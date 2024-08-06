@@ -5414,6 +5414,7 @@ class L3VariableTime(Realm):
             "Upstream": self.upstream_port,
             "Test Duration": self.test_duration,
             "Polling Interval": self.polling_interval,
+            "Total No. of Devices": self.station_count,
         }
 
         self.report.set_table_title("Test Configuration")
