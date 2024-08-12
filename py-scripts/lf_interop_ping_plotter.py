@@ -201,7 +201,10 @@ class Ping(Realm):
         if real_sta_list is None:
             self.real_sta_list, _, _ = real_devices.query_user()
         else:
-            self.real_sta_list = real_sta_list
+            if(real_sta_list == ['all']):
+                self.real_sta_list, _, _ = real_devices.query_user(dowebgui=True, device_list='all')
+            else:
+                self.real_sta_list = real_sta_list
         if base_interop_obj is not None:
             self.Devices = base_interop_obj
 
@@ -486,9 +489,17 @@ class Ping(Realm):
             with open('{}/{}.csv'.format(report_obj.path_date_time,device_name), 'w', newline='') as file:
                 writer = csv.writer(file)
 
-                writer.writerow(['Time', 'RTT (ms)'])
+                writer.writerow(['Time', 'RTT (ms)', 'Sent', 'Received', 'Dropped'])
+                for index in range(len(self.result_json[device_name]['ping_stats']['sent']), len(timestamps)):
+                    self.result_json[device_name]['ping_stats']['sent'].append(str(int(self.result_json[device_name]['ping_stats']['sent'][-1]) + 1))
+                    if(rtts[index] == 0):
+                        self.result_json[device_name]['ping_stats']['dropped'].append(str(int(self.result_json[device_name]['ping_stats']['dropped'][-1]) + 1))
+                        self.result_json[device_name]['ping_stats']['received'].append(str(int(self.result_json[device_name]['ping_stats']['received'][-1])))
+                    else:
+                        self.result_json[device_name]['ping_stats']['received'].append(str(int(self.result_json[device_name]['ping_stats']['received'][-1]) + 1))
+                        self.result_json[device_name]['ping_stats']['dropped'].append(str(int(self.result_json[device_name]['ping_stats']['dropped'][-1])))
                 for row in range(len(timestamps)):
-                    writer.writerow([timestamps[row], rtts[row]])
+                    writer.writerow([timestamps[row], rtts[row], self.result_json[device_name]['ping_stats']['sent'][row], self.result_json[device_name]['ping_stats']['received'][row], self.result_json[device_name]['ping_stats']['dropped'][row]])
                 # writer.writerows([timestamps, rtts])
             sequence_numbers.sort()
             timestamps.sort()
@@ -609,6 +620,7 @@ class Ping(Realm):
         self.device_mac = []
         self.device_ips = []
         self.device_bssid = []
+        self.device_ssid = []
         self.device_names_with_errors = []
         self.devices_with_errors = []
         self.report_names = []
@@ -627,6 +639,7 @@ class Ping(Realm):
             self.device_mac.append(device_data['mac'])
             self.device_ips.append(device_data['ip'])
             self.device_bssid.append(device_data['bssid'])
+            self.device_ssid.append(device_data['ssid'])
             if(float(device_data['sent']) == 0):
                 self.packet_loss_percent.append(0)
                 # self.client_unrechability_percent.append(0)
@@ -679,30 +692,29 @@ class Ping(Realm):
         report.build_banner()
 
         # test setup info
-        if(self.do_webUI):
-            self.real_sta_list = self.sta_list
-            for resource in self.real_sta_list:
-                shelf, r_id, _ = resource.split('.')
-                url = 'http://{}:{}/resource/{}/{}?fields=hw version'.format(self.host, self.port, shelf, r_id)
-                hw_version = requests.get(url)
-                hw_version = hw_version.json()
-                if('resource' in hw_version.keys()):
-                    hw_version = hw_version['resource']
-                    if('hw version' in hw_version.keys()):
-                        hw_version = hw_version['hw version']
-                        print(hw_version)
-                        if('Win' in hw_version):
-                            self.windows += 1
-                        elif('Lin' in hw_version):
-                            self.linux += 1
-                        elif('Apple' in hw_version):
-                            self.mac += 1
-                        else:
-                            self.android += 1
+        self.real_sta_list = self.sta_list
+        for resource in self.real_sta_list:
+            shelf, r_id, _ = resource.split('.')
+            url = 'http://{}:{}/resource/{}/{}?fields=hw version'.format(self.host, self.port, shelf, r_id)
+            hw_version = requests.get(url)
+            hw_version = hw_version.json()
+            if('resource' in hw_version.keys()):
+                hw_version = hw_version['resource']
+                if('hw version' in hw_version.keys()):
+                    hw_version = hw_version['hw version']
+                    print(hw_version)
+                    if('Win' in hw_version):
+                        self.windows += 1
+                    elif('Lin' in hw_version):
+                        self.linux += 1
+                    elif('Apple' in hw_version):
+                        self.mac += 1
                     else:
-                        logging.warning('Malformed response for hw version query on resource manager.')
+                        self.android += 1
                 else:
                     logging.warning('Malformed response for hw version query on resource manager.')
+            else:
+                logging.warning('Malformed response for hw version query on resource manager.')
         test_setup_info = {
             'SSID': [self.ssid if self.ssid else 'TEST CONFIGURED'][0],
             'Security': [self.security if self.ssid else 'TEST CONFIGURED'][0],
@@ -750,6 +762,7 @@ class Ping(Realm):
             'IP Address': self.device_ips,
             'MAC': self.device_mac,
             'BSSID': self.device_bssid,
+            'SSID': self.device_ssid,
             'Channel': self.device_channels,
             'Packets Sent': self.packets_sent,
             'Packets Received': self.packets_received,
@@ -798,18 +811,6 @@ class Ping(Realm):
         report.set_csv_filename(graph_png)
         report.move_csv_file()
         report.build_graph()
-
-        dataframe1 = pd.DataFrame({
-            'Wireless Client': self.device_names,
-            'MAC': self.device_mac,
-            'Channel': self.device_channels,
-            'Mode': self.device_modes,
-            'Packets Sent': self.packets_sent,
-            'Packets Received': self.packets_received,
-            'Packets Loss': self.packets_dropped
-        })
-        report.set_table_dataframe(dataframe1)
-        report.build_table()
 
         # packets rtt graph
         report.set_table_title('Ping RTT Graph')
@@ -1243,8 +1244,14 @@ connectivity problems.
     logging.info(ping.result_json)
     rtts = {}
     rtts_list = []
+    ping_stats = {}
     for station in ping.sta_list:
         rtts[station] = {}
+        ping_stats[station] = {
+            'sent': [],
+            'received': [],
+            'dropped': []
+        }
     while(loop_timer <= duration):
         t_init = datetime.now()
         result_data = ping.get_results()
@@ -1271,6 +1278,7 @@ connectivity problems.
                                 'mac': current_device_data['mac'],
                                 'ip': current_device_data['ip'],
                                 'bssid': current_device_data['ap'],
+                                'ssid': current_device_data['ssid'],
                                 'channel': current_device_data['channel'],
                                 'mode': current_device_data['mode'],
                                 'name': station,
@@ -1278,6 +1286,10 @@ connectivity problems.
                                 'remarks': [],
                                 'last_result': [result_data['last results'].split('\n')[-2] if len(result_data['last results']) != 0 else ""][0]
                             }
+                            ping_stats[station]['sent'].append(result_data['tx pkts'])
+                            ping_stats[station]['received'].append(result_data['rx pkts'])
+                            ping_stats[station]['dropped'].append(result_data['dropped'])
+                            ping.result_json[station]['ping_stats'] = ping_stats[station]
                             if(len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results']):
                                 temp_last_results = result_data['last results'].split('\n')[0: len(result_data['last results']) -1 ]
                                 drop_count = 0 # let dropped = 0 initially
@@ -1349,6 +1361,7 @@ connectivity problems.
                                     'mac': current_device_data['mac'],
                                     'ip': current_device_data['ip'],
                                     'bssid': current_device_data['ap'],
+                                    'ssid': current_device_data['ssid'],
                                     'channel': current_device_data['channel'],
                                     'mode': current_device_data['mode'],
                                     'name': station,
@@ -1356,6 +1369,10 @@ connectivity problems.
                                     'remarks': [],
                                     'last_result': [ping_data['last results'].split('\n')[-2] if len(ping_data['last results']) != 0 else ""][0]
                                 }
+                                ping_stats[station]['sent'].append(ping_data['tx pkts'])
+                                ping_stats[station]['received'].append(ping_data['rx pkts'])
+                                ping_stats[station]['dropped'].append(ping_data['dropped'])
+                                ping.result_json[station]['ping_stats'] = ping_stats[station]
                                 if(len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results']):
                                     temp_last_results = ping_data['last results'].split('\n')[0: len(ping_data['last results']) -1 ]
                                     drop_count = 0 # let dropped = 0 initially
@@ -1427,6 +1444,7 @@ connectivity problems.
                             'mac': current_device_data['mac'],
                             'ip': current_device_data['ip'],
                             'bssid': current_device_data['ap'],
+                            'ssid': current_device_data['ssid'],
                             'channel': current_device_data['channel'],
                             'mode': current_device_data['mode'],
                             'name': [current_device_data['user'] if current_device_data['user'] != '' else current_device_data['hostname']][0],
@@ -1434,6 +1452,10 @@ connectivity problems.
                             'remarks': [],
                             'last_result': [result_data['last results'].split('\n')[-2] if len(result_data['last results']) != 0 else ""][0]
                         }
+                        ping_stats[station]['sent'].append(result_data['tx pkts'])
+                        ping_stats[station]['received'].append(result_data['rx pkts'])
+                        ping_stats[station]['dropped'].append(result_data['dropped'])
+                        ping.result_json[station]['ping_stats'] = ping_stats[station]
                         if(len(result_data['last results']) != 0):
                             temp_last_results = result_data['last results'].split('\n')[0: len(result_data['last results']) -1 ]
                             drop_count = 0 # let dropped = 0 initially
@@ -1512,6 +1534,7 @@ connectivity problems.
                                 'mac': current_device_data['mac'],
                                 'ip': current_device_data['ip'],
                                 'bssid': current_device_data['ap'],
+                                'ssid': current_device_data['ssid'],
                                 'channel': current_device_data['channel'],
                                 'mode': current_device_data['mode'],
                                 'name': [current_device_data['user'] if current_device_data['user'] != '' else current_device_data['hostname']][0],
@@ -1519,6 +1542,10 @@ connectivity problems.
                                 'remarks': [],
                                 'last_result': [ping_data['last results'].split('\n')[-2] if len(ping_data['last results']) != 0 else ""][0]
                             }
+                            ping_stats[station]['sent'].append(ping_data['tx pkts'])
+                            ping_stats[station]['received'].append(ping_data['rx pkts'])
+                            ping_stats[station]['dropped'].append(ping_data['dropped'])
+                            ping.result_json[station]['ping_stats'] = ping_stats[station]
                             if(len(ping_data['last results']) != 0):
                                 temp_last_results = ping_data['last results'].split('\n')[0: len(ping_data['last results']) -1 ]
                                 drop_count = 0 # let dropped = 0 initially
