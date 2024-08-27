@@ -2074,15 +2074,15 @@ candela_apis = Candela(ip='192.168.242.2', port=8080)
 #                                    )
 
 # TO RUN VIDEO STREAMING TEST
-candela_apis.start_video_streaming_test(url="https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-                                        media_source="hls",
-                                        media_quality="4k",
-                                        duration="1m",
-                                        device_list='1.13,1.18,1.22,1.23,1.24,1.25,1.26,1.27',
-                                        precleanup=True,
-                                        postcleanup=True,
-                                        incremental_capacity="5"
-                                        )
+# candela_apis.start_video_streaming_test(url="https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+#                                         media_source="hls",
+#                                         media_quality="4k",
+#                                         duration="1m",
+#                                         device_list='1.13,1.18,1.22,1.23,1.24,1.25,1.26,1.27',
+#                                         precleanup=True,
+#                                         postcleanup=True,
+#                                         incremental_capacity="5"
+#                                         )
 
 # TO RUN WEB BROWSER TEST
 # candela_apis.start_web_browser_test(device_list="1.13,1.18,1.22,1.23,1.24,1.25,1.26,1.27", 
