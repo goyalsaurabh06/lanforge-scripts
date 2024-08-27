@@ -457,6 +457,24 @@ class Candela:
         obj.postcleanup()
         test_end_time = datetime.now()
         logger.info("Test ended at {}".format(test_end_time))
+        date = str(datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
+        input_setup_info = {
+            "AP": ap_name,
+            "File Size": file_size,
+            "Bands": band,
+            "Direction": direction,
+            "Stations": len(device_list),
+            "Upstream": upstream,
+            "SSID": ssid,
+            "Security": security,
+            "Contact": "support@candelatech.com"
+        }
+        obj.generate_report(obj.data, date, input_setup_info, bands=band,
+                        test_rig="", test_tag="", dut_hw_version="",
+                        dut_sw_version="", dut_model_num="",
+                        dut_serial_num="", test_id="FTP Data",
+                        csv_outfile="",
+                        local_lf_report_dir="")
         return obj.data
 
     def start_http_test(self, ssid, password, security, http_file_size, device_list, report_labels, device_macs,
@@ -663,6 +681,15 @@ class Candela:
             band = ''
         else:
             band = '_' + band
+        http_obj.generate_report(date, num_stations=len(http_sta_list), duration=http_test_duration,
+                                        test_setup_info=test_setup_info, dataset=dataset, lis=lis,
+                                        bands=Bands, threshold_2g="", threshold_5g="", threshold_both="",
+                                        dataset1=dataset1,
+                                        dataset2=dataset2, result_data=result_data, test_rig="", test_tag="",
+                                        dut_hw_version="", dut_sw_version="", dut_model_num="", dut_serial_num="",
+                                        test_id="", test_input_infor="", csv_outfile="",
+                                        _results_dir_name=f'Webpage_Test_Report{band}',
+                                        report_path="")
         self.cleanup.layer4_endp_clean()
         return result_data
 
@@ -770,6 +797,11 @@ class Candela:
                     result1, result2, result3, result4 = result_dicts[0], result_dicts[1], result_dicts[2], result_dicts[3]
                     data1 = result4
                 data = data1
+
+            qos_test_obj.generate_report(data=data,
+                                            input_setup_info={"contact": "support@candelatech.com"},
+                                            report_path="",
+                                            result_dir_name=f"Qos_Test_Report")
             data_set, load, res = qos_test_obj.generate_graph_data_set(data)
             return data
         if qos_serial_run:
@@ -880,6 +912,8 @@ class Candela:
                             'last_result': [ping_data['last results'].split('\n')[-2] if len(ping_data['last results']) != 0 else ""][0]}
                         result_json[station]['remarks'] = ping_test_obj.generate_remarks(result_json[station])
         logger.info("Final Result Json For Ping Test: {}".format(result_json))
+        ping_test_obj.generate_report(result_json=result_json, result_dir=f'Ping_Test_Report',
+                                        report_path="")
         return result_json
         
     def start_throughput_test(self,
@@ -1941,7 +1975,7 @@ class Candela:
 
 
 logger_config = lf_logger_config.lf_logger_config()
-candela_apis = Candela(ip='192.168.214.61', port=8080)
+candela_apis = Candela(ip='192.168.242.2', port=8080)
 
 
 # candela_apis.get_client_connection_details(['1.208.wlan0', '1.19.wlan0'])
@@ -1953,24 +1987,24 @@ candela_apis = Candela(ip='192.168.214.61', port=8080)
  
 # TO RUN FTP TEST
 # candela_apis.start_ftp_test(ssid='Walkin_open', password='[BLANK]', security='open',
-#                                 device_list=','.join(['1.26', '1.22']))
+#                                 device_list=','.join(['1.16', '1.19']))
 
 # TO RUN HTTP TEST
 # candela_apis.start_http_test(ssid='Walkin_open', password='[BLANK]',
 #                              security='open', http_file_size='10MB',
-#                              device_list=['1.342.wlan0'], report_labels=['1.342 linux test41'],
-#                              device_macs=['48:e7:da:fe:0d:ed'], target_per_ten=1000,
+#                              device_list=['1.16.wlan0', '1.19.wlan0'], report_labels=['1.16 android test41', '1.19 android test46'],
+#                              device_macs=['48:e7:da:fe:0d:ed', '48:e7:da:fe:0d:91'], target_per_ten=1000, upstream='eth2',
 #                              band='5G', ap_name='Netgear')
 
 # TO RUN QOS TEST
 # candela_apis.start_qos_test(ssid='Walkin_open', password='[BLANK]', security='open',
-                            # ap_name='Netgear', upstream='eth1', tos=['VI', 'VO', 'BE', 'BK'],
-                            # traffic_type='lf_tcp', device_list=['1.342.wlan0'], report_labels=['1.342 linux test41'],
-                            # device_macs=['48:e7:da:fe:0d:ed'], qos_serial_run=False)
+#                             ap_name='Netgear', upstream='eth3', tos=['VI', 'VO', 'BE', 'BK'],
+#                             traffic_type='lf_tcp', device_list=['1.16.wlan0', '1.19.wlan0'], report_labels=['1.16 android test41', '1.19 android test46'],
+#                             device_macs=['48:e7:da:fe:0d:ed', '48:e7:da:fe:0d:91'], qos_serial_run=False)
 
 # TO RUN PING TEST
 # candela_apis.start_ping_test(ssid='Walkin_open', password='[BLANK]', encryption='open',
-                            #  target='192.168.1.61', device_list=['1.342.wlan0'])
+#                              target='192.168.1.95', device_list=['1.16.wlan0', '1.19.wlan0'])
 
 # TO RUN THROUGHPUT TEST
 # candela_apis.start_throughput_test(traffic_type="lf_udp",
