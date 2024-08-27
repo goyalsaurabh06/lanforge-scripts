@@ -214,6 +214,8 @@ class Candela:
                            groups=False,
                            _debug_on=False,
                            _exit_on_error=False,
+                           reboot=None,
+                           disconnect_devices=None,
                            all_android=None,
                            all_laptops=None,
                            device_list=None):
@@ -364,6 +366,8 @@ class Candela:
                                             selected_bands=['5g'],
                                             groups=groups,
                                             _debug_on=_debug_on,
+                                            reboot=reboot,
+                                            disconnect_devices=disconnect_devices,
                                             _exit_on_error=_exit_on_error,
                                             all_android=all_android,
                                             all_laptops=all_laptops)
@@ -2021,7 +2025,11 @@ candela_apis = Candela(ip='192.168.242.2', port=8080)
 # device_list, report_labels, device_macs = candela_apis.start_connectivity(
 #     manager_ip='192.168.214.61', port=8080, server_ip='192.168.1.61', ssid_5g='Walkin_open', encryption_5g='open', passwd_5g='[BLANK]', device_list=['test41'])
 # logger.info('{} {} {}'.format(device_list, report_labels, device_macs))
- 
+# device_list, report_labels, device_macs = candela_apis.start_connectivity(
+#     manager_ip='192.168.246.138', port=8080, server_ip='192.168.246.138', ssid_5g='client_connectivity_al', encryption_5g='open', passwd_5g='[BLANK]', device_list=['R9ZN604QM0T'], reboot=True, disconnect_devices=False)
+
+# device_list, report_labels, device_macs = candela_apis.start_connectivity(
+#     manager_ip='192.168.246.138', port=8080, server_ip='192.168.246.138', ssid_5g='client_connectivity_al', encryption_5g='open', passwd_5g='[BLANK]', device_list=['ZY223DBCK9'], reboot=False, disconnect_devices=True)
 # TO RUN FTP TEST
 # candela_apis.start_ftp_test(ssid='Walkin_open', password='[BLANK]', security='open',
 #                                 device_list=','.join(['1.16', '1.19']))
