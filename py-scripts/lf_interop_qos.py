@@ -864,7 +864,7 @@ class ThroughputQOS(Realm):
         report.build_objective()
 
         # Initialize counts and lists for device types
-        android_devices,windows_devices,linux_devices,ios_devices=0,0,0,0
+        android_devices,windows_devices,linux_devices,ios_devices,ios_mob_devices=0,0,0,0,0
         all_devices_names=[]
         device_type=[]
         total_devices=""
@@ -886,6 +886,10 @@ class ThroughputQOS(Realm):
                 all_devices_names.append(split_device_name[2] + ("(Mac)"))
                 device_type.append("Mac")
                 ios_devices+=1
+            elif 'iOS' in split_device_name:
+                all_devices_names.append(split_device_name[2] + ("(iOS)"))
+                device_type.append("iOS")
+                ios_mob_devices+=1
 
         # Build total_devices string based on counts
         if android_devices>0:
@@ -896,6 +900,8 @@ class ThroughputQOS(Realm):
             total_devices+= f" Linux({linux_devices})" 
         if ios_devices>0:
             total_devices+= f" Mac({ios_devices})"
+        if ios_mob_devices>0:
+            total_devices+= f" iOS({ios_mob_devices})"
         
         test_setup_info = {
         "Device List": ", ".join(all_devices_names),
