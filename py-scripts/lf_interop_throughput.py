@@ -1472,7 +1472,7 @@ class Throughput(Realm):
             report.build_objective()
 
             # Initialize counts and lists for device types
-            android_devices,windows_devices,linux_devices,ios_devices=0,0,0,0,0
+            android_devices,windows_devices,linux_devices,mac_devices,ios_devices=0,0,0,0,0
             all_devices_names=[]
             device_type=[]
             total_devices=""
