@@ -250,7 +250,13 @@ class Throughput(Realm):
             if key == "resources":
                 for element in value:
                     for a,b in element.items():
-                        self.hw_list.append(b['hw version'])
+                        if "Apple" in b['hw version']:
+                            if b['kernel']=='':
+                                self.hw_list.append('iOS')
+                            else:
+                                self.hw_list.append(b['hw version'])
+                        else:
+                            self.hw_list.append(b['hw version'])
         # print(self.hw_list)
         for hw_version in self.hw_list:                       
             if "Win" in hw_version:
@@ -258,6 +264,8 @@ class Throughput(Realm):
             elif "Linux" in hw_version:
                 self.linux_list.append(hw_version)
             elif "Apple" in hw_version:
+                self.mac_list.append(hw_version)
+            elif "iOS" in hw_version:
                 self.mac_list.append(hw_version)
             else:
                 if hw_version != "":
@@ -301,9 +309,15 @@ class Throughput(Realm):
                                         self.linux_list.append(b['hw version'])
                                         self.devices_available.append(b['eid'] +" " +'Lin'+" "+ b['hostname'])
                             elif "Apple" in b['hw version']:
-                                self.eid_list.append(b['eid'])
-                                self.mac_list.append(b['hw version'])
-                                self.devices_available.append(b['eid'] +" " +'Mac'+" "+ b['hostname'])
+                                if b['kernel']=='':
+                                    self.eid_list.append(b['eid'])
+                                    self.mac_list.append(b['hw version'])
+                                    self.devices_available.append(b['eid'] +" " +'iOS'+" "+ b['hostname'])
+                                else:
+                                    self.eid_list.append(b['eid'])
+                                    self.mac_list.append(b['hw version'])
+                                    #self.hostname_list.append(b['eid']+ " " +b['hostname'])
+                                    self.devices_available.append(b['eid'] +" " +'Mac'+" "+ b['hostname'])
                             else:
                                 self.eid_list.append(b['eid'])
                                 self.android_list.append(b['hw version'])
@@ -1082,7 +1096,7 @@ class Throughput(Realm):
             report.build_objective()
 
             # Initialize counts and lists for device types
-            android_devices,windows_devices,linux_devices,mac_devices=0,0,0,0
+            android_devices,windows_devices,linux_devices,mac_devices,ios_devices=0,0,0,0,0
             all_devices_names=[]
             device_type=[]
             packet_size_text=''
@@ -1114,6 +1128,10 @@ class Throughput(Realm):
                     all_devices_names.append(split_device_name[2] + ("(Mac)"))
                     device_type.append("Mac")
                     mac_devices+=1
+                elif 'iOS' in split_device_name:
+                    all_devices_names.append(split_device_name[2] + ("(iOS)"))
+                    device_type.append("iOS")
+                    ios_devices+=1
 
             # Build total_devices string based on counts
             if android_devices>0:
@@ -1124,6 +1142,8 @@ class Throughput(Realm):
                 total_devices+= f" Linux({linux_devices})" 
             if mac_devices>0:
                 total_devices+= f" Mac({mac_devices})"
+            if ios_devices>0:
+                total_devices+= f" iOS({ios_devices})"
 
             # Determine incremental_capacity_data based on self.incremental_capacity
             if len(self.incremental_capacity)==1:
@@ -1416,7 +1436,7 @@ class Throughput(Realm):
                             " Link Speed ":self.link_speed_list[0:int(incremental_capacity_list[i])],
                             " Packet Size(Bytes) ":[str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]]
                         }
-    
+                print(bk_dataframe,"JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ")
                 dataframe1 = pd.DataFrame(bk_dataframe)
                 report.set_table_dataframe(dataframe1)
                 report.build_table()
@@ -1452,7 +1472,7 @@ class Throughput(Realm):
             report.build_objective()
 
             # Initialize counts and lists for device types
-            android_devices,windows_devices,linux_devices,mac_devices=0,0,0,0
+            android_devices,windows_devices,linux_devices,ios_devices=0,0,0,0,0
             all_devices_names=[]
             device_type=[]
             total_devices=""
@@ -1475,6 +1495,10 @@ class Throughput(Realm):
                     all_devices_names.append(split_device_name[2] + ("(Mac)"))
                     device_type.append("Mac")
                     mac_devices+=1
+                elif 'iOS' in split_device_name:
+                    all_devices_names.append(split_device_name[2] + ("(iOS)"))
+                    device_type.append("iOS")
+                    ios_devices+=1
 
             # Build total_devices string based on counts
             if android_devices>0:
@@ -1485,6 +1509,8 @@ class Throughput(Realm):
                 total_devices+= f" Linux({linux_devices})" 
             if mac_devices>0:
                 total_devices+= f" Mac({mac_devices})"
+            if ios_devices>0:
+                total_devices+= f" iOS({ios_devices})"
             
             # Construct test_setup_info dictionary for test setup table
             test_setup_info = {

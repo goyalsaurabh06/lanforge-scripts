@@ -179,16 +179,28 @@ class ThroughputQOS(Realm):
     def os_type(self):
         response = self.json_get("/resource/all")
         for key,value in response.items():
+            # print("aaaaaaaaaaaaaaaa",response.items())
             if key == "resources":
                 for element in value:
                     for a,b in element.items():
-                        self.hw_list.append(b['hw version'])
+                        
+                        if "Apple" in b['hw version']:
+                            if b['kernel']=='':
+                                self.hw_list.append('iOS')
+                            else:
+                                self.hw_list.append(b['hw version'])
+                        else:
+                            self.hw_list.append(b['hw version'])
+        # print(self.hw_list)
+        # exit()
         for hw_version in self.hw_list:                       
             if "Win" in hw_version:
                 self.windows_list.append(hw_version)
             elif "Linux" in hw_version:
                 self.linux_list.append(hw_version)
             elif "Apple" in hw_version:
+                self.mac_list.append(hw_version)
+            elif "iOS" in hw_version:
                 self.mac_list.append(hw_version)
             else:
                 if hw_version != "":
@@ -219,10 +231,15 @@ class ThroughputQOS(Realm):
                                         #self.hostname_list.append(b['eid']+ " " +b['hostname'])
                                         self.devices_available.append(b['eid'] +" " +'Lin'+" "+ b['hostname'])
                             elif "Apple" in b['hw version']:
-                                self.eid_list.append(b['eid'])
-                                self.mac_list.append(b['hw version'])
-                                #self.hostname_list.append(b['eid']+ " " +b['hostname'])
-                                self.devices_available.append(b['eid'] +" " +'Mac'+" "+ b['hostname'])
+                                if b['kernel']=='':
+                                    self.eid_list.append(b['eid'])
+                                    self.mac_list.append(b['hw version'])
+                                    self.devices_available.append(b['eid'] +" " +'iOS'+" "+ b['hostname'])
+                                else:
+                                    self.eid_list.append(b['eid'])
+                                    self.mac_list.append(b['hw version'])
+                                    #self.hostname_list.append(b['eid']+ " " +b['hostname'])
+                                    self.devices_available.append(b['eid'] +" " +'Mac'+" "+ b['hostname'])
                             else:
                                 self.eid_list.append(b['eid'])
                                 self.android_list.append(b['hw version'])  
