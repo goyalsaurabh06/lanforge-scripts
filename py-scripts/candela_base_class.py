@@ -1256,7 +1256,7 @@ class Candela:
             print("setting the flag to false")
             self.throughput_test.stop_test=True
         print("setting throughput test to stop")
-        self.monitoring_thread.join()
+        self.th_monitoring_thread.join()
         self.throughput_test.stop() 
     def generate_report_throughput_test(self):
         self.throughput_test.generate_report(list(set(self.iterations_before_test_stopped_by_user)),self.incremental_capacity_list,data=self.all_dataframes,data1=self.to_run_cxs_len)
@@ -1672,7 +1672,7 @@ class Candela:
             # self.video_streaming_test.background_run = False
             self.video_streaming_test.stop_test=True
         print("setting video streaming test to stop")
-        self.monitoring_thread.join()
+        self.vs_monitoring_thread.join()
         self.video_streaming_test.stop() 
     def generate_report_video_streaming_test(self):
         if self.video_streaming_test.resource_ids and self.video_streaming_test.incremental :  
@@ -2119,7 +2119,7 @@ class Candela:
             # self.web_browser_test.background_run = False
             self.web_browser_test.stop_test=True
         print("setting web browser test to stop")
-        self.monitoring_thread.join()
+        self.wb_monitoring_thread.join()
         self.web_browser_test.stop()
 
     def generate_report_web_browser_test(self):
@@ -2128,8 +2128,8 @@ class Candela:
     def start_mc_test(self,**kwargs):
         background_run = kwargs.get("background_run",False)
         if background_run:
-            self.monitoring_thread=threading.Thread(target=self.start_multicast_test,kwargs=kwargs)
-            self.monitoring_thread.start()
+            self.mc_monitoring_thread=threading.Thread(target=self.start_multicast_test,kwargs=kwargs)
+            self.mc_monitoring_thread.start(**kwargs)
         else:
             self.start_multicast_test(**kwargs)
     def start_multicast_test(self,
@@ -2263,7 +2263,7 @@ class Candela:
             print("setting the flag to false")
             self.multicast_test.background_run = False
         print("setting multicast test to stop")
-        self.monitoring_thread.join()
+        self.mc_monitoring_thread.join()
         self.multicast_test.stop()
 
     def generate_report_multicast_test(self):
