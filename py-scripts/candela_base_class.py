@@ -939,7 +939,7 @@ class Candela:
                                             base_interop_obj=base_interop_profile)
         # removing the existing generic endpoints & cxs
         ping_test_obj.cleanup()
-        ping_test_obj.sta_list = device_list
+        # ping_test_obj.sta_list = device_list
         # creating generic endpoints
         ping_test_obj.create_generic_endp()
         logger.info("Generic Cross-Connection List: {}".format(ping_test_obj.generic_endps_profile.created_cx))
@@ -960,6 +960,7 @@ class Candela:
         # getting result dict
         result_data = ping_test_obj.get_results()
         result_json = {}
+        ping_test_obj.sta_list = ping_test_obj.real_sta_list
         if type(result_data) == dict:
             for station in ping_test_obj.sta_list:
                 current_device_data = base_interop_profile.devices_data[station]
@@ -1014,6 +1015,7 @@ class Candela:
         # getting result dict
         result_data = self.ping_test_obj.get_results()
         result_json = {}
+        self.ping_test_obj.sta_list = self.ping_test_obj.real_sta_list
         if type(result_data) == dict:
             for station in self.ping_test_obj.sta_list:
                 current_device_data = self.base_interop_profile.devices_data[station]
@@ -2338,8 +2340,7 @@ candela_apis.generate_report_multicast_test()
 
 # TO RUN PING TEST
 # candela_apis.start_ping_test(ssid='Walkin_open', password='[BLANK]', encryption='open',
-#                              target='192.168.1.95', device_list='all')
-# candela_apis.stop_ping_test()
+#                              target='192.168.1.95', device_list=['1.36.wlan0'], background=True)
 
 # TO RUN THROUGHPUT TEST
 # candela_apis.start_th_test(traffic_type="lf_udp",
