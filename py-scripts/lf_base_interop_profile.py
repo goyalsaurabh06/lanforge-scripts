@@ -34,6 +34,8 @@ python3 lf_base_interop_profile.py --host 192.168.242.2 --server_ip 192.168.1.95
 OR
 For only all androids
 python3 lf_base_interop_profile.py --host 192.168.242.2 --server_ip 192.168.1.95 --ssid_5g test_wpa2 --passwd_5g lanforge --encryption_5g wpa2 --config_wifi --server_ip 192.168.1.95 --device_list all --all_android
+To disconnect devices
+python3 lf_base_interop_profile.py --host 192.168.242.2 --server_ip 192.168.1.95 --config_wifi --server_ip 192.168.1.95 --device_list all --disconnect_devices
 #@TODO more functionality need to be added
 
 
@@ -706,6 +708,8 @@ class RealDevice(Realm):
                  pk_passwd_6g=None,
                  pac_file_6g=None,
                  enable_wifi=None,
+                 disconnect_devices=None,
+                 reboot=None,
                  disable_wifi=None,
                  selected_bands=['5g'],
                  groups=False,
@@ -719,6 +723,8 @@ class RealDevice(Realm):
         self.manager_port = port
         self.server_ip = server_ip
         self.enable_wifi = enable_wifi
+        self.disconnect_devices = disconnect_devices
+        self.reboot = reboot
         self.disable_wifi = disable_wifi
         self.all_android = all_android
         self.all_laptops = all_laptops
@@ -841,6 +847,8 @@ class RealDevice(Realm):
             port=self.manager_port,
             server_ip=self.server_ip,
             enable_wifi=self.enable_wifi,
+            disconnect_devices=self.disconnect_devices,
+            reboot=self.reboot,
             disable_wifi=self.disable_wifi,
             ssid_2g=self.ssid_2g,
             passwd_2g=self.passwd_2g,
@@ -917,6 +925,8 @@ class RealDevice(Realm):
                                                        port=self.manager_port,
                                                        server_ip=self.server_ip,
                                                        enable_wifi=self.enable_wifi,
+                                                       disconnect_devices=self.disconnect_devices,
+                                                       reboot=self.reboot,
                                                        disable_wifi=self.disable_wifi,
                                                        ssid_2g=self.ssid_2g,
                                                        passwd_2g=self.passwd_2g,
@@ -1140,45 +1150,59 @@ class RealDevice(Realm):
                         print(laptop)
                         selected_laptops.append(laptop)
                         break
-
-        if (selected_androids != []):
-            await self.androids_obj.stop_app(port_list=selected_androids)
-            # await self.androids_obj.forget_all_networks(port_list=selected_androids)
-            await self.androids_obj.configure_wifi(port_list=selected_androids)
-            
-            if(selected_laptops == []):  
-                print("WAITING FOR 120 seconds")
-                time.sleep(120)
-        if(selected_laptops != []):
-            # if laptop['eap_method']!="" or laptop['eap_method']!= None or laptop['eap_method']!="NA":
-            await self.laptops_obj.rm_station(port_list=selected_laptops)
-            time.sleep(10)
-            #trial for making port up before configuration
-            await self.laptops_obj.set_port_1(port_list=selected_laptops)
-            time.sleep(10)
-            await self.laptops_obj.add_station(port_list=selected_laptops)
-            time.sleep(30)
-            #check for enterprise for enterprise configuration
-            if i==True:
-                await self.laptops_obj.set_wifi_extra(port_list=selected_laptops)
+        if self.reboot==True:
+            if(selected_androids != []):
+                await self.androids_obj.reboot_android(port_list=selected_androids)
+                time.sleep(5)
+            if(selected_laptops != []):
+                await self.laptops_obj.reboot_laptop(port_list=selected_laptops)
+                time.sleep(5)
+        if self.disconnect_devices==True:
+            if(selected_androids != []):
+                await self.androids_obj.forget_all_networks(port_list=selected_androids)
                 time.sleep(10)
-            await self.laptops_obj.set_port(port_list=selected_laptops)
-            # await self.laptops_obj.set_port(port_list=selected_laptops)
-            # time.sleep(60)
-            # logging.info('Applying the new Wi-Fi configuration. Waiting for 2 minutes for the new configuration to apply.')
-            print("WAITING TOTAL 120 SECONDS FOR CONFIGURATION TO APPLY")
-            time.sleep(70)
-            exclude_laptops_con=[]
-            for laptop in selected_laptops:
-                current_laptop_port_data = self.json_get('/port/{}/{}/{}'.format(laptop['shelf'], laptop['resource'], laptop['sta_name']))
-                current_laptop_port_data = current_laptop_port_data['interface']
-                if (current_laptop_port_data['down'] == True):
-                    exclude_laptops_con.append(laptop)
-                    continue
-            if exclude_laptops_con!=[]:
-                print(exclude_laptops_con)
-                print("WAITING FOR EXTRA 30 SECONDS")
+            if(selected_laptops != []):
+                await self.laptops_obj.disconnect_wifi(port_list=selected_laptops)
+                time.sleep(10)
+        if self.reboot==False and self.disconnect_devices==False:
+            if(selected_androids != []):
+                await self.androids_obj.stop_app(port_list=selected_androids)
+                # await self.androids_obj.forget_all_networks(port_list=selected_androids)
+                await self.androids_obj.configure_wifi(port_list=selected_androids)
+                
+                if(selected_laptops == []):  
+                    print("WAITING FOR 120 seconds")
+                    time.sleep(120)
+            if(selected_laptops != []):
+                # if laptop['eap_method']!="" or laptop['eap_method']!= None or laptop['eap_method']!="NA":
+                await self.laptops_obj.rm_station(port_list=selected_laptops)
+                time.sleep(10)
+                #trial for making port up before configuration
+                await self.laptops_obj.set_port_1(port_list=selected_laptops)
+                time.sleep(10)
+                await self.laptops_obj.add_station(port_list=selected_laptops)
                 time.sleep(30)
+                #check for enterprise for enterprise configuration
+                if i==True:
+                    await self.laptops_obj.set_wifi_extra(port_list=selected_laptops)
+                    time.sleep(10)
+                await self.laptops_obj.set_port(port_list=selected_laptops)
+                # await self.laptops_obj.set_port(port_list=selected_laptops)
+                # time.sleep(60)
+                # logging.info('Applying the new Wi-Fi configuration. Waiting for 2 minutes for the new configuration to apply.')
+                print("WAITING TOTAL 120 SECONDS FOR CONFIGURATION TO APPLY")
+                time.sleep(70)
+                exclude_laptops_con=[]
+                for laptop in selected_laptops:
+                    current_laptop_port_data = self.json_get('/port/{}/{}/{}'.format(laptop['shelf'], laptop['resource'], laptop['sta_name']))
+                    current_laptop_port_data = current_laptop_port_data['interface']
+                    if (current_laptop_port_data['down'] == True):
+                        exclude_laptops_con.append(laptop)
+                        continue
+                if exclude_laptops_con!=[]:
+                    print(exclude_laptops_con)
+                    print("WAITING FOR EXTRA 30 SECONDS")
+                    time.sleep(30)
 
             exclude_laptops_1=[]
             for laptop in selected_laptops:
@@ -1221,8 +1245,8 @@ class RealDevice(Realm):
             elif (android[3] == '6g'):
                 curr_ssid = self.ssid_6g
 
-            # get resource id for the android device from interop tab
-            resource_id = self.json_get('/adb/1/1/{}'.format(android[2]))['devices']['resource-id']
+                # get resource id for the android device from interop tab
+                resource_id = self.json_get('/adb/1/1/{}'.format(android[2]))['devices']['resource-id']
 
             # if there is no resource id in interop tab
             if (resource_id == ''):
@@ -1241,7 +1265,7 @@ class RealDevice(Realm):
                 exclude_androids.append(android)
                 continue
 
-            # fetching port data for the android device
+                # fetching port data for the android device
             current_android_port_data = \
             self.json_get('/port/{}/{}/wlan0'.format(resource_id.split('.')[0], resource_id.split('.')[1]))['interface']
 
@@ -1287,15 +1311,15 @@ class RealDevice(Realm):
         for android in exclude_androids:
             selected_androids.remove(android)
 
-        # for laptops
-        exclude_laptops = []
-        for laptop in selected_laptops:
-            if (laptop['band'] == '2g'):
-                curr_ssid = self.ssid_2g
-            elif (laptop['band'] == '5g'):
-                curr_ssid = self.ssid_5g
-            elif (laptop['band'] == '6g'):
-                curr_ssid = self.ssid_6g
+            # for laptops
+            exclude_laptops = []
+            for laptop in selected_laptops:
+                if (laptop['band'] == '2g'):
+                    curr_ssid = self.ssid_2g
+                elif (laptop['band'] == '5g'):
+                    curr_ssid = self.ssid_5g
+                elif (laptop['band'] == '6g'):
+                    curr_ssid = self.ssid_6g
 
             # check SSID and IP values from port manager
             current_laptop_port_data = self.json_get(
@@ -1308,22 +1332,22 @@ class RealDevice(Realm):
                 exclude_laptops.append(laptop)
                 continue
 
-            current_laptop_port_data = current_laptop_port_data['interface']
+                current_laptop_port_data = current_laptop_port_data['interface']
 
-            # checking if the laptop is connected to the desired ssid
-            if (current_laptop_port_data['ssid'] != curr_ssid):
-                logging.warning(
-                    'The laptop with port {}.{}.{} is not conneted to the given SSID {}. Excluding it from testing'.format(
-                        laptop['shelf'], laptop['resource'], laptop['sta_name'], curr_ssid))
-                exclude_laptops.append(laptop)
-                
-                continue
-            if (current_laptop_port_data['down'] == True):
-                logging.warning(
-                    'The laptop with port {}.{}.{} is in down state {}.Please check the wifi. Excluding it from testing'.format(
-                        laptop['shelf'], laptop['resource'], laptop['sta_name'], curr_ssid))
-                exclude_laptops.append(laptop)
-                continue
+                # checking if the laptop is connected to the desired ssid
+                if (current_laptop_port_data['ssid'] != curr_ssid):
+                    logging.warning(
+                        'The laptop with port {}.{}.{} is not conneted to the given SSID {}. Excluding it from testing'.format(
+                            laptop['shelf'], laptop['resource'], laptop['sta_name'], curr_ssid))
+                    exclude_laptops.append(laptop)
+                    
+                    continue
+                if (current_laptop_port_data['down'] == True):
+                    logging.warning(
+                        'The laptop with port {}.{}.{} is in down state {}.Please check the wifi. Excluding it from testing'.format(
+                            laptop['shelf'], laptop['resource'], laptop['sta_name'], curr_ssid))
+                    exclude_laptops.append(laptop)
+                    continue
 
             # checking if the laptop is active or down
             if (current_laptop_port_data['ip'] == '0.0.0.0'):
@@ -1376,16 +1400,16 @@ class RealDevice(Realm):
                 selected_t_devices[current_resource_id]['hw version'] = 'Mac'
                 current_laptop_port_data['ostype'] = 'macos'
 
-            current_sta_name = current_resource_id
-            self.station_list.append(current_sta_name)
+                current_sta_name = current_resource_id
+                self.station_list.append(current_sta_name)
 
-            self.devices_data[current_sta_name] = current_laptop_port_data
+                self.devices_data[current_sta_name] = current_laptop_port_data
 
-        for laptop in exclude_laptops:
-            selected_laptops.remove(laptop)
+            for laptop in exclude_laptops:
+                selected_laptops.remove(laptop)
 
-        df = pd.DataFrame(data=selected_t_devices).transpose()
-        print(df)
+            df = pd.DataFrame(data=selected_t_devices).transpose()
+            print(df)
         return [self.selected_devices, self.report_labels, self.selected_macs]
 
     async def configure_wifi_groups(self,select_serials,serials_input,ssid_input,passwd_input,enc_input,eap_method_input,eap_identity_input,ieee80211,key_management,private_key,ca_cert,client_cert,pk_passwd,pac_file):
@@ -1962,6 +1986,8 @@ This script is a standard library which support different functionality of inter
     parser.add_argument("--disable_wifi", action="store_true")
     parser.add_argument("--all_android",action="store_true")
     parser.add_argument("--all_laptops",action="store_true")
+    parser.add_argument("--disconnect_devices", action="store_true")
+    parser.add_argument("--reboot", action="store_true")
 
     args = parser.parse_args()
 
@@ -1973,6 +1999,8 @@ This script is a standard library which support different functionality of inter
         real_devices = RealDevice(manager_ip=args.host,
                                   server_ip=args.server_ip,
                                   enable_wifi=args.enable_wifi,
+                                  disconnect_devices=args.disconnect_devices,
+                                  reboot=args.reboot,
                                   disable_wifi=args.disable_wifi,
                                   ssid_2g=args.ssid_2g,
                                   passwd_2g=args.passwd_2g,
