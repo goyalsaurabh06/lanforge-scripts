@@ -1796,8 +1796,8 @@ class RealDevice(Realm):
             for device, device_details in self.devices_data.items():
                 if (selected_device + '.' in device):
                     # filtering interfaces other than wlan0 for android
-                    if ('Apple' not in self.devices_data[device]['hw version'] and 'Linux' not in self.devices_data[device]['hw version'] and 'Win' not in self.devices_data[device]['hw version']):
-                        if ('wlan0' not in device):
+                    if('Apple' not in self.devices_data[device]['hw version'] and 'Linux' not in self.devices_data[device]['hw version'] and 'Win' not in self.devices_data[device]['hw version']):
+                        if('wlan0' not in device):
                             continue
                     selected_t_devices[device] = {
                         'Eid': selected_device,
