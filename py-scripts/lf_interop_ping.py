@@ -1064,7 +1064,7 @@ effectively over the network and pinpoint potential issues affecting connectivit
                         device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["serial"])
                 print("Available devices:", device_list)
                 dev_list = input("Enter the desired resources to run the test:").split(',')
-                #asyncio.run(obj.connectivity(device_list=dev_list,wifi_config=config_dict))
+                asyncio.run(obj.connectivity(device_list=dev_list,wifi_config=config_dict))
                 ping.select_real_devices(real_devices=Devices,device_list=dev_list)
             
             

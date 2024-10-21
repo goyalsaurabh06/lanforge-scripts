@@ -314,7 +314,7 @@ class ThroughputQOS(Realm):
 
             }
             self.device_list=self.device_list.split(',')
-            #asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
+            asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
         elif(self.device_list==[]):
             all_devices= obj.get_all_devices()
             device_list=[]
@@ -348,7 +348,7 @@ class ThroughputQOS(Realm):
                     device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["serial"])
             print("Available devices:", device_list)
             self.device_list = input("Enter the desired resources to run the test:").split(',')
-            #asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
+            asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
             if not self.expected_passfail_val:
                 obj.device_csv_file(csv_name=self.csv_name)
 
