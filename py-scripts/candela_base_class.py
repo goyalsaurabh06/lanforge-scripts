@@ -538,7 +538,7 @@ class Candela:
                  ca_cert=None,
                  client_cert=None,
                  pk_passwd=None,
-                 pac_file=None,server_ip=None):
+                 pac_file=None,server_ip=None,expected_passfail_val=None,csv_name='device'):
         """
         Method to start FTP test on the given device list
 
@@ -574,7 +574,10 @@ class Candela:
             selected_profiles=profile_name.split(',')
         else:
             selected_profiles=[]
-        print(group_name,file_name,device_list,ssid,password,security)
+        if csv_name!='device' and expected_passfail_val:
+            print("Enter either --csv_name or --expected_passfail_val")
+            exit(0)
+       # print(group_name,file_name,device_list,ssid,password,security)
         if((group_name!=None and profile_name!=None and file_name!=None and device_list==[] and ssid==None and password==None and security==None and (len(selected_groups)==len(selected_profiles))) or(group_name==None and profile_name==None and file_name==None and ssid!=None and password!=None and security!=None)):
 
             device_list = self.filter_iOS_devices(device_list)
@@ -617,7 +620,7 @@ class Candela:
                                     client_cert=client_cert,
                                     pk_passwd=pk_passwd,
                                     pac_file=pac_file,
-                                    server_ip=server_ip)
+                                    server_ip=server_ip,csv_name=csv_name+'.csv',expected_passfail_val=expected_passfail_val)
 
             self.ftp_test.data = {}
             self.ftp_test.file_create()
@@ -989,14 +992,16 @@ class Candela:
                  client_cert=None,
                  pk_passwd=None,
                  pac_file=None,server_ip=None,
-                 csv_direction=None):
+                 csv_direction=None,csv_name='device',expected_passfail_val=None):
         if(side_a_min!=0 and side_b_min!=0):
             direction='L3_'+traffic_type.split('_')[1].upper()+'_BiDi'
         elif( side_a_min!=0):
             direction='L3_'+traffic_type.split('_')[1].upper()+'_UL'
         else:
             direction='L3_'+traffic_type.split('_')[1].upper()+'_DL'
-        
+        if csv_name!='device' and expected_passfail_val:
+            print("Enter either --csv_name or --expected_passfail_val")
+            exit(0)
         if not background_run:
             qos_test_duration = test_duration
         else:
@@ -1014,7 +1019,7 @@ class Candela:
         else:
             selected_profiles=[]
         # qos test for real clients
-        print(group_name,profile_name,device_list,ssid,password,file_name,security)
+        print("55555555555555",group_name,profile_name,device_list,ssid,password,file_name,security)
         def qos_test_overall_real(qos_tos_real=None):
             if((group_name!=None and profile_name!=None and file_name!=None and device_list==[] and ssid==None and (len(selected_groups)==len(selected_profiles))) or(group_name==None and profile_name==None and file_name==None and ssid!=None and password!=None and security!=None)):
 
@@ -1025,7 +1030,7 @@ class Candela:
                                                         name_prefix="TOS-",
                                                         #tos=tos,
                                                         tos=qos_tos_real if qos_serial_run else ','.join(tos),
-                                                        ssid=ssid,
+                                                        ssid=ssid,device_list=device_list,input_devices_list=[],
                                                         password=password,
                                                         security=security,
                                                         upstream=upstream,
@@ -1058,7 +1063,9 @@ class Candela:
                                     pk_passwd=pk_passwd,
                                     pac_file=pac_file,
                                     server_ip=server_ip,
-                                    csv_direction=direction)
+                                    csv_direction=direction,
+                                    csv_name=csv_name+'.csv',
+                                    expected_passfail_val=expected_passfail_val)
 
                 data = {}
                 self.qos_test.background_run = background_run
@@ -1193,7 +1200,9 @@ class Candela:
                  ca_cert=None,
                  client_cert=None,
                  pk_passwd=None,
-                 pac_file=None,server_ip=None):
+                 pac_file=None,server_ip=None,
+                 expected_passfail_val=None,
+                 csv_name='device'):
         """
         Method to start and run the ping test on the selected devices.
 
@@ -1211,6 +1220,9 @@ class Candela:
         device_list = self.filter_iOS_devices(device_list)
         target = target
         interval = 1
+        if csv_name!='device' and expected_passfail_val:
+            print("Enter either --csv_name or --expected_passfail_val")
+            exit(0)
         if (encryption != 'open' and password == '[BLANK]'):
             print('--passwd required')
             exit(0)
@@ -1264,7 +1276,9 @@ class Candela:
                                 pk_passwd=pk_passwd,
                                 pac_file=pac_file,
                                 real=real,
-                                server_ip=server_ip)
+                                server_ip=server_ip,
+                                expected_passfail_val=expected_passfail_val,
+                                csv_name=csv_name+'.csv')
         ping_test_obj.enable_real = True
         if not ping_test_obj.check_tab_exists():
             logger.info('Generic Tab is not available for Ping Test.\nAborting the test.')
@@ -1272,7 +1286,10 @@ class Candela:
         base_interop_profile = RealDevice(manager_ip=self.lanforge_ip,selected_bands=[])
         self.base_interop_profile = base_interop_profile
         base_interop_profile.get_devices()
+
         obj=DeviceConfig.DeviceConfig(lanforge_ip=self.lanforge_ip,file_name=file_name)
+        if not expected_passfail_val:
+            obj.device_csv_file(csv_name+'.csv')
         if(group_name!=None and file_name!=None and profile_name!=None):
             selected_groups=group_name.split(',')
             selected_profiles=profile_name.split(',')
@@ -1288,7 +1305,6 @@ class Candela:
             df1=obj.display_groups(obj.groups)
             groups_list=df1.to_dict(orient='list')
             group_devices={}
-            #asyncio.run(obj.connectivity({self.group_name:self.profile_name}))
             for adb in adbresponse:   
                 group_devices[adb['serial']]=adb['eid']
             for res in resource_manager:
@@ -1720,7 +1736,7 @@ class Candela:
                  ca_cert=None,
                  client_cert=None,
                  pk_passwd=None,
-                 pac_file=None,server_ip=None):
+                 pac_file=None,server_ip=None,expected_passfail_val=None,csv_name='device'):
 
         media_source_dict={
                        'dash':'1',
@@ -1737,7 +1753,9 @@ class Candela:
                             '360p':'4'
                             }
         webgui_incremental=incremental_capacity
-
+        if csv_name!='device' and expected_passfail_val:
+            print("Enter either --csv_name or --expected_passfail_val")
+            exit(0)
         media_source,media_quality=media_source.capitalize(),media_quality
         media_source_name=media_source=media_source.lower()
         media_quality_name=media_quality=media_quality.lower()
@@ -1786,7 +1804,9 @@ class Candela:
                                     client_cert=client_cert,
                                     pk_passwd=pk_passwd,
                                     pac_file=pac_file,
-                                    server_ip=server_ip)
+                                    server_ip=server_ip,
+                                    expected_passfail_val=expected_passfail_val,
+                                    csv_name=csv_name+'.csv')
             resource_ids_sm = []
             resource_set = set()
             resource_list = []
@@ -1794,9 +1814,9 @@ class Candela:
 
             
             config_obj=DeviceConfig.DeviceConfig(lanforge_ip=self.lanforge_ip,file_name=file_name)
-            config_obj.device_csv_file()
+            if not expected_passfail_val:
+                config_obj.device_csv_file(csv_name=csv_name+'.csv')
             if(group_name!=None and file_name!=None and profile_name!=None  and device_list==[]):
-                        print("ghjkjhgcvkl ")
                         selected_groups=group_name.split(',')
                         selected_profiles=profile_name.split(',')
                         config_devices={}    
@@ -1804,7 +1824,7 @@ class Candela:
                             config_devices[selected_groups[i]]=selected_profiles[i]
                         #print("CONFIGURED DICT",config_devices)
                         config_obj.initiate_group()
-                        asyncio.run(config_obj.connectivity(config_devices))
+                       # asyncio.run(config_obj.connectivity(config_devices))
                         
                         adbresponse=config_obj.adb_obj.get_devices()
                         resource_manager=config_obj.laptop_obj.get_devices()
@@ -1974,15 +1994,18 @@ class Candela:
                 exit()
             gave_incremental=False
             if(len(available_resources)>0):
-                device_map={}
-                expected_val=input("Enter the expected value for the following devices{} eg 8,6,2: ".format(available_resources)).split(',')
-                if(len(available_resources)==len(expected_val)):
-                    for i in range(len(available_resources)):
-                        device_map[self.video_streaming_test.android_list[i].split('.')[0]+'.'+self.video_streaming_test.android_list[i].split('.')[1]]=expected_val[i]
-                    config_obj.update_device_csv('Videostreaming',device_map)
-                else:
-                    print("Enter correct number of values")
-                    exit(0)
+                if(not expected_passfail_val):
+                    device_map={}
+                    expected_val=input("Enter the expected value for the following devices{} eg 8,6,2: ".format(available_resources)).split(',')
+                    if(len(available_resources)==len(expected_val)):
+                        for i in range(len(available_resources)):
+                            device_map[self.video_streaming_test.android_list[i].split('.')[0]+'.'+self.video_streaming_test.android_list[i].split('.')[1]]=expected_val[i]
+                        config_obj.update_device_csv(csv_name+'.csv','Videostreaming',device_map)
+                    else:
+                        print("Enter correct number of values")
+                        exit(0)
+                elif expected_passfail_val:
+                    pass
             if len(resource_list_sorted)==0:
                 logger.info("Selected Devices are not available in the lanforge")
                 exit(1)
@@ -3007,24 +3030,31 @@ class Candela:
 
         """
         device_list = kwargs.get("device_list","")
-        print("444444",device_list)
+        expected_passfail_val = kwargs.get("expected_passfail_val","")
+        csv_name = kwargs.get("csv_name","")
+        if csv_name!='device' and expected_passfail_val:
+            print("Enter either --csv_name or --expected_passfail_val")
+            exit(0)
         if len(device_list) == 0:
             print('No devices specified.')
             exit(1)
         else:
             stations = device_list
             obj=DeviceConfig.DeviceConfig(lanforge_ip=self.lanforge_ip)
-            obj.device_csv_file()
+            if not expected_passfail_val:
+                obj.device_csv_file(csv_name=csv_name+'.csv')
             device_list=[]
             expected_dict={}
             flag=0
             for sta in stations:
                 device_list.append(sta.split('.')[0]+'.'+sta.split('.')[1])
-            expected_list=input("Enter the expected number to roams for {} eg:2,3: ".format(device_list)).split(',')
-        # print("11111111111111",device_list,expected_list)
-            for val in range(len(expected_list)):
-                expected_dict[device_list[val]]=expected_list[val]
-            obj.update_device_csv('Roaming',expected_dict)
+            if(not expected_passfail_val):    
+                expected_list=input("Enter the expected number to roams for {} eg:2,3: ".format(device_list)).split(',')
+                for val in range(len(expected_list)):
+                    expected_dict[device_list[val]]=expected_list[val]
+                obj.update_device_csv(csv_name+'.csv','Roaming',expected_dict)
+            elif expected_passfail_val:
+                pass
         
         background_run = kwargs.get("background_run",False)
         if background_run:
@@ -3049,7 +3079,7 @@ class Candela:
                     upstream='1.1.eth1',
                     channel='AUTO',
                     frequency=-1,
-                    iterations=1
+                    iterations=1,expected_passfail_val=None,csv_name='device'
                   ):
         self.roam_test_object = Roam(
             lanforge_ip=self.lanforge_ip,
@@ -3066,7 +3096,7 @@ class Candela:
             channel=channel,
             frequency=frequency,
             iterations=iterations,
-            iteration_based=True
+            iteration_based=True,expected_passfail_val=expected_passfail_val,csv_name=csv_name+'.csv'
         )
         self.roam_test_object.station_list = device_list
         logging.info('Selected stations\t{}'.format(device_list))
@@ -3087,32 +3117,32 @@ class Candela:
         self.zoom_obj = ZoomAutomation(sigin_email=sigin_email,sigin_passwd=sigin_passwd,audio=audio,video=video,duration=duration,lanforge_ip=self.lanforge_ip,participants=participants)
         self.zoom_obj.run()
 logger_config = lf_logger_config.lf_logger_config()
-candela_apis = Candela(ip='192.168.214.61', port=8080)
+# candela_apis = Candela(ip='192.168.214.61', port=8080)
 ftp_test=Candela(ip='192.168.214.219',port=8080)
 
 
 #QOS
-# ftp_test.start_qos_test(group_name='grp1',file_name='g219',profile_name='OpenWa',ap_name='NETGEAR',qos_serial_run=False,traffic_type='lf_tcp',upstream='eth1', tos=['VO'])
+#ftp_test.start_qos_test(ssid='Dev_wpa2',password='lanforge',security='wpa2',ap_name='NETGEAR',qos_serial_run=False,traffic_type='lf_tcp',upstream='eth1', tos=['VO'],csv_name='nikhi')
 
 
 #ROAMMMMM
 # candela_apis.start_roam_test(attenuator='1.1.3192', attenuator_modules=['0,1', '2,3'],
-#                              device_list=['1.208.wlan0','1.209.wlan0'],
+#                              device_list=['1.11.wlan0','1.12.wlan0'],
 #                              bssids=['90:3c:b3:b1:70:0d', '90:3c:b3:6c:41:c5'],
 #                              wait_time=1,
-#                              step=1000, background_run=False)
+#                              step=1000, background_run=False,csv_name='demo.csv')
 # candela_apis.generate_roam_test_report()
 
 
 #FTP TEST
-# ftp_test.start_ftp_test(group_name='grp1',file_name='g219',profile_name='OpenWa',background=False)
+#candela_apis.start_ftp_test(ssid='Dev_wpa2',password='lanforge',security='wpa2',device_list='1.17',background=False,csv_name='demo')
 
 
 #VIDEO STREAMING
-#ftp_test.start_vs_test(group_name='grp1',file_name='g219',profile_name='OpenWa')
+#candela_apis.start_vs_test(group_name='grp1',file_name='g219',profile_name='OpenWa',csv_name='demo')
 
 #PING TEST
-ftp_test.start_ping_test(group_name='grp1',file_name='g219',profile_name='OpenWa',target='192.168.1.3',real=True)
+#ftp_test.start_ping_test(group_name='grp1',file_name='g219',profile_name='OpenWa',target='192.168.1.3',real=True,csv_name='demo')
 
 
 
