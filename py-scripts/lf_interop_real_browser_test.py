@@ -268,6 +268,8 @@ class RealBrowserTest(Realm):
         self.total_urls_dict = {}
         self.data_for_webui = {}
         self.all_cx_list = []
+        self.prev_data=[]
+        self.present_data=[]
 
         # Initialize lists for required parameters
         self.req_total_urls = []
@@ -1007,7 +1009,7 @@ class RealBrowserTest(Realm):
                         phone_radio.append('2G/5G')
         return station_name
 
-    def monitor_for_runtime_csv(self,duration,file_path,iteration,resource_list_sorted = [],cx_list = [], ):
+    def monitor_for_runtime_csv(self,duration,file_path,iteration,resource_list_sorted = [],cx_list = [],iter=0 ):
         """
             Monitors runtime data for a specified duration and saves it to a CSV file.
 
@@ -1025,8 +1027,8 @@ class RealBrowserTest(Realm):
         #     dt = datetime.strptime(final_end_time_webGUI, "%Y-%m-%dT%H:%M:%S")
         #     self.formatted_endtime_str = dt.strftime("%Y-%m-%d %H:%M:%S")
         #     print("formatted_endtime_str",self.formatted_endtime_str)
-
-
+        if iter==0:
+            self.prev_data=[0] * len(list(self.http_profile.created_cx.keys()))
         self.all_cx_list.extend(cx_list) 
 
         resource_ids = list(map(int, self.resource_ids.split(',')))
@@ -1177,6 +1179,11 @@ class RealBrowserTest(Realm):
 
             # len_cx_list = len(cx_list)
             # len_all_cx_list = len(self.all_cx_list)
+
+            self.present_data=self.data['total_urls']
+            self.data['urls_per_iteration']=[abs(a-b) for a,b in zip(self.present_data,self.prev_data)]
+            self.data['iteration']=[iter+1]*len(self.data['name'])
+            
             for i in range(len(iterator)):
                 
                 if self.all_cx_list[i] in cx_list:
@@ -1199,7 +1206,6 @@ class RealBrowserTest(Realm):
                                 temp[i] = int(abs(( datetime.now() - start_time_check ).total_seconds()))
 
 
-
             # Check if the test is stopped by the user via web GUI
             if self.dowebgui == True:
                 with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host,
@@ -1214,7 +1220,7 @@ class RealBrowserTest(Realm):
                                 if self.time_data[k][j] == -1:
                                     self.time_data[k][j] = 0 
                             k+=1
-                        self.data["end_time"] = [datetime.now().strftime("%d/%m %I:%M:%S %p")] * len(self.data["end_time"])
+                        self.data["end_time"] = [datetime.now().strftime("%d/%m %I:%M:%S %p")] * len(self.data["total_urls"])
                         break
 
             elif self.stop_test:
@@ -1243,7 +1249,7 @@ class RealBrowserTest(Realm):
 
             # Save data to CSV file based on dowebgui condition
             if self.dowebgui == True:
-                df1.to_csv('{}/rb_datavalues.csv'.format(self.result_dir), index=False)
+                df1.to_csv('{}/webBrowser.csv'.format(self.result_dir), index=False)
             else:
                 df1.to_csv(file_path, mode='w', index=False)
 
@@ -1255,6 +1261,7 @@ class RealBrowserTest(Realm):
             if not self.background_run and self.background_run is not None:
                 break
         
+        self.prev_data=self.data['total_urls']
         # Finalize end_time_webGUI
         if self.data['end_time_webGUI'][0] < current_time.strftime('%Y-%m-%d %H:%M:%S'):
             self.data['end_time_webGUI'] = [current_time.strftime('%Y-%m-%d %H:%M:%S') ] * len(self.data['name'])
@@ -1297,9 +1304,10 @@ class RealBrowserTest(Realm):
         # len_all_cx_list = len(self.all_cx_list)
 
         # Store time data in self.time_data and reset end_time if stopped
-      
+        total_urls_per_iteration=[0]* len(list(self.http_profile.created_cx.keys()))
         for i in range(len(iterator)):
             if self.all_cx_list[i] in cx_list: 
+                total_urls_per_iteration[i] = self.data['total_urls'][i]
                 # present value
                 if self.data['total_urls'][i] == self.count or self.data['total_urls'][i] > self.count:
                     if temp[i] == -1:
@@ -1312,6 +1320,7 @@ class RealBrowserTest(Realm):
                     if (self.data['total_urls'][i] - self.total_urls_dict[self.all_cx_list[i]][-1]) == self.count or (self.data['total_urls'][i] - self.total_urls_dict[self.all_cx_list[i]][-1]) > self.count:
                         if temp[i] == -1:
                             temp[i] = int(abs(( datetime.now() - start_time_check ).total_seconds()))
+                    total_urls_per_iteration[i] = self.data['total_urls'][i] - self.total_urls_dict[self.all_cx_list[i]][-1]
         
         prev_cx_list = len(self.all_cx_list) - len(cx_list)
         for i in range(prev_cx_list):
@@ -1435,7 +1444,7 @@ class RealBrowserTest(Realm):
 
         # Store final data in CSV file based on dowebgui condition
         if self.dowebgui == True:   
-            df.to_csv('{}/rb_datavalues.csv'.format(self.result_dir), index=False)
+            df.to_csv('{}/webBrowser.csv'.format(self.result_dir), index=False)
         else:
             df.to_csv(file_path, mode='w', index=False)     
 
@@ -1492,7 +1501,7 @@ class RealBrowserTest(Realm):
         graph_png = graph_2.build_bar_graph_horizontal()
         return graph_png
 
-    def generate_multiple_graphs(self, report, cx_order_list,gave_incremental):
+    def generate_multiple_graphs(self, report, cx_order_list,gave_incremental,test_info):
         """
             Generates multiple graphs and reports based on monitored data.
 
@@ -1607,6 +1616,9 @@ class RealBrowserTest(Realm):
 
         # Iterate over labels to generate graphs and reports
         for i in range(len(labels)):
+            if self.dowebgui:
+                if test_info:
+                    gave_incremental=False
             if gave_incremental:
                 report.set_obj_html(f'Iteration {i+1}',"")
                 report.build_objective()
@@ -1675,7 +1687,7 @@ class RealBrowserTest(Realm):
                 exit(1)
             
 
-    def generate_report(self, date, file_path,test_setup_info, dataset2, dataset, lis, bands, total_urls, uc_min_value, report_path = '', cx_order_list = [],gave_incremental=True):
+    def generate_report(self, date, file_path,test_setup_info, dataset2, dataset, lis, bands, total_urls, uc_min_value, report_path = '', cx_order_list = [],gave_incremental=True,test_info=False):
         logging.info("Creating Reports")
         if self.dowebgui == True and report_path == '':
             report = lf_report.lf_report(_results_dir_name="Web_Browser_Test_report", _output_html="web_browser.html",
@@ -1684,7 +1696,8 @@ class RealBrowserTest(Realm):
             report = lf_report.lf_report(_results_dir_name="Web_Browser_Test_report", _output_html="web_browser.html",
                                         _output_pdf="Webbrowser.pdf", _path=report_path)
         report_path_date_time = report.get_path_date_time()
-        shutil.move('webBrowser.csv',report_path_date_time)
+        if not self.dowebgui:
+            shutil.move('webBrowser.csv',report_path_date_time)
         report.set_title("Web Browser Test")
         report.set_date(date)
         report.build_banner()
@@ -1705,7 +1718,7 @@ class RealBrowserTest(Realm):
        
         # Graph 1
         if cx_order_list:
-            self.generate_multiple_graphs(report, cx_order_list,gave_incremental) 
+            self.generate_multiple_graphs(report, cx_order_list,gave_incremental,test_info) 
         else:
             graph2 = self.graph_2(dataset2 = dataset2, lis=lis, bands=bands)
             report.set_graph_image(graph2)
@@ -1803,7 +1816,7 @@ class RealBrowserTest(Realm):
                     self.data["status"][i] = "Completed"
             df = pd.DataFrame(self.data)
             if self.dowebgui == True:
-                df.to_csv('{}/rb_datavalues.csv'.format(self.result_dir), index=False)
+                df.to_csv('{}/webBrowser.csv'.format(self.result_dir), index=False)
 
 def main():
     help_summary = '''\
@@ -1979,6 +1992,8 @@ def main():
         selected_devices,report_labels,selected_macs = obj.devices.query_user(dowebgui = args.dowebgui, device_list = resource_ids_generated)
         # Modify obj.resource_ids to include only the second part of each ID (after '.')
         obj.resource_ids = ",".join(id.split(".")[1] for id in args.device_list.split(","))
+
+        available_resources= [int(num) for num in obj.resource_ids.split(',')]
     else :
         # Case where args.no_laptops flag is set
         # if args.no_laptops:
@@ -2123,9 +2138,12 @@ def main():
             obj.incremental = [int(x) for x in obj.incremental.split(',')]
         else:
             logging.info("incremental Values are not needed as Android devices are not selected..")
-    
+    test_info=False
     # Handle webgui_incremental argument
     if args.webgui_incremental:
+        if args.webgui_incremental=="no_increment":
+            args.webgui_incremental=str(len(available_resources))
+            test_info=True
         incremental = [int(x) for x in args.webgui_incremental.split(',')]
         # Validate the length and assign incremental values
         if (len(args.webgui_incremental) == 1 and incremental[0] != len(resource_list_sorted)) or (len(args.webgui_incremental) > 1):
@@ -2221,6 +2239,9 @@ def main():
             test_setup_info_incremental_values = "No Incremental Value provided"
             test_setup_info_total_duration = args.duration
         obj.total_duration = test_setup_info_total_duration
+        if args.dowebgui:
+            if test_info:
+                test_setup_info_incremental_values = "No Incremental Value provided"
 
     # Calculate and manage cx_order_list ( list of cross connections to run ) based on incremental values
     gave_incremental,iteration_number=True,0
@@ -2269,7 +2290,7 @@ def main():
                     # elif len(obj.incremental) != 1 and len(keys) > 1:
                     #     end_time_webGUI = (datetime.now() + timedelta(minutes = obj.total_duration)).strftime('%Y-%m-%d %H:%M:%S')
 
-                    end_time_webGUI = (datetime.now() + timedelta(minutes = obj.total_duration)).strftime('%Y-%m-%d %H:%M:%S')
+                    end_time_webGUI = (datetime.now() + timedelta(minutes = args.duration * len(cx_order_list))).strftime('%Y-%m-%d %H:%M:%S')
                     obj.data['end_time_webGUI'] = [end_time_webGUI] * len(keys)
 
 
@@ -2293,6 +2314,7 @@ def main():
                     date_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     obj.data['remaining_time_webGUI'] =  [datetime.strptime(end_time_webGUI,"%Y-%m-%d %H:%M:%S") - datetime.strptime(date_time,"%Y-%m-%d %H:%M:%S")] * len(keys)
                 # Monitor runtime and save results
+                
                 if args.dowebgui == True:
                     file_path = os.path.join(obj.result_dir, "../../Running_instances/{}_{}_running.json".format(obj.host, obj.test_name))
                     if os.path.exists(file_path):
@@ -2300,10 +2322,9 @@ def main():
                             data = json.load(file)
                             if data["status"] != "Running":
                                 break 
-
-                    obj.monitor_for_runtime_csv(args.duration,file_path,iteration_number,resource_list_sorted,cx_order_list[i])
+                    obj.monitor_for_runtime_csv(args.duration,file_path,iteration_number,resource_list_sorted,cx_order_list[i],i)
                 else:
-                    obj.monitor_for_runtime_csv(args.duration,file_path,iteration_number,resource_list_sorted,cx_order_list[i])
+                    obj.monitor_for_runtime_csv(args.duration,file_path,iteration_number,resource_list_sorted,cx_order_list[i],i)
                     # time.sleep(duration)
             
         # else:
@@ -2342,7 +2363,7 @@ def main():
     # Generate CSV for webGUI results if dowebgui is True
     if args.dowebgui == True:
         df = pd.DataFrame(obj.data)
-        df.to_csv('{}/rb_datavalues.csv'.format(obj.result_dir), index=False)
+        df.to_csv('{}/webBrowser.csv'.format(obj.result_dir), index=False)
 
     # Additional setup for generating reports and post-cleanup
     if obj.resource_ids:
@@ -2389,7 +2410,7 @@ def main():
         # if obj.incremental:
         #     test_setup_info['Duration per Iteration (min)']= str(test_setup_info_duration_per_iteration)+ " (min)"
         test_setup_info['Incremental Values'] = test_setup_info_incremental_values
-        test_setup_info['Total Duration (min)'] = str(test_setup_info_total_duration) + " (min)"
+        test_setup_info['Total Duration (min)'] = str(args.duration * len(cx_order_list)) + " (min)"
 
         # Retrieve additional monitoring data
         # total_urls = obj.my_monitor('total-urls')
@@ -2430,12 +2451,12 @@ def main():
 
             df1 = pd.DataFrame(obj.data)
             if args.dowebgui == True:
-                df1.to_csv('{}/rb_datavalues.csv'.format(obj.result_dir), index=False)
-                df1.to_csv(file_path, mode='w', index=False) 
+                df1.to_csv('{}/webBrowser.csv'.format(obj.result_dir), index=False)
+                # df1.to_csv(file_path, mode='w', index=False) 
             else:
                 df1.to_csv(file_path, mode='w', index=False)     
         # Generate report for the test
-        obj.generate_report(date,"webBrowser.csv",test_setup_info = test_setup_info, dataset2 = dataset2, dataset = dataset, lis = lis, bands = bands, total_urls = total_urls, uc_min_value = uc_min_value , cx_order_list = cx_order_list,gave_incremental=gave_incremental) 
+        obj.generate_report(date,"webBrowser.csv",test_setup_info = test_setup_info, dataset2 = dataset2, dataset = dataset, lis = lis, bands = bands, total_urls = total_urls, uc_min_value = uc_min_value , cx_order_list = cx_order_list,gave_incremental=gave_incremental,test_info=test_info) 
     # elif obj.resource_ids:
     #     obj.generate_report(date,"webBrowser.csv", test_setup_info = test_setup_info, dataset2 = dataset2, dataset = dataset, lis = lis, bands = bands, total_urls = total_urls, uc_min_value = uc_min_value) 
 
@@ -2448,13 +2469,14 @@ def main():
     #     obj.cleanup(os_types_dict)
 
     # Save webGUI data if dowebgui is True
-    if args.dowebgui == True and obj.resource_ids: 
-        resource_ids = list(map(int, obj.resource_ids.split(',')))
-        obj.data_for_webui["status"] = ["Completed"] * len(resource_ids)
-        obj.data_for_webui["start_time_webGUI"] = obj.data["start_time_webGUI"]
-        obj.data_for_webui["end_time_webGUI"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        obj.data_for_webui["remaining_time_webGUI"] = "0"
-        df1 = pd.DataFrame(obj.data_for_webui)
-        df1.to_csv('{}/rb_datavalues.csv'.format(obj.result_dir), index=False)
+    # if args.dowebgui == True and obj.resource_ids: 
+    #     resource_ids = list(map(int, obj.resource_ids.split(',')))
+    #     obj.data_for_webui["status"] = ["Completed"] * len(resource_ids)
+    #     obj.data_for_webui["start_time_webGUI"] = obj.data["start_time_webGUI"]
+    #     obj.data_for_webui["end_time_webGUI"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    #     obj.data_for_webui["remaining_time_webGUI"] = "0"
+    #     obj.data_for_webui["total_urls"] = total_urls
+    #     df1 = pd.DataFrame(obj.data_for_webui)
+    #     df1.to_csv('{}/webBrowser.csv'.format(obj.result_dir), index=False)
 if __name__ == '__main__':
     main() 
