@@ -225,6 +225,7 @@ class BaseInteropWifi(Realm):
         logging.info(f"Active Device list: {devices}")
         for i in devices:
             release_ver = self.get_device_details(query="release", device=i)
+            print("release",release_ver,self.release)
             for j in self.release:
                 if release_ver == j:
                     # check if the release is supported in supported sdk  version
@@ -841,7 +842,7 @@ class RealDevice(Realm):
         index = 1 # serial number for selection of devices
         
         # fetch all androids
-        
+       
         self.androids_obj = interop_connectivity.Android(
             lanforge_ip=self.manager_ip,
             port=self.manager_port,
@@ -988,6 +989,7 @@ class RealDevice(Realm):
                                                        client_cert_6g=self.client_cert_6g,
                                                        pk_passwd_6g=self.pk_passwd_6g,
                                                        pac_file_6g=self.pac_file_6g)
+        
         if self.all_android!=True:
             self.laptops = self.laptops_obj.get_resources_data()
             if self.ieee80211_2g==True or self.ieee80211_5g==True or self.ieee80211_6g==True:
@@ -1014,15 +1016,17 @@ class RealDevice(Realm):
         else:
             selected = '5g='
             device_serials = []
+            #print("all devices",self.all_devices)
             for device in device_list:
                 for idx in self.all_devices:
-                    if self.all_devices[idx]['username'] == device:
+                    if self.all_devices[idx]['port'] == device:
                         device_serials.append(str(idx))
                         break
             if device_list[0]=='all':
                 select_serials = selected +'all'
             else:
                 select_serials = selected + (",").join(device_serials)
+        print("5g",select_serials)
         for band in select_serials.split(':'):
             if ('2g' in band) and ('2g' in self.selected_bands or '2G' in self.selected_bands or '2.4G' in self.selected_bands):
                 if ('all' in band):
@@ -1753,7 +1757,7 @@ class RealDevice(Realm):
             devices_data[port_id]     = port_data_dict
 
         self.devices          = devices
-        self.devices_data     = devices_data
+        self.devices_data     = devices_data 
         return self.devices
     
     # querying the user the required mobiles to test

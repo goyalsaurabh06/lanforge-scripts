@@ -21,11 +21,15 @@ from roam_test import Roam
 from test_l3 import L3VariableTime
 from lf_kpi_csv import lf_kpi_csv
 import lf_cleanup
+import asyncio
+import csv
 througput_test=importlib.import_module("py-scripts.lf_interop_throughput")
 video_streaming_test=importlib.import_module("py-scripts.lf_interop_video_streaming")
 web_browser_test=importlib.import_module("py-scripts.lf_interop_real_browser_test")
 lf_report_pdf = importlib.import_module("py-scripts.lf_report")
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
+DeviceConfig=importlib.import_module("py-scripts.DeviceConfig")
+
 logger = logging.getLogger(__name__)
 
 
@@ -633,10 +637,12 @@ class Candela:
                         local_lf_report_dir="")
         return self.ftp_test.data
 
-    def start_http_test(self, ssid, password, security, http_file_size, device_list, report_labels, device_macs,
-                  target_per_ten, upstream='eth1', ap_name='', http_test=http_test, all_bands=False, windows_ports=[],
+    def start_http_test(self,  http_file_size,  report_labels, device_macs,
+                  target_per_ten, ssid=None, password=None, security=None,device_list=[],upstream='eth1', ap_name='', http_test=http_test, all_bands=False, windows_ports=[],
                   band='5G', lf_username='lanforge', lf_password='lanforge', 
-                  test_duration=60, background = False):
+                  test_duration=60, background = False,file_name=None,group_name=None,profile_name=None,eap_method='DEFAULT',eap_identity='',ieee80211=True,ieee80211u=True,ieee80211w=1,enable_pkc=True,
+                  bss_transition=True,power_save=True,disable_ofdma=True,roam_ft_ds=True,key_management='DEFAULT',pairwise='[BLANK]',private_key='[BLANK]',ca_cert='[BLANK]',client_cert='[BLANK]',pk_passwd='[BLANK]',pac_file='[BLANK]',
+                  server_ip=None,expected_passfail_value=None,device_csv_name='device'):
         """
         Method to start HTTP test on the given device list
 
@@ -664,13 +670,46 @@ class Candela:
 
         Returns:
             result_data (dict): Result data of the test.
-        """        
-        http_test_duration = test_duration
-        device_list = self.filter_iOS_devices(device_list)
-        if len(device_list) == 0:
-            print('No devices specified.')
+        """  
+        if(expected_passfail_value!=None and device_csv_name!=None and device_csv_name!='device'):
+            print("Specify either expected_passfail_value or device_csv_name")
             exit(1)
+        if(group_name!=None):
+            selected_groups=group_name.split(',')
+        else:
+            selected_groups=[]
+        if(profile_name!=None):
+            selected_profiles=profile_name.split(',')
+        else:
+            selected_profiles=[]  
+        
+        if((group_name!=None or profile_name!=None or file_name!=None) and device_list!=[]):
+            print("Specify the correct set of arguments either for groups or device_list")
+            exit(1)
+        elif((group_name==None and file_name==None and profile_name==None and device_list==[]) and (ssid==None or (password==None and  security==None) or (password==None and security.lower()!='open'))):
+            print("ssid or password or security is missing")
+            exit(1)
+        elif((ssid!=None or password!=None or security!=None )and (file_name!=None or group_name!=None or profile_name!=None)):
+            print("Specify correct set of arguments")
+            exit(1)
+        elif(ssid!=None and profile_name!=None):
+            print("ssid or profile name should be specified")
+            exit(1)
+        elif((file_name!=None and (group_name==None or profile_name==None))or (group_name!=None and (file_name==None or profile_name==None))or(profile_name!=None and (file_name==None or group_name==None)) ):
+            print("Specify the correct set of arguments for groups")
+            exit(1)
+        elif(device_list!=[] and (ssid==None or (password==None and  security==None) or (password==None and security.lower()!='open'))):
+            print("Please provide ssid password and security when device list is given")
+            exit(1)
+        elif(len(selected_groups)!=len(selected_profiles)):
+            print("Number of groups should match number of profiles")
+            exit(1)
+        http_test_duration = test_duration
+        # if len(device_list) == 0:
+        #     print('No devices specified.')
+        #     exit(1)
         # Error checking to prevent case issues
+       
         Bands = [band]
         for bands in range(len(Bands)):
             Bands[bands] = Bands[bands].upper()
@@ -692,20 +731,55 @@ class Candela:
         num_stations = 0
         
         num_stations = len(device_list)
+        dev_list=[]
+        for dev in device_list:
+            dev_list.append(dev.split('.')[0]+'.'+dev.split('.')[1])
+        if device_list!=[]:
+            arg_dev_list=','.join(dev_list)
+        else:
+            arg_dev_list=[]
         self.http_test = http_test.HttpDownload(lfclient_host=self.lanforge_ip, lfclient_port=self.port,
                                                upstream=upstream,
                                                num_sta=num_stations,
                                                ap_name=ap_name, ssid=ssid, password=password, security=security,
                                                target_per_ten=target_per_ten, file_size=http_file_size, bands=band,
                                                client_type="Real", lf_username=lf_username,
-                                               lf_password=lf_password)
+                                               lf_password=lf_password,file_name=file_name,
+                                                group_name=group_name,
+                                                profile_name=profile_name,
+                                                eap_method=eap_method,
+                                                eap_identity=eap_identity,
+                                                ieee80211=ieee80211,
+                                                ieee80211u=ieee80211u,
+                                                ieee80211w=ieee80211w,
+                                                enable_pkc=enable_pkc,
+                                                bss_transition=bss_transition,
+                                                power_save=power_save,
+                                                disable_ofdma=disable_ofdma,
+                                                roam_ft_ds=roam_ft_ds,
+                                                key_management=key_management,
+                                                pairwise=pairwise,
+                                                private_key=private_key,
+                                                ca_cert=ca_cert,
+                                                client_cert=client_cert,
+                                                pk_passwd=pk_passwd,
+                                                pac_file=pac_file,
+                                                server_ip=server_ip,
+                                                device_list=arg_dev_list,expected_passfail_value=expected_passfail_value,device_csv_name=device_csv_name+'.csv')
         self.http_test.http_test_duration = http_test_duration
         self.http_test.Bands = Bands
         self.http_test.data = {}
-        self.http_test.port_list = device_list
-        self.http_test.devices_list = report_labels
+        device_list = self.filter_iOS_devices(device_list)
+        http_port_list,http_dev_list,http_mac=self.http_test.get_real_client_list()
+        print("http_dev_list",http_dev_list)
+        if(len(http_dev_list)==0):
+            print('No devices')
+            exit(1)
+
+        self.http_test.port_list = http_port_list
+        self.http_test.devices_list = http_dev_list
         self.http_test.macid_list = device_macs
-        self.http_test.user_query = [device_list, report_labels, device_macs]
+        self.http_test.user_query = [http_port_list, report_labels, device_macs]
         self.http_test.windows_ports = windows_ports
         self.http_test.file_create(ssh_port=22)
         self.http_test.set_values()
@@ -1250,10 +1324,10 @@ class Candela:
 
         # NOTE: Please don't pass incremental_capacity argument when background_run is True.
         """
-        device_list = kwargs.get("device_list",[])
+        # device_list = kwargs.get("device_list",[])
         # kwargs['device_list'] = self.filter_iOS_devices(device_list)
-        if len(device_list) == 0:
-            exit(1)
+        # if len(device_list) == 0:
+        #     exit(1)
         background_run = kwargs.get("background_run",False)
         incremental_capacity=kwargs.get("incremental_capacity",None)
         do_interopability=kwargs.get("do_interopability",None)
@@ -1279,9 +1353,14 @@ class Candela:
                             precleanup=False,
                             postcleanup=False,
                             test_name=None,
-                            background_run = False
+                            background_run = False,ssid=None,password=None,security=None,file_name=None,group_name=None,profile_name=None,eap_method='DEFAULT',eap_identity='',ieee80211=True,ieee80211u=True,ieee80211w=1,enable_pkc=True,
+                  bss_transition=True,power_save=True,disable_ofdma=True,roam_ft_ds=True,key_management='DEFAULT',pairwise='[BLANK]',private_key='[BLANK]',ca_cert='[BLANK]',client_cert='[BLANK]',pk_passwd='[BLANK]',pac_file='[BLANK]',
+                  server_ip=None,expected_passfail_value=None,device_csv_name='device'
                               ):
-
+        
+        if(expected_passfail_value!=None and device_csv_name!=None and device_csv_name!='device'):
+            print("Specify either expected_passfail_value or device_csv_name")
+            exit(1)
         if do_interopability:
             incremental_capacity='1'
         if test_duration.endswith('s') or test_duration.endswith('S'):
@@ -1309,10 +1388,45 @@ class Candela:
         elif test_duration.endswith(''):        
             report_timer=int(report_timer)
 
+        if(download!='2560' and download!='0' and upload!='0' and upload!='2560' ):
+            csv_direction='L3_'+traffic_type.split('_')[1].upper()+'_BiDi'
+        elif(upload!='2560' and upload!='0'):
+            csv_direction='L3_'+traffic_type.split('_')[1].upper()+'_UL'
+        else:
+            csv_direction='L3_'+traffic_type.split('_')[1].upper()+'_DL'
         
         if (int(packet_size)<16 or int(packet_size)>65507) and int(packet_size)!=-1:
             logger.info("Packet size should be greater than 16 bytes and less than 65507 bytes incorrect")
             return
+        if(group_name!=None):
+            selected_groups=group_name.split(',')
+        else:
+            selected_groups=[]
+        if(profile_name!=None):
+            selected_profiles=profile_name.split(',')
+        else:
+            selected_profiles=[]
+
+                
+        if((group_name!=None or profile_name!=None or file_name!=None) and device_list!=[]):
+            print("Specify the correct set of arguments either for groups or device_list")
+            exit(1)
+        elif((group_name==None and file_name==None and profile_name==None and device_list==[]) and (ssid==None or (password==None and  security==None) or (password==None and security.lower()!='open'))):
+            print("ssid or password or security is missing")
+            exit(1)
+        elif((ssid!=None or password!=None or security!=None )and (file_name!=None or group_name!=None or profile_name!=None)):
+            print("Specify correct set of arguments")
+            exit(1)
+        elif((file_name!=None and (group_name==None or profile_name==None))or (group_name!=None and (file_name==None or profile_name==None))or(profile_name!=None and (file_name==None or group_name==None)) ):
+            print("Specify the correct set of arguments for groups")
+            exit(1)
+        elif(device_list!=[] and (ssid==None or (password==None and  security==None) or (password==None and security.lower()!='open'))):
+            print("Please provide ssid password and security when device list is given")
+            exit(1)
+        elif(len(selected_groups)!=len(selected_profiles)):
+            print("Number of groups should match number of profiles")
+            exit(1)
+
         self.throughput_test=Throughput(host=self.lanforge_ip,
                        ip=self.lanforge_ip,
                        port=self.port,
@@ -1331,7 +1445,32 @@ class Candela:
                        do_interopability=do_interopability,
                        incremental=incremental,
                        precleanup=precleanup,
-                       test_name=test_name
+                       test_name=test_name,
+                       ssid=ssid,
+                       password=password,
+                       security=security,
+                       file_name=file_name,
+                        group_name=group_name,
+                        profile_name=profile_name,
+                        eap_method=eap_method,
+                        eap_identity=eap_identity,
+                        ieee80211=ieee80211,
+                        ieee80211u=ieee80211u,
+                        ieee80211w=ieee80211w,
+                        enable_pkc=enable_pkc,
+                        bss_transition=bss_transition,
+                        power_save=power_save,
+                        disable_ofdma=disable_ofdma,
+                        roam_ft_ds=roam_ft_ds,
+                        key_management=key_management,
+                        pairwise=pairwise,
+                        private_key=private_key,
+                        ca_cert=ca_cert,
+                        client_cert=client_cert,
+                        pk_passwd=pk_passwd,
+                        pac_file=pac_file,
+                        server_ip=server_ip,
+                        csv_direction=csv_direction,expected_passfail_value=expected_passfail_value,device_csv_name=device_csv_name+'.csv'
                        )
         
         self.throughput_test.os_type()
@@ -1358,6 +1497,7 @@ class Candela:
         individual_df=pd.DataFrame(columns=individual_dataframe_column)
         overall_start_time=datetime.now()
         overall_end_time=overall_start_time + timedelta(seconds=int(test_duration)*len(incremental_capacity_list))
+
         if background_run :
                 logger.info("Start the test and run till stopped")
                 self.throughput_test.background_run = True
@@ -1891,12 +2031,11 @@ class Candela:
                   
         # NOTE: Please don't pass incremental_capacity argument when background_run is True.
         """
-        device_list = kwargs.get("device_list",[])
-        device_list = self.filter_iOS_devices(device_list)
-        if len(device_list) == 0:
-            print('No devices specified.')
-            exit(1)
-        kwargs['device_list'] = device_list
+        # device_list = kwargs.get("device_list",[])
+        # if len(device_list) == 0:
+        #     print('No devices specified.')
+        #     exit(1)
+        # kwargs['device_list'] = device_list
         background_run = kwargs.get("background_run",False)
         incremental_capacity=kwargs.get("incremental_capacity",None)
         if background_run or incremental_capacity:
@@ -1905,20 +2044,79 @@ class Candela:
         else:
             self.start_web_browser_test(**kwargs)
 
-    def start_web_browser_test(self,ssid="ssid_wpa_2g", passwd="something", encryp="psk",
-                    suporrted_release=["7.0", "10", "11", "12"], max_speed=0,
+    def start_web_browser_test(self,ssid=None, passwd=None, encryp=None,
+                    suporrted_release=["7.0", "10", "11", "12","14","13"], max_speed=0,
                     url="www.google.com", count=1, duration="60s", 
                     device_list="", 
                     incremental = False,incremental_capacity=None,postcleanup=False,
-                    precleanup=False,test_name=None,background_run=False):
+                    precleanup=False,test_name=None,background_run=False,file_name=None,group_name=None,profile_name=None,eap_method='DEFAULT',eap_identity='',ieee80211=True,ieee80211u=True,ieee80211w=1,enable_pkc=True,
+                  bss_transition=True,power_save=True,disable_ofdma=True,roam_ft_ds=True,key_management='DEFAULT',pairwise='[BLANK]',private_key='[BLANK]',ca_cert='[BLANK]',client_cert='[BLANK]',pk_passwd='[BLANK]',pac_file='[BLANK]',
+                  server_ip=None,expected_passfail_value=None,device_csv_name='device'):
+        if device_list!="":
+            device_list = self.filter_iOS_devices(device_list)
         
         webgui_incremental=incremental_capacity
+        if(expected_passfail_value!=None and device_csv_name!=None and device_csv_name!='device'):
+            print("Specify either expected_passfail_value or device_csv_name")
+            exit(1)
+        if(group_name!=None):
+            selected_groups=group_name.split(',')
+        else:
+            selected_groups=[]
+        if(profile_name!=None):
+            selected_profiles=profile_name.split(',')
+        else:
+            selected_profiles=[]
+
+                
+        if((group_name!=None or profile_name!=None or file_name!=None) and device_list!=""):
+            print("Specify the correct set of arguments either for groups or device_list")
+            exit(1)
+        elif((group_name==None and file_name==None and profile_name==None and device_list==[]) and (ssid==None or (passwd==None and  encryp==None) or (passwd==None and encryp.lower()!='open'))):
+            print("ssid or password or security is missing")
+            exit(1)
+        elif((ssid!=None or passwd!=None or encryp!=None )and (file_name!=None or group_name!=None or profile_name!=None)):
+            print("Specify correct set of arguments")
+            exit(1)
+        elif((file_name!=None and (group_name==None or profile_name==None))or (group_name!=None and (file_name==None or profile_name==None))or(profile_name!=None and (file_name==None or group_name==None)) ):
+            print("Specify the correct set of arguments for groups")
+            exit(1)
+        elif(device_list!="" and (ssid==None or (passwd==None and  encryp==None) or (passwd==None and encryp.lower()!='open'))):
+            print("Please provide ssid password and security when device list is given")
+            exit(1)
+        elif(len(selected_groups)!=len(selected_profiles)):
+            print("Number of groups should match number of profiles")
+            exit(1)
+
         self.web_browser_test = RealBrowserTest(host=self.lanforge_ip, ssid=ssid, passwd=passwd, encryp=encryp,
-                        suporrted_release=["7.0", "10", "11", "12"], max_speed=max_speed,
+                        suporrted_release=["7.0", "10", "11", "12","14"], max_speed=max_speed,
                         url=url, count=count, duration=duration, 
                         resource_ids = device_list,
                         incremental = incremental,postcleanup=postcleanup,
-                        precleanup=precleanup)
+                        precleanup=precleanup,file_name=file_name,
+                        group_name=group_name,
+                        profile_name=profile_name,
+                        eap_method=eap_method,
+                        eap_identity=eap_identity,
+                        ieee80211=ieee80211,
+                        ieee80211u=ieee80211u,
+                        ieee80211w=ieee80211w,
+                        enable_pkc=enable_pkc,
+                        bss_transition=bss_transition,
+                        power_save=power_save,
+                        disable_ofdma=disable_ofdma,
+                        roam_ft_ds=roam_ft_ds,
+                        key_management=key_management,
+                        pairwise=pairwise,
+                        private_key=private_key,
+                        ca_cert=ca_cert,
+                        client_cert=client_cert,
+                        pk_passwd=pk_passwd,
+                        pac_file=pac_file,
+                        server_ip=server_ip,
+                        expected_passfail_value=expected_passfail_value,
+                        device_csv_name=device_csv_name+'.csv'
+                        )
         resource_ids_sm = []
         resource_set = set()
         resource_list = []
@@ -1927,12 +2125,76 @@ class Candela:
         resource_ids_generated = ""
         #  Process resource IDs when web GUI is enabled
 
-        self.web_browser_test.android_devices = self.web_browser_test.devices.get_devices(only_androids=True)
+        config_obj=DeviceConfig.DeviceConfig(lanforge_ip=self.lanforge_ip,file_name=file_name)
+        config_obj.device_csv_file(csv_name=device_csv_name+'.csv')
+        if(group_name!=None and file_name!=None and profile_name!=None):
+            selected_groups=group_name.split(',')
+            selected_profiles=profile_name.split(',')
+            config_devices={}
+            for i in range(len(selected_groups)):
+                config_devices[selected_groups[i]]=selected_profiles[i]
 
+        #print("CONFIGURED DICT",config_devices)
+            config_obj.initiate_group()
+            asyncio.run(config_obj.connectivity(config_devices))
+        
+            adbresponse=config_obj.adb_obj.get_devices()
+            resource_manager=config_obj.laptop_obj.get_devices()
+            all_res={}
+            df1=config_obj.display_groups(config_obj.groups)
+            groups_list=df1.to_dict(orient='list')
+            group_devices={}
+            
+            for adb in adbresponse:   
+                group_devices[adb['serial']]=adb['eid']
+            for res in resource_manager:
+                all_res[res['hostname']]=res['shelf']+'.'+res['resource']
+            eid_list=[]
+            for grp_name in groups_list.keys():
+                for g_name in selected_groups:
+                    if(grp_name == g_name):
+                        for j in groups_list[grp_name]:
+                            if(j in group_devices.keys()):
+                                eid_list.append(group_devices[j])
+                            elif(j in all_res.keys()):
+                                eid_list.append(all_res[j])
+            device_list = ",".join(id for id in eid_list) 
+        
         
         # Process resource IDs if provided
         if device_list:
+            all_devices= config_obj.get_all_devices()
+            config_dict={
+            'ssid':ssid,
+            'passwd':passwd,
+            'enc':encryp,
+            'eap_method':eap_method,
+            'eap_identity':eap_identity,
+            'ieee80211':ieee80211,
+            'ieee80211u':ieee80211u,
+            'ieee80211w':ieee80211w,
+            'enable_pkc':enable_pkc,
+            'bss_transition':bss_transition,
+            'power_save':power_save,
+            'disable_ofdma':disable_ofdma,
+            'roam_ft_ds':roam_ft_ds,
+            'key_management':key_management,
+            'pairwise':pairwise,
+            'private_key':private_key,
+            'ca_cert':ca_cert,
+            'client_cert':client_cert,
+            'pk_passwd':pk_passwd,
+            'pac_file':pac_file,
+            'server_ip':server_ip,
+
+            }
+            if(group_name==None and file_name==None and profile_name==None):
+                dev_list=device_list.split(',')
+                asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
+
+
             # Extract second part of resource IDs and sort them
+            self.web_browser_test.android_devices = self.web_browser_test.devices.get_devices(only_androids=True)
             self.web_browser_test.resource_ids = ",".join(id.split(".")[1] for id in device_list.split(","))
             resource_ids_sm = self.web_browser_test.resource_ids
             resource_list = resource_ids_sm.split(',')            
@@ -1957,8 +2219,8 @@ class Candela:
             # Verify if all resource IDs are valid for Android devices
             resource_ids = [int(x) for x in sorted_string.split(',')]
             new_list_android = [item.split('.')[0] + '.' + item.split('.')[1] for item in self.web_browser_test.android_devices]
-
             resources_list = device_list.split(",")
+            
             for element in resources_list:
                 if element in new_list_android:
                     for ele in self.web_browser_test.android_devices:
@@ -1973,7 +2235,40 @@ class Candela:
             
         else:
             # Query user to select devices if no resource IDs are provided
-            selected_devices,report_labels,selected_macs = self.web_browser_test.devices.query_user()
+            all_devices= config_obj.get_all_devices()
+            device_list=[]
+            config_dict={
+            'ssid':ssid,
+            'passwd':passwd,
+            'enc':encryp,
+            'eap_method':eap_method,
+            'eap_identity':eap_identity,
+            'ieee80211':ieee80211,
+            'ieee80211u':ieee80211u,
+            'ieee80211w':ieee80211w,
+            'enable_pkc':enable_pkc,
+            'bss_transition':bss_transition,
+            'power_save':power_save,
+            'disable_ofdma':disable_ofdma,
+            'roam_ft_ds':roam_ft_ds,
+            'key_management':key_management,
+            'pairwise':pairwise,
+            'private_key':private_key,
+            'ca_cert':ca_cert,
+            'client_cert':client_cert,
+            'pk_passwd':pk_passwd,
+            'pac_file':pac_file,
+            'server_ip':server_ip,
+
+            }
+            for device in all_devices:
+                if(device["type"]!='laptop'):
+                    device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["serial"])
+            print("Available devices:", device_list)
+            device_list = input("Enter the desired resources to run the test:")
+            dev1_list=device_list.split(',')
+            asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
+            selected_devices,report_labels,selected_macs = self.web_browser_test.devices.query_user(device_list=dev1_list)
             # Handle cases where no devices are selected
             if not selected_devices:
                 logger.info("devices donot exist..!!")
@@ -2014,6 +2309,19 @@ class Candela:
         if len(available_resources)==0:
             logger.info("There no devices available which are selected")
             exit()
+        if len(available_resources) > 0:
+            device_map={}
+            if(not expected_passfail_value):
+                expected_val=input("Enter the expected value for the following devices{} eg 8,6,2: ".format(available_resources)).split(',')
+                if(len(available_resources)==len(expected_val)):
+                    for i in range(len(available_resources)):
+                        device_map[self.web_browser_test.android_list[i].split('.')[0]+'.'+self.web_browser_test.android_list[i].split('.')[1]]=expected_val[i]
+                        config_obj.update_device_csv(device_csv_name+'.csv','RealBrowser',device_map)
+            elif expected_passfail_value:
+                pass
+            else:
+                print("Enter correct number of values")
+                exit(0)
         # Handle incremental values input if resource IDs are specified and in not specified case.
         if incremental and not webgui_incremental :
             if self.web_browser_test.resource_ids:
@@ -2339,12 +2647,12 @@ class Candela:
             "background_run (bool)": Test will run without considering test duration.
 
         """ 
-        device_list = kwargs.get("device_list",[])
-        # device_list = self.filter_iOS_devices(device_list)
-        if len(device_list) == 0:
-            print('No devices specified.')
-            exit(1)
-        kwargs['device_list'] = device_list
+        # device_list = kwargs.get("device_list",[])
+        # # device_list = self.filter_iOS_devices(device_list)
+        # if len(device_list) == 0:
+        #     print('No devices specified.')
+        #     exit(1)
+        # kwargs['device_list'] = device_list
         background_run = kwargs.get("background_run",False)
         self.misc_clean_up(layer3=True)
         if background_run:
@@ -2362,18 +2670,212 @@ class Candela:
                             upstream_port='eth1',
                             test_duration=5,
                             device_list=[],
-                            ssid="",
-                            passwd="",
-                            encryption="",
+                            ssid=None,
+                            passwd=None,
+                            encryption=None,
                             report_path="",
-                            background_run = False
-                            ):
+                            background_run = False,
+                            real_devices=False,
+                            real_ssid=None, 
+                            real_passwd=None,
+                            real_security=None,file_name=None,group_name=None,profile_name=None,eap_method='DEFAULT',eap_identity='',ieee80211=True,ieee80211u=True,ieee80211w=1,enable_pkc=True,
+                  bss_transition=True,power_save=True,disable_ofdma=True,roam_ft_ds=True,key_management='DEFAULT',pairwise='[BLANK]',private_key='[BLANK]',ca_cert='[BLANK]',client_cert='[BLANK]',pk_passwd='[BLANK]',pac_file='[BLANK]',
+                  server_ip=None,device_csv_name='device',expected_passfail_value=None
+                    ):
             # use for creating multicast dictionary
-   
+        
+
+
+            
+        if real_devices:
+            if(side_b_min!='256000' and side_b_min!='0' and side_a_min!='0' and side_a_min!='256000' ):
+                    dir='_BiDi'
+            elif(side_a_min!='256000' and side_a_min!='0'):
+                    dir='_UL'
+            else:
+                    dir='_DL'
+            if(expected_passfail_value!=None and device_csv_name!=None and device_csv_name!='device'):
+                print("Specify either expected_passfail_value or device_csv_name")
+                exit(1)
+
+            if(group_name!=None):
+                selected_groups=group_name.split(',')
+            else:
+                selected_groups=[]
+            if(profile_name!=None):
+                selected_profiles=profile_name.split(',')
+            else:
+                selected_profiles=[]
+            if((group_name!=None or profile_name!=None or file_name!=None) and device_list!=[]):
+                print("Specify the correct set of arguments either for groups or device_list")
+                exit(1)
+            elif((group_name==None and file_name==None and profile_name==None and device_list==[]) and (ssid==None or (passwd==None and  encryption==None) or (passwd==None and encryption.lower()!='open'))):
+                print("ssid or password or security is missing")
+                exit(1)
+            elif((ssid!=None or passwd!=None or encryption!=None )and (file_name!=None or group_name!=None or profile_name!=None)):
+                print("Specify correct set of arguments")
+                exit(1)
+            elif((file_name!=None and (group_name==None or profile_name==None))or (group_name!=None and (file_name==None or profile_name==None))or(profile_name!=None and (file_name==None or group_name==None)) ):
+                print("Specify the correct set of arguments for groups")
+                exit(1)
+            elif(device_list!=[] and (ssid==None or (passwd==None and  encryption==None) or (passwd==None and encryption.lower()!='open'))):
+                print("Please provide ssid password and security when device list is given")
+                exit(1)
+            elif(len(selected_groups)!=len(selected_profiles)):
+                print("Number of groups should match number of profiles")
+                exit(1)
+            if((group_name!=None and profile_name!=None and file_name!=None and device_list==[] and real_ssid==None and (len(selected_groups)==len(selected_profiles))) or(group_name==None and profile_name==None and file_name==None and real_ssid!=None and real_passwd!=None and real_security!=None) or (group_name==None and profile_name==None and file_name==None and real_ssid!=None and real_passwd==None and real_security.lower() =='open')):
+                config_obj=DeviceConfig.DeviceConfig(lanforge_ip=self.lanforge_ip,file_name=file_name)
+                config_obj.device_csv_file(csv_name=device_csv_name+'.csv')
+                if(group_name!=None and file_name!=None and profile_name!=None):
+                        selected_groups=group_name.split(',')
+                        selected_profiles=profile_name.split(',')
+                        config_devices={}
+                        for i in range(len(selected_groups)):
+                            config_devices[selected_groups[i]]=selected_profiles[i]
+
+                    #print("CONFIGURED DICT",config_devices)
+                        config_obj.initiate_group()
+                        # asyncio.run(config_obj.connectivity(config_devices))
+                    
+                        adbresponse=config_obj.adb_obj.get_devices()
+                        resource_manager=config_obj.laptop_obj.get_devices()
+                        all_res={}
+                        df1=config_obj.display_groups(config_obj.groups)
+                        groups_list=df1.to_dict(orient='list')
+                        group_devices={}
+                        
+                        for adb in adbresponse:   
+                            group_devices[adb['serial']]=adb['eid']
+                        for res in resource_manager:
+                            all_res[res['hostname']]=res['shelf']+'.'+res['resource']
+                        eid_list=[]
+                        for grp_name in groups_list.keys():
+                            for g_name in selected_groups:
+                                if(grp_name == g_name):
+                                    for j in groups_list[grp_name]:
+                                        if(j in group_devices.keys()):
+                                            eid_list.append(group_devices[j])
+                                        elif(j in all_res.keys()):
+                                            eid_list.append(all_res[j])
+                        device_list = eid_list 
+                elif(device_list!=None):
+                    all_devices= config_obj.get_all_devices()
+                    config_dict={
+                        'ssid':real_ssid,
+                        'passwd':real_passwd,
+                        'enc':real_security,
+                        'eap_method':eap_method,
+                        'eap_identity':eap_identity,
+                        'ieee80211':ieee80211,
+                        'ieee80211u':ieee80211u,
+                        'ieee80211w':ieee80211w,
+                        'enable_pkc':enable_pkc,
+                        'bss_transition':bss_transition,
+                        'power_save':power_save,
+                        'disable_ofdma':disable_ofdma,
+                        'roam_ft_ds':roam_ft_ds,
+                        'key_management':key_management,
+                        'pairwise':pairwise,
+                        'private_key':private_key,
+                        'ca_cert':ca_cert,
+                        'client_cert':client_cert,
+                        'pk_passwd':pk_passwd,
+                        'pac_file':pac_file,
+                        'server_ip':server_ip,
+
+                        }
+                    if(group_name==None and file_name==None and profile_name==None):
+                        asyncio.run(config_obj.connectivity(device_list=device_list,wifi_config=config_dict))
+
+                else:
+
+                        all_devices= config_obj.get_all_devices()
+                        device_list=[]
+                        config_dict={
+                        'ssid':real_ssid,
+                        'passwd':real_passwd,
+                        'enc':real_security,
+                        'eap_method':eap_method,
+                        'eap_identity':eap_identity,
+                        'ieee80211':ieee80211,
+                        'ieee80211u':ieee80211u,
+                        'ieee80211w':ieee80211w,
+                        'enable_pkc':enable_pkc,
+                        'bss_transition':bss_transition,
+                        'power_save':power_save,
+                        'disable_ofdma':disable_ofdma,
+                        'roam_ft_ds':roam_ft_ds,
+                        'key_management':key_management,
+                        'pairwise':pairwise,
+                        'private_key':private_key,
+                        'ca_cert':ca_cert,
+                        'client_cert':client_cert,
+                        'pk_passwd':pk_passwd,
+                        'pac_file':pac_file,
+                        'server_ip':server_ip,
+
+                        }
+                        for device in all_devices:
+                            if(device["type"]!='laptop'):
+                                device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["serial"])
+                        print("Available devices:", device_list)
+                        device_list = [input("Enter the desired resources to run the test:")]
+                        print("AAAA",device_list[0])
+                        dev1_list=device_list
+                        asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
+
+                response_port = config_obj.json_get("/port/all")
+                traffic_type=endp_types.split(',')
+                endp_input_list=[]
+                graph_input_list=[]
+                if device_list!=[]:
+                    csv_device_list=device_list
+                    for endp in traffic_type:
+                        endp_input_list.append('L3_'+endp.split('_')[1].upper()+dir)
+
+                for i in range(len(csv_device_list)):
+                    for endp in traffic_type:
+                        graph_input_list.append('L3_'+endp.split('_')[1].upper()+dir)
+                sample_list=[]
+                
+                if device_list:
+                    for interface in response_port['interfaces']:
+                        for port,port_data in interface.items():
+                            if(not port_data['phantom'] and port_data['parent dev'] == "wiphy0" and port_data['alias'] != 'p2p0'):
+                                port_list= port.split('.')
+                                for device in device_list:
+                                    if((port_list[0]+'.'+port_list[1])==device):
+                                        sample_list.append(port)
+                    if(sample_list==[]):
+                        print("Selected devices are in phantom state")
+                        exit(0)
+                    else:
+                        for endp in endp_input_list:
+                            if(not expected_passfail_value):
+                                device_map={}
+                                expected_val=input("Enter the expected {} value for the following devices{} eg 8,6,2: ".format(endp,sample_list)).split(',')
+                                if(len(sample_list)==len(expected_val)):
+                                    for i in range(len(sample_list)):
+                                        device_map[sample_list[i].split('.')[0]+'.'+sample_list[i].split('.')[1]]=expected_val[i]
+                                            
+                                    config_obj.update_device_csv(device_csv_name+'.csv',endp,device_map)
+                            elif expected_passfail_value:
+                                pass
+                            else:
+                                print("Enter correct number of values")
+                                exit(0)
+                
+                
+           
+            
+            
+            
+            
             test_duration = test_duration
             endp_types = endp_types
             mc_tos = mc_tos
-
+            
                
             
             report = lf_report_pdf.lf_report(_path=report_path, _results_dir_name=f"Multicast_Test",
@@ -2399,42 +2901,85 @@ class Candela:
                                             _kpi_dut_serial_num=dut_serial_num,
                                             _kpi_test_id=test_id)
             # TODO: Add try/except if fails
-            self.multicast_test = L3VariableTime(endp_types=endp_types,
-                                                args="",
-                                                tos=mc_tos,
-                                                side_b=upstream_port,
-                                                ssid_list=ssid,
-                                                ssid_password_list=passwd,
-                                                ssid_security_list=encryption,
-                                                name_prefix="LT-",                                            
-                                                side_a_min_rate=[side_a_min],
-                                                side_b_min_rate=[side_b_min],
-                                                side_a_min_pdu=[side_a_pdu],
-                                                side_b_min_pdu=[side_b_pdu],
-                                                rates_are_totals=True,
-                                                mconn=1,
-                                                test_duration=str(test_duration) + "s",
-                                                polling_interval="5s",
-                                                lfclient_host=self.lanforge_ip,
-                                                lfclient_port=self.port,
-                                                debug=True,
-                                                use_existing_station_lists=True,
-                                                existing_station_lists=device_list,                                                                                                                                            
-                                                interopt_mode=True,
-                                                side_a=None,
-                                                radio_name_list=[],
-                                                number_of_stations_per_radio_list=[],
-                                                wifi_mode_list=[],
-                                                enable_flags_list=[],
-                                                station_lists=[],
-                                                outfile="",
-                                                attenuators=[],
-                                                atten_vals=[-1],
-                                                kpi_csv=kpi_csv,
-                                                reset_port_enable_list=[],
-                                                reset_port_time_min_list=[],
-                                                reset_port_time_max_list=[],
-                                                )
+            if real_devices:
+                self.multicast_test = L3VariableTime(endp_types=endp_types,
+                                                    args="",
+                                                    tos=mc_tos,
+                                                    side_b=upstream_port,
+                                                    ssid_list=ssid,
+                                                    ssid_password_list=passwd,
+                                                    ssid_security_list=encryption,
+                                                    name_prefix="LT-",                                            
+                                                    side_a_min_rate=[side_a_min],
+                                                    side_b_min_rate=[side_b_min],
+                                                    side_a_min_pdu=[side_a_pdu],
+                                                    side_b_min_pdu=[side_b_pdu],
+                                                    rates_are_totals=True,
+                                                    mconn=1,
+                                                    test_duration=str(test_duration) + "s",
+                                                    polling_interval="5s",
+                                                    lfclient_host=self.lanforge_ip,
+                                                    lfclient_port=self.port,
+                                                    debug=True,
+                                                    use_existing_station_lists=True,
+                                                    existing_station_lists=sample_list,                                                                                                                                            
+                                                    interopt_mode=True,
+                                                    side_a=None,
+                                                    radio_name_list=[],
+                                                    number_of_stations_per_radio_list=[],
+                                                    wifi_mode_list=[],
+                                                    enable_flags_list=[],
+                                                    station_lists=[],
+                                                    outfile="",
+                                                    attenuators=[],
+                                                    atten_vals=[-1],
+                                                    kpi_csv=kpi_csv,
+                                                    reset_port_enable_list=[],
+                                                    reset_port_time_min_list=[],
+                                                    reset_port_time_max_list=[],
+                                                    real=real_devices,
+                                                    endp_input_list=endp_input_list,
+                                                    graph_input_list=graph_input_list,
+                                                    expected_passfail_value=expected_passfail_value,device_csv_name=device_csv_name+'.csv'
+                                                    )
+            else:
+                self.multicast_test = L3VariableTime(endp_types=endp_types,
+                                    args="",
+                                    tos=mc_tos,
+                                    side_b=upstream_port,
+                                    ssid_list=ssid,
+                                    ssid_password_list=passwd,
+                                    ssid_security_list=encryption,
+                                    name_prefix="LT-",                                            
+                                    side_a_min_rate=[side_a_min],
+                                    side_b_min_rate=[side_b_min],
+                                    side_a_min_pdu=[side_a_pdu],
+                                    side_b_min_pdu=[side_b_pdu],
+                                    rates_are_totals=True,
+                                    mconn=1,
+                                    test_duration=str(test_duration) + "s",
+                                    polling_interval="5s",
+                                    lfclient_host=self.lanforge_ip,
+                                    lfclient_port=self.port,
+                                    debug=True,
+                                    use_existing_station_lists=True,
+                                    existing_station_lists=device_list,                                                                                                                                            
+                                    interopt_mode=True,
+                                    side_a=None,
+                                    radio_name_list=[],
+                                    number_of_stations_per_radio_list=[],
+                                    wifi_mode_list=[],
+                                    enable_flags_list=[],
+                                    station_lists=[],
+                                    outfile="",
+                                    attenuators=[],
+                                    atten_vals=[-1],
+                                    kpi_csv=kpi_csv,
+                                    reset_port_enable_list=[],
+                                    reset_port_time_min_list=[],
+                                    reset_port_time_max_list=[],
+                                    real=real_devices
+                                    )
             self.multicast_test.set_report_obj(report)
             logger.info("building is going on")
             # building the endpoints
@@ -2547,7 +3092,10 @@ class Candela:
                         # wait_time=args.wait_time,
                         suporrted_release=['12'],
                         device_list="",
-                        forget_network=True):
+                        forget_network=True,expected_passfail_value=None,device_csv_name='device'):
+        if(expected_passfail_value!=None and device_csv_name!=None and device_csv_name!='device'):
+            print("Specify either expected_passfail_value or device_csv_name")
+            exit(1)
         self.port_reset_object = InteropPortReset(
                            host=self.lanforge_ip,
                            port=self.port,
@@ -2560,7 +3108,7 @@ class Candela:
                            suporrted_release=suporrted_release,
                            mgr_ip=mgr_ip,
                            device_list=device_list,
-                           forget_network=forget_network
+                           forget_network=forget_network,expected_passfail_value=expected_passfail_value,device_csv_name=device_csv_name+'.csv'
                            )
         self.port_reset_object.selecting_devices_from_available()
         self.reset_dict, self.preset_duration = self.port_reset_object.run()
@@ -2679,9 +3227,77 @@ class Candela:
         self.zoom_obj = ZoomAutomation(sigin_email=sigin_email,sigin_passwd=sigin_passwd,audio=audio,video=video,duration=duration,lanforge_ip=self.lanforge_ip,participants=participants)
         self.zoom_obj.run()
 logger_config = lf_logger_config.lf_logger_config()
-candela_apis = Candela(ip='192.168.214.61', port=8080)
+# candela_apis = Candela(ip='192.168.214.61', port=8080)
+test_apis = Candela(ip='192.168.214.61', port=8080)
+# To run test including groups and profile
+# >>>>>>>>>>>HTTP TEST
+# test_apis.start_http_test(
+#                             file_name='grp219',group_name='grp2',profile_name='Openx',
+#                             # ssid='Dev_wpa2', password='lanforge',security='wpa2',
+#                             http_file_size='10MB',
+#                             # device_list=['1.95.wlan0'],
+#                             report_labels=['1.95 laptop test2'],device_macs=['02:00:00:00:00:00'], target_per_ten=1000, upstream='eth1',
+#                             band='5G', background=False,server_ip='192.168.214.219',device_csv_name='abc')
+# >>>>>>>>>>>THROUGHPUT TEST
+# test_apis.start_th_test(traffic_type="lf_udp",
+#                         # device_list='1.95,1.13',
+#                         # ssid='Dev_wpa2',
+#                         # password='lanforge',
+#                         # security='wpa2',
+#                         upload=1000000,
+#                         download=100000,
+#                         upstream_port="eth1",
+#                         report_timer="5s",
+#                         load_type="wc_intended_load",
+#                         test_duration="1m",
+#                         precleanup=True,
+#                         postcleanup=True,
+#                         packet_size=18,
+#                         test_name="Throughput_test",
+#                         background_run=False,
+#                         server_ip='192.168.214.61',
+#                         file_name='grp219',
+#                         group_name='grp2',
+#                         profile_name='Openx',
+#                         # expected_passfail_value=0.2
+#                         # device_csv_name='asa'
+#                     )
+# >>>>>>>>>>REAL BROWSWER TEST
+# test_apis.start_wb_test(
+#                         file_name='grp219',
+#                         group_name='grp2',
+#                         profile_name='Openx', 
+#                         duration="2m",
+#                         url="http://www.google.com",
+#                         background_run=False,
+#                         count=3,
+#                         precleanup=True,
+#                         postcleanup=True,
+#                         server_ip='192.168.214.61',
+#                         # incremental_capacity='1'
+#                         # device_list='1.19',
+#                         # ssid="Dev_wpa2",
+#                         # passwd='lanforge',
+#                         # encryp='wpa2',
+#                         expected_passfail_value='7'
+#                         )
+# >>>>>>>>>>>>PORT RESET TEST
+# test_apis.start_port_reset_test(
+#     device_list='1.19',
+#     ssid='Dev_wpa2',
+#     passwd='lanforge',
+#     encryp='wpa2',
+#     reset=1,
+#     suporrted_release=['11', '12', '13','14'],
+#     mgr_ip='192.168.214.61',
+#     forget_network=True,
+#     background_run=False,
+#     expected_passfail_value=2
+# )
+# test_apis.generate_preset_report()
 
-# candela_apis.get_client_connection_details(['1.208.wlan0', '1.19.wlan0'])
+# test_apis.start_mc_test(mc_tos="VO", endp_types="mc_udp",
+#                                   side_b_min=100000000, upstream_port='eth1', test_duration=30,real_devices=True,file_name='grp219',group_name='grp1,grp2',profile_name='Openx,Openx')
 
 # TO RUN CONNECTIVITY TEST
 # device_list, report_labels, device_macs = candela_apis.start_connectivity(

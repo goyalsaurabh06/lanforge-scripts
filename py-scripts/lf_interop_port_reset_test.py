@@ -49,6 +49,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import logging
 import asyncio
+import csv
 
 if sys.version_info[0] != 3:
     print("This script requires Python3")
@@ -61,6 +62,8 @@ realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
 lf_report_pdf = importlib.import_module("py-scripts.lf_report")
 lf_graph = importlib.import_module("py-scripts.lf_graph")
+DeviceConfig=importlib.import_module("py-scripts.DeviceConfig")
+
 
 logger = logging.getLogger(__name__)
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
@@ -79,7 +82,9 @@ class InteropPortReset(Realm):
                  wait_time=None,
                  device_list=None,
                  suporrted_release=None,
-                 forget_network=True
+                 forget_network=True,
+                 device_csv_name='',
+                 expected_passfail_value=None
                  ):
         super().__init__(lfclient_host=host,
                          lfclient_port=8080)
@@ -112,6 +117,8 @@ class InteropPortReset(Realm):
         self.time_int = time_int
         self.device_list = device_list
         self.forget_network = forget_network
+        self.expected_passfail_value=expected_passfail_value
+        self.device_csv_name=device_csv_name 
         # self.wait_time = wait_time
         self.supported_release = suporrted_release
         self.device_name = []
@@ -134,13 +141,32 @@ class InteropPortReset(Realm):
             devices = self.base_interop_profile.query_all_devices_to_configure_wifi(device_list=self.device_list.split(','))
         asyncio.run(self.base_interop_profile.configure_wifi(devices[0] + devices[1] + devices[2]))
         self.real_sta_list = self.base_interop_profile.station_list
-        print(self.real_sta_list)
         real_device_data = self.base_interop_profile.devices_data
         if len(self.real_sta_list) == 0:
             logging.error('There are no real devices in this testbed. Aborting the test.')
             exit(0)
         logging.info(f"{self.real_sta_list}")
+        config_obj=DeviceConfig.DeviceConfig(lanforge_ip=self.host)
+        config_obj.device_csv_file(csv_name=self.device_csv_name)
+        interop_tab_data = self.json_get('/adb/')["devices"]
+        available_list=[]
+        for dev in self.real_sta_list:
+            available_list.append(dev.split('.')[0]+'.'+dev.split('.')[1])
+        print("availablelist",available_list)         
+        if len(self.real_sta_list)>0:
 
+            device_map={}
+            if(not self.expected_passfail_value):
+                expected_val=input("Enter the expected value for the following devices{} eg 8,6,2: ".format(available_list)).split(',')
+                if(len(available_list)==len(expected_val)):
+                    for i in range(len(available_list)):
+                        device_map[available_list[i]]=expected_val[i]
+                        config_obj.update_device_csv(self.device_csv_name,'PortReset',device_map)
+            elif self.expected_passfail_value:
+                    pass
+            else:
+                print("Enter correct number of values")
+                exit(0)
         for sta_name in self.real_sta_list:
             if sta_name not in real_device_data:
                 logger.error('Real Station not in devices data')
@@ -1050,7 +1076,39 @@ class InteropPortReset(Realm):
             s_no = []
             for i in range(len(d_name)):
                 s_no.append(i + 1)
+            
+            if not self.expected_passfail_value:
+                res_list=[]
+                test_input_list=[]
+                pass_fail_list=[]
 
+                for i in range(len(d_name)):
+                    if(device_type[i]=='Android'):
+                        res_list.append(d_name[i].split('.')[2])
+                    else:
+                        res_list.append(user_name[i])
+                with open(self.device_csv_name, mode='r') as file:
+                    reader = csv.DictReader(file)
+                    rows = list(reader)
+                
+                for row in rows:
+                    device = row['DeviceList']  
+                    if device in res_list:
+                        test_input_list.append(row['PortReset'])
+
+                for i in range(len(test_input_list)):
+                    if(int(test_input_list[i])<=self.total_connects[i]):
+                        pass_fail_list.append('PASS')
+                    else:
+                        pass_fail_list.append('FAIL')
+            else:
+                test_input_list=[self.expected_passfail_value for val in range(len(d_name))]
+                pass_fail_list=[]
+                for j in range(len(test_input_list)):
+                    if(int(self.expected_passfail_value) <= self.total_connects[j]):
+                        pass_fail_list.append("PASS")
+                    else:
+                        pass_fail_list.append("FAIL")
             table_2 = {
                 "S.No": s_no,
                 "Name of the Devices": d_name,
@@ -1063,7 +1121,9 @@ class InteropPortReset(Realm):
                 "Scans": self.total_scans,
                 "Assoc Attemts": self.total_ass_attemst,
                 "Assoc Rejects": self.total_ass_rejects,
-                "Connects": self.total_connects
+                "Connects": self.total_connects,
+                "Expected Connects":test_input_list,
+                "Status":pass_fail_list,
             }
             test_setup = pd.DataFrame(table_2)
             self.lf_report.set_table_dataframe(test_setup)
@@ -1182,6 +1242,8 @@ INCLUDE_IN_README: False
 
     parser.add_argument('--help_summary', help='Show summary of what this script does', default=None,
                         action="store_true")
+    parser.add_argument("--expected_passfail_value",help="Specify the expected urlcount value for pass/fail")
+    parser.add_argument("--device_csv_name",type=str,help="Specify the device csv name for pass/fail",default='device')
 
     args = parser.parse_args()
 
@@ -1189,7 +1251,9 @@ INCLUDE_IN_README: False
     if args.help_summary:
         print(help_summary)
         exit(0)
-
+    if(args.expected_passfail_value!=None and args.device_csv_name!=None and args.device_csv_name!='device'):
+        print("Specify either expected_passfail_value or device_csv_name")
+        exit(1)
     # set the logger level to debug
     logger_config = lf_logger_config.lf_logger_config()
 
@@ -1214,7 +1278,9 @@ INCLUDE_IN_README: False
                            suporrted_release=args.release,
                            mgr_ip=args.mgr_ip,
                            device_list=args.device_list,
-                           forget_network=not args.no_forget_networks
+                           forget_network=not args.no_forget_networks,
+                           expected_passfail_value=args.expected_passfail_value,
+                           device_csv_name=args.device_csv_name+'.csv'
                            )
     obj.selecting_devices_from_available()
     reset_dict, duration = obj.run()
