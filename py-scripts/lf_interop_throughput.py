@@ -235,6 +235,7 @@ class Throughput(Realm):
         self.do_interopability=do_interopability
         self.ip = ip
         self.device_found = False
+        self.gave_incremental=False
         self.incremental=incremental
         self.precleanup=precleanup
 
@@ -379,7 +380,8 @@ class Throughput(Realm):
                         break
                 if found == False:
                     not_available.append(input_device)
-                    logger.warning(input_device + " is not available to run the test")
+                    if self.device_list!= "all":
+                        logger.warning(input_device + " is not available to run the test")
             
             # If available_list is not empty, log info and set self.device_found to True
             if len(available_list)>0:
@@ -389,7 +391,10 @@ class Throughput(Realm):
             else:
                 devices_list=""
                 self.device_found=False
-                logger.warning("Test can not be initiated on any selected devices")
+                if self.device_list!= "all":
+                    logger.warning("Test can not be initiated on any selected devices")
+                    exit(1)
+               
         else:
 
             # If self.device_list is not provided, prompt user to select devices from user_list
@@ -436,6 +441,7 @@ class Throughput(Realm):
             for i in self.mac_id1_list:
                 if eid in i:
                     self.mac_id_list.append(i.strip(eid+' '))
+
         # Check if incremental_capacity is provided and ensure selected devices are sufficient
         if (len(self.incremental_capacity)>0 and int(self.incremental_capacity.split(',')[-1])>len(self.mac_id_list)):
             logger.error("Devices available are less than given incremental capacity")
@@ -711,7 +717,8 @@ class Throughput(Realm):
                 overall_remaining_minutes=(overall_total_hours % 1) * 60
                 timestamp=datetime.now().strftime("%d/%m %I:%M:%S %p")
                 remaining_minutes_instrf=[str(int(overall_total_hours)) + " hr and " + str(int(overall_remaining_minutes)) + " min" if int(overall_total_hours) != 0 or int(overall_remaining_minutes) != 0 else '<1 min'][0]
-                
+                if remaining_minutes_instrf != '<1 min':
+                    remaining_minutes_instrf=str(overall_time_difference).split(".")[0]
                 # Storing individual device throughput data(download, upload, Rx % drop A, Rx % drop B) to dataframe
                 for i in range(len(download_throughput)):
                     individual_df_data.extend([download_throughput[i],upload_throughput[i],drop_a_per[i],drop_b_per[i],int(signal_list[i]),link_speed_list[i]])                
@@ -805,7 +812,8 @@ class Throughput(Realm):
                 overall_total_hours=overall_time_difference.total_seconds() / 3600
                 overall_remaining_minutes=(overall_total_hours % 1) * 60
                 remaining_minutes_instrf=[str(int(overall_total_hours)) + " hr and " + str(int(overall_remaining_minutes)) + " min" if int(overall_total_hours) != 0 or int(overall_remaining_minutes) != 0 else '<1 min'][0]
-                
+                if remaining_minutes_instrf != '<1 min':
+                    remaining_minutes_instrf=str(overall_time_difference).split(".")[0]
                 # Storing individual device throughput data(download, upload, Rx % drop A, Rx % drop B) to dataframe
                 for i in range(len(download_throughput)):
                     individual_df_data.extend([download_throughput[i],upload_throughput[i],drop_a_per[i],drop_b_per[i],int(signal_list[i]),link_speed_list[i]])
@@ -882,6 +890,7 @@ class Throughput(Realm):
 
         logger.info("connections download {}".format(connections_download))
         logger.info("connections upload {}".format(connections_upload))
+
 
         return individual_df,test_stopped_by_user
 
@@ -1152,7 +1161,9 @@ class Throughput(Realm):
                 total_devices+= f" iOS({ios_devices})"
 
             # Determine incremental_capacity_data based on self.incremental_capacity
-            if len(self.incremental_capacity)==1:
+            if self.gave_incremental:
+                incremental_capacity_data="No Incremental values provided"
+            elif len(self.incremental_capacity)==1:
                 if len(incremental_capacity_list)==1:
                     incremental_capacity_data=str(self.incremental_capacity[0])
                 else:
@@ -1902,7 +1913,7 @@ Copyright 2023 Candela Technologies Inc.
     
     loads={}
     iterations_before_test_stopped_by_user=[]
-
+    gave_incremental=False
     # Case based on download and upload arguments are provided
     if args.download and args.upload:
         loads = {'upload': str(args.upload).split(","), 'download': str(args.download).split(",")}
@@ -1918,6 +1929,10 @@ Copyright 2023 Candela Technologies Inc.
             for i in range(len(args.upload)):
                 loads['download'].append(2560)
             loads_data=loads["upload"]
+
+    if args.incremental_capacity == 'no_increment' and args.dowebgui:
+        args.incremental_capacity = str(len(args.device_list.split(",")))
+        gave_incremental=True
 
     if args.do_interopability:
         args.incremental_capacity="1"
@@ -1984,7 +1999,9 @@ Copyright 2023 Candela Technologies Inc.
                                 incremental=args.incremental,
                                 precleanup=args.precleanup
                                 )
-
+        
+        if gave_incremental:
+            throughput.gave_incremental=True
         throughput.os_type()
 
         check_condition,clients_to_run=throughput.phantom_check()
