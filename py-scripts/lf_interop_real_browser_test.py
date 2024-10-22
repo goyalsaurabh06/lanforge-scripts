@@ -2356,12 +2356,12 @@ def main():
                 if(len(available_resources)==len(expected_val)):
                     for i in range(len(available_resources)):
                         device_map[obj.android_list[i].split('.')[0]+'.'+obj.android_list[i].split('.')[1]]=expected_val[i]
-                        config_obj.update_device_csv(args.device_csv_name+'.csv','RealBrowser',device_map)
+                    config_obj.update_device_csv(args.device_csv_name+'.csv','RealBrowser',device_map)
+                else:
+                    print("Enter correct number of values")
+                    exit(0)
             elif args.expected_passfail_value:
                 pass
-            else:
-                print("Enter correct number of values")
-                exit(0)
         # Handle incremental values input if resource IDs are specified and in not specified case.
         if args.incremental and not args.webgui_incremental :
             if obj.resource_ids:

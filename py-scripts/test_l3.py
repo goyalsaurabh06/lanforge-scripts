@@ -6819,11 +6819,11 @@ INCLUDE_IN_README: False
                                 device_map[csv_dev_list[0].split('.')[0]+'.'+csv_dev_list[0].split('.')[1]]=expected_val[i]
                                     
                             config_obj.update_device_csv(args.device_csv_name+'.csv',endp,device_map)
+                        else:
+                            print("Enter correct number of values")
+                            exit(0)
                     elif args.expected_passfail_value:
                         pass
-                    else:
-                        print("Enter correct number of values")
-                        exit(0)
             args.existing_station_list=sample_list
             args.use_existing_station_list=True
         

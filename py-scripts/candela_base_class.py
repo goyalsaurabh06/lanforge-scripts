@@ -2316,12 +2316,12 @@ class Candela:
                 if(len(available_resources)==len(expected_val)):
                     for i in range(len(available_resources)):
                         device_map[self.web_browser_test.android_list[i].split('.')[0]+'.'+self.web_browser_test.android_list[i].split('.')[1]]=expected_val[i]
-                        config_obj.update_device_csv(device_csv_name+'.csv','RealBrowser',device_map)
+                    config_obj.update_device_csv(device_csv_name+'.csv','RealBrowser',device_map)
+                else:
+                    print("Enter correct number of values")
+                    exit(0)
             elif expected_passfail_value:
                 pass
-            else:
-                print("Enter correct number of values")
-                exit(0)
         # Handle incremental values input if resource IDs are specified and in not specified case.
         if incremental and not webgui_incremental :
             if self.web_browser_test.resource_ids:
@@ -2860,11 +2860,11 @@ class Candela:
                                         device_map[sample_list[i].split('.')[0]+'.'+sample_list[i].split('.')[1]]=expected_val[i]
                                             
                                     config_obj.update_device_csv(device_csv_name+'.csv',endp,device_map)
+                                else:
+                                    print("Enter correct number of values")
+                                    exit(0)
                             elif expected_passfail_value:
                                 pass
-                            else:
-                                print("Enter correct number of values")
-                                exit(0)
                 
                 
            

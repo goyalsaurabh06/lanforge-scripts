@@ -379,11 +379,12 @@ class HttpDownload(Realm):
                         for i in range(len(available_list)):
                             device_map[available_list[i]]=expected_val[i]
                         obj.update_device_csv(self.device_csv_name,'HTTP',device_map)
+                    else:
+                        print("Enter correct number of values")
+                        exit(0)
                 elif self.expected_passfail_value:
                     pass
-                else:
-                    print("Enter correct number of values")
-                    exit(0)
+                
                 logger.info("Test is initiated on devices: {}".format(available_list))
                 devices_list = ','.join(available_list)
                 device_found = True

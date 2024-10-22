@@ -531,11 +531,11 @@ class Throughput(Realm):
                         for i in range(len(available_list)):
                             device_map[available_list[i]]=expected_val[i]
                         obj.update_device_csv(self.device_csv_name,self.csv_direction,device_map)
+                    else:
+                        print("Enter correct number of values")
+                        exit(0)
                 elif(self.expected_passfail_value):
                     pass
-                else:
-                    print("Enter correct number of values")
-                    exit(0)
                 logger.info("Test is intiated on these devices {}".format(available_list))
                 devices_list=','.join(available_list)
                 self.device_found=True
