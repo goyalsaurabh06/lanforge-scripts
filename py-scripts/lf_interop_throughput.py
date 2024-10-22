@@ -1908,6 +1908,12 @@ Copyright 2023 Candela Technologies Inc.
     if args.help_summary:
         print(help_summary)
         exit(0)
+    
+    if args.dowebgui:
+        if(args.upload == '0'):
+            args.upload='2560'
+        if(args.download == '0'):
+            args.download='2560'
 
     logger_config = lf_logger_config.lf_logger_config()
     
