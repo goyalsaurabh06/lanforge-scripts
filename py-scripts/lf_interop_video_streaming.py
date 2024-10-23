@@ -1441,7 +1441,8 @@ class VideoStreamingTest(Realm):
                         for item in dev.values():
                             if(item['user-name']==username[:created_incremental_values[iter]][client]):
                                 res_list.append(item['name'].split('.')[2])
-
+            if self.csv_name==None:
+                self.csv_name="device.csv"
             with open(self.csv_name, mode='r') as file:
                 reader = csv.DictReader(file)
                 rows = list(reader)
@@ -1660,10 +1661,10 @@ def main():
     parser.add_argument("--pac_file", type=str,default='NA')
     parser.add_argument("--server_ip", type=str,default='NA')
     parser.add_argument('--expected_passfail_val', help='Enter the expected number of urls ', default=None)
-    parser.add_argument('--csv_name',type=str, help='Enter the csv name to store expected values', default='device')
+    parser.add_argument('--csv_name',type=str, help='Enter the csv name to store expected values', default=None)
     
     args = parser.parse_args()
-    if args.csv_name!='device' and args.expected_passfail_val:
+    if args.csv_name!=None and args.expected_passfail_val:
         print("Enter either --csv_name or --expected_passfail_val")
         exit(0)
     if args.help_summary:
@@ -1747,7 +1748,7 @@ def main():
                             pac_file=args.pac_file,
                             server_ip=args.server_ip,
                             expected_passfail_val=args.expected_passfail_val,
-                                csv_name=args.csv_name+'.csv')
+                                csv_name=args.csv_name)
 
         resource_ids_sm = []
         resource_set = set()
@@ -1759,8 +1760,8 @@ def main():
         # other_list = []
         resource_ids_generated = ""
         config_obj=DeviceConfig.DeviceConfig(lanforge_ip=args.host,file_name=args.file_name)
-        if not args.expected_passfail_val:
-            config_obj.device_csv_file(csv_name=args.csv_name+'.csv')
+        if not args.expected_passfail_val and args.csv_name==None:
+            config_obj.device_csv_file(csv_name="device.csv")
         if(args.group_name!=None and args.file_name!=None and args.profile_name!=None  and args.device_list==None):
                     selected_groups=args.group_name.split(',')
                     selected_profiles=args.profile_name.split(',')
@@ -2011,12 +2012,12 @@ def main():
         gave_incremental=False
         if(len(available_resources)>0):
             device_map={}
-            if(not args.expected_passfail_val):
+            if(not args.expected_passfail_val and args.csv_name==None):
                 expected_val=input("Enter the expected value for the following devices{} eg 8,6,2: ".format(available_resources)).split(',')
                 if(len(available_resources)==len(expected_val)):
                     for i in range(len(available_resources)):
                         device_map[obj.android_list[i].split('.')[0]+'.'+obj.android_list[i].split('.')[1]]=expected_val[i]
-                    config_obj.update_device_csv(args.csv_name+'.csv','Videostreaming',device_map)
+                    config_obj.update_device_csv("device.csv",'Videostreaming',device_map)
                 else:
                     print("Enter correct number of values")
                     exit(0)

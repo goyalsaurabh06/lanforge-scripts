@@ -1182,7 +1182,7 @@ def main():
     parser.add_argument("--lf_logger_config_json",
                         help="--lf_logger_config_json <json file> , json configuration of logger")
     parser.add_argument('--expected_passfail_val', help='Enter the expected number of roams', default=None)
-    parser.add_argument('--csv_name',type=str, help='Enter the csv name to store expected values', default='device')
+    parser.add_argument('--csv_name',type=str, help='Enter the csv name to store expected values', default=None)
 
     args = parser.parse_args()
 
@@ -1201,7 +1201,7 @@ def main():
         # logger_config.lf_logger_config_json = "lf_logger_config.json"
         logger_config.lf_logger_config_json = args.lf_logger_config_json
         logger_config.load_lf_logger_config()
-    if args.csv_name!='device' and args.expected_passfail_val:
+    if args.csv_name!=None and args.expected_passfail_val:
         print("Enter either --csv_name or --expected_passfail_val")
         exit(0)
     bssids = []
@@ -1211,18 +1211,19 @@ def main():
         stations = args.station_list.split(',')
         # print("Ffffffffff",stati)
         obj=DeviceConfig.DeviceConfig(lanforge_ip=args.mgr,file_name='')
-        if not args.expected_passfail_val:
-            obj.device_csv_file(csv_name=args.csv_name+'.csv')
+        if not args.expected_passfail_val and args.csv_name ==None:
+            obj.device_csv_file(csv_name="device.csv")
         device_list=[]
         expected_dict={}
         flag=0
         for sta in stations:
             device_list.append(sta.split('.')[0]+'.'+sta.split('.')[1])
-        if(not args.expected_passfail_val):
+        if(not args.expected_passfail_val and args.csv_name == None):
             expected_list=input("Enter the expected number to roams for {} eg:2,3: ".format(device_list)).split(',')
             for val in range(len(expected_list)):
                 expected_dict[device_list[val]]=expected_list[val]
-            obj.update_device_csv(args.csv_name+'.csv','Roaming',expected_dict)
+            obj.update_device_csv("device.csv",'Roaming',expected_dict)
+            args.csv_name="device.csv"
         elif args.expected_passfail_val:
             pass
         
@@ -1253,7 +1254,7 @@ def main():
             frequency=args.frequency,
             iterations=args.iterations,
             expected_passfail_val=args.expected_passfail_val,
-            csv_name=args.csv_name+'.csv'
+            csv_name=args.csv_name
         )
         roam_test.station_list = stations
         print("ffff",roam_test.station_list)
@@ -1293,7 +1294,7 @@ def main():
             frequency=args.frequency,
             iterations=args.iterations,
             expected_passfail_val=args.expected_passfail_val,
-            csv_name=args.csv_name+'.csv'
+            csv_name=args.csv_name
         )
         print("sssssssssssss",roam_test.station_list)
         logging.info(

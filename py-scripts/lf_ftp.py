@@ -223,8 +223,8 @@ class FtpTest(LFCliBase):
 
     def query_realclients(self):
         obj=DeviceConfig.DeviceConfig(lanforge_ip=self.host,file_name=self.file_name)
-        if not self.expected_passfail_val:
-            obj.device_csv_file(csv_name=self.csv_name)
+        if not self.expected_passfail_val and self.csv_name== None :
+            obj.device_csv_file(csv_name="device.csv")
         if(self.group_name!=None and self.file_name!=None and self.device_list==[] and self.profile_name!=None):
             selected_groups=self.group_name.split(',')
             selected_profiles=self.profile_name.split(',')
@@ -446,12 +446,13 @@ class FtpTest(LFCliBase):
 
             if len(available_list) > 0:
                 device_map={}
-                if(not self.expected_passfail_val):
+                if(not self.expected_passfail_val and self.csv_name==None):
                     expected_val=input("Enter the expected {} value for the following devices{} eg 8,6,2: ".format(self.direction,available_list)).split(',')
                     if(len(available_list)==len(expected_val) and not self.expected_passfail_val):
                         for i in range(len(available_list)):
                             device_map[available_list[i]]=expected_val[i]
-                        obj.update_device_csv(self.csv_name,'FTP',device_map)
+                        obj.update_device_csv("device.csv",'FTP',device_map)
+                        self.csv_name="device.csv"
                     else:
                         print("Enter correct number of values")
                         exit(0)
@@ -2143,7 +2144,7 @@ INCLUDE_IN_README: False
     optional.add_argument('--device_list', help='Enter the devices on which the test should be run', default=[])
     optional.add_argument('--test_name', help='Specify test name to store the runtime csv results', default=None)
     optional.add_argument('--expected_passfail_val', help='Enter the expected number of urls ', default=None)
-    optional.add_argument('--csv_name',type=str, help='Enter the csv name to store expected values', default='device')
+    optional.add_argument('--csv_name',type=str, help='Enter the csv name to store expected values', default=None)
 
     # kpi_csv arguments
     optional.add_argument(
@@ -2223,7 +2224,7 @@ INCLUDE_IN_README: False
 
     # empty dictionary for whole test data
     ftp_data = {}
-    if args.csv_name!='device' and args.expected_passfail_val:
+    if args.csv_name!=None and args.expected_passfail_val:
         print("Enter either --csv_name or --expected_passfail_val")
         exit(0)
     def pass_fail_duration(band, file_size):
@@ -2327,7 +2328,7 @@ INCLUDE_IN_README: False
                                 pac_file=args.pac_file,
                                 server_ip=args.server_ip,
                                 expected_passfail_val=args.expected_passfail_val,
-                                csv_name=args.csv_name+'.csv'
+                                csv_name=args.csv_name
                                 )
 
                     interation_num = interation_num + 1

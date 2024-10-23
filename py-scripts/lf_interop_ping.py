@@ -265,14 +265,15 @@ class Ping(Realm):
         for i in self.real_sta_list:
             b=i.split('.')
             d_list.append(b[0]+'.'+b[1])
-        if(not self.expected_passfail_val):
+        if(not self.expected_passfail_val and self.csv_name==None):
             device_map={}
             expected_val=input("Enter the expected value for the following devices{} eg 8,6,2: ".format(d_list)).split(',')
             if(len(d_list)==len(expected_val)):
                 for i in range(len(d_list)):
                     device_map[d_list[i]]=expected_val[i]
                 #print("DEVVVVVVVV",device_map)
-                obj.update_device_csv(self.csv_name,'PingPacketLoss',device_map)
+                obj.update_device_csv("device.csv",'PingPacketLoss',device_map)
+                self.csv_name="device.csv"
             else:
                 print("Enter correct number of values")
                 exit(0)
@@ -849,11 +850,11 @@ effectively over the network and pinpoint potential issues affecting connectivit
     parser.add_argument("--pk_passwd", type=str,default='[BLANK]')
     parser.add_argument("--pac_file", type=str,default='[BLANK]')
     parser.add_argument('--expected_passfail_val', help='Enter the expected packet loss', default=None)
-    parser.add_argument('--csv_name',type=str, help='Enter the csv name to store expected values', default='device')
+    parser.add_argument('--csv_name',type=str, help='Enter the csv name to store expected values', default=None)
 
 
     args = parser.parse_args()
-    if args.csv_name!='device' and args.expected_passfail_val:
+    if args.csv_name!=None and args.expected_passfail_val:
         print("Enter either --csv_name or --expected_passfail_val")
         exit(0)
     if args.help_summary:
@@ -972,7 +973,7 @@ effectively over the network and pinpoint potential issues affecting connectivit
 
     # ping object creation
     ping = Ping(host=mgr_ip, port=mgr_port, ssid=ssid, security=security, password=password, radio=radio,
-                lanforge_password=mgr_password, target=target, interval=interval, sta_list=[], virtual=args.virtual, real=args.real, duration=duration, debug=debug,csv_name=args.csv_name+'.csv',expected_passfail_val=args.expected_passfail_val)
+                lanforge_password=mgr_password, target=target, interval=interval, sta_list=[], virtual=args.virtual, real=args.real, duration=duration, debug=debug,csv_name=args.csv_name,expected_passfail_val=args.expected_passfail_val)
     
     # changing the target from port to IP
     ping.change_target_to_ip()
@@ -999,8 +1000,8 @@ effectively over the network and pinpoint potential issues affecting connectivit
 
             obj=DeviceConfig.DeviceConfig(lanforge_ip=mgr_ip,file_name=file_name)
             print(args.expected_passfail_val)
-            if not args.expected_passfail_val:
-                obj.device_csv_file(args.csv_name+'.csv')
+            if not args.expected_passfail_val and args.csv_name== None:
+                obj.device_csv_file("device.csv")
             if(group_name!=None and file_name!=None and profile_name!=None):
                 selected_groups=group_name.split(',')
                 selected_profiles=profile_name.split(',')

@@ -258,7 +258,6 @@ class ThroughputQOS(Realm):
 
     def phantom_check(self,ftp_test=False):
         obj=DeviceConfig.DeviceConfig(lanforge_ip=self.host,file_name=self.file_name)
-        
         if(self.group_name!=None and self.file_name!=None and self.device_list==[] and self.profile_name!=None):
             selected_groups=self.group_name.split(',')
             selected_profiles=self.profile_name.split(',')
@@ -313,6 +312,7 @@ class ThroughputQOS(Realm):
                 'server_ip':self.server_ip,
 
             }
+            print("selfffffffffff",self.device_list)
             self.device_list=self.device_list.split(',')
             asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
         elif(self.device_list==[]):
@@ -348,9 +348,11 @@ class ThroughputQOS(Realm):
                     device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["serial"])
             print("Available devices:", device_list)
             self.device_list = input("Enter the desired resources to run the test:").split(',')
+            
+
             asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
-            if not self.expected_passfail_val:
-                obj.device_csv_file(csv_name=self.csv_name)
+            if not self.expected_passfail_val and self.csv_name==None:
+                obj.device_csv_file(csv_name="device.csv")
 
         port_eid_list, same_eid_list,original_port_list=[],[],[]
         response = self.json_get("/resource/all")
@@ -467,13 +469,14 @@ class ThroughputQOS(Realm):
 
             if len(available_list) > 0:
                 device_map={}
-                if(not self.expected_passfail_val):
+                if(not self.expected_passfail_val and self.csv_name==None):
                     expected_val=input("Enter the expected {} value in MBPS for the following devices{} eg 8,6,2: ".format(self.csv_direction,available_list)).split(',')
                     if(len(available_list)==len(expected_val)):
                         for i in range(len(available_list)):
                             device_map[available_list[i]]=expected_val[i]
                         #print("DEVVVVVVVV",device_map)
-                        obj.update_device_csv(self.csv_name,self.csv_direction,device_map)
+                        obj.update_device_csv("device.csv",self.csv_direction,device_map)
+                        self.csv_name="device.csv"
                     else:
                         print("Enter correct number of values")
                         exit(0)
@@ -1830,14 +1833,14 @@ def main():
     optional.add_argument("--pac_file", type=str,default='NA')
     optional.add_argument("--server_ip", type=str,default='NA')
     optional.add_argument('--expected_passfail_val', help='Enter the expected throughput ', default=None)
-    optional.add_argument('--csv_name',type=str, help='Enter the csv name to store expected values', default='device')
+    optional.add_argument('--csv_name',type=str, help='Enter the csv name to store expected values', default=None)
     args = parser.parse_args()
 
     # help summary
     if args.help_summary:
         print(help_summary)
         exit(0)
-    if args.csv_name!='device' and args.expected_passfail_val:
+    if args.csv_name!=None and args.expected_passfail_val:
         print("Enter either --csv_name or --expected_passfail_val")
         exit(0)
     print("--------------------------------------------")
@@ -1943,7 +1946,7 @@ def main():
                                 pac_file=args.pac_file,
                                 server_ip=args.server_ip,
                                 expected_passfail_val=args.expected_passfail_val,
-                                csv_name=args.csv_name+'.csv')
+                                csv_name=args.csv_name)
             throughput_qos.os_type()
             throughput_qos.phantom_check()
             # checking if we have atleast one device available for running test
