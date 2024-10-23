@@ -83,7 +83,7 @@ class InteropPortReset(Realm):
                  device_list=None,
                  suporrted_release=None,
                  forget_network=True,
-                 device_csv_name='',
+                 device_csv_name=None,
                  expected_passfail_value=None
                  ):
         super().__init__(lfclient_host=host,
@@ -147,7 +147,8 @@ class InteropPortReset(Realm):
             exit(0)
         logging.info(f"{self.real_sta_list}")
         config_obj=DeviceConfig.DeviceConfig(lanforge_ip=self.host)
-        config_obj.device_csv_file(csv_name=self.device_csv_name)
+        if not self.expected_passfail_value and self.device_csv_name==None :
+            config_obj.device_csv_file(csv_name="device.csv")
         interop_tab_data = self.json_get('/adb/')["devices"]
         available_list=[]
         for dev in self.real_sta_list:
@@ -156,12 +157,13 @@ class InteropPortReset(Realm):
         if len(self.real_sta_list)>0:
 
             device_map={}
-            if(not self.expected_passfail_value):
+            if(not self.expected_passfail_value and self.device_csv_name == None):
                 expected_val=input("Enter the expected value for the following devices{} eg 8,6,2: ".format(available_list)).split(',')
                 if(len(available_list)==len(expected_val)):
                     for i in range(len(available_list)):
                         device_map[available_list[i]]=expected_val[i]
-                    config_obj.update_device_csv(self.device_csv_name,'PortReset',device_map)
+                    config_obj.update_device_csv("device.csv",'PortReset',device_map)
+                    self.device_csv_name="device.csv"
                 else:
                     print("Enter correct number of values")
                     exit(0)
@@ -1243,7 +1245,7 @@ INCLUDE_IN_README: False
     parser.add_argument('--help_summary', help='Show summary of what this script does', default=None,
                         action="store_true")
     parser.add_argument("--expected_passfail_value",help="Specify the expected urlcount value for pass/fail")
-    parser.add_argument("--device_csv_name",type=str,help="Specify the device csv name for pass/fail",default='device')
+    parser.add_argument("--device_csv_name",type=str,help="Specify the device csv name for pass/fail",default=None)
 
     args = parser.parse_args()
 
@@ -1251,7 +1253,7 @@ INCLUDE_IN_README: False
     if args.help_summary:
         print(help_summary)
         exit(0)
-    if(args.expected_passfail_value!=None and args.device_csv_name!=None and args.device_csv_name!='device'):
+    if(args.expected_passfail_value!=None and args.device_csv_name!=None):
         print("Specify either expected_passfail_value or device_csv_name")
         exit(1)
     # set the logger level to debug
@@ -1280,7 +1282,7 @@ INCLUDE_IN_README: False
                            device_list=args.device_list,
                            forget_network=not args.no_forget_networks,
                            expected_passfail_value=args.expected_passfail_value,
-                           device_csv_name=args.device_csv_name+'.csv'
+                           device_csv_name=args.device_csv_name
                            )
     obj.selecting_devices_from_available()
     reset_dict, duration = obj.run()

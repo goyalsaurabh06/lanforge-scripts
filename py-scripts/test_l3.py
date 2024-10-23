@@ -677,7 +677,7 @@ class L3VariableTime(Realm):
                  graph_input_list=[],
                  real=False,
                  expected_passfail_value=None,
-                 device_csv_name=''
+                 device_csv_name=None
                  ):
 
         self.eth_endps = []
@@ -2992,7 +2992,7 @@ class L3VariableTime(Realm):
                             # use the eid to get the hostname and channel
                             eid_tmp_resource = str(self.name_to_eid(endp_data[endp_data_key]['eid'])[0]) + '.' + str(self.name_to_eid(endp_data[endp_data_key]['eid'])[1])
                             # look up the resource
-                            print("resource",eid_tmp_resource)
+                           
                             resource_found = False
                             for resource_data in self.resource_data['resources']:
                                 resource_data_key = list(resource_data.keys())[0]
@@ -5473,9 +5473,10 @@ class L3VariableTime(Realm):
                                         if(item['resource-id']==client.split('_')[0]):
                                             res_list.append(item['name'].split('.')[2])
                             
-
+                        if self.device_csv_name==None:
+                            self.device_csv_name='device.csv'
                         
-                        with open('device.csv', mode='r') as file:
+                        with open(self.device_csv_name, mode='r') as file:
                             reader = csv.DictReader(file)
                             rows = list(reader)
 
@@ -5503,7 +5504,6 @@ class L3VariableTime(Realm):
                                 pass_fail_list.append('FAIL')
                                 direction='upload'
                         else:
-                            
                             if(float(test_input_list[k])<=float(self.client_dict_A[tos]['dl_A'][k])):
                                 pass_fail_list.append('PASS')
                                 direction='download'
@@ -6571,7 +6571,7 @@ INCLUDE_IN_README: False
         help='devices as 1.10,1.11'
     )
     test_l3_parser.add_argument("--expected_passfail_value",help="Specify the expected urlcount value for pass/fail")
-    test_l3_parser.add_argument("--device_csv_name",type=str,help="Specify the device csv name for pass/fail",default='device')
+    test_l3_parser.add_argument("--device_csv_name",type=str,help="Specify the device csv name for pass/fail",default=None)
     
     test_l3_parser.add_argument('--file_name', type=str, help='specify the file name')
     test_l3_parser.add_argument('--group_name', type=str, help='specify the group name')
@@ -6642,7 +6642,7 @@ INCLUDE_IN_README: False
         dir='_UL'
     else:
         dir='_DL'
-    if(args.real and (args.expected_passfail_value!=None and args.device_csv_name!=None and args.device_csv_name!='device')):
+    if(args.real and (args.expected_passfail_value!=None and args.device_csv_name!=None)):
         print("Specify either expected_passfail_value or device_csv_name")
         exit(1)
 
@@ -6668,9 +6668,7 @@ INCLUDE_IN_README: False
         print("Please provide ssid password and security when device list is given")        
         exit(0)
 
-    if(args.real and (args.expected_passfail_value!=None and args.device_csv_name!=None and args.device_csv_name!='device')):
-        print("Specify either expected_passfail_value or device_csv_name")
-        exit(1)    
+  
     if(args.group_name!=None):
         selected_groups=args.group_name.split(',')
     else:
@@ -6683,10 +6681,11 @@ INCLUDE_IN_README: False
     if(len(selected_groups)!=len(selected_profiles)):
         print("Number of groups should match number of profiles")
         exit(0)
-    print("DEVVV",args.device_list)
+    
     if(args.real and (args.group_name!=None and args.profile_name!=None and args.file_name!=None and args.device_list==None and args.ssid==None and (len(selected_groups)==len(selected_profiles))) or(args.group_name==None and args.profile_name==None and args.file_name==None and args.ssid!=None and args.passwd!=None and args.security!=None) or (args.group_name==None and args.profile_name==None and args.file_name==None and args.ssid!=None and args.passwd==None and args.security.lower() =='open')):
         config_obj=DeviceConfig.DeviceConfig(lanforge_ip=args.lfmgr,file_name=args.file_name)
-        config_obj.device_csv_file(csv_name=args.device_csv_name+'.csv')
+        if not args.expected_passfail_value and args.device_csv_name==None :
+            config_obj.device_csv_file(csv_name="device.csv")
         if(args.group_name!=None and args.file_name!=None and args.profile_name!=None):
                 selected_groups=args.group_name.split(',')
                 selected_profiles=args.profile_name.split(',')
@@ -6704,7 +6703,7 @@ INCLUDE_IN_README: False
                 df1=config_obj.display_groups(config_obj.groups)
                 groups_list=df1.to_dict(orient='list')
                 group_devices={}
-                #asyncio.run(obj.connectivity({self.group_name:self.profile_name}))
+              
                 for adb in adbresponse:   
                     group_devices[adb['serial']]=adb['eid']
                 for res in resource_manager:
@@ -6783,7 +6782,7 @@ INCLUDE_IN_README: False
                         device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["serial"])
                 print("Available devices:", device_list)
                 args.device_list = [input("Enter the desired resources to run the test:")]
-                print("AAAA",args.device_list[0])
+                # print("AAAA",args.device_list[0])
                 dev1_list=args.device_list[0].split(',')
                 asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
         if args.device_list!=None:
@@ -6811,14 +6810,14 @@ INCLUDE_IN_README: False
             else:
                 for endp in endp_input_list:
                     device_map={}
-                    if(not args.expected_passfail_value):
+                    if(not args.expected_passfail_value and args.device_csv_name == None):
                         expected_val=input("Enter the expected {} value for the following devices{} eg 8,6,2: ".format(endp,sample_list)).split(',')
                         if(len(sample_list)==len(expected_val)):
                             for i in range(len(sample_list)):
                                 csv_dev_list=sample_list[i]
                                 device_map[csv_dev_list[0].split('.')[0]+'.'+csv_dev_list[0].split('.')[1]]=expected_val[i]
                                     
-                            config_obj.update_device_csv(args.device_csv_name+'.csv',endp,device_map)
+                            config_obj.update_device_csv('device.csv',endp,device_map)
                         else:
                             print("Enter correct number of values")
                             exit(0)

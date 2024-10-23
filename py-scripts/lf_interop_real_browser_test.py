@@ -141,7 +141,7 @@ class RealBrowserTest(Realm):
                 client_cert=None,
                 pk_passwd=None,
                 pac_file=None,
-                server_ip=None,device_csv_name='',
+                server_ip=None,device_csv_name=None,
                 expected_passfail_value=None):
         super().__init__(lfclient_host=host, lfclient_port=8080)
         # Initialize attributes with provided parameters
@@ -1702,7 +1702,8 @@ class RealBrowserTest(Realm):
                     for item in dev.values():
                         if(item['user-name'] in self.username[i]):
                             res_list.append(item['name'].split('.')[2])
-                
+                if self.device_csv_name == None:
+                    self.device_csv_name="device.csv"
                 with open(self.device_csv_name, mode='r') as file:
                         reader = csv.DictReader(file)
                         rows = list(reader)
@@ -2021,7 +2022,7 @@ def main():
     parser.add_argument("--server_ip",type=str,default=None)
     parser.add_argument('--help_summary', help='Show summary of what this script does', default=None)
     parser.add_argument("--expected_passfail_value",help="Specify the expected urlcount value for pass/fail")
-    parser.add_argument("--device_csv_name",type=str,help="Specify the device csv name for pass/fail",default='device')
+    parser.add_argument("--device_csv_name",type=str,help="Specify the device csv name for pass/fail",default=None)
     args = parser.parse_args()
 
     if args.help_summary:
@@ -2039,7 +2040,7 @@ def main():
 
     # TODO refactor to be logger for consistency
     logg = logging.getLogger(__name__)
-    if(args.expected_passfail_value!=None and args.device_csv_name!=None and args.device_csv_name!='device'):
+    if(args.expected_passfail_value!=None and args.device_csv_name!=None):
         print("Specify either expected_passfail_value or device_csv_name")
         exit(1)
 
@@ -2087,7 +2088,7 @@ def main():
                             pac_file=args.pac_file,
                             server_ip=args.server_ip,
                             expected_passfail_value=args.expected_passfail_value,
-                            device_csv_name=args.device_csv_name+'.csv'
+                            device_csv_name=args.device_csv_name
                             )
         
         # Initialize empty lists and dictionaries for resource management
@@ -2101,7 +2102,8 @@ def main():
         # other_list = []
         resource_ids_generated = ""
         config_obj=DeviceConfig.DeviceConfig(lanforge_ip=args.host,file_name=args.file_name)
-        config_obj.device_csv_file(csv_name=args.device_csv_name+'.csv')
+        if not args.expected_passfail_value and args.device_csv_name==None :
+            config_obj.device_csv_file(csv_name="device.csv")
         if(args.group_name!=None and args.file_name!=None and args.profile_name!=None):
             selected_groups=args.group_name.split(',')
             selected_profiles=args.profile_name.split(',')
@@ -2111,7 +2113,7 @@ def main():
 
         #print("CONFIGURED DICT",config_devices)
             config_obj.initiate_group()
-            # asyncio.run(config_obj.connectivity(config_devices))
+            asyncio.run(config_obj.connectivity(config_devices))
         
             adbresponse=config_obj.adb_obj.get_devices()
             resource_manager=config_obj.laptop_obj.get_devices()
@@ -2196,7 +2198,7 @@ def main():
                 }
                 if(args.group_name==None and args.file_name==None and args.profile_name==None):
                     dev_list=args.device_list.split(',')
-                    # asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
+                    asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
 
 
                 # Extract second part of resource IDs and sort them
@@ -2297,7 +2299,7 @@ def main():
                 print("Available devices:", device_list)
                 args.device_list = input("Enter the desired resources to run the test:")
                 dev1_list=args.device_list.split(',')
-                # asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
+                asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
                 # Query user to select devices if no resource IDs are provided
                 selected_devices,report_labels,selected_macs = obj.devices.query_user(device_list=dev1_list)
                 # Handle cases where no devices are selected
@@ -2351,12 +2353,12 @@ def main():
             exit()
         if len(available_resources) > 0:
             device_map={}
-            if(not args.expected_passfail_value):
+            if(not args.expected_passfail_value and args.device_csv_name == None):
                 expected_val=input("Enter the expected value for the following devices{} eg 8,6,2: ".format(available_resources)).split(',')
                 if(len(available_resources)==len(expected_val)):
                     for i in range(len(available_resources)):
                         device_map[obj.android_list[i].split('.')[0]+'.'+obj.android_list[i].split('.')[1]]=expected_val[i]
-                    config_obj.update_device_csv(args.device_csv_name+'.csv','RealBrowser',device_map)
+                    config_obj.update_device_csv('device.csv','RealBrowser',device_map)
                 else:
                     print("Enter correct number of values")
                     exit(0)

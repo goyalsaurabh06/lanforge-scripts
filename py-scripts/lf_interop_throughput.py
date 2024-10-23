@@ -182,7 +182,7 @@ class Throughput(Realm):
                 pac_file=None,
                 server_ip=None,
                 csv_direction='',
-                device_csv_name='',
+                device_csv_name=None,
                 expected_passfail_value=None,
                 user_list=[], real_client_list=[], real_client_list1=[], hw_list=[], laptop_list=[], android_list=[], mac_list=[], windows_list=[], linux_list=[],
                 total_resources_list=[], working_resources_list=[], hostname_list=[], username_list=[], eid_list=[],
@@ -330,7 +330,8 @@ class Throughput(Realm):
         """
         port_eid_list,same_eid_list,original_port_list=[],[],[]
         obj=DeviceConfig.DeviceConfig(lanforge_ip=self.host,file_name=self.file_name)
-        obj.device_csv_file(csv_name=self.device_csv_name)
+        if not self.expected_passfail_value and self.device_csv_name==None :
+            obj.device_csv_file(csv_name="device.csv")
         if(self.group_name!=None and self.file_name!=None and self.device_list==[] and self.profile_name!=None):
             selected_groups=self.group_name.split(',')
             selected_profiles=self.profile_name.split(',')
@@ -369,7 +370,7 @@ class Throughput(Realm):
 
             }
             self.device_list=self.device_list.split(',')
-            # asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
+            asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
         elif(self.device_list==[]):
             all_devices= obj.get_all_devices()
             device_list=[]
@@ -525,12 +526,13 @@ class Throughput(Realm):
             # If available_list is not empty, log info and set self.device_found to True
             if len(available_list)>0:
                 device_map={}
-                if(not self.expected_passfail_value):
+                if(not self.expected_passfail_value and self.device_csv_name==None):
                     expected_val=input("Enter the expected {} value for the following devices{} in Mbps eg 8,6,2: ".format(self.csv_direction,available_list)).split(',')
                     if(len(available_list)==len(expected_val)):
                         for i in range(len(available_list)):
                             device_map[available_list[i]]=expected_val[i]
-                        obj.update_device_csv(self.device_csv_name,self.csv_direction,device_map)
+                        obj.update_device_csv("device.csv",self.csv_direction,device_map)
+                        self.device_csv_name="device.csv"
                     else:
                         print("Enter correct number of values")
                         exit(0)
@@ -2165,7 +2167,7 @@ Copyright 2023 Candela Technologies Inc.
     optional.add_argument('--profile_name', type=str, help='specify the profile name')
     optional.add_argument('--server_ip',type=str,default=None)
     optional.add_argument("--expected_passfail_value",help="Specify the expected urlcount value for pass/fail")
-    optional.add_argument("--device_csv_name",type=str,help="Specify the device csv name for pass/fail",default='device')
+    optional.add_argument("--device_csv_name",type=str,help="Specify the device csv name for pass/fail",default=None)
     parser.add_argument('--help_summary', help='Show summary of what this script does', default=None)
 
     args=parser.parse_args()
@@ -2204,7 +2206,7 @@ Copyright 2023 Candela Technologies Inc.
     else:
         csv_direction='L3_'+args.traffic_type.split('_')[1].upper()+'_DL'
     
-    if(args.expected_passfail_value!=None and args.device_csv_name!=None and args.device_csv_name!='device'):
+    if(args.expected_passfail_value!=None and args.device_csv_name!=None):
         print("Specify either expected_passfail_value or device_csv_name")
         exit(1)
 
@@ -2305,7 +2307,7 @@ Copyright 2023 Candela Technologies Inc.
                                     server_ip=args.server_ip,
                                     csv_direction=csv_direction,
                                     expected_passfail_value=args.expected_passfail_value,
-                                    device_csv_name=args.device_csv_name+'.csv'
+                                    device_csv_name=args.device_csv_name
                                     )
 
             throughput.os_type()

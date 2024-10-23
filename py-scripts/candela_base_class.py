@@ -642,7 +642,7 @@ class Candela:
                   band='5G', lf_username='lanforge', lf_password='lanforge', 
                   test_duration=60, background = False,file_name=None,group_name=None,profile_name=None,eap_method='DEFAULT',eap_identity='',ieee80211=True,ieee80211u=True,ieee80211w=1,enable_pkc=True,
                   bss_transition=True,power_save=True,disable_ofdma=True,roam_ft_ds=True,key_management='DEFAULT',pairwise='[BLANK]',private_key='[BLANK]',ca_cert='[BLANK]',client_cert='[BLANK]',pk_passwd='[BLANK]',pac_file='[BLANK]',
-                  server_ip=None,expected_passfail_value=None,device_csv_name='device'):
+                  server_ip=None,expected_passfail_value=None,device_csv_name=None):
         """
         Method to start HTTP test on the given device list
 
@@ -671,7 +671,7 @@ class Candela:
         Returns:
             result_data (dict): Result data of the test.
         """  
-        if(expected_passfail_value!=None and device_csv_name!=None and device_csv_name!='device'):
+        if(expected_passfail_value!=None and device_csv_name!=None):
             print("Specify either expected_passfail_value or device_csv_name")
             exit(1)
         if(group_name!=None):
@@ -765,7 +765,7 @@ class Candela:
                                                 pk_passwd=pk_passwd,
                                                 pac_file=pac_file,
                                                 server_ip=server_ip,
-                                                device_list=arg_dev_list,expected_passfail_value=expected_passfail_value,device_csv_name=device_csv_name+'.csv')
+                                                device_list=arg_dev_list,expected_passfail_value=expected_passfail_value,device_csv_name=device_csv_name)
         self.http_test.http_test_duration = http_test_duration
         self.http_test.Bands = Bands
         self.http_test.data = {}
@@ -1355,10 +1355,10 @@ class Candela:
                             test_name=None,
                             background_run = False,ssid=None,password=None,security=None,file_name=None,group_name=None,profile_name=None,eap_method='DEFAULT',eap_identity='',ieee80211=True,ieee80211u=True,ieee80211w=1,enable_pkc=True,
                   bss_transition=True,power_save=True,disable_ofdma=True,roam_ft_ds=True,key_management='DEFAULT',pairwise='[BLANK]',private_key='[BLANK]',ca_cert='[BLANK]',client_cert='[BLANK]',pk_passwd='[BLANK]',pac_file='[BLANK]',
-                  server_ip=None,expected_passfail_value=None,device_csv_name='device'
+                  server_ip=None,expected_passfail_value=None,device_csv_name=None
                               ):
         
-        if(expected_passfail_value!=None and device_csv_name!=None and device_csv_name!='device'):
+        if(expected_passfail_value!=None and device_csv_name!=None):
             print("Specify either expected_passfail_value or device_csv_name")
             exit(1)
         if do_interopability:
@@ -1470,7 +1470,7 @@ class Candela:
                         pk_passwd=pk_passwd,
                         pac_file=pac_file,
                         server_ip=server_ip,
-                        csv_direction=csv_direction,expected_passfail_value=expected_passfail_value,device_csv_name=device_csv_name+'.csv'
+                        csv_direction=csv_direction,expected_passfail_value=expected_passfail_value,device_csv_name=device_csv_name
                        )
         
         self.throughput_test.os_type()
@@ -2051,12 +2051,12 @@ class Candela:
                     incremental = False,incremental_capacity=None,postcleanup=False,
                     precleanup=False,test_name=None,background_run=False,file_name=None,group_name=None,profile_name=None,eap_method='DEFAULT',eap_identity='',ieee80211=True,ieee80211u=True,ieee80211w=1,enable_pkc=True,
                   bss_transition=True,power_save=True,disable_ofdma=True,roam_ft_ds=True,key_management='DEFAULT',pairwise='[BLANK]',private_key='[BLANK]',ca_cert='[BLANK]',client_cert='[BLANK]',pk_passwd='[BLANK]',pac_file='[BLANK]',
-                  server_ip=None,expected_passfail_value=None,device_csv_name='device'):
+                  server_ip=None,expected_passfail_value=None,device_csv_name=None):
         if device_list!="":
             device_list = self.filter_iOS_devices(device_list)
         
         webgui_incremental=incremental_capacity
-        if(expected_passfail_value!=None and device_csv_name!=None and device_csv_name!='device'):
+        if(expected_passfail_value!=None and device_csv_name!=None):
             print("Specify either expected_passfail_value or device_csv_name")
             exit(1)
         if(group_name!=None):
@@ -2115,7 +2115,7 @@ class Candela:
                         pac_file=pac_file,
                         server_ip=server_ip,
                         expected_passfail_value=expected_passfail_value,
-                        device_csv_name=device_csv_name+'.csv'
+                        device_csv_name=device_csv_name
                         )
         resource_ids_sm = []
         resource_set = set()
@@ -2126,7 +2126,8 @@ class Candela:
         #  Process resource IDs when web GUI is enabled
 
         config_obj=DeviceConfig.DeviceConfig(lanforge_ip=self.lanforge_ip,file_name=file_name)
-        config_obj.device_csv_file(csv_name=device_csv_name+'.csv')
+        if not expected_passfail_value and device_csv_name==None :
+            config_obj.device_csv_file(csv_name="device.csv")
         if(group_name!=None and file_name!=None and profile_name!=None):
             selected_groups=group_name.split(',')
             selected_profiles=profile_name.split(',')
@@ -2311,12 +2312,12 @@ class Candela:
             exit()
         if len(available_resources) > 0:
             device_map={}
-            if(not expected_passfail_value):
+            if(not expected_passfail_value and device_csv_name==None):
                 expected_val=input("Enter the expected value for the following devices{} eg 8,6,2: ".format(available_resources)).split(',')
                 if(len(available_resources)==len(expected_val)):
                     for i in range(len(available_resources)):
                         device_map[self.web_browser_test.android_list[i].split('.')[0]+'.'+self.web_browser_test.android_list[i].split('.')[1]]=expected_val[i]
-                    config_obj.update_device_csv(device_csv_name+'.csv','RealBrowser',device_map)
+                    config_obj.update_device_csv('device.csv','RealBrowser',device_map)
                 else:
                     print("Enter correct number of values")
                     exit(0)
@@ -2680,7 +2681,7 @@ class Candela:
                             real_passwd=None,
                             real_security=None,file_name=None,group_name=None,profile_name=None,eap_method='DEFAULT',eap_identity='',ieee80211=True,ieee80211u=True,ieee80211w=1,enable_pkc=True,
                   bss_transition=True,power_save=True,disable_ofdma=True,roam_ft_ds=True,key_management='DEFAULT',pairwise='[BLANK]',private_key='[BLANK]',ca_cert='[BLANK]',client_cert='[BLANK]',pk_passwd='[BLANK]',pac_file='[BLANK]',
-                  server_ip=None,device_csv_name='device',expected_passfail_value=None
+                  server_ip=None,device_csv_name=None,expected_passfail_value=None
                     ):
             # use for creating multicast dictionary
         
@@ -2694,7 +2695,7 @@ class Candela:
                     dir='_UL'
             else:
                     dir='_DL'
-            if(expected_passfail_value!=None and device_csv_name!=None and device_csv_name!='device'):
+            if(expected_passfail_value!=None and device_csv_name!=None):
                 print("Specify either expected_passfail_value or device_csv_name")
                 exit(1)
 
@@ -2726,7 +2727,8 @@ class Candela:
                 exit(1)
             if((group_name!=None and profile_name!=None and file_name!=None and device_list==[] and real_ssid==None and (len(selected_groups)==len(selected_profiles))) or(group_name==None and profile_name==None and file_name==None and real_ssid!=None and real_passwd!=None and real_security!=None) or (group_name==None and profile_name==None and file_name==None and real_ssid!=None and real_passwd==None and real_security.lower() =='open')):
                 config_obj=DeviceConfig.DeviceConfig(lanforge_ip=self.lanforge_ip,file_name=file_name)
-                config_obj.device_csv_file(csv_name=device_csv_name+'.csv')
+                if not expected_passfail_value and device_csv_name==None :
+                    config_obj.device_csv_file(csv_name="device.csv")
                 if(group_name!=None and file_name!=None and profile_name!=None):
                         selected_groups=group_name.split(',')
                         selected_profiles=profile_name.split(',')
@@ -2852,14 +2854,15 @@ class Candela:
                         exit(0)
                     else:
                         for endp in endp_input_list:
-                            if(not expected_passfail_value):
+                            if(not expected_passfail_value and device_csv_name == None):
                                 device_map={}
                                 expected_val=input("Enter the expected {} value for the following devices{} eg 8,6,2: ".format(endp,sample_list)).split(',')
                                 if(len(sample_list)==len(expected_val)):
                                     for i in range(len(sample_list)):
                                         device_map[sample_list[i].split('.')[0]+'.'+sample_list[i].split('.')[1]]=expected_val[i]
                                             
-                                    config_obj.update_device_csv(device_csv_name+'.csv',endp,device_map)
+                                    config_obj.update_device_csv('device.csv',endp,device_map)
+                                    device_csv_name="device.csv"
                                 else:
                                     print("Enter correct number of values")
                                     exit(0)
@@ -2940,7 +2943,7 @@ class Candela:
                                                     real=real_devices,
                                                     endp_input_list=endp_input_list,
                                                     graph_input_list=graph_input_list,
-                                                    expected_passfail_value=expected_passfail_value,device_csv_name=device_csv_name+'.csv'
+                                                    expected_passfail_value=expected_passfail_value,device_csv_name=device_csv_name
                                                     )
             else:
                 self.multicast_test = L3VariableTime(endp_types=endp_types,
@@ -3092,8 +3095,8 @@ class Candela:
                         # wait_time=args.wait_time,
                         suporrted_release=['12'],
                         device_list="",
-                        forget_network=True,expected_passfail_value=None,device_csv_name='device'):
-        if(expected_passfail_value!=None and device_csv_name!=None and device_csv_name!='device'):
+                        forget_network=True,expected_passfail_value=None,device_csv_name=None):
+        if(expected_passfail_value!=None and device_csv_name!=None):
             print("Specify either expected_passfail_value or device_csv_name")
             exit(1)
         self.port_reset_object = InteropPortReset(
@@ -3108,7 +3111,7 @@ class Candela:
                            suporrted_release=suporrted_release,
                            mgr_ip=mgr_ip,
                            device_list=device_list,
-                           forget_network=forget_network,expected_passfail_value=expected_passfail_value,device_csv_name=device_csv_name+'.csv'
+                           forget_network=forget_network,expected_passfail_value=expected_passfail_value,device_csv_name=device_csv_name
                            )
         self.port_reset_object.selecting_devices_from_available()
         self.reset_dict, self.preset_duration = self.port_reset_object.run()

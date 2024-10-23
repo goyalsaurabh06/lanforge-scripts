@@ -196,7 +196,8 @@ class HttpDownload(Realm):
         device_found = False
         port_eid_list, same_eid_list,original_port_list=[],[],[]
         obj=DeviceConfig.DeviceConfig(lanforge_ip=self.host,file_name=self.file_name)
-        obj.device_csv_file(csv_name=self.device_csv_name)
+        if not self.expected_passfail_value and self.device_csv_name==None :
+            obj.device_csv_file(csv_name="device.csv")
         if(self.group_name!=None and self.file_name!=None and self.device_list==[] and self.profile_name!=None):
             selected_groups=self.group_name.split(',')
             selected_profiles=self.profile_name.split(',')
@@ -373,12 +374,13 @@ class HttpDownload(Realm):
 
             if len(available_list) > 0:
                 device_map={}
-                if(not self.expected_passfail_value):
+                if(not self.expected_passfail_value and self.device_csv_name==None):
                     expected_val=input("Enter the expected url_count value for the following devices{} eg 8,6,2: ".format(available_list)).split(',')
                     if(len(available_list)==len(expected_val)):
                         for i in range(len(available_list)):
                             device_map[available_list[i]]=expected_val[i]
-                        obj.update_device_csv(self.device_csv_name,'HTTP',device_map)
+                        obj.update_device_csv("device.csv",'HTTP',device_map)
+                        self.device_csv_name="device.csv"
                     else:
                         print("Enter correct number of values")
                         exit(0)
@@ -1453,7 +1455,7 @@ def main():
     optional.add_argument("--pac_file", type=str,default='[BLANK]')
     optional.add_argument("--server_ip",type=str,default=None)
     optional.add_argument("--expected_passfail_value",help="Specify the expected urlcount value for pass/fail")
-    optional.add_argument("--device_csv_name",type=str,help="Specify the device csv name for pass/fail",default='device')
+    optional.add_argument("--device_csv_name",type=str,help="Specify the device csv name for pass/fail",default=None)
     
     args = parser.parse_args()
     args.bands.sort()
@@ -1473,7 +1475,7 @@ def main():
     # Check for Both being used independently
     if len(args.bands) > 1 and "Both" in args.bands:
         raise ValueError("'Both' test type must be used independently!")
-    if(args.expected_passfail_value!=None and args.device_csv_name!=None and args.device_csv_name!='device'):
+    if(args.expected_passfail_value!=None and args.device_csv_name!=None):
         print("Specify either expected_passfail_value or device_csv_name")
         exit(1)
     if(args.group_name!=None):
@@ -1580,7 +1582,8 @@ def main():
                                 pac_file=args.pac_file,
                                 server_ip=args.server_ip,
                                 expected_passfail_value=args.expected_passfail_value,
-                                device_csv_name=args.device_csv_name+'.csv'
+                                device_csv_name=args.device_csv_name
+
                             )
             
             if args.client_type == "Real":
