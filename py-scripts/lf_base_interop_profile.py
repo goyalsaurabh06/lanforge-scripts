@@ -1411,7 +1411,7 @@ class RealDevice(Realm):
         print(df)
         return [self.selected_devices, self.report_labels, self.selected_macs]
 
-    async def configure_wifi_groups(self,select_serials,serials_input,ssid_input,passwd_input,enc_input,eap_method_input,eap_identity_input,ieee80211,key_management,private_key,ca_cert,client_cert,pk_passwd,pac_file):
+    async def configure_wifi_groups(self,select_serials,serials_input,ssid_input,passwd_input,enc_input,eap_method_input,eap_identity_input,ieee80211=True,key_management='DEFAULT',private_key='[BLANK]',ca_cert='[BLANK]',client_cert='[BLANK]',pk_passwd='[BLANK]',pac_file='[BLANK]'):
         self.station_list = []
         selected_androids = []
         selected_androids_temp = [] 
