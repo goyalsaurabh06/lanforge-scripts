@@ -255,7 +255,10 @@ class Ping(Realm):
             if(real_sta_list == ['all']):
                 self.real_sta_list, _, _ = real_devices.query_user(dowebgui=True, device_list='all')
             else:
-                self.real_sta_list, _, _ = real_devices.query_user(dowebgui=True, device_list=','.join(real_sta_list))
+                real_list=[]
+                for i in range(len(real_sta_list)):
+                    real_list.append(real_sta_list[i].split('.')[0]+'.'+real_sta_list[i].split('.')[1])
+                self.real_sta_list, _, _ = real_devices.query_user(dowebgui=True, device_list=','.join(real_list))
         if base_interop_obj is not None:
             self.Devices = base_interop_obj
 
