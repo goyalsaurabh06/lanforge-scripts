@@ -882,7 +882,7 @@ class RealBrowserTest(Realm):
         conn = []
         timeouts = []
         # Check if only one CX endpoint is created
-        if len(self.created_cx.keys()) >1:
+        if len(self.created_cx.keys()) >1:    
             data = data['endpoint']
             for endpoint in data:
                 for key, value in endpoint.items():
@@ -1714,7 +1714,8 @@ class RealBrowserTest(Realm):
                         test_input_list.append(row['RealBrowser'])
                 
                 for j in range(len(test_input_list)):
-                    if(int(test_input_list[j])<=self.req_total_urls[i][j]):
+                    # print("1111",type(test_input_list[j]),"22222",type(self.req_total_urls[i][j]))
+                    if(float(test_input_list[j])<=float(self.req_total_urls[i][j])):
                         pass_fail_list.append('PASS')
                     else:
                         pass_fail_list.append('FAIL')
@@ -1722,7 +1723,7 @@ class RealBrowserTest(Realm):
                 test_input_list=[self.expected_passfail_value for val in range(len(self.device_type[i]))]
                 pass_fail_list=[]
                 for j in range(len(test_input_list)):
-                    if(int(self.expected_passfail_value) <= dataset2[i][j]):
+                    if(float(self.expected_passfail_value) <= float(dataset2[i][j])):
                         pass_fail_list.append("PASS")
                     else:
                         pass_fail_list.append("FAIL")
@@ -2155,7 +2156,6 @@ def main():
             # Case where args.no_laptops flag is set
             # if args.no_laptops:
                 # Retrieve all Android devices if no_laptops flag is True
-            obj.android_devices = obj.devices.get_devices(only_androids=True)
             # else:
             #     # Retrieve all devices and their OS types if no_laptops flag is False
             #     devices,os_types_dict = obj.devices.get_devices(androids=True,laptops=True)
@@ -2201,6 +2201,7 @@ def main():
                     asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
 
 
+                obj.android_devices = obj.devices.get_devices(only_androids=True)
                 # Extract second part of resource IDs and sort them
                 obj.resource_ids = ",".join(id.split(".")[1] for id in args.device_list.split(","))
                 resource_ids_sm = obj.resource_ids
