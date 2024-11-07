@@ -132,7 +132,7 @@ class ADB_DEVICES(Realm):
         data_list_1 = []
 
         for port_data in port_list:
-            print(port_data)
+            
             curr_ssid, curr_passwd, curr_encryption, curr_eap_method, curr_eap_identity , server_ip = port_data["ssid"], port_data["passwd"], port_data["enc"], port_data["eap_method"], port_data["eap_identity"], port_data["server_ip"]
             
             username = port_data["user-name"]
@@ -1172,12 +1172,12 @@ class DeviceConfig(Realm):
                             temp = obj.copy()
                             temp["group_name"] = g_name
                             data_object.append(temp)
-                            print("DO",data_object)
+                            
                         elif obj["type"] == "laptop" and obj["hostname"] in g_values:
                             temp = obj.copy()
                             temp["group_name"] = g_name
                             data_object.append(temp)
-                    print("Data object",data_object)
+                    # print("Data object",data_object)
             print("Following are the selected groups : ")
             self.display_groups(data=selected_group)
         else:
@@ -1353,7 +1353,7 @@ class DeviceConfig(Realm):
         json_data = df.set_index('Profile').to_dict(orient='index')
         
         self.profile_data = json_data
-        print("proffff data",self.profile_data)
+        # print("proffff data",self.profile_data)
         if not data:
             return json_data
         else:
@@ -1425,8 +1425,8 @@ class DeviceConfig(Realm):
                 device_obj["ssid"] = wifi_config.get("ssid")
                 device_obj["passwd"] = wifi_config.get("passwd")
                 device_obj["enc"] = wifi_config.get("enc")
-                print("after",device_obj)
-                if device_obj.get("serial") in device_list or device_obj.get("hostname") in device_list or (device_obj.get("shelf")+'.'+device_obj.get("resource")) in device_list:
+                # print("after",device_obj)
+                if device_obj.get("serial") in device_list or device_obj.get("hostname") in device_list or (device_obj.get("eid")) in device_list or (device_obj.get("shelf") +'.'+device_obj.get("resource")) in device_list :
                     
                     device_obj["ieee80211"] = wifi_config.get("ieee80211")
                     device_obj["eap_method"] = wifi_config.get("eap_method")
@@ -1450,7 +1450,7 @@ class DeviceConfig(Realm):
 
                         selected_laptop_devices.append(device_obj)
                     else:
-                        print("CONSFGFFWDGIY",wifi_config)
+                        
                         device_obj["server_ip"] = wifi_config.get("server_ip")
                         selected_adb_devices.append(device_obj)
         else:
