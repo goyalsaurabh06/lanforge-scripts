@@ -69,7 +69,8 @@ class Roam(Realm):
                  frequency=-1,
                  iterations=None,
                  softroam=True,
-                 real_devices=True
+                 real_devices=True,expected_passfail_val=None,
+                 csv_name=None
                  ):
         super().__init__(lanforge_ip, port)
 
@@ -126,6 +127,8 @@ class Roam(Realm):
         self.bssid_based_totals = {}
         self.station_based_roam_count = {}
         self.pcap_names = []
+        self.expected_passfail_val=expected_passfail_val
+        self.csv_name=csv_name
 
         if(len(self.attenuator_modules) == 1):
             logging.error('Cannot perform roaming with only one module. Please provide atleast two modules.')
@@ -927,48 +930,73 @@ class Roam(Realm):
         report.set_csv_filename(station_based_graph_png)
         report.move_csv_file()
         report.build_graph()
-        res_list=[]
-        test_input_list=[]
-        pass_fail_list=[]
-       # print("urllllll ksoawruodsn",pass_fail_list,self.url_data)
-        for client in [ device_level_data[station]['OS'] for station in self.station_based_roam_count.keys()]:
-            if(client!='Android'):
-                res_list.append([ device_level_data[station]['Device'] for station in self.station_based_roam_count.keys()])
-            else:
-                interop_tab_data = self.json_get('/adb/')["devices"]
-                for dev in interop_tab_data:
-                    for item in dev.values():
-                        if(item['user-name'] in [ device_level_data[station]['Device'] for station in self.station_based_roam_count.keys()]):
-                            res_list.append(item['name'].split('.')[2])
+        if(not self.expected_passfail_val):
 
-        with open('device.csv', mode='r') as file:
-            reader = csv.DictReader(file)
-            rows = list(reader)
-            fieldnames = reader.fieldnames
-        for row in rows:
-            device = row['DeviceList']
-            #print(row)  
-            if device in res_list:
-                test_input_list.append(row['Roaming'])
-            successful_roams=list(self.station_based_roam_count.values())
+            res_list=[]
+            test_input_list=[]
+            pass_fail_list=[]
+            for client in [ device_level_data[station]['OS'] for station in self.station_based_roam_count.keys()]:
+                if(client!='Android'):
+                    for device in device_level_data.values():
+                        if(device['Device'] not in res_list):
+                            res_list.append(device['Device'])
+                        
+                else:
+                    interop_tab_data = self.json_get('/adb/')["devices"]
+                    for dev in interop_tab_data:
+                        for item in dev.values():
+                            if(item['user-name'] in [ device_level_data[station]['Device'] for station in self.station_based_roam_count.keys()]):
+                                res_list.append(item['name'].split('.')[2])
+            with open(self.csv_name, mode='r') as file:
+                reader = csv.DictReader(file)
+                rows = list(reader)
+                fieldnames = reader.fieldnames
+            for row in rows:
+                device = row['DeviceList']
+                if device in res_list:
+                    test_input_list.append(row['Roaming'])
+                    print(device,test_input_list)  
 
-        for i in range(len(test_input_list)):
-            print("555555",test_input_list[i],successful_roams[i])
-            if(int(test_input_list[i])<=successful_roams[i]):
-                pass_fail_list.append('PASS')
-            else:
-                pass_fail_list.append('FAIL')
-        station_based_roam_data = pd.DataFrame({
-            'Device': [ device_level_data[station]['Device'] for station in self.station_based_roam_count.keys()],
-            'OS': [ device_level_data[station]['OS'] for station in self.station_based_roam_count.keys()],
-            'MAC': [ device_level_data[station]['mac'] for station in self.station_based_roam_count.keys()],
-            'Signal Strength (dBm)': [ device_level_data[station]['Signal'] for station in self.station_based_roam_count.keys()],
-            'Attempted Roams': station_based_total_attempted_roams,
-            'Successful Roams': list(self.station_based_roam_count.values()),
-            'Failed Roams': station_based_failed_roams,
-            'Expected Roams':test_input_list,
-            'Status':pass_fail_list
-        })
+                successful_roams=list(self.station_based_roam_count.values())
+
+            for i in range(len(test_input_list)):
+                print("555555",test_input_list[i],successful_roams[i])
+                if(int(test_input_list[i])<=successful_roams[i]):
+                    pass_fail_list.append('PASS')
+                else:
+                    pass_fail_list.append('FAIL')
+            station_based_roam_data = pd.DataFrame({
+                'Device': [ device_level_data[station]['Device'] for station in self.station_based_roam_count.keys()],
+                'OS': [ device_level_data[station]['OS'] for station in self.station_based_roam_count.keys()],
+                'MAC': [ device_level_data[station]['mac'] for station in self.station_based_roam_count.keys()],
+                'Signal Strength (dBm)': [ device_level_data[station]['Signal'] for station in self.station_based_roam_count.keys()],
+                'Attempted Roams': station_based_total_attempted_roams,
+                'Successful Roams': list(self.station_based_roam_count.values()),
+                'Failed Roams': station_based_failed_roams,
+                'Expected Roams':test_input_list,
+                'Status':pass_fail_list
+            })
+        else:
+           
+                test_input_list=[self.expected_passfail_val for val in range(len(station_based_total_attempted_roams))]
+                pass_fail_list=[]
+                successful_roams=list(self.station_based_roam_count.values())
+                for i in range(len(test_input_list)):
+                    if(int(self.expected_passfail_val) <= successful_roams[i]):
+                        pass_fail_list.append("PASS")
+                    else:
+                        pass_fail_list.append("FAIL")
+                station_based_roam_data = pd.DataFrame({
+                'Device': [ device_level_data[station]['Device'] for station in self.station_based_roam_count.keys()],
+                'OS': [ device_level_data[station]['OS'] for station in self.station_based_roam_count.keys()],
+                'MAC': [ device_level_data[station]['mac'] for station in self.station_based_roam_count.keys()],
+                'Signal Strength (dBm)': [ device_level_data[station]['Signal'] for station in self.station_based_roam_count.keys()],
+                'Attempted Roams': station_based_total_attempted_roams,
+                'Successful Roams': list(self.station_based_roam_count.values()),
+                'Failed Roams': station_based_failed_roams,
+                'Expected Roams':test_input_list,
+                'Status':pass_fail_list
+            })
         print(station_based_roam_data)
         report.set_table_dataframe(station_based_roam_data)
         report.build_table()
@@ -1153,6 +1181,8 @@ def main():
 
     parser.add_argument("--lf_logger_config_json",
                         help="--lf_logger_config_json <json file> , json configuration of logger")
+    parser.add_argument('--expected_passfail_val', help='Enter the expected number of roams', default=None)
+    parser.add_argument('--csv_name',type=str, help='Enter the csv name to store expected values', default=None)
 
     args = parser.parse_args()
 
@@ -1171,25 +1201,31 @@ def main():
         # logger_config.lf_logger_config_json = "lf_logger_config.json"
         logger_config.lf_logger_config_json = args.lf_logger_config_json
         logger_config.load_lf_logger_config()
-
+    if args.csv_name!=None and args.expected_passfail_val:
+        print("Enter either --csv_name or --expected_passfail_val")
+        exit(0)
     bssids = []
     for bssid in args.bssids:
         bssids.append(bssid.upper())
     if (args.station_list is not None):
         stations = args.station_list.split(',')
+        # print("Ffffffffff",stati)
         obj=DeviceConfig.DeviceConfig(lanforge_ip=args.mgr,file_name='')
-        obj.device_csv_file()
+        if not args.expected_passfail_val and args.csv_name ==None:
+            obj.device_csv_file(csv_name="device.csv")
         device_list=[]
         expected_dict={}
         flag=0
         for sta in stations:
             device_list.append(sta.split('.')[0]+'.'+sta.split('.')[1])
-        expected_list=input("Enter the expected number to roams for {} eg:2,3: ".format(device_list)).split(',')
-       # print("11111111111111",device_list,expected_list)
-        for val in range(len(expected_list)):
-            expected_dict[device_list[val]]=expected_list[val]
-       # print("33333333333333333",expected_dict)
-        obj.update_device_csv('Roaming',expected_dict)
+        if(not args.expected_passfail_val and args.csv_name == None):
+            expected_list=input("Enter the expected number to roams for {} eg:2,3: ".format(device_list)).split(',')
+            for val in range(len(expected_list)):
+                expected_dict[device_list[val]]=expected_list[val]
+            obj.update_device_csv("device.csv",'Roaming',expected_dict)
+            args.csv_name="device.csv"
+        elif args.expected_passfail_val:
+            pass
         
 
         roam_test = Roam(
@@ -1216,7 +1252,9 @@ def main():
             wait_time=args.wait_time,
             channel=args.channel,
             frequency=args.frequency,
-            iterations=args.iterations
+            iterations=args.iterations,
+            expected_passfail_val=args.expected_passfail_val,
+            csv_name=args.csv_name
         )
         roam_test.station_list = stations
         print("ffff",roam_test.station_list)
@@ -1254,7 +1292,9 @@ def main():
             wait_time=args.wait_time,
             channel=args.channel,
             frequency=args.frequency,
-            iterations=args.iterations
+            iterations=args.iterations,
+            expected_passfail_val=args.expected_passfail_val,
+            csv_name=args.csv_name
         )
         print("sssssssssssss",roam_test.station_list)
         logging.info(

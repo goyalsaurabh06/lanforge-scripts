@@ -125,7 +125,8 @@ class VideoStreamingTest(Realm):
                 ca_cert=None,
                 client_cert=None,
                 pk_passwd=None,
-                pac_file=None,server_ip=None):
+                pac_file=None,server_ip=None,expected_passfail_val=None,
+                 csv_name=None):
         super().__init__(lfclient_host=host, lfclient_port=8080)
         self.adb_device_list = None
         self.host = host
@@ -179,6 +180,8 @@ class VideoStreamingTest(Realm):
         self.pk_passwd = pk_passwd
         self.pac_file = pac_file
         self.server_ip=server_ip
+        self.expected_passfail_val=expected_passfail_val
+        self.csv_name=csv_name
         self.devices = base_RealDevice(manager_ip = self.host, selected_bands = [])
         self.local_realm = realm.Realm(lfclient_host=self.host, lfclient_port=8080)
         self.port_util = PortUtils(self.local_realm)
@@ -1425,71 +1428,100 @@ class VideoStreamingTest(Realm):
 
 
             # Create a dataframe for the detailed result table and append it to the report
-
+        if(not self.expected_passfail_val):
             res_list=[]
-        test_input_list=[]
-        pass_fail_list=[]
-        interop_tab_data = self.json_get('/adb/')["devices"]
-        for client in range(len(device_type[:created_incremental_values[iter]])):
-            if(device_type[client]!='Android'):
-                res_list.append(username[:created_incremental_values[iter]][client])
-            else:
-                for dev in interop_tab_data:
-                    for item in dev.values():
-                        if(item['user-name']==username[:created_incremental_values[iter]][client]):
-                            res_list.append(item['name'].split('.')[2])
+            test_input_list=[]
+            pass_fail_list=[]
+            interop_tab_data = self.json_get('/adb/')["devices"]
+            for client in range(len(device_type[:created_incremental_values[iter]])):
+                if(device_type[client]!='Android'):
+                    res_list.append(username[:created_incremental_values[iter]][client])
+                else:
+                    for dev in interop_tab_data:
+                        for item in dev.values():
+                            if(item['user-name']==username[:created_incremental_values[iter]][client]):
+                                res_list.append(item['name'].split('.')[2])
+            if self.csv_name==None:
+                self.csv_name="device.csv"
+            with open(self.csv_name, mode='r') as file:
+                reader = csv.DictReader(file)
+                rows = list(reader)
+                fieldnames = reader.fieldnames
+            for row in rows:
+                device = row['DeviceList']
+                #print(row)  
+                if device in res_list:
+                    test_input_list.append(row['Videostreaming'])
+            for i in range(len(test_input_list)):
+                if(int(test_input_list[i])<=total_urls[:created_incremental_values[iter]][i]):
+                    pass_fail_list.append('PASS')
+                else:
+                    pass_fail_list.append('FAIL')
 
-        with open('device.csv', mode='r') as file:
-            reader = csv.DictReader(file)
-            rows = list(reader)
-            fieldnames = reader.fieldnames
-        for row in rows:
-            device = row['DeviceList']
-            #print(row)  
-            if device in res_list:
-                test_input_list.append(row['Videostreaming'])
-        for i in range(len(test_input_list)):
-            if(int(test_input_list[i])<=total_urls[:created_incremental_values[iter]][i]):
-                pass_fail_list.append('PASS')
-            else:
-                pass_fail_list.append('FAIL')
+                dataframe = {
+                    " DEVICE TYPE " : device_type[:created_incremental_values[iter]],
+                    " Username " : username[:created_incremental_values[iter]],
+                    " SSID " : ssid[:created_incremental_values[iter]] ,
+                    " MAC " : mac[:created_incremental_values[iter]],
+                    " Channel " : channel[:created_incremental_values[iter]],
+                    " Mode " : mode[:created_incremental_values[iter]],
+                    " Buffers" : total_buffer[:created_incremental_values[iter]],
+                    " Wait-Time(Sec)": wait_time_data,
+                    " Min Video Rate(Mbps) " : min_video_rate[:created_incremental_values[iter]],
+                    " Avg Video Rate(Mbps) " : avg_video_rate[:created_incremental_values[iter]],
+                    " Max Video Rate(Mbps) " : max_video_rate[:created_incremental_values[iter]],
+                    " Total URLs " : total_urls[:created_incremental_values[iter]],
+                    " Expected URLs ": test_input_list,
+                    " Total Errors " : total_err[:created_incremental_values[iter]],
+                    " RSSI (dbm)" : ['' if n == 0 else '-' + str(n) + " dbm" for n in rssi_data[:created_incremental_values[iter]]],
+                    " Link Speed ": tx_rate[:created_incremental_values[iter]],
+                    " Status ":pass_fail_list
+                }
+        else:
+            test_input_list=[self.expected_passfail_val for val in range(len(username[:created_incremental_values[iter]]))]
+            pass_fail_list=[]
+            for i in range(len(test_input_list)):
+                if(int(self.expected_passfail_val) <= total_urls[:created_incremental_values[iter]][i]):
+                    pass_fail_list.append("PASS")
+                else:
+                    pass_fail_list.append("FAIL")
+                dataframe = {
+                        " DEVICE TYPE " : device_type[:created_incremental_values[iter]],
+                        " Username " : username[:created_incremental_values[iter]],
+                        " SSID " : ssid[:created_incremental_values[iter]] ,
+                        " MAC " : mac[:created_incremental_values[iter]],
+                        " Channel " : channel[:created_incremental_values[iter]],
+                        " Mode " : mode[:created_incremental_values[iter]],
+                        " Buffers" : total_buffer[:created_incremental_values[iter]],
+                        " Wait-Time(Sec)": wait_time_data,
+                        " Min Video Rate(Mbps) " : min_video_rate[:created_incremental_values[iter]],
+                        " Avg Video Rate(Mbps) " : avg_video_rate[:created_incremental_values[iter]],
+                        " Max Video Rate(Mbps) " : max_video_rate[:created_incremental_values[iter]],
+                        " Total URLs " : total_urls[:created_incremental_values[iter]],
+                        " Expected URLs ": test_input_list,
+                        " Total Errors " : total_err[:created_incremental_values[iter]],
+                        " RSSI (dbm)" : ['' if n == 0 else '-' + str(n) + " dbm" for n in rssi_data[:created_incremental_values[iter]]],
+                        " Link Speed ": tx_rate[:created_incremental_values[iter]],
+                        " Status ":pass_fail_list
+                    }
+        dataframe1 = pd.DataFrame(dataframe)
+        report.set_table_dataframe(dataframe1)
+        report.build_table()
+        
 
-            dataframe = {
-                " DEVICE TYPE " : device_type[:created_incremental_values[iter]],
-                " Username " : username[:created_incremental_values[iter]],
-                " SSID " : ssid[:created_incremental_values[iter]] ,
-                " MAC " : mac[:created_incremental_values[iter]],
-                " Channel " : channel[:created_incremental_values[iter]],
-                " Mode " : mode[:created_incremental_values[iter]],
-                " Buffers" : total_buffer[:created_incremental_values[iter]],
-                " Wait-Time(Sec)": wait_time_data,
-                " Min Video Rate(Mbps) " : min_video_rate[:created_incremental_values[iter]],
-                " Avg Video Rate(Mbps) " : avg_video_rate[:created_incremental_values[iter]],
-                " Max Video Rate(Mbps) " : max_video_rate[:created_incremental_values[iter]],
-                " Total URLs " : total_urls[:created_incremental_values[iter]],
-                " Expected URLs ": test_input_list,
-                " Total Errors " : total_err[:created_incremental_values[iter]],
-                " RSSI (dbm)" : ['' if n == 0 else '-' + str(n) + " dbm" for n in rssi_data[:created_incremental_values[iter]]],
-                " Link Speed ": tx_rate[:created_incremental_values[iter]],
-                " Status ":pass_fail_list
-            }
-            dataframe1 = pd.DataFrame(dataframe)
-            report.set_table_dataframe(dataframe1)
-            report.build_table()
-            
 
 
-
-            # Set and build title for the overall results table
-            report.set_obj_html("Detailed Total Errors Table", "The below tables provides detailed information of total errors for the web browsing test.")
-            report.build_objective()
-            dataframe2 = {
-                            " DEVICE" : username[:created_incremental_values[iter]],
-                            " TOTAL ERRORS " : total_err[:created_incremental_values[iter]],
-                        }
-            dataframe3 = pd.DataFrame(dataframe2)
-            report.set_table_dataframe(dataframe3)
-            report.build_table()
+        # Set and build title for the overall results table
+        report.set_obj_html("Detailed Total Errors Table", "The below tables provides detailed information of total errors for the web browsing test.")
+        report.build_objective()
+        dataframe2 = {
+                        " DEVICE" : username[:created_incremental_values[iter]],
+                        " TOTAL ERRORS " : total_err[:created_incremental_values[iter]],
+                    }
+        dataframe3 = pd.DataFrame(dataframe2)
+        report.set_table_dataframe(dataframe3)
+        report.build_table()
+    
         report.build_footer()
         html_file = report.write_html()
         report.write_pdf()
@@ -1628,9 +1660,13 @@ def main():
     parser.add_argument("--pk_passwd", type=str,default='NA')
     parser.add_argument("--pac_file", type=str,default='NA')
     parser.add_argument("--server_ip", type=str,default='NA')
+    parser.add_argument('--expected_passfail_val', help='Enter the expected number of urls ', default=None)
+    parser.add_argument('--csv_name',type=str, help='Enter the csv name to store expected values', default=None)
     
     args = parser.parse_args()
-
+    if args.csv_name!=None and args.expected_passfail_val:
+        print("Enter either --csv_name or --expected_passfail_val")
+        exit(0)
     if args.help_summary:
         print(help_summary)
         exit(0)
@@ -1710,7 +1746,9 @@ def main():
                             client_cert=args.client_cert,
                             pk_passwd=args.pk_passwd,
                             pac_file=args.pac_file,
-                            server_ip=args.server_ip)
+                            server_ip=args.server_ip,
+                            expected_passfail_val=args.expected_passfail_val,
+                                csv_name=args.csv_name)
 
         resource_ids_sm = []
         resource_set = set()
@@ -1722,7 +1760,8 @@ def main():
         # other_list = []
         resource_ids_generated = ""
         config_obj=DeviceConfig.DeviceConfig(lanforge_ip=args.host,file_name=args.file_name)
-        config_obj.device_csv_file()
+        if not args.expected_passfail_val and args.csv_name==None:
+            config_obj.device_csv_file(csv_name="device.csv")
         if(args.group_name!=None and args.file_name!=None and args.profile_name!=None  and args.device_list==None):
                     selected_groups=args.group_name.split(',')
                     selected_profiles=args.profile_name.split(',')
@@ -1973,15 +2012,17 @@ def main():
         gave_incremental=False
         if(len(available_resources)>0):
             device_map={}
-            expected_val=input("Enter the expected value for the following devices{} eg 8,6,2: ".format(available_resources)).split(',')
-            if(len(available_resources)==len(expected_val)):
-                for i in range(len(available_resources)):
-                    device_map[obj.android_list[i].split('.')[0]+'.'+obj.android_list[i].split('.')[1]]=expected_val[i]
-                #print("DEVVVVVVVV",device_map)
-                config_obj.update_device_csv('Videostreaming',device_map)
-            else:
-                print("Enter correct number of values")
-                exit(0)
+            if(not args.expected_passfail_val and args.csv_name==None):
+                expected_val=input("Enter the expected value for the following devices{} eg 8,6,2: ".format(available_resources)).split(',')
+                if(len(available_resources)==len(expected_val)):
+                    for i in range(len(available_resources)):
+                        device_map[obj.android_list[i].split('.')[0]+'.'+obj.android_list[i].split('.')[1]]=expected_val[i]
+                    config_obj.update_device_csv("device.csv",'Videostreaming',device_map)
+                else:
+                    print("Enter correct number of values")
+                    exit(0)
+            elif args.expected_passfail_val:
+                    pass
         if len(resource_list_sorted)==0:
             logger.error("Selected Devices are not available in the lanforge")
             exit(1)

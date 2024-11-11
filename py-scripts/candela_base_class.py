@@ -31,6 +31,7 @@ lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 DeviceConfig=importlib.import_module("py-scripts.DeviceConfig")
 
 logger = logging.getLogger(__name__)
+DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
 
 
 class Candela:
@@ -509,9 +510,9 @@ class Candela:
         return device_list, report_labels, device_macs
 
     def start_ftp_test(self,
-                       ssid,
-                       password,
-                       security,
+                       ssid=None,
+                       password=None,
+                       security=None,
                        ap_name='',
                        band='5g',
                        direction='Download',
@@ -523,7 +524,25 @@ class Candela:
                        ssh_port=22,
                        clients_type='Real',
                        device_list=[],
-                       background=False):
+                       background=False,
+                       file_name=None,
+                 profile_name=None,group_name=None,eap_method=None,
+                 eap_identity=None,
+                 ieee80211=None,
+                 ieee80211u=None,
+                 ieee80211w=None,
+                 enable_pkc=None,
+                 bss_transition=None,
+                 power_save=None,
+                 disable_ofdma=None,
+                 roam_ft_ds=None,
+                 key_management=None,
+                 pairwise=None,
+                 private_key=None,
+                 ca_cert=None,
+                 client_cert=None,
+                 pk_passwd=None,
+                 pac_file=None,server_ip=None,expected_passfail_val=None,csv_name=None):
         """
         Method to start FTP test on the given device list
 
@@ -551,52 +570,93 @@ class Candela:
         #     for direction in directions:
         #         for file_size in file_sizes:
         # Start Test
-        device_list = self.filter_iOS_devices(device_list)
-        if len(device_list) == 0:
-            print('No devices specified.')
-            exit(1)
-        self.ftp_test = FtpTest(lfclient_host=self.lanforge_ip,
-                      lfclient_port=self.port,
-                      upstream=upstream,
-                      dut_ssid=ssid,
-                      dut_passwd=password,
-                      dut_security=security,
-                      band=band,
-                      ap_name=ap_name,
-                      file_size=file_size,
-                      direction=direction,
-                      lf_username=lf_username,
-                      lf_password=lf_password,
-                      # duration=pass_fail_duration(band, file_size),
-                      traffic_duration=traffic_duration,
-                      ssh_port=ssh_port,
-                      clients_type=clients_type,
-                      device_list=device_list
-                      )
+        if(group_name!=None):
+            selected_groups=group_name.split(',')
+        else:
+            selected_groups=[]
+        if(profile_name!=None):
+            selected_profiles=profile_name.split(',')
+        else:
+            selected_profiles=[]
+        if csv_name!=None and expected_passfail_val:
+            print("Enter either --csv_name or --expected_passfail_val")
+            exit(0)
+       # print(group_name,file_name,device_list,ssid,password,security)
+        if((group_name!=None and profile_name!=None and file_name!=None and device_list==[] and ssid==None and password==None and security==None and (len(selected_groups)==len(selected_profiles))) or(group_name==None and profile_name==None and file_name==None and ssid!=None and password!=None and security!=None)):
 
-        self.ftp_test.data = {}
-        self.ftp_test.file_create()
-        if clients_type == "Real":
-            self.ftp_test.query_realclients()
-        self.ftp_test.set_values()
-        self.ftp_test.count = 0
-        self.ftp_test.radio = '1.1.wiphy0'
-        # obj.precleanup()
-        self.ftp_test.build()
-        if not self.ftp_test.passes():
-            logger.info(self.ftp_test.get_fail_message())
-            exit(1)
+            device_list = self.filter_iOS_devices(device_list)
+            # if len(device_list) == 0:
+            #     print('No devices specified.')
+            #     exit(1)
+            self.ftp_test = FtpTest(lfclient_host=self.lanforge_ip,
+                        lfclient_port=self.port,
+                        upstream=upstream,
+                        dut_ssid=ssid,
+                        dut_passwd=password,
+                        dut_security=security,
+                        band=band,
+                        ap_name=ap_name,
+                        file_size=file_size,
+                        direction=direction,
+                        lf_username=lf_username,
+                        lf_password=lf_password,
+                        # duration=pass_fail_duration(band, file_size),
+                        traffic_duration=traffic_duration,
+                        ssh_port=ssh_port,
+                        clients_type=clients_type,
+                        device_list=device_list,
+                        group_name=group_name,
+                                    profile_name=profile_name,
+                                    file_name=file_name,eap_method=eap_method,
+                                    eap_identity=eap_identity,
+                                    ieee80211=ieee80211,
+                                    ieee80211u=ieee80211u,
+                                    ieee80211w=ieee80211w,
+                                    enable_pkc=enable_pkc,
+                                    bss_transition=bss_transition,
+                                    power_save=power_save,
+                                    disable_ofdma=disable_ofdma,
+                                    roam_ft_ds=roam_ft_ds,
+                                    key_management=key_management,
+                                    pairwise=pairwise,
+                                    private_key=private_key,
+                                    ca_cert=ca_cert,
+                                    client_cert=client_cert,
+                                    pk_passwd=pk_passwd,
+                                    pac_file=pac_file,
+                                    server_ip=server_ip,csv_name=csv_name,expected_passfail_val=expected_passfail_val)
 
-        # First time stamp
-        test_start_time = datetime.now()
-        logger.info("Traffic started running at {}".format(test_start_time))
-        self.ftp_test.start_time = test_start_time
-        self.ftp_test.start(False, False)
-        if not background:
-            time.sleep(int(self.ftp_test.traffic_duration))
-            self.stop_ftp_test()
-            self.generate_report_ftp_test()
-        
+            self.ftp_test.data = {}
+            self.ftp_test.file_create()
+            if clients_type == "Real":
+                self.ftp_test.query_realclients()
+            self.ftp_test.set_values()
+            self.ftp_test.count = 0
+            self.ftp_test.radio = '1.1.wiphy0'
+            # obj.precleanup()
+            self.ftp_test.build()
+            if not self.ftp_test.passes():
+                logger.info(self.ftp_test.get_fail_message())
+                exit(1)
+
+            # First time stamp
+            test_start_time = datetime.now()
+            logger.info("Traffic started running at {}".format(test_start_time))
+            self.ftp_test.start_time = test_start_time
+            self.ftp_test.start(False, False)
+            if not background:
+                time.sleep(int(self.ftp_test.traffic_duration))
+                self.stop_ftp_test()
+                self.generate_report_ftp_test()
+        elif(len(selected_groups)!=len(selected_profiles)):
+            print("Number of groups should match number of profiles")
+        elif(group_name!=None and profile_name!=None and file_name!=None and (device_list!=[] or ssid!=None or password!=None or security!=None)):
+            print("Either group name or device list should be entered not both")
+        elif(ssid!=None and profile_name!=None):
+            print(ssid,profile_name)
+            print("Either ssid or profile name should be given")
+        elif(device_list!=[] and (ssid==None or password==None or security==None)):
+            print("Please provide ssid password and security when device list is given")
 
     def stop_ftp_test(self):
         """
@@ -972,9 +1032,9 @@ class Candela:
         """
         device_list = kwargs.get("device_list",[])
         # device_list = self.filter_iOS_devices(device_list)
-        if len(device_list) == 0:
-            print('No devices specified.')
-            exit(1)
+        # if len(device_list) == 0:
+        #     print('No devices specified.')
+        #     exit(1)
         kwargs['device_list'] = device_list
         background_run = kwargs.get("background_run",False)
         if background_run:
@@ -983,12 +1043,39 @@ class Candela:
         else:
             self.start_qos(**kwargs)
     
-    def start_qos(self, ssid, password, security,
-                 ap_name, tos, upstream='eth1', traffic_type='lf_udp',
+    def start_qos(self, ssid=None, password=None, security=None,
+                 ap_name='', tos='', upstream='eth1', traffic_type='lf_udp',
                  side_a_min=6200000, side_b_min=6200000, side_a_max=0, side_b_max=0, 
                  test_duration=60, qos_serial_run=False, device_list=[],
-                 report_labels=[], device_macs=[],background_run = False):
-        
+                 report_labels=[], device_macs=[],background_run = False,
+                 file_name=None,
+                 profile_name=None,group_name=None,eap_method=None,
+                 eap_identity=None,
+                 ieee80211=None,
+                 ieee80211u=None,
+                 ieee80211w=None,
+                 enable_pkc=None,
+                 bss_transition=None,
+                 power_save=None,
+                 disable_ofdma=None,
+                 roam_ft_ds=None,
+                 key_management=None,
+                 pairwise=None,
+                 private_key=None,
+                 ca_cert=None,
+                 client_cert=None,
+                 pk_passwd=None,
+                 pac_file=None,server_ip=None,
+                 csv_direction=None,csv_name=None,expected_passfail_val=None):
+        if(side_a_min!=0 and side_b_min!=0):
+            direction='L3_'+traffic_type.split('_')[1].upper()+'_BiDi'
+        elif( side_a_min!=0):
+            direction='L3_'+traffic_type.split('_')[1].upper()+'_UL'
+        else:
+            direction='L3_'+traffic_type.split('_')[1].upper()+'_DL'
+        if csv_name!=None and expected_passfail_val:
+            print("Enter either --csv_name or --expected_passfail_val")
+            exit(0)
         if not background_run:
             qos_test_duration = test_duration
         else:
@@ -997,87 +1084,135 @@ class Candela:
 
         test_results = {'test_results': []}
         data = {}
+        if(group_name!=None):
+            selected_groups=group_name.split(',')
+        else:
+            selected_groups=[]
+        if(profile_name!=None):
+            selected_profiles=profile_name.split(',')
+        else:
+            selected_profiles=[]
         # qos test for real clients
+        #print("55555555555555",group_name,profile_name,device_list,ssid,password,file_name,security)
         def qos_test_overall_real(qos_tos_real=None):
-            self.qos_test = qos_test.ThroughputQOS(host=self.lanforge_ip,
-                                                    port=self.port,
-                                                    number_template="0000",
-                                                    ap_name=ap_name,
-                                                    name_prefix="TOS-",
-                                                    tos=qos_tos_real if qos_serial_run else ','.join(tos),
-                                                    ssid=ssid,
-                                                    password=password,
-                                                    security=security,
-                                                    upstream=upstream,
-                                                    test_duration=qos_test_duration,
-                                                    use_ht160=False,
-                                                    side_a_min_rate=int(side_a_min),
-                                                    side_b_min_rate=int(side_b_min),
-                                                    side_a_max_rate=int(side_a_max),
-                                                    side_b_max_rate=int(side_b_max),
-                                                    traffic_type=traffic_type,
-                                                    ip=self.lanforge_ip,
-                                                    _debug_on=False)
+            if((group_name!=None and profile_name!=None and file_name!=None and device_list==[] and ssid==None and (len(selected_groups)==len(selected_profiles))) or(group_name==None and profile_name==None and file_name==None and ssid!=None and password!=None and security!=None)):
 
-            data = {}
-            self.qos_test.background_run = background_run
-            self.qos_test.input_devices_list = device_list
-            self.qos_test.real_client_list = report_labels
-            self.qos_test.real_client_list1 = report_labels
-            self.qos_test.mac_id_list = device_macs
-            self.qos_test.build()
-            self.qos_test.start()
-            time.sleep(10)
-            try:
+                self.qos_test = qos_test.ThroughputQOS(host=self.lanforge_ip,
+                                                        port=self.port,
+                                                        number_template="0000",
+                                                        ap_name=ap_name,
+                                                        name_prefix="TOS-",
+                                                        #tos=tos,
+                                                        tos=qos_tos_real if qos_serial_run else ','.join(tos),
+                                                        ssid=ssid,device_list=device_list,input_devices_list=[],
+                                                        password=password,
+                                                        security=security,
+                                                        upstream=upstream,
+                                                        test_duration=qos_test_duration,
+                                                        use_ht160=False,
+                                                        side_a_min_rate=int(side_a_min),
+                                                        side_b_min_rate=int(side_b_min),
+                                                        side_a_max_rate=int(side_a_max),
+                                                        side_b_max_rate=int(side_b_max),
+                                                        traffic_type=traffic_type,
+                                                        ip=self.lanforge_ip,
+                                                        _debug_on=False,
+                                                        group_name=group_name,
+                                    profile_name=profile_name,
+                                    file_name=file_name,eap_method=eap_method,
+                                    eap_identity=eap_identity,
+                                    ieee80211=ieee80211,
+                                    ieee80211u=ieee80211u,
+                                    ieee80211w=ieee80211w,
+                                    enable_pkc=enable_pkc,
+                                    bss_transition=bss_transition,
+                                    power_save=power_save,
+                                    disable_ofdma=disable_ofdma,
+                                    roam_ft_ds=roam_ft_ds,
+                                    key_management=key_management,
+                                    pairwise=pairwise,
+                                    private_key=private_key,
+                                    ca_cert=ca_cert,
+                                    client_cert=client_cert,
+                                    pk_passwd=pk_passwd,
+                                    pac_file=pac_file,
+                                    server_ip=server_ip,
+                                    csv_direction=direction,
+                                    csv_name=csv_name,
+                                    expected_passfail_val=expected_passfail_val)
+
+                data = {}
+                self.qos_test.background_run = background_run
+                # self.qos_test.input_devices_list = device_list
+                self.qos_test.real_client_list = report_labels
+                self.qos_test.real_client_list1 = report_labels
+                self.qos_test.mac_id_list = device_macs
+                self.qos_test.os_type()
+                self.qos_test.phantom_check()
+                self.qos_test.build()
+                self.qos_test.start()
+                time.sleep(10)
                 connections_download, connections_upload, drop_a_per, drop_b_per = self.qos_test.monitor()
-            except Exception as e:
-                logger.info(f"Failed at Monitoring the CX... {e}")    
-            if not background_run:
-                self.qos_test.stop()
-                time.sleep(5)
-                test_results['test_results'].append(
-                    self.qos_test.evaluate_qos(connections_download, connections_upload, drop_a_per, drop_b_per))
-                data.update(test_results)
-                test_end_time = datetime.now().strftime("%b %d %H:%M:%S")
-                logger.info("QOS Test ended at: {}".format(test_end_time))
+                # try:
+                #     connections_download, connections_upload, drop_a_per, drop_b_per = self.qos_test.monitor()
+                # except Exception as e:
+                #     logger.info(f"Failed at Monitoring the CX... {e}")    
+                if not background_run:
+                    self.qos_test.stop()
+                    time.sleep(5)
+                    test_results['test_results'].append(
+                        self.qos_test.evaluate_qos(connections_download, connections_upload, drop_a_per, drop_b_per))
+                    data.update(test_results)
+                    test_end_time = datetime.now().strftime("%b %d %H:%M:%S")
+                    logger.info("QOS Test ended at: {}".format(test_end_time))
 
 
-                self.qos_test.cleanup()
-                logging.debug('data:{}'.format(data))
+                    self.qos_test.cleanup()
+                    logging.debug('data:{}'.format(data))
 
-                if qos_serial_run:
-                    result1, result2, result3, result4 = {}, {}, {}, {}
-                    # separating dictionaries for each value in the list
-                    result_dicts = []
-                    for item in data['test_results']:
-                        result_dict = {'test_results': [item]}
-                        result_dicts.append(result_dict)
+                    if qos_serial_run:
+                        result1, result2, result3, result4 = {}, {}, {}, {}
+                        # separating dictionaries for each value in the list
+                        result_dicts = []
+                        for item in data['test_results']:
+                            result_dict = {'test_results': [item]}
+                            result_dicts.append(result_dict)
 
-                    if len(result_dicts) == 1:
-                        logger.info("yes - 1")
-                        result1 = result_dicts[0]
-                        data1 = result1
-                    if len(result_dicts) == 2:
-                        logger.info("yes - 2")
-                        result1, result2 = result_dicts[0], result_dicts[1]
-                        data1 = result2
-                    if len(result_dicts) == 3:
-                        logger.info("yes - 3")
-                        result1, result2, result3 = result_dicts[0], result_dicts[1], result_dicts[2]
-                        data1 = result3
-                    if len(result_dicts) == 4:
-                        logger.info("yes - 4")
-                        result1, result2, result3, result4 = result_dicts[0], result_dicts[1], result_dicts[2], result_dicts[3]
-                        data1 = result4
-                    data = data1
-                self.qos_test.generate_report(data=data,
-                                                input_setup_info={"contact": "support@candelatech.com"},
-                                                report_path="",
-                                                result_dir_name=f"Qos_Test_Report")
-                data_set, load, res = self.qos_test.generate_graph_data_set(data)
-                return data
+                        if len(result_dicts) == 1:
+                            logger.info("yes - 1")
+                            result1 = result_dicts[0]
+                            data1 = result1
+                        if len(result_dicts) == 2:
+                            logger.info("yes - 2")
+                            result1, result2 = result_dicts[0], result_dicts[1]
+                            data1 = result2
+                        if len(result_dicts) == 3:
+                            logger.info("yes - 3")
+                            result1, result2, result3 = result_dicts[0], result_dicts[1], result_dicts[2]
+                            data1 = result3
+                        if len(result_dicts) == 4:
+                            logger.info("yes - 4")
+                            result1, result2, result3, result4 = result_dicts[0], result_dicts[1], result_dicts[2], result_dicts[3]
+                            data1 = result4
+                        data = data1
+                    self.qos_test.generate_report(data=data,
+                                                    input_setup_info={"contact": "support@candelatech.com"},
+                                                    report_path="",
+                                                    result_dir_name=f"Qos_Test_Report")
+                    data_set, load, res = self.qos_test.generate_graph_data_set(data)
+                    return data
                 
         
+
+            elif(len(selected_groups)!=len(selected_profiles)):
+                print("Number of groups should match number of profiles")
+            elif(group_name!=None and profile_name!=None and file_name!=None and (device_list!=[] or ssid!=None or password!=None)):
+                print("Either group name or device list should be entered not both")
+            elif(ssid!=None and profile_name!=None):
+                print(ssid,profile_name)
+                print("Either ssid or profile name should be given")
+            elif(device_list!=[] and (ssid==None or password==None or security==None)):
+                print("Please provide ssid password and security when device list is given")
         if qos_serial_run:
             for qos_tos in tos:
                 logger.info(qos_tos)
@@ -1120,7 +1255,28 @@ class Candela:
                                         result_dir_name=f"Qos_Test_Report")
         data_set, load, res = self.qos_test.generate_graph_data_set(data)
 
-    def start_ping_test(self, ssid, password, encryption, target, ping_test_duration=60, device_list=[], background=False):
+    def start_ping_test(self, ssid=None, password=None, encryption=None, target='', ping_test_duration=60, device_list=[], background=False,
+                        file_name=None,
+                        real=False,
+                 profile_name=None,group_name=None,eap_method=None,
+                 eap_identity=None,
+                 ieee80211=None,
+                 ieee80211u=None,
+                 ieee80211w=None,
+                 enable_pkc=None,
+                 bss_transition=None,
+                 power_save=None,
+                 disable_ofdma=None,
+                 roam_ft_ds=None,
+                 key_management=None,
+                 pairwise=None,
+                 private_key=None,
+                 ca_cert=None,
+                 client_cert=None,
+                 pk_passwd=None,
+                 pac_file=None,server_ip=None,
+                 expected_passfail_val=None,
+                 csv_name=None):
         """
         Method to start and run the ping test on the selected devices.
 
@@ -1138,22 +1294,105 @@ class Candela:
         device_list = self.filter_iOS_devices(device_list)
         target = target
         interval = 1
+        if csv_name!=None and expected_passfail_val:
+            print("Enter either --csv_name or --expected_passfail_val")
+            exit(0)
+        if (encryption != 'open' and password == '[BLANK]'):
+            print('--passwd required')
+            exit(0)
+        if(ssid != None and password != None and group_name != None and profile_name !=None):
+            print('either --ssid,--password or --profile_name,--group_name should be given')
+            exit(0)
+        if(group_name is None and file_name is None and profile_name is None):
+            if(ssid is None):
+                print('--ssid required for Wi-Fi configuration')
+                exit(0)
+
+            if(encryption.lower() != 'open' and password == '[BLANK]'):
+                print('--passwd required for Wi-Fi configuration')
+                exit(0)
+
+            if(server_ip is None):
+                print('--server_ip or upstream ip required for Wi-fi configuration')
+                exit(0)
+        if(group_name!=None):
+            selected_groups=group_name.split(',')
+        else:
+            selected_groups=[]
+        if(profile_name!=None):
+            selected_profiles=profile_name.split(',')
+        else:
+            selected_profiles=[]
+        if(len(selected_groups)!=len(selected_profiles)):
+            print("Number of groups should match number of profiles")
+            exit(0)
         # starting part of the ping test
         ping_test_obj = ping_test.Ping(host=self.lanforge_ip, port=self.port, ssid=ssid, security=encryption,
                                             password=password, lanforge_password="lanforge", target=target,
-                                            interval=interval, sta_list=[], duration=ping_test_duration)
+                                            interval=interval, sta_list=[], duration=ping_test_duration,
+                                            group_name=group_name,
+                                profile_name=profile_name,
+                                file_name=file_name,eap_method=eap_method,
+                                eap_identity=eap_identity,
+                                ieee80211=ieee80211,
+                                ieee80211u=ieee80211u,
+                                ieee80211w=ieee80211w,
+                                enable_pkc=enable_pkc,
+                                bss_transition=bss_transition,
+                                power_save=power_save,
+                                disable_ofdma=disable_ofdma,
+                                roam_ft_ds=roam_ft_ds,
+                                key_management=key_management,
+                                pairwise=pairwise,
+                                private_key=private_key,
+                                ca_cert=ca_cert,
+                                client_cert=client_cert,
+                                pk_passwd=pk_passwd,
+                                pac_file=pac_file,
+                                real=real,
+                                server_ip=server_ip,
+                                expected_passfail_val=expected_passfail_val,
+                                csv_name=csv_name)
         ping_test_obj.enable_real = True
         if not ping_test_obj.check_tab_exists():
             logger.info('Generic Tab is not available for Ping Test.\nAborting the test.')
             exit(0)
-        base_interop_profile = RealDevice(manager_ip=self.lanforge_ip,
-                                        ssid_5g=ssid,
-                                        passwd_5g=password,
-                                        encryption_5g=encryption)
+        base_interop_profile = RealDevice(manager_ip=self.lanforge_ip,selected_bands=[])
         self.base_interop_profile = base_interop_profile
         base_interop_profile.get_devices()
-        ping_test_obj.select_real_devices(real_devices=base_interop_profile,
-                                            real_sta_list=device_list,
+
+        obj=DeviceConfig.DeviceConfig(lanforge_ip=self.lanforge_ip,file_name=file_name)
+        if not expected_passfail_val and csv_name==None:
+            obj.device_csv_file("device.csv")
+        if(group_name!=None and file_name!=None and profile_name!=None):
+            selected_groups=group_name.split(',')
+            selected_profiles=profile_name.split(',')
+            config_devices={}    
+            for i in range(len(selected_groups)):
+                config_devices[selected_groups[i]]=selected_profiles[i]
+            #print("CONFIGURED DICT",config_devices)
+            obj.initiate_group()
+            asyncio.run(obj.connectivity(config_devices))
+            adbresponse=obj.adb_obj.get_devices()
+            resource_manager=obj.laptop_obj.get_devices()
+            all_res={}
+            df1=obj.display_groups(obj.groups)
+            groups_list=df1.to_dict(orient='list')
+            group_devices={}
+            for adb in adbresponse:   
+                group_devices[adb['serial']]=adb['eid']
+            for res in resource_manager:
+                all_res[res['hostname']]=res['shelf']+'.'+res['resource']
+            eid_list=[]
+            for grp_name in groups_list.keys():
+                for g_name in selected_groups:
+                    if(grp_name == g_name):
+                        for j in groups_list[grp_name]:
+                            if(j in group_devices.keys()):
+                                eid_list.append(group_devices[j])
+                            elif(j in all_res.keys()):
+                                eid_list.append(all_res[j])
+        ping_test_obj.select_real_devices(real_devices=base_interop_profile,device_list=eid_list,
                                             base_interop_obj=base_interop_profile)
         # removing the existing generic endpoints & cxs
         ping_test_obj.cleanup()
@@ -1603,9 +1842,9 @@ class Candela:
         """
         device_list = kwargs.get("device_list",[])
         device_list = self.filter_iOS_devices(device_list)
-        if len(device_list) == 0:
-            print('No devices specified.')
-            exit(1)
+        # if len(device_list) == 0:
+        #     print('No devices specified.')
+        #     exit(1)
         kwargs['device_list'] = device_list
         background_run = kwargs.get("background_run",False)
         incremental_capacity=kwargs.get("incremental_capacity",None)
@@ -1614,12 +1853,30 @@ class Candela:
             self.monitoring_thread.start()
         else:
             self.start_video_streaming_test(**kwargs)
-    def start_video_streaming_test(self, ssid="ssid_wpa_2g", passwd="something", encryp="psk",
+    def start_video_streaming_test(self, ssid=None, passwd=None, encryp=None,
                         suporrted_release=["7.0", "10", "11", "12"], max_speed=0,
                         url="www.google.com", urls_per_tenm=100, duration="1m", 
                         device_list=[], media_quality='0',media_source='1',
                         incremental = False,postcleanup=False,
-                        precleanup=False,incremental_capacity=None,test_name=None,background_run = False):
+                        precleanup=False,incremental_capacity=None,test_name=None,background_run = False,
+                        file_name=None,
+                 profile_name=None,group_name=None,eap_method=None,
+                 eap_identity=None,
+                 ieee80211=None,
+                 ieee80211u=None,
+                 ieee80211w=None,
+                 enable_pkc=None,
+                 bss_transition=None,
+                 power_save=None,
+                 disable_ofdma=None,
+                 roam_ft_ds=None,
+                 key_management=None,
+                 pairwise=None,
+                 private_key=None,
+                 ca_cert=None,
+                 client_cert=None,
+                 pk_passwd=None,
+                 pac_file=None,server_ip=None,expected_passfail_val=None,csv_name=None):
 
         media_source_dict={
                        'dash':'1',
@@ -1636,7 +1893,9 @@ class Candela:
                             '360p':'4'
                             }
         webgui_incremental=incremental_capacity
-
+        if csv_name!=None and expected_passfail_val:
+            print("Enter either --csv_name or --expected_passfail_val")
+            exit(0)
         media_source,media_quality=media_source.capitalize(),media_quality
         media_source_name=media_source=media_source.lower()
         media_quality_name=media_quality=media_quality.lower()
@@ -1649,328 +1908,485 @@ class Candela:
             media_quality=media_quality_dict[media_quality]
 
 
-        self.video_streaming_test = VideoStreamingTest(host=self.lanforge_ip, ssid=ssid, passwd=passwd, encryp=encryp,
-                        suporrted_release=["7.0", "10", "11", "12"], max_speed=max_speed,
-                        url=url, urls_per_tenm=urls_per_tenm, duration=duration, 
-                        resource_ids = device_list, media_quality=media_quality,media_source=media_source,
-                        incremental = incremental,postcleanup=postcleanup,
-                        precleanup=precleanup)
-        resource_ids_sm = []
-        resource_set = set()
-        resource_list = []
-        resource_ids_generated = ""
-
-        self.video_streaming_test.android_devices = self.video_streaming_test.devices.get_devices(only_androids=True)
-
-        if device_list:
-            # Extract second part of resource IDs and sort them
-            self.video_streaming_test.resource_ids = ",".join(id.split(".")[1] for id in device_list.split(","))
-            resource_ids_sm = self.video_streaming_test.resource_ids
-            resource_list = resource_ids_sm.split(',')            
-            resource_set = set(resource_list)
-            resource_list_sorted = sorted(resource_set)
-            resource_ids_generated = ','.join(resource_list_sorted)
-
-            # Convert resource IDs into a list of integers
-            num_list = list(map(int, self.video_streaming_test.resource_ids.split(',')))
-
-            # Sort the list
-            num_list.sort()
-
-            # Join the sorted list back into a string
-            sorted_string = ','.join(map(str, num_list))
-            self.video_streaming_test.resource_ids = sorted_string
-
-            # Extract the second part of each Android device ID and convert to integers
-            modified_list = list(map(lambda item: int(item.split('.')[1]), self.video_streaming_test.android_devices))
-            # modified_other_os_list = list(map(lambda item: int(item.split('.')[1]), self.video_streaming_test.other_os_list))
-            
-            # Verify if all resource IDs are valid for Android devices
-            resource_ids = [int(x) for x in sorted_string.split(',')]
-            new_list_android = [item.split('.')[0] + '.' + item.split('.')[1] for item in self.video_streaming_test.android_devices]
-
-            resources_list = device_list.split(",")
-            for element in resources_list:
-                if element in new_list_android:
-                    for ele in self.video_streaming_test.android_devices:
-                        if ele.startswith(element):
-                            self.video_streaming_test.android_list.append(ele)
-                else:
-                    logger.info("{} device is not available".format(element))
-            new_android = [int(item.split('.')[1]) for item in self.video_streaming_test.android_list]
-
-            resource_ids = sorted(new_android)
-            available_resources=list(set(resource_ids))
-
+        if(group_name!=None):
+            selected_groups=group_name.split(',')
         else:
-            # Query user to select devices if no resource IDs are provided
-            selected_devices,report_labels,selected_macs = self.video_streaming_test.devices.query_user()
-            # Handle cases where no devices are selected
-            
-            if not selected_devices:
-                logger.info("devices donot exist..!!")
-                return 
-                
-            self.video_streaming_test.android_list = selected_devices
-            if self.video_streaming_test.android_list:
-                resource_ids = ",".join([item.split(".")[1] for item in self.video_streaming_test.android_list])
+            selected_groups=[]
+        if(profile_name!=None):
+            selected_profiles=profile_name.split(',')
+        else:
+            selected_profiles=[]
 
-                num_list = list(map(int, resource_ids.split(',')))
+        print(group_name,profile_name,ssid,passwd,file_name,device_list)
+        if((group_name!=None and profile_name!=None and file_name!=None and device_list==[] and ssid==None and (len(selected_groups)==len(selected_profiles))) or(group_name==None and profile_name==None and file_name==None and ssid!=None and passwd!=None and encryp!=None) or (group_name==None and profile_name==None and file_name==None and ssid!=None and passwd==None and encryp.lower() =='open')):
+
+            self.video_streaming_test = VideoStreamingTest(host=self.lanforge_ip, ssid=ssid, passwd=passwd, encryp=encryp,
+                            suporrted_release=["7.0", "10", "11", "12"], max_speed=max_speed,
+                            url=url, urls_per_tenm=urls_per_tenm, duration=duration, 
+                            resource_ids = device_list, media_quality=media_quality,media_source=media_source,
+                            incremental = incremental,postcleanup=postcleanup,
+                            precleanup=precleanup,group_name=group_name,
+                                    profile_name=profile_name,
+                                    file_name=file_name,eap_method=eap_method,
+                                    eap_identity=eap_identity,
+                                    ieee80211=ieee80211,
+                                    ieee80211u=ieee80211u,
+                                    ieee80211w=ieee80211w,
+                                    enable_pkc=enable_pkc,
+                                    bss_transition=bss_transition,
+                                    power_save=power_save,
+                                    disable_ofdma=disable_ofdma,
+                                    roam_ft_ds=roam_ft_ds,
+                                    key_management=key_management,
+                                    pairwise=pairwise,
+                                    private_key=private_key,
+                                    ca_cert=ca_cert,
+                                    client_cert=client_cert,
+                                    pk_passwd=pk_passwd,
+                                    pac_file=pac_file,
+                                    server_ip=server_ip,
+                                    expected_passfail_val=expected_passfail_val,
+                                    csv_name=csv_name)
+            resource_ids_sm = []
+            resource_set = set()
+            resource_list = []
+            resource_ids_generated = ""
+
+            
+            config_obj=DeviceConfig.DeviceConfig(lanforge_ip=self.lanforge_ip,file_name=file_name)
+            if not expected_passfail_val and csv_name==None:
+                config_obj.device_csv_file(csv_name="device.csv")
+            if(group_name!=None and file_name!=None and profile_name!=None  and device_list==[]):
+                        selected_groups=group_name.split(',')
+                        selected_profiles=profile_name.split(',')
+                        config_devices={}    
+                        for i in range(len(selected_groups)):
+                            config_devices[selected_groups[i]]=selected_profiles[i]
+                        #print("CONFIGURED DICT",config_devices)
+                        config_obj.initiate_group()
+                        asyncio.run(config_obj.connectivity(config_devices))
+                        
+                        adbresponse=config_obj.adb_obj.get_devices()
+                        resource_manager=config_obj.laptop_obj.get_devices()
+                        all_res={}
+                        df1=config_obj.display_groups(config_obj.groups)
+                        groups_list=df1.to_dict(orient='list')
+                        group_devices={}
+                        
+                        for adb in adbresponse:   
+                            group_devices[adb['serial']]=adb['eid']
+                        for res in resource_manager:
+                            all_res[res['hostname']]=res['shelf']+'.'+res['resource']
+                        eid_list=[]
+                        for grp_name in groups_list.keys():
+                            for g_name in selected_groups:
+                                if(grp_name == g_name):
+                                    for j in groups_list[grp_name]:
+                                        if(j in group_devices.keys()):
+                                            eid_list.append(group_devices[j])
+                                        elif(j in all_res.keys()):
+                                            eid_list.append(all_res[j])
+                        device_list = ",".join(id for id in eid_list)
+
+            if device_list:
+                config_obj=DeviceConfig.DeviceConfig(lanforge_ip=self.lanforge_ip,file_name=file_name)
+                all_devices= config_obj.get_all_devices()
+
+                config_dict={
+                    'ssid':ssid,
+                    'passwd':passwd,
+                    'enc':encryp,
+                    'eap_method':eap_method,
+                    'eap_identity':eap_identity,
+                    'ieee80211':ieee80211,
+                    'ieee80211u':ieee80211u,
+                    'ieee80211w':ieee80211w,
+                    'enable_pkc':enable_pkc,
+                    'bss_transition':bss_transition,
+                    'power_save':power_save,
+                    'disable_ofdma':disable_ofdma,
+                    'roam_ft_ds':roam_ft_ds,
+                    'key_management':key_management,
+                    'pairwise':pairwise,
+                    'private_key':private_key,
+                    'ca_cert':ca_cert,
+                    'client_cert':client_cert,
+                    'pk_passwd':pk_passwd,
+                    'pac_file':pac_file,
+                    'server_ip':server_ip,
+
+                    }
+                if(group_name==None and file_name==None and profile_name==None):
+                    dev_list=device_list.split(',')
+                    asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
+                
+
+                # Extract second part of resource IDs and sort them
+                self.video_streaming_test.android_devices = self.video_streaming_test.devices.get_devices(only_androids=True)
+                self.video_streaming_test.resource_ids = ",".join(id.split(".")[1] for id in device_list.split(","))
+                resource_ids_sm = self.video_streaming_test.resource_ids
+                resource_list = resource_ids_sm.split(',')            
+                resource_set = set(resource_list)
+                resource_list_sorted = sorted(resource_set)
+                resource_ids_generated = ','.join(resource_list_sorted)
+
+                # Convert resource IDs into a list of integers
+                num_list = list(map(int, self.video_streaming_test.resource_ids.split(',')))
 
                 # Sort the list
                 num_list.sort()
 
                 # Join the sorted list back into a string
                 sorted_string = ','.join(map(str, num_list))
-
                 self.video_streaming_test.resource_ids = sorted_string
-                resource_ids1 = list(map(int, sorted_string.split(',')))
+
+                # Extract the second part of each Android device ID and convert to integers
                 modified_list = list(map(lambda item: int(item.split('.')[1]), self.video_streaming_test.android_devices))
-                if not all(x in modified_list for x in resource_ids1):
-                    logger.info("Verify Resource ids, as few are invalid...!!")
-                    exit()
-                resource_ids_sm = self.video_streaming_test.resource_ids
-                resource_list = resource_ids_sm.split(',')            
-                resource_set = set(resource_list)
-                resource_list_sorted = sorted(resource_set)
-                resource_ids_generated = ','.join(resource_list_sorted)
-                available_resources=list(resource_set)
-    
-        if len(available_resources)==0:
-            logger.info("No devices which are selected are available in the lanforge")
-            exit()
-        gave_incremental=False
-        if len(resource_list_sorted)==0:
-            logger.info("Selected Devices are not available in the lanforge")
-            exit(1)
-        if incremental and not webgui_incremental :
-            if self.video_streaming_test.resource_ids:
-                logger.info("The total available devices are {}".format(len(available_resources)))
-                self.video_streaming_test.incremental = input('Specify incremental values as 1,2,3 : ')
-                self.video_streaming_test.incremental = [int(x) for x in self.video_streaming_test.incremental.split(',')]
-            else:
-                logger.info("incremental Values are not needed as Android devices are not selected..")
-        elif incremental==False:
-            gave_incremental=True
-            self.video_streaming_test.incremental=[len(available_resources)]
-        
-        if webgui_incremental:
-            incremental = [int(x) for x in webgui_incremental.split(',')]
-            if (len(webgui_incremental) == 1 and incremental[0] != len(resource_list_sorted)) or (len(webgui_incremental) > 1):
-                self.video_streaming_test.incremental = incremental
-        
-        if self.video_streaming_test.incremental and self.video_streaming_test.resource_ids:
-            resources_list1 = [str(x) for x in self.video_streaming_test.resource_ids.split(',')]
-            if resource_list_sorted:
-                resources_list1 = resource_list_sorted
-            if self.video_streaming_test.incremental[-1] > len(available_resources):
-                logger.info("Exiting the program as incremental values are greater than the resource ids provided")
-                exit()
-            elif self.video_streaming_test.incremental[-1] < len(available_resources) and len(self.video_streaming_test.incremental) > 1:
-                logger.info("Exiting the program as the last incremental value must be equal to selected devices")
-                exit()
-        
-        # To create cx for selected devices
-        self.video_streaming_test.build()
-
-        # To set media source and media quality 
-        time.sleep(10)
-
-        # self.video_streaming_test.run
-        test_time = datetime.now()
-        test_time = test_time.strftime("%b %d %H:%M:%S")
-
-        logger.info("Initiating Test...")
-
-        individual_dataframe_columns=[]
-
-        keys = list(self.video_streaming_test.http_profile.created_cx.keys())
-    
-        #TODO : To create cx for laptop devices
-        # if (not no_laptops) and self.video_streaming_test.other_list:
-        #     self.video_streaming_test.create_generic_endp(self.video_streaming_test.other_list,os_types_dict)
-
-        # Extend individual_dataframe_column with dynamically generated column names
-        for i in range(len(keys)):
-            individual_dataframe_columns.extend([f'video_format_bitrate{keys[i]}', f'total_wait_time{keys[i]}',f'total_urls{keys[i]}',f'RSSI{keys[i]}',f'Link Speed{keys[i]}',f'Total Buffer {keys[i]}',f'Total Errors {keys[i]}',f'Min_Video_Rate{keys[i]}',f'Max_Video_Rate{keys[i]}',f'Avg_Video_Rate{keys[i]}'])
-        individual_dataframe_columns.extend(['overall_video_format_bitrate','timestamp','iteration','start_time','end_time','remaining_Time','status'])
-        individual_df=pd.DataFrame(columns=individual_dataframe_columns)
-        
-        cx_order_list = []
-        index = 0
-        file_path = ""
-
-        # Parsing test_duration
-        if duration.endswith('s') or duration.endswith('S'):
-            duration = round(int(duration[0:-1])/60,2)
-        
-        elif duration.endswith('m') or duration.endswith('M'):
-            duration = int(duration[0:-1]) 
-    
-        elif duration.endswith('h') or duration.endswith('H'):
-            duration = int(duration[0:-1]) * 60  
-        
-        elif duration.endswith(''):
-            duration = int(duration)
-
-        incremental_capacity_list_values=self.video_streaming_test.get_incremental_capacity_list()
-        if incremental_capacity_list_values[-1]!=len(available_resources):
-            logger.info("Incremental capacity doesnt match available devices")
-            if postcleanup==True:
-                self.video_streaming_test.postcleanup()
-            exit(1)
-        # Process resource IDs and incremental values if specified
-        if self.video_streaming_test.resource_ids:
-            if self.video_streaming_test.incremental:
-                test_setup_info_incremental_values =  ','.join([str(n) for n in incremental_capacity_list_values])
-                if len(self.video_streaming_test.incremental) == len(available_resources):
-                    test_setup_info_total_duration = duration
-                elif len(self.video_streaming_test.incremental) == 1 and len(available_resources) > 1:
-                    if self.video_streaming_test.incremental[0] == len(available_resources):
-                        test_setup_info_total_duration = duration
-                    else:
-                        div = len(available_resources)//self.video_streaming_test.incremental[0] 
-                        mod = len(available_resources)%self.video_streaming_test.incremental[0] 
-                        if mod == 0:
-                            test_setup_info_total_duration = duration * (div )
-                        else:
-                            test_setup_info_total_duration = duration * (div + 1)
-                else:
-                    test_setup_info_total_duration = duration * len(incremental_capacity_list_values)
-                # if incremental_capacity_list_values[-1] != len(available_resources):
-                #     test_setup_info_duration_per_iteration= duration 
-            else:
-                test_setup_info_total_duration = duration
+                # modified_other_os_list = list(map(lambda item: int(item.split('.')[1]), self.video_streaming_test.other_os_list))
                 
-            if webgui_incremental:
-                test_setup_info_incremental_values =  ','.join([str(n) for n in incremental_capacity_list_values])
-            elif gave_incremental:
-                test_setup_info_incremental_values = "No Incremental Value provided"
-            self.video_streaming_test.total_duration = test_setup_info_total_duration
+                # Verify if all resource IDs are valid for Android devices
+                resource_ids = [int(x) for x in sorted_string.split(',')]
+                new_list_android = [item.split('.')[0] + '.' + item.split('.')[1] for item in self.video_streaming_test.android_devices]
 
-        actual_start_time=datetime.now()
-
-        iterations_before_test_stopped_by_user=[]
-
-        # Calculate and manage cx_order_list ( list of cross connections to run ) based on incremental values
-        if self.video_streaming_test.resource_ids:
-            # Check if incremental  is specified
-            if self.video_streaming_test.incremental:
-
-                # Case 1: Incremental list has only one value and it equals the length of keys
-                if len(self.video_streaming_test.incremental) == 1 and self.video_streaming_test.incremental[0] == len(keys):
-                    cx_order_list.append(keys[index:])
-
-                # Case 2: Incremental list has only one value but length of keys is greater than 1
-                elif len(self.video_streaming_test.incremental) == 1 and len(keys) > 1:
-                    incremental_value = self.video_streaming_test.incremental[0]
-                    max_index = len(keys)
-                    index = 0
-
-                    while index < max_index:
-                        next_index = min(index + incremental_value, max_index)
-                        cx_order_list.append(keys[index:next_index])
-                        index = next_index
-
-                # Case 3: Incremental list has multiple values and length of keys is greater than 1
-                elif len(self.video_streaming_test.incremental) != 1 and len(keys) > 1:
-                    
-                    index = 0
-                    for num in self.video_streaming_test.incremental:
-                        
-                        cx_order_list.append(keys[index: num])
-                        index = num
-
-                    if index < len(keys):
-                        cx_order_list.append(keys[index:])
-                        start_time_webGUI = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-                if background_run :
-                    logger.info("Start the test and run till stopped")
-                    self.video_streaming_test.background_run = True
-                # Iterate over cx_order_list to start tests incrementally
-                for i in range(len(cx_order_list)):
-                    if i == 0:
-                        self.video_streaming_test.data["start_time_webGUI"] = [datetime.now().strftime('%Y-%m-%d %H:%M:%S')] 
-                        end_time_webGUI = (datetime.now() + timedelta(minutes = self.video_streaming_test.total_duration)).strftime('%Y-%m-%d %H:%M:%S')
-                        self.video_streaming_test.data['end_time_webGUI'] = [end_time_webGUI] 
-
-
-                    # time.sleep(10)
-
-                    # Start specific devices based on incremental capacity
-                    self.video_streaming_test.start_specific(cx_order_list[i])
-                    if cx_order_list[i]:
-                        logger.info("Test started on Devices with resource Ids : {selected}".format(selected = cx_order_list[i]))
+                resources_list = device_list.split(",")
+                for element in resources_list:
+                    if element in new_list_android:
+                        for ele in self.video_streaming_test.android_devices:
+                            if ele.startswith(element):
+                                self.video_streaming_test.android_list.append(ele)
                     else:
-                        logger.info("Test started on Devices with resource Ids : {selected}".format(selected = cx_order_list[i]))
+                        logger.info("{} device is not available".format(element))
+                new_android = [int(item.split('.')[1]) for item in self.video_streaming_test.android_list]
+
+                resource_ids = sorted(new_android)
+                available_resources=list(set(resource_ids))
+
+            elif(device_list==None):
+                # Query user to select devices if no resource IDs are provided
+                all_devices= config_obj.get_all_devices()
+                device_list=[]
+                config_dict={
+                'ssid':ssid,
+                'passwd':passwd,
+                'enc':encryp,
+                'eap_method':eap_method,
+                'eap_identity':eap_identity,
+                'ieee80211':ieee80211,
+                'ieee80211u':ieee80211u,
+                'ieee80211w':ieee80211w,
+                'enable_pkc':enable_pkc,
+                'bss_transition':bss_transition,
+                'power_save':power_save,
+                'disable_ofdma':disable_ofdma,
+                'roam_ft_ds':roam_ft_ds,
+                'key_management':key_management,
+                'pairwise':pairwise,
+                'private_key':private_key,
+                'ca_cert':ca_cert,
+                'client_cert':client_cert,
+                'pk_passwd':pk_passwd,
+                'pac_file':pac_file,
+                'server_ip':server_ip,
+
+                }
+                for device in all_devices:
+                    if(device["type"]!='laptop'):
+                        device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["serial"])
+                print("Available devices:", device_list)
+                device_list = input("Enter the desired resources to run the test:")
+                dev1_list=device_list.split(',')
+                asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
+
+                selected_devices,report_labels,selected_macs = self.video_streaming_test.devices.query_user(device_list=dev1_list)
+                # Handle cases where no devices are selected
+                
+                if not selected_devices:
+                    logger.info("devices donot exist..!!")
+                    return 
                     
-                    file_path = "video_streaming_realtime_data.csv"
+                self.video_streaming_test.android_list = selected_devices
+                if self.video_streaming_test.android_list:
+                    resource_ids = ",".join([item.split(".")[1] for item in self.video_streaming_test.android_list])
 
-                    if end_time_webGUI < datetime.now().strftime('%Y-%m-%d %H:%M:%S'):
-                        self.video_streaming_test.data['remaining_time_webGUI'] = ['0:00'] 
+                    num_list = list(map(int, resource_ids.split(',')))
+
+                    # Sort the list
+                    num_list.sort()
+
+                    # Join the sorted list back into a string
+                    sorted_string = ','.join(map(str, num_list))
+
+                    self.video_streaming_test.resource_ids = sorted_string
+                    resource_ids1 = list(map(int, sorted_string.split(',')))
+                    modified_list = list(map(lambda item: int(item.split('.')[1]), self.video_streaming_test.android_devices))
+                    if not all(x in modified_list for x in resource_ids1):
+                        logger.info("Verify Resource ids, as few are invalid...!!")
+                        exit()
+                    resource_ids_sm = self.video_streaming_test.resource_ids
+                    resource_list = resource_ids_sm.split(',')            
+                    resource_set = set(resource_list)
+                    resource_list_sorted = sorted(resource_set)
+                    resource_ids_generated = ','.join(resource_list_sorted)
+                    available_resources=list(resource_set)
+
+            if len(available_resources)==0:
+                logger.info("No devices which are selected are available in the lanforge")
+                exit()
+            gave_incremental=False
+            if(len(available_resources)>0):
+                if(not expected_passfail_val and csv_name==None):
+                    device_map={}
+                    expected_val=input("Enter the expected value for the following devices{} eg 8,6,2: ".format(available_resources)).split(',')
+                    if(len(available_resources)==len(expected_val)):
+                        for i in range(len(available_resources)):
+                            device_map[self.video_streaming_test.android_list[i].split('.')[0]+'.'+self.video_streaming_test.android_list[i].split('.')[1]]=expected_val[i]
+                        config_obj.update_device_csv("device.csv",'Videostreaming',device_map)
                     else:
-                        date_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        self.video_streaming_test.data['remaining_time_webGUI'] =  [datetime.strptime(end_time_webGUI,"%Y-%m-%d %H:%M:%S") - datetime.strptime(date_time,"%Y-%m-%d %H:%M:%S")] 
-                    
-                    test_stopped_by_user= self.video_streaming_test.monitor_for_runtime_csv(duration,file_path,individual_df,i,actual_start_time,resource_list_sorted,cx_order_list[i])
-                    if test_stopped_by_user==False:
-                    # Append current iteration index to iterations_before_test_stopped_by_user
-                        iterations_before_test_stopped_by_user.append(i)
-                    else:
-                        # Append current iteration index to iterations_before_test_stopped_by_user 
-                        iterations_before_test_stopped_by_user.append(i)
-                        break   
-        if not background_run and self.video_streaming_test.stop_test!=True:
-            self.video_streaming_test.stop()
-            
-        if self.video_streaming_test.resource_ids:
-            
-            date = str(datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
-
-            # phone_list = self.video_streaming_test.get_resource_data() 
-
-            username = []
-            
-            try:
-                eid_data = self.video_streaming_test.json_get("ports?fields=alias,mac,mode,Parent Dev,rx-rate,tx-rate,ssid,signal")
-            except KeyError:
-                logger.info("Error: 'interfaces' key not found in port data")
+                        print("Enter correct number of values")
+                        exit(0)
+                elif expected_passfail_val:
+                    pass
+            if len(resource_list_sorted)==0:
+                logger.info("Selected Devices are not available in the lanforge")
                 exit(1)
+            if incremental and not webgui_incremental :
+                if self.video_streaming_test.resource_ids:
+                    logger.info("The total available devices are {}".format(len(available_resources)))
+                    self.video_streaming_test.incremental = input('Specify incremental values as 1,2,3 : ')
+                    self.video_streaming_test.incremental = [int(x) for x in self.video_streaming_test.incremental.split(',')]
+                else:
+                    logger.info("incremental Values are not needed as Android devices are not selected..")
+            elif incremental==False:
+                gave_incremental=True
+                self.video_streaming_test.incremental=[len(available_resources)]
+            
+            if webgui_incremental:
+                incremental = [int(x) for x in webgui_incremental.split(',')]
+                if (len(webgui_incremental) == 1 and incremental[0] != len(resource_list_sorted)) or (len(webgui_incremental) > 1):
+                    self.video_streaming_test.incremental = incremental
+            
+            if self.video_streaming_test.incremental and self.video_streaming_test.resource_ids:
+                resources_list1 = [str(x) for x in self.video_streaming_test.resource_ids.split(',')]
+                if resource_list_sorted:
+                    resources_list1 = resource_list_sorted
+                if self.video_streaming_test.incremental[-1] > len(available_resources):
+                    logger.info("Exiting the program as incremental values are greater than the resource ids provided")
+                    exit()
+                elif self.video_streaming_test.incremental[-1] < len(available_resources) and len(self.video_streaming_test.incremental) > 1:
+                    logger.info("Exiting the program as the last incremental value must be equal to selected devices")
+                    exit()
+            
+            # To create cx for selected devices
+            self.video_streaming_test.build()
 
-            resource_ids = list(map(int, self.video_streaming_test.resource_ids.split(',')))
-            for alias in eid_data["interfaces"]:
-                for i in alias:
-                    if int(i.split(".")[1]) > 1 and alias[i]["alias"] == 'wlan0':
-                        resource_hw_data = self.video_streaming_test.json_get("/resource/" + i.split(".")[0] + "/" + i.split(".")[1])
-                        hw_version = resource_hw_data['resource']['hw version']
-                        if not hw_version.startswith(('Win', 'Linux', 'Apple')) and int(resource_hw_data['resource']['eid'].split('.')[1]) in resource_ids:
-                            username.append(resource_hw_data['resource']['user'] )
-            device_list_str = ','.join([f"{name} ( Android )" for name in username])
+            # To set media source and media quality 
+            time.sleep(10)
 
-            test_setup_info = {
-                "Testname" : test_name,
-                "Device List" : device_list_str ,
-                "No of Devices" : "Total" + "( " + str(len(keys)) + " ): Android(" +  str(len(keys)) +")",
-                "Incremental Values" : "",
-                "URL" : url,
-                "Media Source":media_source_name.upper(),
-                "Media Quality":media_quality_name
-            }
-            # if self.video_streaming_test.incremental:
-            #     if len(incremental_capacity_list_values) != len(available_resources):
-            #         test_setup_info['Duration per Iteration (min)']= str(test_setup_info_duration_per_iteration)
-            test_setup_info['Incremental Values'] = test_setup_info_incremental_values
-            test_setup_info['Total Duration (min)'] = str(test_setup_info_total_duration) 
-                
-            self.date,self.test_setup_info,self.individual_df,self.cx_order_list,self.iterations_before_test_stopped_by_user=date,test_setup_info,individual_df,cx_order_list,list(set(iterations_before_test_stopped_by_user))
-            if not background_run and self.video_streaming_test.stop_test!=True:
-                if self.video_streaming_test.resource_ids and self.video_streaming_test.incremental :  
-                    self.video_streaming_test.generate_report(date, list(set(iterations_before_test_stopped_by_user)),test_setup_info = test_setup_info,realtime_dataset=individual_df, cx_order_list = cx_order_list) 
-                elif self.video_streaming_test.resource_ids:
-                    self.video_streaming_test.generate_report(date, list(set(iterations_before_test_stopped_by_user)),test_setup_info = test_setup_info,realtime_dataset=individual_df) 
+            # self.video_streaming_test.run
+            test_time = datetime.now()
+            test_time = test_time.strftime("%b %d %H:%M:%S")
+
+            logger.info("Initiating Test...")
+
+            individual_dataframe_columns=[]
+
+            keys = list(self.video_streaming_test.http_profile.created_cx.keys())
+        
+            #TODO : To create cx for laptop devices
+            # if (not no_laptops) and self.video_streaming_test.other_list:
+            #     self.video_streaming_test.create_generic_endp(self.video_streaming_test.other_list,os_types_dict)
+
+            # Extend individual_dataframe_column with dynamically generated column names
+            for i in range(len(keys)):
+                individual_dataframe_columns.extend([f'video_format_bitrate{keys[i]}', f'total_wait_time{keys[i]}',f'total_urls{keys[i]}',f'RSSI{keys[i]}',f'Link Speed{keys[i]}',f'Total Buffer {keys[i]}',f'Total Errors {keys[i]}',f'Min_Video_Rate{keys[i]}',f'Max_Video_Rate{keys[i]}',f'Avg_Video_Rate{keys[i]}'])
+            individual_dataframe_columns.extend(['overall_video_format_bitrate','timestamp','iteration','start_time','end_time','remaining_Time','status'])
+            individual_df=pd.DataFrame(columns=individual_dataframe_columns)
+            
+            cx_order_list = []
+            index = 0
+            file_path = ""
+
+            # Parsing test_duration
+            if duration.endswith('s') or duration.endswith('S'):
+                duration = round(int(duration[0:-1])/60,2)
+            
+            elif duration.endswith('m') or duration.endswith('M'):
+                duration = int(duration[0:-1]) 
+        
+            elif duration.endswith('h') or duration.endswith('H'):
+                duration = int(duration[0:-1]) * 60  
+            
+            elif duration.endswith(''):
+                duration = int(duration)
+
+            incremental_capacity_list_values=self.video_streaming_test.get_incremental_capacity_list()
+            if incremental_capacity_list_values[-1]!=len(available_resources):
+                logger.info("Incremental capacity doesnt match available devices")
                 if postcleanup==True:
                     self.video_streaming_test.postcleanup()
+                exit(1)
+            # Process resource IDs and incremental values if specified
+            if self.video_streaming_test.resource_ids:
+                if self.video_streaming_test.incremental:
+                    test_setup_info_incremental_values =  ','.join([str(n) for n in incremental_capacity_list_values])
+                    if len(self.video_streaming_test.incremental) == len(available_resources):
+                        test_setup_info_total_duration = duration
+                    elif len(self.video_streaming_test.incremental) == 1 and len(available_resources) > 1:
+                        if self.video_streaming_test.incremental[0] == len(available_resources):
+                            test_setup_info_total_duration = duration
+                        else:
+                            div = len(available_resources)//self.video_streaming_test.incremental[0] 
+                            mod = len(available_resources)%self.video_streaming_test.incremental[0] 
+                            if mod == 0:
+                                test_setup_info_total_duration = duration * (div )
+                            else:
+                                test_setup_info_total_duration = duration * (div + 1)
+                    else:
+                        test_setup_info_total_duration = duration * len(incremental_capacity_list_values)
+                    # if incremental_capacity_list_values[-1] != len(available_resources):
+                    #     test_setup_info_duration_per_iteration= duration 
+                else:
+                    test_setup_info_total_duration = duration
+                    
+                if webgui_incremental:
+                    test_setup_info_incremental_values =  ','.join([str(n) for n in incremental_capacity_list_values])
+                elif gave_incremental:
+                    test_setup_info_incremental_values = "No Incremental Value provided"
+                self.video_streaming_test.total_duration = test_setup_info_total_duration
+
+            actual_start_time=datetime.now()
+
+            iterations_before_test_stopped_by_user=[]
+
+            # Calculate and manage cx_order_list ( list of cross connections to run ) based on incremental values
+            if self.video_streaming_test.resource_ids:
+                # Check if incremental  is specified
+                if self.video_streaming_test.incremental:
+
+                    # Case 1: Incremental list has only one value and it equals the length of keys
+                    if len(self.video_streaming_test.incremental) == 1 and self.video_streaming_test.incremental[0] == len(keys):
+                        cx_order_list.append(keys[index:])
+
+                    # Case 2: Incremental list has only one value but length of keys is greater than 1
+                    elif len(self.video_streaming_test.incremental) == 1 and len(keys) > 1:
+                        incremental_value = self.video_streaming_test.incremental[0]
+                        max_index = len(keys)
+                        index = 0
+
+                        while index < max_index:
+                            next_index = min(index + incremental_value, max_index)
+                            cx_order_list.append(keys[index:next_index])
+                            index = next_index
+
+                    # Case 3: Incremental list has multiple values and length of keys is greater than 1
+                    elif len(self.video_streaming_test.incremental) != 1 and len(keys) > 1:
+                        
+                        index = 0
+                        for num in self.video_streaming_test.incremental:
+                            
+                            cx_order_list.append(keys[index: num])
+                            index = num
+
+                        if index < len(keys):
+                            cx_order_list.append(keys[index:])
+                            start_time_webGUI = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+                    if background_run :
+                        logger.info("Start the test and run till stopped")
+                        self.video_streaming_test.background_run = True
+                    # Iterate over cx_order_list to start tests incrementally
+                    for i in range(len(cx_order_list)):
+                        if i == 0:
+                            self.video_streaming_test.data["start_time_webGUI"] = [datetime.now().strftime('%Y-%m-%d %H:%M:%S')] 
+                            end_time_webGUI = (datetime.now() + timedelta(minutes = self.video_streaming_test.total_duration)).strftime('%Y-%m-%d %H:%M:%S')
+                            self.video_streaming_test.data['end_time_webGUI'] = [end_time_webGUI] 
+
+
+                        # time.sleep(10)
+
+                        # Start specific devices based on incremental capacity
+                        self.video_streaming_test.start_specific(cx_order_list[i])
+                        if cx_order_list[i]:
+                            logger.info("Test started on Devices with resource Ids : {selected}".format(selected = cx_order_list[i]))
+                        else:
+                            logger.info("Test started on Devices with resource Ids : {selected}".format(selected = cx_order_list[i]))
+                        
+                        file_path = "video_streaming_realtime_data.csv"
+
+                        if end_time_webGUI < datetime.now().strftime('%Y-%m-%d %H:%M:%S'):
+                            self.video_streaming_test.data['remaining_time_webGUI'] = ['0:00'] 
+                        else:
+                            date_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            self.video_streaming_test.data['remaining_time_webGUI'] =  [datetime.strptime(end_time_webGUI,"%Y-%m-%d %H:%M:%S") - datetime.strptime(date_time,"%Y-%m-%d %H:%M:%S")] 
+                        
+                        test_stopped_by_user= self.video_streaming_test.monitor_for_runtime_csv(duration,file_path,individual_df,i,actual_start_time,resource_list_sorted,cx_order_list[i])
+                        if test_stopped_by_user==False:
+                        # Append current iteration index to iterations_before_test_stopped_by_user
+                            iterations_before_test_stopped_by_user.append(i)
+                        else:
+                            # Append current iteration index to iterations_before_test_stopped_by_user 
+                            iterations_before_test_stopped_by_user.append(i)
+                            break   
+            if not background_run and self.video_streaming_test.stop_test!=True:
+                self.video_streaming_test.stop()
+                
+            if self.video_streaming_test.resource_ids:
+                
+                date = str(datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
+
+                # phone_list = self.video_streaming_test.get_resource_data() 
+
+                username = []
+                
+                try:
+                    eid_data = self.video_streaming_test.json_get("ports?fields=alias,mac,mode,Parent Dev,rx-rate,tx-rate,ssid,signal")
+                except KeyError:
+                    logger.info("Error: 'interfaces' key not found in port data")
+                    exit(1)
+
+                resource_ids = list(map(int, self.video_streaming_test.resource_ids.split(',')))
+                for alias in eid_data["interfaces"]:
+                    for i in alias:
+                        if int(i.split(".")[1]) > 1 and alias[i]["alias"] == 'wlan0':
+                            resource_hw_data = self.video_streaming_test.json_get("/resource/" + i.split(".")[0] + "/" + i.split(".")[1])
+                            hw_version = resource_hw_data['resource']['hw version']
+                            if not hw_version.startswith(('Win', 'Linux', 'Apple')) and int(resource_hw_data['resource']['eid'].split('.')[1]) in resource_ids:
+                                username.append(resource_hw_data['resource']['user'] )
+                device_list_str = ','.join([f"{name} ( Android )" for name in username])
+
+                test_setup_info = {
+                    "Testname" : test_name,
+                    "Device List" : device_list_str ,
+                    "No of Devices" : "Total" + "( " + str(len(keys)) + " ): Android(" +  str(len(keys)) +")",
+                    "Incremental Values" : "",
+                    "URL" : url,
+                    "Media Source":media_source_name.upper(),
+                    "Media Quality":media_quality_name
+                }
+                # if self.video_streaming_test.incremental:
+                #     if len(incremental_capacity_list_values) != len(available_resources):
+                #         test_setup_info['Duration per Iteration (min)']= str(test_setup_info_duration_per_iteration)
+                test_setup_info['Incremental Values'] = test_setup_info_incremental_values
+                test_setup_info['Total Duration (min)'] = str(test_setup_info_total_duration) 
+                    
+                self.date,self.test_setup_info,self.individual_df,self.cx_order_list,self.iterations_before_test_stopped_by_user=date,test_setup_info,individual_df,cx_order_list,list(set(iterations_before_test_stopped_by_user))
+                if not background_run and self.video_streaming_test.stop_test!=True:
+                    if self.video_streaming_test.resource_ids and self.video_streaming_test.incremental :  
+                        self.video_streaming_test.generate_report(date, list(set(iterations_before_test_stopped_by_user)),test_setup_info = test_setup_info,realtime_dataset=individual_df, cx_order_list = cx_order_list) 
+                    elif self.video_streaming_test.resource_ids:
+                        self.video_streaming_test.generate_report(date, list(set(iterations_before_test_stopped_by_user)),test_setup_info = test_setup_info,realtime_dataset=individual_df) 
+                    if postcleanup==True:
+                        self.video_streaming_test.postcleanup()
+        elif(len(selected_groups)!=len(selected_profiles)):
+            print("Number of groups should match number of profiles")
+        elif(group_name!=None and profile_name!=None and file_name!=None and device_list!=[]):
+            print("Either group,profile,file or ssid,passwd,device list should be entered not both")
+        elif(ssid!=None and profile_name!=None):
+            print(ssid,profile_name)
+            print("Either ssid or profile name should be given")
+        elif(device_list!=[] and (ssid==None or passwd==None or encryp==None)):
+            print("Please provide ssid password and security when device list is given")
+
     def stop_video_streaming_test(self):
         """
         Method to stop Video Streaming test.
@@ -3165,14 +3581,38 @@ class Candela:
 
         """
         device_list = kwargs.get("device_list","")
+        expected_passfail_val = kwargs.get("expected_passfail_val","")
+        csv_name = kwargs.get("csv_name",None)
+        if csv_name!=None and expected_passfail_val:
+            print("Enter either --csv_name or --expected_passfail_val")
+            exit(0)
         if len(device_list) == 0:
             print('No devices specified.')
             exit(1)
+        else:
+            stations = device_list
+            obj=DeviceConfig.DeviceConfig(lanforge_ip=self.lanforge_ip)
+            if not expected_passfail_val and csv_name==None:
+                obj.device_csv_file(csv_name="device.csv")
+            device_list=[]
+            expected_dict={}
+            flag=0
+            for sta in stations:
+                device_list.append(sta.split('.')[0]+'.'+sta.split('.')[1])
+            if(not expected_passfail_val and csv_name==None):    
+                expected_list=input("Enter the expected number to roams for {} eg:2,3: ".format(device_list)).split(',')
+                for val in range(len(expected_list)):
+                    expected_dict[device_list[val]]=expected_list[val]
+                obj.update_device_csv("device.csv",'Roaming',expected_dict)
+                csv_name="device.csv"
+            elif expected_passfail_val:
+                pass
         
         background_run = kwargs.get("background_run",False)
         if background_run:
             logging.info('Started roam test in background.')
             del kwargs['background_run']
+            
             self.roam_test_thread=threading.Thread(target=self.roam_test,kwargs=kwargs)
             self.roam_test_thread.start()
         else:
@@ -3192,8 +3632,10 @@ class Candela:
                     upstream='1.1.eth1',
                     channel='AUTO',
                     frequency=-1,
-                    iterations=1
+                    iterations=1,expected_passfail_val=None,csv_name=None
                   ):
+        if(csv_name==None):
+            csv_name="device.csv"
         self.roam_test_object = Roam(
             lanforge_ip=self.lanforge_ip,
             port=self.port,
@@ -3209,7 +3651,7 @@ class Candela:
             channel=channel,
             frequency=frequency,
             iterations=iterations,
-            iteration_based=True
+            iteration_based=True,expected_passfail_val=expected_passfail_val,csv_name=csv_name
         )
         self.roam_test_object.station_list = device_list
         logging.info('Selected stations\t{}'.format(device_list))
@@ -3230,78 +3672,38 @@ class Candela:
         self.zoom_obj = ZoomAutomation(sigin_email=sigin_email,sigin_passwd=sigin_passwd,audio=audio,video=video,duration=duration,lanforge_ip=self.lanforge_ip,participants=participants)
         self.zoom_obj.run()
 logger_config = lf_logger_config.lf_logger_config()
-# candela_apis = Candela(ip='192.168.214.61', port=8080)
-test_apis = Candela(ip='192.168.214.61', port=8080)
-# To run test including groups and profile
-# >>>>>>>>>>>HTTP TEST
-# test_apis.start_http_test(
-#                             file_name='grp219',group_name='grp2',profile_name='Openx',
-#                             # ssid='Dev_wpa2', password='lanforge',security='wpa2',
-#                             http_file_size='10MB',
-#                             # device_list=['1.95.wlan0'],
-#                             report_labels=['1.95 laptop test2'],device_macs=['02:00:00:00:00:00'], target_per_ten=1000, upstream='eth1',
-#                             band='5G', background=False,server_ip='192.168.214.219',device_csv_name='abc')
-# >>>>>>>>>>>THROUGHPUT TEST
-# test_apis.start_th_test(traffic_type="lf_udp",
-#                         # device_list='1.95,1.13',
-#                         # ssid='Dev_wpa2',
-#                         # password='lanforge',
-#                         # security='wpa2',
-#                         upload=1000000,
-#                         download=100000,
-#                         upstream_port="eth1",
-#                         report_timer="5s",
-#                         load_type="wc_intended_load",
-#                         test_duration="1m",
-#                         precleanup=True,
-#                         postcleanup=True,
-#                         packet_size=18,
-#                         test_name="Throughput_test",
-#                         background_run=False,
-#                         server_ip='192.168.214.61',
-#                         file_name='grp219',
-#                         group_name='grp2',
-#                         profile_name='Openx',
-#                         # expected_passfail_value=0.2
-#                         # device_csv_name='asa'
-#                     )
-# >>>>>>>>>>REAL BROWSWER TEST
-# test_apis.start_wb_test(
-#                         file_name='grp219',
-#                         group_name='grp2',
-#                         profile_name='Openx', 
-#                         duration="2m",
-#                         url="http://www.google.com",
-#                         background_run=False,
-#                         count=3,
-#                         precleanup=True,
-#                         postcleanup=True,
-#                         server_ip='192.168.214.61',
-#                         # incremental_capacity='1'
-#                         # device_list='1.19',
-#                         # ssid="Dev_wpa2",
-#                         # passwd='lanforge',
-#                         # encryp='wpa2',
-#                         expected_passfail_value='7'
-#                         )
-# >>>>>>>>>>>>PORT RESET TEST
-# test_apis.start_port_reset_test(
-#     device_list='1.19',
-#     ssid='Dev_wpa2',
-#     passwd='lanforge',
-#     encryp='wpa2',
-#     reset=1,
-#     suporrted_release=['11', '12', '13','14'],
-#     mgr_ip='192.168.214.61',
-#     forget_network=True,
-#     background_run=False,
-#     expected_passfail_value=2
-# )
-# test_apis.generate_preset_report()
+candela_apis = Candela(ip='192.168.214.61', port=8080)
+# ftp_test=Candela(ip='192.168.214.219',port=8080)
 
-# test_apis.start_mc_test(mc_tos="VO", endp_types="mc_udp",
-#                                   side_b_min=100000000, upstream_port='eth1', test_duration=30,real_devices=True,file_name='grp219',group_name='grp1,grp2',profile_name='Openx,Openx')
 
+#QOS
+#ftp_test.start_qos_test(ssid='Dev_wpa2',password='lanforge',security='wpa2',ap_name='NETGEAR',qos_serial_run=False,traffic_type='lf_tcp',upstream='eth1', tos=['VO'],csv_name="demo.csv")
+
+
+# ROAMMMMM
+candela_apis.start_roam_test(attenuator='1.1.3192', attenuator_modules=['0,1', '2,3'],
+                             device_list=['1.11.wlan0','1.12.wlan0'],
+                             bssids=['90:3c:b3:b1:70:0d', '90:3c:b3:6c:41:c5'],
+                             wait_time=1,
+                             step=1000, background_run=False,csv_name='demo.csv')
+candela_apis.generate_roam_test_report()
+
+
+#FTP TEST
+#ftp_test.start_ftp_test(ssid='Dev_wpa2',password='lanforge',security='wpa2',device_list='1.14',background=False,csv_name='demo.csv')
+
+
+#VIDEO STREAMING
+#ftp_test.start_vs_test(group_name='grp1',file_name='g219',profile_name='OpenWa',csv_name="demo.csv")
+
+#PING TEST
+#ftp_test.start_ping_test(group_name='grp1',file_name='g219',profile_name='OpenWa',target='192.168.1.3',real=True,csv_name="demo.csv")
+
+
+
+# candela_apis.get_client_connection_details(['1.208.wlan0', '1.19.wlan0'])
+
+# python3 lf_interop_video_streaming.py --mgr 192.168.214.219 --url "https://youtu.be/tuclLjhiRI4?si=-CcR-3drdwPE4Pyz" --media_source hls --media_quality 1080P --duration 1m  --debug --test_name video_streaming_test --ssid Dev_wpa2 --passwd lanforge --encryp wpa2 --server_ip 192.168.214.219
 # TO RUN CONNECTIVITY TEST
 # device_list, report_labels, device_macs = candela_apis.start_connectivity(
 #     manager_ip='192.168.214.61', port=8080, server_ip='192.168.1.61', ssid_5g='Walkin_open', encryption_5g='open', passwd_5g='[BLANK]', device_list=['test41'])

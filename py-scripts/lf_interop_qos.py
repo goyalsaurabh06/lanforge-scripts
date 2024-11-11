@@ -139,7 +139,9 @@ class ThroughputQOS(Realm):
                  client_cert=None,
                  pk_passwd=None,
                  pac_file=None,
-                 csv_direction=None):
+                 csv_direction=None,
+                 expected_passfail_val=None,
+                 csv_name=None):
         super().__init__(lfclient_host=host,
                          lfclient_port=port),
         self.ssid_list = []
@@ -220,7 +222,8 @@ class ThroughputQOS(Realm):
         self.pac_file = pac_file
         self.server_ip=server_ip
         self.csv_direction=csv_direction
-
+        self.expected_passfail_val=expected_passfail_val
+        self.csv_name=csv_name
     def os_type(self):
         response = self.json_get("/resource/all")
         for key,value in response.items():
@@ -255,7 +258,6 @@ class ThroughputQOS(Realm):
 
     def phantom_check(self,ftp_test=False):
         obj=DeviceConfig.DeviceConfig(lanforge_ip=self.host,file_name=self.file_name)
-        obj.device_csv_file()
         if(self.group_name!=None and self.file_name!=None and self.device_list==[] and self.profile_name!=None):
             selected_groups=self.group_name.split(',')
             selected_profiles=self.profile_name.split(',')
@@ -310,6 +312,7 @@ class ThroughputQOS(Realm):
                 'server_ip':self.server_ip,
 
             }
+            print("selfffffffffff",self.device_list)
             self.device_list=self.device_list.split(',')
             asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
         elif(self.device_list==[]):
@@ -345,8 +348,11 @@ class ThroughputQOS(Realm):
                     device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["serial"])
             print("Available devices:", device_list)
             self.device_list = input("Enter the desired resources to run the test:").split(',')
-            asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
+            
 
+            asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
+            if not self.expected_passfail_val and self.csv_name==None:
+                obj.device_csv_file(csv_name="device.csv")
 
         port_eid_list, same_eid_list,original_port_list=[],[],[]
         response = self.json_get("/resource/all")
@@ -416,7 +422,8 @@ class ThroughputQOS(Realm):
             for device in self.devices_available:
                 if eid in device:
                     print(eid + ' ' + device)
-                    self.user_list.append(device)
+                    if device not in self.user_list:
+                        self.user_list.append(device)
         #checking for the availability of slected devices to run test
 
         adbresponse=obj.adb_obj.get_devices()
@@ -427,8 +434,7 @@ class ThroughputQOS(Realm):
             df1=obj.display_groups(obj.groups)
             groups_list=df1.to_dict(orient='list')
             group_devices=[]
-            #asyncio.run(obj.connectivity({self.group_name:self.profile_name}))
-            #print("Groups list",groups_list)
+            
             for grp_name in groups_list.keys():
                 for g_name in selected_groups:
                     if(grp_name==g_name):
@@ -463,15 +469,19 @@ class ThroughputQOS(Realm):
 
             if len(available_list) > 0:
                 device_map={}
-                expected_val=input("Enter the expected {} value in MBPS for the following devices{} eg 8,6,2: ".format(self.csv_direction,available_list)).split(',')
-                if(len(available_list)==len(expected_val)):
-                    for i in range(len(available_list)):
-                        device_map[available_list[i]]=expected_val[i]
-                    #print("DEVVVVVVVV",device_map)
-                    obj.update_device_csv(self.csv_direction,device_map)
-                else:
-                    print("Enter correct number of values")
-                    exit(0)
+                if(not self.expected_passfail_val and self.csv_name==None):
+                    expected_val=input("Enter the expected {} value in MBPS for the following devices{} eg 8,6,2: ".format(self.csv_direction,available_list)).split(',')
+                    if(len(available_list)==len(expected_val)):
+                        for i in range(len(available_list)):
+                            device_map[available_list[i]]=expected_val[i]
+                        #print("DEVVVVVVVV",device_map)
+                        obj.update_device_csv("device.csv",self.csv_direction,device_map)
+                        self.csv_name="device.csv"
+                    else:
+                        print("Enter correct number of values")
+                        exit(0)
+                elif self.expected_passfail_val:
+                    pass
                 logger.info("Test is initiated on devices: {}".format(available_list))
                 devices_list = ','.join(available_list)
                 self.device_found = True
@@ -498,13 +508,15 @@ class ThroughputQOS(Realm):
         logger.info("INPUT DEVICES LIST {}".format(self.input_devices_list))
 
         # user desired real client list 1.1 wlan0 ---
-        
+        s=[]
         for i in resource_eid_list2:
             for j in range(len(self.user_list)):
                 if i in self.user_list[j]:
-                    self.real_client_list.append(self.user_list[j])
-                    self.real_client_list1.append((self.user_list[j])[:25])
-        print("REAL CLIENT LIST", self.real_client_list)
+                    if self.user_list[j] not in self.real_client_list:
+                        self.real_client_list.append(self.user_list[j])
+                        s.append((self.user_list[j])[:25])
+                        print("REAL CLIENT LIST", self.real_client_list)
+        self.real_client_list1=s
         #print("REAL CLIENT LIST1", self.real_client_list1)
 
         self.num_stations = len(self.real_client_list)
@@ -1208,53 +1220,33 @@ class ThroughputQOS(Realm):
                 logger.info(load)
                 logger.info(data_set)
                 
-                res_list=[]
-                test_input_list=[]
-                pass_fail_list=[]
-                interop_tab_data = self.json_get('/adb/')["devices"]
-           
-                for client in self.real_client_list:
-                    if(client.split(' ')[1]!='android'):
-                        res_list.append(client.split(' ')[2])
-                    else:
-                        for dev in interop_tab_data:
-                            for item in dev.values():
-                                if(item['user-name']==client.split(' ')[2]):
-                                    res_list.append(item['name'].split('.')[2])
+                if(not self.expected_passfail_val):
+                    res_list=[]
+                    test_input_list=[]
+                    pass_fail_list=[]
+                    interop_tab_data = self.json_get('/adb/')["devices"]
+                    print("222222222222",interop_tab_data)
+                    for client in self.real_client_list:
+                        if(client.split(' ')[1]!='android'):
+                            res_list.append(client.split(' ')[2])
+                        else:
+                            for dev in interop_tab_data:
+                                for item in dev.values():
+                                    if(item['user-name']==client.split(' ')[2]):
+                                        res_list.append(item['name'].split('.')[2])
 
-                with open('device.csv', mode='r') as file:
-                    reader = csv.DictReader(file)
-                    rows = list(reader)
-                    fieldnames = reader.fieldnames
-                for row in rows:
-                    device = row['DeviceList']
-                    #print(row)  
-                    if device in res_list:
-                        test_input_list.append(row[self.csv_direction])
-                direction=''
-                for i in range(len(test_input_list)):
-                    if(self.csv_direction.split('_')[2]=='BiDi'):
-                        if(float(test_input_list[i])<=float(upload_list[i].split(' ')[0]) and float(test_input_list[i])<=float(download_list[i].split(' ')[0])):
-                            pass_fail_list.append('PASS')
-                            direction='bidirectional'
-                        else:
-                            pass_fail_list.append('FAIL')
-                            direction='bidirectional'
-                    elif(self.csv_direction.split('_')[2]=='UL'):
-                        if(float(test_input_list[i])<=float(upload_list[i].split(' ')[0])):
-                            pass_fail_list.append('PASS')
-                            direction='upload'
-                        else:
-                            pass_fail_list.append('FAIL')
-                            direction='upload'
-                    else:
-                        # print(float(test_input_list[i]),float(download_list[i].split(' ')[0]))
-                        if(float(test_input_list[i])<=float(download_list[i].split(' ')[0])):
-                            pass_fail_list.append('PASS')
-                            direction='download'
-                        else:
-                            pass_fail_list.append('FAIL')
-                            direction='download'
+                    with open(self.csv_name, mode='r') as file:
+                        reader = csv.DictReader(file)
+                        rows = list(reader)
+                        fieldnames = reader.fieldnames
+                    for row in rows:
+                        device = row['DeviceList']
+                        #print(row)  
+                        if device in res_list:
+                            test_input_list.append(row[self.csv_direction])
+                    direction=''
+
+
                 if "BK" in self.tos:
                     if self.direction=="Bi-direction":
                         individual_set=list1[2]
@@ -1306,6 +1298,35 @@ class ThroughputQOS(Realm):
                     report.set_csv_filename(graph_png)
                     report.move_csv_file()
                     report.build_graph()
+                    if(self.expected_passfail_val):
+                        test_input_list=[self.expected_passfail_val for val in range(len(self.real_client_list))]
+                        
+                    for i in range(len(test_input_list)):
+                        if(self.csv_direction.split('_')[2]=='BiDi'):
+                            if(float(test_input_list[i])<=float(individual_upload_list[i]) and float(test_input_list[i])<=float(individual_download_list[i])):
+                                pass_fail_list.append('PASS')
+                                print("PASS")
+                                direction='bidirectional'
+                            else:
+                                pass_fail_list.append('FAIL')
+                                direction='bidirectional'
+                                print("FAIL")
+                        elif(self.csv_direction.split('_')[2]=='UL'):
+                            if(float(test_input_list[i])<=float(individual_upload_list[i])):
+                                pass_fail_list.append('PASS')
+                                direction='upload'
+                            else:
+                                pass_fail_list.append('FAIL')
+                                direction='upload'
+                        else:
+                            # print(float(test_input_list[i]),float(download_list[i].split(' ')[0]))
+                            if(float(test_input_list[i])<=float(individual_download_list[i])):
+                                pass_fail_list.append('PASS')
+                                direction='download'
+                            else:
+                                pass_fail_list.append('FAIL')
+                                direction='download'
+
 
                     bk_dataframe = {
                         " Client Name " : self.real_client_list,
@@ -1386,6 +1407,34 @@ class ThroughputQOS(Realm):
                     report.set_csv_filename(graph_png)
                     report.move_csv_file()
                     report.build_graph()
+                    if(self.expected_passfail_val):
+                        test_input_list=[self.expected_passfail_val for val in range(len(self.real_client_list))]
+
+                    for i in range(len(test_input_list)):
+                        if(self.csv_direction.split('_')[2]=='BiDi'):
+                            if(float(test_input_list[i])<=float(individual_upload_list[i]) and float(test_input_list[i])<=float(individual_download_list[i])):
+                                pass_fail_list.append('PASS')
+                                print("PASS")
+                                direction='bidirectional'
+                            else:
+                                pass_fail_list.append('FAIL')
+                                direction='bidirectional'
+                                print("FAIL")
+                        elif(self.csv_direction.split('_')[2]=='UL'):
+                            if(float(test_input_list[i])<=float(individual_upload_list[i])):
+                                pass_fail_list.append('PASS')
+                                direction='upload'
+                            else:
+                                pass_fail_list.append('FAIL')
+                                direction='upload'
+                        else:
+                            # print(float(test_input_list[i]),float(download_list[i].split(' ')[0]))
+                            if(float(test_input_list[i])<=float(individual_download_list[i])):
+                                pass_fail_list.append('PASS')
+                                direction='download'
+                            else:
+                                pass_fail_list.append('FAIL')
+                                direction='download'                   
                     be_dataframe = {
                         " Client Name " : self.real_client_list,
                         " MAC " : self.mac_id_list,
@@ -1465,8 +1514,34 @@ class ThroughputQOS(Realm):
                     report.set_csv_filename(graph_png)
                     report.move_csv_file()
                     report.build_graph()
+                    if(self.expected_passfail_val):
+                        test_input_list=[self.expected_passfail_val for val in range(len(self.real_client_list))]
 
-
+                    for i in range(len(test_input_list)):
+                        if(self.csv_direction.split('_')[2]=='BiDi'):
+                            if(float(test_input_list[i])<=float(individual_upload_list[i]) and float(test_input_list[i])<=float(individual_download_list[i])):
+                                pass_fail_list.append('PASS')
+                                print("PASS")
+                                direction='bidirectional'
+                            else:
+                                pass_fail_list.append('FAIL')
+                                direction='bidirectional'
+                                print("FAIL")
+                        elif(self.csv_direction.split('_')[2]=='UL'):
+                            if(float(test_input_list[i])<=float(individual_upload_list[i])):
+                                pass_fail_list.append('PASS')
+                                direction='upload'
+                            else:
+                                pass_fail_list.append('FAIL')
+                                direction='upload'
+                        else:
+                            # print(float(test_input_list[i]),float(download_list[i].split(' ')[0]))
+                            if(float(test_input_list[i])<=float(individual_download_list[i])):
+                                pass_fail_list.append('PASS')
+                                direction='download'
+                            else:
+                                pass_fail_list.append('FAIL')
+                                direction='download'
                     vi_dataframe = {
                         " Client Name " : self.real_client_list,
                         " MAC " : self.mac_id_list,
@@ -1520,6 +1595,7 @@ class ThroughputQOS(Realm):
                                 f"(WiFi) traffic.  X- axis shows “number of clients” and Y-axis shows "
                                 f"“Throughput in Mbps”.")
                     report.build_objective()
+                    print("444444444444",self.real_client_list1)
                     graph = lf_bar_graph_horizontal(_data_set=individual_set, _yaxis_name="Client names",
                                             _xaxis_name="Throughput in Mbps",
                                             _yaxis_categories=[i for i in self.real_client_list1],
@@ -1546,7 +1622,36 @@ class ThroughputQOS(Realm):
                     report.move_graph_image()
                     report.set_csv_filename(graph_png)
                     report.move_csv_file()
-                    report.build_graph()   
+                    report.build_graph()
+                    if(self.expected_passfail_val):
+                        pass_fail_list=[]
+                        test_input_list=[self.expected_passfail_val for val in range(len(self.real_client_list))]
+                    for i in range(len(test_input_list)):
+                        if(self.csv_direction.split('_')[2]=='BiDi'):
+                            
+                            if(float(test_input_list[i])<=float(individual_upload_list[i]) and float(test_input_list[i])<=float(individual_download_list[i])):
+                                pass_fail_list.append('PASS')
+                                print("PASS")
+                                direction='bidirectional'
+                            else:
+                                pass_fail_list.append('FAIL')
+                                direction='bidirectional'
+                                print("FAIL")
+                        elif(self.csv_direction.split('_')[2]=='UL'):
+                            if(float(test_input_list[i])<=float(individual_upload_list[i])):
+                                pass_fail_list.append('PASS')
+                                direction='upload'
+                            else:
+                                pass_fail_list.append('FAIL')
+                                direction='upload'
+                        else:
+                            # print(float(test_input_list[i]),float(download_list[i].split(' ')[0]))
+                            if(float(test_input_list[i])<=float(individual_download_list[i])):
+                                pass_fail_list.append('PASS')
+                                direction='download'
+                            else:
+                                pass_fail_list.append('FAIL')
+                                direction='download'                       
                     vo_dataframe = {
                         " Client Name " : self.real_client_list,
                         " MAC " : self.mac_id_list,
@@ -1727,12 +1832,16 @@ def main():
     optional.add_argument("--pk_passwd", type=str,default='NA')
     optional.add_argument("--pac_file", type=str,default='NA')
     optional.add_argument("--server_ip", type=str,default='NA')
-
+    optional.add_argument('--expected_passfail_val', help='Enter the expected throughput ', default=None)
+    optional.add_argument('--csv_name',type=str, help='Enter the csv name to store expected values', default=None)
     args = parser.parse_args()
 
     # help summary
     if args.help_summary:
         print(help_summary)
+        exit(0)
+    if args.csv_name!=None and args.expected_passfail_val:
+        print("Enter either --csv_name or --expected_passfail_val")
         exit(0)
     print("--------------------------------------------")
     print(args)
@@ -1835,7 +1944,9 @@ def main():
                                 client_cert=args.client_cert,
                                 pk_passwd=args.pk_passwd,
                                 pac_file=args.pac_file,
-                                server_ip=args.server_ip)
+                                server_ip=args.server_ip,
+                                expected_passfail_val=args.expected_passfail_val,
+                                csv_name=args.csv_name)
             throughput_qos.os_type()
             throughput_qos.phantom_check()
             # checking if we have atleast one device available for running test

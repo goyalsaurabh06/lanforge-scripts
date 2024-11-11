@@ -129,7 +129,9 @@ class FtpTest(LFCliBase):
                  ca_cert=None,
                  client_cert=None,
                  pk_passwd=None,
-                 pac_file=None,server_ip=None,):
+                 pac_file=None,server_ip=None,
+                 expected_passfail_val=None,
+                 csv_name=None):
         super().__init__(lfclient_host, lfclient_port, _debug=_debug_on, _exit_on_fail=_exit_on_fail)
         logger.info("Test is about to start")
         self.ssid_list = []
@@ -213,13 +215,16 @@ class FtpTest(LFCliBase):
         self.pk_passwd = pk_passwd
         self.pac_file = pac_file
         self.server_ip=server_ip
+        self.expected_passfail_val=expected_passfail_val
+        self.csv_name=csv_name
         self.api_url = 'http://{}:{}'.format(self.host, self.port)
 
         logger.info("Test is Initialized")
 
     def query_realclients(self):
         obj=DeviceConfig.DeviceConfig(lanforge_ip=self.host,file_name=self.file_name)
-        obj.device_csv_file()
+        if not self.expected_passfail_val and self.csv_name== None :
+            obj.device_csv_file(csv_name="device.csv")
         if(self.group_name!=None and self.file_name!=None and self.device_list==[] and self.profile_name!=None):
             selected_groups=self.group_name.split(',')
             selected_profiles=self.profile_name.split(',')
@@ -441,15 +446,19 @@ class FtpTest(LFCliBase):
 
             if len(available_list) > 0:
                 device_map={}
-                expected_val=input("Enter the expected {} value for the following devices{} eg 8,6,2: ".format(self.direction,available_list)).split(',')
-                if(len(available_list)==len(expected_val)):
-                    for i in range(len(available_list)):
-                        device_map[available_list[i]]=expected_val[i]
-                    #print("DEVVVVVVVV",device_map)
-                    obj.update_device_csv('FTP',device_map)
-                else:
-                    print("Enter correct number of values")
-                    exit(0)
+                if(not self.expected_passfail_val and self.csv_name==None):
+                    expected_val=input("Enter the expected {} value for the following devices{} eg 8,6,2: ".format(self.direction,available_list)).split(',')
+                    if(len(available_list)==len(expected_val) and not self.expected_passfail_val):
+                        for i in range(len(available_list)):
+                            device_map[available_list[i]]=expected_val[i]
+                        obj.update_device_csv("device.csv",'FTP',device_map)
+                        self.csv_name="device.csv"
+                    else:
+                        print("Enter correct number of values")
+                        exit(0)
+                elif self.expected_passfail_val:
+                    pass
+                
                     
 
 
@@ -1748,48 +1757,72 @@ class FtpTest(LFCliBase):
        # print("urllllll ksoawruodsn",pass_fail_list)
         #self.report.test_setup_table(value="Information", test_setup_data=input_setup_info)
         if(self.clients_type=='Real'):
-            res_list=[]
-            test_input_list=[]
-            pass_fail_list=[]
-        # print("urllllll ksoawruodsn",pass_fail_list,self.url_data)
-            for client in client_list:
-                if(client.split(' ')[1]!='android'):
-                    res_list.append(client.split(' ')[2])
-                else:
-                    interop_tab_data = self.json_get('/adb/')["devices"]
-                    for dev in interop_tab_data:
-                        for item in dev.values():
-                            if(item['user-name']==client.split(' ')[2]):
-                                res_list.append(item['name'].split('.')[2])
+            if(not self.expected_passfail_val):
+                res_list=[]
+                test_input_list=[]
+                pass_fail_list=[]
+            # print("urllllll ksoawruodsn",pass_fail_list,self.url_data)
+                for client in client_list:
+                    if(client.split(' ')[1]!='android'):
+                        res_list.append(client.split(' ')[2])
+                    else:
+                        interop_tab_data = self.json_get('/adb/')["devices"]
+                        for dev in interop_tab_data:
+                            for item in dev.values():
+                                if(item['user-name']==client.split(' ')[2]):
+                                    res_list.append(item['name'].split('.')[2])
 
-            with open('device.csv', mode='r') as file:
-                reader = csv.DictReader(file)
-                rows = list(reader)
-                fieldnames = reader.fieldnames
-            for row in rows:
-                device = row['DeviceList']
-                #print(row)  
-                if device in res_list:
-                    test_input_list.append(row['FTP'])
-            for i in range(len(test_input_list)):
-                if(int(test_input_list[i])<=self.url_data[i]):
-                    pass_fail_list.append('PASS')
-                else:
-                    pass_fail_list.append('FAIL')
+                with open(self.csv_name, mode='r') as file:
+                    reader = csv.DictReader(file)
+                    rows = list(reader)
+                    fieldnames = reader.fieldnames
+                for row in rows:
+                    device = row['DeviceList']
+                    #print(row)  
+                    if device in res_list:
+                        test_input_list.append(row['FTP'])
+                for i in range(len(test_input_list)):
+                    if(int(test_input_list[i])<=self.url_data[i]):
+                        pass_fail_list.append('PASS')
+                    else:
+                        pass_fail_list.append('FAIL')
+                    dataframe = {
+                                    " Clients" : client_list,
+                                    " MAC " : self.mac_id_list,
+                                    " Channel" : self.channel_list,
+                                    " SSID " : self.ssid_list,
+                                    " Mode" : self.mode_list,
+                                    " No of times File downloaded " : self.url_data,
+                                    " Expected output " : test_input_list,
+                                    " Time Taken to Download file (ms)" : self.uc_avg,
+                                    " Bytes-rd (Mega Bytes)" : self.bytes_rd,
+                                    " Status ":pass_fail_list
+                                }
+            else:
+                test_input_list=[self.expected_passfail_val for val in range(len(client_list))]
+                print("2222222",test_input_list)
+                pass_fail_list=[]
+                for i in range(len(test_input_list)):
+                    if(int(self.expected_passfail_val) <= self.url_data[i]):
+                        pass_fail_list.append("PASS")
+                    else:
+                        pass_fail_list.append("FAIL")
                 dataframe = {
-                                " Clients" : client_list,
-                                " MAC " : self.mac_id_list,
-                                " Channel" : self.channel_list,
-                                " SSID " : self.ssid_list,
-                                " Mode" : self.mode_list,
-                                " No of times File downloaded " : self.url_data,
-                                " Expected output " : test_input_list,
-                                " Time Taken to Download file (ms)" : self.uc_avg,
-                                " Bytes-rd (Mega Bytes)" : self.bytes_rd,
-                                " Status ":pass_fail_list
-                            }
+                                    " Clients" : client_list,
+                                    " MAC " : self.mac_id_list,
+                                    " Channel" : self.channel_list,
+                                    " SSID " : self.ssid_list,
+                                    " Mode" : self.mode_list,
+                                    " No of times File downloaded " : self.url_data,
+                                    " Expected output " : test_input_list,
+                                    " Time Taken to Download file (ms)" : self.uc_avg,
+                                    " Bytes-rd (Mega Bytes)" : self.bytes_rd,
+                                    " Status ":pass_fail_list
+                                }
+
+
         else:
-               dataframe = {
+            dataframe = {
                                 " Clients" : client_list,
                                 " MAC " : self.mac_id_list,
                                 " Channel" : self.channel_list,
@@ -2110,6 +2143,9 @@ INCLUDE_IN_README: False
     optional.add_argument('--result_dir', help='Specify the result dir to store the runtime logs', default='')
     optional.add_argument('--device_list', help='Enter the devices on which the test should be run', default=[])
     optional.add_argument('--test_name', help='Specify test name to store the runtime csv results', default=None)
+    optional.add_argument('--expected_passfail_val', help='Enter the expected number of urls ', default=None)
+    optional.add_argument('--csv_name',type=str, help='Enter the csv name to store expected values', default=None)
+
     # kpi_csv arguments
     optional.add_argument(
         "--test_rig",
@@ -2188,7 +2224,9 @@ INCLUDE_IN_README: False
 
     # empty dictionary for whole test data
     ftp_data = {}
-
+    if args.csv_name!=None and args.expected_passfail_val:
+        print("Enter either --csv_name or --expected_passfail_val")
+        exit(0)
     def pass_fail_duration(band, file_size):
         '''Method for set duration according file size and band which are given by user'''
 
@@ -2289,6 +2327,8 @@ INCLUDE_IN_README: False
                                 pk_passwd=args.pk_passwd,
                                 pac_file=args.pac_file,
                                 server_ip=args.server_ip,
+                                expected_passfail_val=args.expected_passfail_val,
+                                csv_name=args.csv_name
                                 )
 
                     interation_num = interation_num + 1

@@ -118,7 +118,9 @@ class Ping(Realm):
                  ca_cert=None,
                  client_cert=None,
                  pk_passwd=None,
-                 pac_file=None,server_ip=None):
+                 pac_file=None,server_ip=None,
+                 expected_passfail_val=None,
+                 csv_name=None):
         super().__init__(lfclient_host=host,
                          lfclient_port=port)
         self.ssid_list = []
@@ -173,6 +175,8 @@ class Ping(Realm):
         self.group_name=group_name
         self.server_ip=server_ip
         self.real=real
+        self.expected_passfail_val=expected_passfail_val
+        self.csv_name=csv_name
 
     def change_target_to_ip(self):
 
@@ -226,6 +230,7 @@ class Ping(Realm):
     #   devices: Connected RealDevice object which has already populated tracked real device
     #            resources through call to get_devices()
     def select_real_devices(self, real_devices, real_sta_list=None, base_interop_obj=None,device_list=None):
+        print("---",real_sta_list,device_list)
         if real_sta_list==None:
             #print("HI")
             self.real_sta_list, _, _ = real_devices.query_user(device_list=device_list)
@@ -260,13 +265,21 @@ class Ping(Realm):
         for i in self.real_sta_list:
             b=i.split('.')
             d_list.append(b[0]+'.'+b[1])
-        device_map={}
-        expected_val=input("Enter the expected value for the following devices{} eg 8,6,2: ".format(d_list)).split(',')
-        if(len(d_list)==len(expected_val)):
-            for i in range(len(d_list)):
-                device_map[d_list[i]]=expected_val[i]
-            #print("DEVVVVVVVV",device_map)
-            obj.update_device_csv('PingPacketLoss',device_map)
+        if(not self.expected_passfail_val and self.csv_name==None):
+            device_map={}
+            expected_val=input("Enter the expected value for the following devices{} eg 8,6,2: ".format(d_list)).split(',')
+            if(len(d_list)==len(expected_val)):
+                for i in range(len(d_list)):
+                    device_map[d_list[i]]=expected_val[i]
+                #print("DEVVVVVVVV",device_map)
+                obj.update_device_csv("device.csv",'PingPacketLoss',device_map)
+                self.csv_name="device.csv"
+            else:
+                print("Enter correct number of values")
+                exit(0)
+        elif self.expected_passfail_val:
+            pass
+        
         return d_list
 
     def buildstation(self):
@@ -507,51 +520,83 @@ class Ping(Realm):
         report.move_csv_file()
         report.build_graph()
 
-        if(self.real):   
-            res_list=[]
-            test_input_list=[]
-            pass_fail_list=[]
-            interop_tab_data = self.json_get('/adb/')["devices"]
-            for client in range(len(os_type)):
-                if(os_type[client]!='Android'):
-                    res_list.append(self.device_names[client])
-                else:
-                    for dev in interop_tab_data:
-                        for item in dev.values():
-                            if(item['user-name']==self.device_names[client]):
-                                res_list.append(item['name'].split('.')[2])
+        if(self.real):
+            if(not self.expected_passfail_val):
+                res_list=[]
+                test_input_list=[]
+                pass_fail_list=[]
+                interop_tab_data = self.json_get('/adb/')["devices"]
+                for client in range(len(os_type)):
+                    if(os_type[client]!='Android'):
+                        res_list.append(self.device_names[client])
+                    else:
+                        for dev in interop_tab_data:
+                            for item in dev.values():
+                                if(item['user-name']==self.device_names[client]):
+                                    res_list.append(item['name'].split('.')[2])
 
-            with open('device.csv', mode='r') as file:
-                reader = csv.DictReader(file)
-                rows = list(reader)
-                fieldnames = reader.fieldnames
-            for row in rows:
-                device = row['DeviceList']
-                #print(row)  
-                if device in res_list:
-                    test_input_list.append(row['PingPacketLoss'])
-            percent_pac_loss=[]
-            for i in range(len(self.packets_sent)):
-                percent_pac_loss.append(((self.packets_sent[i]-self.packets_received[i])/self.packets_sent[i])*100)
-            for i in range(len(test_input_list)):
-                if(int(test_input_list[i])>=percent_pac_loss[i]):
-                    pass_fail_list.append('PASS')
-                else:
-                    pass_fail_list.append('FAIL')
+                with open(self.csv_name, mode='r') as file:
+                    reader = csv.DictReader(file)
+                    rows = list(reader)
+                    fieldnames = reader.fieldnames
+                for row in rows:
+                    device = row['DeviceList']
+                    #print(row)  
+                    if device in res_list:
+                        print(device,row['PingPacketLoss'])
+                        test_input_list.append(row['PingPacketLoss'])
+                percent_pac_loss=[]
+                for i in range(len(self.packets_sent)):
+                    if(self.packets_sent[i]!=0):
+                        percent_pac_loss.append(((self.packets_sent[i]-self.packets_received[i])/self.packets_sent[i])*100)
+                    else:
+                        percent_pac_loss.append(0)
+                for i in range(len(test_input_list)):
+                    if(int(test_input_list[i])>=percent_pac_loss[i]):
+                        pass_fail_list.append('PASS')
+                    else:
+                        pass_fail_list.append('FAIL')
 
-            dataframe1 = pd.DataFrame({
-                'Wireless Client': self.device_names,
-                'MAC': self.device_mac,
-                'Channel': self.device_channels,
-                'SSID ' : self.device_ssid,
-                'Mode': self.device_modes,
-                'Packets Sent': self.packets_sent,
-                'Packets Received': self.packets_received,
-                'Packets Loss': self.packets_dropped,
-                " Percentage of Packet loss":percent_pac_loss,
-                " Expected loss": test_input_list,
-                "Status ":pass_fail_list
-            })
+                dataframe1 = pd.DataFrame({
+                    'Wireless Client': self.device_names,
+                    'MAC': self.device_mac,
+                    'Channel': self.device_channels,
+                    'SSID ' : self.device_ssid,
+                    'Mode': self.device_modes,
+                    'Packets Sent': self.packets_sent,
+                    'Packets Received': self.packets_received,
+                    'Packets Loss': self.packets_dropped,
+                    " Percentage of Packet loss":percent_pac_loss,
+                    " Expected loss": test_input_list,
+                    "Status ":pass_fail_list
+                })
+            else:
+                test_input_list=[self.expected_passfail_val for val in range(len(self.device_names))]
+                percent_pac_loss=[]
+                for i in range(len(self.packets_sent)):
+                    if(self.packets_sent[i]!=0):
+                        percent_pac_loss.append(((self.packets_sent[i]-self.packets_received[i])/self.packets_sent[i])*100)
+                    else:
+                        percent_pac_loss.append(0)
+                pass_fail_list=[]
+                for i in range(len(test_input_list)):
+                    if(int(self.expected_passfail_val) >= percent_pac_loss[i]):
+                        pass_fail_list.append("PASS")
+                    else:
+                        pass_fail_list.append("FAIL")
+                dataframe1 = pd.DataFrame({
+                    'Wireless Client': self.device_names,
+                    'MAC': self.device_mac,
+                    'Channel': self.device_channels,
+                    'SSID ' : self.device_ssid,
+                    'Mode': self.device_modes,
+                    'Packets Sent': self.packets_sent,
+                    'Packets Received': self.packets_received,
+                    'Packets Loss': self.packets_dropped,
+                    " Percentage of Packet loss":percent_pac_loss,
+                    " Expected loss": test_input_list,
+                    "Status ":pass_fail_list
+                })
         else:
             dataframe1 = pd.DataFrame({
                 'Wireless Client': self.device_names,
@@ -562,7 +607,6 @@ class Ping(Realm):
                 'Packets Sent': self.packets_sent,
                 'Packets Received': self.packets_received,
                 'Packets Loss': self.packets_dropped,
-                " Percentage of Packet loss":percent_pac_loss,
             })
         report.set_table_dataframe(dataframe1)
         report.build_table()
@@ -805,9 +849,14 @@ effectively over the network and pinpoint potential issues affecting connectivit
     parser.add_argument("--client_cert", type=str,default='[BLANK]')
     parser.add_argument("--pk_passwd", type=str,default='[BLANK]')
     parser.add_argument("--pac_file", type=str,default='[BLANK]')
+    parser.add_argument('--expected_passfail_val', help='Enter the expected packet loss', default=None)
+    parser.add_argument('--csv_name',type=str, help='Enter the csv name to store expected values', default=None)
+
 
     args = parser.parse_args()
-
+    if args.csv_name!=None and args.expected_passfail_val:
+        print("Enter either --csv_name or --expected_passfail_val")
+        exit(0)
     if args.help_summary:
         print(help_summary)
         exit(0)
@@ -852,22 +901,8 @@ effectively over the network and pinpoint potential issues affecting connectivit
         if(args.server_ip is None):
             print('--server_ip or upstream ip required for Wi-fi configuration')
             exit(0)
-    if(args.group_name!=None):
-        selected_groups=args.group_name.split(',')
-    else:
-        selected_groups=[]
-    if(args.profile_name!=None):
-        selected_profiles=args.profile_name.split(',')
-    else:
-        selected_profiles=[]
-    if(len(selected_groups)!=len(selected_profiles)):
-        print("Number of groups should match number of profiles")
-        exit(0)
+   
     
-
-       
-
-
 
 
     if(args.group_name!=None):
@@ -938,7 +973,7 @@ effectively over the network and pinpoint potential issues affecting connectivit
 
     # ping object creation
     ping = Ping(host=mgr_ip, port=mgr_port, ssid=ssid, security=security, password=password, radio=radio,
-                lanforge_password=mgr_password, target=target, interval=interval, sta_list=[], virtual=args.virtual, real=args.real, duration=duration, debug=debug)
+                lanforge_password=mgr_password, target=target, interval=interval, sta_list=[], virtual=args.virtual, real=args.real, duration=duration, debug=debug,csv_name=args.csv_name,expected_passfail_val=args.expected_passfail_val)
     
     # changing the target from port to IP
     ping.change_target_to_ip()
@@ -964,7 +999,9 @@ effectively over the network and pinpoint potential issues affecting connectivit
         if(configure):
 
             obj=DeviceConfig.DeviceConfig(lanforge_ip=mgr_ip,file_name=file_name)
-            obj.device_csv_file()
+            print(args.expected_passfail_val)
+            if not args.expected_passfail_val and args.csv_name== None:
+                obj.device_csv_file("device.csv")
             if(group_name!=None and file_name!=None and profile_name!=None):
                 selected_groups=group_name.split(',')
                 selected_profiles=profile_name.split(',')
@@ -977,8 +1014,6 @@ effectively over the network and pinpoint potential issues affecting connectivit
                 adbresponse=obj.adb_obj.get_devices()
                 resource_manager=obj.laptop_obj.get_devices()
                 all_res={}
-                # print("ADBBBBBBBB",adbresponse)
-                # print("RESSSSSS",resource_manager)
                 df1=obj.display_groups(obj.groups)
                 groups_list=df1.to_dict(orient='list')
                 group_devices={}
