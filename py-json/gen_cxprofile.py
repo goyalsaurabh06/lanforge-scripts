@@ -84,6 +84,13 @@ class GenCXProfile(LFCliBase):
             else:
                 logger.critical("Please ensure file_output has been set correctly")
                 raise ValueError("Please ensure file_output has been set correctly")
+    
+        elif self.type == "zoom":
+            pass
+        elif self.type == 'youtube':
+            pass
+        elif self.type == "real_browser":
+            pass
         else:
             logger.critical("Unknown command type")
             raise ValueError("Unknown command type")
@@ -745,4 +752,3 @@ class GenCXProfile(LFCliBase):
             if output_format.lower() != 'csv':
                 pandas_extensions.df_to_file(dataframe=pd.read_csv(report_file), output_f=output_format,
                                              save_path=report_file)
-
