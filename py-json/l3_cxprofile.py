@@ -482,6 +482,7 @@ class L3CXProfile(LFCliBase):
         these_endp = []
         these_cx = []
 
+
         if (self.side_a_min_bps is None) \
                 or (self.side_a_max_bps is None) \
                 or (self.side_b_min_bps is None) \
@@ -676,6 +677,7 @@ class L3CXProfile(LFCliBase):
                 if ip_port_b != -1:
                     if ip_port_increment_b != 0:
                         ip_port_b = int(ip_port_b) + int(ip_port_increment_b)
+                cx_name=None
 
         elif type(side_b) == list and type(side_a) != list:
             side_b_info = self.local_realm.name_to_eid(side_b[0])

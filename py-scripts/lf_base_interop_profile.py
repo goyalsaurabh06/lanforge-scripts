@@ -1757,7 +1757,7 @@ class RealDevice(Realm):
             devices_data[port_id]     = port_data_dict
 
         self.devices          = devices
-        self.devices_data     = devices_data
+        self.devices_data     = devices_data 
         return self.devices
     
     # querying the user the required mobiles to test

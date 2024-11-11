@@ -141,7 +141,8 @@ class RealBrowserTest(Realm):
                 client_cert=None,
                 pk_passwd=None,
                 pac_file=None,
-                server_ip=None):
+                server_ip=None,device_csv_name=None,
+                expected_passfail_value=None):
         super().__init__(lfclient_host=host, lfclient_port=8080)
         # Initialize attributes with provided parameters
         self.host = host 
@@ -202,6 +203,8 @@ class RealBrowserTest(Realm):
         self.pk_passwd = pk_passwd
         self.pac_file = pac_file
         self.server_ip=server_ip
+        self.expected_passfail_value=expected_passfail_value
+        self.device_csv_name=device_csv_name        
         # Initialize RealDevice instance      
         self.devices = base_RealDevice(manager_ip = self.host, selected_bands = [])
         # Initialize local realm 
@@ -694,6 +697,7 @@ class RealBrowserTest(Realm):
         # Start specific CX endpoints using the provided list
         logging.info("Test started at : {0} ".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
         logger.info("Starting CXs...")
+        time.sleep(2)
         for cx_name in cx_start_list:
             self.json_post("/cli-json/set_cx_state", {
                 "test_mgr": "default_tm",
@@ -878,7 +882,7 @@ class RealBrowserTest(Realm):
         conn = []
         timeouts = []
         # Check if only one CX endpoint is created
-        if len(self.created_cx.keys()) >1:
+        if len(self.created_cx.keys()) >1:    
             data = data['endpoint']
             for endpoint in data:
                 for key, value in endpoint.items():
@@ -1224,6 +1228,7 @@ class RealBrowserTest(Realm):
                 if self.all_cx_list[i] in cx_list:
                    
                     # Handle present value conditions
+
                     if self.data['total_urls'][i] == self.count or self.data['total_urls'][i] > self.count:
                         if temp[i] == -1:
                             temp[i] = int(abs(( datetime.now() - start_time_check ).total_seconds()))
@@ -1688,30 +1693,40 @@ class RealBrowserTest(Realm):
                 report.set_obj_html(" Detailed Result Table", "The below tables provides detailed information for the web browsing test.")
                 report.build_objective()
             
-            res_list=[]
-            test_input_list=[]
-            pass_fail_list=[]
-            interop_tab_data = self.json_get('/adb/')["devices"]
-            for dev in interop_tab_data:
-                for item in dev.values():
-                    if(item['user-name'] in self.username[i]):
-                        res_list.append(item['name'].split('.')[2])
-            
-            with open('device.csv', mode='r') as file:
-                    reader = csv.DictReader(file)
-                    rows = list(reader)
-            
-            for row in rows:
-                device = row['DeviceList']  
-                if device in res_list:
-                    test_input_list.append(row['RealBrowser'])
-            
-            for j in range(len(test_input_list)):
-                if(int(test_input_list[j])<=self.req_total_urls[i][j]):
-                    pass_fail_list.append('PASS')
-                else:
-                    pass_fail_list.append('FAIL')
-            
+            if not self.expected_passfail_value:
+                res_list=[]
+                test_input_list=[]
+                pass_fail_list=[]
+                interop_tab_data = self.json_get('/adb/')["devices"]
+                for dev in interop_tab_data:
+                    for item in dev.values():
+                        if(item['user-name'] in self.username[i]):
+                            res_list.append(item['name'].split('.')[2])
+                if self.device_csv_name == None:
+                    self.device_csv_name="device.csv"
+                with open(self.device_csv_name, mode='r') as file:
+                        reader = csv.DictReader(file)
+                        rows = list(reader)
+                
+                for row in rows:
+                    device = row['DeviceList']  
+                    if device in res_list:
+                        test_input_list.append(row['RealBrowser'])
+                
+                for j in range(len(test_input_list)):
+                    # print("1111",type(test_input_list[j]),"22222",type(self.req_total_urls[i][j]))
+                    if(float(test_input_list[j])<=float(self.req_total_urls[i][j])):
+                        pass_fail_list.append('PASS')
+                    else:
+                        pass_fail_list.append('FAIL')
+            else:
+                test_input_list=[self.expected_passfail_value for val in range(len(self.device_type[i]))]
+                pass_fail_list=[]
+                for j in range(len(test_input_list)):
+                    if(float(self.expected_passfail_value) <= float(dataset2[i][j])):
+                        pass_fail_list.append("PASS")
+                    else:
+                        pass_fail_list.append("FAIL")
             # Prepare dataframe with detailed result information
             dataframe = {
                 " DEVICE TYPE " : self.device_type[i],
@@ -2007,7 +2022,8 @@ def main():
     parser.add_argument("--pac_file", type=str,default='[BLANK]')
     parser.add_argument("--server_ip",type=str,default=None)
     parser.add_argument('--help_summary', help='Show summary of what this script does', default=None)
-
+    parser.add_argument("--expected_passfail_value",help="Specify the expected urlcount value for pass/fail")
+    parser.add_argument("--device_csv_name",type=str,help="Specify the device csv name for pass/fail",default=None)
     args = parser.parse_args()
 
     if args.help_summary:
@@ -2025,6 +2041,10 @@ def main():
 
     # TODO refactor to be logger for consistency
     logg = logging.getLogger(__name__)
+    if(args.expected_passfail_value!=None and args.device_csv_name!=None):
+        print("Specify either expected_passfail_value or device_csv_name")
+        exit(1)
+
     if(args.group_name!=None):
         selected_groups=args.group_name.split(',')
     else:
@@ -2042,7 +2062,7 @@ def main():
 
         # Initialize an instance of RealBrowserTest with various parameters
         obj = RealBrowserTest(host=args.host, ssid=args.ssid, passwd=args.passwd, encryp=args.encryp,
-                            suporrted_release=["7.0", "10", "11", "12"], max_speed=args.max_speed,
+                            suporrted_release=["7.0", "10", "11", "12","14"], max_speed=args.max_speed,
                             url=args.url, count=args.count, duration=args.duration, 
                             resource_ids = args.device_list, dowebgui = args.dowebgui,
                             result_dir = args.result_dir,test_name = args.test_name, incremental = args.incremental,postcleanup=args.postcleanup,
@@ -2067,7 +2087,9 @@ def main():
                             client_cert=args.client_cert,
                             pk_passwd=args.pk_passwd,
                             pac_file=args.pac_file,
-                            server_ip=args.server_ip
+                            server_ip=args.server_ip,
+                            expected_passfail_value=args.expected_passfail_value,
+                            device_csv_name=args.device_csv_name
                             )
         
         # Initialize empty lists and dictionaries for resource management
@@ -2081,7 +2103,8 @@ def main():
         # other_list = []
         resource_ids_generated = ""
         config_obj=DeviceConfig.DeviceConfig(lanforge_ip=args.host,file_name=args.file_name)
-        config_obj.device_csv_file()
+        if not args.expected_passfail_value and args.device_csv_name==None :
+            config_obj.device_csv_file(csv_name="device.csv")
         if(args.group_name!=None and args.file_name!=None and args.profile_name!=None):
             selected_groups=args.group_name.split(',')
             selected_profiles=args.profile_name.split(',')
@@ -2099,7 +2122,7 @@ def main():
             df1=config_obj.display_groups(config_obj.groups)
             groups_list=df1.to_dict(orient='list')
             group_devices={}
-            #asyncio.run(obj.connectivity({self.group_name:self.profile_name}))
+            
             for adb in adbresponse:   
                 group_devices[adb['serial']]=adb['eid']
             for res in resource_manager:
@@ -2133,7 +2156,6 @@ def main():
             # Case where args.no_laptops flag is set
             # if args.no_laptops:
                 # Retrieve all Android devices if no_laptops flag is True
-            obj.android_devices = obj.devices.get_devices(only_androids=True)
             # else:
             #     # Retrieve all devices and their OS types if no_laptops flag is False
             #     devices,os_types_dict = obj.devices.get_devices(androids=True,laptops=True)
@@ -2176,9 +2198,10 @@ def main():
                 }
                 if(args.group_name==None and args.file_name==None and args.profile_name==None):
                     dev_list=args.device_list.split(',')
-                    # asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
+                    asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
 
 
+                obj.android_devices = obj.devices.get_devices(only_androids=True)
                 # Extract second part of resource IDs and sort them
                 obj.resource_ids = ",".join(id.split(".")[1] for id in args.device_list.split(","))
                 resource_ids_sm = obj.resource_ids
@@ -2331,14 +2354,17 @@ def main():
             exit()
         if len(available_resources) > 0:
             device_map={}
-            expected_val=input("Enter the expected value for the following devices{} eg 8,6,2: ".format(available_resources)).split(',')
-            if(len(available_resources)==len(expected_val)):
-                for i in range(len(available_resources)):
-                    device_map[obj.android_list[i].split('.')[0]+'.'+obj.android_list[i].split('.')[1]]=expected_val[i]
-                    config_obj.update_device_csv('RealBrowser',device_map)
-            else:
-                print("Enter correct number of values")
-                exit(0)
+            if(not args.expected_passfail_value and args.device_csv_name == None):
+                expected_val=input("Enter the expected value for the following devices{} eg 8,6,2: ".format(available_resources)).split(',')
+                if(len(available_resources)==len(expected_val)):
+                    for i in range(len(available_resources)):
+                        device_map[obj.android_list[i].split('.')[0]+'.'+obj.android_list[i].split('.')[1]]=expected_val[i]
+                    config_obj.update_device_csv('device.csv','RealBrowser',device_map)
+                else:
+                    print("Enter correct number of values")
+                    exit(0)
+            elif args.expected_passfail_value:
+                pass
         # Handle incremental values input if resource IDs are specified and in not specified case.
         if args.incremental and not args.webgui_incremental :
             if obj.resource_ids:

@@ -82,7 +82,9 @@ class InteropPortReset(Realm):
                  wait_time=None,
                  device_list=None,
                  suporrted_release=None,
-                 forget_network=True
+                 forget_network=True,
+                 device_csv_name=None,
+                 expected_passfail_value=None
                  ):
         super().__init__(lfclient_host=host,
                          lfclient_port=8080)
@@ -115,6 +117,8 @@ class InteropPortReset(Realm):
         self.time_int = time_int
         self.device_list = device_list
         self.forget_network = forget_network
+        self.expected_passfail_value=expected_passfail_value
+        self.device_csv_name=device_csv_name 
         # self.wait_time = wait_time
         self.supported_release = suporrted_release
         self.device_name = []
@@ -143,24 +147,28 @@ class InteropPortReset(Realm):
             exit(0)
         logging.info(f"{self.real_sta_list}")
         config_obj=DeviceConfig.DeviceConfig(lanforge_ip=self.host)
-        config_obj.device_csv_file()
+        if not self.expected_passfail_value and self.device_csv_name==None :
+            config_obj.device_csv_file(csv_name="device.csv")
         interop_tab_data = self.json_get('/adb/')["devices"]
         available_list=[]
         for dev in self.real_sta_list:
             available_list.append(dev.split('.')[0]+'.'+dev.split('.')[1])
-        print("availablelist",available_list)
-         
+        print("availablelist",available_list)         
         if len(self.real_sta_list)>0:
 
             device_map={}
-            expected_val=input("Enter the expected value for the following devices{} eg 8,6,2: ".format(available_list)).split(',')
-            if(len(available_list)==len(expected_val)):
-                for i in range(len(available_list)):
-                    device_map[available_list[i]]=expected_val[i]
-                config_obj.update_device_csv('PortReset',device_map)
-            else:
-                print("Enter correct number of values")
-                exit(0)
+            if(not self.expected_passfail_value and self.device_csv_name == None):
+                expected_val=input("Enter the expected value for the following devices{} eg 8,6,2: ".format(available_list)).split(',')
+                if(len(available_list)==len(expected_val)):
+                    for i in range(len(available_list)):
+                        device_map[available_list[i]]=expected_val[i]
+                    config_obj.update_device_csv("device.csv",'PortReset',device_map)
+                    self.device_csv_name="device.csv"
+                else:
+                    print("Enter correct number of values")
+                    exit(0)
+            elif self.expected_passfail_value:
+                    pass
         for sta_name in self.real_sta_list:
             if sta_name not in real_device_data:
                 logger.error('Real Station not in devices data')
@@ -1070,31 +1078,39 @@ class InteropPortReset(Realm):
             s_no = []
             for i in range(len(d_name)):
                 s_no.append(i + 1)
-
-            res_list=[]
-            test_input_list=[]
-            pass_fail_list=[]
-
-            for i in range(len(d_name)):
-                if(device_type[i]=='Android'):
-                    res_list.append(d_name[i].split('.')[2])
-                else:
-                    res_list.append(user_name[i])
-            with open('device.csv', mode='r') as file:
-                reader = csv.DictReader(file)
-                rows = list(reader)
             
-            for row in rows:
-                device = row['DeviceList']  
-                if device in res_list:
-                    test_input_list.append(row['PortReset'])
+            if not self.expected_passfail_value:
+                res_list=[]
+                test_input_list=[]
+                pass_fail_list=[]
 
-            for i in range(len(test_input_list)):
-                if(int(test_input_list[i])<=self.total_connects[i]):
-                    pass_fail_list.append('PASS')
-                else:
-                    pass_fail_list.append('FAIL')
-            print("AAAAAA",res_list,test_input_list,pass_fail_list)
+                for i in range(len(d_name)):
+                    if(device_type[i]=='Android'):
+                        res_list.append(d_name[i].split('.')[2])
+                    else:
+                        res_list.append(user_name[i])
+                with open(self.device_csv_name, mode='r') as file:
+                    reader = csv.DictReader(file)
+                    rows = list(reader)
+                
+                for row in rows:
+                    device = row['DeviceList']  
+                    if device in res_list:
+                        test_input_list.append(row['PortReset'])
+
+                for i in range(len(test_input_list)):
+                    if(int(test_input_list[i])<=self.total_connects[i]):
+                        pass_fail_list.append('PASS')
+                    else:
+                        pass_fail_list.append('FAIL')
+            else:
+                test_input_list=[self.expected_passfail_value for val in range(len(d_name))]
+                pass_fail_list=[]
+                for j in range(len(test_input_list)):
+                    if(int(self.expected_passfail_value) <= self.total_connects[j]):
+                        pass_fail_list.append("PASS")
+                    else:
+                        pass_fail_list.append("FAIL")
             table_2 = {
                 "S.No": s_no,
                 "Name of the Devices": d_name,
@@ -1228,6 +1244,8 @@ INCLUDE_IN_README: False
 
     parser.add_argument('--help_summary', help='Show summary of what this script does', default=None,
                         action="store_true")
+    parser.add_argument("--expected_passfail_value",help="Specify the expected urlcount value for pass/fail")
+    parser.add_argument("--device_csv_name",type=str,help="Specify the device csv name for pass/fail",default=None)
 
     args = parser.parse_args()
 
@@ -1235,7 +1253,9 @@ INCLUDE_IN_README: False
     if args.help_summary:
         print(help_summary)
         exit(0)
-
+    if(args.expected_passfail_value!=None and args.device_csv_name!=None):
+        print("Specify either expected_passfail_value or device_csv_name")
+        exit(1)
     # set the logger level to debug
     logger_config = lf_logger_config.lf_logger_config()
 
@@ -1260,7 +1280,9 @@ INCLUDE_IN_README: False
                            suporrted_release=args.release,
                            mgr_ip=args.mgr_ip,
                            device_list=args.device_list,
-                           forget_network=not args.no_forget_networks
+                           forget_network=not args.no_forget_networks,
+                           expected_passfail_value=args.expected_passfail_value,
+                           device_csv_name=args.device_csv_name
                            )
     obj.selecting_devices_from_available()
     reset_dict, duration = obj.run()

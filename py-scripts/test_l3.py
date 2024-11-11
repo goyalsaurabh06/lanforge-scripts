@@ -527,7 +527,8 @@ import itertools
 import pandas as pd
 import traceback
 import json
-
+import asyncio
+import csv
 if sys.version_info[0] != 3:
     print("This script requires Python 3")
     exit(1)
@@ -541,6 +542,8 @@ lf_kpi_csv = importlib.import_module("py-scripts.lf_kpi_csv")
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 LFUtils = importlib.import_module("py-json.LANforge.LFUtils")
 realm = importlib.import_module("py-json.realm")
+DeviceConfig=importlib.import_module("py-scripts.DeviceConfig")
+
 
 # from lf_graph import lf_bar_graph_horizontal
 # from lf_graph import lf_bar_graph
@@ -669,7 +672,12 @@ class L3VariableTime(Realm):
                  network_auth_type_list=[],
                  anqp_3gpp_cell_net_list=[],
                  ieee80211w_list=[],
-                 interopt_mode=False
+                 interopt_mode=False,
+                 endp_input_list=[],
+                 graph_input_list=[],
+                 real=False,
+                 expected_passfail_value=None,
+                 device_csv_name=None
                  ):
 
         self.eth_endps = []
@@ -717,6 +725,8 @@ class L3VariableTime(Realm):
         self.test_name = test_name
         self.ip = ip
         self.result_dir = result_dir
+        self.device_csv_name=device_csv_name
+        self.expected_passfail_value=expected_passfail_value
         # if it is a dataplane test the side_a is not none and an ethernet port
         if self.side_a is not None:
             self.dataplane = True
@@ -1158,6 +1168,9 @@ class L3VariableTime(Realm):
         self.network_auth_type_list = network_auth_type_list
         self.anqp_3gpp_cell_net_list = anqp_3gpp_cell_net_list
         self.ieee80211w_list = ieee80211w_list
+        self.endp_input_list=endp_input_list
+        self.graph_input_list=graph_input_list
+        self.real=real
 
         # AP information import the module
         if self.ap_read and self.ap_module is not None:
@@ -1352,7 +1365,10 @@ class L3VariableTime(Realm):
                 for existing_station_list in self.existing_station_lists:
                     self.station_profile.station_names.append(
                         existing_station_list)
+             
                 self.station_profiles.append(self.station_profile)
+                
+                
         else:
             pass
 
@@ -1398,8 +1414,8 @@ class L3VariableTime(Realm):
 
         for endp in endps:
             # pprint(endp)
-            if self.dowebgui != True:
-                logging.info(pformat(endp))
+            # if self.dowebgui != True:
+            #     logging.info(pformat(endp))
             eid_endp = endp["eid"].split(".")
             logger.debug(
                 "Comparing eid:{eid} to endp-id {eid_endp}".format(eid=eid, eid_endp=eid_endp))
@@ -1717,7 +1733,7 @@ class L3VariableTime(Realm):
             # logger.info("rebuild: Clearing cx profile lists.\n")
             self.cx_profile.clean_cx_lists()
             self.multicast_profile.clean_mc_lists()
-
+        
         if self.dataplane:
             for etype in self.endp_types:
                 for _tos in self.tos:
@@ -1781,8 +1797,12 @@ class L3VariableTime(Realm):
                         for _tos in self.tos:
                             logger.info("Creating connections for endpoint type: {etype} TOS: {tos}  cx-count: {cx_count}".format(
                                 etype=etype, tos=_tos, cx_count=self.cx_profile.get_cx_count()))
-                            these_cx, these_endp = self.cx_profile.create(
-                                endp_type=etype, side_a=station_profile.station_names, side_b=self.side_b, sleep_time=0, tos=_tos, add_tos_to_name=True)
+                            if self.use_existing_station_lists:
+                                these_cx, these_endp = self.cx_profile.create(
+                                    endp_type=etype, side_a=self.station_profile.station_names, side_b=self.side_b, sleep_time=0, tos=_tos, add_tos_to_name=True)
+                            else:
+                                these_cx, these_endp = self.cx_profile.create(
+                                    endp_type=etype, side_a=station_profile.station_names, side_b=self.side_b, sleep_time=0, tos=_tos, add_tos_to_name=True)
                             if etype == "lf_udp" or etype == "lf_udp6":
                                 self.udp_endps = self.udp_endps + these_endp
                             else:
@@ -2972,6 +2992,7 @@ class L3VariableTime(Realm):
                             # use the eid to get the hostname and channel
                             eid_tmp_resource = str(self.name_to_eid(endp_data[endp_data_key]['eid'])[0]) + '.' + str(self.name_to_eid(endp_data[endp_data_key]['eid'])[1])
                             # look up the resource
+                           
                             resource_found = False
                             for resource_data in self.resource_data['resources']:
                                 resource_data_key = list(resource_data.keys())[0]
@@ -5435,28 +5456,107 @@ class L3VariableTime(Realm):
                 self.report.build_graph()
                 self.report.set_csv_filename(graph_png)
                 self.report.move_csv_file()
+                if self.real:
+                    res_list=[]
+                    test_input_list=[]
+                    pass_fail_list=[]
 
-                tos_dataframe_A = {
-                    " Client Alias ": self.client_dict_A[tos]['resource_alias_A'],
-                    " Host eid ": self.client_dict_A[tos]['resource_eid_A'],
-                    " Host Name ": self.client_dict_A[tos]['resource_host_A'],
-                    " Device Type / Hw Ver ": self.client_dict_A[tos]['resource_hw_ver_A'],
-                    " Endp Name": self.client_dict_A[tos]["clients_A"],
-                    # TODO : port A being set to many times
-                    " Port Name ": self.client_dict_A[tos]['port_A'],
-                    " Mode ": self.client_dict_A[tos]['mode_A'],
-                    " Mac ": self.client_dict_A[tos]['mac_A'],
-                    " SSID ": self.client_dict_A[tos]['ssid_A'],
-                    " Channel ": self.client_dict_A[tos]['channel_A'],
-                    " Type of traffic ": self.client_dict_A[tos]['traffic_type_A'],
-                    " Traffic Protocol ": self.client_dict_A[tos]['traffic_protocol_A'],
-                    " Offered Upload Rate Per Client": self.client_dict_A[tos]['offered_upload_rate_A'],
-                    " Offered Download Rate Per Client": self.client_dict_A[tos]['offered_download_rate_A'],
-                    " Upload Rate Per Client": self.client_dict_A[tos]['ul_A'],
-                    " Download Rate Per Client": self.client_dict_A[tos]['dl_A'],
-                    " Drop Percentage (%)": self.client_dict_A[tos]['download_rx_drop_percent_A']
-                }
+                    interop_tab_data = self.json_get('/adb/')["devices"]
+                    # print("interop_data",interop_tab_data)
+                    if not self.expected_passfail_value:
+                        for client in self.client_dict_A[tos]['resource_alias_A']:
+                            if(client.split('_')[2]!='Android'):
+                                res_list.append(client.split('_')[1])
+                            else:
+                                for dev in interop_tab_data:
+                                    for item in dev.values():
+                                        if(item['resource-id']==client.split('_')[0]):
+                                            res_list.append(item['name'].split('.')[2])
+                            
+                        if self.device_csv_name==None:
+                            self.device_csv_name='device.csv'
+                        
+                        with open(self.device_csv_name, mode='r') as file:
+                            reader = csv.DictReader(file)
+                            rows = list(reader)
 
+                        for row in rows:
+                            device = row['DeviceList'] 
+                            if device in res_list:
+                                for endp in self.endp_input_list:
+                                    test_input_list.append(row[endp])
+                    else:
+                        test_input_list=[self.expected_passfail_value for val in range(len(self.client_dict_A[tos]['resource_alias_A']))] 
+
+                    for k in range(len(test_input_list)):
+                        if(self.graph_input_list[k].split('_')[2]=='BiDi'):
+                            if(float(test_input_list[k])<=float(self.client_dict_A[tos]['ul_A'][k]) and float(test_input_list[k])<=float(self.client_dict_A[tos]['dl_A'][k])):
+                                pass_fail_list.append('PASS')
+                                direction='bidirectional'
+                            else:
+                                pass_fail_list.append('FAIL')
+                                direction='bidirectional'
+                        elif(self.graph_input_list[k].split('_')[2]=='UL'):
+                            if(float(test_input_list[k])<=float(self.client_dict_A[tos]['ul_A'][k])):
+                                pass_fail_list.append('PASS')
+                                direction='upload'
+                            else:
+                                pass_fail_list.append('FAIL')
+                                direction='upload'
+                        else:
+                            if(float(test_input_list[k])<=float(self.client_dict_A[tos]['dl_A'][k])):
+                                pass_fail_list.append('PASS')
+                                direction='download'
+                            else:
+                                pass_fail_list.append('FAIL')
+                                direction='download'
+                if self.real:
+                    tos_dataframe_A = {
+                        " Client Alias ": self.client_dict_A[tos]['resource_alias_A'],
+                        " Host eid ": self.client_dict_A[tos]['resource_eid_A'],
+                        " Host Name ": self.client_dict_A[tos]['resource_host_A'],
+                        " Device Type / Hw Ver ": self.client_dict_A[tos]['resource_hw_ver_A'],
+                        " Endp Name": self.client_dict_A[tos]["clients_A"],
+                        # TODO : port A being set to many times
+                        " Port Name ": self.client_dict_A[tos]['port_A'],
+                        " Mode ": self.client_dict_A[tos]['mode_A'],
+                        " Mac ": self.client_dict_A[tos]['mac_A'],
+                        " SSID ": self.client_dict_A[tos]['ssid_A'],
+                        " Channel ": self.client_dict_A[tos]['channel_A'],
+                        " Type of traffic ": self.client_dict_A[tos]['traffic_type_A'],
+                        " Traffic Protocol ": self.client_dict_A[tos]['traffic_protocol_A'],
+                        " Offered Upload Rate Per Client": self.client_dict_A[tos]['offered_upload_rate_A'],
+                        " Offered Download Rate Per Client": self.client_dict_A[tos]['offered_download_rate_A'],
+                        " Upload Rate Per Client": self.client_dict_A[tos]['ul_A'],
+                        " Download Rate Per Client": self.client_dict_A[tos]['dl_A'],
+                        " Expected "+direction+" Rate":test_input_list,
+                        " Drop Percentage (%)": self.client_dict_A[tos]['download_rx_drop_percent_A'],
+                        " Status ":pass_fail_list
+                    }
+                else:
+                    tos_dataframe_A = {
+                        " Client Alias ": self.client_dict_A[tos]['resource_alias_A'],
+                        " Host eid ": self.client_dict_A[tos]['resource_eid_A'],
+                        " Host Name ": self.client_dict_A[tos]['resource_host_A'],
+                        " Device Type / Hw Ver ": self.client_dict_A[tos]['resource_hw_ver_A'],
+                        " Endp Name": self.client_dict_A[tos]["clients_A"],
+                        # TODO : port A being set to many times
+                        " Port Name ": self.client_dict_A[tos]['port_A'],
+                        " Mode ": self.client_dict_A[tos]['mode_A'],
+                        " Mac ": self.client_dict_A[tos]['mac_A'],
+                        " SSID ": self.client_dict_A[tos]['ssid_A'],
+                        " Channel ": self.client_dict_A[tos]['channel_A'],
+                        " Type of traffic ": self.client_dict_A[tos]['traffic_type_A'],
+                        " Traffic Protocol ": self.client_dict_A[tos]['traffic_protocol_A'],
+                        " Offered Upload Rate Per Client": self.client_dict_A[tos]['offered_upload_rate_A'],
+                        " Offered Download Rate Per Client": self.client_dict_A[tos]['offered_download_rate_A'],
+                        " Upload Rate Per Client": self.client_dict_A[tos]['ul_A'],
+                        " Download Rate Per Client": self.client_dict_A[tos]['dl_A'],
+                        # " Expected "+direction+" Rate":test_input_list,
+                        " Drop Percentage (%)": self.client_dict_A[tos]['download_rx_drop_percent_A'],
+                        # " Status ":pass_fail_list
+                    }                    
+                
                 dataframe3 = pd.DataFrame(tos_dataframe_A)
                 self.report.set_table_dataframe(dataframe3)
                 self.report.build_table()
@@ -6451,6 +6551,51 @@ INCLUDE_IN_README: False
         '--test_name',
         help='Test name when running through webgui'
     )
+
+    test_l3_parser.add_argument(
+        '--ssid',
+        help='ssid to configure real devices'
+    )
+    test_l3_parser.add_argument(
+        '--passwd',
+        default="[BLANK]",
+        help='password to configure real devices'
+    )
+    test_l3_parser.add_argument(
+        '--security',
+        help='security to configure real devices'
+    )
+    test_l3_parser.add_argument(
+        '--device_list',
+        action='append',
+        help='devices as 1.10,1.11'
+    )
+    test_l3_parser.add_argument("--expected_passfail_value",help="Specify the expected urlcount value for pass/fail")
+    test_l3_parser.add_argument("--device_csv_name",type=str,help="Specify the device csv name for pass/fail",default=None)
+    
+    test_l3_parser.add_argument('--file_name', type=str, help='specify the file name')
+    test_l3_parser.add_argument('--group_name', type=str, help='specify the group name')
+    test_l3_parser.add_argument('--profile_name', type=str, help='specify the profile name')
+    test_l3_parser.add_argument("--eap_method", type=str,default='DEFAULT')
+    test_l3_parser.add_argument("--eap_identity", type=str,default='')
+    test_l3_parser.add_argument("--ieee80211",action="store_true")
+    test_l3_parser.add_argument("--ieee80211u",action="store_true")
+    test_l3_parser.add_argument("--ieee80211w",type=int,default=1)
+    test_l3_parser.add_argument("--enable_pkc",action="store_true")
+    test_l3_parser.add_argument("--bss_transition",action="store_true")
+    test_l3_parser.add_argument("--power_save",action="store_true")
+    test_l3_parser.add_argument("--disable_ofdma",action="store_true")
+    test_l3_parser.add_argument("--roam_ft_ds",action="store_true")
+    test_l3_parser.add_argument("--key_management", type=str,default='DEFAULT')
+    test_l3_parser.add_argument("--pairwise", type=str,default='[BLANK]')
+    test_l3_parser.add_argument("--private_key", type=str,default='[BLANK]')
+    test_l3_parser.add_argument("--ca_cert", type=str,default='[BLANK]')
+    test_l3_parser.add_argument("--client_cert", type=str,default='[BLANK]')
+    test_l3_parser.add_argument("--pk_passwd", type=str,default='[BLANK]')
+    test_l3_parser.add_argument("--pac_file", type=str,default='[BLANK]')
+    test_l3_parser.add_argument("--server_ip",type=str,default=None)
+    test_l3_parser.add_argument("--real",action="store_true")
+
     parser.add_argument('--help_summary',
                         default=None,
                         action="store_true",
@@ -6491,6 +6636,197 @@ INCLUDE_IN_README: False
         logger_config.load_lf_logger_config()
 
     debug = args.debug
+    if(args.side_b_min_bps!='256000' and args.side_b_min_bps!='0' and args.side_a_min_bps!='0' and args.side_a_min_bps!='256000' ):
+        dir='_BiDi'
+    elif(args.side_a_min_bps!='256000' and args.side_a_min_bps!='0'):
+        dir='_UL'
+    else:
+        dir='_DL'
+    if(args.real and (args.expected_passfail_value!=None and args.device_csv_name!=None)):
+        print("Specify either expected_passfail_value or device_csv_name")
+        exit(1)
+
+    traffic_type=args.endp_type.split(',')
+    endp_input_list=[]
+    graph_input_list=[]
+
+    # print("end_point",endp_input_list,args.device_list)
+    # input()
+    if(args.real and (args.use_existing_station_list or args.use_existing_station_list)):
+        print("For real devices use_existing_station_list and use_existing_station_list are not needed")  
+        exit(0)
+    elif(args.real and args.group_name!=None and args.profile_name!=None and args.file_name!=None and args.device_list!=None):
+        print("Either group name or device list should be entered not both")
+        exit(0)
+    elif(args.real and args.ssid!=None and args.profile_name!=None):
+        print("Either ssid or profile name should be given")
+        exit(0)
+    elif(args.real and args.file_name!=None and (args.group_name==None or args.profile_name==None) ):
+        print("Please enter the correct set of arguments")
+        exit(0)
+    elif(args.real and args.device_list!=None and (args.ssid==None or (args.passwd==None and args.security.lower()!='open') )):
+        print("Please provide ssid password and security when device list is given")        
+        exit(0)
+
+  
+    if(args.group_name!=None):
+        selected_groups=args.group_name.split(',')
+    else:
+        selected_groups=[]
+    if(args.profile_name!=None):
+        selected_profiles=args.profile_name.split(',')
+    else:
+        selected_profiles=[]
+
+    if(len(selected_groups)!=len(selected_profiles)):
+        print("Number of groups should match number of profiles")
+        exit(0)
+    
+    if(args.real and (args.group_name!=None and args.profile_name!=None and args.file_name!=None and args.device_list==None and args.ssid==None and (len(selected_groups)==len(selected_profiles))) or(args.group_name==None and args.profile_name==None and args.file_name==None and args.ssid!=None and args.passwd!=None and args.security!=None) or (args.group_name==None and args.profile_name==None and args.file_name==None and args.ssid!=None and args.passwd==None and args.security.lower() =='open')):
+        config_obj=DeviceConfig.DeviceConfig(lanforge_ip=args.lfmgr,file_name=args.file_name)
+        if not args.expected_passfail_value and args.device_csv_name==None :
+            config_obj.device_csv_file(csv_name="device.csv")
+        if(args.group_name!=None and args.file_name!=None and args.profile_name!=None):
+                selected_groups=args.group_name.split(',')
+                selected_profiles=args.profile_name.split(',')
+                config_devices={}
+                for i in range(len(selected_groups)):
+                    config_devices[selected_groups[i]]=selected_profiles[i]
+
+            #print("CONFIGURED DICT",config_devices)
+                config_obj.initiate_group()
+                asyncio.run(config_obj.connectivity(config_devices))
+            
+                adbresponse=config_obj.adb_obj.get_devices()
+                resource_manager=config_obj.laptop_obj.get_devices()
+                all_res={}
+                df1=config_obj.display_groups(config_obj.groups)
+                groups_list=df1.to_dict(orient='list')
+                group_devices={}
+              
+                for adb in adbresponse:   
+                    group_devices[adb['serial']]=adb['eid']
+                for res in resource_manager:
+                    all_res[res['hostname']]=res['shelf']+'.'+res['resource']
+                eid_list=[]
+                for grp_name in groups_list.keys():
+                    for g_name in selected_groups:
+                        if(grp_name == g_name):
+                            for j in groups_list[grp_name]:
+                                if(j in group_devices.keys()):
+                                    eid_list.append(group_devices[j])
+                                elif(j in all_res.keys()):
+                                    eid_list.append(all_res[j])
+                args.device_list = [",".join(id for id in eid_list)] 
+        elif(args.device_list!=None):
+            all_devices= config_obj.get_all_devices()
+            config_dict={
+                'ssid':args.ssid,
+                'passwd':args.passwd,
+                'enc':args.security,
+                'eap_method':args.eap_method,
+                'eap_identity':args.eap_identity,
+                'ieee80211':args.ieee80211,
+                'ieee80211u':args.ieee80211u,
+                'ieee80211w':args.ieee80211w,
+                'enable_pkc':args.enable_pkc,
+                'bss_transition':args.bss_transition,
+                'power_save':args.power_save,
+                'disable_ofdma':args.disable_ofdma,
+                'roam_ft_ds':args.roam_ft_ds,
+                'key_management':args.key_management,
+                'pairwise':args.pairwise,
+                'private_key':args.private_key,
+                'ca_cert':args.ca_cert,
+                'client_cert':args.client_cert,
+                'pk_passwd':args.pk_passwd,
+                'pac_file':args.pac_file,
+                'server_ip':args.server_ip,
+
+                }
+            if(args.group_name==None and args.file_name==None and args.profile_name==None):
+                dev_list=args.device_list[0].split(',')
+                
+                asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
+
+        else:
+
+                all_devices= config_obj.get_all_devices()
+                device_list=[]
+                config_dict={
+                'ssid':args.ssid,
+                'passwd':args.passwd,
+                'enc':args.security,
+                'eap_method':args.eap_method,
+                'eap_identity':args.eap_identity,
+                'ieee80211':args.ieee80211,
+                'ieee80211u':args.ieee80211u,
+                'ieee80211w':args.ieee80211w,
+                'enable_pkc':args.enable_pkc,
+                'bss_transition':args.bss_transition,
+                'power_save':args.power_save,
+                'disable_ofdma':args.disable_ofdma,
+                'roam_ft_ds':args.roam_ft_ds,
+                'key_management':args.key_management,
+                'pairwise':args.pairwise,
+                'private_key':args.private_key,
+                'ca_cert':args.ca_cert,
+                'client_cert':args.client_cert,
+                'pk_passwd':args.pk_passwd,
+                'pac_file':args.pac_file,
+                'server_ip':args.server_ip,
+
+                }
+                for device in all_devices:
+                    if(device["type"]!='laptop'):
+                        device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["serial"])
+                print("Available devices:", device_list)
+                args.device_list = [input("Enter the desired resources to run the test:")]
+                # print("AAAA",args.device_list[0])
+                dev1_list=args.device_list[0].split(',')
+                asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
+        if args.device_list!=None:
+            csv_device_list=args.device_list[0].split(',')
+            for endp in traffic_type:
+                endp_input_list.append('L3_'+endp.split('_')[1].upper()+dir)
+
+            for i in range(len(csv_device_list)):
+                for endp in traffic_type:
+                    graph_input_list.append('L3_'+endp.split('_')[1].upper()+dir)
+        response_port = config_obj.json_get("/port/all")
+        sample_list=[]
+        
+        if args.device_list:
+            for interface in response_port['interfaces']:
+                for port,port_data in interface.items():
+                    if(not port_data['phantom'] and port_data['parent dev'] == "wiphy0" and port_data['alias'] != 'p2p0'):
+                        port_list= port.split('.')
+                        for device in args.device_list[0].split(','):
+                            if((port_list[0]+'.'+port_list[1])==device):
+                                sample_list.append([port])
+            if(sample_list==[]):
+                print("Selected devices are in phantom state")
+                exit(0)
+            else:
+                for endp in endp_input_list:
+                    device_map={}
+                    if(not args.expected_passfail_value and args.device_csv_name == None):
+                        expected_val=input("Enter the expected {} value for the following devices{} eg 8,6,2: ".format(endp,sample_list)).split(',')
+                        if(len(sample_list)==len(expected_val)):
+                            for i in range(len(sample_list)):
+                                csv_dev_list=sample_list[i]
+                                device_map[csv_dev_list[0].split('.')[0]+'.'+csv_dev_list[0].split('.')[1]]=expected_val[i]
+                                    
+                            config_obj.update_device_csv('device.csv',endp,device_map)
+                        else:
+                            print("Enter correct number of values")
+                            exit(0)
+                    elif args.expected_passfail_value:
+                        pass
+            args.existing_station_list=sample_list
+            args.use_existing_station_list=True
+        
+
 
     # Validate existing station list configuration if specified before starting test
     if not args.use_existing_station_list and args.existing_station_list:
@@ -7168,7 +7504,10 @@ INCLUDE_IN_README: False
         network_auth_type_list=network_auth_type_list,
         anqp_3gpp_cell_net_list=anqp_3gpp_cell_net_list,
         ieee80211w_list=ieee80211w_list,
-        interopt_mode=interopt_mode
+        interopt_mode=interopt_mode,
+        endp_input_list=endp_input_list,
+        graph_input_list=graph_input_list,
+        real=args.real
     )
 
     if args.no_pre_cleanup or args.use_existing_station_list:
@@ -7179,6 +7518,7 @@ INCLUDE_IN_README: False
 
     logger.info("create stations or use passed in station_list, build the test")
     ip_var_test.build()
+    # time.sleep(6000)
     if not ip_var_test.passes():
         logger.critical("build step failed.")
         logger.critical(ip_var_test.get_fail_message())
