@@ -1430,7 +1430,7 @@ class DeviceConfig(Realm):
                 device_obj["passwd"] = wifi_config.get("passwd")
                 device_obj["enc"] = wifi_config.get("enc")
                 print("after",device_obj)
-                if device_obj.get("serial") in device_list or device_obj.get("hostname") in device_list or (device_obj.get("shelf")+'.'+device_obj.get("resource")) in device_list or (device_obj.get("eid")) in device_list:
+                if device_obj.get("serial") in device_list or device_obj.get("hostname") in device_list or (device_obj.get("shelf")+'.'+device_obj.get("resource")) in device_list or device_obj.get("eid") in device_list:
                     
                     device_obj["ieee80211"] = wifi_config.get("ieee80211")
                     device_obj["eap_method"] = wifi_config.get("eap_method")
