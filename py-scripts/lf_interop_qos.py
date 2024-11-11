@@ -1892,7 +1892,7 @@ def main():
 
 
 
-    if((args.group_name!=None and args.profile_name!=None and args.file_name!=None and args.device_list==[] and args.ssid==None and (len(selected_groups)==len(selected_profiles))) or(args.group_name==None and args.profile_name==None and args.file_name==None and args.ssid!=None and args.passwd!=None and args.security!=None)):
+    if((args.group_name!=None and args.profile_name!=None and args.file_name!=None and args.device_list==[] and args.ssid==None and (len(selected_groups)==len(selected_profiles))) or(args.group_name==None and args.profile_name==None and args.file_name==None and args.ssid!=None and args.passwd!=None and args.security!=None) or (args.group_name==None and args.profile_name==None and args.file_name==None and args.ssid!=None and args.passwd==None and args.security.lower() =='open')):
         if args.test_duration.endswith('s') or args.test_duration.endswith('S'):
             args.test_duration = int(args.test_duration[0:-1])
         elif args.test_duration.endswith('m') or args.test_duration.endswith('M'):

@@ -552,7 +552,9 @@ class Ping(Realm):
                     else:
                         percent_pac_loss.append(0)
                 for i in range(len(test_input_list)):
-                    if(int(test_input_list[i])>=percent_pac_loss[i]):
+                    if(self.packets_sent==0):
+                        pass_fail_list.append('FAIL')
+                    elif(int(test_input_list[i])>=percent_pac_loss[i]):
                         pass_fail_list.append('PASS')
                     else:
                         pass_fail_list.append('FAIL')

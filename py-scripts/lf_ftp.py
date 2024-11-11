@@ -1800,7 +1800,7 @@ class FtpTest(LFCliBase):
                                 }
             else:
                 test_input_list=[self.expected_passfail_val for val in range(len(client_list))]
-                print("2222222",test_input_list)
+                # print("2222222",test_input_list)
                 pass_fail_list=[]
                 for i in range(len(test_input_list)):
                     if(int(self.expected_passfail_val) <= self.url_data[i]):
@@ -2267,7 +2267,7 @@ INCLUDE_IN_README: False
     else:
         selected_profiles=[]
 
-    if((args.group_name!=None and args.profile_name!=None and args.file_name!=None and args.device_list==[] and args.ssid==None and (len(selected_groups)==len(selected_profiles))) or(args.group_name==None and args.profile_name==None and args.file_name==None and args.ssid!=None and args.passwd!=None and args.security!=None)):
+    if((args.group_name!=None and args.profile_name!=None and args.file_name!=None and args.device_list==[] and args.ssid==None and (len(selected_groups)==len(selected_profiles))) or(args.group_name==None and args.profile_name==None and args.file_name==None and args.ssid!=None and args.passwd!=None and args.security!=None) or (args.group_name==None and args.profile_name==None and args.file_name==None and args.ssid!=None and args.passwd==None and args.security.lower() =='open')):
         if args.traffic_duration.endswith('s') or args.traffic_duration.endswith('S'):
             args.traffic_duration = int(args.traffic_duration[0:-1])
         elif args.traffic_duration.endswith('m') or args.traffic_duration.endswith('M'):
