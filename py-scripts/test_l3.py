@@ -6595,7 +6595,7 @@ INCLUDE_IN_README: False
     test_l3_parser.add_argument("--pac_file", type=str,default='[BLANK]')
     test_l3_parser.add_argument("--server_ip",type=str,default=None)
     test_l3_parser.add_argument("--real",action="store_true")
-
+    
     parser.add_argument('--help_summary',
                         default=None,
                         action="store_true",
@@ -7507,7 +7507,9 @@ INCLUDE_IN_README: False
         interopt_mode=interopt_mode,
         endp_input_list=endp_input_list,
         graph_input_list=graph_input_list,
-        real=args.real
+        real=args.real,
+        expected_passfail_value=args.expected_passfail_value,
+        device_csv_name=args.device_csv_name
     )
 
     if args.no_pre_cleanup or args.use_existing_station_list:
