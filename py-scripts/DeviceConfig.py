@@ -863,7 +863,7 @@ class LAPTOPS(Realm):
 class DeviceConfig(Realm):
     def __init__(self, lanforge_ip=None,
                  port=8080,file_name=None,
-                 _debug_on=False,
+                 _debug_on=False,csv_name=None,create_csv=False
                  
                  ):
         super().__init__(lfclient_host=lanforge_ip,
@@ -871,7 +871,8 @@ class DeviceConfig(Realm):
         self.lanforge_ip=lanforge_ip
         self.port=port
         self.file_name=file_name
-       
+        self.create_csv=create_csv
+        self.csv_name=csv_name       
 
         # Objects for alptops and adb class  
         self.adb_obj = ADB_DEVICES(lanforge_ip=self.lanforge_ip)
@@ -992,13 +993,17 @@ class DeviceConfig(Realm):
         columns = ['DeviceList', 'PingPacketLoss', 'L3_TCP_UL','L3_TCP_DL','L3_TCP_BiDi','L3_UDP_UL','L3_UDP_DL','L3_UDP_BiDi','Videostreaming','RealBrowser','HTTP','FTP','PortReset','Roaming']
 
         if not os.path.exists(file_name):
-           
             with open(file_name, mode='w', newline='') as file:
                 writer = csv.writer(file)
                 writer.writerow(columns)
             print(f'{file_name} created with columns: {columns}')
         else:
             print(f'{file_name} already exists, no need to create.')
+            with open(file_name, 'w+') as f:
+                f.close()
+            with open(file_name, mode='w', newline='') as file:
+                writer = csv.writer(file)
+                writer.writerow(columns)
         
         adbresponse=self.adb_obj.get_devices()
         resource_manager=self.laptop_obj.get_devices()
@@ -1139,6 +1144,7 @@ class DeviceConfig(Realm):
 
         print("====================================================")
         self.groups = final_data_set
+        print("222222222222222",final_data_set)
         df=pd.DataFrame.from_dict(final_data_set, orient='index').transpose()
         df.to_csv(file_name, index=False)
 
@@ -1249,7 +1255,7 @@ class DeviceConfig(Realm):
 
                 
                 details = dict(kv_pattern.findall(profile_details))
-
+               
                 print("details",details)
                 details["ieee80211u"]=True if("<ieee80211u>" in profile_details+'>') else False
                 details["ieee80211"]=True if("<ieee80211>" in profile_details+'>') else False
@@ -1274,7 +1280,7 @@ class DeviceConfig(Realm):
                 details["passwd"]=match
                 details["Profile"] = profile_name
                 profile_conf.append(details)
-                print(profile_conf)
+                print("111111111!",profile_conf)
         elif delete_profiles:
             print("Deleting profiles")
         else:
@@ -1699,6 +1705,9 @@ if __name__ == "__main__":
     parser.add_argument("--delete_profiles",type=str,help="To mention if any profile needs to be deleted, Ex=> --delete_profiles p1,p2,p3",default="")
     parser.add_argument("--create_profile",action="store_true")
     parser.add_argument("--connect_profile",action="store_true")
+    parser.add_argument("--create_csv",action="store_true")
+    parser.add_argument('--csv_name',type=str,default='',help='')
+
     args = parser.parse_args()
     obj = DeviceConfig(lanforge_ip=args.lanforge_ip,file_name=args.file_name)
 
@@ -1754,6 +1763,11 @@ if __name__ == "__main__":
             key,value=i.split(':')
             input_dict[key]=value
         asyncio.run(obj.connectivity(input_dict))
+    elif args.create_csv:
+        if args.csv_name =='':
+            obj.device_csv_file()
+        else:
+            obj.device_csv_file(args.csv_name)
     
     
 
