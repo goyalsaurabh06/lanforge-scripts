@@ -84,6 +84,7 @@ import matplotlib.pyplot as plt
 import logging     
 import json      
 import shutil
+import asyncio
 from datetime import datetime, timedelta  
 from lf_graph import lf_bar_graph_horizontal
 from flask import Flask, request, jsonify
@@ -123,6 +124,7 @@ lf_line_graph = lf_graph.lf_line_graph
 lf_stacked_graph = lf_graph.lf_stacked_graph
 lf_horizontal_stacked_graph = lf_graph.lf_horizontal_stacked_graph
 
+DeviceConfig=importlib.import_module("py-scripts.DeviceConfig")
 port_utils = importlib.import_module("py-json.port_utils")
 PortUtils = port_utils.PortUtils
 
@@ -139,7 +141,27 @@ log.setLevel(logging.ERROR)
 
 class RealBrowserTest(Realm):
     def __init__(self, host, ssid, passwd, encryp, suporrted_release=None, max_speed=None, url=None,
-                count=None, duration=None, resource_ids = None, dowebgui = False,result_dir = "",test_name = None, incremental = None,postcleanup=False,precleanup=False):
+                count=None, duration=None, resource_ids = None, dowebgui = False,result_dir = "",test_name = None, incremental = None,postcleanup=False,precleanup=False,
+                file_name=None,group_name=None,profile_name=None,
+                eap_method=None,
+                eap_identity=None,
+                ieee80211=None,
+                ieee80211u=None,
+                ieee80211w=None,
+                enable_pkc=None,
+                bss_transition=None,
+                power_save=None,
+                disable_ofdma=None,
+                roam_ft_ds=None,
+                key_management=None,
+                pairwise=None,
+                private_key=None,
+                ca_cert=None,
+                client_cert=None,
+                pk_passwd=None,
+                pac_file=None,
+                server_ip=None,device_csv_name=None,
+                expected_passfail_value=None):
         super().__init__(lfclient_host=host, lfclient_port=8080)
         # Initialize attributes with provided parameters
         self.host = host 
@@ -193,7 +215,30 @@ class RealBrowserTest(Realm):
         self.generic_endps_profile = self.new_generic_endp_profile()
         self.generic_endps_profile.type = 'real_browser'
         self.generic_endps_profile.name_prefix = "rb"
-
+        self.file_name=file_name
+        self.group_name=group_name
+        self.profile_name=profile_name
+        #for advanced config
+        self.eap_method = eap_method
+        self.eap_identity = eap_identity
+        self.ieee80211 = ieee80211
+        self.ieee80211u= ieee80211u
+        self.ieee80211w= ieee80211w
+        self.enable_pkc= enable_pkc
+        self.bss_transition= bss_transition
+        self.power_save= power_save
+        self.disable_ofdma= disable_ofdma
+        self.roam_ft_ds= roam_ft_ds
+        self.key_management = key_management
+        self.pairwise = pairwise
+        self.private_key = private_key
+        self.ca_cert= ca_cert
+        self.client_cert = client_cert
+        self.pk_passwd = pk_passwd
+        self.pac_file = pac_file
+        self.server_ip=server_ip
+        self.expected_passfail_value=expected_passfail_value
+        self.device_csv_name=device_csv_name
         # Initialize RealDevice instance      
         self.devices = base_RealDevice(manager_ip = self.host, selected_bands = [])
         # Initialize local realm 
@@ -1332,6 +1377,55 @@ class RealBrowserTest(Realm):
         
         report.set_table_title(f"Final Test Results")
         report.build_table_title()
+        if not self.expected_passfail_value:
+                res_list=[]
+                test_input_list=[]
+                pass_fail_list=[]
+                interop_tab_data = self.json_get('/adb/')["devices"]
+                res_response=self.json_get("/resource/all")['resources']
+                # print("!!!!!",device_type_data,"@@@@@@",device_names,"########",total_urls,"######",res_response)
+                for i in range(len(device_type_data)):
+                    if device_type_data[i]!='Android':
+                        res_list.append(device_names[i])
+                    else:
+                        user_list=[]
+                        for res in res_response:
+                            for user in res.values():
+                                
+                                if(user['hostname'] in device_names and user['device type']=='Android'):
+                                    user_list.append(user['user'])
+                        # print("!!!",user_list)
+                        for dev in interop_tab_data:
+                            for item in dev.values():
+                                # print("@@@@@",item['user-name'],user_list)
+                                if(item['user-name'] in user_list):
+                                    res_list.append(item['name'].split('.')[2])
+                
+                
+                if self.device_csv_name == None:
+                    self.device_csv_name="device.csv"
+                with open(self.device_csv_name, mode='r') as file:
+                        reader = csv.DictReader(file)
+                        rows = list(reader)
+                
+                for row in rows:
+                    device = row['DeviceList']  
+                    if device in res_list:
+                        test_input_list.append(row['RealBrowser'])
+                
+                for j in range(len(test_input_list)):
+                    if(float(test_input_list[j])<=float(total_urls[j])):
+                        pass_fail_list.append('PASS')
+                    else:
+                        pass_fail_list.append('FAIL')
+        else:
+                test_input_list=[self.expected_passfail_value for val in range(len(device_type_data))]
+                pass_fail_list=[]
+                for j in range(len(test_input_list)):
+                    if(float(self.expected_passfail_value) <= float(total_urls[j])):
+                        pass_fail_list.append("PASS")
+                    else:
+                        pass_fail_list.append("FAIL")
         final_test_results = {
                
                 "Device Type" : device_type_data,
@@ -1343,9 +1437,11 @@ class RealBrowserTest(Realm):
                 "UC-MAX (ms)": uc_max_data,
                 "UC-AVG (ms)": uc_avg_data,
                 "Total Successful URLs":total_urls,
+                "Expected URLS":test_input_list,
                 "Total Erros": total_err_data,
                 "RSSI": signal_data,
-                "Link Speed": tx_rate_data
+                "Link Speed": tx_rate_data,
+                "Status ":pass_fail_list
                 
             }
         test_results_df=pd.DataFrame(final_test_results)
@@ -1449,540 +1545,713 @@ class RealBrowserTest(Realm):
     
 
 def main():
-  try:
+    try:
 
-    help_summary = '''\
-    The Candela Web browser test is designed to measure the Access Point performance and stability by browsing multiple websites in real clients like
-    android, Linux, windows, and IOS which are connected to the access point. This test allows the user to choose the options like website link, the
-    number of times the page has to browse, and the Time taken to browse the page. Along with the performance other measurements made are client
-    connection times, Station 4-Way Handshake time, DHCP times, and more. The expected behavior is for the AP to be able to handle several stations
-    (within the limitations of the AP specs) and make sure all clients can browse the page.
-    '''
-  
-    parser = argparse.ArgumentParser(
-        prog=__file__,
-        formatter_class=argparse.RawTextHelpFormatter,
-        description='''\
-        
-        Name: lf_interop_real_browser_test.py
-
-        Purpose: To be generic script for LANforge-Interop devices(Real clients) which runs layer4-7 traffic
-        For now the test script supports Real Browser test for Androids.
-
-        Pre-requisites: Real devices should be connected to the LANforge MGR and Interop app should be open on the real clients which are connected to Lanforge
-
-        Example: (python3 or ./)lf_interop_real_browser_test.py --mgr 192.168.214.219 --duration 1 --url "www.google.com"
-
-        Example-1 :
-        Command Line Interface to run url in the Browser with specified URL and duration:
-        python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --debug
-
-            CASE-1:
-            If not specified it takes the default url (default url is www.google.com)
-
-        Example-2:
-        Command Line Interface to run url in the Browser with specified Resources:
-        python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --debug
-
-        Example-3:
-        Command Line Interface to run url in the Browser with specified urls_per_tennm (specify the number of url you want to test in the given duration):
-        python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --count 10 --debug
-
-            CASE-1:
-            If not specified it takes the default count value (default count is 100)
-
-        Example-4:
-        Command Line Interface to run the the Real Browser test with incremental Capacity by specifying the --incremental flag
-        python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --count 10 --incremental --debug
-
-        Example-5:
-        Command Line Interface to run the the Real Browser test in webGUI by specifying the --dowebgui flag
-        python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --count 10 --dowebgui --debug
-
-        Example-6:
-        Command Line Interface to run url in the Browser with precleanup:
-        python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --precleanup --debug
-
-        Example-7:
-        Command Line Interface to run url in the Browser with postcleanup:
-        python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --postcleanup --debug
-
-        Example-8:
-        Command Line Interface to run url in the Browser with incremental capacity:
-        python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --incremental_capacity 1 --debug
-        
-        SCRIPT CLASSIFICATION: Test
-
-        SCRIPT_CATEGORIES:   Performance,  Functional, Report Generation
-
-        NOTES:
-            1. Use './lf_interop_real_browser_test.py --help' to see command line usage and options.
-            2. Always specify the duration in minutes (for example: --duration 3 indicates a duration of 3 minutes).
-            3. If --device_list are not given after passing the CLI, a list of available devices will be displayed on the terminal.
-            4. Enter the resource numbers separated by commas (,) in the resource argument and also enclose in double quotes (e.g. : 1.10,1.12).
-            5. For --url, you can specify the URL (e.g., www.google.com).
-            6. To run the test by specifying the incremental capacity, enable the --incremental flag. 
-
-        STATUS: BETA RELEASE
-
-        VERIFIED_ON:
-        Working date - 29/07/2024
-        Build version - 5.4.8
-        kernel version - 6.2.16+
-
-        License: Free to distribute and modify. LANforge systems must be licensed.
-        Copyright 2023 Candela Technologies Inc.
-
-        ''')
-
-        
-    optional=parser.add_argument_group('Optional arguments to run lf_interop_real_browser_test.py')
-    parser.add_argument("--host", "--mgr", required = True, help='specify the GUI to connect to, assumes port '
-                                                                        '8080')
-    parser.add_argument("--ssid", default="ssid_wpa_2g", help='specify ssid on which the test will be running')
-    parser.add_argument("--passwd", default="something", help='specify encryption password  on which the test will '
-                                                        'be running')
-    parser.add_argument("--encryp", default="psk", help='specify the encryption type  on which the test will be '
-                                                        'running eg :open|psk|psk2|sae|psk2jsae')
-    parser.add_argument("--url", default="www.google.com", help='specify the url you want to test on')
-    parser.add_argument("--max_speed", type=int, default=0, help='specify the max speed you want in bytes')
-    parser.add_argument("--count", type=int, default=1, help='specify the number of url you want to calculate time to reach'
-                                                                    )
-    parser.add_argument('--duration', type=str, help='time to run traffic')
-    optional.add_argument('--test_name',help='Specify test name to store the runtime csv results', default=None)
-    parser.add_argument('--dowebgui',help="If true will execute script for webgui", default=False, type=bool)
-    parser.add_argument('--result_dir',help="Specify the result dir to store the runtime logs <Do not use in CLI, --used by webui>", default='')
-
-    parser.add_argument("--lf_logger_config_json", help="[log configuration] --lf_logger_config_json <json file> , json configuration of logger")
-    parser.add_argument("--log_level", help="[log configuration] --log_level  debug info warning error critical")
-    parser.add_argument("--debug", help="[log configuration] --debug store_true , used by lanforge client ", action='store_true')
-
-    parser.add_argument('--device_list', type=str, help='provide resource_ids of android devices. for instance: "10,12,14"')
-    parser.add_argument('--webgui_incremental','--incremental_capacity', help="Specify the incremental values <1,2,3..>",dest='webgui_incremental', type=str)
-    parser.add_argument('--incremental', help="to add incremental capacity to run the test", action = 'store_true')
-    optional.add_argument('--no_laptops', help="run the test without laptop devices", action = 'store_false')
-    parser.add_argument('--postcleanup', help="Cleanup the cross connections after test is stopped", action = 'store_true')
-    parser.add_argument('--precleanup', help="Cleanup the cross connections before test is started", action = 'store_true')
-    parser.add_argument('--help_summary', help='Show summary of what this script does', default=None)
-
-    args = parser.parse_args()
-
-    if args.help_summary:
-        print(help_summary)
-        exit(0)
-
-    logger_config = lf_logger_config.lf_logger_config()
-
-    if args.log_level:
-        logger_config.set_level(level=args.log_level)
-
-    if args.lf_logger_config_json:
-        logger_config.lf_logger_config_json = args.lf_logger_config_json
-        logger_config.load_lf_logger_config()
-
-    # TODO refactor to be logger for consistency
-    logg = logging.getLogger(__name__)
-
-
-    if(args.dowebgui):
-        url = f"http://{args.host}:5454/update_status_yt"
-        #url = f"http://localhost:8000/read_rb_data_from_csv"
-        #url = f"http://10.253.8.108:8000/update_status_yt"
-        response = requests.post(url)
-
-        if response.status_code == 200:
-            print('device_data has been cleared.')
-        else:
-            print(f'Error: {response.status_code}')
-    # Extract the URL from args and remove 'http://' or 'https://'
-    # url = args.url.replace("http://", "").replace("https://", "")
-
-    # Initialize an instance of RealBrowserTest with various parameters
-    obj = RealBrowserTest(host=args.host, ssid=args.ssid, passwd=args.passwd, encryp=args.encryp,
-                        suporrted_release=["7.0", "10", "11", "12"], max_speed=args.max_speed,
-                        url=args.url, count=args.count, duration=args.duration, 
-                        resource_ids = args.device_list, dowebgui = args.dowebgui,
-                        result_dir = args.result_dir,test_name = args.test_name, incremental = args.incremental,postcleanup=args.postcleanup,
-                        precleanup=args.precleanup)
+        help_summary = '''\
+        The Candela Web browser test is designed to measure the Access Point performance and stability by browsing multiple websites in real clients like
+        android, Linux, windows, and IOS which are connected to the access point. This test allows the user to choose the options like website link, the
+        number of times the page has to browse, and the Time taken to browse the page. Along with the performance other measurements made are client
+        connection times, Station 4-Way Handshake time, DHCP times, and more. The expected behavior is for the AP to be able to handle several stations
+        (within the limitations of the AP specs) and make sure all clients can browse the page.
+        '''
     
-    obj.run_flask_server()
-    
-    
-    # Initialize empty lists and dictionaries for resource management
-    resource_ids_sm = []
-    resource_set = set()
-    resource_list = []
-    os_types_dict = {}
-    # android_devices = []
-    # other_os_list = []
-    # android_list = []
-    # other_list = []
-    resource_ids_generated = ""
-    #  Process resource IDs when web GUI is enabled
-    if args.dowebgui == True :
-        # Split resource IDs from args into a list
-        resource_ids_sm = args.device_list.split(',')
-        # Convert list to set to remove duplicates
-        resource_set = set(resource_ids_sm)
-        # Sort the set to maintain order
-        resource_list = sorted(resource_set)
-        # Generate a comma-separated string of sorted resource IDs
-        resource_ids_generated = ','.join(resource_list)
-        resource_list_sorted = resource_list
-        # Query devices based on the generated resource IDs
-        selected_devices,report_labels,selected_macs = obj.devices.query_user(dowebgui = args.dowebgui, device_list = resource_ids_generated)
-        # Modify obj.resource_ids to include only the second part of each ID (after '.')
-        obj.resource_ids = ",".join(id.split(".")[1] for id in args.device_list.split(","))
-
-        available_resources= [int(num) for num in obj.resource_ids.split(',')]
-    else :
-        # Case where args.no_laptops flag is set
-        # if args.no_laptops:
-            # Retrieve all Android devices if no_laptops flag is True
-        obj.android_devices = obj.devices.get_devices()
-        
-        
-        # Process resource IDs if provided
-        if args.device_list:
-            # Extract second part of resource IDs and sort them
-            obj.resource_ids = ",".join(id.split(".")[1] for id in args.device_list.split(","))
-            resource_ids_sm = obj.resource_ids
-            resource_list = resource_ids_sm.split(',')            
-            resource_set = set(resource_list)
-            resource_list_sorted = sorted(resource_set)
-            resource_ids_generated = ','.join(resource_list_sorted)
-
-            # Convert resource IDs into a list of integers
-            num_list = list(map(int, obj.resource_ids.split(',')))
-
-            # Sort the list
-            num_list.sort()
-
-            # Join the sorted list back into a string
-            sorted_string = ','.join(map(str, num_list))
-            obj.resource_ids = sorted_string
-
-            # Extract the second part of each Android device ID and convert to integers
-            modified_list = list(map(lambda item: int(item.split('.')[1]), obj.android_devices))
-            modified_other_os_list = list(map(lambda item: int(item.split('.')[1]), obj.other_os_list))
+        parser = argparse.ArgumentParser(
+            prog=__file__,
+            formatter_class=argparse.RawTextHelpFormatter,
+            description='''\
             
-            # Verify if all resource IDs are valid for Android devices
-            resource_ids = [int(x) for x in sorted_string.split(',')]
+            Name: lf_interop_real_browser_test.py
+
+            Purpose: To be generic script for LANforge-Interop devices(Real clients) which runs layer4-7 traffic
+            For now the test script supports Real Browser test for Androids.
+
+            Pre-requisites: Real devices should be connected to the LANforge MGR and Interop app should be open on the real clients which are connected to Lanforge
+
+            Example: (python3 or ./)lf_interop_real_browser_test.py --mgr 192.168.214.219 --duration 1 --url "www.google.com"
+
+            Example-1 :
+            Command Line Interface to run url in the Browser with specified URL and duration:
+            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --debug
+
+                CASE-1:
+                If not specified it takes the default url (default url is www.google.com)
+
+            Example-2:
+            Command Line Interface to run url in the Browser with specified Resources:
+            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --debug
+
+            Example-3:
+            Command Line Interface to run url in the Browser with specified urls_per_tennm (specify the number of url you want to test in the given duration):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --count 10 --debug
+
+                CASE-1:
+                If not specified it takes the default count value (default count is 100)
+
+            Example-4:
+            Command Line Interface to run the the Real Browser test with incremental Capacity by specifying the --incremental flag
+            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --count 10 --incremental --debug
+
+            Example-5:
+            Command Line Interface to run the the Real Browser test in webGUI by specifying the --dowebgui flag
+            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --count 10 --dowebgui --debug
+
+            Example-6:
+            Command Line Interface to run url in the Browser with precleanup:
+            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --precleanup --debug
+
+            Example-7:
+            Command Line Interface to run url in the Browser with postcleanup:
+            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --postcleanup --debug
+
+            Example-8:
+            Command Line Interface to run url in the Browser with incremental capacity:
+            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --incremental_capacity 1 --debug
             
-            new_list_android = [item.split('.')[0] + '.' + item.split('.')[1] for item in obj.android_devices]
+            SCRIPT CLASSIFICATION: Test
 
-            resources_list = args.device_list.split(",")
-            for element in resources_list:
-                if element in new_list_android:
-                    for ele in obj.android_devices:
-                        if ele.startswith(element):
-                            obj.android_list.append(ele)
-                else:
-                    logger.info("{} device is not available".format(element))
-            new_android = [int(item.split('.')[1]) for item in obj.android_list]
+            SCRIPT_CATEGORIES:   Performance,  Functional, Report Generation
 
-            resource_ids = sorted(new_android)
-            available_resources=list(set(resource_ids))
-              
-        else:
-            # Query user to select devices if no resource IDs are provided
-            selected_devices,report_labels,selected_macs = obj.devices.query_user()
-            # Handle cases where no devices are selected
-            if not selected_devices:
-                logging.info("devices donot exist..!!")
-                return 
-            # Categorize selected devices into Android and other OS types if no_laptops flag is False
-            # if not args.no_laptops:
-            #     for device in selected_devices:
-            #         if device in obj.android_devices:
-            #             obj.android_list.append(device)
-            #         else:
-            #             obj.other_list.append(device)
-            # else:
-            # Assign all selected devices as Android devices if no_laptops flag is True
-            obj.android_list = selected_devices
+            NOTES:
+                1. Use './lf_interop_real_browser_test.py --help' to see command line usage and options.
+                2. Always specify the duration in minutes (for example: --duration 3 indicates a duration of 3 minutes).
+                3. If --device_list are not given after passing the CLI, a list of available devices will be displayed on the terminal.
+                4. Enter the resource numbers separated by commas (,) in the resource argument and also enclose in double quotes (e.g. : 1.10,1.12).
+                5. For --url, you can specify the URL (e.g., www.google.com).
+                6. To run the test by specifying the incremental capacity, enable the --incremental flag. 
+
+            STATUS: BETA RELEASE
+
+            VERIFIED_ON:
+            Working date - 29/07/2024
+            Build version - 5.4.8
+            kernel version - 6.2.16+
+
+            License: Free to distribute and modify. LANforge systems must be licensed.
+            Copyright 2023 Candela Technologies Inc.
+
+            ''')
+
             
-            # if args.incremental and  (not obj.android_list):
-            #     logging.info("Incremental Values are not needed as no android devices are selected")
-            
-            # Verify if all resource IDs are valid for Android devices
-            if obj.android_list:
-                resource_ids = ",".join([item.split(".")[1] for item in obj.android_list])
+        optional=parser.add_argument_group('Optional arguments to run lf_interop_real_browser_test.py')
+        parser.add_argument("--host", "--mgr", required = True, help='specify the GUI to connect to, assumes port '
+                                                                            '8080')
+        parser.add_argument("--ssid", default=None, help='specify ssid on which the test will be running')
+        parser.add_argument("--passwd", default=None, help='specify encryption password  on which the test will '
+                                                            'be running')
+        parser.add_argument("--encryp", default=None, help='specify the encryption type  on which the test will be '
+                                                            'running eg :open|psk|psk2|sae|psk2jsae')
+        parser.add_argument("--url", default="www.google.com", help='specify the url you want to test on')
+        parser.add_argument("--max_speed", type=int, default=0, help='specify the max speed you want in bytes')
+        parser.add_argument("--count", type=int, default=1, help='specify the number of url you want to calculate time to reach'
+                                                                        )
+        parser.add_argument('--duration', type=str, help='time to run traffic')
+        optional.add_argument('--test_name',help='Specify test name to store the runtime csv results', default=None)
+        parser.add_argument('--dowebgui',help="If true will execute script for webgui", default=False, type=bool)
+        parser.add_argument('--result_dir',help="Specify the result dir to store the runtime logs <Do not use in CLI, --used by webui>", default='')
 
-                num_list = list(map(int, resource_ids.split(',')))
+        parser.add_argument("--lf_logger_config_json", help="[log configuration] --lf_logger_config_json <json file> , json configuration of logger")
+        parser.add_argument("--log_level", help="[log configuration] --log_level  debug info warning error critical")
+        parser.add_argument("--debug", help="[log configuration] --debug store_true , used by lanforge client ", action='store_true')
 
-                # Sort the list
-                num_list.sort()
+        parser.add_argument('--device_list', type=str, help='provide resource_ids of android devices. for instance: "10,12,14"')
+        parser.add_argument('--webgui_incremental','--incremental_capacity', help="Specify the incremental values <1,2,3..>",dest='webgui_incremental', type=str)
+        parser.add_argument('--incremental', help="to add incremental capacity to run the test", action = 'store_true')
+        optional.add_argument('--no_laptops', help="run the test without laptop devices", action = 'store_false')
+        parser.add_argument('--postcleanup', help="Cleanup the cross connections after test is stopped", action = 'store_true')
+        parser.add_argument('--precleanup', help="Cleanup the cross connections before test is started", action = 'store_true')
+        parser.add_argument('--file_name', type=str, help='specify the file name')
+        parser.add_argument('--group_name', type=str, help='specify the group name')
+        parser.add_argument('--profile_name', type=str, help='specify the profile name')
+        parser.add_argument("--eap_method", type=str,default='DEFAULT')
+        parser.add_argument("--eap_identity", type=str,default='')
+        parser.add_argument("--ieee80211",action="store_true")
+        parser.add_argument("--ieee80211u",action="store_true")
+        parser.add_argument("--ieee80211w",type=int,default=1)
+        parser.add_argument("--enable_pkc",action="store_true")
+        parser.add_argument("--bss_transition",action="store_true")
+        parser.add_argument("--power_save",action="store_true")
+        parser.add_argument("--disable_ofdma",action="store_true")
+        parser.add_argument("--roam_ft_ds",action="store_true")
+        parser.add_argument("--key_management", type=str,default='DEFAULT')
+        parser.add_argument("--pairwise", type=str,default='[BLANK]')
+        parser.add_argument("--private_key", type=str,default='[BLANK]')
+        parser.add_argument("--ca_cert", type=str,default='[BLANK]')
+        parser.add_argument("--client_cert", type=str,default='[BLANK]')
+        parser.add_argument("--pk_passwd", type=str,default='[BLANK]')
+        parser.add_argument("--pac_file", type=str,default='[BLANK]')
+        parser.add_argument("--server_ip",type=str,default=None)
+        parser.add_argument('--help_summary', help='Show summary of what this script does', default=None)
+        parser.add_argument("--expected_passfail_value",help="Specify the expected urlcount value for pass/fail")
+        parser.add_argument("--device_csv_name",type=str,help="Specify the device csv name for pass/fail",default=None)
+        args = parser.parse_args()
 
-                # Join the sorted list back into a string
-                sorted_string = ','.join(map(str, num_list))
+        if args.help_summary:
+            print(help_summary)
+            exit(0)
 
-                obj.resource_ids = sorted_string
-                resource_ids1 = list(map(int, sorted_string.split(',')))
-                modified_list = list(map(lambda item: int(item.split('.')[1]), obj.android_devices))
+        logger_config = lf_logger_config.lf_logger_config()
 
-                # Check for invalid resource IDs
-                if not all(x in modified_list for x in resource_ids1):
-                    logging.info("Verify Resource ids, as few are invalid...!!")
-                    exit()
-                resource_ids_sm = obj.resource_ids
-                resource_list = resource_ids_sm.split(',')            
-                resource_set = set(resource_list)
-                resource_list_sorted = sorted(resource_set)
-                resource_ids_generated = ','.join(resource_list_sorted)
-                available_resources=list(resource_set)
+        if args.log_level:
+            logger_config.set_level(level=args.log_level)
 
-    logger.info("Devices available: {}".format(available_resources))
-    if len(available_resources)==0:
-        logging.info("There no devices available which are selected")
-        exit()
-    # Handle incremental values input if resource IDs are specified and in not specified case.
-    if args.incremental and not args.webgui_incremental :
-        if obj.resource_ids:
-            obj.incremental = input('Specify incremental values as 1,2,3 : ')
-            obj.incremental = [int(x) for x in obj.incremental.split(',')]
-        else:
-            logging.info("incremental Values are not needed as Android devices are not selected..")
-    test_info=False
+        if args.lf_logger_config_json:
+            logger_config.lf_logger_config_json = args.lf_logger_config_json
+            logger_config.load_lf_logger_config()
 
-    # Handle webgui_incremental argument
-    if args.webgui_incremental:
-        if args.webgui_incremental=="no_increment":
-            args.webgui_incremental=str(len(available_resources))
-            test_info=True
-        incremental = [int(x) for x in args.webgui_incremental.split(',')]
-        # Validate the length and assign incremental values
-        if (len(args.webgui_incremental) == 1 and incremental[0] != len(resource_list_sorted)) or (len(args.webgui_incremental) > 1):
-            obj.incremental = incremental
-        elif len(args.webgui_incremental) == 1:
-            obj.incremental = incremental
-
-    # if obj.incremental and (not obj.resource_ids):
-    #     logging.info("incremental values are not needed as Android devices are not selected.")
-    #     exit()
-    
-    # Validate incremental and resource IDs combination
-    if (obj.incremental and obj.resource_ids) or (args.webgui_incremental):
-        resources_list1 = [str(x) for x in obj.resource_ids.split(',')]
-        if resource_list_sorted:
-            resources_list1 = resource_list_sorted
-        # Check if the last incremental value is greater or less than resources provided
-        if obj.incremental[-1] > len(available_resources):
-            logging.info("Exiting the program as incremental values are greater than the resource ids provided")
-            exit()
-        elif obj.incremental[-1] < len(available_resources) and len(obj.incremental) > 1:
-            logging.info("Exiting the program as the last incremental value must be equal to selected devices")
-            exit()
-
-    # obj.run
-    test_time = datetime.now()
-    test_time = test_time.strftime("%b %d %H:%M:%S")
-
-    logging.info("Initiating Test...")
-    available_resources= [int(n) for n in available_resources]
-    available_resources.sort()
-    available_resources_string=",".join([str(n) for n in available_resources])
-    obj.set_available_resources_ids(available_resources_string)
-    # obj.set_available_resources_ids([int(n) for n in available_resources].sort())
-    obj.build()
-    time.sleep(10)
-    #TODO : To create cx for laptop devices
-    # Create end-points for devices other than Android if specified
-    # if (not args.no_laptops) and obj.other_list:
-    #     obj.create_generic_endp(obj.other_list,os_types_dict)
-
-    keys = list(obj.http_profile.created_cx.keys())
-    generic_keys = obj.generic_endps_profile.created_cx
-    keys = keys + generic_keys
-    if len(keys)==0:
-        logger.error("Selected Devices are not available in the lanforge")
-        exit(1)
-    cx_order_list = []
-    hw_version_list = []
-    user_name_list = []
-    mac_add_list = []
-    index = 0
-    file_path = ""
-
-    if args.duration.endswith('s') or args.duration.endswith('S'):
-        args.duration = round(int(args.duration[0:-1])/60,2)
-    
-    elif args.duration.endswith('m') or args.duration.endswith('M'):
-        args.duration = int(args.duration[0:-1]) 
- 
-    elif args.duration.endswith('h') or args.duration.endswith('H'):
-        args.duration = int(args.duration[0:-1]) * 60  
-    
-    elif args.duration.endswith(''):
-        args.duration = int(args.duration)
-
-    if args.incremental or args.webgui_incremental:
-        incremental_capacity_list_values=obj.get_incremental_capacity_list()
-        #print("checking incremental capacity_list_values",incremental_capacity_list_values)
-        if incremental_capacity_list_values[-1]!=len(available_resources):
-            logger.error("Incremental capacity doesnt match available devices")
-            if args.postcleanup==True:
-                obj.postcleanup()
+        # TODO refactor to be logger for consistency
+        logg = logging.getLogger(__name__)
+        if(args.expected_passfail_value!=None and args.device_csv_name!=None):
+            print("Specify either expected_passfail_value or device_csv_name")
             exit(1)
 
-    # Process resource IDs and incremental values if specified
-    if obj.resource_ids:
-        if obj.incremental:
-            obj.test_setup_info_incremental_values =  ','.join(map(str, incremental_capacity_list_values))
-            if len(obj.incremental) == len(available_resources):
-                test_setup_info_total_duration = args.duration
-            elif len(obj.incremental) == 1 and len(available_resources) > 1:
-                if obj.incremental[0] == len(available_resources):
-                    test_setup_info_total_duration = args.duration
-                else:
-                    div = len(available_resources)//obj.incremental[0] 
-                    mod = len(available_resources)%obj.incremental[0] 
-                    if mod == 0:
-                        test_setup_info_total_duration = args.duration * (div )
-                    else:
-                        test_setup_info_total_duration = args.duration * (div + 1)
-            else:
-                test_setup_info_total_duration = args.duration * len(incremental_capacity_list_values)
-            # test_setup_info_duration_per_iteration= args.duration 
-        elif args.webgui_incremental:
-            obj.test_setup_info_incremental_values = ','.join(map(str, incremental_capacity_list_values))
-            test_setup_info_total_duration = args.duration * len(incremental_capacity_list_values)
+        if(args.group_name!=None):
+            selected_groups=args.group_name.split(',')
         else:
-            obj.test_setup_info_incremental_values = "No Incremental Value provided"
-            test_setup_info_total_duration = args.duration
-        obj.total_duration = test_setup_info_total_duration
-        if args.dowebgui:
-            if test_info:
-                obj.test_setup_info_incremental_values = "No Incremental Value provided"
+            selected_groups=[]
+        if(args.profile_name!=None):
+            selected_profiles=args.profile_name.split(',')
+        else:
+            selected_profiles=[]
 
-    # Calculate and manage cx_order_list ( list of cross connections to run ) based on incremental values
-    gave_incremental,iteration_number=True,0
-    if obj.resource_ids:
-        if not obj.incremental:
-            obj.incremental=[len(keys)]
-            gave_incremental=False
-        if obj.incremental or not gave_incremental:
-            if len(obj.incremental) == 1 and obj.incremental[0] == len(keys):
-                cx_order_list.append(keys[index:])
-                #user_name_list.append(obj.user_name[index:])
-            elif len(obj.incremental) == 1 and len(keys) > 1:
-                incremental_value = obj.incremental[0]
-                max_index = len(keys)
-                index = 0
+        if(args.dowebgui):
+            url = f"http://{args.host}:5454/update_status_yt"
+            #url = f"http://localhost:8000/read_rb_data_from_csv"
+            #url = f"http://10.253.8.108:8000/update_status_yt"
+            response = requests.post(url)
 
-                while index < max_index:
-                    next_index = min(index + incremental_value, max_index)
-                    cx_order_list.append(keys[index:next_index])
-                    #hw_version_list.append(obj.hw[index:next_index])
-                    #user_name_list.append(obj.user_name[index:next_index])
-                    #mac_add_list.append(obj.mac_list[index:next_index])
+            if response.status_code == 200:
+                print('device_data has been cleared.')
+            else:
+                print(f'Error: {response.status_code}')
+        # Extract the URL from args and remove 'http://' or 'https://'
+        # url = args.url.replace("http://", "").replace("https://", "")
+        if((args.group_name!=None and args.profile_name!=None and args.file_name!=None and args.device_list==None and args.ssid==None and (len(selected_groups)==len(selected_profiles))) or(args.group_name==None and args.profile_name==None and args.file_name==None and args.ssid!=None and args.passwd!=None and args.encryp!=None) or (args.group_name==None and args.profile_name==None and args.file_name==None and args.ssid!=None and args.passwd==None and args.encryp.lower() =='open')):
 
+        # Initialize an instance of RealBrowserTest with various parameters
+            obj = RealBrowserTest(host=args.host, ssid=args.ssid, passwd=args.passwd, encryp=args.encryp,
+                                suporrted_release=["7.0", "10", "11", "12"], max_speed=args.max_speed,
+                                url=args.url, count=args.count, duration=args.duration, 
+                                resource_ids = args.device_list, dowebgui = args.dowebgui,
+                                result_dir = args.result_dir,test_name = args.test_name, incremental = args.incremental,postcleanup=args.postcleanup,
+                                precleanup=args.precleanup,
+                                file_name=args.file_name,
+                                group_name=args.group_name,
+                                profile_name=args.profile_name,
+                                eap_method=args.eap_method,
+                                eap_identity=args.eap_identity,
+                                ieee80211=args.ieee80211,
+                                ieee80211u=args.ieee80211u,
+                                ieee80211w=args.ieee80211w,
+                                enable_pkc=args.enable_pkc,
+                                bss_transition=args.bss_transition,
+                                power_save=args.power_save,
+                                disable_ofdma=args.disable_ofdma,
+                                roam_ft_ds=args.roam_ft_ds,
+                                key_management=args.key_management,
+                                pairwise=args.pairwise,
+                                private_key=args.private_key,
+                                ca_cert=args.ca_cert,
+                                client_cert=args.client_cert,
+                                pk_passwd=args.pk_passwd,
+                                pac_file=args.pac_file,
+                                server_ip=args.server_ip,
+                                expected_passfail_value=args.expected_passfail_value,
+                                device_csv_name=args.device_csv_name
+                                )
+            
+            obj.run_flask_server()
+            
+            
+            # Initialize empty lists and dictionaries for resource management
+            resource_ids_sm = []
+            resource_set = set()
+            resource_list = []
+            os_types_dict = {}
+            # android_devices = []
+            # other_os_list = []
+            # android_list = []
+            # other_list = []
+            resource_ids_generated = ""
+            config_obj=DeviceConfig.DeviceConfig(lanforge_ip=args.host,file_name=args.file_name)
+            if not args.expected_passfail_value and args.device_csv_name==None :
+                config_obj.device_csv_file(csv_name="device.csv")
+            if(args.group_name!=None and args.file_name!=None and args.profile_name!=None):
+                selected_groups=args.group_name.split(',')
+                selected_profiles=args.profile_name.split(',')
+                config_devices={}
+                for i in range(len(selected_groups)):
+                    config_devices[selected_groups[i]]=selected_profiles[i]
 
-                    index = next_index
-            elif len(obj.incremental) != 1 and len(keys) > 1:
+            #print("CONFIGURED DICT",config_devices)
+                config_obj.initiate_group()
+                asyncio.run(config_obj.connectivity(config_devices))
+            
+                adbresponse=config_obj.adb_obj.get_devices()
+                resource_manager=config_obj.laptop_obj.get_devices()
+                all_res={}
+                df1=config_obj.display_groups(config_obj.groups)
+                groups_list=df1.to_dict(orient='list')
+                group_devices={}
                 
-                index = 0
-                for num in obj.incremental:
+                for adb in adbresponse:   
+                    group_devices[adb['serial']]=adb['eid']
+                for res in resource_manager:
+                    all_res[res['hostname']]=res['shelf']+'.'+res['resource']
+                eid_list=[]
+                for grp_name in groups_list.keys():
+                    for g_name in selected_groups:
+                        if(grp_name == g_name):
+                            for j in groups_list[grp_name]:
+                                if(j in group_devices.keys()):
+                                    eid_list.append(group_devices[j])
+                                elif(j in all_res.keys()):
+                                    eid_list.append(all_res[j])
+                args.device_list = ",".join(id for id in eid_list)
+                
+            #  Process resource IDs when web GUI is enabled
+            if args.dowebgui == True :
+                # Split resource IDs from args into a list
+                resource_ids_sm = args.device_list.split(',')
+                # Convert list to set to remove duplicates
+                resource_set = set(resource_ids_sm)
+                # Sort the set to maintain order
+                resource_list = sorted(resource_set)
+                # Generate a comma-separated string of sorted resource IDs
+                resource_ids_generated = ','.join(resource_list)
+                resource_list_sorted = resource_list
+                # Query devices based on the generated resource IDs
+                selected_devices,report_labels,selected_macs = obj.devices.query_user(dowebgui = args.dowebgui, device_list = resource_ids_generated)
+                # Modify obj.resource_ids to include only the second part of each ID (after '.')
+                obj.resource_ids = ",".join(id.split(".")[1] for id in args.device_list.split(","))
+
+                available_resources= [int(num) for num in obj.resource_ids.split(',')]
+            else :
+                # Case where args.no_laptops flag is set
+                # if args.no_laptops:
+                    # Retrieve all Android devices if no_laptops flag is True
+                
+                
+                
+                # Process resource IDs if provided
+                if args.device_list:
+                    all_devices= config_obj.get_all_devices()
+                    config_dict={
+                    'ssid':args.ssid,
+                    'passwd':args.passwd,
+                    'enc':args.encryp,
+                    'eap_method':args.eap_method,
+                    'eap_identity':args.eap_identity,
+                    'ieee80211':args.ieee80211,
+                    'ieee80211u':args.ieee80211u,
+                    'ieee80211w':args.ieee80211w,
+                    'enable_pkc':args.enable_pkc,
+                    'bss_transition':args.bss_transition,
+                    'power_save':args.power_save,
+                    'disable_ofdma':args.disable_ofdma,
+                    'roam_ft_ds':args.roam_ft_ds,
+                    'key_management':args.key_management,
+                    'pairwise':args.pairwise,
+                    'private_key':args.private_key,
+                    'ca_cert':args.ca_cert,
+                    'client_cert':args.client_cert,
+                    'pk_passwd':args.pk_passwd,
+                    'pac_file':args.pac_file,
+                    'server_ip':args.server_ip,
+
+                    }
+                    if(args.group_name==None and args.file_name==None and args.profile_name==None):
+                        dev_list=args.device_list.split(',')
+                        asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
+                    obj.android_devices = obj.devices.get_devices()
+                    # Extract second part of resource IDs and sort them
+                    obj.resource_ids = ",".join(id.split(".")[1] for id in args.device_list.split(","))
+                    resource_ids_sm = obj.resource_ids
+                    resource_list = resource_ids_sm.split(',')            
+                    resource_set = set(resource_list)
+                    resource_list_sorted = sorted(resource_set)
+                    resource_ids_generated = ','.join(resource_list_sorted)
+
+                    # Convert resource IDs into a list of integers
+                    num_list = list(map(int, obj.resource_ids.split(',')))
+
+                    # Sort the list
+                    num_list.sort()
+
+                    # Join the sorted list back into a string
+                    sorted_string = ','.join(map(str, num_list))
+                    obj.resource_ids = sorted_string
+
+                    # Extract the second part of each Android device ID and convert to integers
+                    modified_list = list(map(lambda item: int(item.split('.')[1]), obj.android_devices))
+                    modified_other_os_list = list(map(lambda item: int(item.split('.')[1]), obj.other_os_list))
                     
-                    cx_order_list.append(keys[index: num])
-                    #hw_version_list.append(obj.hw[index:num])
-                    #user_name_list.append(obj.user_name[index:num])
-                    #mac_add_list.append(obj.mac_list[index:num])
-                    index = num
+                    # Verify if all resource IDs are valid for Android devices
+                    resource_ids = [int(x) for x in sorted_string.split(',')]
+                    
+                    new_list_android = [item.split('.')[0] + '.' + item.split('.')[1] for item in obj.android_devices]
 
-                if index < len(keys):
-                    cx_order_list.append(keys[index:])
-                    #hw_version_list.append(obj.hw[index:])
-                    #user_name_list.append(obj.user_name[index:])
-                    #mac_add_list.append(obj.mac_list[index:])
+                    resources_list = args.device_list.split(",")
+                    for element in resources_list:
+                        if element in new_list_android:
+                            for ele in obj.android_devices:
+                                if ele.startswith(element):
+                                    obj.android_list.append(ele)
+                        else:
+                            logger.info("{} device is not available".format(element))
+                    new_android = [int(item.split('.')[1]) for item in obj.android_list]
 
-                    start_time_webGUI = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-            # Update start and end times for webGUI
-            for i in range(len(cx_order_list)):
-                if i == 0:
-                    obj.data["start_time_webGUI"] = [datetime.now().strftime('%Y-%m-%d %H:%M:%S')] * len(keys)
-                    end_time_webGUI = (datetime.now() + timedelta(minutes = args.duration * len(cx_order_list))).strftime('%Y-%m-%d %H:%M:%S')
-                    obj.data['end_time_webGUI'] = [end_time_webGUI] * len(keys)
-
-
-                obj.start_specific(cx_order_list[i])
-                
-                iteration_number+=len(cx_order_list[i])
-                if cx_order_list[i]:
-                    logging.info("Test started on Devices with resource Ids : {selected}".format(selected = cx_order_list[i]))
+                    resource_ids = sorted(new_android)
+                    available_resources=list(set(resource_ids))
+                    # print("22222",available_resources)
+                    
                 else:
-                    logging.info("Test started on Devices with resource Ids : {selected}".format(selected = cx_order_list[i]))
-                
-                # duration = 60 * args.duration
-                file_path = "webBrowser.csv"
+                    all_devices= config_obj.get_all_devices()
+                    device_list=[]
+                    config_dict={
+                    'ssid':args.ssid,
+                    'passwd':args.passwd,
+                    'enc':args.encryp,
+                    'eap_method':args.eap_method,
+                    'eap_identity':args.eap_identity,
+                    'ieee80211':args.ieee80211,
+                    'ieee80211u':args.ieee80211u,
+                    'ieee80211w':args.ieee80211w,
+                    'enable_pkc':args.enable_pkc,
+                    'bss_transition':args.bss_transition,
+                    'power_save':args.power_save,
+                    'disable_ofdma':args.disable_ofdma,
+                    'roam_ft_ds':args.roam_ft_ds,
+                    'key_management':args.key_management,
+                    'pairwise':args.pairwise,
+                    'private_key':args.private_key,
+                    'ca_cert':args.ca_cert,
+                    'client_cert':args.client_cert,
+                    'pk_passwd':args.pk_passwd,
+                    'pac_file':args.pac_file,
+                    'server_ip':args.server_ip,
 
-                start_time = time.time()
-                df = pd.DataFrame(obj.data)
+                    }
+                    for device in all_devices:
+                        if(device["type"]!='laptop'):
+                            device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["serial"])
+                        elif(device["type"]=='laptop'):
+                            device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["hostname"])
+                    print("Available devices:", device_list)
+                    args.device_list = input("Enter the desired resources to run the test:")
+                    dev1_list=args.device_list.split(',')   
+                    # asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
+                    obj.android_devices = obj.devices.get_devices()
+                    # Query user to select devices if no resource IDs are provided
+                    selected_devices,report_labels,selected_macs = obj.devices.query_user(device_list=dev1_list)
+                    # Handle cases where no devices are selected
+                    if not selected_devices:
+                        logging.info("devices donot exist..!!")
+                        return 
+                    # Categorize selected devices into Android and other OS types if no_laptops flag is False
+                    # if not args.no_laptops:
+                    #     for device in selected_devices:
+                    #         if device in obj.android_devices:
+                    #             obj.android_list.append(device)
+                    #         else:
+                    #             obj.other_list.append(device)
+                    # else:
+                    # Assign all selected devices as Android devices if no_laptops flag is True
+                    obj.android_list = selected_devices
+                    
+                    # if args.incremental and  (not obj.android_list):
+                    #     logging.info("Incremental Values are not needed as no android devices are selected")
+                    
+                    # Verify if all resource IDs are valid for Android devices
+                    if obj.android_list:
+                        resource_ids = ",".join([item.split(".")[1] for item in obj.android_list])
 
-                if end_time_webGUI < datetime.now().strftime('%Y-%m-%d %H:%M:%S'):
-                    obj.data['remaining_time_webGUI'] = ['0:00'] * len(keys)
-                else:
-                    date_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    obj.data['remaining_time_webGUI'] =  [datetime.strptime(end_time_webGUI,"%Y-%m-%d %H:%M:%S") - datetime.strptime(date_time,"%Y-%m-%d %H:%M:%S")] * len(keys)
-                # Monitor runtime and save results
-                
-                # if args.dowebgui == True:
-                #     file_path = os.path.join(obj.result_dir, "../../Running_instances/{}_{}_running.json".format(obj.host, obj.test_name))
-                #     if os.path.exists(file_path):
-                #         with open(file_path, 'r') as file:
-                #             data = json.load(file)
-                #             if data["status"] != "Running":
-                #                 break 
-                #     obj.monitor_for_runtime_csv(args.duration,file_path,iteration_number,resource_list_sorted,cx_order_list[i],i)
-                
-                    #time.sleep(2000)
-                obj.get_stats(args.duration,file_path,iteration_number,resource_list_sorted,cx_order_list[i],i,args.count)
-    obj.create_report()
+                        num_list = list(map(int, resource_ids.split(',')))
 
+                        # Sort the list
+                        num_list.sort()
 
+                        # Join the sorted list back into a string
+                        sorted_string = ','.join(map(str, num_list))
 
-  except Exception as e:
-    print("Error occured",e)
-    traceback.print_exc()
-  finally:
-    if(args.dowebgui):
-            try:
-                url = f"http://{args.host}:5454/update_status_yt"
-                #url = f"http://localhost:8000/update_status_yt"
-                #url = f"http://10.253.8.108:8000/update_status_yt"
+                        obj.resource_ids = sorted_string
+                        resource_ids1 = list(map(int, sorted_string.split(',')))
+                        modified_list = list(map(lambda item: int(item.split('.')[1]), obj.android_devices))
 
-                
-                headers = {
-                    'Content-Type': 'application/json',
-                }
-                
+                        # Check for invalid resource IDs
+                        if not all(x in modified_list for x in resource_ids1):
+                            logging.info("Verify Resource ids, as few are invalid...!!")
+                            exit()
+                        resource_ids_sm = obj.resource_ids
+                        resource_list = resource_ids_sm.split(',')            
+                        resource_set = set(resource_list)
+                        resource_list_sorted = sorted(resource_set)
+                        resource_ids_generated = ','.join(resource_list_sorted)
+                        available_resources=list(resource_set)
 
-                data = {
-                    'status': 'Completed',
-                    'name': args.test_name
-                }
-                
-                response = requests.post(url, json=data, headers=headers)
-
-                if response.status_code == 200:
-                    logging.info("Successfully updated STOP status to 'Completed'")
+            logger.info("Devices available: {}".format(available_resources))
+            if len(available_resources)==0:
+                logging.info("There no devices available which are selected")
+                exit()
+            if len(available_resources) > 0:
+                device_map={}
+                if(not args.expected_passfail_value and args.device_csv_name == None):
+                    expected_val=input("Enter the expected value for the following devices{} eg 8,6,2: ".format(available_resources)).split(',')
+                    if(len(available_resources)==len(expected_val)):
+                        for i in range(len(available_resources)):
+                            device_map[obj.android_list[i].split('.')[0]+'.'+obj.android_list[i].split('.')[1]]=expected_val[i]
+                        config_obj.update_device_csv('device.csv','RealBrowser',device_map)
+                    else:
+                        print("Enter correct number of values")
+                        exit(0)
+                elif args.expected_passfail_value:
                     pass
+            # Handle incremental values input if resource IDs are specified and in not specified case.
+            if args.incremental and not args.webgui_incremental :
+                if obj.resource_ids:
+                    obj.incremental = input('Specify incremental values as 1,2,3 : ')
+                    obj.incremental = [int(x) for x in obj.incremental.split(',')]
                 else:
-                    logging.error(f"Failed to update STOP status: {response.status_code} - {response.text}")
-                
-            except Exception as e:
-                # Print an error message if an exception occurs during the request
-                logging.error(f"An error occurred while updating status: {e}")
-    
-    obj.stop()
+                    logging.info("incremental Values are not needed as Android devices are not selected..")
+            test_info=False
 
-    if args.postcleanup==True:
-        obj.postcleanup()
+            # Handle webgui_incremental argument
+            if args.webgui_incremental:
+                if args.webgui_incremental=="no_increment":
+                    args.webgui_incremental=str(len(available_resources))
+                    test_info=True
+                incremental = [int(x) for x in args.webgui_incremental.split(',')]
+                # Validate the length and assign incremental values
+                if (len(args.webgui_incremental) == 1 and incremental[0] != len(resource_list_sorted)) or (len(args.webgui_incremental) > 1):
+                    obj.incremental = incremental
+                elif len(args.webgui_incremental) == 1:
+                    obj.incremental = incremental
+
+            # if obj.incremental and (not obj.resource_ids):
+            #     logging.info("incremental values are not needed as Android devices are not selected.")
+            #     exit()
+            
+            # Validate incremental and resource IDs combination
+            if (obj.incremental and obj.resource_ids) or (args.webgui_incremental):
+                resources_list1 = [str(x) for x in obj.resource_ids.split(',')]
+                if resource_list_sorted:
+                    resources_list1 = resource_list_sorted
+                # Check if the last incremental value is greater or less than resources provided
+                if obj.incremental[-1] > len(available_resources):
+                    logging.info("Exiting the program as incremental values are greater than the resource ids provided")
+                    exit()
+                elif obj.incremental[-1] < len(available_resources) and len(obj.incremental) > 1:
+                    logging.info("Exiting the program as the last incremental value must be equal to selected devices")
+                    exit()
+
+            # obj.run
+            test_time = datetime.now()
+            test_time = test_time.strftime("%b %d %H:%M:%S")
+
+            logging.info("Initiating Test...")
+            available_resources= [int(n) for n in available_resources]
+            available_resources.sort()
+            available_resources_string=",".join([str(n) for n in available_resources])
+            obj.set_available_resources_ids(available_resources_string)
+            # obj.set_available_resources_ids([int(n) for n in available_resources].sort())
+            obj.build()
+            time.sleep(10)
+            #TODO : To create cx for laptop devices
+            # Create end-points for devices other than Android if specified
+            # if (not args.no_laptops) and obj.other_list:
+            #     obj.create_generic_endp(obj.other_list,os_types_dict)
+
+            keys = list(obj.http_profile.created_cx.keys())
+            generic_keys = obj.generic_endps_profile.created_cx
+            keys = keys + generic_keys
+            if len(keys)==0:
+                logger.error("Selected Devices are not available in the lanforge")
+                exit(1)
+            cx_order_list = []
+            hw_version_list = []
+            user_name_list = []
+            mac_add_list = []
+            index = 0
+            file_path = ""
+
+            if args.duration.endswith('s') or args.duration.endswith('S'):
+                args.duration = round(int(args.duration[0:-1])/60,2)
+            
+            elif args.duration.endswith('m') or args.duration.endswith('M'):
+                args.duration = int(args.duration[0:-1]) 
+        
+            elif args.duration.endswith('h') or args.duration.endswith('H'):
+                args.duration = int(args.duration[0:-1]) * 60  
+            
+            elif args.duration.endswith(''):
+                args.duration = int(args.duration)
+
+            if args.incremental or args.webgui_incremental:
+                incremental_capacity_list_values=obj.get_incremental_capacity_list()
+                #print("checking incremental capacity_list_values",incremental_capacity_list_values)
+                if incremental_capacity_list_values[-1]!=len(available_resources):
+                    logger.error("Incremental capacity doesnt match available devices")
+                    if args.postcleanup==True:
+                        obj.postcleanup()
+                    exit(1)
+
+            # Process resource IDs and incremental values if specified
+            if obj.resource_ids:
+                if obj.incremental:
+                    obj.test_setup_info_incremental_values =  ','.join(map(str, incremental_capacity_list_values))
+                    if len(obj.incremental) == len(available_resources):
+                        test_setup_info_total_duration = args.duration
+                    elif len(obj.incremental) == 1 and len(available_resources) > 1:
+                        if obj.incremental[0] == len(available_resources):
+                            test_setup_info_total_duration = args.duration
+                        else:
+                            div = len(available_resources)//obj.incremental[0] 
+                            mod = len(available_resources)%obj.incremental[0] 
+                            if mod == 0:
+                                test_setup_info_total_duration = args.duration * (div )
+                            else:
+                                test_setup_info_total_duration = args.duration * (div + 1)
+                    else:
+                        test_setup_info_total_duration = args.duration * len(incremental_capacity_list_values)
+                    # test_setup_info_duration_per_iteration= args.duration 
+                elif args.webgui_incremental:
+                    obj.test_setup_info_incremental_values = ','.join(map(str, incremental_capacity_list_values))
+                    test_setup_info_total_duration = args.duration * len(incremental_capacity_list_values)
+                else:
+                    obj.test_setup_info_incremental_values = "No Incremental Value provided"
+                    test_setup_info_total_duration = args.duration
+                obj.total_duration = test_setup_info_total_duration
+                if args.dowebgui:
+                    if test_info:
+                        obj.test_setup_info_incremental_values = "No Incremental Value provided"
+
+            # Calculate and manage cx_order_list ( list of cross connections to run ) based on incremental values
+            gave_incremental,iteration_number=True,0
+            if obj.resource_ids:
+                if not obj.incremental:
+                    obj.incremental=[len(keys)]
+                    gave_incremental=False
+                if obj.incremental or not gave_incremental:
+                    if len(obj.incremental) == 1 and obj.incremental[0] == len(keys):
+                        cx_order_list.append(keys[index:])
+                        #user_name_list.append(obj.user_name[index:])
+                    elif len(obj.incremental) == 1 and len(keys) > 1:
+                        incremental_value = obj.incremental[0]
+                        max_index = len(keys)
+                        index = 0
+
+                        while index < max_index:
+                            next_index = min(index + incremental_value, max_index)
+                            cx_order_list.append(keys[index:next_index])
+                            #hw_version_list.append(obj.hw[index:next_index])
+                            #user_name_list.append(obj.user_name[index:next_index])
+                            #mac_add_list.append(obj.mac_list[index:next_index])
 
 
-    
-    
+                            index = next_index
+                    elif len(obj.incremental) != 1 and len(keys) > 1:
+                        
+                        index = 0
+                        for num in obj.incremental:
+                            
+                            cx_order_list.append(keys[index: num])
+                            #hw_version_list.append(obj.hw[index:num])
+                            #user_name_list.append(obj.user_name[index:num])
+                            #mac_add_list.append(obj.mac_list[index:num])
+                            index = num
+
+                        if index < len(keys):
+                            cx_order_list.append(keys[index:])
+                            #hw_version_list.append(obj.hw[index:])
+                            #user_name_list.append(obj.user_name[index:])
+                            #mac_add_list.append(obj.mac_list[index:])
+
+                            start_time_webGUI = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+                    # Update start and end times for webGUI
+                    for i in range(len(cx_order_list)):
+                        if i == 0:
+                            obj.data["start_time_webGUI"] = [datetime.now().strftime('%Y-%m-%d %H:%M:%S')] * len(keys)
+                            end_time_webGUI = (datetime.now() + timedelta(minutes = args.duration * len(cx_order_list))).strftime('%Y-%m-%d %H:%M:%S')
+                            obj.data['end_time_webGUI'] = [end_time_webGUI] * len(keys)
+
+
+                        obj.start_specific(cx_order_list[i])
+                        
+                        iteration_number+=len(cx_order_list[i])
+                        if cx_order_list[i]:
+                            logging.info("Test started on Devices with resource Ids : {selected}".format(selected = cx_order_list[i]))
+                        else:
+                            logging.info("Test started on Devices with resource Ids : {selected}".format(selected = cx_order_list[i]))
+                        
+                        # duration = 60 * args.duration
+                        file_path = "webBrowser.csv"
+
+                        start_time = time.time()
+                        df = pd.DataFrame(obj.data)
+
+                        if end_time_webGUI < datetime.now().strftime('%Y-%m-%d %H:%M:%S'):
+                            obj.data['remaining_time_webGUI'] = ['0:00'] * len(keys)
+                        else:
+                            date_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            obj.data['remaining_time_webGUI'] =  [datetime.strptime(end_time_webGUI,"%Y-%m-%d %H:%M:%S") - datetime.strptime(date_time,"%Y-%m-%d %H:%M:%S")] * len(keys)
+                        # Monitor runtime and save results
+                        
+                        # if args.dowebgui == True:
+                        #     file_path = os.path.join(obj.result_dir, "../../Running_instances/{}_{}_running.json".format(obj.host, obj.test_name))
+                        #     if os.path.exists(file_path):
+                        #         with open(file_path, 'r') as file:
+                        #             data = json.load(file)
+                        #             if data["status"] != "Running":
+                        #                 break 
+                        #     obj.monitor_for_runtime_csv(args.duration,file_path,iteration_number,resource_list_sorted,cx_order_list[i],i)
+                        
+                            #time.sleep(2000)
+                        obj.get_stats(args.duration,file_path,iteration_number,resource_list_sorted,cx_order_list[i],i,args.count)
+            obj.create_report()
+
+
+
+    except Exception as e:
+        print("Error occured",e)
+        traceback.print_exc()
+    finally:
+        if(args.dowebgui):
+                try:
+                    url = f"http://{args.host}:5454/update_status_yt"
+                    #url = f"http://localhost:8000/update_status_yt"
+                    #url = f"http://10.253.8.108:8000/update_status_yt"
+
+                    
+                    headers = {
+                        'Content-Type': 'application/json',
+                    }
+                    
+
+                    data = {
+                        'status': 'Completed',
+                        'name': args.test_name
+                    }
+                    
+                    response = requests.post(url, json=data, headers=headers)
+
+                    if response.status_code == 200:
+                        logging.info("Successfully updated STOP status to 'Completed'")
+                        pass
+                    else:
+                        logging.error(f"Failed to update STOP status: {response.status_code} - {response.text}")
+                    
+                except Exception as e:
+                    # Print an error message if an exception occurs during the request
+                    logging.error(f"An error occurred while updating status: {e}")
+        
+        obj.stop()
+
+        if args.postcleanup==True:
+            obj.postcleanup()
+
+
+        
+        
 
 if __name__ == '__main__':
     main()
