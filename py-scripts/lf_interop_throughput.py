@@ -486,7 +486,7 @@ class Throughput(Realm):
             #obj.initiate_group()
             df1=obj.display_groups(obj.groups)
             groups_list=df1.to_dict(orient='list')
-            
+            ios_list=[]
             for grp_name in groups_list.keys():
                 for g_name in selected_groups:
                     if(grp_name==g_name):
@@ -495,13 +495,16 @@ class Throughput(Realm):
                                 if(i.split(' ')[1]=='android'):
                                     for adb_dict in adbresponse:
                                         if(adb_dict['serial']==j):
-                                            if(adb_dict['eid'] not in self.device_list):
+                                            if(adb_dict['eid'] not in self.device_list and adb_dict['os']!='iOS' and adb_dict['eid']!=''):
                                                 self.device_list.append(adb_dict['eid'])
+                                            elif(adb_dict['os']=='iOS'and adb_dict['serial'] not in ios_list):
+                                                ios_list.append(adb_dict['serial'])
                                 else: 
                                     if(j==i.split(' ')[2]):
                                         self.device_list.append(i.split(' ')[0])
                                     #group_devices.append(j)
-        
+            if(len(ios_list)>0):          
+                print("EXCLUDING IOS DEVICES",ios_list)
 
         # If self.device_list is provided, check availability against devices_available
         if len(self.device_list) != 0:
