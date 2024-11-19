@@ -1727,7 +1727,7 @@ def main():
         # url = args.url.replace("http://", "").replace("https://", "")
         if((args.group_name!=None and args.profile_name!=None and args.file_name!=None and args.device_list==None and args.ssid==None and (len(selected_groups)==len(selected_profiles))) or(args.group_name==None and args.profile_name==None and args.file_name==None and args.ssid!=None and args.passwd!=None and args.encryp!=None) or (args.group_name==None and args.profile_name==None and args.file_name==None and args.ssid!=None and args.passwd==None and args.encryp.lower() =='open')):
 
-        # Initialize an instance of RealBrowserTest with various parameters
+            # Initialize an instance of RealBrowserTest with various parameters
             obj = RealBrowserTest(host=args.host, ssid=args.ssid, passwd=args.passwd, encryp=args.encryp,
                                 suporrted_release=["7.0", "10", "11", "12"], max_speed=args.max_speed,
                                 url=args.url, count=args.count, duration=args.duration, 
@@ -1938,8 +1938,8 @@ def main():
                             device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["hostname"])
                     print("Available devices:", device_list)
                     args.device_list = input("Enter the desired resources to run the test:")
-                    dev1_list=args.device_list.split(',')   
-                    # asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
+                    dev1_list=args.device_list.split(',')  
+                    asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
                     obj.android_devices = obj.devices.get_devices()
                     # Query user to select devices if no resource IDs are provided
                     selected_devices,report_labels,selected_macs = obj.devices.query_user(device_list=dev1_list)
