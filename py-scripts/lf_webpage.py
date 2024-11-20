@@ -208,7 +208,7 @@ class HttpDownload(Realm):
                     config_devices[selected_groups[i]]=selected_profiles[i]
             # print("CONFIGURED DICT",config_devices)    
             obj.initiate_group()
-            # asyncio.run(obj.connectivity(config_devices))
+            asyncio.run(obj.connectivity(config_devices))
         elif(self.device_list!=[]):
             obj.get_all_devices()
             config_dict={
@@ -236,7 +236,7 @@ class HttpDownload(Realm):
             }
             
             self.device_list=self.device_list.split(',')
-            # asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
+            asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
         elif(self.device_list==[]):
             all_devices= obj.get_all_devices()
             config_dict={
@@ -270,7 +270,7 @@ class HttpDownload(Realm):
                     device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["serial"])
             print("Available devices:", device_list)
             self.device_list = input("Enter the desired resources to run the test:").split(',')
-            # asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
+            asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
 
         response = self.json_get("/resource/all")
         for key,value in response.items():
