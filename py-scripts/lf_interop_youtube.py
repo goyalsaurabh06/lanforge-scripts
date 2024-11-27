@@ -417,7 +417,59 @@ class Youtube(Realm):
             return data['status']
 
            
+    def select_real_devices(self, real_devices, real_sta_list=None, base_interop_obj=None):
+        final_device_list = []
+        
+        
+        if real_sta_list is None:
+            self.real_sta_list, _, _ = real_devices.query_user()
+        else:
+            interface_data = self.json_get("/port/all")
+            interfaces = interface_data["interfaces"]
+            #print("checking interfaces",interfaces)
+            final_device_list = []  # Initialize the list
 
+            for device in real_sta_list:  
+                for interface_dict in interfaces:  
+                    for key, value in interface_dict.items():  
+                        
+                        if (
+                            key.startswith(device)
+                            and not value["phantom"]
+                            and not value["down"]
+                            and value["parent dev"] != ""
+                        ):
+                            final_device_list.append(key)  
+                            break  
+
+            self.real_sta_list = final_device_list
+
+        # Assign `base_interop_obj` to `self.Devices` if provided
+        if base_interop_obj is not None:
+            self.Devices = base_interop_obj
+
+       
+        if (len(self.real_sta_list) == 0):
+            logger.error('There are no real devices in this testbed. Aborting test')
+            exit(0)
+
+        
+        for sta_name in self.real_sta_list:
+            if sta_name not in real_devices.devices_data:
+                logger.error('Real station not in devices data, ignoring it from testing')
+                continue
+
+            self.real_sta_data_dict[sta_name] = real_devices.devices_data[sta_name]
+
+        
+
+        # Track the selected devices
+        self.android = self.Devices.android
+        self.windows = self.Devices.windows
+        self.mac = self.Devices.mac
+        self.linux = self.Devices.linux
+        # Return the sorted list of selected real station names
+        return self.real_sta_list
 
     def get_data_from_api(self):
         """
