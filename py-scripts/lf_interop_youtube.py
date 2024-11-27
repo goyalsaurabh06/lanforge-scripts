@@ -394,17 +394,11 @@ class Youtube(Realm):
         if base_interop_obj is not None:
             self.Devices = base_interop_obj
 
-        # Sort `self.real_sta_list` based on the second part of each station name
-        #self.real_sta_list = sorted(self.real_sta_list, key=lambda x: int(x.split('.')[1]))
-
-        # Log an error and exit if no real stations are selected for testing
         if (len(self.real_sta_list) == 0):
             logger.error('There are no real devices in this testbed. Aborting test')
             exit(0)
 
-        # Log the selected real station names
-        #logging.info('{}'.format(*self.real_sta_list))
-        # # Add real station data to `self.real_sta_data_dict`
+       
         for sta_name in self.real_sta_list:
             if sta_name not in real_devices.devices_data:
                 logger.error('Real station not in devices data, ignoring it from testing')
@@ -412,20 +406,6 @@ class Youtube(Realm):
 
             self.real_sta_data_dict[sta_name] = real_devices.devices_data[sta_name]
 
-        # for device_id, device_data in real_devices.devices_data.items():
-        #     print("============================================================================================================================")
-        #     print("checking device data",device_data)
-        #     print("checking whether this loop is iterating or not")
-        #     stripped_eid = device_data.get("eid", "").strip()
-        #     if stripped_eid in (sta_name.strip() for sta_name in self.real_sta_list):
-        #         print("==================================================")
-        #         print("checking device data",device_data)
-        #         # Store the matching object in real_sta_data_dict
-        #         self.real_sta_data_dict[stripped_eid] = device_data
-        #         print("device found")
-        #     else:
-        #         # Log if a real station is not in the devices data
-        #         logger.error(f"Real station {stripped_eid} not in devices data, ignoring it from testing")
 
         # Track the selected devices
         self.android = self.Devices.android
@@ -1108,13 +1088,13 @@ def main():
     configure = False
     resources = []
 
-    # If configuring devices, query and configure them
-    # If not configuring, get the list of laptops and devices to be used
+    
     if(configure):
         
         # Run the event loop
         asyncio.run(Devices.query_all_devices_to_configure_wifi())
         youtube.select_real_devices(real_devices=Devices, real_sta_list=Devices.station_list, base_interop_obj=Devices)
+
     else:
         
         laptops = Devices.get_devices()
@@ -1123,19 +1103,12 @@ def main():
         result_list = []
         if(not do_webUI):
             if args.resources:
-                resources = args.resources.split(',')
+                resources = [r.strip() for r in args.resources.split(',')]
                 resources = [r for r in resources if len(r.split('.')) > 1]
                 
                 get_data = youtube.select_real_devices(real_devices=Devices, real_sta_list=resources, base_interop_obj=Devices)
                
 
-                # # Iterate over get_data and check if each element exists in laptops
-                # for item in get_data:
-                #     item=item.strip()
-                #     if any(lap.startswith(item) for lap in laptops):
-                #         result_list.append(item)
-
-                # Iterate over get_data and check if each element exists in laptops
                 for item in get_data:
                     item = item.strip()
                     # Find and append the matching lap to result_list
@@ -1143,17 +1116,16 @@ def main():
                     result_list.extend(matching_laps)
 
                 if not result_list:
-                    logging.info("Resources donot exist hence Terminating the test.")
+                    logging.info("Resources do not exist hence Terminating the test.")
                     return 
 
                 if len(result_list) != len(get_data):
-                    logging.info("Few Resources donot exist hence Terminating the test.")
-                    return 
+                    logging.info("Few Resources donot Excluding it from the test") 
             else:
                 resources = youtube.select_real_devices(real_devices=Devices)
 
         else:
-            resources = args.resources.split(',')
+            resources = [r.strip() for r in args.resources.split(',')]
             youtube.select_real_devices(real_devices=Devices, real_sta_list=resources, base_interop_obj=Devices)
     
     # Perform pre-test cleanup if not skipped
