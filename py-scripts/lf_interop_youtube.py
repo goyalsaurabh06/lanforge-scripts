@@ -361,50 +361,97 @@ class Youtube(Realm):
             
         
 
-    def select_real_devices(self, real_devices, real_sta_list=None, base_interop_obj=None):
-        """
-        Selects real devices for testing.
+    # def select_real_devices(self, real_devices, real_sta_list=None, base_interop_obj=None):
+    #     """
+    #     Selects real devices for testing.
 
-        Args:
-        - real_devices (RealDevice): Instance of RealDevice containing devices information.
-        - real_sta_list (list, optional): List of specific real station names to select for testing.
-        - base_interop_obj (object, optional): Base interop object to set for Devices.
+    #     Args:
+    #     - real_devices (RealDevice): Instance of RealDevice containing devices information.
+    #     - real_sta_list (list, optional): List of specific real station names to select for testing.
+    #     - base_interop_obj (object, optional): Base interop object to set for Devices.
 
-        Returns:
-        - list: list of selected real station names for testing.
+    #     Returns:
+    #     - list: list of selected real station names for testing.
 
-        Steps:
-        1. If `real_sta_list` is not provided, queries and retrieves all user-defined real stations from `real_devices`.
-        2. Otherwise, assigns the provided `real_sta_list` to `self.real_sta_list`.
-        3. If `base_interop_obj` is provided, assigns it to `self.Devices`.
-        4. Sorts `self.real_sta_list` based on the second part of each station name.
-        5. Logs an error and exits if no real stations are selected for testing.
-        6. Logs the selected real station names.
-        7. Adds real station data to `self.real_sta_data_dict`.
-        8. Tracks the number of selected devices (`android`, `windows`, `mac`, `linux`).
+    #     Steps:
+    #     1. If `real_sta_list` is not provided, queries and retrieves all user-defined real stations from `real_devices`.
+    #     2. Otherwise, assigns the provided `real_sta_list` to `self.real_sta_list`.
+    #     3. If `base_interop_obj` is provided, assigns it to `self.Devices`.
+    #     4. Sorts `self.real_sta_list` based on the second part of each station name.
+    #     5. Logs an error and exits if no real stations are selected for testing.
+    #     6. Logs the selected real station names.
+    #     7. Adds real station data to `self.real_sta_data_dict`.
+    #     8. Tracks the number of selected devices (`android`, `windows`, `mac`, `linux`).
         
 
-        """
+    #     """
+    #     # Query and retrieve all user-defined real stations if `real_sta_list` is not provided
+    #     if real_sta_list is None:
+    #         self.real_sta_list, _, _ = real_devices.query_user()
+    #     else:
+    #         self.real_sta_list = real_sta_list
+    #     # Assign `base_interop_obj` to `self.Devices` if provided
+    #     if base_interop_obj is not None:
+    #         self.Devices = base_interop_obj
+
+    #     if (len(self.real_sta_list) == 0):
+    #         logger.error('There are no real devices in this testbed. Aborting test')
+    #         exit(0)
+
+       
+    #     for sta_name in self.real_sta_list:
+    #         if sta_name not in real_devices.devices_data:
+    #             logger.error('Real station not in devices data, ignoring it from testing')
+    #             continue
+
+    #         self.real_sta_data_dict[sta_name] = real_devices.devices_data[sta_name]
+
+
+    #     # Track the selected devices
+    #     self.android = self.Devices.android
+    #     self.windows = self.Devices.windows
+    #     self.mac = self.Devices.mac
+    #     self.linux = self.Devices.linux
+    #     # Return the sorted list of selected real station names
+    #     return self.real_sta_list
+
+    def select_real_devices(self, real_devices, real_sta_list=None, base_interop_obj=None):
+        final_device_list = []
+        
         # Query and retrieve all user-defined real stations if `real_sta_list` is not provided
         if real_sta_list is None:
             self.real_sta_list, _, _ = real_devices.query_user()
         else:
-            self.real_sta_list = real_sta_list
+            interface_data = self.json_get("/port/all")
+            interfaces = interface_data["interfaces"]
+            #print("checking interfaces",interfaces)
+            for interface in interfaces:
+                for device in real_sta_list:
+                    for interface, data in interface.items():
+                        if interface.startswith(device) and data["phantom"] == False and data["down"] == False and data["parent dev"] != "":
+                            final_device_list.append(interface)
+
+            self.real_sta_list = final_device_list
+
         # Assign `base_interop_obj` to `self.Devices` if provided
         if base_interop_obj is not None:
             self.Devices = base_interop_obj
 
+        # Sort `self.real_sta_list` based on the second part of each station name
+        #self.real_sta_list = sorted(self.real_sta_list, key=lambda x: int(x.split('.')[1]))
+
+        # Log an error and exit if no real stations are selected for testing
         if (len(self.real_sta_list) == 0):
             logger.error('There are no real devices in this testbed. Aborting test')
             exit(0)
 
-       
         for sta_name in self.real_sta_list:
             if sta_name not in real_devices.devices_data:
                 logger.error('Real station not in devices data, ignoring it from testing')
                 continue
 
             self.real_sta_data_dict[sta_name] = real_devices.devices_data[sta_name]
+
 
 
         # Track the selected devices
@@ -1238,6 +1285,8 @@ def main():
 
 
     else:
+        print("====================================")
+        print(youtube.device_names)
         while ((not all_stop)):
                 initial_data = youtube.get_data_from_api()
                 if initial_data:
