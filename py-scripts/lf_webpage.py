@@ -199,6 +199,7 @@ class HttpDownload(Realm):
         if not self.expected_passfail_value and self.device_csv_name==None :
             obj.device_csv_file(csv_name="device.csv")
         if(self.group_name!=None and self.file_name!=None and self.device_list==[] and self.profile_name!=None):
+            print("!!!!!")
             selected_groups=self.group_name.split(',')
             selected_profiles=self.profile_name.split(',')
             config_devices={}
@@ -276,7 +277,6 @@ class HttpDownload(Realm):
             if key == "resources":
                 for element in value:
                     for a,b in element.items():
-                        print("bbb",b)
                         if b['phantom'] == False :
                             working_resources_list2.append(b["hw version"])
                             if "Win" in b['hw version']:
@@ -333,28 +333,30 @@ class HttpDownload(Realm):
                 if eid in device:
                     print(eid + ' ' + device)
                     user_list2.append(device)
-
         adbrespone=obj.adb_obj.get_devices()
         if(self.group_name!='' and self.file_name!='' and self.device_list==[] and self.profile_name!=''):
             #obj.initiate_group()
             df1=obj.display_groups(obj.groups)
             groups_list=df1.to_dict(orient='list')
+            ios_list=[]
             for grp_name in groups_list.keys():
                 for g_name in selected_groups:
                     if(grp_name==g_name):
                         for j in groups_list[grp_name]:
                             for i in user_list2:
                                 if(i.split(' ')[1]=='android'):
-                                    for adb_dict in adbrespone:                                       
-                                        if(adb_dict['serial']==j):
-                                            if(adb_dict['eid'] not in self.device_list):
+                                    for adb_dict in adbrespone:
+                                        if(adb_dict['serial']==j):                                 
+                                            if(adb_dict['eid'] not in self.device_list and adb_dict['os']!='iOS' and adb_dict['eid']!=''):
                                                 self.device_list.append(adb_dict['eid'])
+                                            elif(adb_dict['os']=='iOS'and adb_dict['serial'] not in ios_list):
+                                                ios_list.append(adb_dict['serial'])
                                 else:
                                     if(j==i.split(' ')[2]):
                                         self.device_list.append(i.split(' ')[0])
                                     #group_devices.append(j)
-                           
-        
+            if(len(ios_list)>0):          
+                print("EXCLUDING IOS DEVICES",ios_list)
         #checking for the availability of slected devices to run test
         if len(self.device_list) != 0:
             
@@ -416,7 +418,6 @@ class HttpDownload(Realm):
                 if eid in ports_m:
                     input_devices_list2.append(ports_m)
         logger.info("INPUT DEVICES LIST {}".format(input_devices_list2))
-
         # user desired real client list 1.1 wlan0 ---
         
         for i in resource_eid_list2:
@@ -538,6 +539,7 @@ class HttpDownload(Realm):
 
     def precleanup(self):
         self.count = 0
+        print("111111",self.radio,self.fiveg_radio,self.sixg_radio,self.twog_radio)
         for rad in range(len(self.radio)):
             if self.radio[rad] == self.fiveg_radio:
                 # select an mode
@@ -1236,7 +1238,6 @@ class HttpDownload(Realm):
                             for item in dev.values():
                                 if(item['user-name']==client.split(' ')[2]):
                                     res_list.append(item['name'].split('.')[2])
-                
                 with open(self.device_csv_name, mode='r') as file:
                     reader = csv.DictReader(file)
                     rows = list(reader)
