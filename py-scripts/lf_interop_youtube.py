@@ -396,11 +396,20 @@ class Youtube(Realm):
             interface_data = self.json_get("/port/all")
             interfaces = interface_data["interfaces"]
             #print("checking interfaces",interfaces)
-            for interface in interfaces:
-                for device in real_sta_list:
-                    for interface, data in interface.items():
-                        if interface.startswith(device) and data["phantom"] == False and data["down"] == False and data["parent dev"] != "":
-                            final_device_list.append(interface)
+            final_device_list = []  # Initialize the list
+
+            for device in real_sta_list:  # Iterate over devices in `real_sta_list` to preserve order
+                for interface_dict in interfaces:  # Iterate through `interfaces`
+                    for key, value in interface_dict.items():  # Iterate through items of each interface dictionary
+                        # Check conditions for adding the device
+                        if (
+                            key.startswith(device)
+                            and not value["phantom"]
+                            and not value["down"]
+                            and value["parent dev"] != ""
+                        ):
+                            final_device_list.append(key)  # Add to final_device_list in order
+                            break  # Stop after finding the first match for the current device to maintain order
 
             self.real_sta_list = final_device_list
 
