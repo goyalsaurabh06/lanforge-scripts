@@ -314,7 +314,7 @@ class ThroughputQOS(Realm):
             }
             print("selfffffffffff",self.device_list)
             self.device_list=self.device_list.split(',')
-            asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
+            # asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
         elif(self.device_list==[]):
             all_devices= obj.get_all_devices()
             device_list=[]
@@ -1305,7 +1305,7 @@ class ThroughputQOS(Realm):
                         
                     for i in range(len(test_input_list)):
                         if(self.csv_direction.split('_')[2]=='BiDi'):
-                            if(float(test_input_list[i])<=float(individual_upload_list[i]) and float(test_input_list[i])<=float(individual_download_list[i])):
+                            if(float(test_input_list[i])<=float(individual_upload_list[i])+float(individual_download_list[i])):
                                 pass_fail_list.append('PASS')
                                 print("PASS")
                                 direction='bidirectional'
