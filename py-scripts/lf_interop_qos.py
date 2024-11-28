@@ -1305,6 +1305,7 @@ class ThroughputQOS(Realm):
                         
                     for i in range(len(test_input_list)):
                         if(self.csv_direction.split('_')[2]=='BiDi'):
+                            print("aaaaaaa",float(test_input_list[i]),"222222222",float(individual_upload_list[i]),"3#########3333",float(individual_download_list[i]))
                             if(float(test_input_list[i])<=float(individual_upload_list[i])+float(individual_download_list[i])):
                                 pass_fail_list.append('PASS')
                                 print("PASS")
@@ -1416,7 +1417,7 @@ class ThroughputQOS(Realm):
                     for i in range(len(test_input_list)):
                         
                         if(self.csv_direction.split('_')[2]=='BiDi'):
-                            if(float(test_input_list[i])<=float(individual_upload_list[i]) and float(test_input_list[i])<=float(individual_download_list[i])):
+                            if(float(test_input_list[i])<=float(individual_upload_list[i])+float(individual_download_list[i])):
                                 pass_fail_list.append('PASS')
                                 print("PASS")
                                 direction='bidirectional'
@@ -1524,7 +1525,7 @@ class ThroughputQOS(Realm):
 
                     for i in range(len(test_input_list)):
                         if(self.csv_direction.split('_')[2]=='BiDi'):
-                            if(float(test_input_list[i])<=float(individual_upload_list[i]) and float(test_input_list[i])<=float(individual_download_list[i])):
+                            if(float(test_input_list[i])<=float(individual_upload_list[i])+float(individual_download_list[i])):
                                 pass_fail_list.append('PASS')
                                 print("PASS")
                                 direction='bidirectional'
@@ -1635,7 +1636,7 @@ class ThroughputQOS(Realm):
                     for i in range(len(test_input_list)):
                         if(self.csv_direction.split('_')[2]=='BiDi'):
                             
-                            if(float(test_input_list[i])<=float(individual_upload_list[i]) and float(test_input_list[i])<=float(individual_download_list[i])):
+                            if(float(test_input_list[i])<=float(individual_upload_list[i])+float(individual_download_list[i])):
                                 pass_fail_list.append('PASS')
                                 print("PASS")
                                 direction='bidirectional'
