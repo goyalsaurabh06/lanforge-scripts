@@ -1379,8 +1379,9 @@ class Candela:
             df1=obj.display_groups(obj.groups)
             groups_list=df1.to_dict(orient='list')
             group_devices={}
-            for adb in adbresponse:   
-                group_devices[adb['serial']]=adb['eid']
+            for adb in adbresponse:
+                if adb['eid']!='':   
+                    group_devices[adb['serial']]=adb['eid']
             for res in resource_manager:
                 all_res[res['hostname']]=res['shelf']+'.'+res['resource']
             eid_list=[]
@@ -1392,8 +1393,44 @@ class Candela:
                                 eid_list.append(group_devices[j])
                             elif(j in all_res.keys()):
                                 eid_list.append(all_res[j])
-        ping_test_obj.select_real_devices(real_devices=base_interop_profile,device_list=eid_list,
+            ping_test_obj.select_real_devices(real_devices=base_interop_profile,device_list=eid_list,
                                             base_interop_obj=base_interop_profile)
+        else:
+                all_devices=obj.get_all_devices()
+                device_list=[]
+                config_dict={
+                            'ssid':ssid,
+                            'passwd':password,
+                            'enc':encryption,
+                            'eap_method':eap_method,
+                            'eap_identity':eap_identity,
+                            'ieee80211':ieee80211,
+                            'ieee80211u':ieee80211u,
+                            'ieee80211w':ieee80211w,
+                            'enable_pkc':enable_pkc,
+                            'bss_transition':bss_transition,
+                            'power_save':power_save,
+                            'disable_ofdma':disable_ofdma,
+                            'roam_ft_ds':roam_ft_ds,
+                            'key_management':key_management,
+                            'pairwise':pairwise,
+                            'private_key':private_key,
+                            'ca_cert':ca_cert,
+                            'client_cert':client_cert,
+                            'pk_passwd':pk_passwd,
+                            'pac_file':pac_file,
+                            'server_ip':server_ip,
+                        }
+                for device in all_devices:
+                    if(device["type"]=='laptop'):
+                        device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["hostname"])
+                    else:
+                        device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["serial"])
+                print("Available devices:", device_list)
+                dev_list = input("Enter the desired resources to run the test:").split(',')
+                asyncio.run(obj.connectivity(device_list=dev_list,wifi_config=config_dict))
+                ping_test_obj.select_real_devices(real_devices=base_interop_profile,device_list=dev_list,base_interop_obj=base_interop_profile)
+        
         # removing the existing generic endpoints & cxs
         ping_test_obj.cleanup()
         # ping_test_obj.sta_list = device_list
@@ -1973,8 +2010,9 @@ class Candela:
                         groups_list=df1.to_dict(orient='list')
                         group_devices={}
                         
-                        for adb in adbresponse:   
-                            group_devices[adb['serial']]=adb['eid']
+                        for adb in adbresponse:
+                            if adb['eid']!='':
+                                group_devices[adb['serial']]=adb['eid']
                         for res in resource_manager:
                             all_res[res['hostname']]=res['shelf']+'.'+res['resource']
                         eid_list=[]
@@ -3672,33 +3710,35 @@ class Candela:
         self.zoom_obj = ZoomAutomation(sigin_email=sigin_email,sigin_passwd=sigin_passwd,audio=audio,video=video,duration=duration,lanforge_ip=self.lanforge_ip,participants=participants)
         self.zoom_obj.run()
 logger_config = lf_logger_config.lf_logger_config()
-candela_apis = Candela(ip='192.168.214.61', port=8080)
-# ftp_test=Candela(ip='192.168.214.219',port=8080)
+#candela_apis = Candela(ip='192.168.214.61', port=8080)
+ftp_test=Candela(ip='192.168.214.219',port=8080)
 
 
-#QOS
-#ftp_test.start_qos_test(ssid='Dev_wpa2',password='lanforge',security='wpa2',ap_name='NETGEAR',qos_serial_run=False,traffic_type='lf_tcp',upstream='eth1', tos=['VO'],csv_name="demo.csv")
 
 
 # ROAMMMMM
-candela_apis.start_roam_test(attenuator='1.1.3192', attenuator_modules=['0,1', '2,3'],
-                             device_list=['1.11.wlan0','1.12.wlan0'],
-                             bssids=['90:3c:b3:b1:70:0d', '90:3c:b3:6c:41:c5'],
-                             wait_time=1,
-                             step=1000, background_run=False,csv_name='demo.csv')
-candela_apis.generate_roam_test_report()
+# candela_apis.start_roam_test(attenuator='1.1.3192', attenuator_modules=['0,1', '2,3'],
+#                              device_list=['1.11.wlan0','1.12.wlan0'],
+#                              bssids=['90:3c:b3:b1:70:0d', '90:3c:b3:6c:41:c5'],
+#                              wait_time=1,
+#                              step=1000, background_run=False,csv_name='demo.csv')
+# candela_apis.generate_roam_test_report()
 
 
 #FTP TEST
-#ftp_test.start_ftp_test(ssid='Dev_wpa2',password='lanforge',security='wpa2',device_list='1.14',background=False,csv_name='demo.csv')
+#ftp_test.start_ftp_test(ssid='OpenWifi',password='OpenWifi',security='wpa2',background=False,server_ip='192.168.214.219')
 
 
 #VIDEO STREAMING
-#ftp_test.start_vs_test(group_name='grp1',file_name='g219',profile_name='OpenWa',csv_name="demo.csv")
+# ftp_test.start_vs_test(ssid='OpenWifi',passwd='OpenWifi',encryp='wpa2',server_ip='192.168.214.219',device_list='1.10')
 
 #PING TEST
-#ftp_test.start_ping_test(group_name='grp1',file_name='g219',profile_name='OpenWa',target='192.168.1.3',real=True,csv_name="demo.csv")
+# ftp_test.start_ping_test(file_name='g219',group_name='grp1',profile_name='OpenWa',target='192.168.1.3',real=True,server_ip='192.168.214.219')
+ftp_test.start_ping_test(ssid="OpenWifi",password="OpenWifi",encryption="wpa2",target='192.168.1.3',real=True,server_ip='192.168.214.219')
 
+
+#QOS
+# ftp_test.start_qos_test(ssid='OpenWifi',password='OpenWifi',security='wpa2',ap_name='NETGEAR',qos_serial_run=False,traffic_type='lf_tcp',upstream='eth1', tos=['VO'])
 
 
 # candela_apis.get_client_connection_details(['1.208.wlan0', '1.19.wlan0'])
@@ -3725,9 +3765,8 @@ candela_apis.generate_roam_test_report()
 #                                device_list=','.join(['1.16', '1.19']))
 
 # TO RUN HTTP TEST
-# candela_apis.start_http_test(ssid='Walkin_open', password='[BLANK]',
-#                              security='open', http_file_size='10MB',
-#                              device_list=['1.80.en0', '1.81.en0', '1.11.wlan0'], report_labels=['1.16 android test41', '1.19 android test46', '1.16 android test41'],
+# ftp_test.start_http_test(ssid='OpenWifi', password='OpenWifi',
+#                              security='wpa2', http_file_size='10MB', report_labels=['1.16 android test41', '1.19 android test46', '1.16 android test41'],
 #                              device_macs=['48:e7:da:fe:0d:ed', '48:e7:da:fe:0d:91', '48:e7:da:fe:0d:ed'], target_per_ten=1000, upstream='eth1',
 #                              band='5G', ap_name='Netgear', background=True)
 # time.sleep(120)

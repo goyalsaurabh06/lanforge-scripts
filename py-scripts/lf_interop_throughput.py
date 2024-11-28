@@ -1938,7 +1938,7 @@ class Throughput(Realm):
                 direction=''
                 for k in range(len(test_input_list)):
                     if(self.csv_direction.split('_')[2]=='BiDi'):
-                        if(float(test_input_list[k])<=float(upload_data[-1][k]) and float(test_input_list[k])<=float(download_data[-1][k][k])):
+                        if(float(test_input_list[k])<=float(upload_data[-1][k])+float(download_data[-1][k][k])):
                             pass_fail_list.append('PASS')
                             direction='bidirectional'
                         else:

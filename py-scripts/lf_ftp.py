@@ -233,7 +233,7 @@ class FtpTest(LFCliBase):
                 config_devices[selected_groups[i]]=selected_profiles[i]
             #print("CONFIGURED DICT",config_devices)
             obj.initiate_group()
-            asyncio.run(obj.connectivity(config_devices))
+            connected_devices=asyncio.run(obj.connectivity(config_devices))
         elif(self.device_list!=[]):
             #obj.initiate_group()
             # response = self.json_get("/resource/all")
@@ -280,7 +280,7 @@ class FtpTest(LFCliBase):
 
             }
             self.device_list=self.device_list.split(',')
-            asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
+            connected_devices=asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
             
         elif(self.device_list==[]):
             all_devices= obj.get_all_devices()
@@ -315,8 +315,7 @@ class FtpTest(LFCliBase):
                     device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["serial"])
             print("Available devices:", device_list)
             self.device_list = input("Enter the desired resources to run the test:").split(',')
-            asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
-        
+            connected_devices=asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
 
         response = self.json_get("/resource/all")
         for key,value in response.items():
@@ -409,8 +408,7 @@ class FtpTest(LFCliBase):
             df1=obj.display_groups(obj.groups)
             groups_list=df1.to_dict(orient='list')
             group_devices=[]
-            #asyncio.run(obj.connectivity({self.group_name:self.profile_name}))
-            #print("Groups list",groups_list)
+            ios_list=[]
             for grp_name in groups_list.keys():
                 for g_name in selected_groups:
                     if(grp_name==g_name):
@@ -421,11 +419,17 @@ class FtpTest(LFCliBase):
                                     for adb_dict in adbresponse:
                                         if(adb_dict['serial']==j):
                                             if(adb_dict['eid'] not in self.device_list):
-                                                self.device_list.append(adb_dict['eid'])
+                                                if(adb_dict['eid'] not in self.device_list and adb_dict['os']!='iOS' and adb_dict['eid']!=''):
+                                                    self.device_list.append(adb_dict['eid'])
+                                                elif(adb_dict['os']=='iOS'and adb_dict['serial'] not in ios_list):
+                                                    ios_list.append(adb_dict['serial'])
                                 else: 
                                     if(j==i.split(' ')[2]):
                                         self.device_list.append(i.split(' ')[0])
                                     #group_devices.append(j)
+            
+            if(len(ios_list)>0):          
+                print("EXCLUDING IOS DEVICES",ios_list)
             
 
 
@@ -484,7 +488,7 @@ class FtpTest(LFCliBase):
             logging.info("AVAILABLE DEVICES TO RUN TEST : %s", self.user_list)
             devices_list = input("Enter the desired resources to run the test:")
             obj.get_all_devices()
-            asyncio.run(obj.connectivity(device_list=devices_list.split(','),wifi_config={'ssid':self.ssid,'passwd':self.password,'enc':self.security}))
+            configured_devices=asyncio.run(obj.connectivity(device_list=devices_list.split(','),wifi_config={'ssid':self.ssid,'passwd':self.password,'enc':self.security}))
             logging.info("devices list %s", devices_list)
         #print("devices list",devices_list)
         resource_eid_list = devices_list.split(',')
@@ -1782,7 +1786,7 @@ class FtpTest(LFCliBase):
                     if device in res_list:
                         test_input_list.append(row['FTP'])
                 for i in range(len(test_input_list)):
-                    if(int(test_input_list[i])<=self.url_data[i]):
+                    if(float(test_input_list[i])<=self.url_data[i]):
                         pass_fail_list.append('PASS')
                     else:
                         pass_fail_list.append('FAIL')
