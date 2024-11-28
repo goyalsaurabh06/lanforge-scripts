@@ -407,7 +407,7 @@ class LAPTOPS(Realm):
         time.sleep(2)
     
     # add station
-    async def add_station(self, port_list=[]): 
+    async def add_station(self, port_list=[]):
         print("ADD STATION LAPTOP")
         if (port_list == []):
             logger.info('Port list is empty')
@@ -436,7 +436,7 @@ class LAPTOPS(Realm):
                         'sta_name': sta_name,
                         'flags': curr_enc,
                         'ssid': curr_ssid,
-                        'mac': 'xx:xx:xx:::xx',
+                        'mac': 'xx:xx:xx:*:*:xx',
                         "ieee80211w" : enable_80211w,
                         'key': curr_passwd,
 
@@ -449,7 +449,7 @@ class LAPTOPS(Realm):
                         'sta_name': sta_name,
                         'flags': curr_enc,
                         'ssid': curr_ssid,
-                        'mac':'xx:xx:xx:::xx',
+                        'mac':'xx:xx:xx:*:*:xx',
                         'key': curr_passwd,
                         "ieee80211w" : 1,
 
@@ -1509,7 +1509,7 @@ class DeviceConfig(Realm):
                 
                 print("WAITING TOTAL 120 SECONDS FOR CONFIGURATION TO APPLY")
                 time.sleep(120)
-            self.monitor_connection(selected_adb_devices,selected_laptop_devices)
+            return self.monitor_connection(selected_adb_devices,selected_laptop_devices)
             
 
 
