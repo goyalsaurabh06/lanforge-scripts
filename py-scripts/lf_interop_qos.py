@@ -350,7 +350,7 @@ class ThroughputQOS(Realm):
             self.device_list = input("Enter the desired resources to run the test:").split(',')
             
 
-            asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
+            #asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
             if not self.expected_passfail_val and self.csv_name==None:
                 obj.device_csv_file(csv_name="device.csv")
 
@@ -671,6 +671,7 @@ class ThroughputQOS(Realm):
                     if key in ['bps rx a', 'bps rx b', 'rx drop % a', 'rx drop % b']:
                         t_response[cx_name].append(cx_data[key])
                     traffic_tos = cx_name.split('_')[-1].split('-')[0]
+                    #print("ssss",self.real_time_data,cx_name)
                     self.real_time_data[cx_name][traffic_tos]['time'].append(datetime.now().strftime('%H:%M:%S'))
                     self.real_time_data[cx_name][traffic_tos]['bps rx a'].append(cx_data['bps rx a']/1000000)
                     self.real_time_data[cx_name][traffic_tos]['bps rx b'].append(cx_data['bps rx b']/1000000)
@@ -1245,9 +1246,10 @@ class ThroughputQOS(Realm):
                         if device in res_list:
                             test_input_list.append(row[self.csv_direction])
                     direction=''
-
+                    print("2222222",self.tos,test_input_list)
 
                 if "BK" in self.tos:
+                    pass_fail_list=[]
                     if self.direction=="Bi-direction":
                         individual_set=list1[2]
                         individual_download_list=individual_set[0]
@@ -1356,6 +1358,7 @@ class ThroughputQOS(Realm):
                     report.build_table()
                 logger.info("Graph and table for BK tos are built")
                 if "BE" in self.tos:
+                    pass_fail_list=[]
                     if self.direction=="Bi-direction":
                         individual_set=list1[3]
                         individual_download_list=individual_set[0]
@@ -1411,6 +1414,7 @@ class ThroughputQOS(Realm):
                         test_input_list=[self.expected_passfail_val for val in range(len(self.real_client_list))]
 
                     for i in range(len(test_input_list)):
+                        
                         if(self.csv_direction.split('_')[2]=='BiDi'):
                             if(float(test_input_list[i])<=float(individual_upload_list[i]) and float(test_input_list[i])<=float(individual_download_list[i])):
                                 pass_fail_list.append('PASS')
@@ -1463,6 +1467,7 @@ class ThroughputQOS(Realm):
                     report.build_table()
                 logger.info("Graph and table for BE tos are built")
                 if "VI" in self.tos:
+                    pass_fail_list=[]
                     if self.direction=="Bi-direction":
                         individual_set=list1[0]
                         individual_download_list=individual_set[0]
@@ -1571,6 +1576,7 @@ class ThroughputQOS(Realm):
                     report.build_table()
                 logger.info("Graph and table for VI tos are built")
                 if "VO" in self.tos:
+                    pass_fail_list=[]
                     if self.direction=="Bi-direction":
                         individual_set=list1[1]
                         individual_download_list=individual_set[0]
