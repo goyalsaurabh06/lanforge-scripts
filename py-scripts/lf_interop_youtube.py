@@ -19,7 +19,7 @@
 
     EXAMPLE-2:
     Command Line Interface to run YouTube on multiple devices:
-    python3 lf_interop_youtube.py --mgr 192.168.214.219 --url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" --duration 2 --resources "1.13.sta0, 1.14.wlan0, ..."
+    python3 lf_interop_youtube.py --mgr 192.168.214.219 --url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" --duration 2 --resources "1.13,1.14..."
 
     EXAMPLE-3:
     Command Line Interface to run YouTube without pre-cleanup of existing cross-connections:
@@ -55,6 +55,7 @@ import shutil
 import requests
 from datetime import datetime, timedelta
 import re
+
 
 # Add necessary paths if not already included
 if 'py-json' not in sys.path:
@@ -97,6 +98,8 @@ Realm = realm.Realm
 # Import base interop profile module
 base = importlib.import_module('py-scripts.lf_base_interop_profile')
 base_RealDevice = base.RealDevice
+
+DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
 
 
 class Youtube(Realm):
@@ -355,13 +358,14 @@ class Youtube(Realm):
                 cmd = "su -l lanforge  ctyt.bash %s %s %s %s %s %s" % (self.new_port_list[i], self.url, self.lfclient_host, self.real_sta_hostname[i], self.duration,self.resolution)
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i],cmd)
             
-            elif self.real_sta_os_types == 'macos':
+            elif self.real_sta_os_types[i] == 'macos':
                 cmd = "sudo bash youtube_stream.bash --url %s --host %s --device_name %s --duration %s --res %s" % (self.url, self.lfclient_host, self.real_sta_hostname[i], self.duration,self.resolution )
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i],cmd)
             
         
 
     def select_real_devices(self, real_devices, real_sta_list=None, base_interop_obj=None):
+        final_device_list = []
         """
         Selects real devices for testing.
 
@@ -389,7 +393,17 @@ class Youtube(Realm):
         if real_sta_list is None:
             self.real_sta_list, _, _ = real_devices.query_user()
         else:
-            self.real_sta_list = real_sta_list
+            interface_data = self.json_get("/port/all")
+            interfaces = interface_data["interfaces"]
+            #print("checking interfaces",interfaces)
+            for interface in interfaces:
+                for device in real_sta_list:
+                    for interface, data in interface.items():
+                        if interface.startswith(device) and data["phantom"] == False and data["down"] == False and data["parent dev"] != "":
+                            final_device_list.append(interface)
+
+            self.real_sta_list = final_device_list
+
         # Assign `base_interop_obj` to `self.Devices` if provided
         if base_interop_obj is not None:
             self.Devices = base_interop_obj
@@ -1021,18 +1035,15 @@ def main():
 
     # Add required arguments
     required.add_argument('--mgr',type=str,help="hostname where LANforge GUI is running",required=True)
-
     required.add_argument('--url',type=str,help='youtube url',required=True)
     required.add_argument('--duration',type=int,help='duration to run the test in sec',required=True)
     required.add_argument('--ap_name',type=str,default="TIP",help="Name of the AP in which we run the test")
-    required.add_argument('--ssid',type=str,default="openwifi",help="Name of the ssid")
     required.add_argument('--sec',type=str,default="wpa2",help="security type used")
     required.add_argument('--band',type=str,default="5GHZ",help="Name of the Frequency band used")
     required.add_argument('--test_name',type=str,help="Test name while running through webgui")
 
     
-    
-    
+
     
     # Add optional arguments
     optional.add_argument('--resources',help='Specify the real device ports seperated by comma')
@@ -1042,15 +1053,43 @@ def main():
     optional.add_argument('--mgr_port',type=str,default=8080,help='port on which LANforge HTTP service is running')
     parser.add_argument('--log_level', default=None,help='Set logging level: debug | info | warning | error | critical')
     parser.add_argument('--res',default='Auto',help="to set resolution to  144p,240p,720p")
-
     parser.add_argument("--lf_logger_config_json",help="--lf_logger_config_json <json file> , json configuration of logger")
-    
-    parser.add_argument('--help_summary', default=None, action="store_true", help='Show summary of what this script does')
 
     # Add webUI specific arguments
     webUI_args.add_argument('--ui_report_dir', default=None, help='Specify the results directory to store the reports for webUI')
-    
     webUI_args.add_argument('--do_webUI',action='store_true',help='specify this flag when triggering a test from webUI')
+
+    # Arguments Related to Device Configurations
+    parser.add_argument('--file_name',help="File name for DeviceConfig")
+    parser.add_argument('--group_name', type=str, help='specify the group name')
+    parser.add_argument('--profile_name', type=str, help='specify the profile name')
+    parser.add_argument("--ssid", default=None, help='specify ssid on which the test will be running')
+    parser.add_argument("--passwd", default=None, help='specify encryption password  on which the test will '
+                                                 'be running')
+    parser.add_argument("--encryp", default=None, help='specify the encryption type  on which the test will be '
+                                                        'running eg :open|psk|psk2|sae|psk2jsae')
+    
+    parser.add_argument("--eap_method", type=str,default='DEFAULT')
+    parser.add_argument("--eap_identity", type=str,default='')
+    parser.add_argument("--ieee80211",action="store_true")
+    parser.add_argument("--ieee80211u",action="store_true")
+    parser.add_argument("--ieee80211w",type=int,default=1)
+    parser.add_argument("--enable_pkc",action="store_true")
+    parser.add_argument("--bss_transition",action="store_true")
+    parser.add_argument("--power_save",action="store_true")
+    parser.add_argument("--disable_ofdma",action="store_true")
+    parser.add_argument("--roam_ft_ds",action="store_true")
+    parser.add_argument("--key_management", type=str,default='DEFAULT')
+    parser.add_argument("--pairwise", type=str,default='[BLANK]')
+    parser.add_argument("--private_key", type=str,default='[BLANK]')
+    parser.add_argument("--ca_cert", type=str,default='[BLANK]')
+    parser.add_argument("--client_cert", type=str,default='[BLANK]')
+    parser.add_argument("--pk_passwd", type=str,default='[BLANK]')
+    parser.add_argument("--pac_file", type=str,default='[BLANK]')
+    parser.add_argument("--server_ip",type=str,default=None)
+    parser.add_argument('--help_summary', help='Show summary of what this script does', default=None)
+    parser.add_argument("--expected_passfail_value",help="Specify the expected urlcount value for pass/fail")
+    parser.add_argument("--device_csv_name",type=str,help="Specify the device csv name for pass/fail",default=None)
 
 
     args = parser.parse_args()
@@ -1068,6 +1107,19 @@ def main():
     if args.lf_logger_config_json:
         logger_config.lf_logger_config_json = args.lf_logger_config_json
         logger_config.load_lf_logger_config()
+
+    if(args.expected_passfail_value!=None and args.device_csv_name!=None):
+            print("Specify either expected_passfail_value or device_csv_name")
+            exit(1)
+
+    if(args.group_name!=None):
+        selected_groups=args.group_name.split(',')
+    else:
+        selected_groups=[]
+    if(args.profile_name!=None):
+        selected_profiles=args.profile_name.split(',')
+    else:
+        selected_profiles=[]
     
     # Assign arguments to variables for easier access
     mgr_ip = args.mgr 
@@ -1088,251 +1140,353 @@ def main():
             debug:                    {}
             '''.format(mgr_ip, mgr_port, duration, debug))
     
-    # Create a YouTube object with the specified parameters
-    youtube = Youtube(host = mgr_ip, port = mgr_port, url = url, duration = args.duration, lanforge_password = 'lanforge', sta_list=[], do_webUI = args.do_webUI, ui_report_dir = ui_report_dir, debug = debug,resolution=args.res,ap_name=args.ap_name,ssid=args.ssid,security=args.sec,band=args.band,test_name=args.test_name)
+    if((args.group_name!=None and args.profile_name!=None and args.file_name!=None and args.resources==None and args.ssid==None and (len(selected_groups)==len(selected_profiles))) or(args.group_name==None and args.profile_name==None and args.file_name==None and args.ssid!=None and args.passwd!=None and args.encryp!=None) or (args.group_name==None and args.profile_name==None and args.file_name==None and args.ssid!=None and args.passwd==None and args.encryp.lower() =='open')):
 
-    # Create a RealDevice object for device management
-    Devices = RealDevice(manager_ip=mgr_ip,
-                        server_ip="192.168.1.61",
-                        ssid_2g='Test Configured',
-                        passwd_2g='',
-                        encryption_2g='',
-                        ssid_5g='Test Configured',
-                        passwd_5g='',
-                        encryption_5g='',
-                        ssid_6g='Test Configured',
-                        passwd_6g='',
-                        encryption_6g='',
-                        selected_bands=['5G'])
-    
-    configure = False
-    resources = []
 
-    # If configuring devices, query and configure them
-    # If not configuring, get the list of laptops and devices to be used
-    if(configure):
+        # Create a YouTube object with the specified parameters
+        youtube = Youtube(host = mgr_ip, port = mgr_port, url = url, duration = args.duration, lanforge_password = 'lanforge', sta_list=[], do_webUI = args.do_webUI, ui_report_dir = ui_report_dir, debug = debug,resolution=args.res,ap_name=args.ap_name,ssid=args.ssid,security=args.sec,band=args.band,test_name=args.test_name)
+
+        # Create a RealDevice object for device management
+        Devices = RealDevice(manager_ip=mgr_ip,
+                            server_ip="192.168.1.61",
+                            ssid_2g='Test Configured',
+                            passwd_2g='',
+                            encryption_2g='',
+                            ssid_5g='Test Configured',
+                            passwd_5g='',
+                            encryption_5g='',
+                            ssid_6g='Test Configured',
+                            passwd_6g='',
+                            encryption_6g='',
+                            selected_bands=['5G'])
         
-        # Run the event loop
-        asyncio.run(Devices.query_all_devices_to_configure_wifi())
-        youtube.select_real_devices(real_devices=Devices, real_sta_list=Devices.station_list, base_interop_obj=Devices)
-    else:
-        
+        configure = False
+        resources = []    
         laptops = Devices.get_devices()
         youtube.Devices = Devices
+        # Initialize empty lists and dictionaries for resource management
+        resource_ids_sm = []
+        resource_set = set()
+        resource_list = []
+        resource_ids_generated = ""
+        config_obj=DeviceConfig.DeviceConfig(lanforge_ip=args.mgr,file_name=args.file_name)
+        if not args.expected_passfail_value and args.device_csv_name==None :
+                    config_obj.device_csv_file(csv_name="device.csv")
+        if(args.group_name!=None and args.file_name!=None and args.profile_name!=None):
+            selected_groups=args.group_name.split(',')
+            selected_profiles=args.profile_name.split(',')
+            config_devices={}
+            for i in range(len(selected_groups)):
+                config_devices[selected_groups[i]]=selected_profiles[i]
+        
+        
+            config_obj.initiate_group()
+            asyncio.run(config_obj.connectivity(config_devices))
+    
+            adbresponse=config_obj.adb_obj.get_devices()
+            resource_manager=config_obj.laptop_obj.get_devices()
+            all_res={}
+            df1=config_obj.display_groups(config_obj.groups)
+            groups_list=df1.to_dict(orient='list')
+            group_devices={}
+            
+            for adb in adbresponse:   
+                group_devices[adb['serial']]=adb['eid']
+            for res in resource_manager:
+                all_res[res['hostname']]=res['shelf']+'.'+res['resource']
+            eid_list=[]
+            for grp_name in groups_list.keys():
+                for g_name in selected_groups:
+                    if(grp_name == g_name):
+                        for j in groups_list[grp_name]:
+                            if(j in group_devices.keys()):
+                                eid_list.append(group_devices[j])
+                            elif(j in all_res.keys()):
+                                eid_list.append(all_res[j])
+            args.resources = ",".join(id for id in eid_list)
+        else:
+            if args.resources:
+                all_devices= config_obj.get_all_devices()
+                config_dict={
+                'ssid':args.ssid,
+                'passwd':args.passwd,
+                'enc':args.encryp,
+                'eap_method':args.eap_method,
+                'eap_identity':args.eap_identity,
+                'ieee80211':args.ieee80211,
+                'ieee80211u':args.ieee80211u,
+                'ieee80211w':args.ieee80211w,
+                'enable_pkc':args.enable_pkc,
+                'bss_transition':args.bss_transition,
+                'power_save':args.power_save,
+                'disable_ofdma':args.disable_ofdma,
+                'roam_ft_ds':args.roam_ft_ds,
+                'key_management':args.key_management,
+                'pairwise':args.pairwise,
+                'private_key':args.private_key,
+                'ca_cert':args.ca_cert,
+                'client_cert':args.client_cert,
+                'pk_passwd':args.pk_passwd,
+                'pac_file':args.pac_file,
+                'server_ip':args.server_ip
+                }
+                if(args.group_name==None and args.file_name==None and args.profile_name==None):
+                    dev_list=args.resources.split(',')
+                    asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
+            else:
+                 all_devices= config_obj.get_all_devices()
+                 device_list=[]
+                 config_dict={
+                 'ssid':args.ssid,
+                 'passwd':args.passwd,
+                 'enc':args.encryp,
+                 'eap_method':args.eap_method,
+                 'eap_identity':args.eap_identity,
+                 'ieee80211':args.ieee80211,
+                 'ieee80211u':args.ieee80211u,
+                 'ieee80211w':args.ieee80211w,
+                 'enable_pkc':args.enable_pkc,
+                 'bss_transition':args.bss_transition,
+                 'power_save':args.power_save,
+                 'disable_ofdma':args.disable_ofdma,
+                 'roam_ft_ds':args.roam_ft_ds,
+                 'key_management':args.key_management,
+                 'pairwise':args.pairwise,
+                 'private_key':args.private_key,
+                 'ca_cert':args.ca_cert,
+                 'client_cert':args.client_cert,
+                 'pk_passwd':args.pk_passwd,
+                 'pac_file':args.pac_file,
+                 'server_ip':args.server_ip,
+                 }
+                 for device in all_devices:
+                     if(device["type"]!='laptop'):
+                         device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["serial"])
+                     elif(device["type"]=='laptop'):
+                         device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["hostname"])
+                 print("Available devices:", device_list)
+                 args.resources = input("Enter the desired resources to run the test:")
+                 dev1_list=args.resources.split(',')
+                 asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
+               
+
+
+
+
+
+        print("===============================================")
+        print("Checking args.resources value",args.resources)
+
+        
 
         result_list = []
         if(not do_webUI):
             if args.resources:
-                resources = args.resources.split(',')
+                resources = [r.strip() for r in args.resources.split(',')]
                 resources = [r for r in resources if len(r.split('.')) > 1]
                 
                 get_data = youtube.select_real_devices(real_devices=Devices, real_sta_list=resources, base_interop_obj=Devices)
-               
-
+            
                 # # Iterate over get_data and check if each element exists in laptops
                 # for item in get_data:
                 #     item=item.strip()
                 #     if any(lap.startswith(item) for lap in laptops):
                 #         result_list.append(item)
-
                 # Iterate over get_data and check if each element exists in laptops
                 for item in get_data:
                     item = item.strip()
                     # Find and append the matching lap to result_list
                     matching_laps = [lap for lap in laptops if lap.startswith(item)]
                     result_list.extend(matching_laps)
-
                 if not result_list:
                     logging.info("Resources donot exist hence Terminating the test.")
                     return 
-
                 if len(result_list) != len(get_data):
-                    logging.info("Few Resources donot exist hence Terminating the test.")
-                    return 
+                    logging.info("Few Resources donot exist hence Excluding Them from the Test")
+                    
             else:
                 resources = youtube.select_real_devices(real_devices=Devices)
-
         else:
-            resources = args.resources.split(',')
+            resources = [r.strip() for r in args.resources.split(',')]
             youtube.select_real_devices(real_devices=Devices, real_sta_list=resources, base_interop_obj=Devices)
-    
-    # Perform pre-test cleanup if not skipped
-    if not args.no_pre_cleanup:
-        youtube.cleanup()
+        
+        # Perform pre-test cleanup if not skipped
+        if not args.no_pre_cleanup:
+            youtube.cleanup()
 
-    # Check if the required tab exists, and exit if not
-    if (not youtube.check_tab_exists()):
-        logging.error('Generic Tab is not available.\nAborting the test.')
-        exit(0)
+        # Check if the required tab exists, and exit if not
+        if (not youtube.check_tab_exists()):
+            logging.error('Generic Tab is not available.\nAborting the test.')
+            exit(0)
 
-    # Combine station list with real devices list
-    youtube.sta_list += youtube.real_sta_list 
-    if(not do_webUI):
-        youtube.clear_previous_data()
+        # Combine station list with real devices list
+        youtube.sta_list += youtube.real_sta_list 
+        if(not do_webUI):
+            youtube.clear_previous_data()
 
-    # If valid resources exist, create generic endpoints
-    
-    if result_list:
-        youtube.create_generic_endp(result_list)
-    else:
-        youtube.create_generic_endp(resources)
+        # If valid resources exist, create generic endpoints
+        
+        if result_list:
+            youtube.create_generic_endp(result_list)
+        else:
+            youtube.create_generic_endp(resources)
 
-    logging.info("==============================================================================")
-    logging.info(f"TEST STARTED")
-    logging.info('Running the Youtube Streaming test for {} minutes'.format(duration))
+        logging.info("==============================================================================")
+        logging.info(f"TEST STARTED")
+        logging.info('Running the Youtube Streaming test for {} minutes'.format(duration))
 
-    # Wait for 10 seconds before starting the test
-    time.sleep(10)
+        # Wait for 10 seconds before starting the test
+        time.sleep(10)
 
-    youtube.start_time = datetime.now() 
-    youtube.start_generic()
+        youtube.start_time = datetime.now() 
+        youtube.start_generic()
 
-    duration = args.duration  # Set your desired duration in minutes
-    # Calculate end time based on duration 
-    end_time = datetime.now() + timedelta(minutes=duration)
+        duration = args.duration  # Set your desired duration in minutes
+        # Calculate end time based on duration 
+        end_time = datetime.now() + timedelta(minutes=duration)
 
-    time_counter = 0 
+        time_counter = 0 
 
 
-    # Get data from API and check for valid data
-    initial_data = youtube.get_data_from_api()
-    
-    while not initial_data:
+        # Get data from API and check for valid data
         initial_data = youtube.get_data_from_api()
-        time.sleep(1)
-    if initial_data:
-        end_time_webgui = []
-        for i in range(len(youtube.device_names)):
-            end_time_webgui.append(initial_data['result'].get(youtube.device_names[i], {}).get('stop', False))
-    else:
-        for i in range(len(youtube.device_names)):
-            end_time_webgui.append("")
+        
+        while not initial_data:
+            initial_data = youtube.get_data_from_api()
+            time.sleep(1)
+        if initial_data:
+            end_time_webgui = []
+            for i in range(len(youtube.device_names)):
+                end_time_webgui.append(initial_data['result'].get(youtube.device_names[i], {}).get('stop', False))
+        else:
+            for i in range(len(youtube.device_names)):
+                end_time_webgui.append("")
 
-    # Monitor and manage test execution until all endpoints stop or if not all endpoints stops then monitor and manage till estimated end time is reached
-    all_stop = False
+        # Monitor and manage test execution until all endpoints stop or if not all endpoints stops then monitor and manage till estimated end time is reached
+        all_stop = False
 
-    keys = youtube.generic_endps_profile.created_cx
+        keys = youtube.generic_endps_profile.created_cx
 
-    start_time = datetime.now()
-    est_end_time = datetime.now() + timedelta(minutes = duration, seconds = 60)
-    #logging.info(f"checking start_time : {start_time}")
-    #logging.info(f"checking est_end_time : {est_end_time}")
+        start_time = datetime.now()
+        est_end_time = datetime.now() + timedelta(minutes = duration, seconds = 60)
+        #logging.info(f"checking start_time : {start_time}")
+        #logging.info(f"checking est_end_time : {est_end_time}")
 
 
 
-    if(do_webUI):
-         while ((not all_stop)):
-                stop_value = youtube.set_webUI_stop()
-                if(stop_value == "Completed"):
-                    break
-                initial_data = youtube.get_data_from_api()
-                if initial_data:
-                    for i in range(len(youtube.device_names)):
-                        stop_state = initial_data['result'].get(youtube.device_names[i], {}).get('stop', False)
-                        if stop_state:
-                            end_time_webgui[i] = True
-                            if ((all(end_time_webgui))):
-                                all_stop = True 
-                            if datetime.now() >= est_end_time:
-                                for key in range(len(youtube.device_names)):
-                                    if ((all(end_time_webgui))):
-
-                                        all_stop = True 
-                                    if not end_time_webgui[key]:
-                                        new_key = keys[key]
-                                        if new_key.startswith("CX_"):
-                                            new_key = keys[key][3:]
-                                        response = youtube.json_get(f'/generic/{new_key}')
-                                        if response['endpoint']['status'] in ['WAITING', 'Stopped']:
-                                            end_time_webgui[key] = True
-                        else:
-                            if datetime.now() >= est_end_time:
+        if(do_webUI):
+            while ((not all_stop)):
+                    stop_value = youtube.set_webUI_stop()
+                    if(stop_value == "Completed"):
+                        break
+                    initial_data = youtube.get_data_from_api()
+                    if initial_data:
+                        for i in range(len(youtube.device_names)):
+                            stop_state = initial_data['result'].get(youtube.device_names[i], {}).get('stop', False)
+                            if stop_state:
+                                end_time_webgui[i] = True
                                 if ((all(end_time_webgui))):
                                     all_stop = True 
-                                for key in range(len(youtube.device_names)):
+                                if datetime.now() >= est_end_time:
+                                    for key in range(len(youtube.device_names)):
+                                        if ((all(end_time_webgui))):
+
+                                            all_stop = True 
+                                        if not end_time_webgui[key]:
+                                            new_key = keys[key]
+                                            if new_key.startswith("CX_"):
+                                                new_key = keys[key][3:]
+                                            response = youtube.json_get(f'/generic/{new_key}')
+                                            if response['endpoint']['status'] in ['WAITING', 'Stopped']:
+                                                end_time_webgui[key] = True
+                            else:
+                                if datetime.now() >= est_end_time:
                                     if ((all(end_time_webgui))):
                                         all_stop = True 
-                                    if not end_time_webgui[key]:
-                                        new_key = keys[key]
-                                        if new_key.startswith("CX_"):
-                                            new_key = keys[key][3:]
-                                        response = youtube.json_get(f'/generic/{new_key}')
-                                       # logging.info(f"checking response: {response}")
-                                        if response['endpoint']['status'] in ['WAITING', 'Stopped']:
-                                            end_time_webgui[key] = True
-                                
+                                    for key in range(len(youtube.device_names)):
+                                        if ((all(end_time_webgui))):
+                                            all_stop = True 
+                                        if not end_time_webgui[key]:
+                                            new_key = keys[key]
+                                            if new_key.startswith("CX_"):
+                                                new_key = keys[key][3:]
+                                            response = youtube.json_get(f'/generic/{new_key}')
+                                        # logging.info(f"checking response: {response}")
+                                            if response['endpoint']['status'] in ['WAITING', 'Stopped']:
+                                                end_time_webgui[key] = True
+                                    
+                    
+                    time.sleep(1)  # Adjust the sleep time as needed
+
+
+        else:
+            while ((not all_stop)):
+                    initial_data = youtube.get_data_from_api()
+                    if initial_data:
+                        for i in range(len(youtube.device_names)):
+                            stop_state = initial_data['result'].get(youtube.device_names[i], {}).get('stop', False)
+                            if stop_state:
                 
-                time.sleep(1)  # Adjust the sleep time as needed
-
-
-    else:
-        while ((not all_stop)):
-                initial_data = youtube.get_data_from_api()
-                if initial_data:
-                    for i in range(len(youtube.device_names)):
-                        stop_state = initial_data['result'].get(youtube.device_names[i], {}).get('stop', False)
-                        if stop_state:
-            
-                            end_time_webgui[i] = True
-                            if all(end_time_webgui):
-                                all_stop = True 
-                            if datetime.now() >= est_end_time:
-                                for key in range(len(youtube.device_names)):
-                                    if all(end_time_webgui):
-                                        all_stop = True 
-                                    if not end_time_webgui[key]:
-                                        new_key = keys[key]
-                                        if new_key.startswith("CX_"):
-                                            new_key = keys[key][3:]
-                                        response = youtube.json_get(f'/generic/{new_key}')
-                                        
-                                        if response['endpoint']['status'] in ['WAITING', 'Stopped']:
-                                            end_time_webgui[key] = True
-                        else:
-                            if datetime.now() >= est_end_time:
+                                end_time_webgui[i] = True
                                 if all(end_time_webgui):
                                     all_stop = True 
-                                for key in range(len(youtube.device_names)):
+                                if datetime.now() >= est_end_time:
+                                    for key in range(len(youtube.device_names)):
+                                        if all(end_time_webgui):
+                                            all_stop = True 
+                                        if not end_time_webgui[key]:
+                                            new_key = keys[key]
+                                            if new_key.startswith("CX_"):
+                                                new_key = keys[key][3:]
+                                            response = youtube.json_get(f'/generic/{new_key}')
+                                            
+                                            if response['endpoint']['status'] in ['WAITING', 'Stopped']:
+                                                end_time_webgui[key] = True
+                            else:
+                                if datetime.now() >= est_end_time:
                                     if all(end_time_webgui):
                                         all_stop = True 
-                                    if not end_time_webgui[key]:
-                                        new_key = keys[key]
-                                        if new_key.startswith("CX_"):
-                                            new_key = keys[key][3:]
-                                        response = youtube.json_get(f'/generic/{new_key}')
-                                        if response['endpoint']['status'] in ['WAITING', 'Stopped']:
-                                            end_time_webgui[key] = True
-                
-                time.sleep(1)  # Adjust the sleep time as needed
+                                    for key in range(len(youtube.device_names)):
+                                        if all(end_time_webgui):
+                                            all_stop = True 
+                                        if not end_time_webgui[key]:
+                                            new_key = keys[key]
+                                            if new_key.startswith("CX_"):
+                                                new_key = keys[key][3:]
+                                            response = youtube.json_get(f'/generic/{new_key}')
+                                            if response['endpoint']['status'] in ['WAITING', 'Stopped']:
+                                                end_time_webgui[key] = True
+                    
+                    time.sleep(1)  # Adjust the sleep time as needed
 
+            
+
+
+
+        #Stopping the Youtube test
+        if(do_webUI):
+            youtube.stop_test_yt()
         
+        youtube.generic_endps_profile.stop_cx()
+        logging.info(f"=================================================================================================")
+        logging.info("Duration ended")
 
+        logging.info('Stopping the test')
 
+        #print("youtube.data is ",youtube.data)
 
-    #Stopping the Youtube test
-    if(do_webUI):
-         youtube.stop_test_yt()
-    
-    youtube.generic_endps_profile.stop_cx()
-    logging.info(f"=================================================================================================")
-    logging.info("Duration ended")
-
-    logging.info('Stopping the test')
-
-    #print("youtube.data is ",youtube.data)
-
-    if(do_webUI):
-        time.sleep(3)
-        final_data = youtube.get_last_result_yt()
-        print("checking final data =========================")
-        print(final_data)
-        youtube.create_report(final_data,youtube.ui_report_dir)
-    else:
-        youtube.create_report(youtube.data,'')
-    
-    # Perform post-test cleanup if not skipped
-    if not args.no_post_cleanup:
-        youtube.cleanup()
+        if(do_webUI):
+            time.sleep(3)
+            final_data = youtube.get_last_result_yt()
+            print("checking final data =========================")
+            print(final_data)
+            youtube.create_report(final_data,youtube.ui_report_dir)
+        else:
+            youtube.create_report(youtube.data,'')
+        
+        # Perform post-test cleanup if not skipped
+        if not args.no_post_cleanup:
+            youtube.cleanup()
 
 if __name__ == "__main__":
     main()
