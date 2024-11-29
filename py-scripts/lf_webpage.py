@@ -199,7 +199,6 @@ class HttpDownload(Realm):
         if not self.expected_passfail_value and self.device_csv_name==None :
             obj.device_csv_file(csv_name="device.csv")
         if(self.group_name!=None and self.file_name!=None and self.device_list==[] and self.profile_name!=None):
-            print("!!!!!")
             selected_groups=self.group_name.split(',')
             selected_profiles=self.profile_name.split(',')
             config_devices={}
@@ -308,7 +307,7 @@ class HttpDownload(Realm):
         #All the available resources are fetched from resource mgr tab ----
 
         response_port = self.json_get("/port/all")
-        #print(response_port)
+        # print("AAAAAAAAAAAAAAAAAA",response_port)
         mac_id1_list=[]
         for interface in response_port['interfaces']:
             for port,port_data in interface.items():
@@ -324,8 +323,8 @@ class HttpDownload(Realm):
                 if eid_list2[i] == port_eid_list[j]:
                     same_eid_list.append(eid_list2[i])
         same_eid_list = [_eid + ' ' for _eid in same_eid_list]
-        #print("same eid list",same_eid_list)  
-        print("mac_id list",devices_available2)
+        # print("same eid list",same_eid_list)  
+        print("mac_id list",user_list2)
         #All the available ports from port manager are fetched from port manager tab ---
         
         for eid in same_eid_list:
@@ -403,6 +402,7 @@ class HttpDownload(Realm):
 
         if(devices_list=="" or devices_list==","):
             logger.error("Selected Devices are not available in the lanforge")
+            exit(1)
             return input_devices_list2,real_client_list2,mac_id_list2
         
         resource_eid_list = devices_list.split(',')
@@ -444,11 +444,11 @@ class HttpDownload(Realm):
             for device in self.devices_list:
                 if ("Win" in device) and (eid + ' ' in device):
                     self.windows_eids.append(eid)
-
         for eid in self.windows_eids:
             for port in self.port_list:
                 if eid + '.' in port:
                     self.windows_ports.append(port)
+                    
         if self.dowebgui == "True":
             if device_found == False:
                 print("No Device is available to run the test hence aborting the testllmlml")
@@ -637,7 +637,6 @@ class HttpDownload(Realm):
                         if "{shelf}.{resource}.{port}".format(shelf=eid[0], resource=eid[1], port=eid[2]) == j:
                             ip_upstream = i["{shelf}.{resource}.{port}".format(
                                 shelf=eid[0], resource=eid[1], port=eid[2])]['ip']
-
                 self.http_profile.create(ports=self.port_list, sleep_time=.5,
                                     suppress_related_commands_=None, http=True,interop=True,
                                     user=self.lf_username, passwd=self.lf_password,
@@ -1647,6 +1646,7 @@ def main():
                 http.monitor_for_runtime_csv(args.duration)
             elif args.client_type=='Real':
                 # To fetch runtime csv during runtime
+                # time.sleep(2)
                 http.monitor_for_runtime_csv(args.duration)
             else:
                 time.sleep(args.duration)

@@ -1294,6 +1294,7 @@ class L3VariableTime(Realm):
                     self.anqp_3gpp_cell_net_list,
                     self.ieee80211w_list
             ):
+
                 self.station_profile = self.new_station_profile()
                 self.station_profile.lfclient_url = self.lfclient_url
                 self.station_profile.ssid = ssid_
@@ -5396,6 +5397,7 @@ class L3VariableTime(Realm):
         # Graph TOS data
         # Once the data is stopped can collect the data for the cx's both multi cast and uni cast
         # if the traffic is still running will gather the running traffic
+        
         self.evaluate_qos()
 
         # graph BK A
@@ -5485,6 +5487,7 @@ class L3VariableTime(Realm):
                             if device in res_list:
                                 for endp in self.endp_input_list:
                                     test_input_list.append(row[endp])
+                        # print("!!!!!",test_input_list)
                     else:
                         test_input_list=[self.expected_passfail_value for val in range(len(self.client_dict_A[tos]['resource_alias_A']))] 
 
@@ -5555,8 +5558,7 @@ class L3VariableTime(Realm):
                         # " Expected "+direction+" Rate":test_input_list,
                         " Drop Percentage (%)": self.client_dict_A[tos]['download_rx_drop_percent_A'],
                         # " Status ":pass_fail_list
-                    }                    
-                
+                    }
                 dataframe3 = pd.DataFrame(tos_dataframe_A)
                 self.report.set_table_dataframe(dataframe3)
                 self.report.build_table()
@@ -5625,7 +5627,6 @@ class L3VariableTime(Realm):
                     " Download Rate Per Client": self.client_dict_B[tos]['dl_B'],
                     " Drop Percentage (%)": self.client_dict_B[tos]['download_rx_drop_percent_B']
                 }
-
                 dataframe3 = pd.DataFrame(tos_dataframe_B)
                 self.report.set_table_dataframe(dataframe3)
                 self.report.build_table()
@@ -6704,8 +6705,9 @@ INCLUDE_IN_README: False
                 groups_list=df1.to_dict(orient='list')
                 group_devices={}
               
-                for adb in adbresponse:   
-                    group_devices[adb['serial']]=adb['eid']
+                for adb in adbresponse:
+                    if(adb['eid']!=''):
+                        group_devices[adb['serial']]=adb['eid']
                 for res in resource_manager:
                     all_res[res['hostname']]=res['shelf']+'.'+res['resource']
                 eid_list=[]
@@ -6717,7 +6719,7 @@ INCLUDE_IN_README: False
                                     eid_list.append(group_devices[j])
                                 elif(j in all_res.keys()):
                                     eid_list.append(all_res[j])
-                args.device_list = [",".join(id for id in eid_list)] 
+                args.device_list = [",".join(id for id in eid_list)]
         elif(args.device_list!=None):
             all_devices= config_obj.get_all_devices()
             config_dict={
@@ -6799,13 +6801,13 @@ INCLUDE_IN_README: False
         if args.device_list:
             for interface in response_port['interfaces']:
                 for port,port_data in interface.items():
-                    if(not port_data['phantom'] and port_data['parent dev'] == "wiphy0" and port_data['alias'] != 'p2p0'):
+                    if(not port_data['phantom'] and not port_data['down'] and port_data['parent dev'] == "wiphy0" and port_data['alias'] != 'p2p0'):
                         port_list= port.split('.')
                         for device in args.device_list[0].split(','):
                             if((port_list[0]+'.'+port_list[1])==device):
                                 sample_list.append([port])
             if(sample_list==[]):
-                print("Selected devices are in phantom state")
+                print("Selected devices are not available")
                 exit(0)
             else:
                 for endp in endp_input_list:
@@ -7519,6 +7521,10 @@ INCLUDE_IN_README: False
         ip_var_test.pre_cleanup()
 
     logger.info("create stations or use passed in station_list, build the test")
+    if endp_types== 'mc_udp':
+        cleanl3=lf_cleanup.lf_clean(host=args.lfmgr,resource='all')
+        cleanl3.cxs_clean()
+        cleanl3.layer3_endp_clean()
     ip_var_test.build()
     # time.sleep(6000)
     if not ip_var_test.passes():
