@@ -23,12 +23,15 @@ from lf_kpi_csv import lf_kpi_csv
 import lf_cleanup
 import asyncio
 import csv
+from lf_interop_youtube import Youtube
+
 througput_test=importlib.import_module("py-scripts.lf_interop_throughput")
 video_streaming_test=importlib.import_module("py-scripts.lf_interop_video_streaming")
 web_browser_test=importlib.import_module("py-scripts.lf_interop_real_browser_test")
 lf_report_pdf = importlib.import_module("py-scripts.lf_report")
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 DeviceConfig=importlib.import_module("py-scripts.DeviceConfig")
+
 
 logger = logging.getLogger(__name__)
 DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
@@ -3709,9 +3712,463 @@ class Candela:
     def start_zoom(self,sigin_email,sigin_passwd,duration=1,participants=10,audio=True,video=True):
         self.zoom_obj = ZoomAutomation(sigin_email=sigin_email,sigin_passwd=sigin_passwd,audio=audio,video=video,duration=duration,lanforge_ip=self.lanforge_ip,participants=participants)
         self.zoom_obj.run()
+    
+    # Methods related to Youtube Streaming Test
+
+    def start_youtube_test(self, 
+                           host=None, 
+                           port=None, 
+                           url=None,
+                           duration=None, 
+                           device_list=None, 
+                           debug=False,
+                           resolution="auto",
+                           ssid=None,
+                           passwd=None,
+                           encryp=None,
+                           postcleanup=False,
+                           precleanup=False,
+                           file_name=None,
+                           group_name=None,
+                           profile_name=None,
+                           eap_method='DEFAULT',
+                           eap_identity='',
+                           ieee80211=True,
+                           ieee80211u=True,
+                           ieee80211w=1,
+                           enable_pkc=True,
+                           bss_transition=True,
+                           power_save=True,
+                           disable_ofdma=True,
+                           roam_ft_ds=True,
+                           key_management='DEFAULT',
+                           pairwise='[BLANK]',
+                           private_key='[BLANK]',
+                           ca_cert='[BLANK]',
+                           client_cert='[BLANK]',
+                           pk_passwd='[BLANK]',
+                           pac_file='[BLANK]',
+                           server_ip=None,
+                           expected_passfail_value=None,
+                           device_csv_name=None
+
+                           
+                           ):
+        print("checking script is executing or not")
+        
+        if(group_name!=None):
+            selected_groups=group_name.split(',')
+        else:
+            selected_groups=[]
+        if(profile_name!=None):
+            selected_profiles=profile_name.split(',')
+        else:
+            selected_profiles=[]
+
+                
+        if((group_name!=None or profile_name!=None or file_name!=None) and device_list!=None):
+            print("Specify the correct set of arguments either for groups or device_list")
+            exit(1)
+        elif((group_name==None and file_name==None and profile_name==None and device_list==None) and (ssid==None or (passwd==None and  encryp==None) or (passwd==None and encryp.lower()!='open'))):
+            print("ssid or password or security is missing")
+            exit(1)
+        elif((ssid!=None or passwd!=None or encryp!=None )and (file_name!=None or group_name!=None or profile_name!=None)):
+            print("Specify correct set of arguments")
+            exit(1)
+        elif((file_name!=None and (group_name==None or profile_name==None))or (group_name!=None and (file_name==None or profile_name==None))or(profile_name!=None and (file_name==None or group_name==None)) ):
+            print("Specify the correct set of arguments for groups")
+            exit(1)
+        elif(device_list!=None and (ssid==None or (passwd==None and  encryp==None) or (passwd==None and encryp.lower()!='open'))):
+            print("Please provide ssid password and security when device list is given")
+            exit(1)
+        elif(len(selected_groups)!=len(selected_profiles)):
+            print("Number of groups should match number of profiles")
+            exit(1)
+
+        config_obj=DeviceConfig.DeviceConfig(lanforge_ip=host,file_name=file_name)
+        # if not expected_passfail_value and device_csv_name==None :
+        #     config_obj.device_csv_file(csv_name="device.csv")
+        if(group_name!=None and file_name!=None and profile_name!=None):
+            selected_groups=group_name.split(',')
+            selected_profiles=profile_name.split(',')
+            config_devices={}
+            for i in range(len(selected_groups)):
+                config_devices[selected_groups[i]]=selected_profiles[i]
+
+            config_obj.initiate_group()
+            asyncio.run(config_obj.connectivity(config_devices))
+        
+            adbresponse=config_obj.adb_obj.get_devices()
+            resource_manager=config_obj.laptop_obj.get_devices()
+            all_res={}
+            df1=config_obj.display_groups(config_obj.groups)
+            groups_list=df1.to_dict(orient='list')
+            group_devices={}
+            
+            for adb in adbresponse:   
+                group_devices[adb['serial']]=adb['eid']
+            for res in resource_manager:
+                all_res[res['hostname']]=res['shelf']+'.'+res['resource']
+            eid_list=[]
+            for grp_name in groups_list.keys():
+                for g_name in selected_groups:
+                    if(grp_name == g_name):
+                        for j in groups_list[grp_name]:
+                            if(j in group_devices.keys()):
+                                eid_list.append(group_devices[j])
+                            elif(j in all_res.keys()):
+                                eid_list.append(all_res[j])
+            device_list = eid_list
+        
+        
+        # Process resource IDs if provided
+        elif device_list:
+            all_devices= config_obj.get_all_devices()
+            config_dict={
+            'ssid':ssid,
+            'passwd':passwd,
+            'enc':encryp,
+            'eap_method':eap_method,
+            'eap_identity':eap_identity,
+            'ieee80211':ieee80211,
+            'ieee80211u':ieee80211u,
+            'ieee80211w':ieee80211w,
+            'enable_pkc':enable_pkc,
+            'bss_transition':bss_transition,
+            'power_save':power_save,
+            'disable_ofdma':disable_ofdma,
+            'roam_ft_ds':roam_ft_ds,
+            'key_management':key_management,
+            'pairwise':pairwise,
+            'private_key':private_key,
+            'ca_cert':ca_cert,
+            'client_cert':client_cert,
+            'pk_passwd':pk_passwd,
+            'pac_file':pac_file,
+            'server_ip':server_ip,
+
+            }
+            if(group_name==None and file_name==None and profile_name==None):
+                dev_list=device_list.split(',')
+                device_list = dev_list
+                asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
+
+   
+        else:
+            # Query user to select devices if no resource IDs are provided
+            all_devices= config_obj.get_all_devices()
+            device_list=[]
+            config_dict={
+            'ssid':ssid,
+            'passwd':passwd,
+            'enc':encryp,
+            'eap_method':eap_method,
+            'eap_identity':eap_identity,
+            'ieee80211':ieee80211,
+            'ieee80211u':ieee80211u,
+            'ieee80211w':ieee80211w,
+            'enable_pkc':enable_pkc,
+            'bss_transition':bss_transition,
+            'power_save':power_save,
+            'disable_ofdma':disable_ofdma,
+            'roam_ft_ds':roam_ft_ds,
+            'key_management':key_management,
+            'pairwise':pairwise,
+            'private_key':private_key,
+            'ca_cert':ca_cert,
+            'client_cert':client_cert,
+            'pk_passwd':pk_passwd,
+            'pac_file':pac_file,
+            'server_ip':server_ip,
+
+            }
+            print("Available devices:", all_devices)
+            device_list = input("Enter the desired resources to run the test:")
+            dev1_list=device_list.split(',')
+            device_list = dev1_list
+            asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
+
+        
+        self.youtube_test = Youtube(
+            host=host,
+            port=port,
+            url=url,
+            duration=duration,
+            sta_list=device_list,
+            debug=debug,
+            resolution=resolution
+
+        )
+
+         # Create a RealDevice object for device management
+        Devices = RealDevice(manager_ip=host,
+                            server_ip="192.168.1.61",
+                            ssid_2g='Test Configured',
+                            passwd_2g='',
+                            encryption_2g='',
+                            ssid_5g='Test Configured',
+                            passwd_5g='',
+                            encryption_5g='',
+                            ssid_6g='Test Configured',
+                            passwd_6g='',
+                            encryption_6g='',
+                            selected_bands=['5G'])
+        
+        configure = False
+        resources = []    
+        laptops = Devices.get_devices()
+        self.youtube_test.Devices = Devices
+
+        self.youtube_test.select_real_devices(real_devices=Devices, real_sta_list=device_list,base_interop_obj=Devices)
+        self.youtube_test.create_generic_endp(query_resources=self.youtube_test.real_sta_list)
+        self.youtube_test.execute_youtube_test(duration, do_webUI=False)
+        logger.info("YouTube test started.")
+    
+    def stop_youtube_test(self,):
+        self.youtube_test.stop_generic_cx()
+        logger.info("Stopped The cross Connections")
+        self.youtube_test.cleanup()
+
+    def generate_youtube_report(self,):
+        self.youtube_test.create_report(self.youtube_test.data,"")
+
+    #Methods related to zoomtest through generic Tab
+    
+    def start_zoom_test(self, 
+                           host=None, 
+                           port=None, 
+                           duration=None, 
+                           device_list=None, 
+                           debug=False,
+                           ssid=None,
+                           passwd=None,
+                           encryp=None,
+                           postcleanup=False,
+                           precleanup=False,
+                           file_name=None,
+                           group_name=None,
+                           profile_name=None,
+                           eap_method='DEFAULT',
+                           eap_identity='',
+                           ieee80211=True,
+                           ieee80211u=True,
+                           ieee80211w=1,
+                           enable_pkc=True,
+                           bss_transition=True,
+                           power_save=True,
+                           disable_ofdma=True,
+                           roam_ft_ds=True,
+                           key_management='DEFAULT',
+                           pairwise='[BLANK]',
+                           private_key='[BLANK]',
+                           ca_cert='[BLANK]',
+                           client_cert='[BLANK]',
+                           pk_passwd='[BLANK]',
+                           pac_file='[BLANK]',
+                           server_ip=None,
+                           expected_passfail_value=None,
+                           device_csv_name=None,
+                           audio=None,
+                           video=None,
+                           zoom_host = None,
+                           sigin_email=None,
+                           sigin_passwd=None,
+                           participants=None,
+
+                           
+                           ):
+        
+        self.zoom_automation = ZoomAutomation(audio=audio ,video=video, lanforge_ip=self.lanforge_ip)
+
+        realdevice = RealDevice(manager_ip=self.lanforge_ip,
+                            server_ip="192.168.1.61",
+                            ssid_2g='Test Configured',
+                            passwd_2g='',
+                            encryption_2g='',
+                            ssid_5g='Test Configured',
+                            passwd_5g='',
+                            encryption_5g='',
+                            ssid_6g='Test Configured',
+                            passwd_6g='',
+                            encryption_6g='',
+                            selected_bands=['5G'])
+        laptops = realdevice.get_devices()
+
+        if(group_name!=None):
+            selected_groups=group_name.split(',')
+        else:
+            selected_groups=[]
+        if(profile_name!=None):
+            selected_profiles=profile_name.split(',')
+        else:
+            selected_profiles=[]
+
+                
+        if((group_name!=None or profile_name!=None or file_name!=None) and device_list!=None):
+            print("Specify the correct set of arguments either for groups or device_list")
+            exit(1)
+        elif((group_name==None and file_name==None and profile_name==None and device_list==None) and (ssid==None or (passwd==None and  encryp==None) or (passwd==None and encryp.lower()!='open'))):
+            print("ssid or password or security is missing")
+            exit(1)
+        elif((ssid!=None or passwd!=None or encryp!=None )and (file_name!=None or group_name!=None or profile_name!=None)):
+            print("Specify correct set of arguments")
+            exit(1)
+        elif((file_name!=None and (group_name==None or profile_name==None))or (group_name!=None and (file_name==None or profile_name==None))or(profile_name!=None and (file_name==None or group_name==None)) ):
+            print("Specify the correct set of arguments for groups")
+            exit(1)
+        elif(device_list!=None and (ssid==None or (passwd==None and  encryp==None) or (passwd==None and encryp.lower()!='open'))):
+            print("Please provide ssid password and security when device list is given")
+            exit(1)
+        elif(len(selected_groups)!=len(selected_profiles)):
+            print("Number of groups should match number of profiles")
+            exit(1)
+
+        config_obj=DeviceConfig.DeviceConfig(lanforge_ip=host,file_name=file_name)
+        # if not expected_passfail_value and device_csv_name==None :
+        #     config_obj.device_csv_file(csv_name="device.csv")
+        if(group_name!=None and file_name!=None and profile_name!=None):
+            selected_groups=group_name.split(',')
+            selected_profiles=profile_name.split(',')
+            config_devices={}
+            for i in range(len(selected_groups)):
+                config_devices[selected_groups[i]]=selected_profiles[i]
+
+            config_obj.initiate_group()
+            asyncio.run(config_obj.connectivity(config_devices))
+        
+            adbresponse=config_obj.adb_obj.get_devices()
+            resource_manager=config_obj.laptop_obj.get_devices()
+            all_res={}
+            df1=config_obj.display_groups(config_obj.groups)
+            groups_list=df1.to_dict(orient='list')
+            group_devices={}
+            
+            for adb in adbresponse:   
+                group_devices[adb['serial']]=adb['eid']
+            for res in resource_manager:
+                all_res[res['hostname']]=res['shelf']+'.'+res['resource']
+            eid_list=[]
+            for grp_name in groups_list.keys():
+                for g_name in selected_groups:
+                    if(grp_name == g_name):
+                        for j in groups_list[grp_name]:
+                            if(j in group_devices.keys()):
+                                eid_list.append(group_devices[j])
+                            elif(j in all_res.keys()):
+                                eid_list.append(all_res[j])
+            if zoom_host in eid_list:
+                eid_list.remove(zoom_host)
+                eid_list.insert(0,zoom_host)
+
+            
+            device_list = eid_list
+        
+        
+        # Process resource IDs if provided
+        elif device_list:
+            all_devices= config_obj.get_all_devices()
+            config_dict={
+            'ssid':ssid,
+            'passwd':passwd,
+            'enc':encryp,
+            'eap_method':eap_method,
+            'eap_identity':eap_identity,
+            'ieee80211':ieee80211,
+            'ieee80211u':ieee80211u,
+            'ieee80211w':ieee80211w,
+            'enable_pkc':enable_pkc,
+            'bss_transition':bss_transition,
+            'power_save':power_save,
+            'disable_ofdma':disable_ofdma,
+            'roam_ft_ds':roam_ft_ds,
+            'key_management':key_management,
+            'pairwise':pairwise,
+            'private_key':private_key,
+            'ca_cert':ca_cert,
+            'client_cert':client_cert,
+            'pk_passwd':pk_passwd,
+            'pac_file':pac_file,
+            'server_ip':server_ip,
+
+            }
+            if(group_name==None and file_name==None and profile_name==None):
+                dev_list=device_list.split(',')
+                dev_list.insert(0,zoom_host)
+                device_list = dev_list
+                asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
+
+   
+        else:
+            # Query user to select devices if no resource IDs are provided
+            all_devices= config_obj.get_all_devices()
+            device_list=[]
+            config_dict={
+            'ssid':ssid,
+            'passwd':passwd,
+            'enc':encryp,
+            'eap_method':eap_method,
+            'eap_identity':eap_identity,
+            'ieee80211':ieee80211,
+            'ieee80211u':ieee80211u,
+            'ieee80211w':ieee80211w,
+            'enable_pkc':enable_pkc,
+            'bss_transition':bss_transition,
+            'power_save':power_save,
+            'disable_ofdma':disable_ofdma,
+            'roam_ft_ds':roam_ft_ds,
+            'key_management':key_management,
+            'pairwise':pairwise,
+            'private_key':private_key,
+            'ca_cert':ca_cert,
+            'client_cert':client_cert,
+            'pk_passwd':pk_passwd,
+            'pac_file':pac_file,
+            'server_ip':server_ip,
+
+            }
+            
+
+            print("Available Devices For Testing")
+            for device in all_devices:
+                    print(device)
+            zm_host = input("Enter Host Resource for the Test : ")
+            zm_host = zm_host.strip()
+            clients = input("Enter client Resources to run the test :")
+            device_list = zm_host+","+clients
+            device_list = device_list.split()
+            asyncio.run(config_obj.connectivity(device_list=device_list,wifi_config=config_dict))
+        
+        self.zoom_automation.select_real_devices(real_device_obj=realdevice, real_sta_list=device_list)
+
+        if (not self.zoom_automation.check_tab_exists()):
+                    logging.error('Generic Tab is not available.\nAborting the test.')
+                    exit(0)
+        
+        self.zoom_automation.run(duration, self.lanforge_ip, sigin_email, sigin_passwd, participants)
+
+
+    def stop_zoom_test(self):
+        self.zoom_automation.generic_endps_profile.stop_cx()
+
+    def clean_cx_zoom_test(self,):
+        self.zoom_automation.generic_endps_profile.cleanup()
+    def generate_report_zoom(self,):
+        self.zoom_automation.generate_report()
+    
+
+        
+    
+    
+
+
+    
+    
+    
+
+
 logger_config = lf_logger_config.lf_logger_config()
-#candela_apis = Candela(ip='192.168.214.61', port=8080)
-ftp_test=Candela(ip='192.168.214.219',port=8080)
+#candela_apis = Candela(ip='192.168.242.2', port=8080)
+# ftp_test=Candela(ip='192.168.214.219',port=8080)
 
 
 

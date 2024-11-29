@@ -418,7 +418,7 @@ class ZoomAutomation(Realm):
         return [self.start_time,self.end_time]
         
     def run(self, duration, lanforge_ip, sigin_email, sigin_passwd, participants):
-        print("checking resources list in run method laxmi narayana",self.real_sta_list)
+        #print("checking resources list in run method laxmi narayana",self.real_sta_list)
         # Store the email and password in the instance
         self.sigin_email = sigin_email
         self.sigin_passwd = sigin_passwd
@@ -608,21 +608,60 @@ class ZoomAutomation(Realm):
 
         self.set_start_time()  
         logging.info(f"TEST WILL BE STARTING")
-        while datetime.now(self.tz) < self.end_time:
-            if datetime.now(self.tz) > self.start_time:
-                logging.info(f"MONITORING THE TEST")
-            time.sleep(5)
-        logging.info(f"WAITING FOR THE CLIENTS TO BE DISCONNECTED")
-        tries = 0
-        while not self.clients_disconnected:
-            tries += 1
-            if tries > 25:
-                logging.info(f"clients Disconnection Time exceeded")
+
+
+        # while datetime.now(self.tz) < self.end_time:
+        #     if datetime.now(self.tz) > self.start_time:
+        #         logging.info(f"MONITORING THE TEST")
+        #     time.sleep(5)
+        # logging.info(f"WAITING FOR THE CLIENTS TO BE DISCONNECTED")
+        #tries = 0
+
+
+        # Fetch connection names dynamically
+        connection_names = self.generic_endps_profile.created_endp
+
+        print("Checking connetion names",connection_names)
+
+        # Dictionary to track stopped status for each connection
+        connection_status = {name: False for name in connection_names}
+
+        # Continue monitoring while the current time is less than end_time
+        # and not all connections are stopped
+        while datetime.now(self.tz) < self.end_time and not all(connection_status.values()):
+            for name in connection_names:
+                if not connection_status[name]:  # Check only for connections not yet stopped
+                    # Send a request for the current connection
+                    response = self.json_get(f'/generic/{name}')
+                    print("checking response",response)
+
+                    cx_status = response.get('endpoint', {}).get('status', '')
+
+                    print("Checking the value of cx state",cx_status)
+
+
+                    if cx_status in ['WAITING', 'Stopped']:
+                        print("checking whether going inside this loop or not")
+                        connection_status[name] = True
+                        logging.info(f"Connection {name} is now stopped.")
+
+            # Check if all connections have stopped
+            if all(connection_status.values()):
+                logging.info("All connections have stopped. Exiting monitor.")
                 break
+
+            # Sleep for a short duration to avoid excessive API calls
             time.sleep(5)
-        logging.info(f"Generating Report")
-        self.generate_report()
-        logging.info("TEST COMPLETED SUCCESSFULLY")
+        
+
+        # while not self.clients_disconnected:
+        #     tries += 1
+        #     if tries > 25:
+        #         logging.info(f"clients Disconnection Time exceeded")
+        #         break
+        #     time.sleep(5)
+        # logging.info(f"Generating Report")
+        
     
     def select_real_devices(self, real_device_obj, real_sta_list=None):
         final_device_list = []
@@ -1323,7 +1362,7 @@ def main():
                 
                 
                     config_obj.initiate_group()
-                    asyncio.run(config_obj.connectivity(config_devices))
+                    #asyncio.run(config_obj.connectivity(config_devices))
             
                     adbresponse=config_obj.adb_obj.get_devices()
                     resource_manager=config_obj.laptop_obj.get_devices()
@@ -1382,7 +1421,7 @@ def main():
                         if(args.group_name==None and args.file_name==None and args.profile_name==None):
                             dev_list=args.resources.split(',')
                             dev_list.insert(0,args.zoom_host)
-                            asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
+                            #asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
                             args.resources = ",".join(id for id in dev_list)
                     else:
 
@@ -1426,7 +1465,7 @@ def main():
                          args.resources = zm_host+","+args.resources
 
                          dev1_list=args.resources.split(',')
-                         asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
+                         #asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
 
 
 
@@ -1482,6 +1521,8 @@ def main():
 
                 zoom_automation.run(args.duration, args.lanforge_ip, args.sigin_email, args.sigin_passwd, args.participants)
                 zoom_automation.data_store.clear()
+                zoom_automation.generate_report()
+                logging.info("Test Completed Sucessfully")
     except Exception as e:
         logging.error(f"AN ERROR OCCURED WHILE RUNNING TEST {e}")
     finally:

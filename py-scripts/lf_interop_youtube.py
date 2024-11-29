@@ -124,7 +124,8 @@ class Youtube(Realm):
                 security=None,
                 band=None,
                 base_dir=None,
-                test_name = None
+                test_name = None,
+                
 
     ):
         """
@@ -174,16 +175,17 @@ class Youtube(Realm):
         self.ssid=ssid
         self.security=security
         self.band=band
+        self.start_time = None,
+        self.est_end_time = None,
+        self.end_time_webgui = []
+        self.all_stop = False
+        self.keys = []
         if(self.do_webUI):
             self.base_dir = os.path.abspath(os.path.join(ui_report_dir, "../../"))
             self.test_name = test_name
-        # self.report = lf_report(_output_pdf='youtube_streaming.pdf',
-        #                    _output_html='youtube_streaming.html',
-        #                    _results_dir_name="youtube_streaming_report",
-        #                    _path='')
-        # self.report_path = self.report.get_path()
-        # self.report_path_date_time = self.report.get_path_date_time()
+        
         self.mydatajson = {}
+        self.final_data = None
 
 
 
@@ -213,6 +215,80 @@ class Youtube(Realm):
         self.generic_endps_profile.created_endp = []
         # Log cleanup completion
     
+
+    def execute_youtube_test(self, duration, do_webUI):
+        """
+        Execute the YouTube test for monitoring 
+
+        Args:
+            duration (int): Duration of the test in minutes.
+            do_webUI (bool): Flag to determine if the test is triggered from the web UI.
+        """
+        # Wait for 10 seconds before starting the test
+        self.clear_previous_data()
+    
+        
+
+        self.start_generic()
+        time.sleep(5)
+
+         # Initialize variables
+        self.start_time = datetime.now()
+        self.est_end_time = self.start_time + timedelta(minutes=duration, seconds=60)
+        self.end_time_webgui = [False] * len(self.device_names)
+        self.keys = self.generic_endps_profile.created_cx
+        self.all_stop = False
+
+        # Ensure initial data is fetched
+        initial_data = self.get_data_from_api()
+        while not initial_data:
+            initial_data = self.get_data_from_api()
+            time.sleep(1)
+
+        # Monitoring loop
+        while not self.all_stop:
+            if do_webUI:
+                stop_value = self.set_webUI_stop()
+                if stop_value == "Completed":
+                    break
+
+            self._monitor_test(do_webUI)
+
+            time.sleep(1)  # Adjust sleep time as needed
+
+    
+        logging.info("Duration ended. Stopping the test.")
+
+        
+
+    
+    def _monitor_test(self, do_webUI):
+        """
+        Monitor the YouTube test execution and handle stop conditions.
+
+        Args:
+            do_webUI (bool): Flag to determine if the test is triggered from the web UI.
+        """
+        initial_data = self.get_data_from_api()
+        if initial_data:
+            for i in range(len(self.device_names)):
+                stop_state = initial_data['result'].get(self.device_names[i], {}).get('stop', False)
+                if stop_state:
+                    self.end_time_webgui[i] = True
+                if all(self.end_time_webgui) or datetime.now() >= self.est_end_time:
+                    self.all_stop = True
+                    return
+
+            for i in range(len(self.device_names)):
+                if not self.end_time_webgui[i]:
+                    new_key = self.keys[i]
+                    if new_key.startswith("CX_"):
+                        new_key = self.keys[i][3:]
+                    response = self.json_get(f'/generic/{new_key}')
+                    if response['endpoint']['status'] in ['WAITING', 'Stopped']:
+                        self.end_time_webgui[i] = True
+        
+        
     def check_tab_exists(self):
         """
         Checks if the 'generic' tab exists by making a JSON GET request.
@@ -472,7 +548,7 @@ class Youtube(Realm):
         # Set the start time to the current datetime
         self.start_time = datetime.now()
 
-    def stop_generic_cx(self, cx_name):
+    def stop_generic_cx(self,):
         """
         Stops a specific generic connection (CX) and records the stop time.
         Args:
@@ -483,7 +559,8 @@ class Youtube(Realm):
         2. Sets the stop time (`self.stop_time`) to the current datetime.
         """
         # Stop the specific connection (CX)
-        self.generic_endps_profile.stop_cx_specific(cx_name)        
+        #self.generic_endps_profile.stop_cx_specific(cx_name)
+        self.generic_endps_profile.stop_cx()        
         # Set the stop time to the current datetime
         self.stop_time = datetime.now()
     
@@ -1296,12 +1373,6 @@ def main():
                 
                 get_data = youtube.select_real_devices(real_devices=Devices, real_sta_list=resources, base_interop_obj=Devices)
             
-                # # Iterate over get_data and check if each element exists in laptops
-                # for item in get_data:
-                #     item=item.strip()
-                #     if any(lap.startswith(item) for lap in laptops):
-                #         result_list.append(item)
-                # Iterate over get_data and check if each element exists in laptops
                 for item in get_data:
                     item = item.strip()
                     # Find and append the matching lap to result_list
@@ -1378,10 +1449,7 @@ def main():
 
         start_time = datetime.now()
         est_end_time = datetime.now() + timedelta(minutes = duration, seconds = 60)
-        #logging.info(f"checking start_time : {start_time}")
-        #logging.info(f"checking est_end_time : {est_end_time}")
-
-
+    
 
         if(do_webUI):
             while ((not all_stop)):
