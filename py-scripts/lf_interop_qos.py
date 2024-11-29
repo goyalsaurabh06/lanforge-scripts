@@ -434,7 +434,7 @@ class ThroughputQOS(Realm):
             df1=obj.display_groups(obj.groups)
             groups_list=df1.to_dict(orient='list')
             group_devices=[]
-            
+            ios_list=[]
             for grp_name in groups_list.keys():
                 for g_name in selected_groups:
                     if(grp_name==g_name):
@@ -444,11 +444,15 @@ class ThroughputQOS(Realm):
                                 if(i.split(' ')[1]=='android'):
                                     for adb_dict in adbresponse:
                                         if(adb_dict['serial']==j):
-                                            if(adb_dict['eid'] not in self.device_list):
+                                            if(adb_dict['eid'] not in self.device_list and adb_dict['os']!='iOS' and adb_dict['eid']!=''):
                                                 self.device_list.append(adb_dict['eid'])
+                                            elif(adb_dict['os']=='iOS'and adb_dict['serial'] not in ios_list):
+                                                ios_list.append(adb_dict['serial'])
                                 else: 
                                     if(j==i.split(' ')[2]):
                                         self.device_list.append(i.split(' ')[0])
+            if(len(ios_list)>0):          
+                print("EXCLUDING IOS DEVICES",ios_list)
 
 
 
@@ -575,7 +579,6 @@ class ThroughputQOS(Realm):
             traffic_direction_list.append(direction)
             traffic_type_list.append(traffic_type)
         logger.info("tos: {}".format(self.tos))
-
         for ip_tos in self.tos:
             for i in self.real_client_list1:
                 for j in traffic_direction_list:

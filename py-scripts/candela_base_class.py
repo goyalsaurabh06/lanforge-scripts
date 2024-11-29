@@ -23,12 +23,17 @@ from lf_kpi_csv import lf_kpi_csv
 import lf_cleanup
 import asyncio
 import csv
+from lf_interop_youtube import Youtube
+from lf_interop_zoom import ZoomAutomation as ZA
+
+
 througput_test=importlib.import_module("py-scripts.lf_interop_throughput")
 video_streaming_test=importlib.import_module("py-scripts.lf_interop_video_streaming")
 web_browser_test=importlib.import_module("py-scripts.lf_interop_real_browser_test")
 lf_report_pdf = importlib.import_module("py-scripts.lf_report")
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 DeviceConfig=importlib.import_module("py-scripts.DeviceConfig")
+
 
 logger = logging.getLogger(__name__)
 DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
@@ -1382,8 +1387,9 @@ class Candela:
             df1=obj.display_groups(obj.groups)
             groups_list=df1.to_dict(orient='list')
             group_devices={}
-            for adb in adbresponse:   
-                group_devices[adb['serial']]=adb['eid']
+            for adb in adbresponse:
+                if adb['eid']!='':   
+                    group_devices[adb['serial']]=adb['eid']
             for res in resource_manager:
                 all_res[res['hostname']]=res['shelf']+'.'+res['resource']
             eid_list=[]
@@ -1395,8 +1401,44 @@ class Candela:
                                 eid_list.append(group_devices[j])
                             elif(j in all_res.keys()):
                                 eid_list.append(all_res[j])
-        ping_test_obj.select_real_devices(real_devices=base_interop_profile,device_list=eid_list,
+            ping_test_obj.select_real_devices(real_devices=base_interop_profile,device_list=eid_list,
                                             base_interop_obj=base_interop_profile)
+        else:
+                all_devices=obj.get_all_devices()
+                device_list=[]
+                config_dict={
+                            'ssid':ssid,
+                            'passwd':password,
+                            'enc':encryption,
+                            'eap_method':eap_method,
+                            'eap_identity':eap_identity,
+                            'ieee80211':ieee80211,
+                            'ieee80211u':ieee80211u,
+                            'ieee80211w':ieee80211w,
+                            'enable_pkc':enable_pkc,
+                            'bss_transition':bss_transition,
+                            'power_save':power_save,
+                            'disable_ofdma':disable_ofdma,
+                            'roam_ft_ds':roam_ft_ds,
+                            'key_management':key_management,
+                            'pairwise':pairwise,
+                            'private_key':private_key,
+                            'ca_cert':ca_cert,
+                            'client_cert':client_cert,
+                            'pk_passwd':pk_passwd,
+                            'pac_file':pac_file,
+                            'server_ip':server_ip,
+                        }
+                for device in all_devices:
+                    if(device["type"]=='laptop'):
+                        device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["hostname"])
+                    else:
+                        device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["serial"])
+                print("Available devices:", device_list)
+                dev_list = input("Enter the desired resources to run the test:").split(',')
+                asyncio.run(obj.connectivity(device_list=dev_list,wifi_config=config_dict))
+                ping_test_obj.select_real_devices(real_devices=base_interop_profile,device_list=dev_list,base_interop_obj=base_interop_profile)
+        
         # removing the existing generic endpoints & cxs
         ping_test_obj.cleanup()
         # ping_test_obj.sta_list = device_list
@@ -1976,8 +2018,9 @@ class Candela:
                         groups_list=df1.to_dict(orient='list')
                         group_devices={}
                         
-                        for adb in adbresponse:   
-                            group_devices[adb['serial']]=adb['eid']
+                        for adb in adbresponse:
+                            if adb['eid']!='':
+                                group_devices[adb['serial']]=adb['eid']
                         for res in resource_manager:
                             all_res[res['hostname']]=res['shelf']+'.'+res['resource']
                         eid_list=[]
@@ -2541,6 +2584,9 @@ class Candela:
         resource_list = []
         os_types_dict = {}
 
+        self.web_browser_test.run_flask_server()
+
+
         resource_ids_generated = ""
         #  Process resource IDs when web GUI is enabled
 
@@ -2554,7 +2600,6 @@ class Candela:
             for i in range(len(selected_groups)):
                 config_devices[selected_groups[i]]=selected_profiles[i]
 
-        #print("CONFIGURED DICT",config_devices)
             config_obj.initiate_group()
             asyncio.run(config_obj.connectivity(config_devices))
         
@@ -2614,7 +2659,7 @@ class Candela:
 
 
             # Extract second part of resource IDs and sort them
-            self.web_browser_test.android_devices = self.web_browser_test.devices.get_devices(only_androids=True)
+            self.web_browser_test.android_devices = self.web_browser_test.devices.get_devices()
             self.web_browser_test.resource_ids = ",".join(id.split(".")[1] for id in device_list.split(","))
             resource_ids_sm = self.web_browser_test.resource_ids
             resource_list = resource_ids_sm.split(',')            
@@ -2725,13 +2770,14 @@ class Candela:
                 resource_ids_generated = ','.join(resource_list_sorted)
                 available_resources=list(resource_set)
 
+       
         logger.info("Devices available: {}".format(available_resources))
         if len(available_resources)==0:
-            logger.info("There no devices available which are selected")
+            logging.info("There no devices available which are selected")
             exit()
         if len(available_resources) > 0:
             device_map={}
-            if(not expected_passfail_value and device_csv_name==None):
+            if(not expected_passfail_value and device_csv_name == None):
                 expected_val=input("Enter the expected value for the following devices{} eg 8,6,2: ".format(available_resources)).split(',')
                 if(len(available_resources)==len(expected_val)):
                     for i in range(len(available_resources)):
@@ -2748,20 +2794,20 @@ class Candela:
                 self.web_browser_test.incremental = input('Specify incremental values as 1,2,3 : ')
                 self.web_browser_test.incremental = [int(x) for x in self.web_browser_test.incremental.split(',')]
             else:
-                logger.info("incremental Values are not needed as Android devices are not selected..")
-        
+                logging.info("incremental Values are not needed as Android devices are not selected..")
+        test_info=False
         # Handle webgui_incremental argument
         if webgui_incremental:
+            if webgui_incremental=="no_increment":
+                webgui_incremental=str(len(available_resources))
+                test_info=True
             incremental = [int(x) for x in webgui_incremental.split(',')]
             # Validate the length and assign incremental values
             if (len(webgui_incremental) == 1 and incremental[0] != len(resource_list_sorted)) or (len(webgui_incremental) > 1):
                 self.web_browser_test.incremental = incremental
             elif len(webgui_incremental) == 1:
                 self.web_browser_test.incremental = incremental
-
-        # if self.web_browser_test.incremental and (not self.web_browser_test.resource_ids):
-        #     logger.info("incremental values are not needed as Android devices are not selected.")
-        #     exit()
+       
         
         # Validate incremental and resource IDs combination
         if (self.web_browser_test.incremental and self.web_browser_test.resource_ids) or (webgui_incremental):
@@ -2770,37 +2816,38 @@ class Candela:
                 resources_list1 = resource_list_sorted
             # Check if the last incremental value is greater or less than resources provided
             if self.web_browser_test.incremental[-1] > len(available_resources):
-                logger.info("Exiting the program as incremental values are greater than the resource ids provided")
+                logging.info("Exiting the program as incremental values are greater than the resource ids provided")
                 exit()
             elif self.web_browser_test.incremental[-1] < len(available_resources) and len(self.web_browser_test.incremental) > 1:
-                logger.info("Exiting the program as the last incremental value must be equal to selected devices")
+                logging.info("Exiting the program as the last incremental value must be equal to selected devices")
                 exit()
-
-        # self.web_browser_test.run
+        # obj.run
         test_time = datetime.now()
         test_time = test_time.strftime("%b %d %H:%M:%S")
-
-        logger.info("Initiating Test...")
+        logging.info("Initiating Test...")
         available_resources= [int(n) for n in available_resources]
         available_resources.sort()
         available_resources_string=",".join([str(n) for n in available_resources])
         self.web_browser_test.set_available_resources_ids(available_resources_string)
-        # self.web_browser_test.set_available_resources_ids([int(n) for n in available_resources].sort())
+        # obj.set_available_resources_ids([int(n) for n in available_resources].sort())
         self.web_browser_test.build()
         time.sleep(10)
         #TODO : To create cx for laptop devices
         # Create end-points for devices other than Android if specified
-        # if (not no_laptops) and self.web_browser_test.other_list:
-        #     self.web_browser_test.create_generic_endp(self.web_browser_test.other_list,os_types_dict)
-
+        # if (not args.no_laptops) and obj.other_list:
+        #     obj.create_generic_endp(obj.other_list,os_types_dict)
         keys = list(self.web_browser_test.http_profile.created_cx.keys())
+        generic_keys = self.web_browser_test.generic_endps_profile.created_cx
+        keys = keys + generic_keys
         if len(keys)==0:
-            logger.info("Selected Devices are not available in the lanforge")
+            logger.error("Selected Devices are not available in the lanforge")
             exit(1)
         cx_order_list = []
+        hw_version_list = []
+        user_name_list = []
+        mac_add_list = []
         index = 0
         file_path = ""
-
         if duration.endswith('s') or duration.endswith('S'):
             duration = round(int(duration[0:-1])/60,2)
         
@@ -2812,22 +2859,18 @@ class Candela:
         
         elif duration.endswith(''):
             duration = int(duration)
-
         if incremental or webgui_incremental:
             incremental_capacity_list_values=self.web_browser_test.get_incremental_capacity_list()
+            #print("checking incremental capacity_list_values",incremental_capacity_list_values)
             if incremental_capacity_list_values[-1]!=len(available_resources):
-                logger.info("Incremental capacity doesnt match available devices")
+                logger.error("Incremental capacity doesnt match available devices")
                 if postcleanup==True:
                     self.web_browser_test.postcleanup()
                 exit(1)
-        if background_run :
-            logger.info("Start the test and run till stopped")
-            self.web_browser_test.background_run = True
-
         # Process resource IDs and incremental values if specified
         if self.web_browser_test.resource_ids:
             if self.web_browser_test.incremental:
-                test_setup_info_incremental_values =  ','.join(map(str, incremental_capacity_list_values))
+                self.web_browser_test.test_setup_info_incremental_values =  ','.join(map(str, incremental_capacity_list_values))
                 if len(self.web_browser_test.incremental) == len(available_resources):
                     test_setup_info_total_duration = duration
                 elif len(self.web_browser_test.incremental) == 1 and len(available_resources) > 1:
@@ -2842,15 +2885,15 @@ class Candela:
                             test_setup_info_total_duration = duration * (div + 1)
                 else:
                     test_setup_info_total_duration = duration * len(incremental_capacity_list_values)
-                # test_setup_info_duration_per_iteration= duration 
+                # test_setup_info_duration_per_iteration= args.duration 
             elif webgui_incremental:
-                test_setup_info_incremental_values = ','.join(map(str, incremental_capacity_list_values))
+                self.web_browser_test.test_setup_info_incremental_values = ','.join(map(str, incremental_capacity_list_values))
                 test_setup_info_total_duration = duration * len(incremental_capacity_list_values)
             else:
-                test_setup_info_incremental_values = "No Incremental Value provided"
+                self.web_browser_test.test_setup_info_incremental_values = "No Incremental Value provided"
                 test_setup_info_total_duration = duration
             self.web_browser_test.total_duration = test_setup_info_total_duration
-
+            
         # Calculate and manage cx_order_list ( list of cross connections to run ) based on incremental values
         gave_incremental,iteration_number=True,0
         if self.web_browser_test.resource_ids:
@@ -2860,14 +2903,17 @@ class Candela:
             if self.web_browser_test.incremental or not gave_incremental:
                 if len(self.web_browser_test.incremental) == 1 and self.web_browser_test.incremental[0] == len(keys):
                     cx_order_list.append(keys[index:])
+                    #user_name_list.append(obj.user_name[index:])
                 elif len(self.web_browser_test.incremental) == 1 and len(keys) > 1:
                     incremental_value = self.web_browser_test.incremental[0]
                     max_index = len(keys)
                     index = 0
-
                     while index < max_index:
                         next_index = min(index + incremental_value, max_index)
                         cx_order_list.append(keys[index:next_index])
+                        #hw_version_list.append(obj.hw[index:next_index])
+                        #user_name_list.append(obj.user_name[index:next_index])
+                        #mac_add_list.append(obj.mac_list[index:next_index])
                         index = next_index
                 elif len(self.web_browser_test.incremental) != 1 and len(keys) > 1:
                     
@@ -2875,171 +2921,65 @@ class Candela:
                     for num in self.web_browser_test.incremental:
                         
                         cx_order_list.append(keys[index: num])
+                        #hw_version_list.append(obj.hw[index:num])
+                        #user_name_list.append(obj.user_name[index:num])
+                        #mac_add_list.append(obj.mac_list[index:num])
                         index = num
-
                     if index < len(keys):
                         cx_order_list.append(keys[index:])
+                        #hw_version_list.append(obj.hw[index:])
+                        #user_name_list.append(obj.user_name[index:])
+                        #mac_add_list.append(obj.mac_list[index:])
                         start_time_webGUI = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
                 # Update start and end times for webGUI
-                
                 for i in range(len(cx_order_list)):
                     if i == 0:
                         self.web_browser_test.data["start_time_webGUI"] = [datetime.now().strftime('%Y-%m-%d %H:%M:%S')] * len(keys)
-                        # if len(self.web_browser_test.incremental) == 1 and self.web_browser_test.incremental[0] == len(keys):
-                        #     end_time_webGUI = (datetime.now() + timedelta(minutes = duration)).strftime('%Y-%m-%d %H:%M:%S')
-                        # elif len(self.web_browser_test.incremental) == 1 and len(keys) > 1:
-                        #     end_time_webGUI = (datetime.now() + timedelta(minutes = duration * len(cx_order_list))).strftime('%Y-%m-%d %H:%M:%S')
-                        # elif len(self.web_browser_test.incremental) != 1 and len(keys) > 1:
-                        #     end_time_webGUI = (datetime.now() + timedelta(minutes = duration * len(cx_order_list))).strftime('%Y-%m-%d %H:%M:%S')
-                        # if len(self.web_browser_test.incremental) == 1 and self.web_browser_test.incremental[0] == len(keys):
-                        #     end_time_webGUI = (datetime.now() + timedelta(minutes = self.web_browser_test.total_duration)).strftime('%Y-%m-%d %H:%M:%S')
-                        # elif len(self.web_browser_test.incremental) == 1 and len(keys) > 1:
-                        #     end_time_webGUI = (datetime.now() + timedelta(minutes = self.web_browser_test.total_duration)).strftime('%Y-%m-%d %H:%M:%S')
-                        # elif len(self.web_browser_test.incremental) != 1 and len(keys) > 1:
-                        #     end_time_webGUI = (datetime.now() + timedelta(minutes = self.web_browser_test.total_duration)).strftime('%Y-%m-%d %H:%M:%S')
-
-                        end_time_webGUI = (datetime.now() + timedelta(minutes = self.web_browser_test.total_duration)).strftime('%Y-%m-%d %H:%M:%S')
+                        end_time_webGUI = (datetime.now() + timedelta(minutes = duration * len(cx_order_list))).strftime('%Y-%m-%d %H:%M:%S')
                         self.web_browser_test.data['end_time_webGUI'] = [end_time_webGUI] * len(keys)
-
-
                     self.web_browser_test.start_specific(cx_order_list[i])
                     
                     iteration_number+=len(cx_order_list[i])
                     if cx_order_list[i]:
-                        logger.info("Test started on Devices with resource Ids : {selected}".format(selected = cx_order_list[i]))
+                        logging.info("Test started on Devices with resource Ids : {selected}".format(selected = cx_order_list[i]))
                     else:
-                        logger.info("Test started on Devices with resource Ids : {selected}".format(selected = cx_order_list[i]))
+                        logging.info("Test started on Devices with resource Ids : {selected}".format(selected = cx_order_list[i]))
                     
-                    # duration = 60 * duration
+                    # duration = 60 * args.duration
                     file_path = "webBrowser.csv"
-
                     start_time = time.time()
                     df = pd.DataFrame(self.web_browser_test.data)
-
                     if end_time_webGUI < datetime.now().strftime('%Y-%m-%d %H:%M:%S'):
                         self.web_browser_test.data['remaining_time_webGUI'] = ['0:00'] * len(keys)
                     else:
                         date_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                         self.web_browser_test.data['remaining_time_webGUI'] =  [datetime.strptime(end_time_webGUI,"%Y-%m-%d %H:%M:%S") - datetime.strptime(date_time,"%Y-%m-%d %H:%M:%S")] * len(keys)
-                    # Monitor runtime and save results
                     
-                    self.web_browser_test.monitor_for_runtime_csv(duration,file_path,iteration_number,resource_list_sorted,cx_order_list[i])
-                        # time.sleep(duration)
-                    if self.web_browser_test.test_stopped_by_user==True:
-                        break
-        if not background_run and self.web_browser_test.stop_test!=True:
-            self.web_browser_test.stop()
-
-        
-
-        # Additional setup for generating reports and post-cleanup
-        if self.web_browser_test.resource_ids:
-            # uc_avg_val = self.web_browser_test.my_monitor('uc-avg')
-            total_urls = self.web_browser_test.my_monitor('total-urls')
-
-            date = str(datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
-
-            # Retrieve resource data for Android devices
-            phone_list = self.web_browser_test.get_resource_data() 
-
-            # Initialize and retrieve username data
-            username = []
-            eid_data = self.web_browser_test.json_get("ports?fields=alias,mac,mode,Parent Dev,rx-rate,tx-rate,ssid,signal")
-
-            resource_ids = list(map(int, self.web_browser_test.resource_ids.split(',')))
-            # Extract username information from resource data
-            for alias in eid_data["interfaces"]:
-                for i in alias:
-                    if int(i.split(".")[1]) > 1 and alias[i]["alias"] == 'wlan0':
-                        resource_hw_data = self.web_browser_test.json_get("/resource/" + i.split(".")[0] + "/" + i.split(".")[1])
-                        hw_version = resource_hw_data['resource']['hw version']
-                        if not hw_version.startswith(('Win', 'Linux', 'Apple')) and int(resource_hw_data['resource']['eid'].split('.')[1]) in resource_ids:
-                            username.append(resource_hw_data['resource']['user'] )
-
-            # Construct device list string for report
-            device_list_str = ','.join([f"{name} ( Android )" for name in username])
-            test_setup_info = {
-            "Testname" : test_name,
-            "Device List" : device_list_str ,
-            "No of Devices" : "Total" + "( " + str(len(phone_list)) + " ): Android(" +  str(len(phone_list)) +")" ,
-            "Incremental Values" : "",
-            "Required URL Count" : count,
-            "URL" : url 
-            }
-            # if self.web_browser_test.incremental:
-            #     test_setup_info['Duration per Iteration (min)']= str(test_setup_info_duration_per_iteration)+ " (min)"
-            test_setup_info['Incremental Values'] = test_setup_info_incremental_values
-            test_setup_info['Total Duration (min)'] = str(test_setup_info_total_duration) + " (min)"
-
-
-            # Retrieve additional monitoring data
-            # total_urls = self.web_browser_test.my_monitor('total-urls')
-            uc_min_val = self.web_browser_test.my_monitor('uc-min')
-            timeout = self.web_browser_test.my_monitor('timeout')
-            uc_min_value = uc_min_val
-            dataset2 = total_urls
-            dataset = timeout
-            lis = username
-            bands = ['URLs']
-            self.web_browser_test.data['total_urls'] = total_urls
-            self.web_browser_test.data['uc_min_val'] = uc_min_val 
-            self.web_browser_test.data['timeout'] = timeout
-        logger.info("Test Completed")
-
-        # Handle incremental values and generate reports accordingly
-        prev_inc_value = 0
-        if self.web_browser_test.resource_ids and self.web_browser_test.incremental :
-            for i in range(len(cx_order_list)):
-                df = pd.DataFrame(self.web_browser_test.data)
-                names_to_increment = cx_order_list[i] 
-
-                if 'inc_value' not in df.columns:
-                    df['inc_value'] = 0
-                if i == 0:
-                    prev_inc_value = len(cx_order_list[i])
-                else:
-                    prev_inc_value = prev_inc_value + len(cx_order_list[i])
-                    
-                self.web_browser_test.data['inc_value'] = df.apply(
-                    lambda row: (
-                        prev_inc_value  # Accumulate inc_value
-                        if row['inc_value'] == 0 and row['name'] in names_to_increment 
-                        else row['inc_value']  # Keep existing inc_value
-                    ), 
-                    axis=1
-                )
-
-                df1 = pd.DataFrame(self.web_browser_test.data)
-
-                
-                df1.to_csv(file_path, mode='w', index=False)
-        self.date,self.test_setup_info,self.dataset2,dataset,self.lis,self.bands,self.total_urls,self.uc_min_value,self.cx_order_list,self.gave_incremental=date,test_setup_info,dataset2,dataset,lis,bands,total_urls,uc_min_value,cx_order_list,gave_incremental
-        if not background_run and self.web_browser_test.stop_test!=True:
-            self.web_browser_test.generate_report(date,"webBrowser.csv",test_setup_info = test_setup_info, dataset2 = dataset2, dataset = dataset, lis = lis, bands = bands, total_urls = total_urls, uc_min_value = uc_min_value , cx_order_list = cx_order_list,gave_incremental=gave_incremental)      
-            if postcleanup:
-                self.web_browser_test.postcleanup()
+                    self.web_browser_test.get_stats(duration,file_path,iteration_number,resource_list_sorted,cx_order_list[i],i,count)
     def stop_web_browser_test(self):
-        """
-        Method to stop for Web Browser test.
-        """
-        if getattr(self.web_browser_test,"background_run",None):
-            print("setting the flag to false")
-            self.web_browser_test.background_run = False
-        elif self.web_browser_test.incremental:
-            print("setting the flag to false")
-            # self.web_browser_test.background_run = False
-            self.web_browser_test.stop_test=True
-        print("setting web browser test to stop")
-        self.monitoring_thread.join()
+        # """
+        # Method to stop for Web Browser test.
+        # """
+        # if getattr(self.web_browser_test,"background_run",None):
+        #     print("setting the flag to false")
+        #     self.web_browser_test.background_run = False
+        # elif self.web_browser_test.incremental:
+        #     print("setting the flag to false")
+        #     # self.web_browser_test.background_run = False
+        #     self.web_browser_test.stop_test=True
+        # print("setting web browser test to stop")
+        # self.monitoring_thread.join()
+
         self.web_browser_test.stop()
+    
 
     def generate_report_web_browser_test(self):
         """
         Method to generate report for Web Browser test.
         """
-        self.web_browser_test.generate_report(self.date,"webBrowser.csv",test_setup_info = self.test_setup_info, dataset2 = self.dataset2, dataset = self.dataset, lis = self.lis, bands = self.bands, total_urls = self.total_urls, uc_min_value = self.uc_min_value , cx_order_list = self.cx_order_list,gave_incremental=self.gave_incremental)      
-
+        #self.web_browser_test.generate_report(self.date,"webBrowser.csv",test_setup_info = self.test_setup_info, dataset2 = self.dataset2, dataset = self.dataset, lis = self.lis, bands = self.bands, total_urls = self.total_urls, uc_min_value = self.uc_min_value , cx_order_list = self.cx_order_list,gave_incremental=self.gave_incremental)
+              
+        self.web_browser_test.create_report()
     def start_mc_test(self,**kwargs):
         """
         Initiates a Multicast test with various configurable parameters.
@@ -3676,6 +3616,461 @@ class Candela:
     def start_zoom(self,sigin_email,sigin_passwd,duration=1,participants=10,audio=True,video=True):
         self.zoom_obj = ZoomAutomation(sigin_email=sigin_email,sigin_passwd=sigin_passwd,audio=audio,video=video,duration=duration,lanforge_ip=self.lanforge_ip,participants=participants)
         self.zoom_obj.run()
+    
+    # Methods related to Youtube Streaming Test
+
+    def start_youtube_test(self, 
+                           host=None, 
+                           port=None, 
+                           url=None,
+                           duration=None, 
+                           device_list=None, 
+                           debug=False,
+                           resolution="auto",
+                           ssid=None,
+                           passwd=None,
+                           encryp=None,
+                           postcleanup=False,
+                           precleanup=False,
+                           file_name=None,
+                           group_name=None,
+                           profile_name=None,
+                           eap_method='DEFAULT',
+                           eap_identity='',
+                           ieee80211=True,
+                           ieee80211u=True,
+                           ieee80211w=1,
+                           enable_pkc=True,
+                           bss_transition=True,
+                           power_save=True,
+                           disable_ofdma=True,
+                           roam_ft_ds=True,
+                           key_management='DEFAULT',
+                           pairwise='[BLANK]',
+                           private_key='[BLANK]',
+                           ca_cert='[BLANK]',
+                           client_cert='[BLANK]',
+                           pk_passwd='[BLANK]',
+                           pac_file='[BLANK]',
+                           server_ip=None,
+                           expected_passfail_value=None,
+                           device_csv_name=None
+
+                           
+                           ):
+        print("checking script is executing or not")
+        
+        if(group_name!=None):
+            selected_groups=group_name.split(',')
+        else:
+            selected_groups=[]
+        if(profile_name!=None):
+            selected_profiles=profile_name.split(',')
+        else:
+            selected_profiles=[]
+
+                
+        if((group_name!=None or profile_name!=None or file_name!=None) and device_list!=None):
+            print("Specify the correct set of arguments either for groups or device_list")
+            exit(1)
+        elif((group_name==None and file_name==None and profile_name==None and device_list==None) and (ssid==None or (passwd==None and  encryp==None) or (passwd==None and encryp.lower()!='open'))):
+            print("ssid or password or security is missing")
+            exit(1)
+        elif((ssid!=None or passwd!=None or encryp!=None )and (file_name!=None or group_name!=None or profile_name!=None)):
+            print("Specify correct set of arguments")
+            exit(1)
+        elif((file_name!=None and (group_name==None or profile_name==None))or (group_name!=None and (file_name==None or profile_name==None))or(profile_name!=None and (file_name==None or group_name==None)) ):
+            print("Specify the correct set of arguments for groups")
+            exit(1)
+        elif(device_list!=None and (ssid==None or (passwd==None and  encryp==None) or (passwd==None and encryp.lower()!='open'))):
+            print("Please provide ssid password and security when device list is given")
+            exit(1)
+        elif(len(selected_groups)!=len(selected_profiles)):
+            print("Number of groups should match number of profiles")
+            exit(1)
+
+        config_obj=DeviceConfig.DeviceConfig(lanforge_ip=host,file_name=file_name)
+        # if not expected_passfail_value and device_csv_name==None :
+        #     config_obj.device_csv_file(csv_name="device.csv")
+        if(group_name!=None and file_name!=None and profile_name!=None):
+            selected_groups=group_name.split(',')
+            selected_profiles=profile_name.split(',')
+            config_devices={}
+            for i in range(len(selected_groups)):
+                config_devices[selected_groups[i]]=selected_profiles[i]
+
+            config_obj.initiate_group()
+            asyncio.run(config_obj.connectivity(config_devices))
+        
+            adbresponse=config_obj.adb_obj.get_devices()
+            resource_manager=config_obj.laptop_obj.get_devices()
+            all_res={}
+            df1=config_obj.display_groups(config_obj.groups)
+            groups_list=df1.to_dict(orient='list')
+            group_devices={}
+            
+            for adb in adbresponse:   
+                group_devices[adb['serial']]=adb['eid']
+            for res in resource_manager:
+                all_res[res['hostname']]=res['shelf']+'.'+res['resource']
+            eid_list=[]
+            for grp_name in groups_list.keys():
+                for g_name in selected_groups:
+                    if(grp_name == g_name):
+                        for j in groups_list[grp_name]:
+                            if(j in group_devices.keys()):
+                                eid_list.append(group_devices[j])
+                            elif(j in all_res.keys()):
+                                eid_list.append(all_res[j])
+            device_list = eid_list
+        
+        
+        # Process restart_youtube_testsource IDs if provided
+        elif device_list:
+            all_devices= config_obj.get_all_devices()
+            config_dict={
+            'ssid':ssid,
+            'passwd':passwd,
+            'enc':encryp,
+            'eap_method':eap_method,
+            'eap_identity':eap_identity,
+            'ieee80211':ieee80211,
+            'ieee80211u':ieee80211u,
+            'ieee80211w':ieee80211w,
+            'enable_pkc':enable_pkc,
+            'bss_transition':bss_transition,
+            'power_save':power_save,
+            'disable_ofdma':disable_ofdma,
+            'roam_ft_ds':roam_ft_ds,
+            'key_management':key_management,
+            'pairwise':pairwise,
+            'private_key':private_key,
+            'ca_cert':ca_cert,
+            'client_cert':client_cert,
+            'pk_passwd':pk_passwd,
+            'pac_file':pac_file,
+            'server_ip':server_ip,
+
+            }
+            if(group_name==None and file_name==None and profile_name==None):
+                dev_list=device_list.split(',')
+                device_list = dev_list
+                asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
+
+   
+        else:
+            # Query user to select devices if no resource IDs are provided
+            all_devices= config_obj.get_all_devices()
+            device_list=[]
+            config_dict={
+            'ssid':ssid,
+            'passwd':passwd,
+            'enc':encryp,
+            'eap_method':eap_method,
+            'eap_identity':eap_identity,
+            'ieee80211':ieee80211,
+            'ieee80211u':ieee80211u,
+            'ieee80211w':ieee80211w,
+            'enable_pkc':enable_pkc,
+            'bss_transition':bss_transition,
+            'power_save':power_save,
+            'disable_ofdma':disable_ofdma,
+            'roam_ft_ds':roam_ft_ds,
+            'key_management':key_management,
+            'pairwise':pairwise,
+            'private_key':private_key,
+            'ca_cert':ca_cert,
+            'client_cert':client_cert,
+            'pk_passwd':pk_passwd,
+            'pac_file':pac_file,
+            'server_ip':server_ip,
+
+            }
+            print("Available devices:", all_devices)
+            device_list = input("Enter the desired resources to run the test:")
+            dev1_list=device_list.split(',')
+            device_list = dev1_list
+            asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
+
+        
+        self.youtube_test = Youtube(
+            host=host,
+            port=port,
+            url=url,
+            duration=duration,
+            sta_list=device_list,
+            debug=debug,
+            resolution=resolution
+
+        )
+
+         # Create a RealDevice object for device management
+        Devices = RealDevice(manager_ip=host,
+                            server_ip="192.168.1.61",
+                            ssid_2g='Test Configured',
+                            passwd_2g='',
+                            encryption_2g='',
+                            ssid_5g='Test Configured',
+                            passwd_5g='',
+                            encryption_5g='',
+                            ssid_6g='Test Configured',
+                            passwd_6g='',
+                            encryption_6g='',
+                            selected_bands=['5G'])
+        
+        configure = False
+        resources = []    
+        laptops = Devices.get_devices()
+        self.youtube_test.Devices = Devices
+
+        self.youtube_test.select_real_devices(real_devices=Devices, real_sta_list=device_list,base_interop_obj=Devices)
+        self.youtube_test.create_generic_endp(query_resources=self.youtube_test.real_sta_list)
+        self.youtube_test.execute_youtube_test(duration, do_webUI=False)
+        logger.info("YouTube test started.")
+    
+    def stop_youtube_test(self,):
+        self.youtube_test.stop_generic_cx()
+        logger.info("Stopped The cross Connections")
+        self.youtube_test.cleanup()
+
+    def generate_youtube_report(self,):
+        self.youtube_test.create_report(self.youtube_test.data,"")
+
+    #Methods related to zoomtest through generic Tab
+    
+    def start_zoom_test(self, 
+                           host=None, 
+                           port=None, 
+                           duration=None, 
+                           device_list=None, 
+                           debug=False,
+                           ssid=None,
+                           passwd=None,
+                           encryp=None,
+                           postcleanup=False,
+                           precleanup=False,
+                           file_name=None,
+                           group_name=None,
+                           profile_name=None,
+                           eap_method='DEFAULT',
+                           eap_identity='',
+                           ieee80211=True,
+                           ieee80211u=True,
+                           ieee80211w=1,
+                           enable_pkc=True,
+                           bss_transition=True,
+                           power_save=True,
+                           disable_ofdma=True,
+                           roam_ft_ds=True,
+                           key_management='DEFAULT',
+                           pairwise='[BLANK]',
+                           private_key='[BLANK]',
+                           ca_cert='[BLANK]',
+                           client_cert='[BLANK]',
+                           pk_passwd='[BLANK]',
+                           pac_file='[BLANK]',
+                           server_ip=None,
+                           expected_passfail_value=None,
+                           device_csv_name=None,
+                           audio=None,
+                           video=None,
+                           zoom_host = None,
+                           sigin_email=None,
+                           sigin_passwd=None,
+                           participants=None,
+
+                           
+                           ):
+        
+        self.zoom_automation = ZA(audio=audio ,video=video, lanforge_ip=self.lanforge_ip)
+
+        realdevice = RealDevice(manager_ip=self.lanforge_ip,
+                            server_ip="192.168.1.61",
+                            ssid_2g='Test Configured',
+                            passwd_2g='',
+                            encryption_2g='',
+                            ssid_5g='Test Configured',
+                            passwd_5g='',
+                            encryption_5g='',
+                            ssid_6g='Test Configured',
+                            passwd_6g='',
+                            encryption_6g='',
+                            selected_bands=['5G'])
+        laptops = realdevice.get_devices()
+
+        if(group_name!=None):
+            selected_groups=group_name.split(',')
+        else:
+            selected_groups=[]
+        if(profile_name!=None):
+            selected_profiles=profile_name.split(',')
+        else:
+            selected_profiles=[]
+
+                
+        if((group_name!=None or profile_name!=None or file_name!=None) and device_list!=None):
+            print("Specify the correct set of arguments either for groups or device_list")
+            exit(1)
+        elif((group_name==None and file_name==None and profile_name==None and device_list==None) and (ssid==None or (passwd==None and  encryp==None) or (passwd==None and encryp.lower()!='open'))):
+            print("ssid or password or security is missing")
+            exit(1)
+        elif((ssid!=None or passwd!=None or encryp!=None )and (file_name!=None or group_name!=None or profile_name!=None)):
+            print("Specify correct set of arguments")
+            exit(1)
+        elif((file_name!=None and (group_name==None or profile_name==None))or (group_name!=None and (file_name==None or profile_name==None))or(profile_name!=None and (file_name==None or group_name==None)) ):
+            print("Specify the correct set of arguments for groups")
+            exit(1)
+        elif(device_list!=None and (ssid==None or (passwd==None and  encryp==None) or (passwd==None and encryp.lower()!='open'))):
+            print("Please provide ssid password and security when device list is given")
+            exit(1)
+        elif(len(selected_groups)!=len(selected_profiles)):
+            print("Number of groups should match number of profiles")
+            exit(1)
+
+        config_obj=DeviceConfig.DeviceConfig(lanforge_ip=host,file_name=file_name)
+        # if not expected_passfail_value and device_csv_name==None :
+        #     config_obj.device_csv_file(csv_name="device.csv")
+        if(group_name!=None and file_name!=None and profile_name!=None):
+            selected_groups=group_name.split(',')
+            selected_profiles=profile_name.split(',')
+            config_devices={}
+            for i in range(len(selected_groups)):
+                config_devices[selected_groups[i]]=selected_profiles[i]
+
+            config_obj.initiate_group()
+            asyncio.run(config_obj.connectivity(config_devices))
+        
+            adbresponse=config_obj.adb_obj.get_devices()
+            resource_manager=config_obj.laptop_obj.get_devices()
+            all_res={}
+            df1=config_obj.display_groups(config_obj.groups)
+            groups_list=df1.to_dict(orient='list')
+            group_devices={}
+            
+            for adb in adbresponse:   
+                group_devices[adb['serial']]=adb['eid']
+            for res in resource_manager:
+                all_res[res['hostname']]=res['shelf']+'.'+res['resource']
+            eid_list=[]
+            for grp_name in groups_list.keys():
+                for g_name in selected_groups:
+                    if(grp_name == g_name):
+                        for j in groups_list[grp_name]:
+                            if(j in group_devices.keys()):
+                                eid_list.append(group_devices[j])
+                            elif(j in all_res.keys()):
+                                eid_list.append(all_res[j])
+            if zoom_host in eid_list:
+                eid_list.remove(zoom_host)
+                eid_list.insert(0,zoom_host)
+
+            
+            device_list = eid_list
+        
+        
+        # Process resource IDs if provided
+        elif device_list:
+            all_devices= config_obj.get_all_devices()
+            config_dict={
+            'ssid':ssid,
+            'passwd':passwd,
+            'enc':encryp,
+            'eap_method':eap_method,
+            'eap_identity':eap_identity,
+            'ieee80211':ieee80211,
+            'ieee80211u':ieee80211u,
+            'ieee80211w':ieee80211w,
+            'enable_pkc':enable_pkc,
+            'bss_transition':bss_transition,
+            'power_save':power_save,
+            'disable_ofdma':disable_ofdma,
+            'roam_ft_ds':roam_ft_ds,
+            'key_management':key_management,
+            'pairwise':pairwise,
+            'private_key':private_key,
+            'ca_cert':ca_cert,
+            'client_cert':client_cert,
+            'pk_passwd':pk_passwd,
+            'pac_file':pac_file,
+            'server_ip':server_ip,
+
+            }
+            if(group_name==None and file_name==None and profile_name==None):
+                dev_list=device_list.split(',')
+                dev_list.insert(0,zoom_host)
+                device_list = dev_list
+                asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
+
+   
+        else:
+            # Query user to select devices if no resource IDs are provided
+            all_devices= config_obj.get_all_devices()
+            device_list=[]
+            config_dict={
+            'ssid':ssid,
+            'passwd':passwd,
+            'enc':encryp,
+            'eap_method':eap_method,
+            'eap_identity':eap_identity,
+            'ieee80211':ieee80211,
+            'ieee80211u':ieee80211u,
+            'ieee80211w':ieee80211w,
+            'enable_pkc':enable_pkc,
+            'bss_transition':bss_transition,
+            'power_save':power_save,
+            'disable_ofdma':disable_ofdma,
+            'roam_ft_ds':roam_ft_ds,
+            'key_management':key_management,
+            'pairwise':pairwise,
+            'private_key':private_key,
+            'ca_cert':ca_cert,
+            'client_cert':client_cert,
+            'pk_passwd':pk_passwd,
+            'pac_file':pac_file,
+            'server_ip':server_ip,
+
+            }
+            
+
+            print("Available Devices For Testing")
+            for device in all_devices:
+                    print(device)
+            zm_host = input("Enter Host Resource for the Test : ")
+            zm_host = zm_host.strip()
+            clients = input("Enter client Resources to run the test :")
+            device_list = zm_host+","+clients
+            device_list = device_list.split()
+            asyncio.run(config_obj.connectivity(device_list=device_list,wifi_config=config_dict))
+        
+        #print(dir(self.zoom_automation))
+        self.zoom_automation.select_real_devices(real_device_obj=realdevice, real_sta_list=device_list)
+
+        if (not self.zoom_automation.check_tab_exists()):
+                    logging.error('Generic Tab is not available.\nAborting the test.')
+                    exit(0)
+        
+        self.zoom_automation.run(duration, self.lanforge_ip, sigin_email, sigin_passwd, participants)
+
+
+    def stop_zoom_test(self):
+        self.zoom_automation.generic_endps_profile.stop_cx()
+
+    def clean_cx_zoom_test(self,):
+        self.zoom_automation.generic_endps_profile.cleanup()
+    def generate_report_zoom(self,):
+        self.zoom_automation.generate_report()
+    
+
+        
+    
+    
+
+
+    
+    
+    
+
+
 logger_config = lf_logger_config.lf_logger_config()
 # candela_apis = Candela(ip='192.168.214.61', port=8080)
 ftp_test=Candela(ip='192.168.242.2',port=8080)
@@ -3716,8 +4111,6 @@ ftp_test=Candela(ip='192.168.242.2',port=8080)
 # ftp_test.start_mc_test(mc_tos="VO", endp_types="mc_udp",
 #                                   side_b_min=100000000, upstream_port='eth1', test_duration=30,real_devices=True,file_name='g242',group_name='grp1',profile_name='OpenWa',expected_passfail_value=0.2)
 
-#QOS
-#ftp_test.start_qos_test(ssid='Dev_wpa2',password='lanforge',security='wpa2',ap_name='NETGEAR',qos_serial_run=False,traffic_type='lf_tcp',upstream='eth1', tos=['VO'],csv_name="demo.csv")
 
 
 # ROAMMMMM
@@ -3730,15 +4123,19 @@ ftp_test=Candela(ip='192.168.242.2',port=8080)
 
 
 #FTP TEST
-#ftp_test.start_ftp_test(ssid='Dev_wpa2',password='lanforge',security='wpa2',device_list='1.14',background=False,csv_name='demo.csv')
+#ftp_test.start_ftp_test(ssid='OpenWifi',password='OpenWifi',security='wpa2',background=False,server_ip='192.168.214.219')
 
 
 #VIDEO STREAMING
-#ftp_test.start_vs_test(group_name='grp1',file_name='g219',profile_name='OpenWa',csv_name="demo.csv")
+# ftp_test.start_vs_test(ssid='OpenWifi',passwd='OpenWifi',encryp='wpa2',server_ip='192.168.214.219',device_list='1.10')
 
 #PING TEST
-#ftp_test.start_ping_test(group_name='grp1',file_name='g219',profile_name='OpenWa',target='192.168.1.3',real=True,csv_name="demo.csv")
+# ftp_test.start_ping_test(file_name='g219',group_name='grp1',profile_name='OpenWa',target='192.168.1.3',real=True,server_ip='192.168.214.219')
+#ftp_test.start_ping_test(ssid="OpenWifi",password="OpenWifi",encryption="wpa2",target='192.168.1.3',real=True,server_ip='192.168.214.219')
 
+
+#QOS
+# ftp_test.start_qos_test(ssid='OpenWifi',password='OpenWifi',security='wpa2',ap_name='NETGEAR',qos_serial_run=False,traffic_type='lf_tcp',upstream='eth1', tos=['VO'])
 
 
 # candela_apis.get_client_connection_details(['1.208.wlan0', '1.19.wlan0'])
@@ -3765,10 +4162,9 @@ ftp_test=Candela(ip='192.168.242.2',port=8080)
 #                                device_list=','.join(['1.16', '1.19']))
 
 # TO RUN HTTP TEST
-# candela_apis.start_http_test(ssid='OpenWifi', password='OpenWifi',
-#                              security='open', http_file_size='10MB',
-#                              device_list=['1.56.wlan0'], report_labels=['1.16 android test41', '1.19 android test46', '1.16 android test41'],
-#                              device_macs=['b0:b5:c3:5d:2a:3f'], target_per_ten=1000, upstream='eth1',
+# ftp_test.start_http_test(ssid='OpenWifi', password='OpenWifi',
+#                              security='wpa2', http_file_size='10MB', report_labels=['1.16 android test41', '1.19 android test46', '1.16 android test41'],
+#                              device_macs=['48:e7:da:fe:0d:ed', '48:e7:da:fe:0d:91', '48:e7:da:fe:0d:ed'], target_per_ten=1000, upstream='eth1',
 #                              band='5G', ap_name='Netgear', background=True)
 # time.sleep(120)
 # candela_apis.stop_http_test()
@@ -3907,3 +4303,47 @@ ftp_test=Candela(ip='192.168.242.2',port=8080)
 
 # To stop sniffer
 # candela_apis.stop_sniffer()
+
+
+    #candela.start_youtube_test(host="192.168.242.2",port=8080,url="https://youtu.be/V20qFna_ZbA",duration=1,device_list="1.110,1.115",ssid="NETGEAR5G",passwd="lanforge",encryp="wpa2",)
+
+    #candela.start_youtube_test(host="192.168.242.2",port=8080,url="https://youtu.be/V20qFna_ZbA",duration=1,ssid="NETGEAR2G",passwd="lanforge",encryp="wpa2",)
+
+    # candela.start_youtube_test(host="192.168.242.2",port=8080,url="https://youtu.be/V20qFna_ZbA",duration=1,group_name="group1",profile_name="DUT_5G",file_name="grpyt")
+    # candela.stop_youtube_test
+    # candela.generate_youtube_report()
+    # candela.start_zoom_test(host="192.168.242.2",duration=1,device_list="1.115",ssid="NETGEAR5G",passwd="lanforge",encryp="wpa2",zoom_host="1.110",audio=True,video=True,sigin_email="demo@gmail.com",sigin_passwd="Demo@123",participants=2)
+    # candela.stop_zoom_test()
+    # candela.generate_report_zoom()
+    # candela.clean_cx_zoom_test()
+
+    # candela.start_web_browser_test(device_list='1.110,1.115', 
+    #                                     duration="1m",
+    #                                     url="https://www.google.com",
+    #                                     background_run=True,
+    #                                     count=3,
+    #                                     incremental_capacity='1',
+    #                                     ssid="NETGEAR5G",
+    #                                     passwd="lanforge",
+    #                                     encryp="wpa2"
+    #                                     )
+    # candela.stop_web_browser_test()
+    # candela.generate_report_web_browser_test()
+
+    # candela.start_web_browser_test(group_name="group1", 
+    #                                     duration="1m",
+    #                                     url="https://www.google.com",
+    #                                     background_run=True,
+    #                                     count=3,
+    #                                     incremental_capacity='1',
+    #                                     profile_name="DUT_2G",
+    #                                     file_name="grpyt"
+    #                                     )
+    # candela.stop_web_browser_test()
+    # candela.generate_report_web_browser_test()
+
+
+    # candela.start_zoom_test(host="192.168.242.2",duration=1,zoom_host="1.110",audio=True,video=True,sigin_email="demo@gmail.com",sigin_passwd="Demo@123",participants=2,group_name="group1",profile_name="DUT_5G",file_name="grpyt")
+    # candela.stop_zoom_test()
+    # candela.generate_report_zoom()
+    # candela.clean_cx_zoom_test()

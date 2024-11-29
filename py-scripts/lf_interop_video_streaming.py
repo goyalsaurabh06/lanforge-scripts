@@ -1453,7 +1453,7 @@ class VideoStreamingTest(Realm):
                 if device in res_list:
                     test_input_list.append(row['Videostreaming'])
             for i in range(len(test_input_list)):
-                if(int(test_input_list[i])<=total_urls[:created_incremental_values[iter]][i]):
+                if(float(test_input_list[i])<=total_urls[:created_incremental_values[iter]][i]):
                     pass_fail_list.append('PASS')
                 else:
                     pass_fail_list.append('FAIL')
@@ -1670,7 +1670,6 @@ def main():
     if args.help_summary:
         print(help_summary)
         exit(0)
-
     media_source_dict={
                        'dash':'1',
                        'smooth_streaming':'2',
@@ -1779,8 +1778,9 @@ def main():
                     groups_list=df1.to_dict(orient='list')
                     group_devices={}
                   
-                    for adb in adbresponse:   
-                        group_devices[adb['serial']]=adb['eid']
+                    for adb in adbresponse:
+                        if adb['eid']!='':
+                            group_devices[adb['serial']]=adb['eid']
                     for res in resource_manager:
                         all_res[res['hostname']]=res['shelf']+'.'+res['resource']
                     eid_list=[]
@@ -1793,6 +1793,7 @@ def main():
                                     elif(j in all_res.keys()):
                                         eid_list.append(all_res[j])
                     args.device_list = ",".join(id for id in eid_list)
+        print("argsssssssss",args.device_list)
         if args.dowebgui == True :
             # Split resource IDs from args into a list
             resource_ids_sm = args.device_list.split(',')
@@ -1814,7 +1815,7 @@ def main():
             # Case where args.no_laptops flag is set
             # if args.no_laptops:
                 # Retrieve all Android devices if no_laptops flag is True
-            obj.android_devices = obj.devices.get_devices(only_androids=True)
+            #obj.android_devices = obj.devices.get_devices(only_androids=True)
 
             # else:
             #     # Retrieve all devices and their OS types if no_laptops flag is False
@@ -1862,6 +1863,8 @@ def main():
                     asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
 
                 # Extract second part of resource IDs and sort them
+                obj.android_devices = obj.devices.get_devices(only_androids=True)
+
                 obj.resource_ids = ",".join(id.split(".")[1] for id in args.device_list.split(","))
                 resource_ids_sm = obj.resource_ids
                 resource_list = resource_ids_sm.split(',')            
@@ -1959,7 +1962,7 @@ def main():
                 args.device_list = input("Enter the desired resources to run the test:")
                 dev1_list=args.device_list.split(',')
                 asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
-
+                obj.android_devices = obj.devices.get_devices(only_androids=True)
                 # Query user to select devices if no resource IDs are provided
                 selected_devices,report_labels,selected_macs = obj.devices.query_user(device_list=dev1_list)
                 # Handle cases where no devices are selected
@@ -2061,7 +2064,7 @@ def main():
         obj.build()
 
         # To set media source and media quality 
-        time.sleep(10)
+        time.sleep(20)
 
         # obj.run
         test_time = datetime.now()

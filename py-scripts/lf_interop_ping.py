@@ -271,7 +271,6 @@ class Ping(Realm):
             if(len(d_list)==len(expected_val)):
                 for i in range(len(d_list)):
                     device_map[d_list[i]]=expected_val[i]
-                #print("DEVVVVVVVV",device_map)
                 obj.update_device_csv("device.csv",'PingPacketLoss',device_map)
                 self.csv_name="device.csv"
             else:
@@ -993,7 +992,7 @@ effectively over the network and pinpoint potential issues affecting connectivit
 
     # selecting real clients if --real flag is specified
     if (args.real):
-        Devices = RealDevice(manager_ip=mgr_ip, selected_bands=[])
+        Devices = RealDevice(manager_ip=mgr_ip, selected_bands=[]) 
         Devices.get_devices()
         ping.Devices = Devices
         #ping.select_real_devices(real_devices=Devices)
@@ -1020,8 +1019,9 @@ effectively over the network and pinpoint potential issues affecting connectivit
                 groups_list=df1.to_dict(orient='list')
                 group_devices={}
                
-                for adb in adbresponse:   
-                    group_devices[adb['serial']]=adb['eid']
+                for adb in adbresponse:
+                    if adb['eid']!='':   
+                        group_devices[adb['serial']]=adb['eid']
                 for res in resource_manager:
                     all_res[res['hostname']]=res['shelf']+'.'+res['resource']
                 eid_list=[]
