@@ -806,7 +806,7 @@ class Youtube(Realm):
         mac=0
         linux=0
 
-        print(data)
+        #print(data)
 
         for i in range(0,len(self.real_sta_os_types)):
 
@@ -845,8 +845,8 @@ class Youtube(Realm):
                     "OptimalRes": stats.get("OptimalRes", ""),
                 })
         # print(mydatajson)
-        print("checking mydatajson")
-        print(self.mydatajson)
+        #print("checking mydatajson")
+        #print(self.mydatajson)
 
         if(self.do_webUI):
             self.report = lf_report(_output_pdf='youtube_streaming.pdf',
@@ -1360,8 +1360,8 @@ def main():
 
 
 
-        print("===============================================")
-        print("Checking args.resources value",args.resources)
+        # print("===============================================")
+        # print("Checking args.resources value",args.resources)
 
         
 
@@ -1555,8 +1555,8 @@ def main():
         if(do_webUI):
             time.sleep(3)
             final_data = youtube.get_last_result_yt()
-            print("checking final data =========================")
-            print(final_data)
+            # print("checking final data =========================")
+            # print(final_data)
             youtube.create_report(final_data,youtube.ui_report_dir)
         else:
             youtube.create_report(youtube.data,'')

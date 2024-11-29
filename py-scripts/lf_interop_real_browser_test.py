@@ -1939,7 +1939,7 @@ def main():
                     print("Available devices:", device_list)
                     args.device_list = input("Enter the desired resources to run the test:")
                     dev1_list=args.device_list.split(',')   
-                    # asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
+                    asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
                     obj.android_devices = obj.devices.get_devices()
                     # Query user to select devices if no resource IDs are provided
                     selected_devices,report_labels,selected_macs = obj.devices.query_user(device_list=dev1_list)

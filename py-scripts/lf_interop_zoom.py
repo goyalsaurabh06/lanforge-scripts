@@ -633,15 +633,15 @@ class ZoomAutomation(Realm):
                 if not connection_status[name]:  # Check only for connections not yet stopped
                     # Send a request for the current connection
                     response = self.json_get(f'/generic/{name}')
-                    print("checking response",response)
+                    # print("checking response",response)
 
                     cx_status = response.get('endpoint', {}).get('status', '')
 
-                    print("Checking the value of cx state",cx_status)
+                    # print("Checking the value of cx state",cx_status)
 
 
                     if cx_status in ['WAITING', 'Stopped']:
-                        print("checking whether going inside this loop or not")
+                        # print("checking whether going inside this loop or not")
                         connection_status[name] = True
                         logging.info(f"Connection {name} is now stopped.")
 
@@ -688,7 +688,7 @@ class ZoomAutomation(Realm):
         9. Returns the sorted list of selected real station names.
 
         """
-        print("checking the value of real_sta_list in select_real_devices method",real_sta_list)
+        #print("checking the value of real_sta_list in select_real_devices method",real_sta_list)
         # Query and retrieve all user-defined real stations if `real_sta_list` is not provided
         if real_sta_list is None:
             self.real_sta_list, _, _ = real_device_obj.query_user()
@@ -1362,7 +1362,7 @@ def main():
                 
                 
                     config_obj.initiate_group()
-                    #asyncio.run(config_obj.connectivity(config_devices))
+                    asyncio.run(config_obj.connectivity(config_devices))
             
                     adbresponse=config_obj.adb_obj.get_devices()
                     resource_manager=config_obj.laptop_obj.get_devices()
@@ -1421,7 +1421,7 @@ def main():
                         if(args.group_name==None and args.file_name==None and args.profile_name==None):
                             dev_list=args.resources.split(',')
                             dev_list.insert(0,args.zoom_host)
-                            #asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
+                            asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
                             args.resources = ",".join(id for id in dev_list)
                     else:
 
@@ -1465,7 +1465,7 @@ def main():
                          args.resources = zm_host+","+args.resources
 
                          dev1_list=args.resources.split(',')
-                         #asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
+                         asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
 
 
 
