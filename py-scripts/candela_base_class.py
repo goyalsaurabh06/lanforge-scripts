@@ -132,12 +132,12 @@ class Candela:
         response = self.api_post('/cli-json/set_wifi_radio', payload=radio_config)
         return response
     
-    def start_sniffer(self, ssh_username='lanforge', ssh_password='lanforge', interface='sniffer0', pcap_name='~/Desktop/sniff.pcap'):
+    def start_sniffer(self, ssh_username='lanforge', ssh_password='lanforge', interface='wiphy0', pcap_name='~/Desktop/sniff.pcap'):
         """
         Method to start sniffing on a selected interface with a pcap name.
 
         Args:
-            interface (str, optional): Interface to start the tshark sniffer. Defaults to 'eth1'.
+            interface (str, optional): Interface to start the tshark sniffer. Defaults to 'wiphy0'.
             pcap_name (str, optional): PCAP name to store the sniffer output. Defaults to '~/Desktop/sniff.pcap'.
         """
 
@@ -147,10 +147,11 @@ class Candela:
                               ssh_password=ssh_password,
                               sniff_radio=interface,
                               sniff=True,
-                              attenuators=['1','1'])
+                              attenuators=['1','1'],
+                              sniff_only=True)
         
         self.sniff_obj.connect()
-        self.sniff_obj.start_sniff(interface=interface, pcap_name=pcap_name)
+        self.sniff_obj.start_sniff(interface=self.sniff_obj.sniffer_name, pcap_name=pcap_name)
         self.sniff_obj.disconnect()
 
     def stop_sniffer(self):
@@ -3495,9 +3496,7 @@ class Candela:
 
         Args:
 
-            attenuator (str): Attenuator serial.
-
-            attenuator_modules (list): List of attenuator modules. Example: ['0,1', '2,3']
+            attenuators (list): List of attenuator serials.
 
             bssids (list): List of BSSIDs of the APs.
 
@@ -3565,8 +3564,7 @@ class Candela:
             self.roam_test(**kwargs)
     
     def roam_test(self,
-                    attenuator,
-                    attenuator_modules,
+                    attenuators,
                     bssids,
                     device_list,
                     wait_time=60,
@@ -3584,8 +3582,7 @@ class Candela:
         self.roam_test_object = Roam(
             lanforge_ip=self.lanforge_ip,
             port=self.port,
-            attenuator=attenuator,
-            attenuator_modules=attenuator_modules,
+            attenuators=attenuators,
             bssids=bssids,
             step=step,
             max_attenuation=max_attenuation,
@@ -4271,7 +4268,7 @@ ftp_test=Candela(ip='192.168.242.2',port=8080)
 # candela_apis.start_zoom(duration=2 , sigin_email = "test@gmail.com" ,sigin_passwd ="test@1" ,participants=10 ,audio = True ,video = True)
 
 # To Run Roam Test
-# candela_apis.start_roam_test(attenuator='1.1.3192', attenuator_modules=['0,1', '2,3'],
+# candela_apis.start_roam_test(attenuators=['1.1.1031', '1.1.3374'],
 #                              device_list=['1.11.wlan0', '1.13.wlan0'],
 #                              bssids=['90:3c:b3:b1:70:0d', '90:3c:b3:6c:41:c5'],
 #                              wait_time=1,
@@ -4299,7 +4296,7 @@ ftp_test=Candela(ip='192.168.242.2',port=8080)
 # candela_apis.set_radio_channel(channel=10, radio='1.1.wiphy0')
 
 # To start sniffer
-# candela_apis.start_sniffer(interface='sniffer0', pcap_name='~/Desktop/sniff.pcap')
+# candela_apis.start_sniffer(interface='wiphy0', pcap_name='~/Desktop/sniff.pcap')
 
 # To stop sniffer
 # candela_apis.stop_sniffer()

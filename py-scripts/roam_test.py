@@ -7,12 +7,13 @@ import sys
 import argparse
 import time
 import logging
-import datetime
+from datetime import datetime
 import importlib
 import paramiko
 import traceback
 import csv
 import pandas as pd
+import pyshark
 # from itertools import combinations # to generate pair combinations for attenuators
 
 
@@ -46,8 +47,9 @@ class Roam(Realm):
                 #  ap2_bssid=None,
                 #  attenuator1=None,
                 #  attenuator2=None,
-                 attenuator='',
-                 attenuator_modules=[],
+                attenuators=[],
+                #  attenuator='',
+                #  attenuator_modules=[],
                  bssids=[],
                  step=100,
                  max_attenuation=950,
@@ -70,7 +72,8 @@ class Roam(Realm):
                  iterations=None,
                  softroam=True,
                  real_devices=True,expected_passfail_val=None,
-                 csv_name=None
+                 csv_name=None,
+                 sniff_only=False,
                  ):
         super().__init__(lanforge_ip, port)
 
@@ -82,10 +85,11 @@ class Roam(Realm):
         # self.ap2_bssid = ap2_bssid
         # self.attenuator1 = attenuator1
         # self.attenuator2 = attenuator2
-        self.attenuator = attenuator
-        self.attenuator_modules = []
-        for atten_module_comb in attenuator_modules:
-            self.attenuator_modules.append(atten_module_comb.split(','))
+        self.attenuators = attenuators
+        # self.attenuator = attenuator
+        # self.attenuator_modules = []
+        # for atten_module_comb in attenuator_modules:
+        #     self.attenuator_modules.append(atten_module_comb.split(','))
         self.step = step
         self.max_attenuation = max_attenuation
         self.bssids = bssids
@@ -130,27 +134,33 @@ class Roam(Realm):
         self.expected_passfail_val=expected_passfail_val
         self.csv_name=csv_name
 
-        if(len(self.attenuator_modules) == 1):
-            logging.error('Cannot perform roaming with only one module. Please provide atleast two modules.')
-            exit(1)
-        # self.attenuator_combinations = list(combinations(self.attenuators, 2)) # generating 2 pair combinations for the given attenuators
-        self.attenuator_combinations  = []
-        attenuators = self.attenuator_modules + [self.attenuator_modules[0]]
-        for atten_index in range(len(attenuators) - 1):
-            self.attenuator_combinations.append((attenuators[atten_index], attenuators[atten_index + 1]))
-        logging.info('Test will be performed on the APs with the following module combinations {}'.format(self.attenuator_combinations))
+        if not sniff_only:
+            if(len(self.attenuators) == 1):
+                logging.error('Cannot perform roaming with only one attenuator. Please provide atleast two attenuators.')
+            # if(len(self.attenuator_modules) == 1):
+            #     logging.error('Cannot perform roaming with only one module. Please provide atleast two modules.')
+                exit(1)
+            # self.attenuator_combinations = list(combinations(self.attenuators, 2)) # generating 2 pair combinations for the given attenuators
+            self.attenuator_combinations  = []
+            attenuators = self.attenuators + [self.attenuators[0]]
+            # attenuators = self.attenuator_modules + [self.attenuator_modules[0]]
+            for atten_index in range(len(attenuators) - 1):
+                self.attenuator_combinations.append((attenuators[atten_index], attenuators[atten_index + 1]))
+            logging.info('Test will be performed on the APs with the following attenuator combinations {}'.format(self.attenuator_combinations))
+            # logging.info('Test will be performed on the APs with the following module combinations {}'.format(self.attenuator_combinations))
 
-        all_attenuators = self.atten_list()
-        if(all_attenuators is None or all_attenuators == []):
-            logging.error('There are no attenuators in the given LANforge {}. Exiting the test.'.format(self.lanforge_ip))
-            exit(1)
-        else:
-            for atten_serial in all_attenuators:
-                atten_serial_name, atten_values = list(atten_serial.keys())[0], list(atten_serial.values())[0]
-                if(atten_serial_name != self.attenuator):
-                    if(atten_values['state'] != 'Phantom'):
-                        logging.info('Attenuator {} is not in the test attenuators list. Setting the attenuation value to max.'.format(atten_serial_name))
-                        self.set_atten(atten_serial_name, self.max_attenuation)
+            all_attenuators = self.atten_list()
+            if(all_attenuators is None or all_attenuators == []):
+                logging.error('There are no attenuators in the given LANforge {}. Exiting the test.'.format(self.lanforge_ip))
+                exit(1)
+            else:
+                for atten_serial in all_attenuators:
+                    atten_serial_name, atten_values = list(atten_serial.keys())[0], list(atten_serial.values())[0]
+                    if(atten_serial_name not in self.attenuators):
+                    # if(atten_serial_name != self.attenuator):
+                        if(atten_values['state'] != 'Phantom'):
+                            logging.info('Attenuator {} is not in the test attenuators list. Setting the attenuation value to max.'.format(atten_serial_name))
+                            self.set_atten(atten_serial_name, self.max_attenuation)
 
         if self.sniff:
             self.sniff_radio_resource, self.sniff_radio_shelf, self.sniff_radio_port, _ = self.name_to_eid(
@@ -196,28 +206,39 @@ class Roam(Realm):
             self.stop_cx(cx_name)
 
     def set_attenuators(self, atten1, atten2):
-        for atten_module in atten1:
-            logging.info('Setting attenuation to {} for module {}'.format(
-                0, atten_module))
-            self.set_atten(eid=self.attenuator, atten_idx=atten_module, atten_ddb=0)
+        logging.info('Setting attenuation to {} for attenuator {}'.format(
+            0, atten1))
+        self.set_atten(atten1, 0)
+        # for atten_module in atten1:
+        #     logging.info('Setting attenuation to {} for module {}'.format(
+        #         0, atten_module))
+        #     self.set_atten(eid=self.attenuator, atten_idx=atten_module, atten_ddb=0)
 
         logging.info(
-            'Setting active module as {}'.format(atten1))
+            'Setting active attenuator as {}'.format(atten1))
+            # 'Setting active module as {}'.format(atten1))
         self.active_attenuator = atten1
 
         logging.info(
-            'Setting passive module as {}'.format(atten2))
+            'Setting passive attenuator as {}'.format(atten2))
+            # 'Setting passive module as {}'.format(atten2))
         self.passive_attenuator = atten2
 
-        for atten_module in atten2:
-            logging.info('Setting attenuation to {} for module {}'.format(
-                self.max_attenuation, atten_module))
-            self.set_atten(eid=self.attenuator, atten_idx=atten_module, atten_ddb=self.max_attenuation)
+        logging.info('Setting attenuation to {} for attenuator {}'.format(
+            self.max_attenuation, atten2))
+        self.set_atten(atten2, self.max_attenuation)
+        # for atten_module in atten2:
+        #     logging.info('Setting attenuation to {} for module {}'.format(
+        #         self.max_attenuation, atten_module))
+        #     self.set_atten(eid=self.attenuator, atten_idx=atten_module, atten_ddb=self.max_attenuation)
 
-        for atten in self.attenuator_modules:
+        for atten in self.attenuators:
+        # for atten in self.attenuator_modules:
             if(atten not in [atten1, atten2]):
-                logging.info('Setting unused module {} value to maximum attenuation.'.format(atten))
-                self.set_atten(eid=self.attenuator, atten_idx=atten, atten_ddb=self.max_attenuation)
+                logging.info('Setting unused attenuator {} value to maximum attenuation.'.format(atten))
+                self.set_atten(atten, self.max_attenuation)
+                # logging.info('Setting unused module {} value to maximum attenuation.'.format(atten))
+                # self.set_atten(eid=self.attenuator, atten_idx=atten, atten_ddb=self.max_attenuation)
 
     def get_port_data(self, station, field):
         shelf, resource, port = station.split('.')
@@ -236,7 +257,8 @@ class Roam(Realm):
     def create_monitor(self):
         self.cleanup()
         self.monitor.create(resource_=self.sniff_radio_resource,
-                            radio_=self.sniff_radio_port, channel=self.channel, frequency=self.frequency, name_='sniffer0')
+                            radio_=self.sniff_radio_port, channel=self.channel, name_='sniffer0')
+        self.sniffer_name = 'sniffer0'
 
     def connect(self):
         """
@@ -290,12 +312,17 @@ class Roam(Realm):
         Method to start sniffing on a selected interface with a pcap name.
 
         Args:
-            interface (str, optional): Interface to start the tshark sniffer. Defaults to 'eth1'.
+            interface (str, optional): Interface to start the tshark sniffer. Defaults to 'sniffer0'.
             pcap_name (str, optional): PCAP name to store the sniffer output. Defaults to '~/Desktop/sniff.pcap'.
         """
 
         self.create_monitor()
         self.pcap_names.append(pcap_name)
+        # capture_filter = "'(wlan type mgt subtype auth) or (wlan type mgt subtype reassoc-resp)'"
+        # sniff_cmd = 'tshark -i ' + interface + ' -f "' + capture_filter + '" -w ' + pcap_name + ' > /dev/null 2>&1 &'
+        
+        #sniff_cmd = 'tshark -i {} -f {} -w {} > /dev/null 2>&1 &'.format(
+        #    interface, capture_filter, pcap_name)
         sniff_cmd = 'tshark -i {} -w {} > /dev/null 2>&1 &'.format(
             interface, pcap_name)
         logging.info('{}'.format(sniff_cmd))
@@ -310,11 +337,13 @@ class Roam(Realm):
     
     def save_files(self, test_dir_name=""):
         # self.connect()
+        self.local_pcap_files = []
         if os.path.exists(test_dir_name):
             for file in self.pcap_names:
                 try:
                     print("Test Directory PATH: ", os.getcwd() + '/' + test_dir_name + '/' + file.split('/')[-1])
                     self.sftp.get(remotepath=file, localpath=os.getcwd() + '/' + test_dir_name + '/' + file.split('/')[-1])
+                    self.local_pcap_files.append(os.getcwd() + '/' + test_dir_name + '/' + file.split('/')[-1])
                 except Exception as e:
                     print('SFTP failed with exception {}.\nFile may be corrupted while transfer.'.format(e))
                 # self.sftp.close()
@@ -332,6 +361,13 @@ class Roam(Realm):
         stop_sniff_cmd = 'killall -9 tshark'
         stdin, stdout, stderr = self.ssh_execute(stop_sniff_cmd)
 
+    
+    def get_sta_macs(self):
+        self.mac_data = {}
+        for station in self.station_list:
+            mac = self.get_port_data(station,'mac')
+            self.mac_data[station] = mac
+    
     def get_bssids(self):
         bssids = []
         removable_stations = []
@@ -365,6 +401,58 @@ class Roam(Realm):
             for j in i:
                 sta_list.append(j)
         return sta_list
+    
+    def calculate_roam_time(self, sta_mac, bssid, pcap_file):
+        display_filter = f'(( wlan.sa == {sta_mac} and wlan.da == {bssid} ) or ( wlan.sa == {bssid} and wlan.da == {sta_mac} )) and !(wlan.fc.type_subtype == 0x000e or wlan.fc.type_subtype == 0x000d or wlan.fc.type_subtype == 0x0000 or wlan.fc.type_subtype == 0x0001 or wlan.fc.type_subtype == 0x000c or wlan.fc.type_subtype == 0x002c or wlan.fc.type_subtype == 0 or wlan.fc.type_subtype == 5 or wlan.fc.type_subtype == 4 or wlan.fc.type_subtype == 0x0024 or eapol)'
+        logging.info(display_filter)
+        final_data = {}
+        capture = pyshark.FileCapture(input_file=pcap_file, display_filter=display_filter)
+        latest_auth_time = ''
+        latest_res_time = ''
+        roam_times = []
+        for packet in capture:
+            if(packet.wlan.fc_type_subtype == '0x000b' and packet['wlan.mgt'].wlan_fixed_auth_seq == '0x0001'):
+                latest_auth_time = packet.frame_info.time_epoch
+            if(packet.wlan.fc_type_subtype == '0x0002'):
+                if(len(roam_times) == 0):
+                    roam_times.append([latest_auth_time])
+                else:
+                    roam_times.insert(len(roam_times), [latest_auth_time])
+            if(packet.wlan.fc_type_subtype == '0x0003'):
+                # print(roam_times)
+                latest_res_time = packet.frame_info.time_epoch
+                if(roam_times == []):
+                    roam_times.append(['', latest_res_time])
+                else:
+                    roam_times[-1].append(latest_res_time)
+        
+        roam_diff_calcs = []
+
+        for timestamps in roam_times:
+            if(len(timestamps) != 1):
+                starttime, endtime = timestamps[0], timestamps[-1]
+                # print(starttime, endtime)
+                if(len(starttime) == 0):
+                    roam_diff_calcs.append('Missing Authentication or Request Packet')
+                    continue
+                else:
+                    starttime = float(starttime)
+                
+                if(len(endtime) == 0):
+                    roam_diff_calcs.append('Missing Reassociation Response')
+                    continue
+                else:
+                    endtime = float(endtime)
+
+                starttime = datetime.fromtimestamp(starttime)
+                endtime = datetime.fromtimestamp(endtime)
+                roam_diff_calcs.append((endtime - starttime).microseconds * 0.001)
+        if len(roam_diff_calcs) > 0:
+            roam_diff_calcs = [roam_diff_calcs[-1]]
+        # print(sta_mac, '\t-\t', roam_diff_calcs)
+        final_data[sta_mac] = roam_diff_calcs
+        capture.close()
+        return roam_diff_calcs
 
     def create_clients(self, start_id=0, sta_prefix='sta'):
         station_profile = self.new_station_profile()
@@ -581,6 +669,7 @@ class Roam(Realm):
         for bssid in self.bssids:
             self.bssid_based_totals[bssid.upper()] = 0
 
+        self.get_sta_macs()
         if (self.iteration_based):
             logging.info(
                 'Performing Roaming Test for {} iterations.'.format(self.iterations))
@@ -598,7 +687,8 @@ class Roam(Realm):
                     
                     # for displaying purpose
                     print('========================================================================')
-                    print('Roaming test started on the attenuator module combination {} - {}'.format(atten_set[0], atten_set[1]))
+                    print('Roaming test started on the attenuator combination {} - {}'.format(atten_set[0], atten_set[1]))
+                    # print('Roaming test started on the attenuator module combination {} - {}'.format(atten_set[0], atten_set[1]))
                     print('========================================================================')
 
                     atten1, atten2 = atten_set
@@ -613,17 +703,25 @@ class Roam(Realm):
 
                     for attenuator_change_index in range(len(self.attenuator_increments)):
 
-                        for atten_module in self.active_attenuator:
-                            logging.info('Setting the attenuation to {} for attenuator module {}'.format(
-                                self.attenuator_increments[attenuator_change_index], atten_module))
-                            self.set_atten(
-                                eid=self.attenuator, atten_idx=atten_module, atten_ddb=self.attenuator_increments[attenuator_change_index])
+                        logging.info('Setting the attenuation to {} for attenuator {}'.format(
+                            self.attenuator_increments[attenuator_change_index], self.active_attenuator))
+                        self.set_atten(
+                            self.active_attenuator, self.attenuator_increments[attenuator_change_index])
+                        # for atten_module in self.active_attenuator:
+                        #     logging.info('Setting the attenuation to {} for attenuator module {}'.format(
+                        #         self.attenuator_increments[attenuator_change_index], atten_module))
+                        #     self.set_atten(
+                        #         eid=self.attenuator, atten_idx=atten_module, atten_ddb=self.attenuator_increments[attenuator_change_index])
 
-                        for atten_module in self.passive_attenuator:
-                            logging.info('Setting the attenuation to {} for attenuator module {}'.format(
-                                self.attenuator_decrements[attenuator_change_index], atten_module))
-                            self.set_atten(
-                                eid=self.attenuator, atten_idx=atten_module, atten_ddb=self.attenuator_decrements[attenuator_change_index])
+                        logging.info('Setting the attenuation to {} for attenuator {}'.format(
+                            self.attenuator_decrements[attenuator_change_index], self.passive_attenuator))
+                        self.set_atten(
+                            self.passive_attenuator, self.attenuator_decrements[attenuator_change_index])
+                        # for atten_module in self.passive_attenuator:
+                        #     logging.info('Setting the attenuation to {} for attenuator module {}'.format(
+                        #         self.attenuator_decrements[attenuator_change_index], atten_module))
+                        #     self.set_atten(
+                        #         eid=self.attenuator, atten_idx=atten_module, atten_ddb=self.attenuator_decrements[attenuator_change_index])
 
                         logging.info(
                             'Waiting for {} seconds before monitoring the stations'.format(self.wait_time))
@@ -638,12 +736,16 @@ class Roam(Realm):
                                     'BSSID before roaming':   before_iteration_bssid_data[bssid_index],
                                     'BSSID after roaming':   current_step_bssid_data[bssid_index],
                                     'Signal Strength':   self.get_port_data(self.station_list[bssid_index], 'signal'),
+                                    'Channel': self.get_port_data(self.station_list[bssid_index], 'channel'),
+                                    'MAC': self.mac_data[self.station_list[bssid_index]],
+                                    'pcap': 'iteration_{}_roam_{}.pcap'.format(current_iteration, self.attenuator_combinations.index(atten_set)),
                                     'Status': before_iteration_bssid_data[bssid_index] != current_step_bssid_data[bssid_index]
                                 }
                         # print(current_iteration_roam_data)
                     # print(current_iteration_roam_data)
-                    atten_set = [','.join(comb) for comb in atten_set]
-                    self.roam_data[current_iteration][' '.join(atten_set)] = current_iteration_roam_data
+                    self.roam_data[current_iteration][atten_set] = current_iteration_roam_data
+                    # atten_set = [','.join(comb) for comb in atten_set]
+                    # self.roam_data[current_iteration][' '.join(atten_set)] = current_iteration_roam_data
                     if self.sniff:
                         logging.info('Stopping sniffer')
                         self.stop_sniff()
@@ -666,6 +768,32 @@ class Roam(Realm):
         return self.roam_data
 
     def generate_report(self, result_json=None, result_dir='Roam_Test_Report', report_path=''):
+        logging.info('Generating Report')
+
+        report = lf_report(_output_pdf='roam_test.pdf',
+                           _output_html='roam_test.html',
+                           _results_dir_name=result_dir,
+                           _path=report_path)
+        report_path = report.get_path()
+        report_path_date_time = report.get_path_date_time()
+        logging.info('path: {}'.format(report_path))
+        logging.info('path_date_time: {}'.format(report_path_date_time))
+
+        # pulling pcaps
+        if self.sniff:
+            self.save_files(test_dir_name=report_path_date_time)
+        
+            for iteration in self.roam_data.keys():
+                for atten_set in self.roam_data[iteration].keys():
+                    for station in self.roam_data[iteration][atten_set].keys():
+                        # if self.roam_data[iteration][atten_set][station]['Status']:
+                            destination_bssid = self.roam_data[iteration][atten_set][station]['BSSID after roaming']
+                            sta_mac = self.roam_data[iteration][atten_set][station]['MAC']
+                            pcap = os.getcwd() + '/' + report_path_date_time + '/' + self.roam_data[iteration][atten_set][station]['pcap']
+                            if destination_bssid in self.bssids:
+                                logging.info('Calculating roam time for station {} in the pcap {}'.format(station, pcap))
+                                self.roam_data[iteration][atten_set][station]['roam_time'] = self.calculate_roam_time(sta_mac=sta_mac, bssid=destination_bssid, pcap_file=pcap)
+
         if result_json is not None:
             self.roam_data = result_json
 
@@ -743,17 +871,6 @@ class Roam(Realm):
                 self.android += 1
         
         logging.info('{}'.format(device_level_data))
-        
-        logging.info('Generating Report')
-
-        report = lf_report(_output_pdf='roam_test.pdf',
-                           _output_html='roam_test.html',
-                           _results_dir_name=result_dir,
-                           _path=report_path)
-        report_path = report.get_path()
-        report_path_date_time = report.get_path_date_time()
-        logging.info('path: {}'.format(report_path))
-        logging.info('path_date_time: {}'.format(report_path_date_time))
 
         # setting report title
         report.set_title('Roam Test Report')
@@ -840,15 +957,15 @@ class Roam(Realm):
             'BSSID based Successful vs Failed')
         report.build_table_title()
         x_fig_size = 25
-        y_fig_size = len(self.bssids) * .5 + 4
+        y_fig_size = len(self.bssids) * 2 + 4
 
         # graph for above
         bssid_based_total_attempted_roams = [total_attempted_roams // 2] * len(list(self.bssid_based_totals.values()))
         bssid_based_failed_roams = [bssid_based_total_attempted_roams[roam] - list(self.bssid_based_totals.values())[roam] for roam in range(len(self.bssid_based_totals.values()))]
-        bssid_based_graph = lf_bar_graph_horizontal(_data_set=[list(self.bssid_based_totals.values())],
+        bssid_based_graph = lf_bar_graph_horizontal(_data_set=[list(self.bssid_based_totals.values()), bssid_based_failed_roams],
                                         _xaxis_name='Roam Count',
                                         _yaxis_name='BSSIDs',
-                                        _label=['Roams'],
+                                        _label=['Successful Roams', 'Failed Roams'],
                                         _graph_image_name='BSSID based Successful vs Failed',
                                         _yaxis_label=list(self.bssid_based_totals.keys()),
                                         _yaxis_categories=list(self.bssid_based_totals.keys()),
@@ -856,7 +973,7 @@ class Roam(Realm):
                                         _yticks_font=8,
                                         _graph_title='BSSID based Successful vs Failed',
                                         _title_size=16,
-                                        _color=['darkgreen', 'darkgreen', 'red'],
+                                        _color=['darkgreen', 'red'],
                                         _color_edge=['black'],
                                         _bar_height=0.15,
                                         _figsize=(x_fig_size, y_fig_size),
@@ -865,7 +982,7 @@ class Roam(Realm):
                                         _dpi=96,
                                         _show_bar_value=True,
                                         _enable_csv=True,
-                                        _color_name=['darkgreen', 'darkgreen', 'red'])
+                                        _color_name=['darkgreen', 'red'])
 
         bssid_based_graph_png = bssid_based_graph.build_bar_graph_horizontal()
         logging.info('graph name {}'.format(bssid_based_graph_png))
@@ -878,7 +995,8 @@ class Roam(Realm):
 
         bssid_based_roam_data = pd.DataFrame({
             'BSSID': list(self.bssid_based_totals.keys()),
-            'Successful Roams': list(self.bssid_based_totals.values())
+            'Successful Roams': list(self.bssid_based_totals.values()),
+            'Failed Roams': bssid_based_failed_roams
         })
         # print(bssid_based_roam_data)
         report.set_table_dataframe(bssid_based_roam_data)
@@ -890,7 +1008,7 @@ class Roam(Realm):
             'Station based Successful vs Failed')
         report.build_table_title()
         x_fig_size = 25
-        y_fig_size = len(self.station_based_roam_count.keys()) * .5 + 4
+        y_fig_size = len(self.station_based_roam_count.keys()) * 2 + 4
 
         # graph for above
         station_based_total_attempted_roams = [ len(self.attenuator_combinations) * self.iterations ] * len(self.station_based_roam_count.keys())
@@ -969,7 +1087,7 @@ class Roam(Realm):
                 'Device': [ device_level_data[station]['Device'] for station in self.station_based_roam_count.keys()],
                 'OS': [ device_level_data[station]['OS'] for station in self.station_based_roam_count.keys()],
                 'MAC': [ device_level_data[station]['mac'] for station in self.station_based_roam_count.keys()],
-                'Signal Strength (dBm)': [ device_level_data[station]['Signal'] for station in self.station_based_roam_count.keys()],
+                # 'Signal Strength (dBm)': [ device_level_data[station]['Signal'] for station in self.station_based_roam_count.keys()],
                 'Attempted Roams': station_based_total_attempted_roams,
                 'Successful Roams': list(self.station_based_roam_count.values()),
                 'Failed Roams': station_based_failed_roams,
@@ -997,19 +1115,44 @@ class Roam(Realm):
                 'Expected Roams':test_input_list,
                 'Status':pass_fail_list
             })
-        print(station_based_roam_data)
+        # print(station_based_roam_data)
         report.set_table_dataframe(station_based_roam_data)
         report.build_table()
+
+        # roam time tables
+        logging.info(self.roam_data)
+        if self.sniff:
+            roam = 0
+            for iteration in self.roam_data.keys():
+                for atten_set in self.roam_data[iteration].keys():
+                    roam += 1
+                    logging.info('Roam time table for Roam {}'.format(roam))
+                    report.set_table_title(
+                            'Roam time data in Iteration {} Roam {}'.format(iteration, roam)
+                        )
+                    report.build_table_title()
+                    roam_table_data = {
+                        'Station': [ station for station in self.roam_data[iteration][atten_set].keys() ],
+                        'MAC': [ self.roam_data[iteration][atten_set][station]['MAC'] for station in self.roam_data[iteration][atten_set].keys() ],
+                        'Channel': [ self.roam_data[iteration][atten_set][station]['Channel'] for station in self.roam_data[iteration][atten_set].keys() ],
+                        'Signal Strength (dBm)': [ self.roam_data[iteration][atten_set][station]['Signal Strength'].replace('dBm', '') for station in self.roam_data[iteration][atten_set].keys() ],
+                        'BSSID before roaming': [ self.roam_data[iteration][atten_set][station]['BSSID before roaming'] for station in self.roam_data[iteration][atten_set].keys() ],
+                        'BSSID after roaming': [ self.roam_data[iteration][atten_set][station]['BSSID after roaming'] for station in self.roam_data[iteration][atten_set].keys() ],
+                        'Roam time (ms)': [ self.roam_data[iteration][atten_set][station]['roam_time'][0] 
+                                            if 'roam_time' in self.roam_data[iteration][atten_set][station].keys() and self.roam_data[iteration][atten_set][station]['roam_time'] != [] 
+                                            else 'NA'
+                                            for station in self.roam_data[iteration][atten_set].keys() ]
+                    }
+                    roam_table_data = pd.DataFrame(roam_table_data)
+                    print(roam_table_data)
+                    report.set_table_dataframe(roam_table_data)
+                    report.build_table()
 
         # closing
         report.build_custom()
         report.build_footer()
         report.write_html()
         report.write_pdf()
-
-        # pulling pcaps
-        if self.sniff:
-            self.save_files(test_dir_name=report_path_date_time)
 
         # self.disconnect()
 
@@ -1077,13 +1220,17 @@ def main():
                           " client you want to create i.e 11r,11r-sae,"
                           " 11r-sae-802.1x or simple as none", default="11r")
 
-    required.add_argument('--attenuator',
-                          help='Attenuator serial',
-                          required=True)
+    # required.add_argument('--attenuator',
+    #                       help='Attenuator serial',
+    #                       required=True)
 
-    required.add_argument('--attenuator_modules',
+    # required.add_argument('--attenuator_modules',
+    #                       nargs='+',
+    #                       help='Attenuator modules', 
+    #                       required=True)
+    required.add_argument('--attenuators',
                           nargs='+',
-                          help='Attenuator modules', 
+                          help='Attenuator serials', 
                           required=True)
     required.add_argument('--bssids',
                           nargs='+',
@@ -1128,7 +1275,7 @@ def main():
 
     optional.add_argument('--channel',
                           help='Channel',
-                          type=str,
+                          type=int,
                           default='AUTO')
 
     optional.add_argument('--frequency',
@@ -1237,8 +1384,9 @@ def main():
             # ap2_bssid=args.ap2_bssid,
             # attenuator1=args.attenuator1,
             # attenuator2=args.attenuator2,
-            attenuator=args.attenuator,
-            attenuator_modules=args.attenuator_modules,
+            attenuators=args.attenuators,
+            # attenuator=args.attenuator,
+            # attenuator_modules=args.attenuator_modules,
             bssids=bssids,
             step=args.step,
             max_attenuation=args.max_attenuation,
@@ -1271,8 +1419,9 @@ def main():
             # ap2_bssid=args.ap2_bssid,
             # attenuator1=args.attenuator1,
             # attenuator2=args.attenuator2,
-            attenuator=args.attenuator,
-            attenuator_modules=args.attenuator_modules,
+            attenuators=args.attenuators,
+            # attenuator=args.attenuator,
+            # attenuator_modules=args.attenuator_modules,
             bssids=args.bssids,
             step=args.step,
             max_attenuation=args.max_attenuation,
