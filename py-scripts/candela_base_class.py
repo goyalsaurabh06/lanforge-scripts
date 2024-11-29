@@ -3545,10 +3545,14 @@ class Candela:
                 device_list.append(sta.split('.')[0]+'.'+sta.split('.')[1])
             if(not expected_passfail_val and csv_name==None):    
                 expected_list=input("Enter the expected number to roams for {} eg:2,3: ".format(device_list)).split(',')
-                for val in range(len(expected_list)):
-                    expected_dict[device_list[val]]=expected_list[val]
-                obj.update_device_csv("device.csv",'Roaming',expected_dict)
-                csv_name="device.csv"
+                if(len(device_list)==len(expected_list)):
+                    for val in range(len(expected_list)):
+                        expected_dict[device_list[val]]=expected_list[val]
+                    obj.update_device_csv("device.csv",'Roaming',expected_dict)
+                    csv_name="device.csv"
+                else:
+                    print("Enter correct number of values")
+                    exit(0)
             elif expected_passfail_val:
                 pass
         
