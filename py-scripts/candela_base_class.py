@@ -3565,6 +3565,7 @@ class Candela:
     
     def roam_test(self,
                     attenuators,
+                    sniff,
                     bssids,
                     device_list,
                     wait_time=60,
@@ -3573,7 +3574,7 @@ class Candela:
                     ssh_username='lanforge',
                     ssh_password='lanforge',
                     upstream='1.1.eth1',
-                    channel='AUTO',
+                    channel=36,
                     frequency=-1,
                     iterations=1,expected_passfail_val=None,csv_name=None
                   ):
@@ -3581,6 +3582,7 @@ class Candela:
             csv_name="device.csv"
         self.roam_test_object = Roam(
             lanforge_ip=self.lanforge_ip,
+            sniff=sniff,
             port=self.port,
             attenuators=attenuators,
             bssids=bssids,
@@ -4069,23 +4071,8 @@ class Candela:
 
 
 logger_config = lf_logger_config.lf_logger_config()
-# candela_apis = Candela(ip='192.168.214.61', port=8080)
-ftp_test=Candela(ip='192.168.242.2',port=8080)
-# candela_apis.start_http_test(
-#                             file_name='g219',group_name='grp1',profile_name='OpenWa',
-#                             # ssid='Dev_wpa2', password='lanforge',security='wpa2',
-#                             http_file_size='10MB',
-#                             # device_list=['1.95.wlan0'],
-#                             report_labels=['1.12 android phone369', '1.11 android v2109', '1.269 Win Dell', '1.13 android samsung059'],device_macs=['aa:b2:e7:22:af:0d', '86:20:53:95:46:0d', '40:1c:83:3c:81:15', '4e:c3:c0:d3:5b:9e'], target_per_ten=1000, upstream='eth1',
-#                             band='5G', background=False,server_ip='192.168.214.61',device_csv_name='device.csv')
-# ftp_test.start_http_test(
-#                             file_name='g242',group_name='grp1',profile_name='OpenWa',
-#                             # ssid='NETGEAR5G', password='lanforge',security='wpa2',
-#                             http_file_size='10MB',
-#                             # device_list=['1.110.wlan0', '1.20.wlan0', '1.115.wlan0'],
-#                             # report_labels=['1.110 Win DESKTOP-IUQFRCV', '1.20 android shelfB2_13', '1.115 Win DESKTOP-DSVHJ4L'],device_macs=['24:ee:9a:39:2e:6', '52:70:de:ba:98:4a', '34:f3:9a:eb:46:b4'], 
-#                             target_per_ten=1000, upstream='eth1',
-#                             band='5G', background=False,server_ip='192.168.242.2',device_csv_name='device.csv')
+candela_apis = Candela(ip='192.168.214.61', port=8080)
+# ftp_test=Candela(ip='192.168.214.219',port=8080)
 
 # ftp_test.start_th_test(traffic_type="lf_udp",
 #                             file_name='g242',group_name='grp1',profile_name='OpenWa',
@@ -4111,11 +4098,11 @@ ftp_test=Candela(ip='192.168.242.2',port=8080)
 
 
 # ROAMMMMM
-# candela_apis.start_roam_test(attenuator='1.1.3192', attenuator_modules=['0,1', '2,3'],
+# candela_apis.start_roam_test(attenuators=['1.1.1031', '1.1.90'],
 #                              device_list=['1.11.wlan0','1.12.wlan0'],
 #                              bssids=['90:3c:b3:b1:70:0d', '90:3c:b3:6c:41:c5'],
 #                              wait_time=1,
-#                              step=1000, background_run=False,csv_name='demo.csv')
+#                              step=1000, background_run=False,expected_passfail_val=2, sniff=True, channel=36)
 # candela_apis.generate_roam_test_report()
 
 
