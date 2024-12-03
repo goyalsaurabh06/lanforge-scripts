@@ -863,7 +863,7 @@ class LAPTOPS(Realm):
 class DeviceConfig(Realm):
     def __init__(self, lanforge_ip=None,
                  port=8080,file_name=None,
-                 _debug_on=False,csv_name=None,create_csv=False
+                 _debug_on=False,csv_name=None,create_csv=False,wait_time=60
                  
                  ):
         super().__init__(lfclient_host=lanforge_ip,
@@ -873,7 +873,7 @@ class DeviceConfig(Realm):
         self.file_name=file_name
         self.create_csv=create_csv
         self.csv_name=csv_name       
-
+        self.wait_time=wait_time
         # Objects for alptops and adb class  
         self.adb_obj = ADB_DEVICES(lanforge_ip=self.lanforge_ip)
         self.laptop_obj = LAPTOPS(lanforge_ip=self.lanforge_ip)
@@ -990,8 +990,7 @@ class DeviceConfig(Realm):
 
     def device_csv_file(self,csv_name='device.csv'):
         file_name = csv_name
-        columns = ['DeviceList', 'PingPacketLoss', 'L3_TCP_UL','L3_TCP_DL','L3_TCP_BiDi','L3_UDP_UL','L3_UDP_DL','L3_UDP_BiDi','Videostreaming','RealBrowser','HTTP','FTP','PortReset','Roaming']
-
+        columns = ['DeviceList', 'PingPacketLoss %', 'L3_TCP_UL Mbps','L3_TCP_DL Mbps','L3_TCP_BiDi Mbps','L3_UDP_UL Mbps','L3_UDP_DL Mbps','L3_UDP_BiDi Mbps','Videostreaming URLcount','RealBrowser URLcount','HTTP URLcount','FTP URLcount','PortReset No_of_connections','Roaming No_of_Successful Roams']
         if not os.path.exists(file_name):
             with open(file_name, mode='w', newline='') as file:
                 writer = csv.writer(file)
@@ -1386,7 +1385,7 @@ class DeviceConfig(Realm):
             group_names = list(config.keys())
             profile_names = list(config.values())
             
-            print("CONFIG",group_names,profile_names)
+            
             if len(group_names) != len(profile_names):
                 print("Wrong config for connecticity")
                 return
@@ -1396,7 +1395,7 @@ class DeviceConfig(Realm):
                 profiles = self.get_profiles(profile_names,flag)
             else:
                 profiles=self.get_profiles(profile_names)
-            print("+++++",group_device,profiles)
+            
             
             for device_obj in group_device:
                 # TODO : to check if device is available in system or not
@@ -1431,11 +1430,9 @@ class DeviceConfig(Realm):
         elif device_list and wifi_config:
             # based on the basis of just device list
             for device_obj in self.all_devices:
-                #print("device obj",device_obj)
                 device_obj["ssid"] = wifi_config.get("ssid")
                 device_obj["passwd"] = wifi_config.get("passwd")
                 device_obj["enc"] = wifi_config.get("enc")
-                print("after",device_obj)
                 if device_obj.get("serial") in device_list or device_obj.get("hostname") in device_list or (device_obj.get("shelf")+'.'+device_obj.get("resource")) in device_list or device_obj.get("eid") in device_list:
                     
                     device_obj["ieee80211"] = wifi_config.get("ieee80211")
@@ -1460,7 +1457,6 @@ class DeviceConfig(Realm):
 
                         selected_laptop_devices.append(device_obj)
                     else:
-                        print("CONSFGFFWDGIY",wifi_config)
                         device_obj["server_ip"] = wifi_config.get("server_ip")
                         selected_adb_devices.append(device_obj)
         else:
@@ -1496,8 +1492,8 @@ class DeviceConfig(Realm):
                 await self.adb_obj.configure_wifi(port_list=selected_adb_devices)
                 
                 if(selected_laptop_devices == []):  
-                    print("WAITING FOR 120 seconds")
-                    time.sleep(120)
+                    print("WAITING FOR {} seconds".format(self.wait_time))
+                    time.sleep(self.wait_time)
             if(selected_laptop_devices != []):
                 # if laptop['eap_method']!="" or laptop['eap_method']!= None or laptop['eap_method']!="NA":
                 await self.laptop_obj.rm_station(port_list=selected_laptop_devices)
@@ -1513,8 +1509,8 @@ class DeviceConfig(Realm):
                 time.sleep(10)
                 await self.laptop_obj.set_port(port_list=selected_laptop_devices)
                 
-                print("WAITING TOTAL 120 SECONDS FOR CONFIGURATION TO APPLY")
-                time.sleep(120)
+                print("WAITING TOTAL {} SECONDS FOR CONFIGURATION TO APPLY".format(self.wait_time))
+                time.sleep(self.wait_time)
             return self.monitor_connection(selected_adb_devices,selected_laptop_devices)
             
 
@@ -1675,7 +1671,11 @@ class DeviceConfig(Realm):
         df = pd.DataFrame(data=selected_t_devices).transpose()
         print("dF--",df)
         print(selected_devices)
-        return selected_devices
+        dev_list=[]
+        for eid in selected_devices:
+            dev_list.append(eid['eid'])
+        print(dev_list)
+        return dev_list
     
             
 
