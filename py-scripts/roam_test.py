@@ -1072,7 +1072,7 @@ class Roam(Realm):
             for row in rows:
                 device = row['DeviceList']
                 if device in res_list:
-                    test_input_list.append(row['Roaming'])
+                    test_input_list.append(row['Roaming No_of_Successful Roams'])
                     print(device,test_input_list)  
 
                 successful_roams=list(self.station_based_roam_count.values())
@@ -1370,7 +1370,7 @@ def main():
             if(len(device_list)==len(expected_list)):
                 for val in range(len(expected_list)):
                     expected_dict[device_list[val]]=expected_list[val]
-                obj.update_device_csv("device.csv",'Roaming',expected_dict)
+                obj.update_device_csv("device.csv",'Roaming No_of_Successful Roams',expected_dict)
                 args.csv_name="device.csv"
             else:
                 print("Enter correct number of values")

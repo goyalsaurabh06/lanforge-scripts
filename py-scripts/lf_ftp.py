@@ -128,6 +128,7 @@ class FtpTest(LFCliBase):
                  private_key=None,
                  ca_cert=None,
                  client_cert=None,
+                 wait_time=60,
                  pk_passwd=None,
                  pac_file=None,server_ip=None,
                  expected_passfail_val=None,
@@ -218,11 +219,12 @@ class FtpTest(LFCliBase):
         self.expected_passfail_val=expected_passfail_val
         self.csv_name=csv_name
         self.api_url = 'http://{}:{}'.format(self.host, self.port)
-
+        self.wait_time=wait_time
         logger.info("Test is Initialized")
 
     def query_realclients(self):
-        obj=DeviceConfig.DeviceConfig(lanforge_ip=self.host,file_name=self.file_name)
+        obj=DeviceConfig.DeviceConfig(lanforge_ip=self.host,file_name=self.file_name,wait_time=self.wait_time)
+        print("11111",self.device_list)
         if not self.expected_passfail_val and self.csv_name== None :
             obj.device_csv_file(csv_name="device.csv")
         if(self.group_name!=None and self.file_name!=None and self.device_list==[] and self.profile_name!=None):
@@ -233,7 +235,7 @@ class FtpTest(LFCliBase):
                 config_devices[selected_groups[i]]=selected_profiles[i]
             #print("CONFIGURED DICT",config_devices)
             obj.initiate_group()
-            connected_devices=asyncio.run(obj.connectivity(config_devices))
+            self.device_list=asyncio.run(obj.connectivity(config_devices))
         elif(self.device_list!=[]):
             #obj.initiate_group()
             # response = self.json_get("/resource/all")
@@ -279,8 +281,9 @@ class FtpTest(LFCliBase):
                 'server_ip':self.server_ip,
 
             }
-            self.device_list=self.device_list.split(',')
-            connected_devices=asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
+            if(type(self.device_list)==str):
+                self.device_list=self.device_list.split(',')
+            self.device_list=asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
             
         elif(self.device_list==[]):
             all_devices= obj.get_all_devices()
@@ -315,7 +318,7 @@ class FtpTest(LFCliBase):
                     device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["serial"])
             print("Available devices:", device_list)
             self.device_list = input("Enter the desired resources to run the test:").split(',')
-            connected_devices=asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
+            self.device_list=asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
 
         response = self.json_get("/resource/all")
         for key,value in response.items():
@@ -403,33 +406,33 @@ class FtpTest(LFCliBase):
         print("AVAILABLE DEVICES TO RUN TEST : ",self.user_list)
         logging.info(self.user_list)
 
-        if(self.group_name!=None and self.file_name!=None and self.device_list==[] and self.profile_name!=None):
-            #obj.initiate_group()
-            df1=obj.display_groups(obj.groups)
-            groups_list=df1.to_dict(orient='list')
-            group_devices=[]
-            ios_list=[]
-            for grp_name in groups_list.keys():
-                for g_name in selected_groups:
-                    if(grp_name==g_name):
-                        for j in groups_list[grp_name]:
-                            #print("j=",j)
-                            for i in self.user_list:
-                                if(i.split(' ')[1]=='android'):
-                                    for adb_dict in adbresponse:
-                                        if(adb_dict['serial']==j):
-                                            if(adb_dict['eid'] not in self.device_list):
-                                                if(adb_dict['eid'] not in self.device_list and adb_dict['os']!='iOS' and adb_dict['eid']!=''):
-                                                    self.device_list.append(adb_dict['eid'])
-                                                elif(adb_dict['os']=='iOS'and adb_dict['serial'] not in ios_list):
-                                                    ios_list.append(adb_dict['serial'])
-                                else: 
-                                    if(j==i.split(' ')[2]):
-                                        self.device_list.append(i.split(' ')[0])
-                                    #group_devices.append(j)
+        # if(self.group_name!=None and self.file_name!=None and self.device_list==[] and self.profile_name!=None):
+        #     #obj.initiate_group()
+        #     df1=obj.display_groups(obj.groups)
+        #     groups_list=df1.to_dict(orient='list')
+        #     group_devices=[]
+        #     ios_list=[]
+        #     for grp_name in groups_list.keys():
+        #         for g_name in selected_groups:
+        #             if(grp_name==g_name):
+        #                 for j in groups_list[grp_name]:
+        #                     #print("j=",j)
+        #                     for i in self.user_list:
+        #                         if(i.split(' ')[1]=='android'):
+        #                             for adb_dict in adbresponse:
+        #                                 if(adb_dict['serial']==j):
+        #                                     if(adb_dict['eid'] not in self.device_list):
+        #                                         if(adb_dict['eid'] not in self.device_list and adb_dict['os']!='iOS' and adb_dict['eid']!=''):
+        #                                             self.device_list.append(adb_dict['eid'])
+        #                                         elif(adb_dict['os']=='iOS'and adb_dict['serial'] not in ios_list):
+        #                                             ios_list.append(adb_dict['serial'])
+        #                         else: 
+        #                             if(j==i.split(' ')[2]):
+        #                                 self.device_list.append(i.split(' ')[0])
+        #                             #group_devices.append(j)
             
-            if(len(ios_list)>0):          
-                print("EXCLUDING IOS DEVICES",ios_list)
+        #     if(len(ios_list)>0):          
+        #         print("EXCLUDING IOS DEVICES",ios_list)
             
 
 
@@ -455,7 +458,7 @@ class FtpTest(LFCliBase):
                     if(len(available_list)==len(expected_val) and not self.expected_passfail_val):
                         for i in range(len(available_list)):
                             device_map[available_list[i]]=expected_val[i]
-                        obj.update_device_csv("device.csv",'FTP',device_map)
+                        obj.update_device_csv("device.csv",'FTP URLcount',device_map)
                         self.csv_name="device.csv"
                     else:
                         print("Enter correct number of values")
@@ -485,11 +488,7 @@ class FtpTest(LFCliBase):
                 raise ValueError("No Device is available to run the test hence aborting the test")
             logging.info("device got from webui are: %s", devices_list)
         else:
-            logging.info("AVAILABLE DEVICES TO RUN TEST : %s", self.user_list)
-            devices_list = input("Enter the desired resources to run the test:")
-            obj.get_all_devices()
-            configured_devices=asyncio.run(obj.connectivity(device_list=devices_list.split(','),wifi_config={'ssid':self.ssid,'passwd':self.password,'enc':self.security}))
-            logging.info("devices list %s", devices_list)
+            devices_list = ""
         #print("devices list",devices_list)
         resource_eid_list = devices_list.split(',')
         resource_eid_list2 = [eid + ' ' for eid in resource_eid_list]
@@ -497,7 +496,9 @@ class FtpTest(LFCliBase):
         #print("resource eid list",resource_eid_list)
 
         #User desired eids are fetched ---
-
+        if devices_list=="" or devices_list==",":
+            print("Can't run test on the selected devices")
+            exit(0) 
         for eid in resource_eid_list1:
             for ports_m in original_port_list:
                 if eid in ports_m and 'p2p0' not in ports_m:
@@ -1784,7 +1785,7 @@ class FtpTest(LFCliBase):
                     device = row['DeviceList']
                     #print(row)  
                     if device in res_list:
-                        test_input_list.append(row['FTP'])
+                        test_input_list.append(row['FTP URLcount'])
                 for i in range(len(test_input_list)):
                     if(float(test_input_list[i])<=self.url_data[i]):
                         pass_fail_list.append('PASS')
@@ -1818,7 +1819,7 @@ class FtpTest(LFCliBase):
                                     " SSID " : self.ssid_list,
                                     " Mode" : self.mode_list,
                                     " No of times File downloaded " : self.url_data,
-                                    " Expected output " : test_input_list,
+                                    " Expected No of file downloads " : test_input_list,
                                     " Time Taken to Download file (ms)" : self.uc_avg,
                                     " Bytes-rd (Mega Bytes)" : self.bytes_rd,
                                     " Status ":pass_fail_list
@@ -2149,6 +2150,7 @@ INCLUDE_IN_README: False
     optional.add_argument('--test_name', help='Specify test name to store the runtime csv results', default=None)
     optional.add_argument('--expected_passfail_val', help='Enter the expected number of urls ', default=None)
     optional.add_argument('--csv_name',type=str, help='Enter the csv name to store expected values', default=None)
+    optional.add_argument('--wait_time',type=int, help='Enter the maximum wait time', default=60)
 
     # kpi_csv arguments
     optional.add_argument(
@@ -2332,9 +2334,8 @@ INCLUDE_IN_README: False
                                 pac_file=args.pac_file,
                                 server_ip=args.server_ip,
                                 expected_passfail_val=args.expected_passfail_val,
-                                csv_name=args.csv_name
+                                csv_name=args.csv_name,wait_time=args.wait_time
                                 )
-
                     interation_num = interation_num + 1
                     obj.file_create()
                     if args.clients_type == "Real":

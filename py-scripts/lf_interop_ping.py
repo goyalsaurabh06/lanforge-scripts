@@ -120,7 +120,7 @@ class Ping(Realm):
                  pk_passwd=None,
                  pac_file=None,server_ip=None,
                  expected_passfail_val=None,
-                 csv_name=None):
+                 csv_name=None,wait_time=60):
         super().__init__(lfclient_host=host,
                          lfclient_port=port)
         self.ssid_list = []
@@ -177,7 +177,7 @@ class Ping(Realm):
         self.real=real
         self.expected_passfail_val=expected_passfail_val
         self.csv_name=csv_name
-
+        self.wait_time=wait_time
     def change_target_to_ip(self):
 
         # checking if target is an IP or a port
@@ -271,7 +271,7 @@ class Ping(Realm):
             if(len(d_list)==len(expected_val)):
                 for i in range(len(d_list)):
                     device_map[d_list[i]]=expected_val[i]
-                obj.update_device_csv("device.csv",'PingPacketLoss',device_map)
+                obj.update_device_csv("device.csv",'PingPacketLoss %',device_map)
                 self.csv_name="device.csv"
             else:
                 print("Enter correct number of values")
@@ -542,8 +542,8 @@ class Ping(Realm):
                     device = row['DeviceList']
                     #print(row)  
                     if device in res_list:
-                        print(device,row['PingPacketLoss'])
-                        test_input_list.append(row['PingPacketLoss'])
+                        print(device,row['PingPacketLoss %'])
+                        test_input_list.append(row['PingPacketLoss %'])
                 percent_pac_loss=[]
                 for i in range(len(self.packets_sent)):
                     if(self.packets_sent[i]!=0):
@@ -551,9 +551,9 @@ class Ping(Realm):
                     else:
                         percent_pac_loss.append(0)
                 for i in range(len(test_input_list)):
-                    if(self.packets_sent==0):
+                    if(self.packets_sent[i]==0):
                         pass_fail_list.append('FAIL')
-                    elif(int(test_input_list[i])>=percent_pac_loss[i]):
+                    elif(float(test_input_list[i])>=percent_pac_loss[i]):
                         pass_fail_list.append('PASS')
                     else:
                         pass_fail_list.append('FAIL')
@@ -567,8 +567,8 @@ class Ping(Realm):
                     'Packets Sent': self.packets_sent,
                     'Packets Received': self.packets_received,
                     'Packets Loss': self.packets_dropped,
-                    " Percentage of Packet loss":percent_pac_loss,
-                    " Expected loss": test_input_list,
+                    " Percentage of Packet loss %":percent_pac_loss,
+                    " Expected Packet loss %": test_input_list,
                     "Status ":pass_fail_list
                 })
             else:
@@ -581,7 +581,9 @@ class Ping(Realm):
                         percent_pac_loss.append(0)
                 pass_fail_list=[]
                 for i in range(len(test_input_list)):
-                    if(int(self.expected_passfail_val) >= percent_pac_loss[i]):
+                    if(self.packets_sent[i]==0):
+                        pass_fail_list.append('FAIL')
+                    elif(float(self.expected_passfail_val) >= percent_pac_loss[i]):
                         pass_fail_list.append("PASS")
                     else:
                         pass_fail_list.append("FAIL")
@@ -852,6 +854,8 @@ effectively over the network and pinpoint potential issues affecting connectivit
     parser.add_argument("--pac_file", type=str,default='[BLANK]')
     parser.add_argument('--expected_passfail_val', help='Enter the expected packet loss', default=None)
     parser.add_argument('--csv_name',type=str, help='Enter the csv name to store expected values', default=None)
+    parser.add_argument('--wait_time',type=int, help='Enter the maximum wait time', default=60)
+
 
 
     args = parser.parse_args()
@@ -974,7 +978,7 @@ effectively over the network and pinpoint potential issues affecting connectivit
 
     # ping object creation
     ping = Ping(host=mgr_ip, port=mgr_port, ssid=ssid, security=security, password=password, radio=radio,
-                lanforge_password=mgr_password, target=target, interval=interval, sta_list=[], virtual=args.virtual, real=args.real, duration=duration, debug=debug,csv_name=args.csv_name,expected_passfail_val=args.expected_passfail_val)
+                lanforge_password=mgr_password, target=target, interval=interval, sta_list=[], virtual=args.virtual, real=args.real, duration=duration, debug=debug,csv_name=args.csv_name,expected_passfail_val=args.expected_passfail_val,wait_time=args.wait_time)
     
     # changing the target from port to IP
     ping.change_target_to_ip()
@@ -999,7 +1003,7 @@ effectively over the network and pinpoint potential issues affecting connectivit
 
         if(configure):
 
-            obj=DeviceConfig.DeviceConfig(lanforge_ip=mgr_ip,file_name=file_name)
+            obj=DeviceConfig.DeviceConfig(lanforge_ip=mgr_ip,file_name=file_name,wait_time=args.wait_time)
             print(args.expected_passfail_val)
             if not args.expected_passfail_val and args.csv_name== None:
                 obj.device_csv_file("device.csv")
@@ -1011,28 +1015,28 @@ effectively over the network and pinpoint potential issues affecting connectivit
                     config_devices[selected_groups[i]]=selected_profiles[i]
                 #print("CONFIGURED DICT",config_devices)
                 obj.initiate_group()
-                asyncio.run(obj.connectivity(config_devices))
-                adbresponse=obj.adb_obj.get_devices()
-                resource_manager=obj.laptop_obj.get_devices()
-                all_res={}
-                df1=obj.display_groups(obj.groups)
-                groups_list=df1.to_dict(orient='list')
-                group_devices={}
+                eid_list=asyncio.run(obj.connectivity(config_devices))
+                # adbresponse=obj.adb_obj.get_devices()
+                # resource_manager=obj.laptop_obj.get_devices()
+                # all_res={}
+                # df1=obj.display_groups(obj.groups)
+                # groups_list=df1.to_dict(orient='list')
+                # group_devices={}
                
-                for adb in adbresponse:
-                    if adb['eid']!='':   
-                        group_devices[adb['serial']]=adb['eid']
-                for res in resource_manager:
-                    all_res[res['hostname']]=res['shelf']+'.'+res['resource']
-                eid_list=[]
-                for grp_name in groups_list.keys():
-                    for g_name in selected_groups:
-                        if(grp_name == g_name):
-                            for j in groups_list[grp_name]:
-                                if(j in group_devices.keys()):
-                                    eid_list.append(group_devices[j])
-                                elif(j in all_res.keys()):
-                                    eid_list.append(all_res[j])
+                # for adb in adbresponse:
+                #     if adb['eid']!='':   
+                #         group_devices[adb['serial']]=adb['eid']
+                # for res in resource_manager:
+                #     all_res[res['hostname']]=res['shelf']+'.'+res['resource']
+                # eid_list=[]
+                # for grp_name in groups_list.keys():
+                #     for g_name in selected_groups:
+                #         if(grp_name == g_name):
+                #             for j in groups_list[grp_name]:
+                #                 if(j in group_devices.keys()):
+                #                     eid_list.append(group_devices[j])
+                #                 elif(j in all_res.keys()):
+                #                     eid_list.append(all_res[j])
                 ping.select_real_devices(real_devices=Devices,device_list=eid_list)
             else:
                 all_devices=obj.get_all_devices()
@@ -1067,7 +1071,7 @@ effectively over the network and pinpoint potential issues affecting connectivit
                         device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["serial"])
                 print("Available devices:", device_list)
                 dev_list = input("Enter the desired resources to run the test:").split(',')
-                asyncio.run(obj.connectivity(device_list=dev_list,wifi_config=config_dict))
+                dev_list=asyncio.run(obj.connectivity(device_list=dev_list,wifi_config=config_dict))
                 ping.select_real_devices(real_devices=Devices,device_list=dev_list)
             
             
