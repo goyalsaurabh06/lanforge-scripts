@@ -55,7 +55,7 @@ lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 
 
 class ZoomAutomation(Realm):
-    def __init__(self,ssid="SSID",band="5G",security="wpa2",apname="AP Name",audio = True, video = True,lanforge_ip="localhost",wait_time = 30,devices = None):
+    def __init__(self,ssid="SSID",band="5G",security="wpa2",apname="AP Name",audio = True, video = True,lanforge_ip="localhost",wait_time = 30,devices = None,testname=None):
 
         super().__init__(lfclient_host=lanforge_ip)
         self.flask_ip = lanforge_ip
@@ -92,10 +92,13 @@ class ZoomAutomation(Realm):
         self.security = security
         self.tz = pytz.timezone('Asia/Kolkata')
         self.meet_link = None
+        self.zoom_host = None
+        self.testname = testname
 
         self.path = "/home/lanforge/lanforge-scripts/py-scripts/zoom_automation/test_results"
         #self.path =  '/home/laxmi/Documents/lanforge-scripts/py-scripts/zoom_automation/test_results'
         self.device_names = []
+        self.hostname_os_combination = None
 
         self.clients_disconnected = False
         self.audio = audio
@@ -735,6 +738,13 @@ class ZoomAutomation(Realm):
         self.real_sta_os_type = [self.real_sta_data[real_sta_name]['ostype'] for real_sta_name in self.real_sta_data]
         self.real_sta_hostname = [self.real_sta_data[real_sta_name]['hostname'] for real_sta_name in self.real_sta_data]
 
+        self.zoom_host = self.real_sta_list[0]
+         # Combine hostname and OS type into a single string
+        self.hostname_os_combination = ", ".join(
+            f"{self.real_sta_data[real_sta_name]['hostname']} ({self.real_sta_data[real_sta_name]['ostype']})"
+            for real_sta_name in self.real_sta_data
+        )
+
 
 
 
@@ -794,6 +804,16 @@ class ZoomAutomation(Realm):
         except Exception as e:
             logging.error(f"Failed to move '{source_file}' to '{dest_dir}': {e}")
 
+    def updating_webui_runningjson(self,obj):
+        data = {}
+        with open(self.path + "/../../Running_instances/{}_{}_running.json".format(self.flask_ip,self.testname),
+                          'r') as file:
+            data = json.load(file)
+            for key in obj:
+                data[key]=obj[key]
+        with open(self.path + "/../../Running_instances/{}_{}_running.json".format(self.flask_ip, self.testname),
+                          'w') as file:
+            json.dump(data, file, indent=4)
 
     def generate_report(self):
         report = lf_report(_output_pdf='zoom_call_report.pdf',
@@ -1244,7 +1264,7 @@ class ZoomAutomation(Realm):
             #print(file_to_move_path)
             self.move_files(file_to_move_path,report_path_date_time)
 def main():
-    try:
+    #try:
         parser = argparse.ArgumentParser(description="Zoom Automation Script")
         parser.add_argument('--duration', type=int, required=True, help="Duration of the Zoom meeting in minutes")
         parser.add_argument('--lanforge_ip', type=str, required=True, help="LANforge IP address")
@@ -1328,7 +1348,7 @@ def main():
         if((args.group_name!=None and args.profile_name!=None and args.file_name!=None and args.resources==None and args.ssid==None and (len(selected_groups)==len(selected_profiles))) or(args.group_name==None and args.profile_name==None and args.file_name==None and args.ssid!=None and args.passwd!=None and args.encryp!=None) or (args.group_name==None and args.profile_name==None and args.file_name==None and args.ssid!=None and args.passwd==None and args.encryp.lower() =='open')):
 
         
-                zoom_automation = ZoomAutomation(audio=args.audio, video=args.video, lanforge_ip=args.lanforge_ip,wait_time=args.wait_time)
+                zoom_automation = ZoomAutomation(audio=args.audio, video=args.video, lanforge_ip=args.lanforge_ip,wait_time=args.wait_time,testname=args.testname)
 
                 realdevice = RealDevice(manager_ip=args.lanforge_ip,
                                     server_ip="192.168.1.61",
@@ -1362,7 +1382,7 @@ def main():
                 
                 
                     config_obj.initiate_group()
-                    asyncio.run(config_obj.connectivity(config_devices))
+                    #asyncio.run(config_obj.connectivity(config_devices))
             
                     adbresponse=config_obj.adb_obj.get_devices()
                     resource_manager=config_obj.laptop_obj.get_devices()
@@ -1421,7 +1441,7 @@ def main():
                         if(args.group_name==None and args.file_name==None and args.profile_name==None):
                             dev_list=args.resources.split(',')
                             dev_list.insert(0,args.zoom_host)
-                            asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
+                            #asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
                             args.resources = ",".join(id for id in dev_list)
                     else:
 
@@ -1465,7 +1485,7 @@ def main():
                          args.resources = zm_host+","+args.resources
 
                          dev1_list=args.resources.split(',')
-                         asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
+                         #asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
 
 
 
@@ -1504,17 +1524,37 @@ def main():
                     else:
                         resources = zoom_automation.select_real_devices(real_device_obj=realdevice)
                 else:
+                    if(args.do_webUI):
+                        zoom_automation.path = args.report_dir
                     resources = args.resources.split(',')
                     #resources = sorted(resources, key=lambda x: int(x.split('.')[1]))
                     zoom_automation.select_real_devices(real_device_obj=realdevice, real_sta_list=resources)
+                    if len(zoom_automation.real_sta_hostname) == 0:
+                        print("No device is available to run the test")
+                        obj = {
+                            "status":"Stopped",
+                            "configuration_status":"configured"
+                        }
+                        zoom_automation.updating_webui_runningjson(obj)
+                        return
+                    else:
+                        obj = {
+                            "configured_devices":zoom_automation.real_sta_hostname,
+                            "configuration_status":"configured",
+                            "no_of_devices":f' Total({len(zoom_automation.real_sta_os_type)}) : W({zoom_automation.windows}),L({zoom_automation.linux}),M({zoom_automation.mac})',
+                            "device_list":zoom_automation.hostname_os_combination,
+                            # "zoom_host":zoom_automation.zoom_host
+
+                        }
+                        zoom_automation.updating_webui_runningjson(obj)
                 
                 if (not zoom_automation.check_tab_exists()):
                     logging.error('Generic Tab is not available.\nAborting the test.')
                     exit(0)
 
                 
-                if(args.do_webUI):
-                    zoom_automation.path = args.report_dir
+                # if(args.do_webUI):
+                #     zoom_automation.path = args.report_dir
                 
                 
                 
@@ -1523,40 +1563,40 @@ def main():
                 zoom_automation.data_store.clear()
                 zoom_automation.generate_report()
                 logging.info("Test Completed Sucessfully")
-    except Exception as e:
-        logging.error(f"AN ERROR OCCURED WHILE RUNNING TEST {e}")
-    finally:
-        if(args.do_webUI):
-            try:
-                url = f"http://{args.lanforge_ip}:5454/update_status_yt"
-                #url = f"http://localhost:8000/update_status_yt"
-                #url = f"http://10.253.8.108:8000/update_status_yt"
+    #except Exception as e:
+        #logging.error(f"AN ERROR OCCURED WHILE RUNNING TEST {e}")
+    # finally:
+    #     if(args.do_webUI):
+    #         try:
+    #             url = f"http://{args.lanforge_ip}:5454/update_status_yt"
+    #             #url = f"http://localhost:8000/update_status_yt"
+    #             #url = f"http://10.253.8.108:8000/update_status_yt"
 
                 
-                headers = {
-                    'Content-Type': 'application/json',
-                }
+    #             headers = {
+    #                 'Content-Type': 'application/json',
+    #             }
                 
 
-                data = {
-                    'status': 'Completed',
-                    'name': args.testname
-                }
+    #             data = {
+    #                 'status': 'Completed',
+    #                 'name': args.testname
+    #             }
                 
-                response = requests.post(url, json=data, headers=headers)
+    #             response = requests.post(url, json=data, headers=headers)
 
-                if response.status_code == 200:
-                    logging.info("Successfully updated STOP status to 'Completed'")
-                    pass
-                else:
-                    logging.error(f"Failed to update STOP status: {response.status_code} - {response.text}")
+    #             if response.status_code == 200:
+    #                 logging.info("Successfully updated STOP status to 'Completed'")
+    #                 pass
+    #             else:
+    #                 logging.error(f"Failed to update STOP status: {response.status_code} - {response.text}")
                 
-            except Exception as e:
-                # Print an error message if an exception occurs during the request
-                logging.error(f"An error occurred while updating status: {e}")
-        zoom_automation.generic_endps_profile.cleanup()
+    #         except Exception as e:
+    #             # Print an error message if an exception occurs during the request
+    #             logging.error(f"An error occurred while updating status: {e}")
+    #     zoom_automation.generic_endps_profile.cleanup()
         
-        zoom_automation.redis_client.set('login_completed', 0)
+    #     zoom_automation.redis_client.set('login_completed', 0)
 
 
 

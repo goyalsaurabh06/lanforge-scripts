@@ -180,6 +180,7 @@ class Youtube(Realm):
         self.end_time_webgui = []
         self.all_stop = False
         self.keys = []
+        self.hostname_os_combination = None
         if(self.do_webUI):
             self.base_dir = os.path.abspath(os.path.join(ui_report_dir, "../../"))
             self.test_name = test_name
@@ -404,22 +405,10 @@ class Youtube(Realm):
                 break
         
 
-        #print("Checking gen_ports_list:", gen_ports_list)
-        # print("checking mac list",mac_list)
-        # print("checking rssi list",rssi_list)
-        # print("checking link_rate_list",link_rate_list)
-
-        # Create generic endpoints using the retrieved ports and other parameters
-        self.real_sta_os_types = [self.real_sta_data_dict[real_sta_name]['ostype'] for real_sta_name in self.real_sta_data_dict]
-        self.real_sta_hostname = [self.real_sta_data_dict[real_sta_name]['hostname'] for real_sta_name in self.real_sta_data_dict]
-
-        # print("checking self.real_sta_os_types",self.real_sta_os_types)
-        # print(self.real_sta_hostname)
-        # print(gen_ports_list)
 
         self.new_port_list = [item.split('.')[2] for item in self.real_sta_list]
         
-        if (self.generic_endps_profile.create(ports=query_resources, sleep_time=.5, real_client_os_types=self.real_sta_os_types,)):
+        if (self.generic_endps_profile.create(ports=self.real_sta_list, sleep_time=.5, real_client_os_types=self.real_sta_os_types,)):
             logging.info(f"=================================================================================================")
             logging.info('Real client generic endpoint creation completed.')
         else:
@@ -511,27 +500,29 @@ class Youtube(Realm):
 
             self.real_sta_data_dict[sta_name] = real_devices.devices_data[sta_name]
 
-        # for device_id, device_data in real_devices.devices_data.items():
-        #     print("============================================================================================================================")
-        #     print("checking device data",device_data)
-        #     print("checking whether this loop is iterating or not")
-        #     stripped_eid = device_data.get("eid", "").strip()
-        #     if stripped_eid in (sta_name.strip() for sta_name in self.real_sta_list):
-        #         print("==================================================")
-        #         print("checking device data",device_data)
-        #         # Store the matching object in real_sta_data_dict
-        #         self.real_sta_data_dict[stripped_eid] = device_data
-        #         print("device found")
-        #     else:
-        #         # Log if a real station is not in the devices data
-        #         logger.error(f"Real station {stripped_eid} not in devices data, ignoring it from testing")
 
-        # Track the selected devices
-        self.android = self.Devices.android
-        self.windows = self.Devices.windows
-        self.mac = self.Devices.mac
-        self.linux = self.Devices.linux
-        # Return the sorted list of selected real station names
+
+        # Retrieve OS types and hostnames
+        self.real_sta_os_types = [self.real_sta_data_dict[real_sta_name]['ostype'] for real_sta_name in self.real_sta_data_dict]
+        self.real_sta_hostname = [self.real_sta_data_dict[real_sta_name]['hostname'] for real_sta_name in self.real_sta_data_dict]
+
+        # Combine hostname and OS type into a single string
+        self.hostname_os_combination = ", ".join(
+            f"{self.real_sta_data_dict[real_sta_name]['hostname']} ({self.real_sta_data_dict[real_sta_name]['ostype']})"
+            for real_sta_name in self.real_sta_data_dict
+        )
+
+
+        for i in range(0,len(self.real_sta_os_types)):
+
+            if (self.real_sta_os_types[i]=='windows'):
+                self.windows=self.windows+1
+            elif (self.real_sta_os_types[i]=='linux'):
+                self.linux=self.linux+1
+            elif (self.real_sta_os_types[i]=='macos'):
+                self.mac=self.mac+1
+
+        
         return self.real_sta_list
 
     def start_generic(self):
@@ -798,26 +789,24 @@ class Youtube(Realm):
 
         except Exception as e:
             logging.ERROR(f"Failed to move '{source_file}' to '{dest_dir}': {e}")
+    
+
+    def updating_webui_runningjson(self,obj):
+        data = {}
+        with open(self.ui_report_dir + "/../../Running_instances/{}_{}_running.json".format(self.host, self.test_name),
+                          'r') as file:
+            data = json.load(file)
+            for key in obj:
+                data[key]=obj[key]
+        with open(self.ui_report_dir + "/../../Running_instances/{}_{}_running.json".format(self.host, self.test_name),
+                          'w') as file:
+            json.dump(data, file, indent=4)
+    
 
     def create_report(self,data,ui_report_dir):
-        #print("==========================================================================================")
-        #print("checking data inside create_report method",data)
-        windows=0
-        mac=0
-        linux=0
+        
 
-        #print(data)
 
-        for i in range(0,len(self.real_sta_os_types)):
-
-            if (self.real_sta_os_types[i]=='windows'):
-                windows=windows+1
-            elif (self.real_sta_os_types[i]=='linux'):
-                linux=linux+1
-            elif (self.real_sta_os_types[i]=='macos'):
-                mac=mac+1
-        # print("checking real_sta_os_types",self.real_sta_os_types)
-        # print("checking mac count",mac)
         
         if(self.do_webUI):
             result_data =data
@@ -844,9 +833,6 @@ class Youtube(Realm):
                     "CurrentRes": stats.get("CurrentRes", ""),
                     "OptimalRes": stats.get("OptimalRes", ""),
                 })
-        # print(mydatajson)
-        #print("checking mydatajson")
-        #print(self.mydatajson)
 
         if(self.do_webUI):
             self.report = lf_report(_output_pdf='youtube_streaming.pdf',
@@ -878,7 +864,7 @@ class Youtube(Realm):
             'Test Name': 'YouTube Streaming Test',
             'Duration (in Minutes)': self.duration,
             'Resolution':self.resolution,
-            'No of Devices :':f' Total({len(self.real_sta_os_types)}) : W({windows}),L({linux}),M({mac})',
+            'No of Devices :':f' Total({len(self.real_sta_os_types)}) : W({self.windows}),L({self.linux}),M({self.mac})',
             "Video URL": self.url,
 
 
@@ -1089,12 +1075,6 @@ class Youtube(Realm):
         self.report.write_pdf()
 
     
-
-        
-
-
-
-        
 
         
 
@@ -1388,7 +1368,27 @@ def main():
                 resources = youtube.select_real_devices(real_devices=Devices)
         else:
             resources = [r.strip() for r in args.resources.split(',')]
+            print("checking the values of resources",resources)
             youtube.select_real_devices(real_devices=Devices, real_sta_list=resources, base_interop_obj=Devices)
+            print("checking the value of real_sta_list",youtube.real_sta_list)
+
+            if len(youtube.real_sta_hostname) == 0:
+                print("No device is available to run the test")
+                obj = {
+                    "status":"Stopped",
+                    "configuration_status":"configured"
+                }
+                youtube.updating_webui_runningjson(obj)
+                return
+            else:
+                obj = {
+                    "configured_devices":youtube.real_sta_hostname,
+                    "configuration_status":"configured",
+                    "no_of_devices":f' Total({len(youtube.real_sta_os_types)}) : W({youtube.windows}),L({youtube.linux}),M({youtube.mac})',
+                    "device_list":youtube.hostname_os_combination
+
+                }
+                youtube.updating_webui_runningjson(obj)
         
         # Perform pre-test cleanup if not skipped
         if not args.no_pre_cleanup:
