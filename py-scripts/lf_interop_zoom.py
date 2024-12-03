@@ -1264,7 +1264,7 @@ class ZoomAutomation(Realm):
             #print(file_to_move_path)
             self.move_files(file_to_move_path,report_path_date_time)
 def main():
-    #try:
+    try:
         parser = argparse.ArgumentParser(description="Zoom Automation Script")
         parser.add_argument('--duration', type=int, required=True, help="Duration of the Zoom meeting in minutes")
         parser.add_argument('--lanforge_ip', type=str, required=True, help="LANforge IP address")
@@ -1563,40 +1563,40 @@ def main():
                 zoom_automation.data_store.clear()
                 zoom_automation.generate_report()
                 logging.info("Test Completed Sucessfully")
-    #except Exception as e:
-        #logging.error(f"AN ERROR OCCURED WHILE RUNNING TEST {e}")
-    # finally:
-    #     if(args.do_webUI):
-    #         try:
-    #             url = f"http://{args.lanforge_ip}:5454/update_status_yt"
-    #             #url = f"http://localhost:8000/update_status_yt"
-    #             #url = f"http://10.253.8.108:8000/update_status_yt"
+    except Exception as e:
+        logging.error(f"AN ERROR OCCURED WHILE RUNNING TEST {e}")
+    finally:
+        if(args.do_webUI):
+            try:
+                url = f"http://{args.lanforge_ip}:5454/update_status_yt"
+                #url = f"http://localhost:8000/update_status_yt"
+                #url = f"http://10.253.8.108:8000/update_status_yt"
 
                 
-    #             headers = {
-    #                 'Content-Type': 'application/json',
-    #             }
+                headers = {
+                    'Content-Type': 'application/json',
+                }
                 
 
-    #             data = {
-    #                 'status': 'Completed',
-    #                 'name': args.testname
-    #             }
+                data = {
+                    'status': 'Completed',
+                    'name': args.testname
+                }
                 
-    #             response = requests.post(url, json=data, headers=headers)
+                response = requests.post(url, json=data, headers=headers)
 
-    #             if response.status_code == 200:
-    #                 logging.info("Successfully updated STOP status to 'Completed'")
-    #                 pass
-    #             else:
-    #                 logging.error(f"Failed to update STOP status: {response.status_code} - {response.text}")
+                if response.status_code == 200:
+                    logging.info("Successfully updated STOP status to 'Completed'")
+                    pass
+                else:
+                    logging.error(f"Failed to update STOP status: {response.status_code} - {response.text}")
                 
-    #         except Exception as e:
-    #             # Print an error message if an exception occurs during the request
-    #             logging.error(f"An error occurred while updating status: {e}")
-    #     zoom_automation.generic_endps_profile.cleanup()
+            except Exception as e:
+                # Print an error message if an exception occurs during the request
+                logging.error(f"An error occurred while updating status: {e}")
+        zoom_automation.generic_endps_profile.cleanup()
         
-    #     zoom_automation.redis_client.set('login_completed', 0)
+        zoom_automation.redis_client.set('login_completed', 0)
 
 
 
