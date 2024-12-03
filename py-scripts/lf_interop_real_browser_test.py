@@ -862,15 +862,14 @@ class RealBrowserTest(Realm):
                                 # phone_name_list.append(name)
     
                        
-        #print(station_name)
-        #print(laptops)
-        #print(laptop_os_types)
-        #print("============================================================ checking station names")
-        #print(station_name)
-        #print(user_name)
-        #print(mac_address)
-        #print(hw_name)
-        #print(phone_name_list)
+        print(station_name)
+        print(laptops)
+        print(laptop_os_types)
+        print("============================================================ checking station names")
+        print(station_name)
+        print(user_name)
+        print(mac_address)
+        print(phone_name_list)
         return station_name,laptops,laptop_os_types,user_name,mac_address,
 
 
@@ -1784,7 +1783,7 @@ def main():
 
             #print("CONFIGURED DICT",config_devices)
                 config_obj.initiate_group()
-                asyncio.run(config_obj.connectivity(config_devices))
+                #asyncio.run(config_obj.connectivity(config_devices))
             
                 adbresponse=config_obj.adb_obj.get_devices()
                 resource_manager=config_obj.laptop_obj.get_devices()
@@ -1861,7 +1860,7 @@ def main():
                     }
                     if(args.group_name==None and args.file_name==None and args.profile_name==None):
                         dev_list=args.device_list.split(',')
-                        asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
+                        #asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
                     obj.android_devices = obj.devices.get_devices()
                     # Extract second part of resource IDs and sort them
                     obj.resource_ids = ",".join(id.split(".")[1] for id in args.device_list.split(","))
@@ -1936,10 +1935,12 @@ def main():
                             device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["serial"])
                         elif(device["type"]=='laptop'):
                             device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["hostname"])
-                    print("Available devices:", device_list)
+                    print("Available devices:")
+                    for device in device_list:
+                        print(device)
                     args.device_list = input("Enter the desired resources to run the test:")
                     dev1_list=args.device_list.split(',')   
-                    asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
+                    #asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
                     obj.android_devices = obj.devices.get_devices()
                     # Query user to select devices if no resource IDs are provided
                     selected_devices,report_labels,selected_macs = obj.devices.query_user(device_list=dev1_list)
@@ -1987,6 +1988,7 @@ def main():
                         resource_list_sorted = sorted(resource_set)
                         resource_ids_generated = ','.join(resource_list_sorted)
                         available_resources=list(resource_set)
+            
 
             logger.info("Devices available: {}".format(available_resources))
             if len(available_resources)==0:
@@ -2052,13 +2054,11 @@ def main():
             available_resources.sort()
             available_resources_string=",".join([str(n) for n in available_resources])
             obj.set_available_resources_ids(available_resources_string)
-            # obj.set_available_resources_ids([int(n) for n in available_resources].sort())
+    
+
             obj.build()
             time.sleep(10)
-            #TODO : To create cx for laptop devices
-            # Create end-points for devices other than Android if specified
-            # if (not args.no_laptops) and obj.other_list:
-            #     obj.create_generic_endp(obj.other_list,os_types_dict)
+            
 
             keys = list(obj.http_profile.created_cx.keys())
             generic_keys = obj.generic_endps_profile.created_cx
