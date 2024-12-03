@@ -79,7 +79,7 @@ class InteropPortReset(Realm):
                  reset=None,
                  mgr_ip=None,
                  time_int=None,
-                 wait_time=None,
+                 wait_time=60,
                  device_list=None,
                  suporrted_release=None,
                  forget_network=True,
@@ -119,7 +119,7 @@ class InteropPortReset(Realm):
         self.forget_network = forget_network
         self.expected_passfail_value=expected_passfail_value
         self.device_csv_name=device_csv_name 
-        # self.wait_time = wait_time
+        self.wait_time = wait_time
         self.supported_release = suporrted_release
         self.device_name = []
         self.lf_report = lf_report_pdf.lf_report(_path="", _results_dir_name="Interop_port_reset_test",
@@ -146,7 +146,7 @@ class InteropPortReset(Realm):
             logging.error('There are no real devices in this testbed. Aborting the test.')
             exit(0)
         logging.info(f"{self.real_sta_list}")
-        config_obj=DeviceConfig.DeviceConfig(lanforge_ip=self.host)
+        config_obj=DeviceConfig.DeviceConfig(lanforge_ip=self.host,wait_time=self.wait_time)
         if not self.expected_passfail_value and self.device_csv_name==None :
             config_obj.device_csv_file(csv_name="device.csv")
         interop_tab_data = self.json_get('/adb/')["devices"]
@@ -158,11 +158,11 @@ class InteropPortReset(Realm):
 
             device_map={}
             if(not self.expected_passfail_value and self.device_csv_name == None):
-                expected_val=input("Enter the expected value for the following devices{} eg 8,6,2: ".format(available_list)).split(',')
+                expected_val=input("Enter the expected no of connections for the following devices{} eg 8,6,2: ".format(available_list)).split(',')
                 if(len(available_list)==len(expected_val)):
                     for i in range(len(available_list)):
                         device_map[available_list[i]]=expected_val[i]
-                    config_obj.update_device_csv("device.csv",'PortReset',device_map)
+                    config_obj.update_device_csv("device.csv",'PortReset No_of_connections',device_map)
                     self.device_csv_name="device.csv"
                 else:
                     print("Enter correct number of values")
@@ -1096,7 +1096,7 @@ class InteropPortReset(Realm):
                 for row in rows:
                     device = row['DeviceList']  
                     if device in res_list:
-                        test_input_list.append(row['PortReset'])
+                        test_input_list.append(row['PortReset No_of_connections'])
 
                 for i in range(len(test_input_list)):
                     if(int(test_input_list[i])<=self.total_connects[i]):
@@ -1245,6 +1245,7 @@ INCLUDE_IN_README: False
     parser.add_argument('--help_summary', help='Show summary of what this script does', default=None,
                         action="store_true")
     parser.add_argument("--expected_passfail_value",help="Specify the expected urlcount value for pass/fail")
+    parser.add_argument("--wait_time",type=int,help="Specify the time for configuration",default=60)
     parser.add_argument("--device_csv_name",type=str,help="Specify the device csv name for pass/fail",default=None)
 
     args = parser.parse_args()
@@ -1282,7 +1283,8 @@ INCLUDE_IN_README: False
                            device_list=args.device_list,
                            forget_network=not args.no_forget_networks,
                            expected_passfail_value=args.expected_passfail_value,
-                           device_csv_name=args.device_csv_name
+                           device_csv_name=args.device_csv_name,
+                           wait_time=args.wait_time
                            )
     obj.selecting_devices_from_available()
     reset_dict, duration = obj.run()
