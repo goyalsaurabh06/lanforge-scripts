@@ -5459,6 +5459,22 @@ class L3VariableTime(Realm):
                 self.report.set_csv_filename(graph_png)
                 self.report.move_csv_file()
                 if self.real:
+                    # off_up=self.conversion(Rate_list=[0.1])
+                    # # off_up=self.conversion(Rate_list=self.client_dict_A[tos]['offered_upload_rate_A'])
+                    # off_down=self.conversion(self.client_dict_A[tos]['offered_download_rate_A'])
+                    # up=self.conversion(self.client_dict_A[tos]['ul_A'])
+                    # down=self.conversion(self.client_dict_A[tos]['dl_A'])
+                    off_up,off_down,up,down=[],[],[],[]
+                    print("xfgchj", self.client_dict_A[tos]['offered_upload_rate_A'])
+                    for i in  self.client_dict_A[tos]['offered_upload_rate_A']:
+                        off_up.append(int(i)/1000000)
+                    for i in  self.client_dict_A[tos]['offered_download_rate_A']:
+                        off_down.append(int(i)/1000000)
+                    for i in  self.client_dict_A[tos]['ul_A']:
+                        up.append(int(i)/1000000)
+                    for i in  self.client_dict_A[tos]['dl_A']:
+                        down.append(int(i)/1000000)
+                    print("zdxfggcvhjb",off_down,"dxfghjk",off_up,"efdhsbh",up,"hnjgbfdv",down)
                     res_list=[]
                     test_input_list=[]
                     pass_fail_list=[]
@@ -5467,7 +5483,7 @@ class L3VariableTime(Realm):
                     # print("interop_data",interop_tab_data)
                     if not self.expected_passfail_value:
                         for client in self.client_dict_A[tos]['resource_alias_A']:
-                            if(client.split('_')[2]!='Android'):
+                            if(client.split('_')[-1]!='Android'):
                                 res_list.append(client.split('_')[1])
                             else:
                                 for dev in interop_tab_data:
@@ -5486,34 +5502,37 @@ class L3VariableTime(Realm):
                             device = row['DeviceList'] 
                             if device in res_list:
                                 for endp in self.endp_input_list:
-                                    test_input_list.append(row[endp])
+                                    test_input_list.append(row[endp+' Mbps'])
                         # print("!!!!!",test_input_list)
                     else:
-                        test_input_list=[self.expected_passfail_value for val in range(len(self.client_dict_A[tos]['resource_alias_A']))] 
-
+                        test_input_list=[self.expected_passfail_value for val in range(len(self.client_dict_A[tos]['resource_alias_A']))]
+                    # test_input_list1=[]
+                    # for i in test_input_list:
+                    #     test_input_list1.append(i*1000000)
                     for k in range(len(test_input_list)):
                         if(self.graph_input_list[k].split('_')[2]=='BiDi'):
-                            if(float(test_input_list[k])<=float(self.client_dict_A[tos]['ul_A'][k]) and float(test_input_list[k])<=float(self.client_dict_A[tos]['dl_A'][k])):
+                            if(float(test_input_list[k])<=float(up[k]) and float(test_input_list[k])<=float(down[k])):
                                 pass_fail_list.append('PASS')
                                 direction='bidirectional'
                             else:
                                 pass_fail_list.append('FAIL')
                                 direction='bidirectional'
                         elif(self.graph_input_list[k].split('_')[2]=='UL'):
-                            if(float(test_input_list[k])<=float(self.client_dict_A[tos]['ul_A'][k])):
+                            if(float(test_input_list[k])<=float(up[k])):
                                 pass_fail_list.append('PASS')
                                 direction='upload'
                             else:
                                 pass_fail_list.append('FAIL')
                                 direction='upload'
                         else:
-                            if(float(test_input_list[k])<=float(self.client_dict_A[tos]['dl_A'][k])):
+                            if(float(test_input_list[k])<=float(down[k])):
                                 pass_fail_list.append('PASS')
                                 direction='download'
                             else:
                                 pass_fail_list.append('FAIL')
                                 direction='download'
                 if self.real:
+                    
                     tos_dataframe_A = {
                         " Client Alias ": self.client_dict_A[tos]['resource_alias_A'],
                         " Host eid ": self.client_dict_A[tos]['resource_eid_A'],
@@ -5528,11 +5547,11 @@ class L3VariableTime(Realm):
                         " Channel ": self.client_dict_A[tos]['channel_A'],
                         " Type of traffic ": self.client_dict_A[tos]['traffic_type_A'],
                         " Traffic Protocol ": self.client_dict_A[tos]['traffic_protocol_A'],
-                        " Offered Upload Rate Per Client": self.client_dict_A[tos]['offered_upload_rate_A'],
-                        " Offered Download Rate Per Client": self.client_dict_A[tos]['offered_download_rate_A'],
-                        " Upload Rate Per Client": self.client_dict_A[tos]['ul_A'],
-                        " Download Rate Per Client": self.client_dict_A[tos]['dl_A'],
-                        " Expected "+direction+" Rate":test_input_list,
+                        " Offered Upload Rate(Mbps) Per Client": off_up,
+                        " Offered Download Rate (Mbps) Per Client": off_down,
+                        " Upload Rate (Mbps) Per Client": up,
+                        " Download Rate (Mbps) Per Client":down,
+                        " Expected "+direction+" Rate (bps)":test_input_list,
                         " Drop Percentage (%)": self.client_dict_A[tos]['download_rx_drop_percent_A'],
                         " Status ":pass_fail_list
                     }
@@ -5559,6 +5578,7 @@ class L3VariableTime(Realm):
                         " Drop Percentage (%)": self.client_dict_A[tos]['download_rx_drop_percent_A'],
                         # " Status ":pass_fail_list
                     }
+                print("DATAFRAME",tos_dataframe_A)
                 dataframe3 = pd.DataFrame(tos_dataframe_A)
                 self.report.set_table_dataframe(dataframe3)
                 self.report.build_table()
@@ -5659,7 +5679,11 @@ class L3VariableTime(Realm):
     # End of the main class.
 
 # Check some input values.
-
+    # def conversion(Rate_list=[]):
+    #     converted_list=[]
+    #     for i in Rate_list:
+    #         converted_list.append(i/1000000)
+    #     return converted_list       
 
 # Only used by argparser, so safe to exit in this function
 def valid_endp_types(_endp_type):
@@ -6595,6 +6619,7 @@ INCLUDE_IN_README: False
     test_l3_parser.add_argument("--pk_passwd", type=str,default='[BLANK]')
     test_l3_parser.add_argument("--pac_file", type=str,default='[BLANK]')
     test_l3_parser.add_argument("--server_ip",type=str,default=None)
+    test_l3_parser.add_argument("--wait_time",type=int,help="Specify the time for configuration",default=60)
     test_l3_parser.add_argument("--real",action="store_true")
     
     parser.add_argument('--help_summary',
@@ -6684,7 +6709,7 @@ INCLUDE_IN_README: False
         exit(0)
     
     if(args.real and (args.group_name!=None and args.profile_name!=None and args.file_name!=None and args.device_list==None and args.ssid==None and (len(selected_groups)==len(selected_profiles))) or(args.group_name==None and args.profile_name==None and args.file_name==None and args.ssid!=None and args.passwd!=None and args.security!=None) or (args.group_name==None and args.profile_name==None and args.file_name==None and args.ssid!=None and args.passwd==None and args.security.lower() =='open')):
-        config_obj=DeviceConfig.DeviceConfig(lanforge_ip=args.lfmgr,file_name=args.file_name)
+        config_obj=DeviceConfig.DeviceConfig(lanforge_ip=args.lfmgr,file_name=args.file_name,wait_time=args.wait_time)
         if not args.expected_passfail_value and args.device_csv_name==None :
             config_obj.device_csv_file(csv_name="device.csv")
         if(args.group_name!=None and args.file_name!=None and args.profile_name!=None):
@@ -6696,30 +6721,30 @@ INCLUDE_IN_README: False
 
             #print("CONFIGURED DICT",config_devices)
                 config_obj.initiate_group()
-                asyncio.run(config_obj.connectivity(config_devices))
+                args.device_list=[','.join(i for i in asyncio.run(config_obj.connectivity(config_devices)))]
             
-                adbresponse=config_obj.adb_obj.get_devices()
-                resource_manager=config_obj.laptop_obj.get_devices()
-                all_res={}
-                df1=config_obj.display_groups(config_obj.groups)
-                groups_list=df1.to_dict(orient='list')
-                group_devices={}
+                # adbresponse=config_obj.adb_obj.get_devices()
+                # resource_manager=config_obj.laptop_obj.get_devices()
+                # all_res={}
+                # df1=config_obj.display_groups(config_obj.groups)
+                # groups_list=df1.to_dict(orient='list')
+                # group_devices={}
               
-                for adb in adbresponse:
-                    if(adb['eid']!=''):
-                        group_devices[adb['serial']]=adb['eid']
-                for res in resource_manager:
-                    all_res[res['hostname']]=res['shelf']+'.'+res['resource']
-                eid_list=[]
-                for grp_name in groups_list.keys():
-                    for g_name in selected_groups:
-                        if(grp_name == g_name):
-                            for j in groups_list[grp_name]:
-                                if(j in group_devices.keys()):
-                                    eid_list.append(group_devices[j])
-                                elif(j in all_res.keys()):
-                                    eid_list.append(all_res[j])
-                args.device_list = [",".join(id for id in eid_list)]
+                # for adb in adbresponse:
+                #     if(adb['eid']!=''):
+                #         group_devices[adb['serial']]=adb['eid']
+                # for res in resource_manager:
+                #     all_res[res['hostname']]=res['shelf']+'.'+res['resource']
+                # eid_list=[]
+                # for grp_name in groups_list.keys():
+                #     for g_name in selected_groups:
+                #         if(grp_name == g_name):
+                #             for j in groups_list[grp_name]:
+                #                 if(j in group_devices.keys()):
+                #                     eid_list.append(group_devices[j])
+                #                 elif(j in all_res.keys()):
+                #                     eid_list.append(all_res[j])
+                # args.device_list = [",".join(id for id in eid_list)]
         elif(args.device_list!=None):
             all_devices= config_obj.get_all_devices()
             config_dict={
@@ -6749,7 +6774,7 @@ INCLUDE_IN_README: False
             if(args.group_name==None and args.file_name==None and args.profile_name==None):
                 dev_list=args.device_list[0].split(',')
                 
-                asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
+                args.device_list=[','.join(i for i in asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict)))]
 
         else:
 
@@ -6786,7 +6811,7 @@ INCLUDE_IN_README: False
                 args.device_list = [input("Enter the desired resources to run the test:")]
                 # print("AAAA",args.device_list[0])
                 dev1_list=args.device_list[0].split(',')
-                asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
+                args.device_list=[','.join(i for i in asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict)))]
         if args.device_list!=None:
             csv_device_list=args.device_list[0].split(',')
             for endp in traffic_type:
@@ -6813,13 +6838,13 @@ INCLUDE_IN_README: False
                 for endp in endp_input_list:
                     device_map={}
                     if(not args.expected_passfail_value and args.device_csv_name == None):
-                        expected_val=input("Enter the expected {} value for the following devices{} eg 8,6,2: ".format(endp,sample_list)).split(',')
+                        expected_val=input("Enter the expected {} value in Mbps for the following devices{} eg 8,6,2: ".format(endp,sample_list)).split(',')
                         if(len(sample_list)==len(expected_val)):
                             for i in range(len(sample_list)):
                                 csv_dev_list=sample_list[i]
                                 device_map[csv_dev_list[0].split('.')[0]+'.'+csv_dev_list[0].split('.')[1]]=expected_val[i]
                                     
-                            config_obj.update_device_csv('device.csv',endp,device_map)
+                            config_obj.update_device_csv('device.csv',endp+' Mbps',device_map)
                         else:
                             print("Enter correct number of values")
                             exit(0)

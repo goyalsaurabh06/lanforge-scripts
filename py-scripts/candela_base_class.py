@@ -707,7 +707,7 @@ class Candela:
                   band='5G', lf_username='lanforge', lf_password='lanforge', 
                   test_duration=60, background = False,file_name=None,group_name=None,profile_name=None,eap_method='DEFAULT',eap_identity='',ieee80211=True,ieee80211u=True,ieee80211w=1,enable_pkc=True,
                   bss_transition=True,power_save=True,disable_ofdma=True,roam_ft_ds=True,key_management='DEFAULT',pairwise='[BLANK]',private_key='[BLANK]',ca_cert='[BLANK]',client_cert='[BLANK]',pk_passwd='[BLANK]',pac_file='[BLANK]',
-                  server_ip=None,expected_passfail_value=None,device_csv_name=None):
+                  server_ip=None,expected_passfail_value=None,device_csv_name=None,wait_time=60):
         """
         Method to start HTTP test on the given device list
 
@@ -833,7 +833,7 @@ class Candela:
                                                 twog_radio='wiphy3',
                                                 fiveg_radio='wiphy0',
                                                 sixg_radio='wiphy2',
-                                                device_list=arg_dev_list,expected_passfail_value=expected_passfail_value,device_csv_name=device_csv_name)
+                                                device_list=arg_dev_list,expected_passfail_value=expected_passfail_value,device_csv_name=device_csv_name,wait_time=wait_time)
         self.http_test.http_test_duration = http_test_duration
         self.http_test.Bands = Bands
         self.http_test.data = {}
@@ -1074,7 +1074,7 @@ class Candela:
                  client_cert=None,
                  pk_passwd=None,
                  pac_file=None,server_ip=None,
-                 csv_direction=None,csv_name=None,expected_passfail_val=None):
+                 csv_direction=None,csv_name=None,expected_passfail_val=None,wait_time=60):
         if(side_a_min!=0 and side_b_min!=0):
             direction='L3_'+traffic_type.split('_')[1].upper()+'_BiDi'
         elif( side_a_min!=0):
@@ -1147,7 +1147,7 @@ class Candela:
                                     server_ip=server_ip,
                                     csv_direction=direction,
                                     csv_name=csv_name,
-                                    expected_passfail_val=expected_passfail_val)
+                                    expected_passfail_val=expected_passfail_val,wait_time=wait_time)
 
                 data = {}
                 self.qos_test.background_run = background_run
@@ -1639,7 +1639,7 @@ class Candela:
                             test_name=None,
                             background_run = False,ssid=None,password=None,security=None,file_name=None,group_name=None,profile_name=None,eap_method='DEFAULT',eap_identity='',ieee80211=True,ieee80211u=True,ieee80211w=1,enable_pkc=True,
                   bss_transition=True,power_save=True,disable_ofdma=True,roam_ft_ds=True,key_management='DEFAULT',pairwise='[BLANK]',private_key='[BLANK]',ca_cert='[BLANK]',client_cert='[BLANK]',pk_passwd='[BLANK]',pac_file='[BLANK]',
-                  server_ip=None,expected_passfail_value=None,device_csv_name=None
+                  server_ip=None,expected_passfail_value=None,device_csv_name=None,wait_time=60
                               ):
         
         if(expected_passfail_value!=None and device_csv_name!=None):
@@ -1754,7 +1754,7 @@ class Candela:
                         pk_passwd=pk_passwd,
                         pac_file=pac_file,
                         server_ip=server_ip,
-                        csv_direction=csv_direction,expected_passfail_value=expected_passfail_value,device_csv_name=device_csv_name
+                        csv_direction=csv_direction,expected_passfail_value=expected_passfail_value,device_csv_name=device_csv_name,wait_time=wait_time
                        )
         
         self.throughput_test.os_type()
@@ -2513,7 +2513,7 @@ class Candela:
                     incremental = False,incremental_capacity=None,postcleanup=False,
                     precleanup=False,test_name=None,background_run=False,file_name=None,group_name=None,profile_name=None,eap_method='DEFAULT',eap_identity='',ieee80211=True,ieee80211u=True,ieee80211w=1,enable_pkc=True,
                   bss_transition=True,power_save=True,disable_ofdma=True,roam_ft_ds=True,key_management='DEFAULT',pairwise='[BLANK]',private_key='[BLANK]',ca_cert='[BLANK]',client_cert='[BLANK]',pk_passwd='[BLANK]',pac_file='[BLANK]',
-                  server_ip=None,expected_passfail_value=None,device_csv_name=None):
+                  server_ip=None,expected_passfail_value=None,device_csv_name=None,wait_time=60):
         if device_list!="":
             device_list = self.filter_iOS_devices(device_list)
         
@@ -2590,7 +2590,7 @@ class Candela:
         resource_ids_generated = ""
         #  Process resource IDs when web GUI is enabled
 
-        config_obj=DeviceConfig.DeviceConfig(lanforge_ip=self.lanforge_ip,file_name=file_name)
+        config_obj=DeviceConfig.DeviceConfig(lanforge_ip=self.lanforge_ip,file_name=file_name,wait_time=wait_time)
         if not expected_passfail_value and device_csv_name==None :
             config_obj.device_csv_file(csv_name="device.csv")
         if(group_name!=None and file_name!=None and profile_name!=None):
@@ -2601,28 +2601,28 @@ class Candela:
                 config_devices[selected_groups[i]]=selected_profiles[i]
 
             config_obj.initiate_group()
-            asyncio.run(config_obj.connectivity(config_devices))
+            eid_list=asyncio.run(config_obj.connectivity(config_devices))
         
-            adbresponse=config_obj.adb_obj.get_devices()
-            resource_manager=config_obj.laptop_obj.get_devices()
-            all_res={}
-            df1=config_obj.display_groups(config_obj.groups)
-            groups_list=df1.to_dict(orient='list')
-            group_devices={}
+            # adbresponse=config_obj.adb_obj.get_devices()
+            # resource_manager=config_obj.laptop_obj.get_devices()
+            # all_res={}
+            # df1=config_obj.display_groups(config_obj.groups)
+            # groups_list=df1.to_dict(orient='list')
+            # group_devices={}
             
-            for adb in adbresponse:   
-                group_devices[adb['serial']]=adb['eid']
-            for res in resource_manager:
-                all_res[res['hostname']]=res['shelf']+'.'+res['resource']
-            eid_list=[]
-            for grp_name in groups_list.keys():
-                for g_name in selected_groups:
-                    if(grp_name == g_name):
-                        for j in groups_list[grp_name]:
-                            if(j in group_devices.keys()):
-                                eid_list.append(group_devices[j])
-                            elif(j in all_res.keys()):
-                                eid_list.append(all_res[j])
+            # for adb in adbresponse:   
+            #     group_devices[adb['serial']]=adb['eid']
+            # for res in resource_manager:
+            #     all_res[res['hostname']]=res['shelf']+'.'+res['resource']
+            # eid_list=[]
+            # for grp_name in groups_list.keys():
+            #     for g_name in selected_groups:
+            #         if(grp_name == g_name):
+            #             for j in groups_list[grp_name]:
+            #                 if(j in group_devices.keys()):
+            #                     eid_list.append(group_devices[j])
+            #                 elif(j in all_res.keys()):
+            #                     eid_list.append(all_res[j])
             device_list = ",".join(id for id in eid_list) 
         
         
@@ -2655,8 +2655,8 @@ class Candela:
             }
             if(group_name==None and file_name==None and profile_name==None):
                 dev_list=device_list.split(',')
-                asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
-
+                eid_list=asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
+                device_list = ",".join(id for id in eid_list) 
 
             # Extract second part of resource IDs and sort them
             self.web_browser_test.android_devices = self.web_browser_test.devices.get_devices()
@@ -2732,8 +2732,9 @@ class Candela:
             print("Available devices:", device_list)
             device_list = input("Enter the desired resources to run the test:")
             dev1_list=device_list.split(',')
-            asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
-            selected_devices,report_labels,selected_macs = self.web_browser_test.devices.query_user(device_list=dev1_list)
+            eid_list=asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
+            device_list = ",".join(id for id in eid_list) 
+            selected_devices,report_labels,selected_macs = self.web_browser_test.devices.query_user(device_list=eid_list)
             # Handle cases where no devices are selected
             if not selected_devices:
                 logger.info("devices donot exist..!!")
@@ -2782,7 +2783,7 @@ class Candela:
                 if(len(available_resources)==len(expected_val)):
                     for i in range(len(available_resources)):
                         device_map[self.web_browser_test.android_list[i].split('.')[0]+'.'+self.web_browser_test.android_list[i].split('.')[1]]=expected_val[i]
-                    config_obj.update_device_csv('device.csv','RealBrowser',device_map)
+                    config_obj.update_device_csv('device.csv','RealBrowser URLcount',device_map)
                 else:
                     print("Enter correct number of values")
                     exit(0)
@@ -3040,7 +3041,7 @@ class Candela:
                             real_passwd=None,
                             real_security=None,file_name=None,group_name=None,profile_name=None,eap_method='DEFAULT',eap_identity='',ieee80211=True,ieee80211u=True,ieee80211w=1,enable_pkc=True,
                   bss_transition=True,power_save=True,disable_ofdma=True,roam_ft_ds=True,key_management='DEFAULT',pairwise='[BLANK]',private_key='[BLANK]',ca_cert='[BLANK]',client_cert='[BLANK]',pk_passwd='[BLANK]',pac_file='[BLANK]',
-                  server_ip=None,device_csv_name=None,expected_passfail_value=None
+                  server_ip=None,device_csv_name=None,expected_passfail_value=None,wait_time=60
                     ):
             # use for creating multicast dictionary
         
@@ -3083,7 +3084,7 @@ class Candela:
                 print("Number of groups should match number of profiles")
                 exit(1)
             if((group_name!=None and profile_name!=None and file_name!=None and device_list==[] and real_ssid==None and (len(selected_groups)==len(selected_profiles))) or(group_name==None and profile_name==None and file_name==None and real_ssid!=None and real_passwd!=None and real_security!=None) or (group_name==None and profile_name==None and file_name==None and real_ssid!=None and real_passwd==None and real_security.lower() =='open')):
-                config_obj=DeviceConfig.DeviceConfig(lanforge_ip=self.lanforge_ip,file_name=file_name)
+                config_obj=DeviceConfig.DeviceConfig(lanforge_ip=self.lanforge_ip,file_name=file_name,wait_time=wait_time)
                 if not expected_passfail_value and device_csv_name==None :
                     config_obj.device_csv_file(csv_name="device.csv")
                 if(group_name!=None and file_name!=None and profile_name!=None):
@@ -3095,29 +3096,29 @@ class Candela:
 
                     #print("CONFIGURED DICT",config_devices)
                         config_obj.initiate_group()
-                        # asyncio.run(config_obj.connectivity(config_devices))
+                        eid_list=asyncio.run(config_obj.connectivity(config_devices))
                     
-                        adbresponse=config_obj.adb_obj.get_devices()
-                        resource_manager=config_obj.laptop_obj.get_devices()
-                        all_res={}
-                        df1=config_obj.display_groups(config_obj.groups)
-                        groups_list=df1.to_dict(orient='list')
-                        group_devices={}
+                        # adbresponse=config_obj.adb_obj.get_devices()
+                        # resource_manager=config_obj.laptop_obj.get_devices()
+                        # all_res={}
+                        # df1=config_obj.display_groups(config_obj.groups)
+                        # groups_list=df1.to_dict(orient='list')
+                        # group_devices={}
                         
-                        for adb in adbresponse:
-                            if(adb['eid']!=''):
-                                group_devices[adb['serial']]=adb['eid']
-                        for res in resource_manager:
-                            all_res[res['hostname']]=res['shelf']+'.'+res['resource']
-                        eid_list=[]
-                        for grp_name in groups_list.keys():
-                            for g_name in selected_groups:
-                                if(grp_name == g_name):
-                                    for j in groups_list[grp_name]:
-                                        if(j in group_devices.keys()):
-                                            eid_list.append(group_devices[j])
-                                        elif(j in all_res.keys()):
-                                            eid_list.append(all_res[j])
+                        # for adb in adbresponse:
+                        #     if(adb['eid']!=''):
+                        #         group_devices[adb['serial']]=adb['eid']
+                        # for res in resource_manager:
+                        #     all_res[res['hostname']]=res['shelf']+'.'+res['resource']
+                        # eid_list=[]
+                        # for grp_name in groups_list.keys():
+                        #     for g_name in selected_groups:
+                        #         if(grp_name == g_name):
+                        #             for j in groups_list[grp_name]:
+                        #                 if(j in group_devices.keys()):
+                        #                     eid_list.append(group_devices[j])
+                        #                 elif(j in all_res.keys()):
+                        #                     eid_list.append(all_res[j])
                         device_list = eid_list 
                 elif(device_list!=None):
                     all_devices= config_obj.get_all_devices()
@@ -3146,8 +3147,9 @@ class Candela:
 
                         }
                     if(group_name==None and file_name==None and profile_name==None):
-                        # asyncio.run(config_obj.connectivity(device_list=device_list,wifi_config=config_dict))
-                        print()
+                        eid_list=asyncio.run(config_obj.connectivity(device_list=device_list,wifi_config=config_dict))
+                        device_list = eid_list 
+                        print("Device",device_list)
 
                 else:
 
@@ -3184,8 +3186,7 @@ class Candela:
                         device_list = [input("Enter the desired resources to run the test:")]
                         print("AAAA",device_list[0])
                         dev1_list=device_list
-                        # asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
-
+                        device_list=asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
                 response_port = config_obj.json_get("/port/all")
                 traffic_type=endp_types.split(',')
                 endp_input_list=[]
@@ -3220,7 +3221,7 @@ class Candela:
                                     for i in range(len(sample_list)):
                                         device_map[sample_list[i].split('.')[0]+'.'+sample_list[i].split('.')[1]]=expected_val[i]
                                             
-                                    config_obj.update_device_csv('device.csv',endp,device_map)
+                                    config_obj.update_device_csv('device.csv',endp+' Mbps',device_map)
                                     device_csv_name="device.csv"
                                 else:
                                     print("Enter correct number of values")
@@ -4072,28 +4073,24 @@ class Candela:
 
 
 logger_config = lf_logger_config.lf_logger_config()
-# candela_apis = Candela(ip='192.168.214.61', port=8080)
-ftp_test=Candela(ip='192.168.242.2',port=8080)
+candela_apis = Candela(ip='192.168.214.61', port=8080)
+# candela_apis.start_qos_test(file_name='g219',group_name='grp1',profile_name='OpenWa',ap_name='NETGEAR',qos_serial_run=False,traffic_type='lf_tcp',upstream='eth1', tos=['VO'],wait_time=30)
+# ftp_test=Candela(ip='192.168.242.2',port=8080)
+# >>>>>>>>>>>>>>>>HTTP TEST>>>>>>>>>>>>>>>>>>
 # candela_apis.start_http_test(
 #                             file_name='g219',group_name='grp1',profile_name='OpenWa',
-#                             # ssid='Dev_wpa2', password='lanforge',security='wpa2',
+#                             # ssid='OpenWifi', password='OpenWifi',security='wpa2',
 #                             http_file_size='10MB',
-#                             # device_list=['1.95.wlan0'],
-#                             report_labels=['1.12 android phone369', '1.11 android v2109', '1.269 Win Dell', '1.13 android samsung059'],device_macs=['aa:b2:e7:22:af:0d', '86:20:53:95:46:0d', '40:1c:83:3c:81:15', '4e:c3:c0:d3:5b:9e'], target_per_ten=1000, upstream='eth1',
-#                             band='5G', background=False,server_ip='192.168.214.61',device_csv_name='device.csv')
-# ftp_test.start_http_test(
-#                             file_name='g242',group_name='grp1',profile_name='OpenWa',
-#                             # ssid='NETGEAR5G', password='lanforge',security='wpa2',
-#                             http_file_size='10MB',
-#                             # device_list=['1.110.wlan0', '1.20.wlan0', '1.115.wlan0'],
-#                             # report_labels=['1.110 Win DESKTOP-IUQFRCV', '1.20 android shelfB2_13', '1.115 Win DESKTOP-DSVHJ4L'],device_macs=['24:ee:9a:39:2e:6', '52:70:de:ba:98:4a', '34:f3:9a:eb:46:b4'], 
+#                             # device_list=['1.59.wlan0','1.216.wlan0'],
+#                             # report_labels=['1.12 android phone369', '1.11 android v2109', '1.269 Win Dell', '1.13 android samsung059'],device_macs=['aa:b2:e7:22:af:0d', '86:20:53:95:46:0d', '40:1c:83:3c:81:15', '4e:c3:c0:d3:5b:9e'], 
 #                             target_per_ten=1000, upstream='eth1',
-#                             band='5G', background=False,server_ip='192.168.242.2',device_csv_name='device.csv')
+#                             band='5G', background=False,server_ip='192.168.214.61',expected_passfail_value=2,wait_time=30)
 
-# ftp_test.start_th_test(traffic_type="lf_udp",
-#                             file_name='g242',group_name='grp1',profile_name='OpenWa',
-#                             # device_list='1.110,1.115,1.12',
-#                             # ssid='NETGEAR5',password='lanforge',security='wpa2',
+# >>>>>>>>>>>>>>>>THROUGHPUT TEST>>>>>>>>>>>>>
+# candela_apis.start_th_test(traffic_type="lf_udp",
+#                             # file_name='g219',group_name='grp1',profile_name='OpenWa',
+#                             device_list='1.59,1.216',
+#                             ssid='OpenWifi',password='OpenWifi',security='wpa2',
 #                             upload=1000000,
 #                             # download=100000,
 #                             upstream_port="eth1",
@@ -4105,15 +4102,57 @@ ftp_test=Candela(ip='192.168.242.2',port=8080)
 #                             # postcleanup=True,
 #                             packet_size=18,
 #                             test_name="Throughput_test",
-#                             background_run=False,precleanup=True,postcleanup=True,expected_passfail_value=0.2
+#                             background_run=False,precleanup=True,postcleanup=True,expected_passfail_value=0.2,wait_time=30
 #                             )
 
-# ftp_test.start_mc_test(mc_tos="VO", endp_types="mc_udp",
-#                                   side_b_min=100000000, upstream_port='eth1', test_duration=30,real_devices=True,file_name='g242',group_name='grp1',profile_name='OpenWa',expected_passfail_value=0.2)
+# >>>>>>>>>>>>>>>>>MULTICAST TEST>>>>>>>>>>>>>
+# candela_apis.start_mc_test(mc_tos="VO,VI,BE,BK", endp_types="mc_udp",
+#                                   side_b_min=100000000, upstream_port='eth1', test_duration=30,real_devices=True,file_name='g219',group_name='grp1',profile_name='OpenWa',wait_time=30)
+
+# >>>>>>>>>>>>>>>PORT RESET>>>>>>>>>>>>>>>>>
+# candela_apis.start_port_reset_test(
+#     #file_name='g219',group_name='grp1',profile_name='OpenWa'
+#     device_list='1.19',
+#     ssid='Dev_wpa2',
+#     passwd='lanforge',
+#     encryp='wpa2',
+#     reset=1,
+#     suporrted_release=['11', '12', '13','14'],
+#     mgr_ip='192.168.214.61',
+#     forget_network=True,
+#     background_run=False,
+#     expected_passfail_value=2,wait_time=30
+# )
+# candela_apis.generate_preset_report()
+
+#>>>>>>>>>>>>>>>>>>>>REAL BROWSER TEST>>>>>>>>>>>>>>>>>>>>>>>
+    # candela.start_web_browser_test(device_list='1.110,1.115', 
+    #                                     duration="1m",
+    #                                     url="https://www.google.com",
+    #                                     background_run=True,
+    #                                     count=3,
+    #                                     incremental_capacity='1',
+    #                                     ssid="NETGEAR5G",
+    #                                     passwd="lanforge",
+    #                                     encryp="wpa2"
+    #                                     )
+    # candela.stop_web_browser_test()
+    # candela.generate_report_web_browser_test()
+
+# candela_apis.start_web_browser_test(group_name="grp1", 
+#                                         duration="1m",
+#                                         url="https://www.google.com",
+#                                         background_run=True,
+#                                         count=3,
+#                                         incremental_capacity='1',
+#                                         profile_name="OpenWa",
+#                                         file_name="g219",wait_time=20
+#                                         )
+    # candela.stop_web_browser_test()
+    # candela.generate_report_web_browser_test()
 
 
-
-# ROAMMMMM
+# ROAM TEST
 # candela_apis.start_roam_test(attenuator='1.1.3192', attenuator_modules=['0,1', '2,3'],
 #                              device_list=['1.11.wlan0','1.12.wlan0'],
 #                              bssids=['90:3c:b3:b1:70:0d', '90:3c:b3:6c:41:c5'],
@@ -4123,20 +4162,24 @@ ftp_test=Candela(ip='192.168.242.2',port=8080)
 
 
 #FTP TEST
-#ftp_test.start_ftp_test(ssid='OpenWifi',password='OpenWifi',security='wpa2',background=False,server_ip='192.168.214.219')
+# ftp_test.start_ftp_test(ssid='OpenWifi',password='OpenWifi',security='wpa2',background=False,device_list=['1.16','1.260'],server_ip='192.168.214.148',wait_time=20)
+# ftp_test.start_ftp_test(profile_name="OpenWa",file_name="g219",group_name="grp4",background=False,wait_time=20)
+
 
 
 #VIDEO STREAMING
-# ftp_test.start_vs_test(ssid='OpenWifi',passwd='OpenWifi',encryp='wpa2',server_ip='192.168.214.219',device_list='1.10')
+# ftp_test.start_vs_test(ssid='OpenWifi',passwd='OpenWifi',encryp='wpa2',server_ip='192.168.214.61',device_list='1.16,1.260',wait_time=20)
+# ftp_test.start_vs_test(profile_name="OpenWa",file_name="g219",group_name="grp4",wait_time=20)
 
 #PING TEST
-# ftp_test.start_ping_test(file_name='g219',group_name='grp1',profile_name='OpenWa',target='192.168.1.3',real=True,server_ip='192.168.214.219')
-#ftp_test.start_ping_test(ssid="OpenWifi",password="OpenWifi",encryption="wpa2",target='192.168.1.3',real=True,server_ip='192.168.214.219')
-
+# ftp_test.start_ping_test(file_name='g219',group_name='grp4',profile_name='OpenWa',target='192.168.1.3',real=True,wait_time=20)
+# ftp_test.start_ping_test(ssid="OpenWifi",password="OpenWifi",encryption="wpa2",target='192.168.1.3',real=True,server_ip='192.168.214.61',wait_time=20)
 
 #QOS
-# ftp_test.start_qos_test(ssid='OpenWifi',password='OpenWifi',security='wpa2',ap_name='NETGEAR',qos_serial_run=False,traffic_type='lf_tcp',upstream='eth1', tos=['VO'])
+# ftp_test.start_qos_test(ssid='OpenWifi',password='OpenWifi',security='wpa2',ap_name='NETGEAR',qos_serial_run=False,traffic_type='lf_tcp',upstream='eth1', tos=['VO'],wait_time=30)
+# ftp_test.start_qos_test(file_name='g219',group_name='grp4',profile_name='OpenWa',ap_name='NETGEAR',qos_serial_run=False,traffic_type='lf_tcp',upstream='eth1', tos=['VO'],wait_time=40)
 
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 # candela_apis.get_client_connection_details(['1.208.wlan0', '1.19.wlan0'])
 
@@ -4261,8 +4304,8 @@ ftp_test=Candela(ip='192.168.242.2',port=8080)
 
 
 # To RUN MULTICAST TEST
-# candela_apis.start_mc_test(mc_tos="VO", endp_types="mc_udp", side_a_min=10000000,
-#                                   side_b_min=100000000, upstream_port='eth1', test_duration=30, device_list=['1.80.wlan0', '1.11.wlan0'], background_run=True)
+# candela_apis.start_mc_test(mc_tos="VO,VI,BE,BK", endp_types="mc_udp", side_a_min=10000000,
+#                                   side_b_min=100000000, upstream_port='eth1', test_duration=30, device_list=['1.260.wlan0', '1.58.wlan0'], background_run=True)
 # time.sleep(60)
 # candela_apis.stop_multicast_test()
 # candela_apis.generate_report_multicast_test()
@@ -4316,31 +4359,6 @@ ftp_test=Candela(ip='192.168.242.2',port=8080)
     # candela.stop_zoom_test()
     # candela.generate_report_zoom()
     # candela.clean_cx_zoom_test()
-
-    # candela.start_web_browser_test(device_list='1.110,1.115', 
-    #                                     duration="1m",
-    #                                     url="https://www.google.com",
-    #                                     background_run=True,
-    #                                     count=3,
-    #                                     incremental_capacity='1',
-    #                                     ssid="NETGEAR5G",
-    #                                     passwd="lanforge",
-    #                                     encryp="wpa2"
-    #                                     )
-    # candela.stop_web_browser_test()
-    # candela.generate_report_web_browser_test()
-
-    # candela.start_web_browser_test(group_name="group1", 
-    #                                     duration="1m",
-    #                                     url="https://www.google.com",
-    #                                     background_run=True,
-    #                                     count=3,
-    #                                     incremental_capacity='1',
-    #                                     profile_name="DUT_2G",
-    #                                     file_name="grpyt"
-    #                                     )
-    # candela.stop_web_browser_test()
-    # candela.generate_report_web_browser_test()
 
 
     # candela.start_zoom_test(host="192.168.242.2",duration=1,zoom_host="1.110",audio=True,video=True,sigin_email="demo@gmail.com",sigin_passwd="Demo@123",participants=2,group_name="group1",profile_name="DUT_5G",file_name="grpyt")

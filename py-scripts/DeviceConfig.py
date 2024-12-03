@@ -863,8 +863,8 @@ class LAPTOPS(Realm):
 class DeviceConfig(Realm):
     def __init__(self, lanforge_ip=None,
                  port=8080,file_name=None,
-                 _debug_on=False,csv_name=None,create_csv=False
-                 
+                 _debug_on=False,csv_name=None,create_csv=False,
+                 wait_time=60
                  ):
         super().__init__(lfclient_host=lanforge_ip,
                          debug_=_debug_on)
@@ -873,7 +873,7 @@ class DeviceConfig(Realm):
         self.file_name=file_name
         self.create_csv=create_csv
         self.csv_name=csv_name       
-
+        self.wait_time=wait_time
         # Objects for alptops and adb class  
         self.adb_obj = ADB_DEVICES(lanforge_ip=self.lanforge_ip)
         self.laptop_obj = LAPTOPS(lanforge_ip=self.lanforge_ip)
@@ -900,7 +900,7 @@ class DeviceConfig(Realm):
         if laptops:
             laptop_devices = self.laptop_obj.get_devices()
         self.all_devices = adb_devices+laptop_devices
-        print("All devices",self.all_devices)
+        # print("All devices",self.all_devices)
         return(adb_devices+laptop_devices)
     
     def map_all_devices(self):
@@ -990,7 +990,7 @@ class DeviceConfig(Realm):
 
     def device_csv_file(self,csv_name='device.csv'):
         file_name = csv_name
-        columns = ['DeviceList', 'PingPacketLoss', 'L3_TCP_UL','L3_TCP_DL','L3_TCP_BiDi','L3_UDP_UL','L3_UDP_DL','L3_UDP_BiDi','Videostreaming','RealBrowser','HTTP','FTP','PortReset','Roaming']
+        columns = ['DeviceList', 'PingPacketLoss %', 'L3_TCP_UL Mbps','L3_TCP_DL Mbps','L3_TCP_BiDi Mbps','L3_UDP_UL Mbps','L3_UDP_DL Mbps','L3_UDP_BiDi Mbps','Videostreaming URLcount','RealBrowser URLcount','HTTP URLcount','FTP URLcount','PortReset No_of_connections','Roaming No_of_Successful Roams']
 
         if not os.path.exists(file_name):
             with open(file_name, mode='w', newline='') as file:
@@ -1375,6 +1375,7 @@ class DeviceConfig(Realm):
    
 
     async def connectivity(self,config=None,disconnect=False,reboot=False,device_list=None,wifi_config=None,flag=0):
+        
         group_device = []
         selected_adb_devices = []
         selected_laptop_devices = []
@@ -1496,8 +1497,8 @@ class DeviceConfig(Realm):
                 await self.adb_obj.configure_wifi(port_list=selected_adb_devices)
                 
                 if(selected_laptop_devices == []):  
-                    print("WAITING FOR 120 seconds")
-                    time.sleep(120)
+                    print("WAITING FOR {} seconds".format(self.wait_time))
+                    time.sleep(self.wait_time)
             if(selected_laptop_devices != []):
                 # if laptop['eap_method']!="" or laptop['eap_method']!= None or laptop['eap_method']!="NA":
                 await self.laptop_obj.rm_station(port_list=selected_laptop_devices)
@@ -1513,8 +1514,8 @@ class DeviceConfig(Realm):
                 time.sleep(10)
                 await self.laptop_obj.set_port(port_list=selected_laptop_devices)
                 
-                print("WAITING TOTAL 120 SECONDS FOR CONFIGURATION TO APPLY")
-                time.sleep(120)
+                print("WAITING TOTAL {} SECONDS FOR CONFIGURATION TO APPLY".format(self.wait_time))
+                time.sleep(self.wait_time)
             return self.monitor_connection(selected_adb_devices,selected_laptop_devices)
             
 
@@ -1675,7 +1676,11 @@ class DeviceConfig(Realm):
         df = pd.DataFrame(data=selected_t_devices).transpose()
         print("dF--",df)
         print(selected_devices)
-        return selected_devices
+        config_dev_list=[]
+        for dev in selected_devices:
+            config_dev_list.append(dev['eid'])
+        print("config",config_dev_list)
+        return config_dev_list
     
             
 
@@ -1707,6 +1712,7 @@ if __name__ == "__main__":
     parser.add_argument("--connect_profile",action="store_true")
     parser.add_argument("--create_csv",action="store_true")
     parser.add_argument('--csv_name',type=str,default='',help='')
+    
 
     args = parser.parse_args()
     obj = DeviceConfig(lanforge_ip=args.lanforge_ip,file_name=args.file_name)
