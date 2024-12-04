@@ -1174,7 +1174,7 @@ class RealBrowserTest(Realm):
             data = json.load(file)
             for key in obj:
                 data[key]=obj[key]
-        with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.flask_ip, self.test_name),
+        with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host, self.test_name),
                           'w') as file:
             json.dump(data, file, indent=4)
     
@@ -1816,7 +1816,7 @@ def main():
 
             #print("CONFIGURED DICT",config_devices)
                 config_obj.initiate_group()
-                #asyncio.run(config_obj.connectivity(config_devices))
+                asyncio.run(config_obj.connectivity(config_devices))
             
                 adbresponse=config_obj.adb_obj.get_devices()
                 resource_manager=config_obj.laptop_obj.get_devices()
@@ -1893,7 +1893,7 @@ def main():
                     }
                     if(args.group_name==None and args.file_name==None and args.profile_name==None):
                         dev_list=args.device_list.split(',')
-                        #asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
+                        asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
                     obj.android_devices = obj.devices.get_devices()
                     # Extract second part of resource IDs and sort them
                     obj.resource_ids = ",".join(id.split(".")[1] for id in args.device_list.split(","))
@@ -1973,7 +1973,7 @@ def main():
                         print(device)
                     args.device_list = input("Enter the desired resources to run the test:")
                     dev1_list=args.device_list.split(',')   
-                    #asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
+                    asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
                     obj.android_devices = obj.devices.get_devices()
                     # Query user to select devices if no resource IDs are provided
                     selected_devices,report_labels,selected_macs = obj.devices.query_user(device_list=dev1_list)

@@ -1382,7 +1382,7 @@ def main():
                 
                 
                     config_obj.initiate_group()
-                    #asyncio.run(config_obj.connectivity(config_devices))
+                    asyncio.run(config_obj.connectivity(config_devices))
             
                     adbresponse=config_obj.adb_obj.get_devices()
                     resource_manager=config_obj.laptop_obj.get_devices()
@@ -1441,7 +1441,7 @@ def main():
                         if(args.group_name==None and args.file_name==None and args.profile_name==None):
                             dev_list=args.resources.split(',')
                             dev_list.insert(0,args.zoom_host)
-                            #asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
+                            asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
                             args.resources = ",".join(id for id in dev_list)
                     else:
 
@@ -1485,7 +1485,7 @@ def main():
                          args.resources = zm_host+","+args.resources
 
                          dev1_list=args.resources.split(',')
-                         #asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
+                         asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
 
 
 
