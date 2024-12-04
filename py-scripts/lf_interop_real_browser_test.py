@@ -197,6 +197,11 @@ class RealBrowserTest(Realm):
         self.linux = 0
         self.android = 0
         self.iteration_value = 0
+
+        self.webui_hostnames = []
+        self.webui_ostypes = []
+        self.webui_devices = None
+        self.hostname_os_combination = None
         
         # Initialize additional attributes
         self.adb_device_list = None 
@@ -808,6 +813,11 @@ class RealBrowserTest(Realm):
         laptop_os_types = []
         ssid = []
 
+        webui_android = 0
+        webui_windows = 0
+        webui_linux = 0
+        webui_mac = 0
+
         # Retrieve data from LANforge port Manager tab including alias, MAC address, mode, parent device, RX rate, TX rate, SSID, and signal strength
         eid_data = self.json_get("ports?fields=alias,mac,mode,Parent Dev,ssid,signal,phantom,down")
         resource_ids = []
@@ -834,6 +844,10 @@ class RealBrowserTest(Realm):
                                     mac_address.append(alias[i].get("mac", "NA"))
                                     ssid.append(alias[i].get("ssid", "NA"))
                                     user_name.append(resource_hw_data['resource'].get('user', 'NA'))
+                                    self.webui_hostnames.append(resource_hw_data['resource'].get('user', 'NA'))
+                                    self.webui_ostypes.append("Android")
+                                    webui_android+=1
+
 
                                 elif hw_version.startswith('Win') and alias[i]["parent dev"] == 'wiphy0' and alias[i]["down"] == False:
                                     laptops.append(i)
@@ -841,6 +855,9 @@ class RealBrowserTest(Realm):
                                     mac_address.append(alias[i].get("mac", "NA"))
                                     ssid.append(alias[i].get("ssid", "NA"))
                                     #user_name.append(resource_hw_data['resource'].get('user', 'NA'))
+                                    self.webui_hostnames.append(resource_hw_data['resource'].get('hostname', 'NA'))
+                                    self.webui_ostypes.append("windows")
+                                    webui_windows+=1
 
                                 elif hw_version.startswith('Linux') and alias[i]["parent dev"] == 'wiphy0' and alias[i]["down"] == False:
                                     laptops.append(i)
@@ -848,20 +865,27 @@ class RealBrowserTest(Realm):
                                     mac_address.append(alias[i].get("mac", "NA"))
                                     ssid.append(alias[i].get("ssid", "NA"))
                                     #user_name.append(resource_hw_data['resource'].get('user', 'NA'))
-                                    
+                                    self.webui_hostnames.append(resource_hw_data['resource'].get('hostname', 'NA'))
+                                    self.webui_ostypes.append("Linux")
+                                    webui_linux+=1
                                 elif hw_version.startswith('Apple') and alias[i]["parent dev"] == 'wiphy0' and alias[i]["down"] == False:
                                     laptops.append(i)
                                     laptop_os_types.append("macos")
                                     mac_address.append(alias[i].get("mac", "NA"))
                                     ssid.append(alias[i].get("ssid", "NA"))
                                     #user_name.append(resource_hw_data['resource'].get('user', 'NA'))
-            
-                                # # Get user hardware details/name from resource_hw_data
-                                # hw_name = resource_hw_data['resource']['hw version'].split(" ")
-                                # name = " ".join(hw_name[0:2])
-                                # phone_name_list.append(name)
+                                    self.webui_hostnames.append(resource_hw_data['resource'].get('hostname', 'NA'))
+                                    self.webui_ostypes.append("Mac")
+                                    webui_mac+=1
+        self.webui_devices=f'Total({len(self.webui_ostypes)}) : A({webui_android}), W({webui_windows}),L({webui_linux}),M({webui_mac})'
+                            
     
-                       
+        # Create the hostname_os_combinations using webui_hostnames and webui_ostypes
+        self.hostname_os_combination = ", ".join(
+            f"{hostname} ({os_type})"
+            for hostname, os_type in zip(self.webui_hostnames, self.webui_ostypes)
+        )
+
         print(station_name)
         print(laptops)
         print(laptop_os_types)
@@ -1143,7 +1167,16 @@ class RealBrowserTest(Realm):
         self.iteration_value = self.iteration_value + 1
 
         
-
+    def updating_webui_runningjson(self,obj):
+        data = {}
+        with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host,self.test_name),
+                          'r') as file:
+            data = json.load(file)
+            for key in obj:
+                data[key]=obj[key]
+        with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.flask_ip, self.test_name),
+                          'w') as file:
+            json.dump(data, file, indent=4)
     
     def create_report(self,):
         if self.dowebgui:
@@ -2057,6 +2090,26 @@ def main():
     
 
             obj.build()
+
+            if len(obj.webui_hostnames) == 0:
+                        print("No device is available to run the test")
+                        data_obj = {
+                            "status":"Stopped",
+                            "configuration_status":"configured"
+                        }
+                        obj.updating_webui_runningjson(data_obj)
+                        return
+            else:
+                data_obj = {
+                    "configured_devices":obj.webui_hostnames,
+                    "configuration_status":"configured",
+                    "no_of_devices": obj.webui_devices,
+                    "device_list":obj.hostname_os_combination,
+                    # "zoom_host":zoom_automation.zoom_hos
+                }
+                obj.updating_webui_runningjson(data_obj)
+
+
             time.sleep(10)
             
 
