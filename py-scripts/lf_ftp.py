@@ -224,7 +224,6 @@ class FtpTest(LFCliBase):
 
     def query_realclients(self):
         obj=DeviceConfig.DeviceConfig(lanforge_ip=self.host,file_name=self.file_name,wait_time=self.wait_time)
-        print("11111",self.device_list)
         if not self.expected_passfail_val and self.csv_name== None :
             obj.device_csv_file(csv_name="device.csv")
         if(self.group_name!=None and self.file_name!=None and self.device_list==[] and self.profile_name!=None):
@@ -357,7 +356,7 @@ class FtpTest(LFCliBase):
                                         self.linux_list.append(b['hw version'])
                                         #self.hostname_list.append(b['eid']+ " " +b['hostname'])
                                         self.devices_available.append(b['eid'] +" " +'Lin'+" "+ b['hostname'])
-                            elif 'Apple' in b['hw version'] and (b['app-id'] != '' or b['app-id'] != '0' or b['kernel'] == ''):
+                            elif 'Apple' in b['hw version'] and (b['app-id'] != '') and (b['app-id'] != '0' or b['kernel'] == ''):
                                 continue
                             elif "Apple" in b['hw version']:
                                 self.eid_list.append(b['eid'])
@@ -474,17 +473,19 @@ class FtpTest(LFCliBase):
             else:
                 devices_list = ""
                 logging.warning("Test can not be initiated on any selected devices hence aborting the test")
-                df1 = pd.DataFrame({
-                    "client": self.client_list,
-                    "url_data": 0,
-                    "bytes_rd": 0,
-                    "uc_min": 0,
-                    "uc_max": 0,
-                    "uc_avg": 0,
-                    'status': 'Stopped'
-                }
-                )
-                df1.to_csv('{}/ftp_datavalues.csv'.format(self.result_dir), index=False)
+                # df1 = pd.DataFrame({
+                #     "client": self.device_list,
+                #     "url_data": 0,
+                #     "bytes_rd": 0,
+                #     "uc_min": 0,
+                #     "uc_max": 0,
+                #     "uc_avg": 0,
+                #     'status': 'Stopped'
+                # }
+                # )
+                found = True
+
+                # df1.to_csv('{}/ftp_datavalues.csv'.format(self.result_dir), index=False)
                 raise ValueError("No Device is available to run the test hence aborting the test")
             logging.info("device got from webui are: %s", devices_list)
         else:
@@ -833,7 +834,7 @@ class FtpTest(LFCliBase):
                 continue
             device_data = device_data['resource']
             # print(device_data)
-            if 'Apple' in device_data['hw version'] and (device_data['app-id'] != '' or device_data['app-id'] != '0' or device_data['kernel'] == ''):
+            if 'Apple' in device_data['hw version'] and (device_data['app-id'] != '') and (device_data['app-id'] != '0' or device_data['kernel'] == ''):
                 print('{} is an iOS device. Currently we do not support iOS devices.'.format(device))
             else:
                 filtered_list.append(device)
