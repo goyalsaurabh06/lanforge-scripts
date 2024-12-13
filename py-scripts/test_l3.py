@@ -5465,7 +5465,7 @@ class L3VariableTime(Realm):
                     # up=self.conversion(self.client_dict_A[tos]['ul_A'])
                     # down=self.conversion(self.client_dict_A[tos]['dl_A'])
                     off_up,off_down,up,down=[],[],[],[]
-                    print("xfgchj", self.client_dict_A[tos]['offered_upload_rate_A'])
+                    # print("xfgchj", self.client_dict_A[tos]['offered_upload_rate_A'],"edtcfgvbhjn",self.client_dict_A[tos]['offered_download_rate_A'],"qawsertftghj",self.client_dict_A[tos]['dl_A'],"fgjbh",self.client_dict_A[tos]['ul_A'])
                     for i in  self.client_dict_A[tos]['offered_upload_rate_A']:
                         off_up.append(int(i)/1000000)
                     for i in  self.client_dict_A[tos]['offered_download_rate_A']:
@@ -5474,7 +5474,7 @@ class L3VariableTime(Realm):
                         up.append(int(i)/1000000)
                     for i in  self.client_dict_A[tos]['dl_A']:
                         down.append(int(i)/1000000)
-                    print("zdxfggcvhjb",off_down,"dxfghjk",off_up,"efdhsbh",up,"hnjgbfdv",down)
+                    # print("zdxfggcvhjb",off_down,"dxfghjk",off_up,"efdhsbh",up,"hnjgbfdv",down)
                     res_list=[]
                     test_input_list=[]
                     pass_fail_list=[]
@@ -5484,23 +5484,25 @@ class L3VariableTime(Realm):
                     if not self.expected_passfail_value:
                         for client in self.client_dict_A[tos]['resource_alias_A']:
                             if(client.split('_')[-1]!='Android'):
-                                res_list.append(client.split('_')[1])
+                                res_list.append('_'.join(client.split('_')[1:-1]))
                             else:
                                 for dev in interop_tab_data:
                                     for item in dev.values():
                                         if(item['resource-id']==client.split('_')[0]):
                                             res_list.append(item['name'].split('.')[2])
-                            
+                        # print("reslist",res_list)    
                         if self.device_csv_name==None:
                             self.device_csv_name='device.csv'
                         
                         with open(self.device_csv_name, mode='r') as file:
                             reader = csv.DictReader(file)
                             rows = list(reader)
-
+                        # print("endplist",self.endp_input_list)
                         for row in rows:
-                            device = row['DeviceList'] 
+                            device = row['DeviceList']
+                            print("device1",device)
                             if device in res_list:
+                                print("device",device)
                                 for endp in self.endp_input_list:
                                     test_input_list.append(row[endp+' Mbps'])
                         # print("!!!!!",test_input_list)
@@ -5509,6 +5511,7 @@ class L3VariableTime(Realm):
                     # test_input_list1=[]
                     # for i in test_input_list:
                     #     test_input_list1.append(i*1000000)
+                    direction=''
                     for k in range(len(test_input_list)):
                         if(self.graph_input_list[k].split('_')[2]=='BiDi'):
                             if(float(test_input_list[k])<=float(up[k]) and float(test_input_list[k])<=float(down[k])):
@@ -6807,6 +6810,9 @@ INCLUDE_IN_README: False
                 for device in all_devices:
                     if(device["type"]!='laptop'):
                         device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["serial"])
+                    else:
+                        # device_list.append(device)
+                        device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["hostname"])
                 print("Available devices:", device_list)
                 args.device_list = [input("Enter the desired resources to run the test:")]
                 # print("AAAA",args.device_list[0])

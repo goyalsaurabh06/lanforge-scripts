@@ -1917,39 +1917,45 @@ class Throughput(Realm):
                             _obj="The below tables provides detailed information for the throughput test on each device.")
                 report.build_objective()
                 self.mac_id_list = [item.split()[-1] if ' ' in item else item for item in self.mac_id_list]
-                res_list=[]
                 test_input_list=[]
                 pass_fail_list=[]
-                interop_tab_data = self.json_get('/adb/')["devices"]
+                if not self.expected_passfail_value:    
+                    res_list=[]
+                    interop_tab_data = self.json_get('/adb/')["devices"]
 
-                for j in range(len(device_type[int(incremental_capacity_list[i])-1])):
-                    if(device_type[int(incremental_capacity_list[i])-1][j]!='Android'):
-                        res_list.append(devices_on_running[-1][j])
-                    else:
-                        for dev in interop_tab_data:
-                            for item in dev.values():
-                                if(item['user-name']==devices_on_running[-1][j]):
-                                    res_list.append(item['name'].split('.')[2])
+                    for j in range(len(device_type[int(incremental_capacity_list[i])-1])):
+                        if(device_type[int(incremental_capacity_list[i])-1][j]!='Android'):
+                            res_list.append(devices_on_running[-1][j])
+                        else:
+                            for dev in interop_tab_data:
+                                for item in dev.values():
+                                    if(item['user-name']==devices_on_running[-1][j]):
+                                        res_list.append(item['name'].split('.')[2])
 
-                with open('device.csv', mode='r') as file:
-                    reader = csv.DictReader(file)
-                    rows = list(reader)
-            
-                for row in rows:
-                    device = row['DeviceList']  
-                    if device in res_list:
-                        test_input_list.append(row[self.csv_direction+' Mbps'])
+                    with open(self.device_csv_name, mode='r') as file:
+                        reader = csv.DictReader(file)
+                        rows = list(reader)
+                
+                    for row in rows:
+                        device = row['DeviceList']  
+                        if device in res_list:
+                            test_input_list.append(row[self.csv_direction+' Mbps'])
+                else:
+                    for val in [devices_on_running[-1]]:
+                        print("val",val)
+                        test_input_list.append(self.expected_passfail_value)
+                print("testinput",test_input_list,"devicesrunning",devices_on_running[-1],"downloadrate",[str(download_data[-1])+" Mbps"],"uploadrate",[str(upload_data[-1])+" Mbps" ],"DOWN",[(download_data[-1])],"UP",[(upload_data[-1])])      
                 direction=''
                 for k in range(len(test_input_list)):
                     if(self.csv_direction.split('_')[2]=='BiDi'):
-                        if(float(test_input_list[k])<=float(upload_data[-1][k])+float(download_data[-1][k][k])):
+                        if(float(test_input_list[k])<=float([n for n in [(upload_data[-1])]][k])+float([n for n in [(download_data[-1])]][k])):
                             pass_fail_list.append('PASS')
                             direction='bidirectional'
                         else:
                             pass_fail_list.append('FAIL')
                             direction='bidirectional'
                     elif(self.csv_direction.split('_')[2]=='UL'):
-                        if(float(test_input_list[k])<=float(upload_data[-1][k])):
+                        if(float(test_input_list[k])<=float([n for n in [(upload_data[-1]) ]][k])):
                             pass_fail_list.append('PASS')
                             direction='upload'
                         else:
@@ -1957,7 +1963,7 @@ class Throughput(Realm):
                             direction='upload'
                     else:
                         
-                        if(float(test_input_list[k])<=float(download_data[-1][k])):
+                        if(float(test_input_list[k])<=float([n for n in [(download_data[-1])]][k])):
                             pass_fail_list.append('PASS')
                             direction='download'
                         else:
@@ -1981,7 +1987,7 @@ class Throughput(Realm):
                             " Link Speed ":self.link_speed_list[int(incremental_capacity_list[i])-1],
                             " Status":pass_fail_list
                         }  
-    
+                print("interopability",bk_dataframe)
                 dataframe1 = pd.DataFrame(bk_dataframe)
                 report.set_table_dataframe(dataframe1)
                 report.build_table()
