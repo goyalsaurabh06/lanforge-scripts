@@ -141,7 +141,7 @@ class ThroughputQOS(Realm):
                  pac_file=None,
                  csv_direction=None,
                  expected_passfail_val=None,
-                 csv_name=None):
+                 csv_name=None,wait_time=60):
         super().__init__(lfclient_host=host,
                          lfclient_port=port),
         self.ssid_list = []
@@ -224,6 +224,7 @@ class ThroughputQOS(Realm):
         self.csv_direction=csv_direction
         self.expected_passfail_val=expected_passfail_val
         self.csv_name=csv_name
+        self.wait_time=wait_time
     def os_type(self):
         response = self.json_get("/resource/all")
         for key,value in response.items():
@@ -257,7 +258,7 @@ class ThroughputQOS(Realm):
         #print("android_list :",self.android_list)
 
     def phantom_check(self,ftp_test=False):
-        obj=DeviceConfig.DeviceConfig(lanforge_ip=self.host,file_name=self.file_name)
+        obj=DeviceConfig.DeviceConfig(lanforge_ip=self.host,file_name=self.file_name,wait_time=self.wait_time)
         if(self.group_name!=None and self.file_name!=None and self.device_list==[] and self.profile_name!=None):
             selected_groups=self.group_name.split(',')
             selected_profiles=self.profile_name.split(',')
@@ -266,7 +267,7 @@ class ThroughputQOS(Realm):
                 config_devices[selected_groups[i]]=selected_profiles[i]
             #print("CONFIGURED DICT",config_devices)
             obj.initiate_group()
-            asyncio.run(obj.connectivity(config_devices))
+            self.device_list=asyncio.run(obj.connectivity(config_devices))
         elif(self.device_list!=[]):
             #obj.initiate_group()
             # response = self.json_get("/resource/all")
@@ -314,7 +315,7 @@ class ThroughputQOS(Realm):
             }
             print("selfffffffffff",self.device_list)
             self.device_list=self.device_list.split(',')
-            asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
+            self.device_list=asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
         elif(self.device_list==[]):
             all_devices= obj.get_all_devices()
             device_list=[]
@@ -350,7 +351,7 @@ class ThroughputQOS(Realm):
             self.device_list = input("Enter the desired resources to run the test:").split(',')
             
 
-            asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
+            self.device_list=asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
             if not self.expected_passfail_val and self.csv_name==None:
                 obj.device_csv_file(csv_name="device.csv")
 
@@ -429,32 +430,33 @@ class ThroughputQOS(Realm):
         adbresponse=obj.adb_obj.get_devices()
         print("AVAILABLE DEVICES TO RUN TEST : ",self.user_list)
         logging.info(self.user_list)
-        if(self.group_name!=None and self.file_name!=None and self.device_list==[] and self.profile_name!=None):
-            #obj.initiate_group()
-            df1=obj.display_groups(obj.groups)
-            groups_list=df1.to_dict(orient='list')
-            group_devices=[]
-            ios_list=[]
-            for grp_name in groups_list.keys():
-                for g_name in selected_groups:
-                    if(grp_name==g_name):
-                        for j in groups_list[grp_name]:
-                            #print("j=",j)
-                            for i in self.user_list:
-                                if(i.split(' ')[1]=='android'):
-                                    for adb_dict in adbresponse:
-                                        if(adb_dict['serial']==j):
-                                            if(adb_dict['eid'] not in self.device_list and adb_dict['os']!='iOS' and adb_dict['eid']!=''):
-                                                self.device_list.append(adb_dict['eid'])
-                                            elif(adb_dict['os']=='iOS'and adb_dict['serial'] not in ios_list):
-                                                ios_list.append(adb_dict['serial'])
-                                else: 
-                                    if(j==i.split(' ')[2]):
-                                        self.device_list.append(i.split(' ')[0])
-            if(len(ios_list)>0):          
-                print("EXCLUDING IOS DEVICES",ios_list)
+        # if(self.group_name!=None and self.file_name!=None and self.device_list==[] and self.profile_name!=None):
+        #     #obj.initiate_group()
+        #     df1=obj.display_groups(obj.groups)
+        #     groups_list=df1.to_dict(orient='list')
+        #     group_devices=[]
+        #     ios_list=[]
+        #     for grp_name in groups_list.keys():
+        #         for g_name in selected_groups:
+        #             if(grp_name==g_name):
+        #                 for j in groups_list[grp_name]:
+        #                     #print("j=",j)
+        #                     for i in self.user_list:
+        #                         if(i.split(' ')[1]=='android'):
+        #                             for adb_dict in adbresponse:
+        #                                 if(adb_dict['serial']==j):
+        #                                     if(adb_dict['eid'] not in self.device_list and adb_dict['os']!='iOS' and adb_dict['eid']!=''):
+        #                                         self.device_list.append(adb_dict['eid'])
+        #                                     elif(adb_dict['os']=='iOS'and adb_dict['serial'] not in ios_list):
+        #                                         ios_list.append(adb_dict['serial'])
+        #                         else: 
+        #                             if(j==i.split(' ')[2]):
+        #                                 self.device_list.append(i.split(' ')[0])
+        #     if(len(ios_list)>0):          
+        #         print("EXCLUDING IOS DEVICES",ios_list)
 
-
+        if len(self.device_list)==0:
+            devices_list=""
 
         if len(self.device_list) != 0:
             devices_list = self.device_list
@@ -479,7 +481,7 @@ class ThroughputQOS(Realm):
                         for i in range(len(available_list)):
                             device_map[available_list[i]]=expected_val[i]
                         #print("DEVVVVVVVV",device_map)
-                        obj.update_device_csv("device.csv",self.csv_direction,device_map)
+                        obj.update_device_csv("device.csv",self.csv_direction+' Mbps',device_map)
                         self.csv_name="device.csv"
                     else:
                         print("Enter correct number of values")
@@ -493,10 +495,14 @@ class ThroughputQOS(Realm):
                 devices_list = ""
                 self.device_found = False
                 logger.warning("Test can not be initiated on any selected devices")
-        else:
-            logger.info("AVAILABLE DEVICES TO RUN TEST : {}".format(self.user_list))
+        # else:
+        #     logger.info("AVAILABLE DEVICES TO RUN TEST : {}".format(self.user_list))
 
-            devices_list = input("Enter the desired resources to run the test:")
+        #     devices_list = input("Enter the desired resources to run the test:")
+
+        if(devices_list=="" or devices_list==","):
+            logger.error("Selected Devices are not available in the lanforge")
+            exit(0)
         resource_eid_list = devices_list.split(',')
         logger.info("devices list {}".format(devices_list, resource_eid_list))
         resource_eid_list2 = [eid + ' ' for eid in resource_eid_list]
@@ -1247,7 +1253,7 @@ class ThroughputQOS(Realm):
                         device = row['DeviceList']
                         #print(row)  
                         if device in res_list:
-                            test_input_list.append(row[self.csv_direction])
+                            test_input_list.append(row[self.csv_direction+' Mbps'])
                     direction=''
                     print("2222222",self.tos,test_input_list)
 
@@ -1844,6 +1850,7 @@ def main():
     optional.add_argument("--server_ip", type=str,default='NA')
     optional.add_argument('--expected_passfail_val', help='Enter the expected throughput ', default=None)
     optional.add_argument('--csv_name',type=str, help='Enter the csv name to store expected values', default=None)
+    optional.add_argument("--wait_time",type=int,help="Specify the time for configuration",default=60)
     args = parser.parse_args()
 
     # help summary
@@ -1956,7 +1963,8 @@ def main():
                                 pac_file=args.pac_file,
                                 server_ip=args.server_ip,
                                 expected_passfail_val=args.expected_passfail_val,
-                                csv_name=args.csv_name)
+                                csv_name=args.csv_name,
+                                wait_time=args.wait_time)
             throughput_qos.os_type()
             throughput_qos.phantom_check()
             # checking if we have atleast one device available for running test

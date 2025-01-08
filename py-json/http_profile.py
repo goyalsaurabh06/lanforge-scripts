@@ -55,6 +55,7 @@ class HTTPProfile(LFCliBase):
                 return False
 
     def start_cx(self):
+        time.sleep(20)
         logger.info("Starting CXs...")
         for cx_name in self.created_cx.keys():
             self.json_post("/cli-json/set_cx_state", {
@@ -115,7 +116,7 @@ class HTTPProfile(LFCliBase):
         cx_post_data = []
         # print("http_profile - ports:{ports}".format(ports=ports))
         self.map_sta_ips(ports)
-        logger.info("Create HTTP CXs..." + __name__)
+        logger.info("Create HTTP CXs..." + __name__)          
         # print("http_profile - self.ip_map:{ip_map}".format(ip_map=self.ip_map))
 
         for i in range(len(list(self.ip_map))):

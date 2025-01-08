@@ -116,7 +116,8 @@ class HttpDownload(Realm):
                  pac_file=None,
                  server_ip=None,
                  device_csv_name='',
-                 expected_passfail_value=None
+                 expected_passfail_value=None,
+                 wait_time=60
                  ):
         super().__init__(lfclient_host=lfclient_host,lfclient_port=lfclient_port),
         self.ssid_list = []
@@ -188,6 +189,7 @@ class HttpDownload(Realm):
         self.server_ip=server_ip
         self.expected_passfail_value=expected_passfail_value
         self.device_csv_name=device_csv_name
+        self.wait_time=wait_time
         self.api_url = 'http://{}:{}'.format(self.host, self.port)
 
     #Todo- Make use of lf_base_interop_profile.py : Real device class to fetch available devices data
@@ -195,11 +197,10 @@ class HttpDownload(Realm):
         user_list2, real_client_list2, real_client_list12,android_list2, mac_list2, windows_list2, linux_list2, working_resources_list2, eid_list2,devices_available2, input_devices_list2, mac_id1_list2, mac_id_list2=[],[],[],[],[],[],[],[],[],[],[],[],[]
         device_found = False
         port_eid_list, same_eid_list,original_port_list=[],[],[]
-        obj=DeviceConfig.DeviceConfig(lanforge_ip=self.host,file_name=self.file_name)
+        obj=DeviceConfig.DeviceConfig(lanforge_ip=self.host,file_name=self.file_name,wait_time=self.wait_time)
         if not self.expected_passfail_value and self.device_csv_name==None :
             obj.device_csv_file(csv_name="device.csv")
         if(self.group_name!=None and self.file_name!=None and self.device_list==[] and self.profile_name!=None):
-            print("!!!!!")
             selected_groups=self.group_name.split(',')
             selected_profiles=self.profile_name.split(',')
             config_devices={}
@@ -208,7 +209,8 @@ class HttpDownload(Realm):
                     config_devices[selected_groups[i]]=selected_profiles[i]
             # print("CONFIGURED DICT",config_devices)    
             obj.initiate_group()
-            asyncio.run(obj.connectivity(config_devices))
+            self.device_list=asyncio.run(obj.connectivity(config_devices))
+            
         elif(self.device_list!=[]):
             obj.get_all_devices()
             config_dict={
@@ -236,7 +238,7 @@ class HttpDownload(Realm):
             }
             
             self.device_list=self.device_list.split(',')
-            asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
+            self.device_list=asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
         elif(self.device_list==[]):
             all_devices= obj.get_all_devices()
             config_dict={
@@ -270,7 +272,7 @@ class HttpDownload(Realm):
                     device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["serial"])
             print("Available devices:", device_list)
             self.device_list = input("Enter the desired resources to run the test:").split(',')
-            asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
+            self.device_list=asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
 
         response = self.json_get("/resource/all")
         for key,value in response.items():
@@ -308,7 +310,7 @@ class HttpDownload(Realm):
         #All the available resources are fetched from resource mgr tab ----
 
         response_port = self.json_get("/port/all")
-        #print(response_port)
+        # print("AAAAAAAAAAAAAAAAAA",response_port)
         mac_id1_list=[]
         for interface in response_port['interfaces']:
             for port,port_data in interface.items():
@@ -324,8 +326,7 @@ class HttpDownload(Realm):
                 if eid_list2[i] == port_eid_list[j]:
                     same_eid_list.append(eid_list2[i])
         same_eid_list = [_eid + ' ' for _eid in same_eid_list]
-        #print("same eid list",same_eid_list)  
-        print("mac_id list",devices_available2)
+        # print("same eid list",same_eid_list)
         #All the available ports from port manager are fetched from port manager tab ---
         
         for eid in same_eid_list:
@@ -333,31 +334,35 @@ class HttpDownload(Realm):
                 if eid in device:
                     print(eid + ' ' + device)
                     user_list2.append(device)
-        adbrespone=obj.adb_obj.get_devices()
-        if(self.group_name!='' and self.file_name!='' and self.device_list==[] and self.profile_name!=''):
-            #obj.initiate_group()
-            df1=obj.display_groups(obj.groups)
-            groups_list=df1.to_dict(orient='list')
-            ios_list=[]
-            for grp_name in groups_list.keys():
-                for g_name in selected_groups:
-                    if(grp_name==g_name):
-                        for j in groups_list[grp_name]:
-                            for i in user_list2:
-                                if(i.split(' ')[1]=='android'):
-                                    for adb_dict in adbrespone:
-                                        if(adb_dict['serial']==j):                                 
-                                            if(adb_dict['eid'] not in self.device_list and adb_dict['os']!='iOS' and adb_dict['eid']!=''):
-                                                self.device_list.append(adb_dict['eid'])
-                                            elif(adb_dict['os']=='iOS'and adb_dict['serial'] not in ios_list):
-                                                ios_list.append(adb_dict['serial'])
-                                else:
-                                    if(j==i.split(' ')[2]):
-                                        self.device_list.append(i.split(' ')[0])
-                                    #group_devices.append(j)
-            if(len(ios_list)>0):          
-                print("EXCLUDING IOS DEVICES",ios_list)
+        # adbrespone=obj.adb_obj.get_devices()
+        # if(self.group_name!='' and self.file_name!='' and self.device_list==[] and self.profile_name!=''):
+        #     #obj.initiate_group()
+        #     df1=obj.display_groups(obj.groups)
+        #     groups_list=df1.to_dict(orient='list')
+        #     ios_list=[]
+        #     for grp_name in groups_list.keys():
+        #         for g_name in selected_groups:
+        #             if(grp_name==g_name):
+        #                 for j in groups_list[grp_name]:
+        #                     for i in user_list2:
+        #                         if(i.split(' ')[1]=='android'):
+        #                             for adb_dict in adbrespone:
+        #                                 if(adb_dict['serial']==j):                                 
+        #                                     if(adb_dict['eid'] not in self.device_list and adb_dict['os']!='iOS' and adb_dict['eid']!=''):
+        #                                         self.device_list.append(adb_dict['eid'])
+        #                                     elif(adb_dict['os']=='iOS'and adb_dict['serial'] not in ios_list):
+        #                                         ios_list.append(adb_dict['serial'])
+        #                         else:
+        #                             if(j==i.split(' ')[2]):
+        #                                 self.device_list.append(i.split(' ')[0])
+        #                             #group_devices.append(j)
+        #     if(len(ios_list)>0):          
+        #         print("EXCLUDING IOS DEVICES",ios_list)
+        
         #checking for the availability of slected devices to run test
+        # print("DEVVV",self.device_list)
+        if len(self.device_list)==0:
+            devices_list=""
         if len(self.device_list) != 0:
             
             devices_list = self.device_list
@@ -381,7 +386,7 @@ class HttpDownload(Realm):
                     if(len(available_list)==len(expected_val)):
                         for i in range(len(available_list)):
                             device_map[available_list[i]]=expected_val[i]
-                        obj.update_device_csv("device.csv",'HTTP',device_map)
+                        obj.update_device_csv("device.csv",'HTTP URLcount',device_map)
                         self.device_csv_name="device.csv"
                     else:
                         print("Enter correct number of values")
@@ -396,13 +401,14 @@ class HttpDownload(Realm):
                 devices_list = ""
                 device_found = False
                 logger.warning("Test can not be initiated on any selected devices")
-        else:
-            logger.info("AVAILABLE DEVICES TO RUN TEST : {}".format(user_list2))
+        # else:
+        #     logger.info("AVAILABLE DEVICES TO RUN TEST : {}".format(user_list2))
 
-            devices_list = input("Enter the desired resources to run the test:")
+        #     devices_list = input("Enter the desired resources to run the test:").split(',')
 
         if(devices_list=="" or devices_list==","):
             logger.error("Selected Devices are not available in the lanforge")
+            exit(1)
             return input_devices_list2,real_client_list2,mac_id_list2
         
         resource_eid_list = devices_list.split(',')
@@ -444,11 +450,11 @@ class HttpDownload(Realm):
             for device in self.devices_list:
                 if ("Win" in device) and (eid + ' ' in device):
                     self.windows_eids.append(eid)
-
         for eid in self.windows_eids:
             for port in self.port_list:
                 if eid + '.' in port:
                     self.windows_ports.append(port)
+                    
         if self.dowebgui == "True":
             if device_found == False:
                 print("No Device is available to run the test hence aborting the testllmlml")
@@ -498,7 +504,7 @@ class HttpDownload(Realm):
                 continue
             device_data = device_data['resource']
             # print(device_data)
-            if 'Apple' in device_data['hw version'] and (device_data['app-id'] != '' or device_data['app-id'] != '0' or device_data['kernel'] == ''):
+            if 'Apple' in device_data['hw version'] and (device_data['app-id'] != '') and (device_data['app-id'] != '0' or device_data['kernel'] == ''):
                 print('{} is an iOS device. Currently we do not support iOS devices.'.format(device))
             else:
                 filtered_list.append(device)
@@ -637,7 +643,6 @@ class HttpDownload(Realm):
                         if "{shelf}.{resource}.{port}".format(shelf=eid[0], resource=eid[1], port=eid[2]) == j:
                             ip_upstream = i["{shelf}.{resource}.{port}".format(
                                 shelf=eid[0], resource=eid[1], port=eid[2])]['ip']
-
                 self.http_profile.create(ports=self.port_list, sleep_time=.5,
                                     suppress_related_commands_=None, http=True,interop=True,
                                     user=self.lf_username, passwd=self.lf_password,
@@ -1245,7 +1250,7 @@ class HttpDownload(Realm):
                 for row in rows:
                     device = row['DeviceList']  
                     if device in res_list:
-                        test_input_list.append(row['HTTP'])
+                        test_input_list.append(row['HTTP URLcount'])
                 for i in range(len(test_input_list)):
                     if(int(test_input_list[i])<=dataset2[i]):
                         pass_fail_list.append('PASS')
@@ -1266,7 +1271,7 @@ class HttpDownload(Realm):
                             " SSID " : self.ssid_list,
                             " Mode" : self.mode_list,
                             " No of times File downloaded " : dataset2,
-                            " Expected Value":test_input_list,
+                            " Expected value of no of times file downloaded":test_input_list,
                             " Average time taken to Download file (ms)" : dataset,
                             " Bytes-rd (Mega Bytes) " : dataset1,
                             " Status":pass_fail_list
@@ -1457,6 +1462,7 @@ def main():
     optional.add_argument("--server_ip",type=str,default=None)
     optional.add_argument("--expected_passfail_value",help="Specify the expected urlcount value for pass/fail")
     optional.add_argument("--device_csv_name",type=str,help="Specify the device csv name for pass/fail",default=None)
+    optional.add_argument("--wait_time",type=int,help="Specify the time for configuration",default=60)
     
     args = parser.parse_args()
     args.bands.sort()
@@ -1583,7 +1589,8 @@ def main():
                                 pac_file=args.pac_file,
                                 server_ip=args.server_ip,
                                 expected_passfail_value=args.expected_passfail_value,
-                                device_csv_name=args.device_csv_name
+                                device_csv_name=args.device_csv_name,
+                                wait_time=args.wait_time
 
                             )
             
@@ -1647,6 +1654,7 @@ def main():
                 http.monitor_for_runtime_csv(args.duration)
             elif args.client_type=='Real':
                 # To fetch runtime csv during runtime
+                # time.sleep(2)
                 http.monitor_for_runtime_csv(args.duration)
             else:
                 time.sleep(args.duration)

@@ -184,6 +184,7 @@ class Throughput(Realm):
                 csv_direction='',
                 device_csv_name=None,
                 expected_passfail_value=None,
+                wait_time=60,
                 user_list=[], real_client_list=[], real_client_list1=[], hw_list=[], laptop_list=[], android_list=[], mac_list=[], windows_list=[], linux_list=[],
                 total_resources_list=[], working_resources_list=[], hostname_list=[], username_list=[], eid_list=[],
                 devices_available=[], input_devices_list=[], mac_id1_list=[], mac_id_list=[],overall_avg_rssi=[]):
@@ -285,6 +286,7 @@ class Throughput(Realm):
         self.csv_direction=csv_direction
         self.expected_passfail_value=expected_passfail_value
         self.device_csv_name=device_csv_name
+        self.wait_time=wait_time
 
     def os_type(self):
         """
@@ -329,7 +331,7 @@ class Throughput(Realm):
 
         """
         port_eid_list,same_eid_list,original_port_list=[],[],[]
-        obj=DeviceConfig.DeviceConfig(lanforge_ip=self.host,file_name=self.file_name)
+        obj=DeviceConfig.DeviceConfig(lanforge_ip=self.host,file_name=self.file_name,wait_time=self.wait_time)
         if not self.expected_passfail_value and self.device_csv_name==None :
             obj.device_csv_file(csv_name="device.csv")
         if(self.group_name!=None and self.file_name!=None and self.device_list==[] and self.profile_name!=None):
@@ -341,7 +343,7 @@ class Throughput(Realm):
 
         #print("CONFIGURED DICT",config_devices)
             obj.initiate_group()
-            asyncio.run(obj.connectivity(config_devices))
+            self.device_list=asyncio.run(obj.connectivity(config_devices))
         elif(self.device_list!=[]):
             
             all_devices= obj.get_all_devices()
@@ -370,7 +372,7 @@ class Throughput(Realm):
 
             }
             self.device_list=self.device_list.split(',')
-            asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
+            self.device_list=asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
         elif(self.device_list==[]):
             all_devices= obj.get_all_devices()
             device_list=[]
@@ -404,7 +406,7 @@ class Throughput(Realm):
                     device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["serial"])
             print("AVAILABLE RESOURCES",device_list)
             self.device_list = input("Enter the desired resources to run the test:").split(',')
-            asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
+            self.device_list=asyncio.run(obj.connectivity(device_list=self.device_list,wifi_config=config_dict))
 
         # Retrieve all resources from the LANforge
         response=self.json_get("/resource/all")
@@ -482,31 +484,33 @@ class Throughput(Realm):
 
         print("AVAILABLE DEVICES TO RUN TEST : ",self.user_list)
         logging.info(self.user_list)
-        if(self.group_name!=None and self.file_name!=None and self.device_list==[] and self.profile_name!=None):
-            #obj.initiate_group()
-            df1=obj.display_groups(obj.groups)
-            groups_list=df1.to_dict(orient='list')
-            ios_list=[]
-            for grp_name in groups_list.keys():
-                for g_name in selected_groups:
-                    if(grp_name==g_name):
-                        for j in groups_list[grp_name]:
-                            for i in self.user_list:
-                                if(i.split(' ')[1]=='android'):
-                                    for adb_dict in adbresponse:
-                                        if(adb_dict['serial']==j):
-                                            if(adb_dict['eid'] not in self.device_list and adb_dict['os']!='iOS' and adb_dict['eid']!=''):
-                                                self.device_list.append(adb_dict['eid'])
-                                            elif(adb_dict['os']=='iOS'and adb_dict['serial'] not in ios_list):
-                                                ios_list.append(adb_dict['serial'])
-                                else: 
-                                    if(j==i.split(' ')[2]):
-                                        self.device_list.append(i.split(' ')[0])
-                                    #group_devices.append(j)
-            if(len(ios_list)>0):          
-                print("EXCLUDING IOS DEVICES",ios_list)
+        # if(self.group_name!=None and self.file_name!=None and self.device_list==[] and self.profile_name!=None):
+        #     #obj.initiate_group()
+        #     df1=obj.display_groups(obj.groups)
+        #     groups_list=df1.to_dict(orient='list')
+        #     ios_list=[]
+        #     for grp_name in groups_list.keys():
+        #         for g_name in selected_groups:
+        #             if(grp_name==g_name):
+        #                 for j in groups_list[grp_name]:
+        #                     for i in self.user_list:
+        #                         if(i.split(' ')[1]=='android'):
+        #                             for adb_dict in adbresponse:
+        #                                 if(adb_dict['serial']==j):
+        #                                     if(adb_dict['eid'] not in self.device_list and adb_dict['os']!='iOS' and adb_dict['eid']!=''):
+        #                                         self.device_list.append(adb_dict['eid'])
+        #                                     elif(adb_dict['os']=='iOS'and adb_dict['serial'] not in ios_list):
+        #                                         ios_list.append(adb_dict['serial'])
+        #                         else: 
+        #                             if(j==i.split(' ')[2]):
+        #                                 self.device_list.append(i.split(' ')[0])
+        #                             #group_devices.append(j)
+        #     if(len(ios_list)>0):          
+        #         print("EXCLUDING IOS DEVICES",ios_list)
 
         # If self.device_list is provided, check availability against devices_available
+        if len(self.device_list)==0:
+            devices_list=""
         if len(self.device_list) != 0:
             devices_list=self.device_list
             available_list=[]
@@ -530,11 +534,11 @@ class Throughput(Realm):
             if len(available_list)>0:
                 device_map={}
                 if(not self.expected_passfail_value and self.device_csv_name==None):
-                    expected_val=input("Enter the expected {} value for the following devices{} in Mbps eg 8,6,2: ".format(self.csv_direction,available_list)).split(',')
+                    expected_val=input("Enter the expected {} Mbps value for the following devices{} eg 8,6,2: ".format(self.csv_direction,available_list)).split(',')
                     if(len(available_list)==len(expected_val)):
                         for i in range(len(available_list)):
                             device_map[available_list[i]]=expected_val[i]
-                        obj.update_device_csv("device.csv",self.csv_direction,device_map)
+                        obj.update_device_csv("device.csv",self.csv_direction+' Mbps',device_map)
                         self.device_csv_name="device.csv"
                     else:
                         print("Enter correct number of values")
@@ -548,11 +552,11 @@ class Throughput(Realm):
                 devices_list=""
                 self.device_found=False
                 logger.warning("Test can not be initiated on any selected devices")
-        else:
+        # else:
 
-            # If self.device_list is not provided, prompt user to select devices from user_list
-            logger.info("AVAILABLE DEVICES TO RUN TEST : {}".format(self.user_list))
-            devices_list = input("Enter the desired resources to run the test:")
+        #     # If self.device_list is not provided, prompt user to select devices from user_list
+        #     logger.info("AVAILABLE DEVICES TO RUN TEST : {}".format(self.user_list))
+        #     devices_list = input("Enter the desired resources to run the test:")
 
         # If no devices are selected or only comma is entered, log an error and return False
         if(devices_list=="" or devices_list==","):
@@ -1606,7 +1610,7 @@ class Throughput(Realm):
                     for row in rows:
                         device = row['DeviceList']  
                         if device in res_list:
-                            test_input_list.append(row[self.csv_direction])
+                            test_input_list.append(row[self.csv_direction+' Mbps'])
                 else:
                     test_input_list=[self.expected_passfail_value for val in range(len(devices_on_running[0:int(incremental_capacity_list[i])]))]
                        
@@ -1648,7 +1652,7 @@ class Throughput(Realm):
                             " Offered upload rate(Mbps) " : upload_list[0:int(incremental_capacity_list[i])],
                             " Observed upload rate(Mbps) " : [str(n)+" Mbps" for n in upload_data[0:int(incremental_capacity_list[i])]],
                             " RSSI ": ['' if n == 0 else '-' + str(n) + " dbm" for n in rssi_data[0:int(incremental_capacity_list[i])]],
-                            " Expected "+direction+" value":test_input_list,
+                            " Expected "+direction+" rate(Mbps)":test_input_list,
                             " Link Speed ":self.link_speed_list[0:int(incremental_capacity_list[i])],
                             " Packet Size(Bytes) ":[str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
                             " Status ":pass_fail_list
@@ -1913,39 +1917,45 @@ class Throughput(Realm):
                             _obj="The below tables provides detailed information for the throughput test on each device.")
                 report.build_objective()
                 self.mac_id_list = [item.split()[-1] if ' ' in item else item for item in self.mac_id_list]
-                res_list=[]
                 test_input_list=[]
                 pass_fail_list=[]
-                interop_tab_data = self.json_get('/adb/')["devices"]
+                if not self.expected_passfail_value:    
+                    res_list=[]
+                    interop_tab_data = self.json_get('/adb/')["devices"]
 
-                for j in range(len(device_type[int(incremental_capacity_list[i])-1])):
-                    if(device_type[int(incremental_capacity_list[i])-1][j]!='Android'):
-                        res_list.append(devices_on_running[-1][j])
-                    else:
-                        for dev in interop_tab_data:
-                            for item in dev.values():
-                                if(item['user-name']==devices_on_running[-1][j]):
-                                    res_list.append(item['name'].split('.')[2])
+                    for j in range(len(device_type[int(incremental_capacity_list[i])-1])):
+                        if(device_type[int(incremental_capacity_list[i])-1][j]!='Android'):
+                            res_list.append(devices_on_running[-1][j])
+                        else:
+                            for dev in interop_tab_data:
+                                for item in dev.values():
+                                    if(item['user-name']==devices_on_running[-1][j]):
+                                        res_list.append(item['name'].split('.')[2])
 
-                with open('device.csv', mode='r') as file:
-                    reader = csv.DictReader(file)
-                    rows = list(reader)
-            
-                for row in rows:
-                    device = row['DeviceList']  
-                    if device in res_list:
-                        test_input_list.append(row[self.csv_direction])
+                    with open(self.device_csv_name, mode='r') as file:
+                        reader = csv.DictReader(file)
+                        rows = list(reader)
+                
+                    for row in rows:
+                        device = row['DeviceList']  
+                        if device in res_list:
+                            test_input_list.append(row[self.csv_direction+' Mbps'])
+                else:
+                    for val in [devices_on_running[-1]]:
+                        print("val",val)
+                        test_input_list.append(self.expected_passfail_value)
+                print("testinput",test_input_list,"devicesrunning",devices_on_running[-1],"downloadrate",[str(download_data[-1])+" Mbps"],"uploadrate",[str(upload_data[-1])+" Mbps" ],"DOWN",[(download_data[-1])],"UP",[(upload_data[-1])])      
                 direction=''
                 for k in range(len(test_input_list)):
                     if(self.csv_direction.split('_')[2]=='BiDi'):
-                        if(float(test_input_list[k])<=float(upload_data[-1][k])+float(download_data[-1][k][k])):
+                        if(float(test_input_list[k])<=float([n for n in [(upload_data[-1])]][k])+float([n for n in [(download_data[-1])]][k])):
                             pass_fail_list.append('PASS')
                             direction='bidirectional'
                         else:
                             pass_fail_list.append('FAIL')
                             direction='bidirectional'
                     elif(self.csv_direction.split('_')[2]=='UL'):
-                        if(float(test_input_list[k])<=float(upload_data[-1][k])):
+                        if(float(test_input_list[k])<=float([n for n in [(upload_data[-1]) ]][k])):
                             pass_fail_list.append('PASS')
                             direction='upload'
                         else:
@@ -1953,7 +1963,7 @@ class Throughput(Realm):
                             direction='upload'
                     else:
                         
-                        if(float(test_input_list[k])<=float(download_data[-1][k])):
+                        if(float(test_input_list[k])<=float([n for n in [(download_data[-1])]][k])):
                             pass_fail_list.append('PASS')
                             direction='download'
                         else:
@@ -1973,11 +1983,11 @@ class Throughput(Realm):
                             " Offered upload rate(Mbps) " : upload_list[-1],
                             " Observed upload rate(Mbps) " : [str(upload_data[-1])+" Mbps" ],
                             " RSSI ":  ['' if rssi_data[-1] == 0 else '-'+str(rssi_data[-1])+ " dbm"],
-                            " Expected "+direction+" value":test_input_list,
+                            " Expected "+direction+" rate(Mbps)":test_input_list,
                             " Link Speed ":self.link_speed_list[int(incremental_capacity_list[i])-1],
                             " Status":pass_fail_list
                         }  
-    
+                print("interopability",bk_dataframe)
                 dataframe1 = pd.DataFrame(bk_dataframe)
                 report.set_table_dataframe(dataframe1)
                 report.build_table()
@@ -2171,6 +2181,7 @@ Copyright 2023 Candela Technologies Inc.
     optional.add_argument('--server_ip',type=str,default=None)
     optional.add_argument("--expected_passfail_value",help="Specify the expected urlcount value for pass/fail")
     optional.add_argument("--device_csv_name",type=str,help="Specify the device csv name for pass/fail",default=None)
+    optional.add_argument("--wait_time",type=int,help="Specify the time for configuration",default=60)
     parser.add_argument('--help_summary', help='Show summary of what this script does', default=None)
 
     args=parser.parse_args()
@@ -2310,7 +2321,8 @@ Copyright 2023 Candela Technologies Inc.
                                     server_ip=args.server_ip,
                                     csv_direction=csv_direction,
                                     expected_passfail_value=args.expected_passfail_value,
-                                    device_csv_name=args.device_csv_name
+                                    device_csv_name=args.device_csv_name,
+                                    wait_time=args.wait_time
                                     )
 
             throughput.os_type()

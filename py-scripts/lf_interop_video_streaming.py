@@ -126,7 +126,7 @@ class VideoStreamingTest(Realm):
                 client_cert=None,
                 pk_passwd=None,
                 pac_file=None,server_ip=None,expected_passfail_val=None,
-                 csv_name=None):
+                 csv_name=None,wait_time=60):
         super().__init__(lfclient_host=host, lfclient_port=8080)
         self.adb_device_list = None
         self.host = host
@@ -182,6 +182,7 @@ class VideoStreamingTest(Realm):
         self.server_ip=server_ip
         self.expected_passfail_val=expected_passfail_val
         self.csv_name=csv_name
+        self.wait_time=wait_time
         self.devices = base_RealDevice(manager_ip = self.host, selected_bands = [])
         self.local_realm = realm.Realm(lfclient_host=self.host, lfclient_port=8080)
         self.port_util = PortUtils(self.local_realm)
@@ -1451,7 +1452,7 @@ class VideoStreamingTest(Realm):
                 device = row['DeviceList']
                 #print(row)  
                 if device in res_list:
-                    test_input_list.append(row['Videostreaming'])
+                    test_input_list.append(row['Videostreaming URLcount'])
             for i in range(len(test_input_list)):
                 if(float(test_input_list[i])<=total_urls[:created_incremental_values[iter]][i]):
                     pass_fail_list.append('PASS')
@@ -1662,6 +1663,7 @@ def main():
     parser.add_argument("--server_ip", type=str,default='NA')
     parser.add_argument('--expected_passfail_val', help='Enter the expected number of urls ', default=None)
     parser.add_argument('--csv_name',type=str, help='Enter the csv name to store expected values', default=None)
+    parser.add_argument("--wait_time",type=int,help="Specify the time for configuration",default=60)
     
     args = parser.parse_args()
     if args.csv_name!=None and args.expected_passfail_val:
@@ -1747,7 +1749,7 @@ def main():
                             pac_file=args.pac_file,
                             server_ip=args.server_ip,
                             expected_passfail_val=args.expected_passfail_val,
-                                csv_name=args.csv_name)
+                                csv_name=args.csv_name,wait_time=args.wait_time)
 
         resource_ids_sm = []
         resource_set = set()
@@ -1758,7 +1760,7 @@ def main():
         # android_list = []
         # other_list = []
         resource_ids_generated = ""
-        config_obj=DeviceConfig.DeviceConfig(lanforge_ip=args.host,file_name=args.file_name)
+        config_obj=DeviceConfig.DeviceConfig(lanforge_ip=args.host,file_name=args.file_name,wait_time=args.wait_time)
         if not args.expected_passfail_val and args.csv_name==None:
             config_obj.device_csv_file(csv_name="device.csv")
         if(args.group_name!=None and args.file_name!=None and args.profile_name!=None  and args.device_list==None):
@@ -1769,30 +1771,30 @@ def main():
                         config_devices[selected_groups[i]]=selected_profiles[i]
                     #print("CONFIGURED DICT",config_devices)
                     config_obj.initiate_group()
-                    asyncio.run(config_obj.connectivity(config_devices))
+                    config_list=asyncio.run(config_obj.connectivity(config_devices))
                     
-                    adbresponse=config_obj.adb_obj.get_devices()
-                    resource_manager=config_obj.laptop_obj.get_devices()
-                    all_res={}
-                    df1=config_obj.display_groups(config_obj.groups)
-                    groups_list=df1.to_dict(orient='list')
-                    group_devices={}
+                    # adbresponse=config_obj.adb_obj.get_devices()
+                    # resource_manager=config_obj.laptop_obj.get_devices()
+                    # all_res={}
+                    # df1=config_obj.display_groups(config_obj.groups)
+                    # groups_list=df1.to_dict(orient='list')
+                    # group_devices={}
                   
-                    for adb in adbresponse:
-                        if adb['eid']!='':
-                            group_devices[adb['serial']]=adb['eid']
-                    for res in resource_manager:
-                        all_res[res['hostname']]=res['shelf']+'.'+res['resource']
-                    eid_list=[]
-                    for grp_name in groups_list.keys():
-                        for g_name in selected_groups:
-                            if(grp_name == g_name):
-                                for j in groups_list[grp_name]:
-                                    if(j in group_devices.keys()):
-                                        eid_list.append(group_devices[j])
-                                    elif(j in all_res.keys()):
-                                        eid_list.append(all_res[j])
-                    args.device_list = ",".join(id for id in eid_list)
+                    # for adb in adbresponse:
+                    #     if adb['eid']!='':
+                    #         group_devices[adb['serial']]=adb['eid']
+                    # for res in resource_manager:
+                    #     all_res[res['hostname']]=res['shelf']+'.'+res['resource']
+                    # eid_list=[]
+                    # for grp_name in groups_list.keys():
+                    #     for g_name in selected_groups:
+                    #         if(grp_name == g_name):
+                    #             for j in groups_list[grp_name]:
+                    #                 if(j in group_devices.keys()):
+                    #                     eid_list.append(group_devices[j])
+                    #                 elif(j in all_res.keys()):
+                    #                     eid_list.append(all_res[j])
+                    args.device_list = ",".join(id for id in config_list)
         print("argsssssssss",args.device_list)
         if args.dowebgui == True :
             # Split resource IDs from args into a list
@@ -1860,8 +1862,8 @@ def main():
                 }
                 if(args.group_name==None and args.file_name==None and args.profile_name==None):
                     dev_list=args.device_list.split(',')
-                    asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
-
+                    config_list=asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
+                    args.device_list = ",".join(id for id in config_list)
                 # Extract second part of resource IDs and sort them
                 obj.android_devices = obj.devices.get_devices(only_androids=True)
 
@@ -1961,10 +1963,11 @@ def main():
                 print("Available devices:", device_list)
                 args.device_list = input("Enter the desired resources to run the test:")
                 dev1_list=args.device_list.split(',')
-                asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
+                config_list=asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
+                args.device_list = ",".join(id for id in config_list)
                 obj.android_devices = obj.devices.get_devices(only_androids=True)
                 # Query user to select devices if no resource IDs are provided
-                selected_devices,report_labels,selected_macs = obj.devices.query_user(device_list=dev1_list)
+                selected_devices,report_labels,selected_macs = obj.devices.query_user(device_list=config_list)
                 # Handle cases where no devices are selected
                 
                 if not selected_devices:
@@ -2020,7 +2023,7 @@ def main():
                 if(len(available_resources)==len(expected_val)):
                     for i in range(len(available_resources)):
                         device_map[obj.android_list[i].split('.')[0]+'.'+obj.android_list[i].split('.')[1]]=expected_val[i]
-                    config_obj.update_device_csv("device.csv",'Videostreaming',device_map)
+                    config_obj.update_device_csv("device.csv",'Videostreaming URLcount',device_map)
                 else:
                     print("Enter correct number of values")
                     exit(0)
