@@ -16,7 +16,6 @@ from selenium.webdriver.common.keys import Keys
 import os
 import requests
 import socket
-import clipboard
 import platform
 import pyautogui
 import pyperclip
@@ -25,7 +24,6 @@ class ZoomClient:
     def __init__(self,server_ip=None):
         self.server_ip = server_ip
         self.base_url = f"http://{self.server_ip}:5000"
-        #self.base_url = "http://10.253.8.108:5000"
         self.new_login_url = None
         self.new_login_passwd = None
         self.meeting_link = None
@@ -37,6 +35,7 @@ class ZoomClient:
         self.path = "/home/lanforge/lanforge-scripts/py-scripts/zoom_automation/test_results/"
         self.audio = True
         self.video = True
+        self.stop_signal = False
 
     def dynamic_wait(self,waittime):
         return WebDriverWait(self.driver, waittime)
@@ -73,9 +72,30 @@ class ZoomClient:
         self.wait = WebDriverWait(self.driver, 90)
 
 
+    def check_stop_signal(self):
+        """Check the stop signal from the Flask server."""
+        try:
+            endpoint_url = f'{self.base_url}/check_stop'
+            
+            response = requests.get(endpoint_url)  # Replace with your Flask server URL
+            if response.status_code == 200:
+                
+                stop_signal_from_server = response.json().get('stop', False)
+
+                # Only update if the server's stop signal is True
+                if stop_signal_from_server:
+                    self.stop_signal = True
+                    print("Stop signal received from the server. Exiting the loop.")
+                else:
+                    
+                    print("No stop signal received from the server. Continuing.")
+            return self.stop_signal
+        except Exception as e:
+            print(f"Error checking stop signal: {e}")
+    
     def start_zoom(self):
         self.setupdriver()
-        #self.read_credentials()
+       
         self.get_meetin_link_and_password()
         self.zoom_login()
         # After starting Zoom, retrieve new_login_url and new_password
@@ -103,6 +123,8 @@ class ZoomClient:
                 print("monitoring the test","time remaining is")
                 print(self.start_time,self.end_time)
                 print()
+                if self.check_stop_signal():
+                    break
                 stats = self.collecting_stats()
                 csv_writer.writerow(stats)
                 self.send_stats_to_api(self.audio_stats,self.video_stats)
@@ -125,7 +147,6 @@ class ZoomClient:
 
         self.driver.get("https://app.zoom.us/wc/join")
         
-        #self.get_meeting_link()
         #print("checking self.meeting_link",self.meeting_link)
         
         #self.driver.get(str(self.meeting_link))
@@ -145,37 +166,15 @@ class ZoomClient:
 
         # """
         formatted_login_url = self.new_login_url[:3] + ' ' + self.new_login_url[3:7] + ' ' + self.new_login_url[7:]
-        clipboard.copy(formatted_login_url)
-        meeting_id =self.wait.until(EC.visibility_of_element_located(
-            (By.CSS_SELECTOR, "#joinMeeting input.join-meetingId")))
+
+        meeting_id = self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "#joinMeeting input.join-meetingId")))
         meeting_id.click()
-        pyautogui.typewrite(formatted_login_url)
+        if sys.platform.lower()=="linux":
+            pyautogui.write(formatted_login_url)
+        else:
+            meeting_id.send_keys(formatted_login_url)
 
 
-        # if platform.system() == 'Darwin':  
-        #     #pyautogui.hotkey('command')
-        #     #pyautogui.hotkey('v')
-        #     meeting_id.send_keys(formatted_login_url)
-
-
-        # else:  # Windows/Linux
-        #     pyautogui.hotkey('ctrl', 'v')
-        
-        
-
-    
-
-        #self.driver.execute_script(script, formatted_login_url)
-        # script = """
-        # var joinButton = document.querySelector('.btn-join.btn.btn-primary');
-        # if (joinButton) {
-        #     joinButton.disabled = false;
-        #     joinButton.classList.remove('disabled');
-        # }
-        # """
-        #self.driver.execute_script(script)
-        #time.sleep(100000)
-        #time.sleep(10)
         self.wait.until(EC.element_to_be_clickable(
             (By.CSS_SELECTOR, "#joinMeeting ~ footer button.btn-join"))).click()
         #self.driver.execute_script("document.getElementById('joinMeeting ~ footer button.btn-join').click()")
@@ -185,21 +184,24 @@ class ZoomClient:
         pass_element=self.wait.until(EC.visibility_of_element_located(
             (By.CSS_SELECTOR, "#input-for-pwd")))
         pass_element.click()
-        pyautogui.typewrite(self.new_login_passwd)
+        if sys.platform.lower()=="linux":
+            pyautogui.write(self.new_login_passwd)
+        else:
+            pass_element.send_keys(self.new_login_passwd)
         
         time.sleep(1)
         host_element =self.wait.until(EC.visibility_of_element_located(
             (By.CSS_SELECTOR, "#input-for-name")))
         host_element.click()
-        pyautogui.typewrite(self.hostname)
+        host_element.send_keys(self.hostname)
         time.sleep(1)
         self.wait.until(EC.element_to_be_clickable(
             (By.CSS_SELECTOR, ".preview-meeting-info button.preview-join-button"))).click()
         time.sleep(1)
-        self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR,
-                                                     "#voip-tab button.join-audio-by-voip__join-btn")))
-        self.driver.execute_script("document.querySelector('#voip-tab button.join-audio-by-voip__join-btn').click()")
-        time.sleep(1)
+        # self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR,
+        #                                              "#voip-tab button.join-audio-by-voip__join-btn")))
+        # self.driver.execute_script("document.querySelector('#voip-tab button.join-audio-by-voip__join-btn').click()")
+        # time.sleep(1)
         action = webdriver.ActionChains(self.driver)
         action.move_by_offset(10, 20).perform()
         time.sleep(1)
@@ -207,20 +209,20 @@ class ZoomClient:
                                                      ".footer-button-base__button.join-audio-container__btn")))
         self.driver.execute_script("document.querySelector('button.footer-button-base__button.join-audio-container__btn').click()")
         time.sleep(1)
-        if audio_join_btn.text == "Join Audio":
+        if audio_join_btn.text.lower() == "join audio":
             print("audio not joined")
-            self.driver.execute_script("document.querySelector('button.footer-button-base__button.join-audio-container__btn').click()")
-            self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR,
-                                                     "#voip-tab button.join-audio-by-voip__join-btn")))
-            self.driver.execute_script("document.querySelector('#voip-tab button.join-audio-by-voip__join-btn').click()")
-            time.sleep(3)
+            # self.driver.execute_script("document.querySelector('button.footer-button-base__button.join-audio-container__btn').click()")
+            # self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR,
+            #                                          "#voip-tab button.join-audio-by-voip__join-btn")))
+            # self.driver.execute_script("document.querySelector('#voip-tab button.join-audio-by-voip__join-btn').click()")
+            # time.sleep(3)
             self.driver.execute_script("document.querySelector('button.footer-button-base__button.join-audio-container__btn').click()")
 
-        elif audio_join_btn.text == "Unmute":
+        elif audio_join_btn.text.lower() == "unmute":
             print("it is muted")
             self.driver.execute_script("document.querySelector('button.footer-button-base__button.join-audio-container__btn').click()")
             
-        elif audio_join_btn.text == "Mute":
+        elif audio_join_btn.text.lower() == "mute":
             print("already unmuted")
         self.wait.until(EC.element_to_be_clickable((By.XPATH,
                                                      "//*[@id='audioOptionMenu']")))
@@ -237,10 +239,16 @@ class ZoomClient:
             (By.CSS_SELECTOR, "#video")))
         self.driver.execute_script("document.querySelector('#video').click()")
         time.sleep(1)
-        self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR,
+        video_join_btn = self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR,
                                                      ".footer-button-base__button.send-video-container__btn")))
         
         self.driver.execute_script("document.querySelector('button.footer-button-base__button.send-video-container__btn').click()")
+        if video_join_btn.text.lower() == "join video" or video_join_btn.text.lower() == "start video":
+            print("video not joined")
+            self.driver.execute_script("document.querySelector('button.footer-button-base__button.send-video-container__btn').click()")
+
+        elif video_join_btn.text.lower() == "stop video":
+            print("already video on")
         self.wait.until(EC.visibility_of_element_located(
             (By.CSS_SELECTOR, "#stats")))
         self.driver.execute_script("document.querySelector('#stats').click()")
@@ -254,22 +262,6 @@ class ZoomClient:
         except Exception as e:
             print("error in gettig password and meeting id",e)
 
-    def read_credentials(self):
-        # Read credentials.txt in the current directory
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        credentials_file = os.path.join(current_dir, "credentials.txt")
-
-        try:
-            with open(credentials_file, 'r') as file:
-                lines = file.readlines()
-                if lines:
-                    self.server_ip = lines[0].strip().split("=")[1]
-                    self.base_url = f"http://{self.server_ip}"
-                    print(f"Server IP set to {self.server_ip}")
-                else:
-                    print("Error: credentials.txt is empty.")
-        except IOError:
-            print(f"Error: Unable to read {credentials_file}")
 
     def capture_audio_stats(self):
         self.wait.until(EC.visibility_of_element_located((By.XPATH,
@@ -428,22 +420,6 @@ class ZoomClient:
         except requests.RequestException as e:
             print(f"Request error: {e}")
         
-    def get_meeting_link(self):
-        endpoint_url = f"{self.base_url}/meeting_link"
-        print(endpoint_url)
-        try:
-            response = requests.get(endpoint_url)
-            if response.status_code == 200:
-                print("Meeting link fetched sucessfully")
-                data = response.json()
-                print(data,str(data))
-                print(type(data))
-                self.meeting_link = data.get('meet_link')
-                print("checking self.meetinglink",self.meeting_link)
-            else:
-                print(f"Failed to meeting link . Status code: {response.status_code}")
-        except requests.RequestException as e:
-            print(f"Request error: {e}")
 
     def get_login_passwd(self):
         endpoint_url = f"{self.base_url}/login_passwd"
@@ -458,38 +434,6 @@ class ZoomClient:
         except requests.RequestException as e:
             print(f"Request error: {e}")
 
-    def transfer_files(self,filename):
-        
-        username = 'lanforge'
-        password = 'lanforge'
-        
-        # Get the full path of the CSV file
-        local_file_path = os.path.join(os.path.dirname(__file__), f'{filename}')
-        
-        # Ensure the file exists
-        if not os.path.exists(local_file_path):
-            raise FileNotFoundError(f"The file {filename} does not exist in the current directory.")
-        
-        # Establish SSH connection
-        ssh = paramiko.SSHClient()
-        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        
-        try:
-            ssh.connect(self.server_ip.split(":")[0], username=username, password=password)
-            
-            # Use SFTP to transfer the file
-            sftp = ssh.open_sftp()
-            remote_file_path = self.path
-            print("transfering ",local_file_path,"to ",remote_file_path)
-            print(self.server_ip.split(":")[0])
-            sftp.put(local_file_path, os.path.join(remote_file_path, filename))
-            sftp.close()
-            
-        except Exception as e:
-            print(f"An error occurred: {e}")
-            sys.exit(1)
-        finally:
-            ssh.close()
 
     def get_start_and_end_time(self):
         endpoint_url = f"{self.base_url}/get_start_end_time"

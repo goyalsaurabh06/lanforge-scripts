@@ -13,7 +13,8 @@ import time
 from datetime import datetime, timedelta
 import requests
 import re
-
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 class YouTube(object):
     
     def __init__(self, url, resolution,host, port, duration, device_name, driver):
@@ -25,6 +26,7 @@ class YouTube(object):
         self.driver = driver
         self.duration = duration
         self.dataset = []
+        self.stop_signal = False
     
     def get_video_id(self):
         return self.url.split("=")[1]
@@ -33,6 +35,27 @@ class YouTube(object):
         print("Loading url...")
         self.driver.get(self.url)
         return True
+    
+    def check_stop_signal(self):
+        """Check the stop signal from the Flask server."""
+        try:
+            endpoint_url = f'http://{self.host}:5002/check_stop'
+            
+            response = requests.get(endpoint_url)  # Replace with your Flask server URL
+            if response.status_code == 200:
+                
+                stop_signal_from_server = response.json().get('stop', False)
+
+                # Only update if the server's stop signal is True
+                if stop_signal_from_server:
+                    self.stop_signal = True
+                    print("Stop signal received from the server. Exiting the loop.")
+                else:
+                    
+                    print("No stop signal received from the server. Continuing.")
+            return self.stop_signal
+        except Exception as e:
+            print(f"Error checking stop signal: {e}")
 
     def select_resolution(self):
         # Don't bother selecting resolution for Auto
@@ -73,9 +96,22 @@ class YouTube(object):
             return False
   
     def enable_stats(self):
-        movie_player = self.driver.find_element(By.CSS_SELECTOR,'.html5-video-container')
+
+        #movie_player = self.driver.find_element(By.CSS_SELECTOR,'.html5-video-container')
+        movie_player = WebDriverWait(self.driver, 60).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, '.html5-video-container'))
+        )
+        movie_player = WebDriverWait(self.driver, 60).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, '.html5-video-container'))
+        )
         self.hover = ActionChains(self.driver).move_to_element(movie_player)
         self.hover.perform()
+        # movie_player = WebDriverWait(self.driver, 20).until(
+        #     EC.presence_of_element_located((By.CSS_SELECTOR, '.html5-video-container'))
+        # )
+        movie_player = WebDriverWait(self.driver, 60).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, '.html5-video-container'))
+        )
         ActionChains(self.driver).context_click(movie_player).perform()
         options = self.driver.find_elements(By.CSS_SELECTOR,'.ytp-menuitem')
         for option in options:
@@ -94,10 +130,6 @@ class YouTube(object):
 
         
         stat_dict = {}
-        #stat_dict['Timestamp'] = str(datetime.now())
-
-        current_time = datetime.now().strftime("%H:%M:%S")
-        stat_dict['Timestamp'] = current_time
 
         elem = self.driver.find_element(By.CSS_SELECTOR,".html5-video-info-panel-content.ytp-sfn-content")
         stats_data=elem.text
@@ -110,7 +142,7 @@ class YouTube(object):
         
         current_optimal_res_match = re.search(r"Current/OptimalRes([\d@x]+)/([\d@x]+)", stats_data)
 
-            # Initialize an empty dictionary to store extracted values
+        # Initialize an empty dictionary to store extracted values
         data = {}
 
             # Check and assign the extracted values if matches were found
@@ -127,10 +159,10 @@ class YouTube(object):
         if buffer_health_match:
             data["BufferHealth"] = buffer_health_match.group(1)
         
-        stat_dict['stats'] = data
-        print("checking stats_dict",stat_dict)
+        current_time = datetime.now().strftime("%H:%M:%S")
+        data['Timestamp'] = current_time
 
-        return stat_dict
+        return data
 
     def get_current_seek(self):
         elem = self.driver.find_element(By.CSS_SELECTOR,".ytp-time-current")
@@ -191,14 +223,16 @@ class YouTube(object):
         print("start playing")
         self.start()
         self.full_screen()
-        print("self.duration")
-        print(self.duration)
+        # print("self.duration")
+        # print(self.duration)
         if self.duration:
             end_time = datetime.now()+timedelta(minutes=self.duration)
-            print("endtimeee",end_time,self.duration)
+            # print("endtimeee",end_time,self.duration)
             while(datetime.now()<=end_time):
                 #self.dataset.append(self.get_stats())
                 #time.sleep(1)
+                if(self.check_stop_signal()):
+                    break
                 stats = self.get_stats()
                 self.dataset.append(stats)
                 self.send_stats_to_api(stats, self.device_name)
@@ -244,17 +278,22 @@ class YouTube(object):
         
     def send_stats_to_api(self, stats, device_name, stop = False):
         try:
-            url = f"http://{self.host}:5454/youtube_stats"
+            url = f"http://{self.host}:5002/youtube_stats"
             #url=f"http://10.253.8.108:8000/youtube_stats"
 
             headers = {
             'Content-Type': 'application/json',
             }
+            # data = {
+            #     'name' : device_name,
+            #     'stats': stats,
+            #     'stop': stop,
+            # }
             data = {
-                'name' : device_name,
-                'stats': stats,
-                'stop': stop,
+                device_name: stats,  # Device name as the key and stats as the value
+                'stop': stop,        # Stop remains as a separate key
             }
+
             response = requests.post(url, json=data, headers=headers)
             if response.status_code == 200:
                 print("Successfully sent stats to API.")
@@ -265,7 +304,7 @@ class YouTube(object):
             
     def get_initial_data_from_api(self):
         try:
-            url = f"http://{self.host}:5454/youtube_stats"
+            url = f"http://{self.host}:5002/youtube_stats"
             #url=f"http://10.253.8.108:8000/youtube_stats"
             response = requests.get(url)
             if response.status_code == 200:
@@ -354,6 +393,8 @@ Example:
     # options.add_argument("--force-gpu-mem-available-mb=4096")
     # options.add_argument("--memory-pressure-thresholds-mb=2048")
     # options.add_experimental_option("detach", True)
+    options.add_argument('--no-sandbox')
+
     driver = webdriver.Chrome(service=service, options=options)# Or choose the appropriate webdriver for your browser
 
     yt = YouTube(args.url,args.res,args.host, args.port, args.duration, args.device_name,driver)

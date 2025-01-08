@@ -3,12 +3,27 @@
 # Initialize variables
 echo "Batch started"
 url=""
-host=""
-port=""
+server=""
 duration=""
 args=""
 
-# Parse command line arguments
+
+# Kill any Chrome process
+if [[ "$(uname)" == "Linux" ]]; then
+    # Linux: Terminate Chrome processes
+    pkill -f chrome || echo "No Chrome processes found."
+    pkill -f chromedriver || echo "No ChromeDriver processes found."
+elif [[ "$(uname)" == "Darwin" ]]; then
+    # macOS: Terminate Chrome processes
+    pkill -f "Google Chrome" || echo "No Google Chrome processes found."
+    pkill -f chromedriver || echo "No ChromeDriver processes found."
+else
+    # Unsupported OS
+    echo "Unsupported operating system."
+    exit 1
+fi
+
+# Parse command-line arguments
 parseArgs() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -17,16 +32,20 @@ parseArgs() {
                 shift 2
                 ;;
             --server)
-                host="$2"
+                server="$2"
                 shift 2
                 ;;
-            
             --duration)
-                res="$2"
+                duration="$2"
                 shift 2
+                ;;
+            --help)
+                echo "Usage: $0 --url <url> --server <server> --duration <duration>"
+                exit 0
                 ;;
             *)
-                shift
+                echo "Unknown argument: $1"
+                exit 1
                 ;;
         esac
     done
@@ -34,13 +53,49 @@ parseArgs() {
 
 parseArgs "$@"
 
-echo "Batch started1"
+# Validate required arguments
+if [[ -z "$url" ]]; then
+    echo "Error: --url is required."
+    exit 1
+fi
+
+if [[ -z "$duration" ]]; then
+    echo "Error: --duration is required."
+    exit 1
+fi
+
+# Debugging output
+echo "URL: $url"
+echo "Server: $server"
+echo "Duration: $duration"
 
 # Construct arguments for Python script
 args=""
 [[ -n "$url" ]] && args="$args --url $url"
-[[ -n "$server" ]] && args="$args --host $host"
+[[ -n "$server" ]] && args="$args --server $server"
 [[ -n "$duration" ]] && args="$args --duration $duration"
 
 echo "Running with arguments: $args"
-python3 real_browser.py $args
+
+# Export DISPLAY if necessary
+if [[ -z "$DISPLAY" ]]; then
+    export DISPLAY=:0
+fi
+
+# Run the Python script
+python3 real_browser.py $args > real_browser_test.log 2>&1
+
+# Kill any Chrome process
+if [[ "$(uname)" == "Linux" ]]; then
+    # Linux: Terminate Chrome processes
+    pkill -f chrome || echo "No Chrome processes found."
+    pkill -f chromedriver || echo "No ChromeDriver processes found."
+elif [[ "$(uname)" == "Darwin" ]]; then
+    # macOS: Terminate Chrome processes
+    pkill -f "Google Chrome" || echo "No Google Chrome processes found."
+    pkill -f chromedriver || echo "No ChromeDriver processes found."
+else
+    # Unsupported OS
+    echo "Unsupported operating system."
+    exit 1
+fi

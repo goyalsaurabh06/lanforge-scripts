@@ -24,13 +24,13 @@ class TransferFiles:
             # Set remote directory based on OS type
             if os_type.lower() == 'windows':
                 remote_dir = r'C:\Program Files (x86)\LANforge-Server'
-                files_to_transfer = ['zoom_client.py', 'zoom_host.py', 'install_dependencies.py']
+                files_to_transfer = ['youtube_stream.bat','youtube.py']
             elif os_type.lower() == 'linux':
                 remote_dir = '/home/lanforge'
-                files_to_transfer = ['zoom_client.py', 'zoom_host.py', 'ctzoom.bash', 'install_dependencies.py']
+                files_to_transfer = ['ctyt.bash','youtube.py']
             elif os_type.lower() == 'mac':
                 remote_dir = '/Users/lanforge'
-                files_to_transfer = ['zoom_client.py', 'zoom_host.py', 'zoom_test.bash', 'install_dependencies.py']
+                files_to_transfer = ['youtube_stream.bash','youtube.py']
             else:
                 print(f"Unsupported OS type: {os_type}")
                 self.failed_hosts.append(ip_address)

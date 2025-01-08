@@ -20,7 +20,10 @@ import socket
 import argparse
 import json
 import pickle
-
+if sys.platform.lower() == "darwin":
+    pyperclip.set_clipboard('pbcopy')
+else:
+    print("This is not macOS.")
 class ZoomHost:
     def __init__(self,server_ip=None):
         self.server_ip = server_ip
@@ -41,6 +44,7 @@ class ZoomHost:
         self.path = "/home/lanforge/lanforge-scripts/py-scripts/zoom_automation/test_results/"
         self.audio = True
         self.video = True
+        self.stop_signal = False
 
 
     def setupdriver(self):
@@ -75,30 +79,6 @@ class ZoomHost:
         self.driver.maximize_window()
         self.wait = WebDriverWait(self.driver, 90)
     
-    # def saveCookies(self):
-    #     # Get and store cookies after login
-    #     cookies = self.driver.get_cookies()
-
-    #     # Store cookies in a file
-    #     with open('zoom_cookies.json', 'w') as file:
-    #         json.dump(cookies, file)
-    #     print('New Cookies saved successfully')
-    
-    # def loadCookies(self):
-    #     # Check if cookies file exists
-    #     if 'zoom_cookies.json' in os.listdir():
-    #         # Load cookies from file
-    #         with open('zoom_cookies.json', 'r') as file:
-    #             cookies = json.load(file)
-
-    #         # Set cookies to maintain the session
-    #         for cookie in cookies:
-    #             self.driver.add_cookie(cookie)
-    #             print("added cookies")
-    #     else:
-    #         print('No cookies file found')
-
-    #     self.driver.refresh()  # Refresh Browser after loading cookies
     def saveCookies(self):
         # Save cookies to a file
         cookies = self.driver.get_cookies()
@@ -106,16 +86,24 @@ class ZoomHost:
             pickle.dump(cookies, file)
         print("Cookies saved.")
 
+
     def loadCookies(self):
-        # Load cookies from a file
+    # Load cookies from a file
         try:
             with open('cookies.pkl', 'rb') as file:
-                cookies = pickle.load(file)
-                for cookie in cookies:
-                    self.driver.add_cookie(cookie)
-            print("Cookies loaded.")
+                if os.path.getsize('cookies.pkl') > 0:  # Ensure the file is not empty
+                    cookies = pickle.load(file)
+                    for cookie in cookies:
+                        self.driver.add_cookie(cookie)
+                    print("Cookies loaded.")
+                else:
+                    print("Cookies file is empty. Proceeding with new login.")
         except FileNotFoundError:
             print("No cookies file found. Proceeding with new login.")
+        except EOFError:
+            print("Cookies file is corrupted or empty. Proceeding with new login.")
+
+    
     def dynamic_wait(self,waittime):
         return WebDriverWait(self.driver, waittime)
     
@@ -133,6 +121,7 @@ class ZoomHost:
         self.login_passwd = self.get_host_password()
         self.login_email = self.login_email.strip()
         self.login_passwd = self.login_passwd.strip()
+
         print(self.login_email)
         print(self.login_passwd)
 
@@ -165,19 +154,12 @@ class ZoomHost:
             # If the file doesn't exist, treat it as new data
             existing_data = {}
 
-        # If the credentials do not match, write the new data to the file
         if not credentials_match:
             with open(file_path, "w") as json_file:
                 json.dump(login_data, json_file, indent=4)
-                credentials_match = False  # Mark as false because we wrote new data
+                credentials_match = False  
 
 
-
-
-
-
-        # print(self.login_email)
-        # print(self.login_passwd)
         self.driver.get('https://app.zoom.us/wc')
         if(credentials_match):
 
@@ -232,40 +214,54 @@ class ZoomHost:
         
 
         #time.sleep(20000)
-        time.sleep(2)  
+        time.sleep(2) 
+        print("after 2 sec sleep") 
         vel = self.wait.until(EC.visibility_of_element_located((By.XPATH, '//*[@id="webclient"]')))
         self.driver.switch_to.frame(vel)
+        print("after 2 switching to iframe") 
         time.sleep(2)
+        print("after 2 sec sleep") 
         action = webdriver.ActionChains(self.driver)
-        self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR,
-                                                    "#voip-tab button.join-audio-by-voip__join-btn")))
-        self.driver.execute_script("document.querySelector('#voip-tab button.join-audio-by-voip__join-btn').click()")
-        time.sleep(1)
+        
         action.move_by_offset(10, 20).perform()
-        time.sleep(1)
-        self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "#participant")))
+        self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "#participant button")))
         self.driver.execute_script("document.querySelector('#participant button').click()")
-        self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".participants-section-container__participants-footer-bottom")))
-        participent_column = self.driver.find_elements(By.CSS_SELECTOR,".participants-section-container__participants-footer-bottom button")
+        try:
+            print("trying opening participants section")
+            self.dynamic_wait(20).until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".participants-section-container__participants-footer-bottom")))
+            participent_column = self.driver.find_elements(By.CSS_SELECTOR,".participants-section-container__participants-footer-bottom button")
+            print("after clicking participants columns")
+        except:
+            print("except in opening participants section")
+            action.move_by_offset(10, 20).perform()
+            self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "#participant button")))
+            self.driver.execute_script("document.querySelector('#participant button').click()")
+            self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".participants-section-container__participants-footer-bottom")))
+            participent_column = self.driver.find_elements(By.CSS_SELECTOR,".participants-section-container__participants-footer-bottom button")
+            print("after clicking participants columns")
         for btn in participent_column:
             print(btn.text)
             if btn.text == "Invite":
                 btn.click()
                 break
-        self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".invite-footer__button-group")))
-        invite_column = self.driver.find_elements(By.CSS_SELECTOR,".invite-footer__button-group button")
-        for btn in invite_column:
-            print(btn.text)
-            if btn.text == "Copy URL":
-                btn.click()
-                break
-        time.sleep(2)
-        for btn in invite_column:
-            print(btn.text)
-            if btn.text == "Cancel":
-                btn.click()
-                break
-        self.meeting_link = pyperclip.paste()
+        # self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".invite-footer__button-group")))
+        # invite_column = self.driver.find_elements(By.CSS_SELECTOR,".invite-footer__button-group button")
+        # for btn in invite_column:
+        #     print(btn.text)
+        #     if btn.text == "Copy URL":
+        #         btn.click()
+        #         break
+        # time.sleep(2)
+        # for btn in invite_column:
+        #     print(btn.text)
+        #     if btn.text == "Cancel":
+        #         btn.click()
+        #         break
+        # self.meeting_link = pyperclip.paste()
+        self.meeting_link = self.driver.current_url
+        print("+++++++++++++++++++++++++++++++++++++++++")
+        print("========================================")
+        print("checking meeting link")
         print(self.meeting_link)
         action.move_by_offset(10, 20).perform()
         time.sleep(1)
@@ -274,20 +270,15 @@ class ZoomHost:
         
         self.driver.execute_script("document.querySelector('button.footer-button-base__button.join-audio-container__btn').click()")
         time.sleep(1)
-        if audio_join_btn.text == "Join Audio":
+        if audio_join_btn.text.lower() == "join audio":
             print("audio not joined")
             self.driver.execute_script("document.querySelector('button.footer-button-base__button.join-audio-container__btn').click()")
-            self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR,
-                                                     "#voip-tab button.join-audio-by-voip__join-btn")))
-            self.driver.execute_script("document.querySelector('#voip-tab button.join-audio-by-voip__join-btn').click()")
-            time.sleep(3)
-            self.driver.execute_script("document.querySelector('button.footer-button-base__button.join-audio-container__btn').click()")
-
-        elif audio_join_btn.text == "Unmute":
+            
+        elif audio_join_btn.text.lower() == "unmute":
             print("it is muted")
             self.driver.execute_script("document.querySelector('button.footer-button-base__button.join-audio-container__btn').click()")
             
-        elif audio_join_btn.text == "Mute":
+        elif audio_join_btn.text.lower() == "mute":
             print("already unmuted")
         self.wait.until(EC.visibility_of_element_located((By.XPATH,
                                                      "//*[@id='audioOptionMenu']")))
@@ -306,10 +297,17 @@ class ZoomHost:
             (By.CSS_SELECTOR, "#video")))
         self.driver.execute_script("document.querySelector('#video').click()")
         time.sleep(1)
-        self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR,
+        video_join_btn = self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR,
                                                      ".footer-button-base__button.send-video-container__btn")))
         
         self.driver.execute_script("document.querySelector('button.footer-button-base__button.send-video-container__btn').click()")
+        if video_join_btn.text.lower() == "join video" or video_join_btn.text.lower() == "start video":
+            print("video not joined")
+            self.driver.execute_script("document.querySelector('button.footer-button-base__button.send-video-container__btn').click()")
+
+        elif video_join_btn.text.lower() == "stop video":
+            print("already video on")
+        
         self.wait.until(EC.visibility_of_element_located(
             (By.CSS_SELECTOR, "#stats")))
         self.driver.execute_script("document.querySelector('#stats').click()")
@@ -356,10 +354,34 @@ class ZoomHost:
                 
         except Exception as e:
             print("error in seting start test",e)
+    def check_stop_signal(self):
+        """Check the stop signal from the Flask server."""
+        try:
+            endpoint_url = f'{self.base_url}/check_stop'
+            
+            response = requests.get(endpoint_url)  # Replace with your Flask server URL
+            if response.status_code == 200:
+                
+                stop_signal_from_server = response.json().get('stop', False)
+
+                # Only update if the server's stop signal is True
+                if stop_signal_from_server:
+                    self.stop_signal = True
+                    print("Stop signal received from the server. Exiting the loop.")
+                else:
+                    
+                    print("No stop signal received from the server. Continuing.")
+            return self.stop_signal
+        except Exception as e:
+            print(f"Error checking stop signal: {e}")
 
     def send_meetin_link_and_password(self):
-        pattern = r'https://\S+?\.zoom\.us/[^/]+/(?P<meeting_id>\d+)\?pwd=(?P<password>[^\s&]+)'
-        #pattern = r'https://\S+?\.zoom\.us/j/(?P<meeting_id>\d+)(?:\?pwd=(?P<password>[^\s&]+))?'
+        
+    
+        #pattern = r'https://\S+?\.zoom\.us/(?:j|wc)/(?P<meeting_id>\d+)(?:\S*?pwd=(?P<password>[^\s&]+))?'
+
+        pattern = r'https://\S+?\.zoom\.us/(?:j|wc)/(?P<meeting_id>\d+)\S*?pwd=(?P<password>[^\s&]+)'
+
 
 
         match = re.search(pattern, self.meeting_link)
@@ -373,17 +395,6 @@ class ZoomHost:
                 self.update_login_passwd(self.new_login_passwd)
             print("pasword and email updated succesfuly for login")
 
-        # endpoint_url = f"{self.base_url}/meeting_link"
-        # data = {"meet_link": self.meeting_link}
-
-        # try:
-        #     response = requests.post(endpoint_url, json=data)
-        #     if response.status_code == 200:
-        #         print("Meeting Link updated successfully.")
-        #     else:
-        #         print(f"Failed to Meeting Link {response.status_code}")
-        # except requests.RequestException as e:
-        #     print(f"Request error: {e}")
 
 
     def capture_audio_stats(self):
@@ -756,6 +767,8 @@ if __name__ == "__main__":
             print("monitoring the test")
             print(header)
             print(len(header))
+            if zoom_host.check_stop_signal():
+                break
             stats = zoom_host.collecting_stats()
             csv_writer.writerow(stats)
             zoom_host.send_stats_to_api(zoom_host.audio_stats,zoom_host.video_stats)
@@ -764,6 +777,6 @@ if __name__ == "__main__":
     zoom_host.wait_for_exit()
     zoom_host.send_client_disconnection()
     zoom_host.stop_zoom()
-    # zoom_host.transfer_files(f'{zoom_host.hostname}.csv')
+    
     
     

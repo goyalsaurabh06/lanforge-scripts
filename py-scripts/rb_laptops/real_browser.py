@@ -1,4 +1,5 @@
 import os
+import selenium
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.action_chains import ActionChains
@@ -10,18 +11,15 @@ import requests
 import json
 import socket
 from statistics import mean
+import sys
+import platform
+import subprocess
 
 
 class RealBrowser():
 
     def __init__(self,url,count,driver,duration,device_name,server):
         self.url = url
-
-        # if "http://" in self.url:
-        #         self.url = self.url.replace("http://","")
-        # if "https://" in self.url:
-        #         self.url = self.url.replace("https://","http://")
-        # self.url = "www."+self.url
 
         self.count = count
         self.driver = driver
@@ -57,10 +55,14 @@ class RealBrowser():
         self.tries = 0
         self.error = 0
         self.successful_load = 0
-        while(not self.check_stop_signal()):
+        while((datetime.now() < self.end_time) ):
+
+            if (self.check_stop_signal()):
+                break
+
             try:
-                self.tries += 1
                 self.load_url()
+                self.tries += 1
                 # Execute JavaScript to get performance timing data
                 performance_data = self.driver.execute_script("return window.performance.timing")
 
@@ -116,10 +118,16 @@ class RealBrowser():
                 }
                 print(f"error occured")
                 self.send_stats(laptop_stats)
-            
-    def stop(self):
-        self.driver.quit()
+        print("checking whether statments are reaching upto this or not")
+        self.driver.close()
+        self.stop()
+        
     
+    def stop(self):
+        #os._exit(0)
+        self.driver.close()
+        # self.driver.quit()
+        # sys.exit(0)
     def check_stop_signal(self):
         """Check the stop signal from the Flask server."""
         try:
@@ -152,9 +160,45 @@ class RealBrowser():
         except Exception as e:
             print("Failed to upload stats",e)
     
+    def kill_chrome_processs(self,):
+        os_name = platform.system()
+    
+        if os_name == "Linux":
+            # Linux: Terminate Chrome processes
+            try:
+                subprocess.run(["pkill", "-f", "chrome"], check=True)
+                subprocess.run(["pkill", "-f", "chromedriver"], check=True)
+                subprocess.run(["pkill", "-f", "chrome for testing"], check=True)
+            except subprocess.CalledProcessError:
+                print("No matching Chrome processes found on Linux.")
+        
+        elif os_name == "Darwin":
+            # macOS: Terminate Chrome processes
+            try:
+                subprocess.run(["pkill", "-f", "chrome for testing"], check=True)
+                subprocess.run(["pkill", "-f", "chrome"], check=True)
+                subprocess.run(["pkill", "-f", "chromedriver"], check=True)
+            except subprocess.CalledProcessError:
+                print("No matching Chrome processes found on macOS.")
+        
+        else:
+            # Unsupported OS
+            print("Unsupported operating system.")
+    
+    def init_driver(self,):
+        service = Service()
+        options = webdriver.ChromeOptions()
+        options.set_capability("goog:loggingPrefs", {"performance": "ALL", "browser": "ALL"})
+        # options.add_experimental_option("detach", True)
+        options.add_argument("--no-cache")
+        options.add_argument('--disk-cache-size=0')
+        self.driver = webdriver.Chrome(service=service, options=options)# Or choose the appropriate webdriver for your browser
+        self.driver.execute_cdp_cmd("Network.setCacheDisabled", {"cacheDisabled":True})
+        
 
 
 def main():
+
     parser = argparse.ArgumentParser(
         prog='real_browser.py',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -162,11 +206,11 @@ def main():
         Real Browser automation
          ''',
           description='''\
-NAME: real_browser.py
-PURPOSE: This script will open youtube over browser and play it for mentioned duration or single loop and get the reporting stats
+            NAME: real_browser.py
+            PURPOSE: This script will open youtube over browser and play it for mentioned duration or single loop and get the reporting stats
 
-          '''
-    )
+                    '''
+        )
 
     parser.add_argument('--url', type=str,default="https://www.youtube.com")
     parser.add_argument('--duration',default=None,type=str)
@@ -180,33 +224,23 @@ PURPOSE: This script will open youtube over browser and play it for mentioned du
     parser.add_argument('--env', action='extend', nargs='+', default=[])
 
     args = parser.parse_args()
+    
+    url = args.url
+    
     duration = args.duration.replace("m","")
     duration = int(duration)
-    url = args.url
+    print(duration)
+    if duration == "":
+        exit(0)
 
-    # if "http" in url:
-    #     url = url.replace("http","https")
-    # elif "https" in url:
-    #     pass
-    # else:
-    #     url = "https://"+url
     
-
-
-    for argument in args.env:
-        arg = argument.split("=")
-        os.environ[arg[0]] = arg[1]
-    service = Service()
-    options = webdriver.ChromeOptions()
-    options.set_capability("goog:loggingPrefs", {"performance": "ALL", "browser": "ALL"})
-    # options.add_experimental_option("detach", True)
-    options.add_argument("--no-cache")
-    options.add_argument('--disk-cache-size=0')
-    driver = webdriver.Chrome(service=service, options=options)# Or choose the appropriate webdriver for your browser
-    driver.execute_cdp_cmd("Network.setCacheDisabled", {"cacheDisabled":True})
-    rb = RealBrowser(url=url,count=args.count,duration=duration,driver=driver,device_name=args.device_name,server=args.server)
+    rb = RealBrowser(url=url,count=args.count,duration=duration,driver=None,device_name=args.device_name,server=args.server)
+    #rb.kill_chrome_processs()
+    rb.init_driver()
     rb.start()
+
     print(f"Total Tries: {rb.tries},Total Successfull Count :{rb.successful_load} ,Error Count :{rb.error}")
     rb.stop()
+    #rb.kill_chrome_processs()
 if __name__ == '__main__':
     main()
