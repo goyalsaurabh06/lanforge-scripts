@@ -483,7 +483,7 @@ class Youtube(Realm):
         else:
             interface_data = self.json_get("/port/all")
             interfaces = interface_data["interfaces"]
-            print("checking interfaces",interfaces)
+            #print("checking interfaces",interfaces)
             final_device_list = []  # Initialize the list
 
             for device in real_sta_list:  
@@ -1058,7 +1058,7 @@ class Youtube(Realm):
             # Create a string by joining the mapped pairs
             gp_map = ", ".join(f"{group} -> {profile}" for group, profile in gp_pairs)
             
-            print(gp_map)
+            #print(gp_map)
 
             # Test setup info
             test_setup_info = {

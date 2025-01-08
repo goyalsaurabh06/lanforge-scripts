@@ -732,7 +732,7 @@ if __name__ == "__main__":
 
     #zoom_host.read_credentials()
     zoom_host.start_zoom()
-    wait_limit = datetime.now() + timedelta(seconds = 60)
+    wait_limit = datetime.now() + timedelta(seconds = 120)
     zoom_host.get_stats_flags()
     while True:
         zoom_host.set_start_test()
