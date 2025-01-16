@@ -1971,6 +1971,52 @@ def main():
                 exit(0)
 
             # Initialize an instance of RealBrowserTest with various parameters
+            # obj = RealBrowserTest(host=args.host, 
+            #                       ssid=args.ssid, 
+            #                       passwd=args.passwd, 
+            #                       encryp=args.encryp,
+            #                     suporrted_release=["7.0", "10", "11", "12"], 
+            #                     max_speed=args.max_speed,
+            #                     url=args.url, count=args.count, 
+            #                     duration=args.duration, 
+            #                     resource_ids = args.device_list, 
+            #                     dowebgui = args.dowebgui,
+            #                     result_dir = args.result_dir,
+            #                     test_name = args.test_name, 
+            #                     incremental = args.incremental,
+            #                     postcleanup=args.postcleanup,
+            #                     precleanup=args.precleanup,
+            #                     file_name=args.file_name,
+            #                     group_name=args.group_name,
+            #                     profile_name=args.profile_name,
+            #                     eap_method=args.eap_method,
+            #                     eap_identity=args.eap_identity,
+            #                     ieee80211=args.ieee80211,
+            #                     ieee80211u=args.ieee80211u,
+            #                     ieee80211w=args.ieee80211w,
+            #                     enable_pkc=args.enable_pkc,
+            #                     bss_transition=args.bss_transition,
+            #                     power_save=args.power_save,
+            #                     disable_ofdma=args.disable_ofdma,
+            #                     roam_ft_ds=args.roam_ft_ds,
+            #                     key_management=args.key_management,
+            #                     pairwise=args.pairwise,
+            #                     private_key=args.private_key,
+            #                     ca_cert=args.ca_cert,
+            #                     client_cert=args.client_cert,
+            #                     pk_passwd=args.pk_passwd,
+            #                     pac_file=args.pac_file,
+            #                     server_ip=args.server_ip,
+            #                     expected_passfail_value=args.expected_passfail_value,
+            #                     device_csv_name=args.device_csv_name,
+            #                     wait_time=args.wait_time,
+            #                     flask_ip=args.flask_ip,
+            #                     config=args.config,
+            #                     selected_groups=selected_groups,
+            #                     selected_profiles=selected_profiles
+            #                     )
+            
+
             obj = RealBrowserTest(host=args.host, 
                                   ssid=args.ssid, 
                                   passwd=args.passwd, 
@@ -2010,12 +2056,11 @@ def main():
                                 expected_passfail_value=args.expected_passfail_value,
                                 device_csv_name=args.device_csv_name,
                                 wait_time=args.wait_time,
-                                flask_ip=args.flask_ip,
+                                flask_ip='10.253.8.108',
                                 config=args.config,
                                 selected_groups=selected_groups,
                                 selected_profiles=selected_profiles
                                 )
-            
             obj.run_flask_server()
             
             
@@ -2101,6 +2146,8 @@ def main():
                         if args.config:
                             config_list=asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
                         #args.device_list = ",".join(id for id in config_list)
+                    
+                    
                     obj.android_devices = obj.devices.get_devices()
                     # Extract second part of resource IDs and sort them
                     obj.resource_ids = ",".join(id.split(".")[1] for id in args.device_list.split(","))

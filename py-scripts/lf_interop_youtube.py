@@ -58,6 +58,7 @@ import re
 from flask import Flask, request, jsonify
 from threading import Thread
 import traceback
+import threading
 
 logger = logging.getLogger(__name__)
 log = logging.getLogger('werkzeug')
@@ -842,6 +843,44 @@ class Youtube(Realm):
         @app.route('/check_stop',methods = ['GET'])
         def check_stop():
             return jsonify({"stop":self.stop_signal})
+        
+
+        # @app.route('/stop_yt', methods=['GET'])
+        # def stop_yt():
+        #     # Return the latest data for all hostnames
+        #     logging.info("Stopping the test through webui")
+        #     self.stop_signal = True
+        #     time.sleep(10)
+            
+        #     response = jsonify({"message": "Stopping Zoom Test"})
+        #     response.status_code = 200
+
+
+        #     def shutdown():
+        #         #os._exit(0) 
+        #         sys.exit(0)
+
+        #     response.call_on_close(shutdown)
+
+        #     return response
+
+        @app.route('/stop_yt', methods=['GET'])
+        def stop_yt():
+            """
+            Endpoint to stop the YouTube test and trigger a graceful application shutdown.
+            """
+            logging.info("Stopping the test through web UI")
+            
+            # Respond to the client immediately
+            response = jsonify({"message": "Stopping Youtube Test"})
+            response.status_code = 200
+
+            # Start shutdown in a separate thread
+            shutdown_thread = threading.Thread(target=self.shutdown)
+            shutdown_thread.start()
+
+            return response
+        
 
         
         @app.route('/youtube_stats', methods=['GET', 'POST'])
@@ -910,8 +949,10 @@ class Youtube(Realm):
     def stop_test_yt(self,):
         try:
             # Define the API endpoint URL
-            url = f"http://localhost:5454/update_status_yt"
+            #url = f"http://localhost:5454/update_status_yt"
             #url = f"http://10.253.8.108:8000/update_status_yt"
+            url = f"http://localhost:8000/update_status_yt"
+
             
             # Set the headers for the HTTP POST request
             headers = {
@@ -983,6 +1024,16 @@ class Youtube(Realm):
         except Exception as e:
             logging.ERROR(f"Failed to move '{source_file}' to '{dest_dir}': {e}")
     
+    def shutdown(self):
+        """
+        Gracefully shut down the application.
+        """
+        logging.info("Initiating graceful shutdown...")
+        self.stop_signal = True
+        time.sleep(10)
+        self.generic_endps_profile.cleanup()
+        logging.info("Application Closed sucessfully")
+        os._exit(0)
 
     def updating_webui_runningjson(self,obj):
         data = {}
@@ -1489,7 +1540,9 @@ def main():
 
         # Create a YouTube object with the specified parameters
 
-        youtube = Youtube(host = mgr_ip, port = mgr_port, url = url, duration = args.duration, lanforge_password = 'lanforge', sta_list=[], do_webUI = args.do_webUI, ui_report_dir = ui_report_dir, debug = debug,resolution=args.res,ap_name=args.ap_name,ssid=args.ssid,security=args.encryp,band=args.band,test_name=args.test_name,flask_ip=args.flask_ip,config=args.config,selected_groups=selected_groups,selected_profiles=selected_profiles)
+        
+        #youtube = Youtube(host = mgr_ip, port = mgr_port, url = url, duration = args.duration, lanforge_password = 'lanforge', sta_list=[], do_webUI = args.do_webUI, ui_report_dir = ui_report_dir, debug = debug,resolution=args.res,ap_name=args.ap_name,ssid=args.ssid,security=args.encryp,band=args.band,test_name=args.test_name,flask_ip=args.flask_ip,config=args.config,selected_groups=selected_groups,selected_profiles=selected_profiles)
+        youtube = Youtube(host = mgr_ip, port = mgr_port, url = url, duration = args.duration, lanforge_password = 'lanforge', sta_list=[], do_webUI = args.do_webUI, ui_report_dir = ui_report_dir, debug = debug,resolution=args.res,ap_name=args.ap_name,ssid=args.ssid,security=args.encryp,band=args.band,test_name=args.test_name,flask_ip='10.253.8.108',config=args.config,selected_groups=selected_groups,selected_profiles=selected_profiles)
         youtube.start_flask_server()
 
 
@@ -1619,8 +1672,12 @@ def main():
                 youtube.select_real_devices(real_devices=Devices)
         else:
             resources = [r.strip() for r in args.resources.split(',')]
+
+            extracted_parts = [res.split('.')[:2] for res in resources]  
+            formatted_parts = ['.'.join(parts) for parts in extracted_parts] 
+            print(formatted_parts)  
             # print("checking the values of resources",resources)
-            youtube.select_real_devices(real_devices=Devices, real_sta_list=resources, base_interop_obj=Devices)
+            youtube.select_real_devices(real_devices=Devices, real_sta_list=formatted_parts, base_interop_obj=Devices)
             # print("checking the value of real_sta_list",youtube.real_sta_list)
 
             if args.do_webUI:
@@ -1713,13 +1770,9 @@ def main():
         #print("youtube.data is ",youtube.data)
 
         if(do_webUI):
-            time.sleep(3)
-            final_data = youtube.get_last_result_yt()
-            youtube.create_report(final_data,youtube.ui_report_dir)
+            youtube.create_report(youtube.stats_api_response,youtube.ui_report_dir)
         else:
-            #final_data = youtube.get_last_result_yt()
-            # print("+==============================")
-            # print(youtube.stats_api_response)
+    
             youtube.create_report(youtube.stats_api_response,'')
         
         # Perform post-test cleanup if not skipped

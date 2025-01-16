@@ -349,21 +349,39 @@ class ZoomAutomation(Realm):
             # Return the latest data for all hostnames
             return jsonify(self.data_store), 200
         
-        @self.app.route('/stop_zoom', methods=['GET'])
-        #@limit_hosts(allowed_hosts=self.ALLOWED_HOSTS,)
-        def stop_zoom():
-            # Return the latest data for all hostnames
-            logging.info("Stopping the test through webui")
+        # @self.app.route('/stop_zoom', methods=['GET'])
 
-            self.generic_endps_profile.cleanup()
+        # def stop_zoom():
+        #     # Return the latest data for all hostnames
+        #     logging.info("Stopping the test through webui")
+
             
+        #     response = jsonify({"message": "Stopping Zoom Test"})
+        #     response.status_code = 200
+        #     self.stop_signal = True
+        #     def shutdown():
+        #         #os._exit(0)
+        #         sys.exit(0)
+
+        #     response.call_on_close(shutdown)
+
+        #     return response
+
+        @self.app.route('/stop_zoom', methods=['GET'])
+        def stop_zoom():
+            """
+            Endpoint to stop the Zoom test and trigger a graceful application shutdown.
+            """
+            logging.info("Stopping the test through web UI")
+            self.stop_signal = True  # Signal to stop the application
+
+            # Respond to the client
             response = jsonify({"message": "Stopping Zoom Test"})
             response.status_code = 200
 
-            def shutdown():
-                os._exit(0) 
-
-            response.call_on_close(shutdown)
+            # Trigger shutdown in a separate thread to avoid blocking
+            shutdown_thread = threading.Thread(target=self.shutdown)
+            shutdown_thread.start()
 
             return response
             
@@ -375,10 +393,17 @@ class ZoomAutomation(Realm):
             sys.exit(0)
         
 
-        
 
+    def shutdown(self):
+        """
+        Gracefully shut down the application.
+        """
+        logging.info("Initiating graceful shutdown...")
 
-        
+        self.stop_signal = True
+        time.sleep(10)
+        logging.info("Exiting the application.")
+        os._exit(0)
     
     def set_start_time(self):
         self.start_time = datetime.now(self.tz) + timedelta(seconds=30)
@@ -1341,7 +1366,9 @@ def main():
                     exit(0)
 
 
-                zoom_automation = ZoomAutomation(audio=args.audio, video=args.video, lanforge_ip=args.lanforge_ip,wait_time=args.wait_time,testname=args.testname,server_ip=args.server_ip,config=args.config,selected_groups=selected_groups,selected_profiles=selected_profiles)
+                #zoom_automation = ZoomAutomation(audio=args.audio, video=args.video, lanforge_ip=args.lanforge_ip,wait_time=args.wait_time,testname=args.testname,server_ip=args.server_ip,config=args.config,selected_groups=selected_groups,selected_profiles=selected_profiles)
+                
+                zoom_automation = ZoomAutomation(audio=args.audio, video=args.video, lanforge_ip=args.lanforge_ip,wait_time=args.wait_time,testname=args.testname,server_ip='10.253.8.108',config=args.config,selected_groups=selected_groups,selected_profiles=selected_profiles)
 
                 realdevice = RealDevice(manager_ip=args.lanforge_ip,
                                     server_ip="192.168.1.61",
@@ -1435,58 +1462,58 @@ def main():
                         }
                         if(args.group_name==None and args.file_name==None and args.profile_name==None):
                             dev_list=args.resources.split(',')
-                            args.zoom_host = args.zoom_host.strip()
-                            if args.zoom_host in dev_list:
-                                dev_list.remove(args.zoom_host)
+                            if not args.do_webUI:
 
-                            dev_list.insert(0,args.zoom_host)
+                                args.zoom_host = args.zoom_host.strip()
+                                if args.zoom_host in dev_list:
+                                    dev_list.remove(args.zoom_host)
+
+                                dev_list.insert(0,args.zoom_host)
                             if args.config:
                                 asyncio.run(config_obj.connectivity(device_list=dev_list,wifi_config=config_dict))
                             args.resources = ",".join(id for id in dev_list)
                     else:
+                     all_devices= config_obj.get_all_devices()
+                     device_list=[]
+                     config_dict={
+                     'ssid':args.ssid,
+                     'passwd':args.passwd,
+                     'enc':args.encryp,
+                     'eap_method':args.eap_method,
+                     'eap_identity':args.eap_identity,
+                     'ieee80211':args.ieee80211,
+                     'ieee80211u':args.ieee80211u,
+                     'ieee80211w':args.ieee80211w,
+                     'enable_pkc':args.enable_pkc,
+                     'bss_transition':args.bss_transition,
+                     'power_save':args.power_save,
+                     'disable_ofdma':args.disable_ofdma,
+                     'roam_ft_ds':args.roam_ft_ds,
+                     'key_management':args.key_management,
+                     'pairwise':args.pairwise,
+                     'private_key':args.private_key,
+                     'ca_cert':args.ca_cert,
+                     'client_cert':args.client_cert,
+                     'pk_passwd':args.pk_passwd,
+                     'pac_file':args.pac_file,
+                     'server_ip':args.server_ip,
 
-                         all_devices= config_obj.get_all_devices()
-                         device_list=[]
-                         config_dict={
-                         'ssid':args.ssid,
-                         'passwd':args.passwd,
-                         'enc':args.encryp,
-                         'eap_method':args.eap_method,
-                         'eap_identity':args.eap_identity,
-                         'ieee80211':args.ieee80211,
-                         'ieee80211u':args.ieee80211u,
-                         'ieee80211w':args.ieee80211w,
-                         'enable_pkc':args.enable_pkc,
-                         'bss_transition':args.bss_transition,
-                         'power_save':args.power_save,
-                         'disable_ofdma':args.disable_ofdma,
-                         'roam_ft_ds':args.roam_ft_ds,
-                         'key_management':args.key_management,
-                         'pairwise':args.pairwise,
-                         'private_key':args.private_key,
-                         'ca_cert':args.ca_cert,
-                         'client_cert':args.client_cert,
-                         'pk_passwd':args.pk_passwd,
-                         'pac_file':args.pac_file,
-                         'server_ip':args.server_ip,
- 
-                         }
-                         for device in all_devices:
-                             if(device["type"]!='laptop'):
-                                 device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["serial"])
-                             elif(device["type"]=='laptop'):
-                                 device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["hostname"])
-                         print("Available Devices For Testing")
-                         for device in device_list:
-                            print(device)
-                         zm_host = input("Enter Host Resource for the Test : ")
-                         zm_host = zm_host.strip()
-                         args.resources = input("Enter client Resources to run the test :")
-                         args.resources = zm_host+","+args.resources
-
-                         dev1_list=args.resources.split(',')
-                         if args.config:
-                            asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
+                     }
+                     for device in all_devices:
+                         if(device["type"]!='laptop'):
+                             device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["serial"])
+                         elif(device["type"]=='laptop'):
+                             device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["hostname"])
+                     print("Available Devices For Testing")
+                     for device in device_list:
+                        print(device)
+                     zm_host = input("Enter Host Resource for the Test : ")
+                     zm_host = zm_host.strip()
+                     args.resources = input("Enter client Resources to run the test :")
+                     args.resources = zm_host+","+args.resources
+                     dev1_list=args.resources.split(',')
+                     if args.config:
+                        asyncio.run(config_obj.connectivity(device_list=dev1_list,wifi_config=config_dict))
 
 
                 # print("===============================================")
@@ -1502,11 +1529,6 @@ def main():
                         
                         #resources = sorted(resources, key=lambda x: int(x.split('.')[1]))
                         get_data = zoom_automation.select_real_devices(real_device_obj=realdevice, real_sta_list=resources)
-
-                        # print("checking get data ==================")
-                        # print(get_data)
-                        # print("checking laptops")
-                        # print(laptops)
                         for item in get_data:
                             item = item.strip()
                             # Find and append the matching lap to result_list
@@ -1522,9 +1544,14 @@ def main():
                 else:
                     if(args.do_webUI):
                         zoom_automation.path = args.report_dir
-                    resources = args.resources.split(',')
-                    #resources = sorted(resources, key=lambda x: int(x.split('.')[1]))
-                    zoom_automation.select_real_devices(real_device_obj=realdevice, real_sta_list=resources)
+                    resources = args.resources.split(',')  
+                    extracted_parts = [res.split('.')[:2] for res in resources]  
+                    formatted_parts = ['.'.join(parts) for parts in extracted_parts]  
+
+                    print(formatted_parts)  
+
+
+                    zoom_automation.select_real_devices(real_device_obj=realdevice, real_sta_list=formatted_parts)
                     if args.do_webUI:
 
                         if len(zoom_automation.real_sta_hostname) == 0:
@@ -1551,7 +1578,8 @@ def main():
                     exit(0)
 
                 
-                zoom_automation.run(args.duration, args.server_ip, args.sigin_email, args.sigin_passwd, args.participants)
+                #zoom_automation.run(args.duration, args.server_ip, args.sigin_email, args.sigin_passwd, args.participants)
+                zoom_automation.run(args.duration, '10.253.8.108' ,args.sigin_email, args.sigin_passwd, args.participants)
                 zoom_automation.data_store.clear()
                 zoom_automation.generate_report()
                 logging.info("Test Completed Sucessfully")
@@ -1561,8 +1589,8 @@ def main():
     finally:
         if(args.do_webUI):
             try:
-                url = f"http://{args.lanforge_ip}:5454/update_status_yt"
-                #url = f"http://localhost:8000/update_status_yt"
+                #url = f"http://{args.lanforge_ip}:5454/update_status_yt"
+                url = f"http://localhost:8000/update_status_yt"
                 #url = f"http://10.253.8.108:8000/update_status_yt"
 
                 
