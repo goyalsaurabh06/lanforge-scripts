@@ -438,7 +438,7 @@ class LAPTOPS(Realm):
                         'ssid': curr_ssid,
                         'mac': 'xx:xx:xx:*:*:xx',
                         "ieee80211w" : enable_80211w,
-                        'key': curr_passwd,
+                        
 
                     }
                 else:
@@ -464,7 +464,7 @@ class LAPTOPS(Realm):
                         'flags': curr_enc,
                         'ssid': curr_ssid,
                         "ieee80211w" : enable_80211w,
-                        'key': curr_passwd,
+                        
 
                     }
                 else:
@@ -497,6 +497,7 @@ class LAPTOPS(Realm):
             logger.info('Port list is empty')
             return        
         data_list = []
+        # print("PORTLIST wifiextra",port_list)
         
         for port_data in port_list:
             shelf = port_data['shelf']
@@ -514,14 +515,7 @@ class LAPTOPS(Realm):
             client_cert = port_data["client_cert"]
             pk_passwd = port_data["pk_passwd"]
             pac_file = port_data["pac_file"]
-            # ieee80211u=port_data["ieee80211u"]
-            # ieee80211w=port_data["ieee80211w"]
-            # enable_pkc=port_data["enable_pkc"]
-            # bss_transition=port_data["bss_transition"]
-            # power_save=port_data["power_save"]
-            # disable_ofdma=port_data["disable_ofdma"]
-            # roam_ft_ds=port_data["roam_ft_ds"]
-
+            
 
 
            
@@ -533,55 +527,26 @@ class LAPTOPS(Realm):
                 eap_method="PEAP"
             if eap_method=="EAP-PEAP":
                 eap_method="PEAP" 
-            if (enterprise_status==True and (os=='Win' or os=='Lin' or os=='Apple')):
-                # os = port_data['os']
-                # if (os in ['Lin']):
+            if (enterprise_status==True and  os=='Lin'):
+                
                 data = {
-                    'shelf': shelf,
-                    'resource': resource,
-                    "port":"wlan0",
-                    "key_mgmt":key_management,
-                    "pairwise":pairwise,
-                    "group":pairwise,
-                    "eap": eap_method,
-                    "identity": eap_identity,
-                    "password": curr_passwd,
-                    "private_key" : private_key,
-                    "ca_cert" : ca_cert,
-                    "client_cert" : client_cert,
-                    "pk_passwd": pk_passwd,
-                    "pac_file" : pac_file,
-
-                    # "ieee80211u":ieee80211u,
-                    # "ieee80211w":ieee80211w,
-                    # "enable_pkc":enable_pkc,
-                    # "bss_transition":bss_transition,
-                    # "power_save":power_save,
-                    # "disable_ofdma":disable_ofdma,
-                    #  "roam_ft_ds":roam_ft_ds
-                }
-            else:
-                 data = {
-                    'shelf': shelf,
-                    'resource': resource,
-                    "port":"wlan0",
-                    "key_mgmt":"[BLANK]",
-                    "pairwise":"[BLANK]",
-                    "group":"[BLANK]",
-                    "eap": "[BLANK]",
-                    "identity": "[BLANK]",
-                    "password": "[BLANK]",
-                    "private_key" : "[BLANK]",
-                    "ca_cert" : "[BLANK]",
-                    "client_cert" : "[BLANK]",
-                    "pk_passwd": "[BLANK]",
-                    "pac_file" : "[BLANK]",
-                    "phase1":"[BLANK]",  # outter auth
-                    "phase2":"[BLANK]",  # inner aut
-                     "pin":"[BLANK]",
-                 }
-
-            data_list.append(data)
+                        'shelf': shelf,
+                        'resource': resource,
+                        "port":"wlan0",
+                        "key_mgmt":key_management,
+                        "pairwise":pairwise,
+                        "group":pairwise,
+                        "eap": eap_method,
+                        "identity": eap_identity,
+                        "password": curr_passwd,
+                        "private_key" : private_key,
+                        "ca_cert" : ca_cert,
+                        "client_cert" : client_cert,
+                        "pk_passwd": pk_passwd,
+                        "pac_file" : pac_file
+                    }
+                data_list.append(data)
+              
                 
         url = 'http://{}:{}/cli-json/set_wifi_extra'.format(self.lanforge_ip, self.port)
         print("DATA LIST: ",data_list)
@@ -1230,6 +1195,7 @@ class DeviceConfig(Realm):
             client_cert_pattern=re.compile(r'><client_cert\s(\w+)')
             pk_passwd_pattern=re.compile(r'><pk_passwd\s(\w+)')
             pac_file_pattern=re.compile(r'><pac_file\s(\w+)')
+            server_ip_pattern = re.compile(r'><server_ip\s([\d\.]+)')
 
             
 
@@ -1251,12 +1217,14 @@ class DeviceConfig(Realm):
                 client_cert_match=client_cert_pattern.findall(profile_details)
                 pk_passwd_match=pk_passwd_pattern.findall(profile_details)
                 pac_file_match=pac_file_pattern.findall(profile_details)
+                server_ip_match=server_ip_pattern.findall(profile_details)
                 
 
                 
                 details = dict(kv_pattern.findall(profile_details))
                
                 print("details",details)
+                
                 details["ieee80211u"]=True if("<ieee80211u>" in profile_details+'>') else False
                 details["ieee80211"]=True if("<ieee80211>" in profile_details+'>') else False
                 details["enable_pkc"]=True if("<enable_pkc>" in profile_details+'>') else False
@@ -1275,7 +1243,7 @@ class DeviceConfig(Realm):
                 details["ieee80211w"]=ieee80211w_match[0] if("<ieee80211w " in profile_details) else int(1)
                 details["eap_identity"]=eap_identity_match[0] if("<eap_identity " in profile_details) else ''
                 details["eap_method"]=eap_method_match[0] if("<eap_method " in profile_details) else 'DEFAULT'
-                details["server_ip"]=self.lanforge_ip
+                details["server_ip"]=server_ip_match[0] if("<server_ip " in profile_details) else self.lanforge_ip
                 details["enc"]=encrypt_match
                 details["passwd"]=match
                 details["Profile"] = profile_name
