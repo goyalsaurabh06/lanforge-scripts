@@ -1183,7 +1183,7 @@ class DeviceConfig(Realm):
             kv_pattern = re.compile(r'(\w+)=([^><]+)')
             # Extract all profiles
             
-            pass_pattern = re.compile(r'><passwd\s(\w+)')
+            pass_pattern = re.compile(r'><passwd\s([^\s><]+)')
             encrypt_pattern=re.compile(r'><enc\s(\w+)')
             eap_method_pattern = re.compile(r'><eap_method\s([A-Za-z0-9_-]+)')
             eap_identity_pattern=re.compile(r'><eap_identity\s(\w+)')
