@@ -1541,8 +1541,8 @@ def main():
         # Create a YouTube object with the specified parameters
 
         
-        #youtube = Youtube(host = mgr_ip, port = mgr_port, url = url, duration = args.duration, lanforge_password = 'lanforge', sta_list=[], do_webUI = args.do_webUI, ui_report_dir = ui_report_dir, debug = debug,resolution=args.res,ap_name=args.ap_name,ssid=args.ssid,security=args.encryp,band=args.band,test_name=args.test_name,flask_ip=args.flask_ip,config=args.config,selected_groups=selected_groups,selected_profiles=selected_profiles)
-        youtube = Youtube(host = mgr_ip, port = mgr_port, url = url, duration = args.duration, lanforge_password = 'lanforge', sta_list=[], do_webUI = args.do_webUI, ui_report_dir = ui_report_dir, debug = debug,resolution=args.res,ap_name=args.ap_name,ssid=args.ssid,security=args.encryp,band=args.band,test_name=args.test_name,flask_ip='10.253.8.108',config=args.config,selected_groups=selected_groups,selected_profiles=selected_profiles)
+        youtube = Youtube(host = mgr_ip, port = mgr_port, url = url, duration = args.duration, lanforge_password = 'lanforge', sta_list=[], do_webUI = args.do_webUI, ui_report_dir = ui_report_dir, debug = debug,resolution=args.res,ap_name=args.ap_name,ssid=args.ssid,security=args.encryp,band=args.band,test_name=args.test_name,flask_ip=args.flask_ip,config=args.config,selected_groups=selected_groups,selected_profiles=selected_profiles)
+        #youtube = Youtube(host = mgr_ip, port = mgr_port, url = url, duration = args.duration, lanforge_password = 'lanforge', sta_list=[], do_webUI = args.do_webUI, ui_report_dir = ui_report_dir, debug = debug,resolution=args.res,ap_name=args.ap_name,ssid=args.ssid,security=args.encryp,band=args.band,test_name=args.test_name,flask_ip='10.253.8.108',config=args.config,selected_groups=selected_groups,selected_profiles=selected_profiles)
         youtube.start_flask_server()
 
 

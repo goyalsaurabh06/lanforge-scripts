@@ -1366,9 +1366,9 @@ def main():
                     exit(0)
 
 
-                #zoom_automation = ZoomAutomation(audio=args.audio, video=args.video, lanforge_ip=args.lanforge_ip,wait_time=args.wait_time,testname=args.testname,server_ip=args.server_ip,config=args.config,selected_groups=selected_groups,selected_profiles=selected_profiles)
+                zoom_automation = ZoomAutomation(audio=args.audio, video=args.video, lanforge_ip=args.lanforge_ip,wait_time=args.wait_time,testname=args.testname,server_ip=args.server_ip,config=args.config,selected_groups=selected_groups,selected_profiles=selected_profiles)
                 
-                zoom_automation = ZoomAutomation(audio=args.audio, video=args.video, lanforge_ip=args.lanforge_ip,wait_time=args.wait_time,testname=args.testname,server_ip='10.253.8.108',config=args.config,selected_groups=selected_groups,selected_profiles=selected_profiles)
+                #zoom_automation = ZoomAutomation(audio=args.audio, video=args.video, lanforge_ip=args.lanforge_ip,wait_time=args.wait_time,testname=args.testname,server_ip='10.253.8.108',config=args.config,selected_groups=selected_groups,selected_profiles=selected_profiles)
 
                 realdevice = RealDevice(manager_ip=args.lanforge_ip,
                                     server_ip="192.168.1.61",
@@ -1578,8 +1578,8 @@ def main():
                     exit(0)
 
                 
-                #zoom_automation.run(args.duration, args.server_ip, args.sigin_email, args.sigin_passwd, args.participants)
-                zoom_automation.run(args.duration, '10.253.8.108' ,args.sigin_email, args.sigin_passwd, args.participants)
+                zoom_automation.run(args.duration, args.server_ip, args.sigin_email, args.sigin_passwd, args.participants)
+                #zoom_automation.run(args.duration, '10.253.8.108' ,args.sigin_email, args.sigin_passwd, args.participants)
                 zoom_automation.data_store.clear()
                 zoom_automation.generate_report()
                 logging.info("Test Completed Sucessfully")
