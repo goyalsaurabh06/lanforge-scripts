@@ -548,6 +548,7 @@ class ZoomAutomation(Realm):
     
         if self.real_sta_os_type[0] == "windows":
             cmd = f"py zoom_host.py --ip {self.flask_ip}"
+            #cmd = "zoom_test.bat --ip %s --type %s" % (self.flask_ip,"host")
             self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[0],cmd)
         elif self.real_sta_os_type[0] == 'linux':
             
@@ -555,7 +556,8 @@ class ZoomAutomation(Realm):
             
             self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[0],cmd)
         elif self.real_sta_os_type[0] == 'macos':
-            cmd = f"sudo bash zoom_test.bash %s %s" % ( self.flask_ip, "host")
+            #cmd = f"sudo bash zoom_test.bash %s %s" % ( self.flask_ip, "host")
+            cmd = f"sudo bash ctzoom.bash %s %s" % ( self.flask_ip, "host")
             self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[0],cmd)
         self.generic_endps_profile.start_cx()
         time.sleep(5)
@@ -589,12 +591,14 @@ class ZoomAutomation(Realm):
 
             if self.real_sta_os_type[i] == "windows":
                 cmd = f"py zoom_client.py --ip {self.flask_ip}"
+                #cmd = "zoom_test.bat --ip %s --type %s" % (self.flask_ip,"client")
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i],cmd)
             elif(self.real_sta_os_type[i] == 'linux'):
                 cmd = "su -l lanforge ctzoom.bash %s %s %s" % (self.new_port_list[i], self.flask_ip, "client")
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i],cmd)
             elif self.real_sta_os_type[i] == 'macos':
-                cmd = f"sudo bash zoom_test.bash %s %s" % ( self.flask_ip, "client")
+                #cmd = f"sudo bash zoom_test.bash %s %s" % ( self.flask_ip, "client")
+                cmd = f"sudo bash ctzoom.bash %s %s" % ( self.flask_ip, "client")
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i],cmd)
 
             

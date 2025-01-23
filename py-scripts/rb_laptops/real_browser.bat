@@ -1,5 +1,6 @@
 @echo off
 
+
 :: Initialize variables
 echo Batch started
 set "url="
@@ -8,11 +9,14 @@ set "duration="
 set "args="
 
 
+
+
 :: Cleanup browser processes before execution
 echo Cleaning up browser processes...
 taskkill /F /IM chrome.exe /T >nul 2>&1
 taskkill /F /IM chromedriver.exe /T >nul 2>&1
 echo Browser processes terminated.
+
 
 :: Parse command line arguments
 :parseArgs
@@ -30,6 +34,7 @@ if "%~1"=="--server" (
     goto parseArgs
 )
 
+
 if "%~1"=="--duration" (
     set "duration=%~2"
     shift
@@ -38,7 +43,10 @@ if "%~1"=="--duration" (
 )
 
 
+
+
 echo Batch started1
+
 
 :argsParsed
 set "args="
@@ -47,8 +55,11 @@ if defined server set "args=%args% --server %server%"
 if defined duration set "args=%args% --duration %duration%"
 
 
+
+
 echo Running with arguments: %args%
 py real_browser.py %args%
+
 
 :: Cleanup browser processes before execution
 echo Cleaning up browser processes...

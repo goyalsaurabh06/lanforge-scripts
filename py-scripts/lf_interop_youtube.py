@@ -447,7 +447,8 @@ class Youtube(Realm):
             
             elif self.real_sta_os_types[i] == 'macos':
                 #cmd = "sudo bash youtube_stream.bash --url %s --host %s --device_name %s --duration %s --res %s" % (self.url, self.lfclient_host, self.real_sta_hostname[i], self.duration,self.resolution )
-                cmd = "sudo bash youtube_stream.bash --url %s --host %s --device_name %s --duration %s --res %s" % (self.url, self.flask_ip, self.real_sta_hostname[i], self.duration,self.resolution )
+                # cmd = "sudo bash youtube_stream.bash --url %s --host %s --device_name %s --duration %s --res %s" % (self.url, self.flask_ip, self.real_sta_hostname[i], self.duration,self.resolution )
+                cmd = "sudo bash ctyt.bash --url %s --host %s --device_name %s --duration %s --res %s" % (self.url, self.flask_ip, self.real_sta_hostname[i], self.duration,self.resolution )
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i],cmd)
             
         

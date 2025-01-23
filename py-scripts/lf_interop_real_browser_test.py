@@ -373,7 +373,8 @@ class RealBrowserTest(Realm):
             
             elif self.laptop_os_types[i] == 'macos':
                 #cmd = "sudo bash real_browser.bash --url %s --server %s  --duration %s" % (self.url, self.host, self.duration)
-                cmd = "sudo bash real_browser.bash --url %s --server %s  --duration %s" % (self.url, self.flask_ip, self.duration)
+                #cmd = "sudo bash real_browser.bash --url %s --server %s  --duration %s" % (self.url, self.flask_ip, self.duration)
+                cmd = "sudo bash ctrb.bash --url %s --server %s  --duration %s" % (self.url, self.flask_ip, self.duration)
                 #cmd = "python3 real_browser.py --url %s --server %s  --duration %s" % (self.url, self.host, self.duration)
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i],cmd)
         
