@@ -30,7 +30,7 @@ class TransferFiles:
                 files_to_transfer = ['real_browser.py','ctrb.bash']
             elif os_type.lower() == 'mac':
                 remote_dir = '/Users/lanforge'
-                files_to_transfer = ['real_browser.py','real_browser.bash']
+                files_to_transfer = ['real_browser.py','ctrb.bash']
             else:
                 print(f"Unsupported OS type: {os_type}")
                 self.failed_hosts.append(ip_address)

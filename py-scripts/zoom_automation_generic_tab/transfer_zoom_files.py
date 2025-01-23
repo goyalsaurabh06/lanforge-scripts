@@ -30,7 +30,7 @@ class TransferFiles:
                 files_to_transfer = ['zoom_client.py', 'zoom_host.py', 'ctzoom.bash', 'install_dependencies.py']
             elif os_type.lower() == 'mac':
                 remote_dir = '/Users/lanforge'
-                files_to_transfer = ['zoom_client.py', 'zoom_host.py', 'zoom_test.bash', 'install_dependencies.py']
+                files_to_transfer = ['zoom_client.py', 'zoom_host.py', 'ctzoom.bash', 'install_dependencies.py']
             else:
                 print(f"Unsupported OS type: {os_type}")
                 self.failed_hosts.append(ip_address)

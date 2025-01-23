@@ -30,7 +30,7 @@ class TransferFiles:
                 files_to_transfer = ['ctyt.bash','youtube.py']
             elif os_type.lower() == 'mac':
                 remote_dir = '/Users/lanforge'
-                files_to_transfer = ['youtube_stream.bash','youtube.py']
+                files_to_transfer = ['ctyt.bash','youtube.py']
             else:
                 print(f"Unsupported OS type: {os_type}")
                 self.failed_hosts.append(ip_address)
