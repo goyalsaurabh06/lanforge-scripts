@@ -224,26 +224,26 @@ class ZoomHost:
         action = webdriver.ActionChains(self.driver)
         
         action.move_by_offset(10, 20).perform()
-        self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "#participant button")))
-        self.driver.execute_script("document.querySelector('#participant button').click()")
-        try:
-            print("trying opening participants section")
-            self.dynamic_wait(20).until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".participants-section-container__participants-footer-bottom")))
-            participent_column = self.driver.find_elements(By.CSS_SELECTOR,".participants-section-container__participants-footer-bottom button")
-            print("after clicking participants columns")
-        except:
-            print("except in opening participants section")
-            action.move_by_offset(10, 20).perform()
-            self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "#participant button")))
-            self.driver.execute_script("document.querySelector('#participant button').click()")
-            self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".participants-section-container__participants-footer-bottom")))
-            participent_column = self.driver.find_elements(By.CSS_SELECTOR,".participants-section-container__participants-footer-bottom button")
-            print("after clicking participants columns")
-        for btn in participent_column:
-            print(btn.text)
-            if btn.text == "Invite":
-                btn.click()
-                break
+        # self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "#participant button")))
+        # self.driver.execute_script("document.querySelector('#participant button').click()")
+        # try:
+        #     print("trying opening participants section")
+        #     self.dynamic_wait(20).until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".participants-section-container__participants-footer-bottom")))
+        #     participent_column = self.driver.find_elements(By.CSS_SELECTOR,".participants-section-container__participants-footer-bottom button")
+        #     print("after clicking participants columns")
+        # except:
+        #     print("except in opening participants section")
+        #     action.move_by_offset(10, 20).perform()
+        #     self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "#participant button")))
+        #     self.driver.execute_script("document.querySelector('#participant button').click()")
+        #     self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".participants-section-container__participants-footer-bottom")))
+        #     participent_column = self.driver.find_elements(By.CSS_SELECTOR,".participants-section-container__participants-footer-bottom button")
+        #     print("after clicking participants columns")
+        # for btn in participent_column:
+        #     print(btn.text)
+        #     if btn.text == "Invite":
+        #         btn.click()
+        #         break
         # self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".invite-footer__button-group")))
         # invite_column = self.driver.find_elements(By.CSS_SELECTOR,".invite-footer__button-group button")
         # for btn in invite_column:
