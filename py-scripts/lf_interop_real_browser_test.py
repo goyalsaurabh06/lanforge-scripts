@@ -920,10 +920,15 @@ class RealBrowserTest(Realm):
                             
     
         # Create the hostname_os_combinations using webui_hostnames and webui_ostypes
-        self.hostname_os_combination = ", ".join(
+        # self.hostname_os_combination = ", ".join(
+        #     f"{hostname} ({os_type})"
+        #     for hostname, os_type in zip(self.webui_hostnames, self.webui_ostypes)
+        # )
+
+        self.hostname_os_combination = [
             f"{hostname} ({os_type})"
             for hostname, os_type in zip(self.webui_hostnames, self.webui_ostypes)
-        )
+        ]
 
         for os_type in self.webui_ostypes:
             if os_type == "windows":
@@ -2364,7 +2369,7 @@ def main():
                         "configuration_status":"configured",
                         "no_of_devices": obj.webui_devices,
                         "device_list":obj.hostname_os_combination,
-                        # "zoom_host":zoom_automation.zoom_hos
+
                     }
                     obj.updating_webui_runningjson(data_obj)
 

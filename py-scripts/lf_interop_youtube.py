@@ -543,10 +543,15 @@ class Youtube(Realm):
         # )
 
         # Create the hostname_os_combinations using webui_hostnames and webui_ostypes
-        self.hostname_os_combination = ", ".join(
+        # self.hostname_os_combination = ", ".join(
+        #     f"{hostname} ({os_type})"
+        #     for hostname, os_type in zip(self.real_sta_hostname, self.real_sta_os_types)
+        # )
+
+        self.hostname_os_combination = [
             f"{hostname} ({os_type})"
             for hostname, os_type in zip(self.real_sta_hostname, self.real_sta_os_types)
-        )
+        ]
 
         for i in range(0,len(self.real_sta_os_types)):
 
