@@ -950,9 +950,9 @@ class Youtube(Realm):
     def stop_test_yt(self,):
         try:
             # Define the API endpoint URL
-            #url = f"http://localhost:5454/update_status_yt"
+            url = f"http://localhost:5454/update_status_yt"
             #url = f"http://10.253.8.108:8000/update_status_yt"
-            url = f"http://localhost:8000/update_status_yt"
+            #url = f"http://localhost:8000/update_status_yt"
 
             
             # Set the headers for the HTTP POST request
@@ -1758,9 +1758,6 @@ def main():
             youtube.get_data_from_api()
             time.sleep(1)
 
-        #Stopping the Youtube test
-        if(do_webUI):
-            youtube.stop_test_yt()
         
         youtube.generic_endps_profile.stop_cx()
         logging.info(f"=================================================================================================")
@@ -1784,6 +1781,9 @@ def main():
       traceback.print_exc()
   finally:
       youtube.stop()
+      #Stopping the Youtube test
+      if(do_webUI):
+          youtube.stop_test_yt()
       print("Waiting for Cleanup of Browsers in Devices")
       time.sleep(10)
 
