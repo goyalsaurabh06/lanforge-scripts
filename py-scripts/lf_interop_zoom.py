@@ -697,9 +697,13 @@ class ZoomAutomation(Realm):
 
         self.zoom_host = self.real_sta_list[0]
          # Combine hostname and OS type into a single string
+        # self.hostname_os_combination = ", ".join(
+        #     f"{self.real_sta_data[real_sta_name]['hostname']} ({self.real_sta_data[real_sta_name]['ostype']})"
+        #     for real_sta_name in self.real_sta_data
+        # )
         self.hostname_os_combination = ", ".join(
-            f"{self.real_sta_data[real_sta_name]['hostname']} ({self.real_sta_data[real_sta_name]['ostype']})"
-            for real_sta_name in self.real_sta_data
+            f"{hostname} ({os_type})"
+            for hostname, os_type in zip(self.real_sta_hostname, self.real_sta_os_type)
         )
 
 

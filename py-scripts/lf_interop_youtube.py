@@ -537,11 +537,16 @@ class Youtube(Realm):
         # print("checking length of real_sta_os_types",len(self.real_sta_os_types))
         # print("checking length of real_sta_list",len(self.real_sta_list))
         # Combine hostname and OS type into a single string
-        self.hostname_os_combination = ", ".join(
-            f"{self.real_sta_data_dict[real_sta_name]['hostname']} ({self.real_sta_data_dict[real_sta_name]['ostype']})"
-            for real_sta_name in self.real_sta_data_dict
-        )
+        # self.hostname_os_combination = ", ".join(
+        #     f"{self.real_sta_data_dict[real_sta_name]['hostname']} ({self.real_sta_data_dict[real_sta_name]['ostype']})"
+        #     for real_sta_name in self.real_sta_data_dict
+        # )
 
+        # Create the hostname_os_combinations using webui_hostnames and webui_ostypes
+        self.hostname_os_combination = ", ".join(
+            f"{hostname} ({os_type})"
+            for hostname, os_type in zip(self.real_sta_hostname, self.real_sta_os_types)
+        )
 
         for i in range(0,len(self.real_sta_os_types)):
 
