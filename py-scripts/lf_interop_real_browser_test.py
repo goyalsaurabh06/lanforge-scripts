@@ -1031,6 +1031,7 @@ class RealBrowserTest(Realm):
         # print(file_path)
         # print(iteration_number)
         # print(resource_list_sorted)
+        # print("checking cx order list")
         # print(cx_order_list)
         # print(i)
         # print(hw_version_list)
@@ -1040,6 +1041,12 @@ class RealBrowserTest(Realm):
 
         test_time = timedelta(minutes=duration)
         end_time = datetime.now() + test_time
+
+        est_end_time = end_time + timedelta(minutes=1)
+
+        logging.info(f"End time of the Test {end_time}")
+        logging.info(f"Estimated End time of the Test {est_end_time}")
+
 
         headers = ['device_type', 'device_name', 'total_urls', 'uc_min', 'uc_avg', 'uc_max', 'total_err','time_to_target_urls','cx_name']
 
@@ -1057,6 +1064,8 @@ class RealBrowserTest(Realm):
                 
         start_time = datetime.now()
         while (datetime.now() <= end_time or (not self.check_gen_cx())):
+            if (datetime.now()> est_end_time):
+                break
             last_data = []
             # Open the CSV file in write mode inside the loop to overwrite previous data
             with open('real_time_data.csv', mode='w', newline='') as file:
@@ -1100,113 +1109,114 @@ class RealBrowserTest(Realm):
 
 
                 # Collect data for mobile devices
-                mobile_data = self.local_realm.json_get("layer4/%s/list?fields=name,status,total-urls,uc-min,uc-avg,uc-max,total-err,bad-url" %
-                                                        (','.join(self.created_cx.keys())))
+                if(True):
+                    mobile_data = self.local_realm.json_get("layer4/%s/list?fields=name,status,total-urls,uc-min,uc-avg,uc-max,total-err,bad-url" %
+                                                            (','.join(self.created_cx.keys())))
 
-                total_urls = []
-                uc_min = []
-                uc_avg = []
-                uc_max = []
-                total_err = []
-                hostnames = []
-                cx_names = []
+                    total_urls = []
+                    uc_min = []
+                    uc_avg = []
+                    uc_max = []
+                    total_err = []
+                    hostnames = []
+                    cx_names = []
 
-                # Check if multiple CX endpoints are created
-                if len(self.created_cx.keys()) > 1:
-                    data = mobile_data['endpoint']
-                    for endpoint in data:
-                        for key, value in endpoint.items():
-                            if value['status'] == "Run":
-                                #print("checking whether going inside mobile stats loop or not")
-                                cx_name = value.get('name', 'NA')
-                                #print("checking cx_name")
-                                # Apply the regex to extract the number after 'http' from the device name
-                                match = re.search(r'http(\d+)', cx_name)
-                                res_no = match.group(1) if match else 'NA'  # Get the number after 'http' or 'NA' if not found
-                                # print("======================================")
-                                # print("checking cx_name",cx_name)
-                                # print("checking res_no",res_no)
+                    # Check if multiple CX endpoints are created
+                    if len(self.created_cx.keys()) > 1:
+                        data = mobile_data['endpoint']
+                        for endpoint in data:
+                            for key, value in endpoint.items():
+                                if value['status'] == "Run":
+                                    #print("checking whether going inside mobile stats loop or not")
+                                    cx_name = value.get('name', 'NA')
+                                    #print("checking cx_name")
+                                    # Apply the regex to extract the number after 'http' from the device name
+                                    match = re.search(r'http(\d+)', cx_name)
+                                    res_no = match.group(1) if match else 'NA'  # Get the number after 'http' or 'NA' if not found
+                                    # print("======================================")
+                                    # print("checking cx_name",cx_name)
+                                    # print("checking res_no",res_no)
 
-                                hostname = self.local_realm.json_get("resource/1/%s/list?fields=user"%(res_no))
-                                hostname = hostname["resource"]["user"]
+                                    hostname = self.local_realm.json_get("resource/1/%s/list?fields=user"%(res_no))
+                                    hostname = hostname["resource"]["user"]
 
-                                #pass_url = (value.get('total-urls', 0) - value.get('total-err',0))
+                                    #pass_url = (value.get('total-urls', 0) - value.get('total-err',0))
 
-                                pass_url = value.get('total-urls', 0)
+                                    pass_url = value.get('total-urls', 0)
 
 
-                                # Append the values for each mobile device
-                                total_urls.append(pass_url)
-                                uc_min.append(value.get('uc-min', 0.0))
-                                uc_avg.append(value.get('uc-avg', 0.0))
-                                uc_max.append(value.get('uc-max', 0.0))
-                                total_err.append(value.get('total-err', 0))
-                                hostnames.append(hostname)
-                                
-                                cx_names.append(cx_name)
-                                # Initialize target URL for the first iteration if not set
-                                if hostname not in self.device_targets:
-                                    self.device_targets[hostname] = initial_target_urls
+                                    # Append the values for each mobile device
+                                    total_urls.append(pass_url)
+                                    uc_min.append(value.get('uc-min', 0.0))
+                                    uc_avg.append(value.get('uc-avg', 0.0))
+                                    uc_max.append(value.get('uc-max', 0.0))
+                                    total_err.append(value.get('total-err', 0))
+                                    hostnames.append(hostname)
+                                    
+                                    cx_names.append(cx_name)
+                                    # Initialize target URL for the first iteration if not set
+                                    if hostname not in self.device_targets:
+                                        self.device_targets[hostname] = initial_target_urls
 
-                                # Check if the mobile device reaches the current target URL count
-                                
-                                if (pass_url >= self.device_targets[hostname] and hostname not in time_taken):
+                                    # Check if the mobile device reaches the current target URL count
+                                    
+                                    if (pass_url >= self.device_targets[hostname] and hostname not in time_taken):
+                                        time_taken[hostname] = (datetime.now() - start_time).total_seconds()
+
+                        # Save each mobile device's data to the CSV
+                        for i in range(len(total_urls)):
+                            row = {
+                                'device_type': 'mobile',
+                                'device_name': hostnames[i],
+                                'total_urls': total_urls[i],
+                                'uc_min': float(uc_min[i])/1000,
+                                'uc_avg': float(uc_avg[i])/1000,
+                                'uc_max': float(uc_max[i])/1000,
+                                'total_err': total_err[i],
+                                'time_to_target_urls': time_taken.get(hostnames[i], 0.0),
+                                'cx_name':cx_names[i],
+                            }
+                            writer.writerow(row)
+                            last_data.append(row)  # Store the latest row in last_data
+
+                    # Handle the case where only one CX endpoint is created
+                    elif len(self.created_cx.keys()) == 1:
+                        endpoint = mobile_data.get('endpoint', {})
+                        status = endpoint.get('status', '')
+
+                        if status == "Run":
+                            #print("==============================================")
+                            #print("checking going inside mobile stats loop or not")
+                            cx_name = endpoint.get('name', 'NA')
+                            # Apply the regex to extract the number after 'http' from the device name
+                            match = re.search(r'http(\d+)', cx_name)
+                            res_no = match.group(1) if match else 'NA'  # Get the number after 'http' or 'NA' if not foun
+                            hostname = self.local_realm.json_get("resource/1/%s/list?fields=user"%(res_no))
+                            hostname = hostname["resource"]["user"]
+
+                            # Initialize target URL for the first iteration if not set
+                            if hostname not in self.device_targets:
+                                self.device_targets[hostname] = initial_target_urls
+
+                            # Check if the mobile device reaches the current target URL count
+                            #pass_url = (endpoint.get('total-urls', 0) - endpoint.get('total-err',0))
+                            pass_url = endpoint.get('total-urls', 0)
+                            if (pass_url >= self.device_targets[hostname]):
+                                if hostname not in time_taken:
                                     time_taken[hostname] = (datetime.now() - start_time).total_seconds()
-
-                    # Save each mobile device's data to the CSV
-                    for i in range(len(total_urls)):
-                        row = {
-                            'device_type': 'mobile',
-                            'device_name': hostnames[i],
-                            'total_urls': total_urls[i],
-                            'uc_min': float(uc_min[i])/1000,
-                            'uc_avg': float(uc_avg[i])/1000,
-                            'uc_max': float(uc_max[i])/1000,
-                            'total_err': total_err[i],
-                            'time_to_target_urls': time_taken.get(hostnames[i], 0.0),
-                            'cx_name':cx_names[i],
-                        }
-                        writer.writerow(row)
-                        last_data.append(row)  # Store the latest row in last_data
-
-                # Handle the case where only one CX endpoint is created
-                elif len(self.created_cx.keys()) == 1:
-                    endpoint = mobile_data.get('endpoint', {})
-                    status = endpoint.get('status', '')
-
-                    if status == "Run":
-                        #print("==============================================")
-                        #print("checking going inside mobile stats loop or not")
-                        cx_name = endpoint.get('name', 'NA')
-                        # Apply the regex to extract the number after 'http' from the device name
-                        match = re.search(r'http(\d+)', cx_name)
-                        res_no = match.group(1) if match else 'NA'  # Get the number after 'http' or 'NA' if not foun
-                        hostname = self.local_realm.json_get("resource/1/%s/list?fields=user"%(res_no))
-                        hostname = hostname["resource"]["user"]
-
-                         # Initialize target URL for the first iteration if not set
-                        if hostname not in self.device_targets:
-                            self.device_targets[hostname] = initial_target_urls
-
-                        # Check if the mobile device reaches the current target URL count
-                        #pass_url = (endpoint.get('total-urls', 0) - endpoint.get('total-err',0))
-                        pass_url = endpoint.get('total-urls', 0)
-                        if (pass_url >= self.device_targets[hostname]):
-                            if hostname not in time_taken:
-                                time_taken[hostname] = (datetime.now() - start_time).total_seconds()
-                        row = {
-                            'device_type': 'mobile',
-                            'device_name': hostname,
-                            'total_urls': pass_url,
-                            'uc_min': float(endpoint.get('uc-min', 0.0))/1000,
-                            'uc_avg': float(endpoint.get('uc-avg', 0.0))/1000,
-                            'uc_max': float(endpoint.get('uc-max', 0.0))/1000,
-                            'total_err': endpoint.get('total-err', 0),
-                            'time_to_target_urls': time_taken.get(hostname, 0.0),
-                            'cx_name':cx_name
-                        }
-                        writer.writerow(row)
-                        last_data.append(row)  # Store the latest row in last_data
+                            row = {
+                                'device_type': 'mobile',
+                                'device_name': hostname,
+                                'total_urls': pass_url,
+                                'uc_min': float(endpoint.get('uc-min', 0.0))/1000,
+                                'uc_avg': float(endpoint.get('uc-avg', 0.0))/1000,
+                                'uc_max': float(endpoint.get('uc-max', 0.0))/1000,
+                                'total_err': endpoint.get('total-err', 0),
+                                'time_to_target_urls': time_taken.get(hostname, 0.0),
+                                'cx_name':cx_name
+                            }
+                            writer.writerow(row)
+                            last_data.append(row)  # Store the latest row in last_data
 
                 
             time.sleep(1)
@@ -2193,6 +2203,8 @@ def main():
                     
                 else:
                     all_devices= config_obj.get_all_devices()
+                    #print("checking all devices")
+                    #print(all_devices)
                     device_list=[]
                     config_dict={
                     'ssid':args.ssid,
@@ -2219,7 +2231,7 @@ def main():
 
                     }
                     for device in all_devices:
-                        if(device["type"]!='laptop'):
+                        if(device["type"]!='laptop' and device['os'] not in ['ios', 'Apple']):
                             device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["serial"])
                         elif(device["type"]=='laptop'):
                             device_list.append(device["shelf"]+'.'+device["resource"]+" "+device["hostname"])
@@ -2237,8 +2249,9 @@ def main():
 
                     obj.android_list = temp_device_list
                     
-                    print("++++++++++++++++++++++++++++++++++++++++++++")
-                    print(obj.android_list)
+                    # print("++++++++++++++++++++++++++++++++++++++++++++")
+                    # print("checking device list given through CLI")
+                    # print(obj.android_list)
         
                     if obj.android_list:
                         resource_ids = ",".join([item.split(".")[1] for item in obj.android_list])
@@ -2253,11 +2266,16 @@ def main():
 
                         obj.resource_ids = sorted_string
                         resource_ids1 = list(map(int, sorted_string.split(',')))
+                        #print("checking obj.android_devices")
+                        print(obj.android_devices)
                         modified_list = list(map(lambda item: int(item.split('.')[1]), obj.android_devices))
                         
-                        print("+++++++++++++++++++++++++++++++++++++++++")
-                        print(modified_list)
+                        # print("+++++++++++++++++++++++++++++++++++++++++")
+                        # print("checking modified list")
+                        # print(modified_list)
                         # Check for invalid resource IDs
+                        # print("checking resource_ids1")
+                        # print(resource_ids1)
                         if not all(x in modified_list for x in resource_ids1):
                             logging.info("Verify Resource ids, as few are invalid...!!")
                             exit()
