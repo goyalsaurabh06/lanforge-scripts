@@ -1593,8 +1593,8 @@ def main():
     finally:
         if(args.do_webUI):
             try:
-                #url = f"http://{args.lanforge_ip}:5454/update_status_yt"
-                url = f"http://localhost:5454/update_status_yt"
+                url = f"http://{args.lanforge_ip}:5454/update_status_yt"
+                #url = f"http://localhost:5454/update_status_yt"
                 #url = f"http://10.253.8.108:8000/update_status_yt"
 
                 
