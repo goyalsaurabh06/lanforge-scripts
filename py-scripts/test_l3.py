@@ -1741,7 +1741,7 @@ class L3VariableTime(Realm):
         self.udp_endps = []
         self.tcp_endps = []
         self.eth_endps = []
-
+        
         if rebuild:
             # if we are just re-applying new cx values, then no need to rebuild
             # stations, so allow skipping it.
@@ -7175,7 +7175,7 @@ INCLUDE_IN_README: False
 
     logger.info("existing_station_lists: {sta}".format(
         sta=existing_station_lists))
-
+       
     # logger.info("endp-types: %s"%(endp_types))
     ul_rates = args.side_a_min_bps.replace(',', ' ').split()
     dl_rates = args.side_b_min_bps.replace(',', ' ').split()
