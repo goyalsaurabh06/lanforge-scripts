@@ -1392,15 +1392,15 @@ times the file is downloaded.
             "Traffic Duration ": duration
         }
     test_input_infor = {
-        "LANforge ip": args.mgr,
-        "Bands": args.bands,
-        "Upstream": args.upstream_port,
-        "Stations": args.num_stations,
-        "SSID": ','.join(info_ssid),
-        "Security": ', '.join(info_security),
-        "Duration": args.duration,
-        "Contact": "support@candelatech.com"
-    }
+            "LANforge ip": args.mgr,
+            "Bands": args.bands,
+            "Upstream": args.upstream_port,
+            "Stations": args.num_stations,
+            "SSID": ','.join(filter(None, info_ssid)) if info_ssid else "",
+            "Security": ', '.join(filter(None,info_security)) if info_security else "",
+            "Duration": args.duration,
+            "Contact": "support@candelatech.com"
+        }
     if not args.file_path:
         test_setup_info["File size"] = args.file_size
         test_setup_info["File location"] = "/usr/local/lanforge/nginx/html"
