@@ -171,8 +171,6 @@ class Throughput(Realm):
         self.channel_list=[]
         self.mode_list=[]
         self.link_speed_list=[]
-        self.background_run = None
-        self.stop_test=False
         self.upstream = upstream
         self.host = host
         self.port = port
@@ -235,7 +233,6 @@ class Throughput(Realm):
         self.do_interopability=do_interopability
         self.ip = ip
         self.device_found = False
-        self.gave_incremental=False
         self.incremental=incremental
         self.precleanup=precleanup
 
@@ -253,13 +250,7 @@ class Throughput(Realm):
             if key == "resources":
                 for element in value:
                     for a,b in element.items():
-                        if "Apple" in b['hw version']:
-                            if b['kernel']=='':
-                                self.hw_list.append('iOS')
-                            else:
-                                self.hw_list.append(b['hw version'])
-                        else:
-                            self.hw_list.append(b['hw version'])
+                        self.hw_list.append(b['hw version'])
         # print(self.hw_list)
         for hw_version in self.hw_list:                       
             if "Win" in hw_version:
@@ -267,8 +258,6 @@ class Throughput(Realm):
             elif "Linux" in hw_version:
                 self.linux_list.append(hw_version)
             elif "Apple" in hw_version:
-                self.mac_list.append(hw_version)
-            elif "iOS" in hw_version:
                 self.mac_list.append(hw_version)
             else:
                 if hw_version != "":
@@ -312,15 +301,9 @@ class Throughput(Realm):
                                         self.linux_list.append(b['hw version'])
                                         self.devices_available.append(b['eid'] +" " +'Lin'+" "+ b['hostname'])
                             elif "Apple" in b['hw version']:
-                                if b['kernel']=='':
-                                    self.eid_list.append(b['eid'])
-                                    self.mac_list.append(b['hw version'])
-                                    self.devices_available.append(b['eid'] +" " +'iOS'+" "+ b['hostname'])
-                                else:
-                                    self.eid_list.append(b['eid'])
-                                    self.mac_list.append(b['hw version'])
-                                    #self.hostname_list.append(b['eid']+ " " +b['hostname'])
-                                    self.devices_available.append(b['eid'] +" " +'Mac'+" "+ b['hostname'])
+                                self.eid_list.append(b['eid'])
+                                self.mac_list.append(b['hw version'])
+                                self.devices_available.append(b['eid'] +" " +'Mac'+" "+ b['hostname'])
                             else:
                                 self.eid_list.append(b['eid'])
                                 self.android_list.append(b['hw version'])
@@ -380,8 +363,7 @@ class Throughput(Realm):
                         break
                 if found == False:
                     not_available.append(input_device)
-                    if self.device_list!= "all":
-                        logger.warning(input_device + " is not available to run the test")
+                    logger.warning(input_device + " is not available to run the test")
             
             # If available_list is not empty, log info and set self.device_found to True
             if len(available_list)>0:
@@ -391,20 +373,15 @@ class Throughput(Realm):
             else:
                 devices_list=""
                 self.device_found=False
-                if self.device_list!= "all":
-                    logger.warning("Test can not be initiated on any selected devices")
-                    exit(1)
-               
+                logger.warning("Test can not be initiated on any selected devices")
         else:
 
             # If self.device_list is not provided, prompt user to select devices from user_list
             logger.info("AVAILABLE DEVICES TO RUN TEST : {}".format(self.user_list))
-            devices_list = input("Select the devices to run the test(e.g. 1.10,1.11 or all to run the test on all devices: ")
+            devices_list = input("Enter the desired resources to run the test:")
 
         # If no devices are selected or only comma is entered, log an error and return False
-        if devices_list =="all":
-            devices_list=""
-        if(devices_list==","):
+        if(devices_list=="" or devices_list==","):
             logger.error("Selected Devices are not available in the lanforge")
             return False,self.real_client_list
         
@@ -444,7 +421,7 @@ class Throughput(Realm):
 
         # Check if incremental_capacity is provided and ensure selected devices are sufficient
         if (len(self.incremental_capacity)>0 and int(self.incremental_capacity.split(',')[-1])>len(self.mac_id_list)):
-            logger.error("Devices available are less than given incremental capacity")
+            logger.error("Devices selected is less than given incremental capacity")
             return False,self.real_client_list
 
         else:
@@ -486,7 +463,7 @@ class Throughput(Realm):
                 mode_list.append('-')
         for sta in station_names:
             if sta in interfaces_dict:
-                link_speed_list.append(interfaces_dict[sta]['tx-rate'])
+                link_speed_list.append(interfaces_dict[sta]['rx-rate'])
             else:
                 link_speed_list.append('-')
         return signal_list,channel_list,mode_list,link_speed_list
@@ -669,7 +646,6 @@ class Throughput(Realm):
             index += 1
             
             signal_list,channel_list,mode_list,link_speed_list=self.get_signal_and_channel_data(self.input_devices_list)
-            signal_list = [int(i) if i != "" else 0 for i in signal_list]
 
             # Fetch required throughput data from Lanforge
             response = list(
@@ -717,8 +693,7 @@ class Throughput(Realm):
                 overall_remaining_minutes=(overall_total_hours % 1) * 60
                 timestamp=datetime.now().strftime("%d/%m %I:%M:%S %p")
                 remaining_minutes_instrf=[str(int(overall_total_hours)) + " hr and " + str(int(overall_remaining_minutes)) + " min" if int(overall_total_hours) != 0 or int(overall_remaining_minutes) != 0 else '<1 min'][0]
-                if remaining_minutes_instrf != '<1 min':
-                    remaining_minutes_instrf=str(overall_time_difference).split(".")[0]
+                
                 # Storing individual device throughput data(download, upload, Rx % drop A, Rx % drop B) to dataframe
                 for i in range(len(download_throughput)):
                     individual_df_data.extend([download_throughput[i],upload_throughput[i],drop_a_per[i],drop_b_per[i],int(signal_list[i]),link_speed_list[i]])                
@@ -812,8 +787,7 @@ class Throughput(Realm):
                 overall_total_hours=overall_time_difference.total_seconds() / 3600
                 overall_remaining_minutes=(overall_total_hours % 1) * 60
                 remaining_minutes_instrf=[str(int(overall_total_hours)) + " hr and " + str(int(overall_remaining_minutes)) + " min" if int(overall_total_hours) != 0 or int(overall_remaining_minutes) != 0 else '<1 min'][0]
-                if remaining_minutes_instrf != '<1 min':
-                    remaining_minutes_instrf=str(overall_time_difference).split(".")[0]
+                
                 # Storing individual device throughput data(download, upload, Rx % drop A, Rx % drop B) to dataframe
                 for i in range(len(download_throughput)):
                     individual_df_data.extend([download_throughput[i],upload_throughput[i],drop_a_per[i],drop_b_per[i],int(signal_list[i]),link_speed_list[i]])
@@ -822,12 +796,6 @@ class Throughput(Realm):
                 individual_df_data.extend([round(sum(download_throughput),2),round(sum(upload_throughput),2),sum(drop_a_per),sum(drop_a_per),iteration+1,timestamp,overall_start_time.strftime("%d/%m %I:%M:%S %p"),overall_end_time.strftime("%d/%m %I:%M:%S %p"),remaining_minutes_instrf,', '.join(str(n) for n in incremental_capacity_list),'Running'])
                 individual_df.loc[len(individual_df)]=individual_df_data
                 individual_df.to_csv('throughput_data.csv', index=False)
-
-            if self.stop_test :
-                test_stopped_by_user=True
-                break
-            if not self.background_run and self.background_run is not None:
-                break
         
         for index, key in enumerate(throughput):
             for i in range(len(throughput[key])):
@@ -843,14 +811,13 @@ class Throughput(Realm):
                     drop_a[i].append(throughput[key][i][2])
                     drop_b[i].append(throughput[key][i][3])
               
-             
+                
         individual_df_data=[]
         upload_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in upload]
         download_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in download]
         drop_a_per = [float(round(sum(i) / len(i), 2)) for i in drop_a]
         drop_b_per = [float(round(sum(i) / len(i), 2)) for i in drop_b]
         signal_list,channel_list,mode_list,link_speed_list=self.get_signal_and_channel_data(self.input_devices_list)
-        signal_list = [int(i) if i != "" else 0 for i in signal_list]
 
         # Storing individual device throughput data(download, upload, Rx % drop A, Rx % drop B) to dataframe after test stopped
         for i in range(len(download_throughput)):
@@ -1111,7 +1078,7 @@ class Throughput(Realm):
             report.build_objective()
 
             # Initialize counts and lists for device types
-            android_devices,windows_devices,linux_devices,mac_devices,ios_devices=0,0,0,0,0
+            android_devices,windows_devices,linux_devices,ios_devices=0,0,0,0
             all_devices_names=[]
             device_type=[]
             packet_size_text=''
@@ -1142,10 +1109,6 @@ class Throughput(Realm):
                 elif 'Mac' in split_device_name:
                     all_devices_names.append(split_device_name[2] + ("(Mac)"))
                     device_type.append("Mac")
-                    mac_devices+=1
-                elif 'iOS' in split_device_name:
-                    all_devices_names.append(split_device_name[2] + ("(iOS)"))
-                    device_type.append("iOS")
                     ios_devices+=1
 
             # Build total_devices string based on counts
@@ -1155,19 +1118,12 @@ class Throughput(Realm):
                 total_devices+= f" Windows({windows_devices})" 
             if linux_devices>0:
                 total_devices+= f" Linux({linux_devices})" 
-            if mac_devices>0:
-                total_devices+= f" Mac({mac_devices})"
             if ios_devices>0:
-                total_devices+= f" iOS({ios_devices})"
+                total_devices+= f" IOS({ios_devices})"
 
             # Determine incremental_capacity_data based on self.incremental_capacity
-            if self.gave_incremental:
-                incremental_capacity_data="No Incremental values provided"
-            elif len(self.incremental_capacity)==1:
-                if len(incremental_capacity_list)==1:
-                    incremental_capacity_data=str(self.incremental_capacity[0])
-                else:
-                    incremental_capacity_data=','.join(map(str, incremental_capacity_list))
+            if len(self.incremental_capacity)==1:
+                incremental_capacity_data=str(self.incremental_capacity[0])
             elif(len(self.incremental_capacity)>1):
                 self.incremental_capacity=self.incremental_capacity.split(',')
                 incremental_capacity_data=', '.join(self.incremental_capacity)
@@ -1342,24 +1298,24 @@ class Throughput(Realm):
                     devices_data_to_create_bar_graph.append(download_data)
                     devices_data_to_create_bar_graph.append(upload_data)
                     label_data=['Download','Upload']
-                    real_time_data=f"Real Time Throughput: Achieved Throughput: Download : {round(((sum(download_data[0:int(incremental_capacity_list[i])]))),2)} Mbps, Upload : {round((sum(upload_data[0:int(incremental_capacity_list[i])])),2)} Mbps"
+                    real_time_data=f"Real Time Throughput: Average achieved Throughput: Download : {round(((sum(download_data[0:int(incremental_capacity_list[i])]))/len(download_data[0:int(incremental_capacity_list[i])])),2)} Mbps, Upload : {round((sum(upload_data[0:int(incremental_capacity_list[i])])/len(upload_data[0:int(incremental_capacity_list[i])])),2)} Mbps"
                 
                 elif self.direction=='Download':
                     download_values_list=data['Overall Download'][data['Iteration']==i+1].values.tolist()
                     data_set_in_graph.append(download_values_list)
                     devices_data_to_create_bar_graph.append(download_data)
                     label_data=['Download']
-                    real_time_data=f"Real Time Throughput: Achieved Throughput: Download : {round(((sum(download_data[0:int(incremental_capacity_list[i])]))),2)} Mbps"
+                    real_time_data=f"Real Time Throughput: Average achieved Throughput: Download : {round(((sum(download_data[0:int(incremental_capacity_list[i])]))/len(download_data[0:int(incremental_capacity_list[i])])),2)} Mbps"
                 
                 elif self.direction=='Upload':
                     upload_values_list=data['Overall Upload'][data['Iteration']==i+1].values.tolist()
                     data_set_in_graph.append(upload_values_list)
                     devices_data_to_create_bar_graph.append(upload_data)
                     label_data=['Upload']
-                    real_time_data=f"Real Time Throughput: Achieved Throughput: Upload : {round((sum(upload_data[0:int(incremental_capacity_list[i])])),2)} Mbps"
+                    real_time_data=f"Real Time Throughput: Average achieved Throughput: Upload : {round((sum(upload_data[0:int(incremental_capacity_list[i])])/len(upload_data[0:int(incremental_capacity_list[i])])),2)} Mbps"
                 
                 if len(incremental_capacity_list)>1:
-                    report.set_custom_html(f"<h2><u>Iteration-{i+1}: Number of Devices Running : {len(devices_on_running)}</u></h2>")
+                    report.set_custom_html(f"<h2><u>Iteration-{i+1}: test running on devices : {', '.join(devices_on_running)}</u></h2>")
                     report.build_custom()
                 logger
                 for _ in range(len(data_set_in_graph)):
@@ -1390,16 +1346,14 @@ class Throughput(Realm):
                             _obj_title="Per Client Avg-Throughput",
                             _obj=" ")
                 report.build_objective()
-                devices_on_running_trimmed = [n[:17] if len(n) > 17 else n for n in devices_on_running]
                 graph=lf_bar_graph_horizontal(_data_set=devices_data_to_create_bar_graph,
                                             _xaxis_name="Avg Throughput(Mbps)",
                                             _yaxis_name="Devices",
                                             _graph_image_name=f"image_name{i}",
                                             _label=label_data,
-                                            _yaxis_categories= devices_on_running_trimmed,
+                                            _yaxis_categories=devices_on_running,
                                             _legend_loc="best",
                                             _legend_box=(1.0, 1.0),
-                                            _show_bar_value=True,
                                             _figsize=(x_fig_size, y_fig_size)
                                                 )
                 
@@ -1418,10 +1372,9 @@ class Throughput(Realm):
                                             _yaxis_name="Devices",
                                             _graph_image_name=f"signal_image_name{i}",
                                             _label=['RSSI'],
-                                            _yaxis_categories= devices_on_running_trimmed,
+                                            _yaxis_categories=devices_on_running,
                                             _legend_loc="best",
                                             _legend_box=(1.0, 1.0),
-                                            _show_bar_value=True,
                                             _figsize=(x_fig_size, y_fig_size)
                                             #    _color=['lightcoral']
                                                 )
@@ -1436,12 +1389,12 @@ class Throughput(Realm):
                             _obj_title="Detailed Result Table ",
                             _obj="The below tables provides detailed information for the throughput test on each device.")
                 report.build_objective()
-                self.mac_id_list = [item.split()[-1] if ' ' in item else item for item in self.mac_id_list]
+            
                 bk_dataframe = {
                             " Device Type " : device_type[0:int(incremental_capacity_list[i])],
                             " Username": devices_on_running[0:int(incremental_capacity_list[i])],
                             " SSID " : self.ssid_list[0:int(incremental_capacity_list[i])],
-                            " MAC ":  self.mac_id_list[0:int(incremental_capacity_list[i])],
+                            " MAC " : self.mac_id_list[0:int(incremental_capacity_list[i])],
                             " Channel ":self.channel_list[0:int(incremental_capacity_list[i])],
                             " Mode" : self.mode_list[0:int(incremental_capacity_list[i])],
                             " Direction":direction_in_table[0:int(incremental_capacity_list[i])],
@@ -1449,7 +1402,7 @@ class Throughput(Realm):
                             " Observed download rate(Mbps)" : [str(n)+" Mbps" for n in download_data[0:int(incremental_capacity_list[i])]],
                             " Offered upload rate(Mbps) " : upload_list[0:int(incremental_capacity_list[i])],
                             " Observed upload rate(Mbps) " : [str(n)+" Mbps" for n in upload_data[0:int(incremental_capacity_list[i])]],
-                            " RSSI ": ['' if n == 0 else '-' + str(n) + " dbm" for n in rssi_data[0:int(incremental_capacity_list[i])]],
+                            " RSSI ":  ['-'+str(n) + " dbm" for n in rssi_data[0:int(incremental_capacity_list[i])]],
                             " Link Speed ":self.link_speed_list[0:int(incremental_capacity_list[i])],
                             " Packet Size(Bytes) ":[str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]]
                         }
@@ -1473,7 +1426,7 @@ class Throughput(Realm):
             
             logger.info("path: {}".format(report_path))
             logger.info("path_date_time: {}".format(report_path_date_time))
-            report.set_title("Interoperability Test")
+            report.set_title("Interopability Test")
             report.build_banner()
             # objective title and description
             report.set_obj_html(_obj_title="Objective",
@@ -1489,7 +1442,7 @@ class Throughput(Realm):
             report.build_objective()
 
             # Initialize counts and lists for device types
-            android_devices,windows_devices,linux_devices,mac_devices,ios_devices=0,0,0,0,0
+            android_devices,windows_devices,linux_devices,ios_devices=0,0,0,0
             all_devices_names=[]
             device_type=[]
             total_devices=""
@@ -1511,10 +1464,6 @@ class Throughput(Realm):
                 elif 'Mac' in split_device_name:
                     all_devices_names.append(split_device_name[2] + ("(Mac)"))
                     device_type.append("Mac")
-                    mac_devices+=1
-                elif 'iOS' in split_device_name:
-                    all_devices_names.append(split_device_name[2] + ("(iOS)"))
-                    device_type.append("iOS")
                     ios_devices+=1
 
             # Build total_devices string based on counts
@@ -1524,10 +1473,8 @@ class Throughput(Realm):
                 total_devices+= f" Windows({windows_devices})" 
             if linux_devices>0:
                 total_devices+= f" Linux({linux_devices})" 
-            if mac_devices>0:
-                total_devices+= f" Mac({mac_devices})"
             if ios_devices>0:
-                total_devices+= f" iOS({ios_devices})"
+                total_devices+= f" IOS({ios_devices})"
             
             # Construct test_setup_info dictionary for test setup table
             test_setup_info = {
@@ -1667,16 +1614,14 @@ class Throughput(Realm):
                             _obj_title="Per Client Avg-Throughput",
                             _obj=" ")
                 report.build_objective()
-                devices_on_running_trimmed = [n[:17] if len(n) > 17 else n for n in devices_on_running]
                 graph=lf_bar_graph_horizontal(_data_set=devices_data_to_create_bar_graph,
                                             _xaxis_name="Avg Throughput(Mbps)",
                                             _yaxis_name="Devices",
                                             _graph_image_name=f"image_name{i}",
                                             _label=label_data,
-                                            _yaxis_categories=devices_on_running_trimmed,
+                                            _yaxis_categories=devices_on_running,
                                             _legend_loc="best",
                                             _legend_box=(1.0, 1.0),
-                                            _show_bar_value=True,
                                             _figsize=(x_fig_size, y_fig_size)
                                                 )
                 
@@ -1695,10 +1640,9 @@ class Throughput(Realm):
                                             _yaxis_name="Devices",
                                             _graph_image_name=f"signal_image_name{i}",
                                             _label=['RSSI'],
-                                            _yaxis_categories=devices_on_running_trimmed,
+                                            _yaxis_categories=devices_on_running,
                                             _legend_loc="best",
                                             _legend_box=(1.0, 1.0),
-                                            _show_bar_value=True,
                                             _figsize=(x_fig_size, y_fig_size)
                                             #    _color=['lightcoral']
                                                 )
@@ -1713,7 +1657,7 @@ class Throughput(Realm):
                             _obj_title="Detailed Result Table ",
                             _obj="The below tables provides detailed information for the throughput test on each device.")
                 report.build_objective()
-                self.mac_id_list = [item.split()[-1] if ' ' in item else item for item in self.mac_id_list]
+
                 bk_dataframe = {
                             " Device Type " : device_type[int(incremental_capacity_list[i])-1],
                             " Username": devices_on_running[-1],
@@ -1726,7 +1670,7 @@ class Throughput(Realm):
                             " Observed download rate(Mbps)" : [str(download_data[-1])+" Mbps"],
                             " Offered upload rate(Mbps) " : upload_list[-1],
                             " Observed upload rate(Mbps) " : [str(upload_data[-1])+" Mbps" ],
-                            " RSSI ":  ['' if rssi_data[-1] == 0 else '-'+str(rssi_data[-1])+ " dbm"],
+                            " RSSI ":  ['-'+str(rssi_data[-1])+ " dbm" ],
                             " Link Speed ":self.link_speed_list[int(incremental_capacity_list[i])-1],
                             # " Packet Size(Bytes) ":[str(n)+" Bytes" for n in packet_size_in_table[0:int(incremental_capacity_list[i])]]
                         }
@@ -1741,7 +1685,7 @@ class Throughput(Realm):
         # report.build_custom()
         report.build_footer()
         report.write_html()
-        report.write_pdf(_orientation="Landscape")
+        report.write_pdf()
 
     def trim_data(self,array_size,to_updated_array):
         if array_size < 6:
@@ -1753,6 +1697,34 @@ class Throughput(Realm):
             new_array = [0] + middle_elements + [array_size - 1]
             updated_array=[to_updated_array[index] for index in new_array]
         return updated_array
+    def copy_otherdirectory(self):
+        curr_path = self.result_dir
+        print('curr_path',curr_path)
+        #came to outer directory
+        change_path = os.path.join(curr_path, '..', '..','..')
+        print("change_path",change_path)
+        out_folder = "WebGui_Reports"
+        new_path = os.path.join(change_path, out_folder)
+        #webgui directory creation
+        if not os.path.exists(new_path):
+            os.makedirs(new_path)
+        print("newpath",new_path)
+        test_name = self.test_name
+        test_name_dir = os.path.join(new_path,test_name)
+        print('test_dir_name',test_name_dir)
+        # in webgui-reports DIR creating a directory with test name
+        if not os.path.exists(test_name_dir):
+            os.makedirs(test_name_dir)
+        shutil.copytree(curr_path, test_name_dir,dirs_exist_ok=True)
+        content1 = os.listdir(curr_path)
+        print(f'content1{curr_path}', content1)
+        content2 = os.listdir(new_path)
+        print(f'content2 {test_name_dir}', content2)
+
+        print('copying done')
+    
+    
+
 
 def main():
     help_summary = '''\
@@ -1908,18 +1880,12 @@ Copyright 2023 Candela Technologies Inc.
     if args.help_summary:
         print(help_summary)
         exit(0)
-    
-    if args.dowebgui:
-        if(args.upload == '0'):
-            args.upload='2560'
-        if(args.download == '0'):
-            args.download='2560'
 
     logger_config = lf_logger_config.lf_logger_config()
     
     loads={}
     iterations_before_test_stopped_by_user=[]
-    gave_incremental=False
+
     # Case based on download and upload arguments are provided
     if args.download and args.upload:
         loads = {'upload': str(args.upload).split(","), 'download': str(args.download).split(",")}
@@ -1935,10 +1901,6 @@ Copyright 2023 Candela Technologies Inc.
             for i in range(len(args.upload)):
                 loads['download'].append(2560)
             loads_data=loads["upload"]
-
-    if args.incremental_capacity == 'no_increment' and args.dowebgui:
-        args.incremental_capacity = str(len(args.device_list.split(",")))
-        gave_incremental=True
 
     if args.do_interopability:
         args.incremental_capacity="1"
@@ -2005,9 +1967,7 @@ Copyright 2023 Candela Technologies Inc.
                                 incremental=args.incremental,
                                 precleanup=args.precleanup
                                 )
-        
-        if gave_incremental:
-            throughput.gave_incremental=True
+
         throughput.os_type()
 
         check_condition,clients_to_run=throughput.phantom_check()
@@ -2083,7 +2043,11 @@ Copyright 2023 Candela Technologies Inc.
     throughput.stop()
     if args.postcleanup:
         throughput.cleanup()
+    print("this is the path",throughput.result_dir)
     throughput.generate_report(list(set(iterations_before_test_stopped_by_user)),incremental_capacity_list,data=all_dataframes,data1=to_run_cxs_len,report_path=throughput.result_dir)
+    
+    if throughput.dowebgui:
+        throughput.copy_otherdirectory()
 if __name__ == "__main__":
     main()
 

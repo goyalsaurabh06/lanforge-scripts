@@ -65,7 +65,7 @@ import copy
 import logging
 import json
 import pandas as pd
-
+import shutil
 logger = logging.getLogger(__name__)
 
 if sys.version_info[0] != 3:
@@ -1348,6 +1348,32 @@ class ThroughputQOS(Realm):
                 if tos in self.tos and len(self.real_time_data[cx][tos]['time']) != 0:
                     cx_df = pd.DataFrame(self.real_time_data[cx][tos])
                     cx_df.to_csv('{}/{}_{}_realtime_data.csv'.format(report.path_date_time, cx, tos), index=False)
+    def copy_otherdirectory(self):
+        curr_path = self.result_dir
+        print('curr_path',curr_path)
+        #came to outer directory
+        change_path = os.path.join(curr_path, '..', '..','..')
+        print("change_path",change_path)
+        out_folder = "WebGui_Reports"
+        new_path = os.path.join(change_path, out_folder)
+        #webgui directory creation
+        if not os.path.exists(new_path):
+            os.makedirs(new_path)
+        print("newpath",new_path)
+        test_name = self.test_name
+        test_name_dir = os.path.join(new_path,test_name)
+        print('test_dir_name',test_name_dir)
+        # in webgui-reports DIR creating a directory with test name
+        if not os.path.exists(test_name_dir):
+            os.makedirs(test_name_dir)
+        shutil.copytree(curr_path, test_name_dir,dirs_exist_ok=True)
+        content1 = os.listdir(curr_path)
+        print(f'content1{curr_path}', content1)
+        content2 = os.listdir(new_path)
+        print(f'content2 {test_name_dir}', content2)
+
+        print('copying done')
+
 
 def main():
     help_summary = '''\
@@ -1583,6 +1609,8 @@ def main():
         )
         df1 = pd.DataFrame(throughput_qos.overall)
         df1.to_csv('{}/overall_throughput.csv'.format(args.result_dir, ), index=False)
+
+        throughput_qos.copy_otherdirectory()
 
 
 

@@ -68,7 +68,6 @@ import paramiko
 from datetime import datetime, timedelta
 import pandas as pd
 import logging
-import requests
 import shutil
 import json
 from lf_graph import lf_bar_graph_horizontal
@@ -139,7 +138,6 @@ class HttpDownload(Realm):
         self.radio = []
         self.get_url_from_file = get_url_from_file
         self.file_path = file_path
-        self.api_url = 'http://{}:{}'.format(self.host, self.port)
 
     #Todo- Make use of lf_base_interop_profile.py : Real device class to fetch available devices data
     def get_real_client_list(self):
@@ -155,7 +153,7 @@ class HttpDownload(Realm):
                             tos="BK",
                             device_list=self.device_list
                             )
-        self.port_list,self.devices_list,self.macid_list=object.phantom_check(ftp_test=True)
+        self.port_list,self.devices_list,self.macid_list=object.phantom_check()
         for port in self.port_list:
             eid=self.name_to_eid(port)
             self.eid_list.append(str(eid[0])+'.'+str(eid[1]))
@@ -180,6 +178,7 @@ class HttpDownload(Realm):
                 df1.to_csv('{}/http_datavalues.csv'.format(self.result_dir), index=False)
                 raise ValueError("Aborting the test....")
         return self.port_list, self.devices_list, self.macid_list
+<<<<<<< HEAD
     
     def api_get(self, endp: str):
         """
@@ -225,6 +224,8 @@ class HttpDownload(Realm):
         self.device_list=filtered_list
         return filtered_list
 
+=======
+>>>>>>> e82af171 (Reports copy to other directory 8 tests)
 
     def set_values(self):
         # This method will set values according user input
@@ -457,7 +458,9 @@ class HttpDownload(Realm):
                                          (','.join(self.http_profile.created_cx.keys()), data_mon.replace(' ', '+')))
         # print(data)
         data1 = []
+        print('data printing b',data)
         data = data['endpoint']
+        print('data printing a',data)
         if self.client_type == "Real":
             self.num_sta = len(self.port_list)
         if self.num_sta == 1:
@@ -659,7 +662,6 @@ class HttpDownload(Realm):
         pass
 
     def generate_graph(self, dataset, lis, bands):
-        bands=['Download']
         if self.client_type == "Real":
             lis=self.devices_list
         elif self.client_type == "Virtual":
@@ -700,7 +702,6 @@ class HttpDownload(Realm):
         return graph_png
 
     def graph_2(self, dataset2, lis, bands):
-        bands=['Download']
         if self.client_type == "Real":
             lis = self.devices_list
         elif self.client_type == "Virtual":
@@ -766,7 +767,7 @@ class HttpDownload(Realm):
 
         report.test_setup_table(value="Test Setup Information", test_setup_data=test_setup_info)
 
-        report.set_obj_html("Objective", "The HTTP Download Test is designed to verify that N clients connected on specified band can "
+        report.set_obj_html("Objective", "The Webpage Download Test is designed to verify that N clients connected on specified band can "
                                  "download some amount of file from HTTP server and measures the "
                                  "time taken by the client to Download the file.")
         report.build_objective()
@@ -883,13 +884,6 @@ class HttpDownload(Realm):
             i = str(round(i, 1))
             z2.append(i)
 
-        download_table_value_dup = {
-            # "Band": bands,
-            "Minimum": z,
-            "Maximum": z1,
-            "Average": z2
-        }
-
         download_table_value = {
             "Band": bands,
             "Minimum": z,
@@ -935,7 +929,7 @@ class HttpDownload(Realm):
             csv_outfile = report.file_add_path(csv_outfile)
             print("csv output file : {}".format(csv_outfile))
 
-        test_setup = pd.DataFrame(download_table_value_dup)
+        test_setup = pd.DataFrame(download_table_value)
         report.set_table_dataframe(test_setup)
         report.build_table()
         report.set_table_title("Overall Results")
@@ -958,6 +952,33 @@ class HttpDownload(Realm):
         print("returned file {}".format(html_file))
         print(html_file)
         report.write_pdf()
+    
+    def copy_otherdirectory(self):
+        curr_path = self.result_dir
+        print('curr_path',curr_path)
+        #came to outer directory
+        change_path = os.path.join(curr_path, '..', '..','..')
+        print("change_path",change_path)
+        out_folder = "WebGui_Reports"
+        new_path = os.path.join(change_path, out_folder)
+        #webgui directory creation
+        if not os.path.exists(new_path):
+            os.makedirs(new_path)
+        print("newpath",new_path)
+        test_name = self.test_name
+        test_name_dir = os.path.join(new_path,test_name)
+        print('test_dir_name',test_name_dir)
+        # in webgui-reports DIR creating a directory with test name
+        if not os.path.exists(test_name_dir):
+            os.makedirs(test_name_dir)
+        shutil.copytree(curr_path, test_name_dir,dirs_exist_ok=True)
+        content1 = os.listdir(curr_path)
+        print(f'content1{curr_path}', content1)
+        content2 = os.listdir(new_path)
+        print(f'content2 {test_name_dir}', content2)
+
+        print('copying done')
+
 
 
 def main():
@@ -1188,44 +1209,7 @@ def main():
                             file_path=args.file_path
                             )
         if args.client_type == "Real":
-            if type(args.device_list) != list:
-                http.device_list=http.filter_iOS_devices(args.device_list)
-                if len(http.device_list) == 0:
-                    print("There are no devices available")
-                    exit(1)
             port_list,device_list,macid_list = http.get_real_client_list()
-            android_devices,windows_devices,linux_devices,mac_devices=0,0,0,0
-            all_devices_names=[]
-            device_type=[]
-            total_devices=""
-            for i in device_list:
-                split_device_name=i.split(" ")
-                if 'android' in split_device_name:
-                    all_devices_names.append(split_device_name[2] + ("(Android)") )
-                    device_type.append("Android")
-                    android_devices+=1
-                elif 'Win' in split_device_name:
-                    all_devices_names.append(split_device_name[2] + ("(Windows)"))
-                    device_type.append("Windows")
-                    windows_devices+=1
-                elif 'Lin' in split_device_name:
-                    all_devices_names.append(split_device_name[2] + ("(Linux)"))
-                    device_type.append("Linux")
-                    linux_devices+=1
-                elif 'Mac' in split_device_name:
-                    all_devices_names.append(split_device_name[2] + ("(Mac)"))
-                    device_type.append("Mac")
-                    mac_devices+=1
-
-            # Build total_devices string based on counts
-            if android_devices>0:
-                total_devices+= f" Android({android_devices})" 
-            if windows_devices>0:
-                total_devices+= f" Windows({windows_devices})" 
-            if linux_devices>0:
-                total_devices+= f" Linux({linux_devices})" 
-            if mac_devices>0:
-                total_devices+= f" Mac({mac_devices})"
             args.num_stations = len(port_list)
         if not args.get_url_from_file:
             http.file_create(ssh_port=args.ssh_port)
@@ -1360,25 +1344,14 @@ def main():
         if int(duration == 3600) or (int(duration) > 3600):
             duration = str(duration/3600) + "h"
 
-    if args.client_type == "Real":
-        test_setup_info = {
-            "AP Name": args.ap_name,
-            "SSID": ssid,
-            "Device List": ", ".join(all_devices_names),
-            "Security" : security,
-            "No of Devices" : "Total"+ f"({args.num_stations})" + total_devices,
-            "Traffic Direction" : "Download",
-            "Traffic Duration ": duration
-        }
-    else:
-        test_setup_info = {
-            "AP Name": args.ap_name,
-            "SSID": ssid,
-            "Security" : security,
-            "No of Devices" : args.num_stations,
-            "Traffic Direction" : "Download",
-            "Traffic Duration ": duration
-        }
+    test_setup_info = {
+        "AP Name": args.ap_name,
+        "SSID": ssid,
+        "Security" : security,
+        "No of Devices" : args.num_stations,
+        "Traffic Direction" : "Download",
+        "Traffic Duration ": duration
+    }
     test_input_infor = {
             "LANforge ip": args.mgr,
             "Bands": args.bands,
@@ -1440,6 +1413,7 @@ def main():
         http.data_for_webui["remaining_time"] = http.data["remaining_time"]
         df1 = pd.DataFrame(http.data_for_webui)
         df1.to_csv('{}/http_datavalues.csv'.format(http.result_dir), index=False)
-
+        #copying to other directory
+        http.copy_otherdirectory()
 if __name__ == '__main__':
     main()

@@ -1369,6 +1369,32 @@ class Youtube(Realm):
                 return False
 
         return True
+    def copy_otherdirectory(self):
+        curr_path = self.ui_report_dir
+        print('curr_path',curr_path)
+        #came to outer directory
+        change_path = os.path.join(curr_path, '..', '..','..')
+        print("change_path",change_path)
+        out_folder = "WebGui_Reports"
+        new_path = os.path.join(change_path, out_folder)
+        #webgui directory creation
+        if not os.path.exists(new_path):
+            os.makedirs(new_path)
+        print("newpath",new_path)
+        test_name = self.test_name
+        test_name_dir = os.path.join(new_path,test_name)
+        print('test_dir_name',test_name_dir)
+        # in webgui-reports DIR creating a directory with test name
+        if not os.path.exists(test_name_dir):
+            os.makedirs(test_name_dir)
+        shutil.copytree(curr_path, test_name_dir,dirs_exist_ok=True)
+        content1 = os.listdir(curr_path)
+        print(f'content1{curr_path}', content1)
+        content2 = os.listdir(new_path)
+        print(f'content2 {test_name_dir}', content2)
+
+        print('copying done')
+
 
 
 
@@ -1795,6 +1821,7 @@ def main():
       #Stopping the Youtube test
       if(do_webUI):
           youtube.stop_test_yt()
+          youtube.copy_otherdirectory()
       print("Waiting for Cleanup of Browsers in Devices")
       time.sleep(10)
 

@@ -1763,6 +1763,33 @@ class RealBrowserTest(Realm):
         # print(device_type_data)
 
         return final_eid_data, mac_data, channel_data, signal_data, ssid_data, tx_rate_data , device_names , device_type_data
+    
+    def copy_otherdirectory(self):
+        curr_path = self.result_dir
+        print('curr_path',curr_path)
+        #came to outer directory
+        change_path = os.path.join(curr_path, '..', '..','..')
+        print("change_path",change_path)
+        out_folder = "WebGui_Reports"
+        new_path = os.path.join(change_path, out_folder)
+        #webgui directory creation
+        if not os.path.exists(new_path):
+            os.makedirs(new_path)
+        print("newpath",new_path)
+        test_name = self.test_name
+        test_name_dir = os.path.join(new_path,test_name)
+        print('test_dir_name',test_name_dir)
+        # in webgui-reports DIR creating a directory with test name
+        if not os.path.exists(test_name_dir):
+            os.makedirs(test_name_dir)
+        shutil.copytree(curr_path, test_name_dir,dirs_exist_ok=True)
+        content1 = os.listdir(curr_path)
+        print(f'content1{curr_path}', content1)
+        content2 = os.listdir(new_path)
+        print(f'content2 {test_name_dir}', content2)
+
+        print('copying done')
+
 
 
     
@@ -2515,6 +2542,7 @@ def main():
         traceback.print_exc()
     finally:
         if(args.dowebgui):
+                
                 try:
                     url = f"http://{args.host}:5454/update_status_yt"
                     #url = f"http://localhost:8000/update_status_yt"
@@ -2542,7 +2570,9 @@ def main():
                 except Exception as e:
                     # Print an error message if an exception occurs during the request
                     logging.error(f"An error occurred while updating status: {e}")
-        
+                
+        if obj.dowebgui:
+            obj.copy_otherdirectory()
         obj.stop()
 
         if args.postcleanup==True:

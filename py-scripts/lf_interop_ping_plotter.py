@@ -91,7 +91,6 @@ lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 if sys.version_info[0] != 3:
     print("This script requires Python 3")
     exit(1)
-
 realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
 
@@ -628,6 +627,7 @@ class Ping(Realm):
                     new_dict[sequence_numbers[seq]] = device_data['rtts'][seq]
                 # for seq,rtt in device_data['rtts'].items():
                 #     new_dict[((int(seq) -1) * interval + self.start_time).strftime("%d/%m/%Y %H:%M:%S")] = rtt
+        
                 data[device]['webui_rtts'] = new_dict
         with open(self.ui_report_dir + '/runtime_ping_data.json', 'w') as f:
             json.dump(data, f, indent=4)
@@ -946,6 +946,35 @@ class Ping(Realm):
 
         if(self.do_webUI):
             self.copy_reports(report_path_date_time)
+            print('report path name name name name name',report_path_date_time)
+    
+    def copy_otherdirectory(self):
+        if self.do_webUI:
+            curr_path = self.ui_report_dir
+            print('curr_path',curr_path)
+            #came to outer directory
+            change_path = os.path.join(curr_path, '..', '..','..')
+            print("change_path",change_path)
+            out_folder = "WebGui_Reports"
+            new_path = os.path.join(change_path, out_folder)
+            #webgui directory creation
+            if not os.path.exists(new_path):
+                os.makedirs(new_path)
+            print("newpath",new_path)
+            test_name = self.ui_report_dir.split("/")[-1]
+            test_name_dir = os.path.join(new_path,test_name)
+            print('test_dir_name',test_name_dir)
+            # in webgui-reports DIR creating a directory with test name
+            if not os.path.exists(test_name_dir):
+                os.makedirs(test_name_dir)
+            shutil.copytree(curr_path, test_name_dir,dirs_exist_ok=True)
+            content1 = os.listdir(curr_path)
+            print(f'content1{curr_path}', content1)
+            content2 = os.listdir(new_path)
+            print(f'content2 {test_name_dir}', content2)
+
+            print('copying done')
+
 
 
 def main():
@@ -1684,7 +1713,7 @@ connectivity problems.
         # print(t_end, abs(t_init - t_end).total_seconds())
         loop_timer += abs(t_init - t_end).total_seconds()
     # time.sleep(duration * 60)
-
+    # print('ui report',ping.ui_report_dir)
     logging.info('Stopping the test')
     ping.stop_generic()
     
@@ -1699,6 +1728,8 @@ connectivity problems.
         ping.cleanup()
 
     ping.generate_report()
+    ping.copy_otherdirectory()
+    
 
 if __name__ == "__main__":
     main()
