@@ -216,7 +216,7 @@ class HttpDownload(Realm):
                 continue
             device_data = device_data['resource']
             # print(device_data)
-            if 'Apple' in device_data['hw version'] and (device_data['app-id'] != '' or device_data['app-id'] != '0' or device_data['kernel'] == ''):
+            if 'Apple' in device_data['hw version'] and (device_data['app-id'] != '') and (device_data['app-id'] != '0' or device_data['kernel'] == ''):
                 print('{} is an iOS device. Currently we do not support iOS devices.'.format(device))
             else:
                 filtered_list.append(device)
