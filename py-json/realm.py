@@ -470,9 +470,9 @@ class Realm(LFCliBase):
         tos = _tos
         # Convert some human readable values to numeric needed by LANforge.
         if _tos == "BK":
-            tos = "64"
+            tos = "32"
         if _tos == "BE":
-            tos = "96"
+            tos = "100"
         if _tos == "VI":
             tos = "128"
         if _tos == "VO":
@@ -480,7 +480,7 @@ class Realm(LFCliBase):
         if _tos == "Voice":
             tos = "184"
         if _tos == "Video":
-            tos = "56"
+            tos = "136"
         data = {
             "name": ename,
             "tos": tos

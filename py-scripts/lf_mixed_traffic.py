@@ -101,6 +101,7 @@ import logging
 import platform
 import sys
 import os
+import requests
 import time
 import datetime
 import pandas as pd
@@ -334,8 +335,10 @@ class Mixed_Traffic(Realm):
         self.device_list = device_list
         self.result_dir = result_dir
         self.test_name = test_name
-        
-        
+        self.api_url = 'http://{}:{}'.format(self.host, self.port)
+        self.ftp_device=[]
+        self.http_dev=[]
+        self.http_mac=[]
         if self.dowebgui:
             self.stopped = False
             self.ping_execution = False
@@ -445,6 +448,59 @@ class Mixed_Traffic(Realm):
         self.cleanup.cxs_clean()
         self.cleanup.layer3_endp_clean()
         self.cleanup.layer4_endp_clean()
+    def api_get(self, endp: str):
+        """
+        Sends a GET request to fetch data
+
+        Args:
+            endp (str): API endpoint
+
+        Returns:
+            response: response code for the request
+            data: data returned in the response
+        """
+        if endp[0] != '/':
+            endp = '/' + endp
+        response = requests.get(url=self.api_url + endp)
+        data = response.json()
+        return response, data
+    
+    def filter_iOS_devices(self, device_list,rc_list,mac_list):
+        modified_device_list = device_list
+        if type(device_list) is str:
+            modified_device_list = device_list.split(',')
+        filtered_list = []
+        real_list=[]
+        mac_lists=[]
+        for device in modified_device_list:
+            if device.count('.') == 1:
+                shelf, resource = device.split('.')
+            elif device.count('.') == 2:
+                shelf, resource, port = device.split('.')
+            elif device.count('.') == 0:
+                shelf, resource = 1, device
+            response_code, device_data = self.api_get('/resource/{}/{}'.format(shelf, resource))
+            if 'status' in device_data and device_data['status'] == 'NOT_FOUND':
+                print('Device {} is not found.'.format(device))
+                continue
+            device_data = device_data['resource']
+            if 'Apple' in device_data['hw version'] and (device_data['app-id'] != '' ) and (device_data['app-id'] != '0' or device_data['kernel'] == ''):
+                print('{} is an iOS device. Currently we do not support iOS devices.'.format(device))
+            else:
+                filtered_list.append(device)
+        for j in rc_list:
+            for one_Dev in filtered_list:
+                if(j.split(' ')[0] in one_Dev):
+                    real_list.append(j)
+        if type(device_list) is str:
+            filtered_list = ','.join(filtered_list)
+        self.device_list=filtered_list
+        response_port = self.json_get("/port/all")
+        for interface in response_port['interfaces']:
+            for port,port_data in interface.items():
+                if port in filtered_list:
+                    mac_lists.append(port_data['mac'])
+        return filtered_list,real_list,mac_lists
 
     def virtual_client_creation(self, ssid, password, security, band, radio, num_stations, start_id, all_sta=False):
         start_id = start_id
@@ -529,7 +585,7 @@ class Mixed_Traffic(Realm):
                                                           ,device_list=self.device_list)
                 self.real_sta_list = self.user_query[0]
             else:
-                self.user_query = real_devices.query_user()
+                self.user_query = real_devices.query_user(flag=1)
                 self.real_sta_list = self.user_query[0]
 
             # fetching window's list
@@ -634,7 +690,11 @@ class Mixed_Traffic(Realm):
                 self.ping_test_obj.select_real_devices(real_devices=self.base_interop_profile,
                                                     real_sta_list=self.user_query[0],
                                                     base_interop_obj=self.base_interop_profile)
+                self.ping_test_obj.real_sta_list,_,_=self.filter_iOS_devices(self.user_query[0],self.user_query[1],self.user_query[2])
                 # removing the existing generic endpoints & cxs
+                if(len(self.ping_test_obj.real_sta_list)==0):
+                    print("No Device is available to run the test hence aborting the test")
+                    exit(0)
                 self.ping_test_obj.cleanup()
                 self.ping_test_obj.sta_list = self.user_query[0]
             elif self.virtual:
@@ -1100,11 +1160,17 @@ class Mixed_Traffic(Realm):
                                                             result_dir=self.result_dir,
                                                             test_name=self.test_name)
                     interation_num = interation_num + 1
+                    self.ftp_test_obj.data={}
                     self.ftp_test_obj.file_create()
                     if self.real:
                         self.ftp_test_obj.input_devices_list = self.user_query[0]
                         self.ftp_test_obj.real_client_list1 = self.user_query[1]
                         self.ftp_test_obj.mac_id_list = self.user_query[2]
+                        self.ftp_test_obj.input_devices_list,self.ftp_test_obj.real_client_list1,self.ftp_test_obj.mac_id_list=self.filter_iOS_devices(self.ftp_test_obj.input_devices_list,self.ftp_test_obj.real_client_list1,self.ftp_test_obj.mac_id_list)
+                        self.ftp_device=self.ftp_test_obj.real_client_list1
+                        if(len(self.ftp_test_obj.input_devices_list)==0):
+                            print("No Device is available to run the test hence aborting the test")
+                            exit(0)
                         self.ftp_test_obj.windows_ports = self.windows_ports
                         self.ftp_test_obj.set_values()
                         self.ftp_test_obj.precleanup()
@@ -1215,10 +1281,17 @@ class Mixed_Traffic(Realm):
                                                 lf_password=self.lf_password,dowebgui = "True" if self.dowebgui else "False",
                                                 result_dir=self.result_dir,
                                                 test_name=self.test_name)
+            self.http_obj.data={}
             if self.real:
                 self.http_obj.port_list = self.user_query[0]
                 self.http_obj.devices_list = self.user_query[1]
                 self.http_obj.macid_list = self.user_query[2]
+                self.http_obj.port_list,self.http_obj.devices_list,self.http_obj.macid_list=self.filter_iOS_devices(self.user_query[0],self.user_query[1],self.user_query[2])
+                self.http_dev=self.http_obj.devices_list
+                self.http_mac=self.http_obj.macid_list
+                if(len(self.http_obj.port_list)==0):
+                            print("No Device is available to run the test hence aborting the test")
+                            exit(0)
                 self.http_obj.user_query = self.user_query
                 self.http_obj.windows_ports = self.windows_ports
                 num_stations = len(self.user_query[0])
@@ -1896,7 +1969,7 @@ class Mixed_Traffic(Realm):
                 self.lf_report_mt.build_objective()
                 sta_list = ""
                 if self.real:
-                    sta_list = self.user_query[1]
+                    sta_list = self.ftp_device
                 elif self.virtual:
                     sta_list = self.station_list
                 x_fig_size = 15
@@ -2008,8 +2081,8 @@ class Mixed_Traffic(Realm):
                 self.lf_report_mt.set_table_title("Overall Results")
                 self.lf_report_mt.build_table_title()
                 dataframe = {
-                    " Clients": self.user_query[1] if self.real else self.station_list,
-                    " MAC ": self.user_query[2] if self.real else self.http_obj.macid_list,
+                    " Clients": self.http_dev if self.real else self.station_list,
+                    " MAC ": self.http_mac if self.real else self.http_obj.macid_list,
                     " Channel": self.http_obj.channel_list,
                     " SSID ": self.http_obj.ssid_list,
                     " Mode": self.http_obj.mode_list,

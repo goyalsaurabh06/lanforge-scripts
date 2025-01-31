@@ -1757,7 +1757,7 @@ class RealDevice(Realm):
         return self.devices
     
     # querying the user the required mobiles to test
-    def query_user(self, dowebgui=False, device_list=""):
+    def query_user(self, dowebgui=False, device_list="",flag=0):
         print('The available real devices are:')
         # print('Port\t\thw version\t\t\tMAC')
         t_devices = {}
@@ -1768,8 +1768,9 @@ class RealDevice(Realm):
             # 'eid' and 'hw version' originally comes from resource data. Snuck into port data to make life easier
             if('p2p0' in device):
                 continue
-            if device_details['kernel']=='' and 'Apple' in device_details['hw version']:
-                continue
+            if(flag==0):
+                if device_details['kernel']=='' and 'Apple' in device_details['hw version']:
+                    continue
             t_devices[device_details['eid']] = {
                 'Port Name': device,
                 'hw version': device_details['hw version'],
