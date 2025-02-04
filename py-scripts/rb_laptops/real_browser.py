@@ -86,7 +86,8 @@ class RealBrowser():
                             "total_err":self.error,
                             "uc_min":min(self.load_times),
                             "uc_max":max(self.load_times),
-                            "uc_avg":mean(self.load_times)
+                            "uc_avg":mean(self.load_times),
+                            "start_time":self.start_time.isoformat()
                         }
                     }
                     self.send_stats(laptop_stats)
@@ -114,6 +115,7 @@ class RealBrowser():
                             "uc_min":self.uc_min,
                             "uc_max":self.uc_max,
                             "uc_avg":self.uc_avg,
+                            "start_time":self.start_time.isoformat()
                         }
                 }
                 print(f"error occured")
