@@ -1969,7 +1969,7 @@ class Mixed_Traffic(Realm):
                 self.lf_report_mt.build_objective()
                 sta_list = ""
                 if self.real:
-                    sta_list = self.ftp_device
+                    sta_list = self.ftp_test_obj.real_client_list1
                 elif self.virtual:
                     sta_list = self.station_list
                 x_fig_size = 15
@@ -2081,8 +2081,8 @@ class Mixed_Traffic(Realm):
                 self.lf_report_mt.set_table_title("Overall Results")
                 self.lf_report_mt.build_table_title()
                 dataframe = {
-                    " Clients": self.http_dev if self.real else self.station_list,
-                    " MAC ": self.http_mac if self.real else self.http_obj.macid_list,
+                    " Clients": self.http_obj.devices_list if self.real else self.station_list,
+                    " MAC ": self.http_obj.macid_list if self.real else self.http_obj.macid_list,
                     " Channel": self.http_obj.channel_list,
                     " SSID ": self.http_obj.ssid_list,
                     " Mode": self.http_obj.mode_list,
