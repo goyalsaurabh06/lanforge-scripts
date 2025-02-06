@@ -953,14 +953,12 @@ class HttpDownload(Realm):
         print(html_file)
         report.write_pdf()
     
-    def copy_otherdirectory(self):
-        curr_path = self.result_dir
-        print('curr_path',curr_path)
-        #came to outer directory
-        change_path = os.path.join(curr_path, '..', '..','..')
-        print("change_path",change_path)
-        out_folder = "WebGui_Reports"
-        new_path = os.path.join(change_path, out_folder)
+    def copy_reports_to_home_dir(self):
+        curr_path = self.result_dir 
+        home_dir = os.path.expanduser("~") # it returns the home directory [ base : home/username]
+        print('home directory: ' , home_dir)
+        out_folder_name = "WebGui_Reports"
+        new_path = os.path.join(home_dir, out_folder_name)
         #webgui directory creation
         if not os.path.exists(new_path):
             os.makedirs(new_path)
@@ -974,10 +972,10 @@ class HttpDownload(Realm):
         shutil.copytree(curr_path, test_name_dir,dirs_exist_ok=True)
         content1 = os.listdir(curr_path)
         print(f'content1{curr_path}', content1)
-        content2 = os.listdir(new_path)
+        content2 = os.listdir(test_name_dir)
         print(f'content2 {test_name_dir}', content2)
 
-        print('copying done')
+        print('copying done............')
 
 
 
@@ -1413,7 +1411,7 @@ def main():
         http.data_for_webui["remaining_time"] = http.data["remaining_time"]
         df1 = pd.DataFrame(http.data_for_webui)
         df1.to_csv('{}/http_datavalues.csv'.format(http.result_dir), index=False)
-        #copying to other directory
-        http.copy_otherdirectory()
+         # copying to home directory i.e home/user_name
+        http.copy_reports_to_home_dir()
 if __name__ == '__main__':
     main()

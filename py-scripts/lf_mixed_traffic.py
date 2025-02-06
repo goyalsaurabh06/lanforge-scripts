@@ -2220,14 +2220,12 @@ class Mixed_Traffic(Realm):
             self.lf_report_mt.write_html()
             self.lf_report_mt.write_pdf_with_timestamp(_page_size='A4', _orientation='Portrait')
     
-    def copy_otherdirectory(self):
+    def copy_reports_to_home_dir(self):
         curr_path = self.result_dir
-        print('curr_path',curr_path)
-        #came to outer directory
-        change_path = os.path.join(curr_path, '..', '..','..')
-        print("change_path",change_path)
-        out_folder = "WebGui_Reports"
-        new_path = os.path.join(change_path, out_folder)
+        home_dir = os.path.expanduser("~")
+        print('home directory: ' , home_dir)
+        out_folder_name = "WebGui_Reports"
+        new_path = os.path.join(home_dir, out_folder_name)
         #webgui directory creation
         if not os.path.exists(new_path):
             os.makedirs(new_path)
@@ -3243,8 +3241,9 @@ INCLUDE_IN_README: False
                         df1.to_csv('{}/overall_status.csv'.format(mixed_obj.result_dir), index=False)
                     except Exception as e:
                         logging.info("Error while wrinting status file for webui",e)
-                    
-                    mixed_obj.copy_otherdirectory()
+
+                    # copying to home directory i.e home/user_name
+                    mixed_obj.copy_reports_to_home_dir()
             else:
                 print("No Test Selected. Please select the Tests.")
                 exit(0)

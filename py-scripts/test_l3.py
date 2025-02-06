@@ -5556,14 +5556,12 @@ class L3VariableTime(Realm):
                 self.report.set_table_dataframe(last_row)
                 self.report.build_table()
     
-    def copy_otherdirectory(self):
+    def copy_reports_to_home_dir(self):
         curr_path = self.result_dir
-        print('curr_path',curr_path)
-        #came to outer directory
-        change_path = os.path.join(curr_path, '..', '..','..')
-        print("change_path",change_path)
-        out_folder = "WebGui_Reports"
-        new_path = os.path.join(change_path, out_folder)
+        home_dir = os.path.expanduser("~")
+        print('home directory: ' , home_dir)
+        out_folder_name = "WebGui_Reports"
+        new_path = os.path.join(home_dir, out_folder_name)
         #webgui directory creation
         if not os.path.exists(new_path):
             os.makedirs(new_path)
@@ -7281,7 +7279,8 @@ INCLUDE_IN_README: False
         )
         df1 = pd.DataFrame(ip_var_test.overall)
         df1.to_csv('{}/overall_multicast_throughput.csv'.format(ip_var_test.result_dir), index=False)
-        ip_var_test.copy_otherdirectory()
+        # copying to home directory i.e home/user_name
+        ip_var_test.copy_reports_to_home_dir()
     if test_passed:
         ip_var_test.exit_success()
     else:

@@ -1426,8 +1426,12 @@ class FtpTest(LFCliBase):
 
         # To move ftp_datavalues.csv in report folder  
         report_path_date_time = self.report.get_path_date_time()
+        #donebyme
+        print('reporttttttttttttttt_pathhhhhhhhh',report_path_date_time)
+        content1 = os.listdir(report_path_date_time)
+        print(f'RPDT{report_path_date_time}', content1)
+        print(f'current path {os.getcwd()},items in current path {os.listdir(os.getcwd())}')
         shutil.move('ftp_datavalues.csv',report_path_date_time)
-
         self.report.set_title("FTP Test")
         self.report.set_date(date)
         self.report.build_banner()
@@ -1767,14 +1771,12 @@ class FtpTest(LFCliBase):
             csv_outfile = self.report.file_add_path(csv_outfile)
             logger.info("csv output file : {}".format(csv_outfile))
         
-    def copy_otherdirectory(self):
+    def copy_reports_to_home_dir(self):
         curr_path = self.result_dir
-        print('curr_path',curr_path)
-        #came to outer directory
-        change_path = os.path.join(curr_path, '..', '..','..')
-        print("change_path",change_path)
-        out_folder = "WebGui_Reports"
-        new_path = os.path.join(change_path, out_folder)
+        home_dir = os.path.expanduser("~")
+        print('home directory: ' , home_dir)
+        out_folder_name = "WebGui_Reports"
+        new_path = os.path.join(home_dir, out_folder_name)
         #webgui directory creation
         if not os.path.exists(new_path):
             os.makedirs(new_path)
@@ -1782,7 +1784,7 @@ class FtpTest(LFCliBase):
         test_name = self.test_name
         test_name_dir = os.path.join(new_path,test_name)
         print('test_dir_name',test_name_dir)
-        # in webgui-reports DIR creating a directory with test name
+        # in webgui-reports DIR creating a directory with test_name
         if not os.path.exists(test_name_dir):
             os.makedirs(test_name_dir)
         shutil.copytree(curr_path, test_name_dir,dirs_exist_ok=True)
@@ -1790,7 +1792,7 @@ class FtpTest(LFCliBase):
         print(f'content1{curr_path}', content1)
         content2 = os.listdir(new_path)
         print(f'content2 {test_name_dir}', content2)
-        print('copying done')
+        print('copying done...........')
 
 
 
@@ -2114,7 +2116,8 @@ INCLUDE_IN_README: False
 
         df1 = pd.DataFrame(obj.data_for_webui)
         df1.to_csv('{}/ftp_datavalues.csv'.format(obj.result_dir), index=False)
-        obj.copy_otherdirectory()
+        # copying to home directory i.e home/user_name
+        obj.copy_reports_to_home_dir()
 
 if __name__ == '__main__':
     main()

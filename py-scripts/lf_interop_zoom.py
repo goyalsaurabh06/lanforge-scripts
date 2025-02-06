@@ -1272,6 +1272,30 @@ class ZoomAutomation(Realm):
             file_to_move_path = os.path.join(self.path, f'{client}.csv')
             #print(file_to_move_path)
             self.move_files(file_to_move_path,report_path_date_time)
+
+
+def copy_reports_to_home_dir(result_dir,test_name):
+        curr_path = result_dir 
+        home_dir = os.path.expanduser("~") # it returns the home directory [ base : home/username]
+        print('home directory: ' , home_dir)
+        out_folder_name = "WebGui_Reports"
+        new_path = os.path.join(home_dir, out_folder_name)
+        #webgui directory creation
+        if not os.path.exists(new_path):
+            os.makedirs(new_path)
+        print("newpath",new_path)
+        test_name_dir = os.path.join(new_path,test_name)
+        print('test_dir_name',test_name_dir)
+        # in webgui-reports DIR creating a directory with test name
+        if not os.path.exists(test_name_dir):
+            os.makedirs(test_name_dir)
+        shutil.copytree(curr_path, test_name_dir,dirs_exist_ok=True)
+        content1 = os.listdir(curr_path)
+        print(f'content1{curr_path}', content1)
+        content2 = os.listdir(test_name_dir)
+        print(f'content2 {test_name_dir}', content2)
+
+        print('copying done............')
 def main():
     try:
         parser = argparse.ArgumentParser(description="Zoom Automation Script")
@@ -1600,6 +1624,7 @@ def main():
         traceback.print_exc()
     finally:
         if(args.do_webUI):
+
             try:
                 url = f"http://{args.lanforge_ip}:5454/update_status_yt"
                 #url = f"http://localhost:5454/update_status_yt"
@@ -1627,6 +1652,11 @@ def main():
             except Exception as e:
                 # Print an error message if an exception occurs during the request
                 logging.error(f"An error occurred while updating status: {e}")
+<<<<<<< HEAD
+=======
+            copy_reports_to_home_dir(args.report_dir,args.testname)
+        zoom_automation.generic_endps_profile.cleanup()
+>>>>>>> b8911ff0 (reports generated using webui after testing are now copied to home directory)
         
         zoom_automation.redis_client.set('login_completed', 0)
         zoom_automation.stop_signal = True

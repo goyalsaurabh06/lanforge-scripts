@@ -1348,14 +1348,12 @@ class ThroughputQOS(Realm):
                 if tos in self.tos and len(self.real_time_data[cx][tos]['time']) != 0:
                     cx_df = pd.DataFrame(self.real_time_data[cx][tos])
                     cx_df.to_csv('{}/{}_{}_realtime_data.csv'.format(report.path_date_time, cx, tos), index=False)
-    def copy_otherdirectory(self):
+    def copy_reports_to_home_dir(self):
         curr_path = self.result_dir
-        print('curr_path',curr_path)
-        #came to outer directory
-        change_path = os.path.join(curr_path, '..', '..','..')
-        print("change_path",change_path)
-        out_folder = "WebGui_Reports"
-        new_path = os.path.join(change_path, out_folder)
+        home_dir = os.path.expanduser("~")
+        print('home directory: ' , home_dir)
+        out_folder_name = "WebGui_Reports"
+        new_path = os.path.join(home_dir, out_folder_name)
         #webgui directory creation
         if not os.path.exists(new_path):
             os.makedirs(new_path)
@@ -1610,7 +1608,8 @@ def main():
         df1 = pd.DataFrame(throughput_qos.overall)
         df1.to_csv('{}/overall_throughput.csv'.format(args.result_dir, ), index=False)
 
-        throughput_qos.copy_otherdirectory()
+        # copying to home directory i.e home/user_name
+        throughput_qos.copy_reports_to_home_dir()
 
 
 

@@ -266,6 +266,8 @@ class Ping(Realm):
             exit(0)
 
         self.real_sta_list = self.filter_iOS_devices(self.real_sta_list)
+        print('nptr' , self.real_sta_list)
+        print('ptr' , *self.real_sta_list)
         logging.info('{}'.format(*self.real_sta_list))
 
         for sta_name in self.real_sta_list:
@@ -948,15 +950,14 @@ class Ping(Realm):
             self.copy_reports(report_path_date_time)
             print('report path name name name name name',report_path_date_time)
     
-    def copy_otherdirectory(self):
+    def copy_reports_to_home_dir(self):
         if self.do_webUI:
             curr_path = self.ui_report_dir
-            print('curr_path',curr_path)
-            #came to outer directory
-            change_path = os.path.join(curr_path, '..', '..','..')
-            print("change_path",change_path)
-            out_folder = "WebGui_Reports"
-            new_path = os.path.join(change_path, out_folder)
+            print('curr path',curr_path)
+            home_dir = os.path.expanduser("~")
+            print('home directory: ' , home_dir)
+            out_folder_name = "WebGui_Reports"
+            new_path = os.path.join(home_dir, out_folder_name)
             #webgui directory creation
             if not os.path.exists(new_path):
                 os.makedirs(new_path)
@@ -1728,7 +1729,8 @@ connectivity problems.
         ping.cleanup()
 
     ping.generate_report()
-    ping.copy_otherdirectory()
+    # copying to home directory i.e home/user_name
+    ping.copy_reports_to_home_dir()
     
 
 if __name__ == "__main__":
