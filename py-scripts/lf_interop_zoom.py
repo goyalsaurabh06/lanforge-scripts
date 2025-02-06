@@ -1652,11 +1652,8 @@ def main():
             except Exception as e:
                 # Print an error message if an exception occurs during the request
                 logging.error(f"An error occurred while updating status: {e}")
-<<<<<<< HEAD
-=======
             copy_reports_to_home_dir(args.report_dir,args.testname)
         zoom_automation.generic_endps_profile.cleanup()
->>>>>>> b8911ff0 (reports generated using webui after testing are now copied to home directory)
         
         zoom_automation.redis_client.set('login_completed', 0)
         zoom_automation.stop_signal = True
