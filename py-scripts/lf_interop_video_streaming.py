@@ -673,7 +673,7 @@ class VideoStreamingTest(Realm):
         """
         # data in json format
         # Construct URL to retrieve monitoring data for all created CX endpoints
-        data = self.local_realm.json_get("layer4/%s/list?fields=name,status,total-urls,urls/s,total-err,video-format-bitrate,bytes-rd,total-wait-time,total-buffers,total-err,rx rate" %
+        data = self.local_realm.json_get("layer4/%s/list?fields=name,status,total-urls,urls/s,total-err,video-format-bitrate,bytes-rd,total-wait-time,total-buffers,total-err,rx rate,frame-rate,video-quality" %
                                         (','.join(self.created_cx.keys())))
        
         
@@ -699,6 +699,8 @@ class VideoStreamingTest(Realm):
         total_wait_time=[]
         total_buffer=[]
         rx_rate = []
+        frame_rate=[]
+        video_quality = []
         # Check if only one CX endpoint is created
         # print(">>>>>>>>>>",self.created_cx.keys())
         if len(self.created_cx.keys()) >1:
@@ -724,6 +726,8 @@ class VideoStreamingTest(Realm):
                     total_wait_time.append(value['total-wait-time'])
                     total_buffer.append(value['total-buffers'])
                     rx_rate.append(value['rx rate'])
+                    frame_rate.append(value['frame-rate'])
+                    video_quality.append(value['video-quality'])
         elif len(self.created_cx.keys()) == 1:
             endpoint = data.get('endpoint', {})
             names = [endpoint.get('name', '')]
@@ -745,7 +749,9 @@ class VideoStreamingTest(Realm):
             total_wait_time.append(endpoint.get('total-wait-time', 0))
             total_buffer.append(endpoint.get('total-buffers', 0))
             rx_rate.append(endpoint.get('rx rate',0))
-        # Print the results
+            frame_rate.append(endpoint.get('frame-rate',0))
+            video_quality.append(endpoint.get('video-quality',0))
+
         # print("Names:", names)
         # print("Statuses:", statuses)
         # print("Total URLs:", total_urls)
@@ -781,6 +787,8 @@ class VideoStreamingTest(Realm):
         self.data["total_wait_time"]=total_wait_time
         self.data["total_buffer"]=total_buffer
         self.data["rx_rate"] = rx_rate
+        self.data['frame_rate']= frame_rate
+        self.data['video_quality']=video_quality
         
         # if len(self.created_cx.keys()) == 1 :
         #     for cx in self.created_cx.keys():
@@ -1012,7 +1020,7 @@ class VideoStreamingTest(Realm):
                     video_rate_dict[i].append(0)
                     overall_video_rate.append(0)
                     min_value_video_rate = self.process_list(video_rate_dict[i])
-                    individual_df_data.extend([0,0,self.data["total_urls"][i],rssi_data[i],link_speed_data[i],self.data["total_buffer"][i],self.data["total_err"][i],min_value_video_rate,max(video_rate_dict[i]),sum(video_rate_dict[i])/len(video_rate_dict[i]),self.data["bytes_rd"][i],self.data["rx_rate"][i]])
+                    individual_df_data.extend([0,0,self.data["total_urls"][i],rssi_data[i],link_speed_data[i],self.data["total_buffer"][i],self.data["total_err"][i],min_value_video_rate,max(video_rate_dict[i]),sum(video_rate_dict[i])/len(video_rate_dict[i]),self.data["bytes_rd"][i],self.data["rx_rate"][i],self.data['frame_rate'][i],self.data['video_quality'][i]])
                 
                 # If the status is not 'Stopped', append the calculated video rate to the video rate dictionary and overall video rate
                 else:
@@ -1020,7 +1028,7 @@ class VideoStreamingTest(Realm):
                     video_rate_dict[i].append(round(self.data["video_format_bitrate"][i]/1000000,2))
                     overall_video_rate.append(round(self.data["video_format_bitrate"][i]/1000000,2))
                     min_value_video_rate = self.process_list(video_rate_dict[i])
-                    individual_df_data.extend([round(self.data["video_format_bitrate"][i]/1000000,2),round(self.data["total_wait_time"][i]/1000,2),self.data["total_urls"][i],int(rssi_data[i]),link_speed_data[i],self.data["total_buffer"][i],self.data["total_err"][i],min_value_video_rate,max(video_rate_dict[i]),sum(video_rate_dict[i])/len(video_rate_dict[i]),self.data["bytes_rd"][i],self.data["rx_rate"][i]])
+                    individual_df_data.extend([round(self.data["video_format_bitrate"][i]/1000000,2),round(self.data["total_wait_time"][i]/1000,2),self.data["total_urls"][i],int(rssi_data[i]),link_speed_data[i],self.data["total_buffer"][i],self.data["total_err"][i],min_value_video_rate,max(video_rate_dict[i]),sum(video_rate_dict[i])/len(video_rate_dict[i]),self.data["bytes_rd"][i],self.data["rx_rate"][i],self.data['frame_rate'][i],self.data['video_quality'][i]])
             
             individual_df_data.extend([sum(overall_video_rate),present_time,iteration+1,actual_start_time.strftime('%Y-%m-%d %H:%M:%S'),self.data['end_time_webGUI'][0],self.data['remaining_time_webGUI'][0],"Running"])
             individual_df.loc[len(individual_df)]=individual_df_data
@@ -1061,12 +1069,12 @@ class VideoStreamingTest(Realm):
                 video_rate_dict[i].append(0)
                 overall_video_rate.append(0)
                 min_value_video_rate = self.process_list(video_rate_dict[i])
-                individual_df_data.extend([0,0,self.data["total_urls"][i],rssi_data[i],link_speed_data[i],self.data["total_buffer"][i],self.data["total_err"][i],min_value_video_rate,max(video_rate_dict[i]),sum(video_rate_dict[i])/len(video_rate_dict[i]),self.data["bytes_rd"][i],self.data["rx_rate"][i]])
+                individual_df_data.extend([0,0,self.data["total_urls"][i],rssi_data[i],link_speed_data[i],self.data["total_buffer"][i],self.data["total_err"][i],min_value_video_rate,max(video_rate_dict[i]),sum(video_rate_dict[i])/len(video_rate_dict[i]),self.data["bytes_rd"][i],self.data["rx_rate"][i],self.data['frame_rate'][i],self.data['video_quality'][i]])
             else:
                 overall_video_rate.append(round(self.data["video_format_bitrate"][i]/1000000,2))
                 video_rate_dict[i].append(round(self.data["video_format_bitrate"][i]/1000000,2))
                 min_value_video_rate = self.process_list(video_rate_dict[i])
-                individual_df_data.extend([round(self.data["video_format_bitrate"][i]/1000000,2),round(self.data["total_wait_time"][i]/1000,2),self.data["total_urls"][i],int(rssi_data[i]),link_speed_data[i],self.data["total_buffer"][i],self.data["total_err"][i],min_value_video_rate,max(video_rate_dict[i]),sum(video_rate_dict[i])/len(video_rate_dict[i]),self.data["bytes_rd"][i],self.data["rx_rate"][i]])
+                individual_df_data.extend([round(self.data["video_format_bitrate"][i]/1000000,2),round(self.data["total_wait_time"][i]/1000,2),self.data["total_urls"][i],int(rssi_data[i]),link_speed_data[i],self.data["total_buffer"][i],self.data["total_err"][i],min_value_video_rate,max(video_rate_dict[i]),sum(video_rate_dict[i])/len(video_rate_dict[i]),self.data["bytes_rd"][i],self.data["rx_rate"][i],self.data['frame_rate'][i],self.data['video_quality'][i]])
 
         if iteration+1 == len(incremental_capacity_list): 
             individual_df_data.extend([sum(overall_video_rate),present_time,iteration+1,actual_start_time.strftime('%Y-%m-%d %H:%M:%S'),self.data['end_time_webGUI'][0],0,"Stopped"])
@@ -1833,7 +1841,7 @@ def main():
 
     # Extend individual_dataframe_column with dynamically generated column names
     for i in range(len(keys)):
-        individual_dataframe_columns.extend([f'video_format_bitrate{keys[i]}', f'total_wait_time{keys[i]}',f'total_urls{keys[i]}',f'RSSI{keys[i]}',f'Link Speed{keys[i]}',f'Total Buffer {keys[i]}',f'Total Errors {keys[i]}',f'Min_Video_Rate{keys[i]}',f'Max_Video_Rate{keys[i]}',f'Avg_Video_Rate{keys[i]}',f'bytes_rd {keys[i]}',f'rx rate {keys[i]} bps'])
+        individual_dataframe_columns.extend([f'video_format_bitrate{keys[i]}', f'total_wait_time{keys[i]}',f'total_urls{keys[i]}',f'RSSI{keys[i]}',f'Link Speed{keys[i]}',f'Total Buffer {keys[i]}',f'Total Errors {keys[i]}',f'Min_Video_Rate{keys[i]}',f'Max_Video_Rate{keys[i]}',f'Avg_Video_Rate{keys[i]}',f'bytes_rd {keys[i]}',f'rx rate {keys[i]} bps',f'frame_rate {keys[i]}',f'Video Quality {keys[i]}'])
     individual_dataframe_columns.extend(['overall_video_format_bitrate','timestamp','iteration','start_time','end_time','remaining_Time','status'])
     individual_df=pd.DataFrame(columns=individual_dataframe_columns)
     
