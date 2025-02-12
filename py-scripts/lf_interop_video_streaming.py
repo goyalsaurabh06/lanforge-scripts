@@ -670,29 +670,14 @@ class VideoStreamingTest(Realm):
             3. Iterates through the retrieved data to extract and append the specified metric values ('data_mon') to 'data1' list.
             4. Returns 'data1', which contains monitoring data for the specified metrics across all created CX endpoints.
         """
-        # data in json format
-        # Construct URL to retrieve monitoring data for all created CX endpoints
         data = self.local_realm.json_get("layer4/%s/list?fields=name,status,total-urls,urls/s,total-err,video-format-bitrate,bytes-rd,total-wait-time,total-buffers,total-err,rx rate,frame-rate,video-quality" %
                                         (','.join(self.created_cx.keys())))
-       
-        
-        
-        data1 = []
         
         names = []
         statuses = []
         total_urls = []
         urls_per_sec = []
-        # uc_min = []
-        # uc_avg = []
-        # uc_max = []
         total_err = []
-        # bad_proto = []
-        # bad_url = []
-        # rslv_p = []
-        # rslv_h = []
-        # conn = []
-        # timeouts = []
         video_format_bitrate=[]
         bytes_rd=[]
         total_wait_time=[]
@@ -700,8 +685,7 @@ class VideoStreamingTest(Realm):
         rx_rate = []
         frame_rate=[]
         video_quality = []
-        # Check if only one CX endpoint is created
-        # print(">>>>>>>>>>",self.created_cx.keys())
+    
         if len(self.created_cx.keys()) >1:
             data = data['endpoint']
             for endpoint in data:
@@ -710,16 +694,7 @@ class VideoStreamingTest(Realm):
                     statuses.append(value['status'])
                     total_urls.append(value['total-urls'])
                     urls_per_sec.append(value['urls/s'])
-                    # uc_min.append(value['uc-min'])
-                    # uc_avg.append(value['uc-avg'])
-                    # uc_max.append(value['uc-max'])
                     total_err.append(value['total-err'])
-                    # bad_proto.append(value['bad-proto'])
-                    # bad_url.append(value['bad-url'])
-                    # rslv_p.append(value['rslv-p'])
-                    # rslv_h.append(value['rslv-h'])
-                    # conn.append(value['!conn'])
-                    # timeouts.append(value['timeout'])
                     video_format_bitrate.append(value['video-format-bitrate'])
                     bytes_rd.append(value['bytes-rd'])
                     total_wait_time.append(value['total-wait-time'])
@@ -733,16 +708,7 @@ class VideoStreamingTest(Realm):
             statuses = [endpoint.get('status', '')]
             total_urls = [endpoint.get('total-urls', 0)]
             urls_per_sec = [endpoint.get('urls/s', 0.0)]
-            # uc_min.append(value['uc-min'])
-            # uc_avg.append(value['uc-avg'])
-            # uc_max.append(value['uc-max'])
             total_err = [endpoint.get('total-err', 0)]
-            # bad_proto.append(value['bad-proto'])
-            # bad_url.append(value['bad-url'])
-            # rslv_p.append(value['rslv-p'])
-            # rslv_h.append(value['rslv-h'])
-            # conn.append(value['!conn'])
-            # timeouts.append(value['timeout'])
             video_format_bitrate = [endpoint.get('video-format-bitrate', 0)]
             bytes_rd.append(endpoint.get('bytes-rd', 0))
             total_wait_time.append(endpoint.get('total-wait-time', 0))
@@ -751,36 +717,11 @@ class VideoStreamingTest(Realm):
             frame_rate.append(endpoint.get('frame-rate',0))
             video_quality.append(endpoint.get('video-quality',0))
 
-        # print("Names:", names)
-        # print("Statuses:", statuses)
-        # print("Total URLs:", total_urls)
-        # print("URLs/s:", urls_per_sec)
-        # print("UC Min:", uc_min)
-        # print("UC Avg:", uc_avg)
-        # print("UC Max:", uc_max)
-        # print("Total Errors:", total_err)
-        # print("Bad Proto:", bad_proto)
-        # print("Bad URL:", bad_url)
-        # print("RSLV P:", rslv_p)
-        # print("RSLV H:", rslv_h)
-        # print("!Conn:", conn)
-        # print("Timeouts:", timeouts)
-        # print("data",data)
-
         self.data['status'] = statuses
         self.data["total_urls"] = total_urls
         self.data["urls_per_sec"] = urls_per_sec
-        # self.data["uc_min"] = uc_min
-        # self.data["uc_avg"] = uc_avg
-        # self.data["uc_max"] = uc_max
         self.data["name"] = names
         self.data["total_err"] = total_err
-        # self.data["bad_proto"] = bad_proto
-        # self.data["bad_url"] =  bad_url
-        # self.data["rslv_p"] = rslv_p
-        # self.data["rslv_h"] = rslv_h
-        # self.data["!conn"] = conn
-        # self.data["timeout"] = timeouts
         self.data["video_format_bitrate"]=video_format_bitrate
         self.data["bytes_rd"]=bytes_rd
         self.data["total_wait_time"]=total_wait_time
@@ -788,18 +729,6 @@ class VideoStreamingTest(Realm):
         self.data["rx_rate"] = rx_rate
         self.data['frame_rate']= frame_rate
         self.data['video_quality']=video_quality
-        
-        # if len(self.created_cx.keys()) == 1 :
-        #     for cx in self.created_cx.keys():
-        #         if cx in data['name']:
-        #             data1.append(data[data_mon])
-        # else:
-        #     # Iterate through each created CX endpoint
-        #     for cx in self.created_cx.keys():
-        #         for info in data:
-        #             if cx in info:
-        #                 data1.append(info[cx][data_mon])
-        # return data1
     
     def my_monitor(self, data_mon):
         # data in json format
@@ -971,11 +900,6 @@ class VideoStreamingTest(Realm):
             # Get signal data for RSSI and link speed
             rssi_data,link_speed_data=self.get_signal_data()
 
-            # Monitor total buffers and total errors
-            # self.data["total_buffer"]=self.my_monitor('total-buffers')
-            # self.data["total_err"] = self.my_monitor('total-err')
-
-            # Initialize a list to store individual dataframe data
             individual_df_data=[]
 
             # Update the end time for the web GUI if necessary
@@ -997,20 +921,11 @@ class VideoStreamingTest(Realm):
             
             # Get the present time
             present_time=datetime.now().strftime("%H:%M:%S")
-
-            # Monitor various metrics
-            # self.data['status'] = self.my_monitor('status')
-            # self.data["total_urls"] = self.my_monitor('total-urls')
-            # self.data["name"] = self.my_monitor('name')
-            # self.data["total_err"] = self.my_monitor('total-err')
-            # # self.data["timeout"] = self.my_monitor('timeout')
-            # self.data["video_format_bitrate"]=self.my_monitor('video-format-bitrate')
-            # self.data["bytes_rd"]=self.my_monitor("bytes-rd")
-            # self.data["total_wait_time"]=self.my_monitor("total-wait-time")
             self.my_monitor_runtime()
        
             overall_video_rate=[]
 
+            print(self.data)
             # Iterate through the total wait time data
             for i in range(len(self.data["total_wait_time"])):
                 # If the status is 'Stopped', append 0 to the video rate dictionary and overall video rate
