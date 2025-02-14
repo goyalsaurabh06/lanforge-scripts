@@ -1049,13 +1049,20 @@ class Youtube(Realm):
 
     def updating_webui_runningjson(self,obj):
         data = {}
-        with open(self.ui_report_dir + "/../../Running_instances/{}_{}_running.json".format(self.host, self.test_name),
-                          'r') as file:
+        file_path = self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host, self.test_name)
+
+
+        # Wait until the file exists
+        while not os.path.exists(file_path):
+            time.sleep(1)  
+
+        with open(file_path, 'r') as file:
             data = json.load(file)
-            for key in obj:
-                data[key]=obj[key]
-        with open(self.ui_report_dir + "/../../Running_instances/{}_{}_running.json".format(self.host, self.test_name),
-                          'w') as file:
+
+        for key in obj:
+            data[key] = obj[key]
+
+        with open(file_path, 'w') as file:
             json.dump(data, file, indent=4)
     
 

@@ -1252,13 +1252,19 @@ class RealBrowserTest(Realm):
         
     def updating_webui_runningjson(self,obj):
         data = {}
-        with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host,self.test_name),
-                          'r') as file:
+        file_path = self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host, self.test_name)
+
+        # Wait until the file exists
+        while not os.path.exists(file_path):
+            time.sleep(1)  
+
+        with open(file_path, 'r') as file:
             data = json.load(file)
-            for key in obj:
-                data[key]=obj[key]
-        with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host, self.test_name),
-                          'w') as file:
+
+        for key in obj:
+            data[key] = obj[key]
+
+        with open(file_path, 'w') as file:
             json.dump(data, file, indent=4)
     
     def create_report(self,):
@@ -1906,7 +1912,7 @@ def main():
         parser.add_argument("--server_ip",type=str,default=None)
         parser.add_argument("--flask_ip",type=str,default=None)
         parser.add_argument('--help_summary', help='Show summary of what this script does', default=None)
-        parser.add_argument("--expected_passfail_value",help="Specify the expected urlcount value for pass/fail")
+        parser.add_argument("--expected_passfail_value",help="Specify the expected urlcount value for pass/fail",default=5)
         parser.add_argument("--device_csv_name",type=str,help="Specify the device csv name for pass/fail",default=None)
         parser.add_argument("--wait_time",type=int,help="Specify the time for configuration",default=60)
         parser.add_argument('--config',action='store_true',help='specify this flag whether to config devices or not')
@@ -2166,45 +2172,23 @@ def main():
                     
                     
                     obj.android_devices = obj.devices.get_devices()
-                    # Extract second part of resource IDs and sort them
-                    obj.resource_ids = ",".join(id.split(".")[1] for id in args.device_list.split(","))
-                    resource_ids_sm = obj.resource_ids
-                    resource_list = resource_ids_sm.split(',')            
-                    resource_set = set(resource_list)
-                    resource_list_sorted = sorted(resource_set)
-                    resource_ids_generated = ','.join(resource_list_sorted)
+                    eid = args.device_list.split(',')
+                    resource_ids = [int(item.split('.')[1]) for item in eid]
 
-                    # Convert resource IDs into a list of integers
-                    num_list = list(map(int, obj.resource_ids.split(',')))
+                    available_resources = []
+                    for device in obj.android_devices:
+                        parts = device.split('.')  
+                        if len(parts) >= 2:  
+                            extracted_value = int(parts[1])
 
-                    # Sort the list
-                    num_list.sort()
+                            if extracted_value in resource_ids:
+                                available_resources.append(extracted_value)
+                    available_resources = list(set(available_resources))
+                    resource_list_sorted = sorted(available_resources)
 
-                    # Join the sorted list back into a string
-                    sorted_string = ','.join(map(str, num_list))
-                    obj.resource_ids = sorted_string
+                    # print("checking obj.andriod devices")
+                    # print(obj.android_devices)
 
-                    # Extract the second part of each Android device ID and convert to integers
-                    modified_list = list(map(lambda item: int(item.split('.')[1]), obj.android_devices))
-                    modified_other_os_list = list(map(lambda item: int(item.split('.')[1]), obj.other_os_list))
-                    
-                    # Verify if all resource IDs are valid for Android devices
-                    resource_ids = [int(x) for x in sorted_string.split(',')]
-                    
-                    new_list_android = [item.split('.')[0] + '.' + item.split('.')[1] for item in obj.android_devices]
-
-                    resources_list = args.device_list.split(",")
-                    for element in resources_list:
-                        if element in new_list_android:
-                            for ele in obj.android_devices:
-                                if ele.startswith(element):
-                                    obj.android_list.append(ele)
-                        else:
-                            logger.info("{} device is not available".format(element))
-                    new_android = [int(item.split('.')[1]) for item in obj.android_list]
-
-                    resource_ids = sorted(new_android)
-                    available_resources=list(set(resource_ids))
                     # print("22222",available_resources)
                     
                 else:
@@ -2255,9 +2239,6 @@ def main():
 
                     obj.android_list = temp_device_list
                     
-                    # print("++++++++++++++++++++++++++++++++++++++++++++")
-                    # print("checking device list given through CLI")
-                    # print(obj.android_list)
         
                     if obj.android_list:
                         resource_ids = ",".join([item.split(".")[1] for item in obj.android_list])
@@ -2276,12 +2257,6 @@ def main():
                         print(obj.android_devices)
                         modified_list = list(map(lambda item: int(item.split('.')[1]), obj.android_devices))
                         
-                        # print("+++++++++++++++++++++++++++++++++++++++++")
-                        # print("checking modified list")
-                        # print(modified_list)
-                        # Check for invalid resource IDs
-                        # print("checking resource_ids1")
-                        # print(resource_ids1)
                         if not all(x in modified_list for x in resource_ids1):
                             logging.info("Verify Resource ids, as few are invalid...!!")
                             exit()
@@ -2350,6 +2325,8 @@ def main():
             available_resources= [int(n) for n in available_resources]
             available_resources.sort()
             available_resources_string=",".join([str(n) for n in available_resources])
+            print("checking available resources")
+            print(available_resources_string)
             obj.set_available_resources_ids(available_resources_string)
     
 
