@@ -771,13 +771,18 @@ class ZoomAutomation(Realm):
     
     def updating_webui_runningjson(self,obj):
         data = {}
-        with open(self.path + "/../../Running_instances/{}_{}_running.json".format(self.mgr_ip,self.testname),
-                          'r') as file:
+        file_path = self.path + "/../../Running_instances/{}_{}_running.json".format(self.mgr_ip, self.testname)
+        # Wait until the file exists
+        while not os.path.exists(file_path):
+            time.sleep(1)  
+
+        with open(file_path, 'r') as file:
             data = json.load(file)
-            for key in obj:
-                data[key]=obj[key]
-        with open(self.path + "/../../Running_instances/{}_{}_running.json".format(self.mgr_ip, self.testname),
-                          'w') as file:
+
+        for key in obj:
+            data[key] = obj[key]
+
+        with open(file_path, 'w') as file:
             json.dump(data, file, indent=4)
 
     def generate_report(self):
