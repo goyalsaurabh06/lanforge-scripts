@@ -1,2 +1,0 @@
-device_type,device_name,total_urls,uc_min,uc_avg,uc_max,total_err,time_to_target_urls,cx_name
-mobile,Near_Mobile_2,0,0.0,0.0,0.0,0,0.0,wlan0_http26_l4
