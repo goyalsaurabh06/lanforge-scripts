@@ -774,7 +774,9 @@ class ZoomAutomation(Realm):
         file_path = self.path + "/../../Running_instances/{}_{}_running.json".format(self.mgr_ip, self.testname)
         # Wait until the file exists
         while not os.path.exists(file_path):
-            time.sleep(1)  
+            logging.info("Waiting for the Running Json file to be created")
+            time.sleep(1)
+        logging.info("Running Json file created")  
 
         with open(file_path, 'r') as file:
             data = json.load(file)
