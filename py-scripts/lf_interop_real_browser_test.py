@@ -859,7 +859,7 @@ class RealBrowserTest(Realm):
         webui_mac = 0
 
         # Retrieve data from LANforge port Manager tab including alias, MAC address, mode, parent device, RX rate, TX rate, SSID, and signal strength
-        eid_data = self.json_get("ports?fields=alias,mac,mode,Parent Dev,ssid,signal,phantom,down")
+        eid_data = self.json_get("ports?fields=alias,mac,mode,Parent Dev,ssid,signal,phantom,down,ip")
         resource_ids = []
         if self.resource_ids:
     
@@ -879,7 +879,7 @@ class RealBrowserTest(Realm):
                                 resource_hw_data = self.json_get("/resource/" + i.split(".")[0] + "/" + i.split(".")[1])
                                 hw_version = resource_hw_data['resource']['hw version']
                                 # Check if the hardware version does not start with ('Win', 'Linux', 'Apple') and the resource ID is in resource_ids
-                                if not hw_version.startswith(('Win', 'Linux', 'Apple')) and alias[i]["parent dev"] == 'wiphy0' and alias[i]["down"] == False:
+                                if not hw_version.startswith(('Win', 'Linux', 'Apple')) and alias[i]["parent dev"] == 'wiphy0' and alias[i]["down"] == False and alias[i]['ip'] != '0.0.0.0':
                                     station_name.append(i)
                                     mac_address.append(alias[i].get("mac", "NA"))
                                     ssid.append(alias[i].get("ssid", "NA"))
@@ -889,7 +889,7 @@ class RealBrowserTest(Realm):
                                     webui_android+=1
 
 
-                                elif hw_version.startswith('Win') and alias[i]["parent dev"] == 'wiphy0' and alias[i]["down"] == False:
+                                elif hw_version.startswith('Win') and alias[i]["parent dev"] == 'wiphy0' and alias[i]["down"] == False and alias[i]['ip'] != '0.0.0.0':
                                     laptops.append(i)
                                     laptop_os_types.append("windows")
                                     mac_address.append(alias[i].get("mac", "NA"))
@@ -899,7 +899,7 @@ class RealBrowserTest(Realm):
                                     self.webui_ostypes.append("windows")
                                     webui_windows+=1
 
-                                elif hw_version.startswith('Linux') and alias[i]["parent dev"] == 'wiphy0' and alias[i]["down"] == False:
+                                elif hw_version.startswith('Linux') and alias[i]["parent dev"] == 'wiphy0' and alias[i]["down"] == False and alias[i]['ip'] != '0.0.0.0':
                                     laptops.append(i)
                                     laptop_os_types.append("linux")
                                     mac_address.append(alias[i].get("mac", "NA"))
@@ -908,7 +908,7 @@ class RealBrowserTest(Realm):
                                     self.webui_hostnames.append(resource_hw_data['resource'].get('hostname', 'NA'))
                                     self.webui_ostypes.append("Linux")
                                     webui_linux+=1
-                                elif hw_version.startswith('Apple') and alias[i]["parent dev"] == 'wiphy0' and alias[i]["down"] == False:
+                                elif hw_version.startswith('Apple') and alias[i]["parent dev"] == 'wiphy0' and alias[i]["down"] == False and alias[i]['ip'] != '0.0.0.0':
                                     laptops.append(i)
                                     laptop_os_types.append("macos")
                                     mac_address.append(alias[i].get("mac", "NA"))
