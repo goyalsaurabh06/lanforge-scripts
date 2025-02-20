@@ -527,6 +527,7 @@ import itertools
 import pandas as pd
 import traceback
 import json
+import shutil
 
 if sys.version_info[0] != 3:
     print("This script requires Python 3")
@@ -5554,6 +5555,21 @@ class L3VariableTime(Realm):
                 self.report.build_table_title()
                 self.report.set_table_dataframe(last_row)
                 self.report.build_table()
+    
+    def copy_reports_to_home_dir(self):
+        curr_path = self.result_dir
+        home_dir = os.path.expanduser("~")
+        out_folder_name = "WebGui_Reports"
+        new_path = os.path.join(home_dir, out_folder_name)
+        #webgui directory creation
+        if not os.path.exists(new_path):
+            os.makedirs(new_path)
+        test_name = self.test_name
+        test_name_dir = os.path.join(new_path,test_name)
+        # in webgui-reports DIR creating a directory with test name
+        if not os.path.exists(test_name_dir):
+            os.makedirs(test_name_dir)
+        shutil.copytree(curr_path, test_name_dir,dirs_exist_ok=True)
 
     # End of the main class.
 
@@ -7254,6 +7270,8 @@ INCLUDE_IN_README: False
         )
         df1 = pd.DataFrame(ip_var_test.overall)
         df1.to_csv('{}/overall_multicast_throughput.csv'.format(ip_var_test.result_dir), index=False)
+        # copying to home directory i.e home/user_name
+        ip_var_test.copy_reports_to_home_dir()
     if test_passed:
         ip_var_test.exit_success()
     else:
