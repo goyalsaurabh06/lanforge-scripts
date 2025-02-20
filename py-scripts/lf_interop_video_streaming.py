@@ -1428,6 +1428,22 @@ class VideoStreamingTest(Realm):
         #     df = pd.DataFrame(self.data)
         #     if self.dowebgui == True:
         #         df.to_csv('{}/rb_datavalues.csv'.format(self.result_dir), index=False)
+    def copy_reports_to_home_dir(self):
+        curr_path = self.result_dir 
+        home_dir = os.path.expanduser("~") # it returns the home directory [ base : home/username]
+        out_folder_name = "WebGui_Reports"
+        new_path = os.path.join(home_dir, out_folder_name)
+        #webgui directory creation
+        if not os.path.exists(new_path):
+            os.makedirs(new_path)
+        test_name = self.test_name
+        test_name_dir = os.path.join(new_path,test_name)
+        # in webgui-reports DIR creating a directory with test name
+        if not os.path.exists(test_name_dir):
+            os.makedirs(test_name_dir)
+        shutil.copytree(curr_path, test_name_dir,dirs_exist_ok=True)
+    
+
 
 def main():
     help_summary = '''\
@@ -2005,6 +2021,11 @@ def main():
     # Perform post-cleanup operations
     if args.postcleanup==True:
         obj.postcleanup()
+    
+    if args.dowebgui:
+        obj.copy_reports_to_home_dir()
+    
+
 
     # Clean up resources based on operating system types
     # if args.postcleanup==True:
