@@ -92,7 +92,6 @@ lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 if sys.version_info[0] != 3:
     print("This script requires Python 3")
     exit(1)
-
 realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
 
@@ -629,6 +628,7 @@ class Ping(Realm):
                     new_dict[sequence_numbers[seq]] = device_data['rtts'][seq]
                 # for seq,rtt in device_data['rtts'].items():
                 #     new_dict[((int(seq) -1) * interval + self.start_time).strftime("%d/%m/%Y %H:%M:%S")] = rtt
+        
                 data[device]['webui_rtts'] = new_dict
         with open(self.ui_report_dir + '/runtime_ping_data.json', 'w') as f:
             json.dump(data, f, indent=4)
@@ -947,6 +947,23 @@ class Ping(Realm):
 
         if(self.do_webUI):
             self.copy_reports(report_path_date_time)
+            print('report path name name name name name',report_path_date_time)
+    
+    def copy_reports_to_home_dir(self):
+        curr_path = self.ui_report_dir
+        home_dir = os.path.expanduser("~")
+        out_folder_name = "WebGui_Reports"
+        new_path = os.path.join(home_dir, out_folder_name)
+        #webgui directory creation
+        if not os.path.exists(new_path):
+            os.makedirs(new_path)
+        test_name = self.ui_report_dir.split("/")[-1]
+        test_name_dir = os.path.join(new_path,test_name)
+        # in webgui-reports DIR creating a directory with test name
+        if not os.path.exists(test_name_dir):
+            os.makedirs(test_name_dir)
+        shutil.copytree(curr_path, test_name_dir,dirs_exist_ok=True)
+
 
 
 def main():
@@ -1290,7 +1307,6 @@ connectivity problems.
         exit(0)
 
     ping.sta_list += ping.real_sta_list
-
     # creating generic endpoints
     ping.create_generic_endp()
 
@@ -1692,7 +1708,6 @@ connectivity problems.
         # print(t_end, abs(t_init - t_end).total_seconds())
         loop_timer += abs(t_init - t_end).total_seconds()
     # time.sleep(duration * 60)
-
     logging.info('Stopping the test')
     ping.stop_generic()
     
@@ -1710,6 +1725,9 @@ connectivity problems.
         ping.generate_report()
     else:
         ping.generate_report(report_path=args.local_lf_report_dir)
+    if ping.do_webUI:
+        # copying to home directory i.e home/user_name
+        ping.copy_reports_to_home_dir()
 
 if __name__ == "__main__":
     main()
