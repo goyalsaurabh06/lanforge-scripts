@@ -1753,6 +1753,20 @@ class Throughput(Realm):
             new_array = [0] + middle_elements + [array_size - 1]
             updated_array=[to_updated_array[index] for index in new_array]
         return updated_array
+    def copy_reports_to_home_dir(self):
+        curr_path = self.result_dir
+        home_dir = os.path.expanduser("~")
+        out_folder_name = "WebGui_Reports"
+        new_path = os.path.join(home_dir, out_folder_name)
+        #webgui directory creation
+        if not os.path.exists(new_path):
+            os.makedirs(new_path)
+        test_name = self.test_name
+        test_name_dir = os.path.join(new_path,test_name)
+        # in webgui-reports DIR creating a directory with test name
+        if not os.path.exists(test_name_dir):
+            os.makedirs(test_name_dir)
+        shutil.copytree(curr_path, test_name_dir,dirs_exist_ok=True)
 
 def main():
     help_summary = '''\
@@ -2084,7 +2098,9 @@ Copyright 2023 Candela Technologies Inc.
     if args.postcleanup:
         throughput.cleanup()
     throughput.generate_report(list(set(iterations_before_test_stopped_by_user)),incremental_capacity_list,data=all_dataframes,data1=to_run_cxs_len,report_path=throughput.result_dir)
+    if throughput.dowebgui:
+        # copying to home directory i.e home/user_name
+        throughput.copy_reports_to_home_dir()
 if __name__ == "__main__":
     main()
 
-    
