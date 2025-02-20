@@ -279,10 +279,10 @@ class Ping(Realm):
             self.real_sta_data_dict[sta_name] = real_devices.devices_data[sta_name]
 
         # Track number of selected devices
-        self.android = self.Devices.android
-        self.windows = self.Devices.windows
-        self.mac = self.Devices.mac
-        self.linux = self.Devices.linux
+        # self.android = self.Devices.android
+        # self.windows = self.Devices.windows
+        # self.mac = self.Devices.mac
+        # self.linux = self.Devices.linux
 
     def buildstation(self):
         logging.info('Creating Virtual Stations: {}'.format(self.sta_list))
@@ -1300,7 +1300,7 @@ connectivity problems.
     logging.info('Running the ping plotter test for {} minutes'.format(duration))
 
     ping.start_time = datetime.now()
-
+    time.sleep(2)
     # start generate endpoint
     ping.start_generic()
     time_counter = 0
@@ -1326,6 +1326,7 @@ connectivity problems.
         }
     while(loop_timer <= duration):
         t_init = datetime.now()
+        time.sleep(10)
         result_data = ping.get_results()
         # logging.info(result_data)
         if (args.virtual):
