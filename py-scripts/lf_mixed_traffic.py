@@ -107,6 +107,8 @@ import time
 import datetime
 import pandas as pd
 from multiprocessing import Process, Pipe
+import shutil
+
 # import traceback
 
 if sys.version_info[0] != 3:
@@ -2218,6 +2220,22 @@ class Mixed_Traffic(Realm):
             self.lf_report_mt.build_footer()
             self.lf_report_mt.write_html()
             self.lf_report_mt.write_pdf_with_timestamp(_page_size='A4', _orientation='Portrait')
+    
+    def copy_reports_to_home_dir(self):
+        curr_path = self.result_dir
+        home_dir = os.path.expanduser("~")
+        out_folder_name = "WebGui_Reports"
+        new_path = os.path.join(home_dir, out_folder_name)
+        #webgui directory creation
+        if not os.path.exists(new_path):
+            os.makedirs(new_path)
+        test_name = self.test_name
+        test_name_dir = os.path.join(new_path,test_name)
+        # in webgui-reports DIR creating a directory with test name
+        if not os.path.exists(test_name_dir):
+            os.makedirs(test_name_dir)
+        shutil.copytree(curr_path, test_name_dir,dirs_exist_ok=True)
+
 
 
 def main():
@@ -3214,6 +3232,9 @@ INCLUDE_IN_README: False
                         df1.to_csv('{}/overall_status.csv'.format(mixed_obj.result_dir), index=False)
                     except Exception as e:
                         logging.info("Error while wrinting status file for webui",e)
+
+                    # copying to home directory i.e home/user_name
+                    mixed_obj.copy_reports_to_home_dir()
             else:
                 print("No Test Selected. Please select the Tests.")
                 exit(0)
