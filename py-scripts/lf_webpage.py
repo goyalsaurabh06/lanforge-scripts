@@ -379,7 +379,6 @@ class HttpDownload(Realm):
             self.data["remaining_time"] = ["0"] * len(self.macid_list)
             df1 = pd.DataFrame(self.data)
             df1.to_csv("http_datavalues.csv",index=False)
-
     def monitor_for_runtime_csv(self, duration):
 
         time_now = datetime.now()
@@ -395,6 +394,8 @@ class HttpDownload(Realm):
         self.data_for_webui = {}
         self.data_for_webui["client"] = self.devices_list
         self.get_device_port_details()
+        max_bytes_rd = []
+        rx_rate_val = []
         while (current_time < endtime):
 
             # data in json format
@@ -408,10 +409,33 @@ class HttpDownload(Realm):
             uc_max_data = self.my_monitor('uc-max')
             uc_min_data = self.my_monitor('uc-min')
             url_times = self.my_monitor('total-urls')
+            rx_rate = self.my_monitor('rx rate')
+            bytes_rd = self.my_monitor('bytes-rd')
             self.data["MAC"] = self.macid_list
             self.data["SSID"] = self.ssid_list
             self.data["Channel"] = self.channel_list
             self.data["Mode"] = self.mode_list
+
+            if len(max_bytes_rd)==0:
+                max_bytes_rd = list(bytes_rd)
+            for i in range(len(max_bytes_rd)):
+                bytes_rd[i] = max(max_bytes_rd[i],bytes_rd[i])
+            max_bytes_rd = list(bytes_rd)
+            # bytes_rd = [round(x / 1000000,4) for x in bytes_rd] 
+            rx_rate_val.append(list(rx_rate))
+            #taking average of rx-rate from the previous and current in the first row
+            for j in range(len(rx_rate_val[0])):
+                rx_rate_sum = 0
+                non_zero = 0
+                for i in range(len(rx_rate_val)):
+                    if rx_rate_val[i][j] != 0:
+                        rx_rate_sum += rx_rate_val[i][j]
+                        non_zero += 1
+                rx_rate_avg = rx_rate_sum / non_zero if non_zero > 0 else 0 # updating each device's rx rate average in 1st row
+                rx_rate[j] = round(rx_rate_avg,4) 
+            # dataset = [round(x / 1000000,4) for x in dataset] #converting bps to mbps
+            
+
             if len(url_times) == len(self.devices_list):
 
                 self.data["status"] = ["RUNNING"] * len(self.devices_list)
@@ -419,12 +443,16 @@ class HttpDownload(Realm):
                 self.data["uc_min"] = uc_min_data
                 self.data["uc_max"] = uc_max_data
                 self.data["uc_avg"] = uc_avg_data
+                self.data["bytes_rd"] = bytes_rd
+                self.data["rx_rate"] = rx_rate
             else:
                 self.data["status"] = ["RUNNING"] * len(self.devices_list)
                 self.data["url_data"] = [0] * len(self.devices_list)
                 self.data["uc_avg"] = [0] * len(self.devices_list)
                 self.data["uc_max"] = [0] * len(self.devices_list)
                 self.data["uc_min"] = [0] * len(self.devices_list)
+                self.data["bytes_rd"] = [0] * len(self.devices_list)
+                self.data["rx_rate"] = [0] * len(self.devices_list)
             time_difference = abs(end_time - datetime.now())
             total_hours = time_difference.total_seconds() / 3600
             remaining_minutes = (total_hours % 1) * 60
@@ -743,7 +771,7 @@ class HttpDownload(Realm):
 
     def generate_report(self, date, num_stations, duration, test_setup_info, dataset, lis, bands, threshold_2g,
                         threshold_5g, threshold_both, dataset2,dataset1, #summary_table_value,
-                        result_data, test_rig,
+                        result_data, test_rig, rx_rate,
                         test_tag, dut_hw_version, dut_sw_version, dut_model_num, dut_serial_num, test_id,
                         test_input_infor, csv_outfile, _results_dir_name='webpage_test', report_path=''):
         if self.dowebgui == "True" and report_path == '':
@@ -948,7 +976,8 @@ class HttpDownload(Realm):
                         " Mode" : self.mode_list,
                         " No of times File downloaded " : dataset2,
                         " Average time taken to Download file (ms)" : dataset,
-                        " Bytes-rd (Mega Bytes) " : dataset1
+                        " Bytes-rd (Mega Bytes) " : dataset1,
+                        "Rx Rate (Mbps)"  : rx_rate
                     }
         dataframe1 = pd.DataFrame(dataframe)
         report.set_table_dataframe(dataframe1)
@@ -958,7 +987,21 @@ class HttpDownload(Realm):
         print("returned file {}".format(html_file))
         print(html_file)
         report.write_pdf()
-
+    
+    def copy_reports_to_home_dir(self):
+        curr_path = self.result_dir 
+        home_dir = os.path.expanduser("~") # it returns the home directory [ base : home/username]
+        out_folder_name = "WebGui_Reports"
+        new_path = os.path.join(home_dir, out_folder_name)
+        #webgui directory creation
+        if not os.path.exists(new_path):
+            os.makedirs(new_path)
+        test_name = self.test_name
+        test_name_dir = os.path.join(new_path,test_name)
+        # in webgui-reports DIR creating a directory with test name
+        if not os.path.exists(test_name_dir):
+            os.makedirs(test_name_dir)
+        shutil.copytree(curr_path, test_name_dir,dirs_exist_ok=True)
 
 def main():
     # set up logger
@@ -1250,13 +1293,19 @@ def main():
         else:
             time.sleep(args.duration)
         http.stop()
-        uc_avg_val = http.my_monitor('uc-avg')
-        url_times = http.my_monitor('total-urls')
-        rx_bytes_val = http.my_monitor('bytes-rd')
-        rx_rate_val = http.my_monitor('rx rate')
-        if args.dowebgui:
+        #taking http.data, which got updated in the monitor_for_runtime_csv method
+        if args.client_type=='Real':
+            uc_avg_val = http.data['uc_avg']
+            url_times = http.data['url_data']
+            rx_bytes_val = http.data['bytes_rd']
+            rx_rate_val = http.data['rx_rate']
+        else:
+            uc_avg_val = http.my_monitor('uc-avg')
+            url_times = http.my_monitor('total-urls')
+            rx_bytes_val = http.my_monitor('bytes-rd')
+            rx_rate_val = http.my_monitor('rx rate')
+        if args.dowebgui:   
             http.data_for_webui["url_data"] = url_times  # storing the layer-4 url data at the end of test
-
         if bands == "5G":
             list5G.extend(uc_avg_val)
             list5G_bytes.extend(rx_bytes_val)
@@ -1396,11 +1445,15 @@ def main():
     else:
         test_setup_info["File location (URLs from the File)"] = args.file_path
     #dataset = http.download_time_in_sec(result_data=result_data)
+    rx_rate = []
     for i in result_data:
         dataset = result_data[i]['dl_time']
         dataset2 = result_data[i]['url_times']
         bytes_rd = result_data[i]['bytes_rd']
-    dataset1 = [float(f"{(i / 1000000): .4f}") for i in bytes_rd]
+        rx_rate = result_data[i]['speed']
+    dataset1 = [round(x / 1000000,4) for x in bytes_rd]
+    rx_rate = [round(x / 1000000,4) for x in rx_rate]   #converting bps to mbps
+
     lis = []
     if bands == "Both":
         for i in range(1, args.num_stations*2 + 1):
@@ -1426,7 +1479,7 @@ def main():
                           bands=args.bands, threshold_2g=args.threshold_2g, threshold_5g=args.threshold_5g,
                           threshold_both=args.threshold_both, dataset2=dataset2,dataset1=dataset1,
                           #summary_table_value=summary_table_value, 
-                          result_data=result_data,
+                          result_data=result_data,rx_rate=rx_rate,
                           test_rig=args.test_rig, test_tag=args.test_tag, dut_hw_version=args.dut_hw_version,
                           dut_sw_version=args.dut_sw_version, dut_model_num=args.dut_model_num,
                           dut_serial_num=args.dut_serial_num, test_id=args.test_id,
@@ -1440,6 +1493,8 @@ def main():
         http.data_for_webui["remaining_time"] = http.data["remaining_time"]
         df1 = pd.DataFrame(http.data_for_webui)
         df1.to_csv('{}/http_datavalues.csv'.format(http.result_dir), index=False)
+
+        http.copy_reports_to_home_dir()
 
 if __name__ == '__main__':
     main()
