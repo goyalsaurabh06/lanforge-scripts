@@ -167,6 +167,7 @@ class FtpTest(LFCliBase):
         self.uc_max = []
         self.url_data = []
         self.bytes_rd = []
+        self.rx_rate = []
         self.channel_list = []
         self.mode_list = []
         self.cx_list = []
@@ -723,6 +724,8 @@ class FtpTest(LFCliBase):
         self.data = {}
         self.data["url_data"] = []
         temp_data = {}
+        max_bytes_rd = []
+        rx_rate_val = []
         while (current_time < endtime):
 
             # data in json format
@@ -743,8 +746,34 @@ class FtpTest(LFCliBase):
             self.data['UC-AVG']=self.uc_avg
             self.data['UC-MAX']=self.uc_max
             
+            rx_rate_val.append(list(self.rx_rate))
+            #calculating average for rx_rate 
+            for j in range(len(rx_rate_val[0])):
+                rx_rate_sum = 0
+                non_zero = 0
+                temp_store = []
+                for i in range(len(rx_rate_val)):
+                    if rx_rate_val[i][j] != 0:
+                        rx_rate_sum += rx_rate_val[i][j]
+                        non_zero += 1
+                rx_rate_average = rx_rate_sum / non_zero if non_zero > 0 else 0
+                self.rx_rate[j] = round(rx_rate_average,4) 
+            dataset = self.rx_rate
+            dataset = [round(x / 1000000,4) for x in dataset] #converting bps to mbps
+            self.rx_rate = dataset
+            self.data['Rx Rate'] = self.rx_rate
+            #calculating max in bytes rd
+            if len(max_bytes_rd)==0:
+                max_bytes_rd = list(self.bytes_rd)
+            for i in range(len(max_bytes_rd)):
+                self.bytes_rd[i] = max(max_bytes_rd[i],self.bytes_rd[i])
+            max_bytes_rd = list(self.bytes_rd)
+
+            self.data['Bytes RD'] = self.bytes_rd
+            
             if 'endpoint' in total_url_data.keys():
                 # list of layer 4 connections name
+                #temp_data can be used to check data as well as check whether the endpoint has data
                 if type(total_url_data['endpoint']) is dict:
                     temp_data[self.cx_list[0]] = total_url_data['endpoint']['total-urls']
                 else:
@@ -757,7 +786,8 @@ class FtpTest(LFCliBase):
                 if temp_data != {}:
 
                     self.data["status"] = ["RUNNING"] * len(list(temp_data.keys()))
-                    self.data["url_data"] = list(temp_data.values())
+                    # self.data["url_data"] = list(temp_data.values())
+                    self.data["url_data"] = self.url_data
                 else:
                     self.data["status"] = ["RUNNING"] * len(self.cx_list)
                     self.data["url_data"] = [0] * len(self.cx_list)
@@ -770,7 +800,7 @@ class FtpTest(LFCliBase):
                     int(remaining_minutes)) + " min" if int(total_hours) != 0 or int(
                     remaining_minutes) != 0 else '<1 min'][0]] * len(self.cx_list)
                 df1 = pd.DataFrame(self.data)
-                if self.dowebgui:
+                if self.dowebgui == "True":
                     df1.to_csv('{}/ftp_datavalues.csv'.format(self.result_dir), index=False)
                 if self.clients_type=='Real':
                     df1.to_csv("ftp_datavalues.csv",index=False)
@@ -792,10 +822,12 @@ class FtpTest(LFCliBase):
 
             current_time = datetime.now().isoformat()[0:19]
 
+
+
     # Created a function to get uc-avg,uc,min,uc-max,ssid and all other details of the devices
     def get_device_details(self):
         dataset = []
-        self.channel_list,self.mode_list,self.ssid_list,self.uc_avg,self.uc_max,self.url_data,self.uc_min,self.bytes_rd=[],[],[],[],[],[],[],[]
+        self.channel_list,self.mode_list,self.ssid_list,self.uc_avg,self.uc_max,self.url_data,self.uc_min,self.bytes_rd,self.rx_rate=[],[],[],[],[],[],[],[],[]
         if self.clients_type == "Real":
             response_port = self.json_get("/port/all")
             for interface in response_port['interfaces']:
@@ -812,45 +844,82 @@ class FtpTest(LFCliBase):
         uc_min_data = self.json_get("layer4/list?fields=uc-min")
         total_url_data = self.json_get("layer4/list?fields=total-urls")
         bytes_rd = self.json_get("layer4/list?fields=bytes-rd") 
-
-
+        rx_rate = self.json_get("layer4/list?fields=rx rate")
+        status = self.json_get("layer4/list?fields=status")
         if 'endpoint' in uc_avg_data.keys():
             # list of layer 4 connections name
             if type(uc_avg_data['endpoint']) is dict:
                 self.uc_avg.append(uc_avg_data['endpoint']['uc-avg'])
                 self.uc_max.append(uc_max_data['endpoint']['uc-max'])
                 self.uc_min.append(uc_min_data['endpoint']['uc-min'])
+                self.rx_rate.append(rx_rate['endpoint']['rx rate'])
                 #reading uc-avg data in json format
                 self.url_data.append(total_url_data['endpoint']['total-urls'])
                 dataset.append(bytes_rd['endpoint']['bytes-rd'])
                 self.bytes_rd=[float(f"{(i / 1000000): .4f}") for i in dataset]            
             else:
-                for cx in uc_avg_data['endpoint']:
-                    for CX in cx:
-                        for created_cx in self.cx_list:
-                            if CX == created_cx:
-                                self.uc_avg.append(cx[CX]['uc-avg'])
-                for cx in uc_max_data['endpoint']:
-                    for CX in cx:
-                        for created_cx in self.cx_list:
-                            if CX == created_cx:
-                                self.uc_max.append(cx[CX]['uc-max'])
-                for cx in uc_min_data['endpoint']:
-                    for CX in cx:
-                        for created_cx in self.cx_list:
-                            if CX == created_cx:
-                                self.uc_min.append(cx[CX]['uc-min'])
-                for cx in total_url_data['endpoint']:
-                    for CX in cx:
-                        for created_cx in self.cx_list:
-                            if CX == created_cx:                
-                                self.url_data.append(cx[CX]['total-urls'])
-                for cx in bytes_rd['endpoint']:
-                    for CX in cx:
-                        for created_cx in self.cx_list:
-                            if CX == created_cx:    
-                                dataset.append(cx[CX]['bytes-rd'])
-                                self.bytes_rd=[float(f"{(i / 1000000): .4f}") for i in dataset]
+                for created_cx in self.cx_list:
+                    for cx in uc_avg_data['endpoint']:
+                        if created_cx in cx:
+                            self.uc_avg.append(cx[created_cx]['uc-avg'])
+                            break  
+    
+                    for cx in uc_max_data['endpoint']:
+                        if created_cx in cx:
+                            self.uc_max.append(cx[created_cx]['uc-max'])
+                            break
+                    
+                    for cx in uc_min_data['endpoint']:
+                        if created_cx in cx:
+                            self.uc_min.append(cx[created_cx]['uc-min'])
+                            break
+                    
+                    for cx in total_url_data['endpoint']:
+                        if created_cx in cx:
+                            self.url_data.append(cx[created_cx]['total-urls'])
+                            break
+                    
+                    for cx in bytes_rd['endpoint']:
+                        if created_cx in cx:
+                            dataset.append(cx[created_cx]['bytes-rd'])
+                            break  
+
+                    for cx in rx_rate['endpoint']:
+                        if created_cx in cx:
+                            self.rx_rate.append(cx[created_cx]['rx rate'])
+                            break
+                self.bytes_rd=[float(f"{(i / 1000000): .4f}") for i in dataset]
+                # for cx in uc_avg_data['endpoint']:
+                #     for CX in cx:
+                #         for created_cx in self.cx_list:
+                #             if CX == created_cx:
+                #                 self.uc_avg.append(cx[CX]['uc-avg'])
+                # for cx in uc_max_data['endpoint']:
+                #     for CX in cx:
+                #         for created_cx in self.cx_list:
+                #             if CX == created_cx:
+                #                 self.uc_max.append(cx[CX]['uc-max'])
+                # for cx in uc_min_data['endpoint']:
+                #     for CX in cx:
+                #         for created_cx in self.cx_list:
+                #             if CX == created_cx:
+                #                 self.uc_min.append(cx[CX]['uc-min'])
+                # for cx in total_url_data['endpoint']:
+                #     for CX in cx:
+                #         for created_cx in self.cx_list:
+                #             if CX == created_cx:                
+                #                 self.url_data.append(cx[CX]['total-urls'])
+                # for cx in bytes_rd['endpoint']:
+                #     for CX in cx:
+                #         for created_cx in self.cx_list:
+                #             if CX == created_cx:    
+                #                 dataset.append(cx[CX]['bytes-rd'])
+                #                 self.bytes_rd=[float(f"{(i / 1000000): .4f}") for i in dataset]
+                # for cx in rx_rate['endpoint']:
+                #     for CX in cx:
+                #         for created_cx in self.cx_list:
+                #             if CX == created_cx:                
+                #                 self.rx_rate.append(cx[CX]['rx rate'])
 
 
     def my_monitor(self):
@@ -950,6 +1019,30 @@ class FtpTest(LFCliBase):
                 df1.to_csv('{}/ftp_datavalues.csv'.format(self.result_dir), index=False)
             logger.info("No layer 4-7 endpoints")
             exit()
+    
+    def my_monitor_for_real_devices(self):
+        print('realdevices monitor is called')
+        self.channel_list, self.mode_list, self.ssid_list = [], [], []
+        response_port = self.json_get("/port/all")
+        for interface in response_port['interfaces']:
+            for port, port_data in interface.items():
+                if port in self.input_devices_list:
+                    self.channel_list.append(str(port_data['channel']))
+                    self.mode_list.append(str(port_data['mode']))
+                    self.ssid_list.append(str(port_data['ssid']))
+        if self.dowebgui:
+            self.data_for_webui = {
+                "client": self.cx_list,
+                "url_data": self.url_data,
+                "uc_avg": self.uc_avg,
+                "start_time": self.data["start_time"],
+                "end_time": self.data["end_time"],
+                "remaining_time": [0] * len(self.cx_list)
+            }
+        
+        logger.info("Monitoring complete")
+        # exit()
+
    
     # The below method is useful when traffic is to be run for one url and stop - virtual clients and when pass/fail criteria is required
     # def my_monitor(self, time1):
@@ -1427,7 +1520,6 @@ class FtpTest(LFCliBase):
         # To move ftp_datavalues.csv in report folder  
         report_path_date_time = self.report.get_path_date_time()
         shutil.move('ftp_datavalues.csv',report_path_date_time)
-
         self.report.set_title("FTP Test")
         self.report.set_date(date)
         self.report.build_banner()
@@ -1570,7 +1662,8 @@ class FtpTest(LFCliBase):
                         " Mode" : self.mode_list,
                         " No of times File downloaded " : self.url_data,
                         " Time Taken to Download file (ms)" : self.uc_avg,
-                        " Bytes-rd (Mega Bytes)" : self.bytes_rd
+                        " Bytes-rd (Mega Bytes)" : self.bytes_rd,
+                        "RX RATE (Mbps)" : self.rx_rate
                     }
         dataframe1 = pd.DataFrame(dataframe)
         self.report.set_table_dataframe(dataframe1)
@@ -1766,6 +1859,22 @@ class FtpTest(LFCliBase):
                 csv_outfile, current_time)
             csv_outfile = self.report.file_add_path(csv_outfile)
             logger.info("csv output file : {}".format(csv_outfile))
+        
+    def copy_reports_to_home_dir(self):
+        curr_path = self.result_dir
+        home_dir = os.path.expanduser("~")
+        out_folder_name = "WebGui_Reports"
+        new_path = os.path.join(home_dir, out_folder_name)
+        #webgui directory creation
+        if not os.path.exists(new_path):
+            os.makedirs(new_path)
+        test_name = self.test_name
+        test_name_dir = os.path.join(new_path,test_name)
+        # in webgui-reports DIR creating a directory with test_name
+        if not os.path.exists(test_name_dir):
+            os.makedirs(test_name_dir)
+        shutil.copytree(curr_path, test_name_dir,dirs_exist_ok=True)
+
 
 
 def main():
@@ -2036,8 +2145,11 @@ INCLUDE_IN_README: False
                 # to fetch runtime values during the execution and fill the csv.
                 if args.dowebgui or args.clients_type=="Real":
                     obj.monitor_for_runtime_csv()
+                    obj.my_monitor_for_real_devices()
                 else:
                     time.sleep(args.traffic_duration)
+                    obj.my_monitor()
+
                 # # return list of download/upload completed time stamp
                 # time_list = obj.my_monitor(time1)
                 # # print("pass_fail_duration - time_list:{time_list}".format(time_list=time_list))
@@ -2050,7 +2162,7 @@ INCLUDE_IN_README: False
                 # # print("pass_fail_duration - ftp_data:{ftp_data}".format(ftp_data=ftp_data))
                 obj.stop()
                 print("Traffic stopped running")
-                obj.my_monitor()
+                
                 obj.postcleanup()
                 time2 = datetime.now()
                 print("Test ended at",time2)
@@ -2088,6 +2200,8 @@ INCLUDE_IN_README: False
 
         df1 = pd.DataFrame(obj.data_for_webui)
         df1.to_csv('{}/ftp_datavalues.csv'.format(obj.result_dir), index=False)
+        # copying to home directory i.e home/user_name
+        obj.copy_reports_to_home_dir()
 
 if __name__ == '__main__':
     main()
