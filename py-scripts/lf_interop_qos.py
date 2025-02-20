@@ -65,7 +65,7 @@ import copy
 import logging
 import json
 import pandas as pd
-
+import shutil
 logger = logging.getLogger(__name__)
 
 if sys.version_info[0] != 3:
@@ -1348,6 +1348,21 @@ class ThroughputQOS(Realm):
                 if tos in self.tos and len(self.real_time_data[cx][tos]['time']) != 0:
                     cx_df = pd.DataFrame(self.real_time_data[cx][tos])
                     cx_df.to_csv('{}/{}_{}_realtime_data.csv'.format(report.path_date_time, cx, tos), index=False)
+    def copy_reports_to_home_dir(self):
+        curr_path = self.result_dir
+        home_dir = os.path.expanduser("~")
+        out_folder_name = "WebGui_Reports"
+        new_path = os.path.join(home_dir, out_folder_name)
+        #webgui directory creation
+        if not os.path.exists(new_path):
+            os.makedirs(new_path)
+        test_name = self.test_name
+        test_name_dir = os.path.join(new_path,test_name)
+        # in webgui-reports DIR creating a directory with test name
+        if not os.path.exists(test_name_dir):
+            os.makedirs(test_name_dir)
+        shutil.copytree(curr_path, test_name_dir,dirs_exist_ok=True)
+
 
 def main():
     help_summary = '''\
@@ -1583,6 +1598,9 @@ def main():
         )
         df1 = pd.DataFrame(throughput_qos.overall)
         df1.to_csv('{}/overall_throughput.csv'.format(args.result_dir, ), index=False)
+
+        # copying to home directory i.e home/user_name
+        throughput_qos.copy_reports_to_home_dir()
 
 
 
