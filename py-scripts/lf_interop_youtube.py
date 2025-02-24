@@ -1374,7 +1374,7 @@ class Youtube(Realm):
             endp_status = generic_endpoint["endpoint"].get("status", "")
             
             
-            if endp_status not in ["Stopped", "WAITING"]:
+            if endp_status not in ["Stopped", "WAITING","NO-CX"]:
                 return False
 
         return True
