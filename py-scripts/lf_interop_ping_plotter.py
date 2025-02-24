@@ -277,10 +277,11 @@ class Ping(Realm):
             self.real_sta_data_dict[sta_name] = real_devices.devices_data[sta_name]
 
         # Track number of selected devices
-        # self.android = self.Devices.android
-        # self.windows = self.Devices.windows
-        # self.mac = self.Devices.mac
-        # self.linux = self.Devices.linux
+        if not self.do_webUI:
+            self.android = self.Devices.android
+            self.windows = self.Devices.windows
+            self.mac = self.Devices.mac
+            self.linux = self.Devices.linux
 
     def buildstation(self):
         logging.info('Creating Virtual Stations: {}'.format(self.sta_list))
@@ -1310,7 +1311,6 @@ connectivity problems.
     logging.info('Running the ping plotter test for {} minutes'.format(duration))
 
     ping.start_time = datetime.now()
-    time.sleep(2)
     # start generate endpoint
     ping.start_generic()
     time_counter = 0
@@ -1336,8 +1336,20 @@ connectivity problems.
         }
     while(loop_timer <= duration):
         t_init = datetime.now()
-        time.sleep(10)
-        result_data = ping.get_results()
+        try:
+            result_data = ping.get_results()
+            if (type(result_data) == dict):
+                if ('UNKNOWN' in result_data['name']):
+                    raise ValueError("There are no valid generic endpoints to run the test")
+            else:
+                keys = [list(d.keys())[0] for d in result_data]
+                keys = [key for key in keys if 'UNKNOWN' not in key]
+                if len(keys) == 0:
+                    raise ValueError("There are no valid generic endpoints to run the test")
+        except ValueError as e:
+                logging.info(result_data)
+                print(e)
+                exit(0)
         # logging.info(result_data)
         if (args.virtual):
             ports_data_dict = ping.json_get('/ports/all/')['interfaces']
@@ -1516,6 +1528,14 @@ connectivity problems.
                     # logging.info(current_device_data)
                     if (station in result_data['name']):
                         # logging.info(result_data['last results'].split('\n'))
+                        if len(result_data['last results']) != 0:
+                                result= result_data['last results'].split('\n')
+                                if len(result)>1:
+                                    last_result=result[-2]
+                                else:
+                                    last_result=result[-1]
+                        else:
+                            last_result=""
                         ping.result_json[station] = {
                             'command': result_data['command'],
                             'sent': result_data['tx pkts'],
@@ -1533,7 +1553,7 @@ connectivity problems.
                             'name': [current_device_data['user'] if current_device_data['user'] != '' else current_device_data['hostname']][0],
                             'os': ['Windows' if 'Win' in current_device_data['hw version'] else 'Linux' if 'Linux' in current_device_data['hw version'] else 'Mac' if 'Apple' in current_device_data['hw version'] else 'Android'][0],
                             'remarks': [],
-                            'last_result': [result_data['last results'].split('\n')[-2] if len(result_data['last results']) != 0 else ""][0]
+                            'last_result': [last_result][0]
                         }
                         ping_stats[station]['sent'].append(result_data['tx pkts'])
                         ping_stats[station]['received'].append(result_data['rx pkts'])
@@ -1605,7 +1625,26 @@ connectivity problems.
                     for ping_device in result_data:
                         ping_endp, ping_data = list(ping_device.keys())[
                             0], list(ping_device.values())[0]
+                        eid=str(ping_data['eid'])
+                        ping.sta_list=list(ping.sta_list)
+                        if 'UNKNOWN' in ping_endp:
+                            device_id=eid.split('.')[0]+'.'+eid.split('.')[1]
+                            if (device_id == station.split('.')[0]+'.'+station.split('.')[1]):
+                                ping.sta_list.remove(station)
+                                ping.real_sta_list.remove(station)
+                            logger.info(result_data)
+                            logger.info("Excluding {} from report as there is no valid generic endpoint creation during the test(UNKNOWN CX)".format(device_id))
+                            continue
                         if (station in ping_endp):
+                            if len(ping_data['last results']) != 0:
+                                result= ping_data['last results'].split('\n')
+                                if len(result)>1:
+                                    last_result=result[-2]
+                                else:
+                                    last_result=result[-1]
+                            else:
+                                last_result=""
+
                             ping.result_json[station] = {
                                 'command': ping_data['command'],
                                 'sent': ping_data['tx pkts'],
@@ -1623,7 +1662,7 @@ connectivity problems.
                                 'name': [current_device_data['user'] if current_device_data['user'] != '' else current_device_data['hostname']][0],
                                 'os': ['Windows' if 'Win' in current_device_data['hw version'] else 'Linux' if 'Linux' in current_device_data['hw version'] else 'Mac' if 'Apple' in current_device_data['hw version'] else 'Android'][0],
                                 'remarks': [],
-                                'last_result': [ping_data['last results'].split('\n')[-2] if len(ping_data['last results']) != 0 else ""][0]
+                                'last_result': [last_result][0]
                             }
                             ping_stats[station]['sent'].append(ping_data['tx pkts'])
                             ping_stats[station]['received'].append(ping_data['rx pkts'])
@@ -1708,14 +1747,14 @@ connectivity problems.
 
     logging.info(ping.result_json)
 
+    # print('----',rtts)
+    ping.generate_report()
     if(ping.do_webUI):
         ping.set_webUI_stop()
-    # print('----',rtts)
     # station post cleanup
     if(not args.no_cleanup):
         ping.cleanup()
 
-    ping.generate_report()
     # copying to home directory i.e home/user_name
     ping.copy_reports_to_home_dir()
     
