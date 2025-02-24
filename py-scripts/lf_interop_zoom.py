@@ -422,7 +422,7 @@ class ZoomAutomation(Realm):
             endp_status = generic_endpoint["endpoint"].get("status", "")
             
             
-            if endp_status not in ["Stopped", "WAITING"]:
+            if endp_status not in ["Stopped", "WAITING","NO-CX"]:
                 return False
 
         return True
@@ -612,9 +612,11 @@ class ZoomAutomation(Realm):
 
         self.set_start_time()  
         logging.info(f"TEST WILL BE STARTING")
+        logging.info(f"End time of the test {self.end_time}")
 
     
         while datetime.now(self.tz) < self.end_time or not self.check_gen_cx():
+            logging.info("Monitoring The Test")
             
             time.sleep(5)
         
