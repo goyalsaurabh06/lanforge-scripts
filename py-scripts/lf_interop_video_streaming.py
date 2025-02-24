@@ -925,7 +925,7 @@ class VideoStreamingTest(Realm):
        
             overall_video_rate=[]
 
-            print(self.data)
+            #print(self.data)
             # Iterate through the total wait time data
             for i in range(len(self.data["total_wait_time"])):
                 # If the status is 'Stopped', append 0 to the video rate dictionary and overall video rate
@@ -1140,6 +1140,7 @@ class VideoStreamingTest(Realm):
         total_err =  self.data["total_err"]
         total_buffer = self.data["total_buffer"]
         max_bytes_rd_list = []
+        avg_rx_rate_list = []
         # Iterate through the length of cx_order_list
         for iter in range(len(iterations_before_test_stopped_by_user)):
             data_set_in_graph,wait_time_data,devices_on_running_state,device_names_on_running=[],[],[],[]
@@ -1147,6 +1148,8 @@ class VideoStreamingTest(Realm):
             max_video_rate,min_video_rate,avg_video_rate=[],[],[]
             total_url_data,rssi_data=[],[]
             trimmed_data_set_in_graph=[]
+            max_bytes_rd_list = []
+            avg_rx_rate_list = []
              # Retrieve data for the previous iteration, if it's not the first iteration
             if iter !=0:
                 before_data_iter=realtime_dataset[realtime_dataset['iteration']==iter]
@@ -1179,12 +1182,22 @@ class VideoStreamingTest(Realm):
                 max_bytes_rd = max(filtered_df[[col for col in filtered_df.columns if "bytes_rd" in col][0]].values.tolist())
                 max_bytes_rd_list.append(max_bytes_rd)
 
+                # Calculate and append the average RX rate in Mbps
+                rx_rate_values = filtered_df[[col for col in filtered_df.columns if "rx rate" in col][0]].values.tolist()
+                avg_rx_rate_list.append(round((sum(rx_rate_values) / len(rx_rate_values)) / 1_000_000, 2))  # Convert bps to Mbps
+
+
+
+
                 if iter !=0:
                     # Calculate the difference in total URLs between the current and previous iterations
                     total_url_data.append(abs(filtered_df[[col for col in  filtered_df.columns if "total_urls" in col][0]].values.tolist()[-1]-before_filtered_df[[col for col in  before_filtered_df.columns if "total_urls" in col][0]].values.tolist()[-1]))
                 else:
                     # Append the total URLs for the first iteration
                     total_url_data.append(filtered_df[[col for col in  filtered_df.columns if "total_urls" in col][0]].values.tolist()[-1])
+            print("checking devices on running state")
+            print("===================================")
+            print(devices_on_running_state)
             
             # Append the wait time data to the list for creating the wait time bar graph
             devices_data_to_create_wait_time_bar_graph.append(wait_time_data)
@@ -1328,8 +1341,12 @@ class VideoStreamingTest(Realm):
                 " Total Errors " : total_err[:created_incremental_values[iter]],
                 " RSSI (dbm)" : ['' if n == 0 else '-' + str(n) + " dbm" for n in rssi_data[:created_incremental_values[iter]]],
                 " Link Speed ": tx_rate[:created_incremental_values[iter]],
-                "Bytes Read (bytes)": max_bytes_rd_list  # Added here
+                "Bytes Read (bytes)": max_bytes_rd_list,  # Added here
+                'Average Rx Rate (Mbps)':avg_rx_rate_list
             }
+            print("================================")
+            print(max_bytes_rd_list)
+            print(avg_rx_rate_list)
             dataframe1 = pd.DataFrame(dataframe)
             report.set_table_dataframe(dataframe1)
             report.build_table()
