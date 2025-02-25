@@ -942,195 +942,202 @@ class RealBrowserTest(Realm):
 
     def get_stats(self, duration, file_path, iteration_number, resource_list_sorted, cx_order_list, i, initial_target_urls):
 
-        test_time = timedelta(minutes=duration)
-        end_time = datetime.now() + test_time
+        try:
 
-        est_end_time = end_time + timedelta(minutes=1)
 
-        logging.info(f"End time of the Test {end_time}")
-        logging.info(f"Estimated End time of the Test {est_end_time}")
+            test_time = timedelta(minutes=duration)
+            end_time = datetime.now() + test_time
 
-        headers = ['device_type', 'device_name', 'total_urls', 'uc_min', 'uc_avg', 'uc_max', 'total_err', 'time_to_target_urls', 'cx_name']
+            est_end_time = end_time + timedelta(minutes=1)
 
-        last_data = []
-        mobile_data = {}
+            logging.info(f"End time of the Test {end_time}")
+            logging.info(f"Estimated End time of the Test {est_end_time}")
 
-        # Dictionary to track time taken for each device to reach the next target
-        time_taken = {}
+            headers = ['device_type', 'device_name', 'total_urls', 'uc_min', 'uc_avg', 'uc_max', 'total_err', 'time_to_target_urls', 'cx_name']
 
-        self.original_dir = os.getcwd()
-
-        if self.dowebgui:
-            os.chdir(self.result_dir)
-
-        start_time = datetime.now()
-        while (datetime.now() <= end_time or (not self.check_gen_cx())):
-            if (datetime.now() > est_end_time):
-                break
-            if datetime.now() > end_time and self.stop_mobile_cx:
-                self.http_profile.stop_cx()
-                self.stop_mobile_cx = False
             last_data = []
-            # Open the CSV file in write mode inside the loop to overwrite previous data
-            with open('real_time_data.csv', mode='w', newline='') as file:
-                writer = csv.DictWriter(file, fieldnames=headers)
+            mobile_data = {}
 
-                # Write the CSV headers only once, at the beginning
-                writer.writeheader()
+            # Dictionary to track time taken for each device to reach the next target
+            time_taken = {}
 
-                if (self.laptop_stats is not None):
-                    for laptop, stats in self.laptop_stats.items():
+            self.original_dir = os.getcwd()
 
-                        if laptop not in self.device_targets:
-                            self.device_targets[laptop] = initial_target_urls
+            if self.dowebgui:
+                os.chdir(self.result_dir)
 
-                        # Check if the device reaches the current target URL count
-                        if stats.get('total_urls', 0) >= self.device_targets[laptop] and laptop not in time_taken:
-                            # time_taken[laptop] = (datetime.now() - start_time).total_seconds()
-                            # time_taken[laptop] = (datetime.now() - stats.get('start_time',start_time)).total_seconds()
-                            time_taken[laptop] = (datetime.now() - datetime.fromisoformat(stats.get("start_time", start_time.isoformat()))).total_seconds()
+            start_time = datetime.now()
+            while (datetime.now() <= end_time or (not self.check_gen_cx())):
+                if (datetime.now() > est_end_time):
+                    break
+                if datetime.now() > end_time and self.stop_mobile_cx:
+                    self.http_profile.stop_cx()
+                    self.stop_mobile_cx = False
+                last_data = []
+                # Open the CSV file in write mode inside the loop to overwrite previous data
+                with open('real_time_data.csv', mode='w', newline='') as file:
+                    writer = csv.DictWriter(file, fieldnames=headers)
 
-                        row = {
-                            'device_type': 'laptop',
-                            'device_name': stats.get('name', 'NA'),
-                            'total_urls': stats.get('total_urls', 0),
-                            'uc_min': stats.get('uc_min', 0.0),
-                            'uc_avg': stats.get('uc_avg', 0.0),
-                            'uc_max': stats.get('uc_max', 0.0),
-                            'total_err': stats.get('total_err', 0),
-                            'time_to_target_urls': time_taken.get(laptop, 0.0),
-                            'cx_name': "NA",
-                        }
-                        # Check if the device reaches the current target URL count
-                        if stats.get('total_urls', 0) >= self.device_targets[laptop] and laptop not in time_taken:
-                            # time_taken[laptop] = (datetime.now() - start_time).total_seconds()
-                            # time_taken[laptop] = (datetime.now() - stats.get('start_time',start_time)).total_seconds()
-                            time_taken[laptop] = (datetime.now() - datetime.fromisoformat(stats.get("start_time", start_time.isoformat()))).total_seconds()
-                            row['time_to_target_urls'] = time_taken[laptop]
-                        writer.writerow(row)
-                        last_data.append(row)  # Store the latest row in last_data
+                    # Write the CSV headers only once, at the beginning
+                    writer.writeheader()
 
-                # Collect data for mobile devices
-                if (True):
-                    mobile_data = self.local_realm.json_get("layer4/%s/list?fields=name,status,total-urls,uc-min,uc-avg,uc-max,total-err,bad-url" %
-                                                            (','.join(self.created_cx.keys())))
+                    if (self.laptop_stats is not None):
+                        for laptop, stats in self.laptop_stats.items():
 
-                    total_urls = []
-                    uc_min = []
-                    uc_avg = []
-                    uc_max = []
-                    total_err = []
-                    hostnames = []
-                    cx_names = []
+                            if laptop not in self.device_targets:
+                                self.device_targets[laptop] = initial_target_urls
 
-                    # Check if multiple CX endpoints are created
-                    if len(self.created_cx.keys()) > 1:
-                        data = mobile_data['endpoint']
-                        for endpoint in data:
-                            for key, value in endpoint.items():
-                                if True:
-                                    cx_name = value.get('name', 'NA')
-                                    # Apply the regex to extract the number after 'http' from the device name
-                                    match = re.search(r'http(\d+)', cx_name)
-                                    res_no = match.group(1) if match else 'NA'  # Get the number after 'http' or 'NA' if not found
+                            # Check if the device reaches the current target URL count
+                            if stats.get('total_urls', 0) >= self.device_targets[laptop] and laptop not in time_taken:
+                                # time_taken[laptop] = (datetime.now() - start_time).total_seconds()
+                                # time_taken[laptop] = (datetime.now() - stats.get('start_time',start_time)).total_seconds()
+                                time_taken[laptop] = (datetime.now() - datetime.fromisoformat(stats.get("start_time", start_time.isoformat()))).total_seconds()
 
-                                    hostname = self.local_realm.json_get("resource/1/%s/list?fields=user" % (res_no))
-                                    hostname = hostname["resource"]["user"]
+                            row = {
+                                'device_type': 'laptop',
+                                'device_name': stats.get('name', 'NA'),
+                                'total_urls': stats.get('total_urls', 0),
+                                'uc_min': stats.get('uc_min', 0.0),
+                                'uc_avg': stats.get('uc_avg', 0.0),
+                                'uc_max': stats.get('uc_max', 0.0),
+                                'total_err': stats.get('total_err', 0),
+                                'time_to_target_urls': time_taken.get(laptop, 0.0),
+                                'cx_name': "NA",
+                            }
+                            # Check if the device reaches the current target URL count
+                            if stats.get('total_urls', 0) >= self.device_targets[laptop] and laptop not in time_taken:
+                                # time_taken[laptop] = (datetime.now() - start_time).total_seconds()
+                                # time_taken[laptop] = (datetime.now() - stats.get('start_time',start_time)).total_seconds()
+                                time_taken[laptop] = (datetime.now() - datetime.fromisoformat(stats.get("start_time", start_time.isoformat()))).total_seconds()
+                                row['time_to_target_urls'] = time_taken[laptop]
+                            writer.writerow(row)
+                            last_data.append(row)  # Store the latest row in last_data
 
-                                    # pass_url = (value.get('total-urls', 0) - value.get('total-err',0))
+                    # Collect data for mobile devices
+                    if (True):
+                        mobile_data = self.local_realm.json_get("layer4/%s/list?fields=name,status,total-urls,uc-min,uc-avg,uc-max,total-err,bad-url" %
+                                                                (','.join(self.created_cx.keys())))
 
-                                    pass_url = value.get('total-urls', 0)
+                        total_urls = []
+                        uc_min = []
+                        uc_avg = []
+                        uc_max = []
+                        total_err = []
+                        hostnames = []
+                        cx_names = []
 
-                                    # Append the values for each mobile device
-                                    total_urls.append(pass_url)
-                                    uc_min.append(value.get('uc-min', 0.0))
-                                    uc_avg.append(value.get('uc-avg', 0.0))
-                                    uc_max.append(value.get('uc-max', 0.0))
-                                    total_err.append(value.get('total-err', 0))
-                                    hostnames.append(hostname)
+                        # Check if multiple CX endpoints are created
+                        if len(self.created_cx.keys()) > 1:
+                            data = mobile_data['endpoint']
+                            for endpoint in data:
+                                for key, value in endpoint.items():
+                                    if True:
+                                        cx_name = value.get('name', 'NA')
+                                        # Apply the regex to extract the number after 'http' from the device name
+                                        match = re.search(r'http(\d+)', cx_name)
+                                        res_no = match.group(1) if match else 'NA'  # Get the number after 'http' or 'NA' if not found
 
-                                    cx_names.append(cx_name)
-                                    # Initialize target URL for the first iteration if not set
-                                    if hostname not in self.device_targets:
-                                        self.device_targets[hostname] = initial_target_urls
+                                        hostname = self.local_realm.json_get("resource/1/%s/list?fields=user" % (res_no))
+                                        hostname = hostname["resource"]["user"]
 
-                                    # Check if the mobile device reaches the current target URL count
+                                        # pass_url = (value.get('total-urls', 0) - value.get('total-err',0))
 
-                                    if (pass_url >= self.device_targets[hostname] and hostname not in time_taken):
+                                        pass_url = value.get('total-urls', 0)
+
+                                        # Append the values for each mobile device
+                                        total_urls.append(pass_url)
+                                        uc_min.append(value.get('uc-min', 0.0))
+                                        uc_avg.append(value.get('uc-avg', 0.0))
+                                        uc_max.append(value.get('uc-max', 0.0))
+                                        total_err.append(value.get('total-err', 0))
+                                        hostnames.append(hostname)
+
+                                        cx_names.append(cx_name)
+                                        # Initialize target URL for the first iteration if not set
+                                        if hostname not in self.device_targets:
+                                            self.device_targets[hostname] = initial_target_urls
+
+                                        # Check if the mobile device reaches the current target URL count
+
+                                        if (pass_url >= self.device_targets[hostname] and hostname not in time_taken):
+                                            time_taken[hostname] = (datetime.now() - start_time).total_seconds()
+
+                            # Save each mobile device's data to the CSV
+                            for i in range(len(total_urls)):
+                                row = {
+                                    'device_type': 'mobile',
+                                    'device_name': hostnames[i],
+                                    'total_urls': total_urls[i],
+                                    'uc_min': float(uc_min[i]) / 1000,
+                                    'uc_avg': float(uc_avg[i]) / 1000,
+                                    'uc_max': float(uc_max[i]) / 1000,
+                                    'total_err': total_err[i],
+                                    'time_to_target_urls': time_taken.get(hostnames[i], 0.0),
+                                    'cx_name': cx_names[i],
+                                }
+                                writer.writerow(row)
+                                last_data.append(row)  # Store the latest row in last_data
+
+                        # Handle the case where only one CX endpoint is created
+                        elif len(self.created_cx.keys()) == 1:
+                            endpoint = mobile_data.get('endpoint', {})
+
+                            if True:
+                                cx_name = endpoint.get('name', 'NA')
+                                # Apply the regex to extract the number after 'http' from the device name
+                                match = re.search(r'http(\d+)', cx_name)
+                                res_no = match.group(1) if match else 'NA'  # Get the number after 'http' or 'NA' if not foun
+                                hostname = self.local_realm.json_get("resource/1/%s/list?fields=user" % (res_no))
+                                hostname = hostname["resource"]["user"]
+
+                                # Initialize target URL for the first iteration if not set
+                                if hostname not in self.device_targets:
+                                    self.device_targets[hostname] = initial_target_urls
+
+                                # Check if the mobile device reaches the current target URL count
+                                # pass_url = (endpoint.get('total-urls', 0) - endpoint.get('total-err',0))
+                                pass_url = endpoint.get('total-urls', 0)
+                                if (pass_url >= self.device_targets[hostname]):
+                                    if hostname not in time_taken:
                                         time_taken[hostname] = (datetime.now() - start_time).total_seconds()
+                                row = {
+                                    'device_type': 'mobile',
+                                    'device_name': hostname,
+                                    'total_urls': pass_url,
+                                    'uc_min': float(endpoint.get('uc-min', 0.0)) / 1000,
+                                    'uc_avg': float(endpoint.get('uc-avg', 0.0)) / 1000,
+                                    'uc_max': float(endpoint.get('uc-max', 0.0)) / 1000,
+                                    'total_err': endpoint.get('total-err', 0),
+                                    'time_to_target_urls': time_taken.get(hostname, 0.0),
+                                    'cx_name': cx_name
+                                }
+                                writer.writerow(row)
+                                last_data.append(row)  # Store the latest row in last_data
 
-                        # Save each mobile device's data to the CSV
-                        for i in range(len(total_urls)):
-                            row = {
-                                'device_type': 'mobile',
-                                'device_name': hostnames[i],
-                                'total_urls': total_urls[i],
-                                'uc_min': float(uc_min[i]) / 1000,
-                                'uc_avg': float(uc_avg[i]) / 1000,
-                                'uc_max': float(uc_max[i]) / 1000,
-                                'total_err': total_err[i],
-                                'time_to_target_urls': time_taken.get(hostnames[i], 0.0),
-                                'cx_name': cx_names[i],
-                            }
-                            writer.writerow(row)
-                            last_data.append(row)  # Store the latest row in last_data
+                time.sleep(1)
+            for device in self.device_targets:
 
-                    # Handle the case where only one CX endpoint is created
-                    elif len(self.created_cx.keys()) == 1:
-                        endpoint = mobile_data.get('endpoint', {})
+                # Update the target URLs based on the last fetched total_urls value
+                for row in last_data:
+                    if row['device_name'] == device:
+                        self.device_targets[device] = row['total_urls'] + initial_target_urls
 
-                        if True:
-                            cx_name = endpoint.get('name', 'NA')
-                            # Apply the regex to extract the number after 'http' from the device name
-                            match = re.search(r'http(\d+)', cx_name)
-                            res_no = match.group(1) if match else 'NA'  # Get the number after 'http' or 'NA' if not foun
-                            hostname = self.local_realm.json_get("resource/1/%s/list?fields=user" % (res_no))
-                            hostname = hostname["resource"]["user"]
+            # After the loop ends, write the last collected data to a separate file with iteration number
+            last_file_name = f'iteration_{self.iteration_value}_final_data.csv'
+            with open(last_file_name, mode='w', newline='') as last_file:
+                last_writer = csv.DictWriter(last_file, fieldnames=headers)
+                last_writer.writeheader()
+                for row in last_data:
+                    last_writer.writerow(row)
 
-                            # Initialize target URL for the first iteration if not set
-                            if hostname not in self.device_targets:
-                                self.device_targets[hostname] = initial_target_urls
+            # Append the file name to the csv_file_names list
+            self.csv_file_names.append(last_file_name)
 
-                            # Check if the mobile device reaches the current target URL count
-                            # pass_url = (endpoint.get('total-urls', 0) - endpoint.get('total-err',0))
-                            pass_url = endpoint.get('total-urls', 0)
-                            if (pass_url >= self.device_targets[hostname]):
-                                if hostname not in time_taken:
-                                    time_taken[hostname] = (datetime.now() - start_time).total_seconds()
-                            row = {
-                                'device_type': 'mobile',
-                                'device_name': hostname,
-                                'total_urls': pass_url,
-                                'uc_min': float(endpoint.get('uc-min', 0.0)) / 1000,
-                                'uc_avg': float(endpoint.get('uc-avg', 0.0)) / 1000,
-                                'uc_max': float(endpoint.get('uc-max', 0.0)) / 1000,
-                                'total_err': endpoint.get('total-err', 0),
-                                'time_to_target_urls': time_taken.get(hostname, 0.0),
-                                'cx_name': cx_name
-                            }
-                            writer.writerow(row)
-                            last_data.append(row)  # Store the latest row in last_data
+            self.iteration_value = self.iteration_value + 1
+        except Exception as e:
+            logging.error(f"Error in get_stats function {e}",exc_info=True)
+            logging.info(f"layer4 cx data {mobile_data}")
 
-            time.sleep(1)
-        for device in self.device_targets:
-
-            # Update the target URLs based on the last fetched total_urls value
-            for row in last_data:
-                if row['device_name'] == device:
-                    self.device_targets[device] = row['total_urls'] + initial_target_urls
-
-        # After the loop ends, write the last collected data to a separate file with iteration number
-        last_file_name = f'iteration_{self.iteration_value}_final_data.csv'
-        with open(last_file_name, mode='w', newline='') as last_file:
-            last_writer = csv.DictWriter(last_file, fieldnames=headers)
-            last_writer.writeheader()
-            for row in last_data:
-                last_writer.writerow(row)
-
-        # Append the file name to the csv_file_names list
-        self.csv_file_names.append(last_file_name)
-
-        self.iteration_value = self.iteration_value + 1
 
     def updating_webui_runningjson(self, obj):
         data = {}
@@ -1356,6 +1363,8 @@ class RealBrowserTest(Realm):
                 "Link Speed": tx_rate_data
 
             }
+            print("==========================")
+            print("checking test_results",test_results)
 
             test_results_df = pd.DataFrame(test_results)
             report.set_table_dataframe(test_results_df)
@@ -1427,6 +1436,8 @@ class RealBrowserTest(Realm):
             "Status ": pass_fail_list
 
         }
+        print("======================================")
+        print("final-test_results",final_test_results)
         test_results_df = pd.DataFrame(final_test_results)
         report.set_table_dataframe(test_results_df)
         report.build_table()
@@ -1487,6 +1498,9 @@ class RealBrowserTest(Realm):
         for i in range(0, len(device_names)):
             for resource in rm_data['resources']:
                 for key, value in resource.items():
+                    # print("checking value of hostname",value['hostname'])
+                    # print("value of device_names[i]",device_names[i])
+
                     if value['hostname'] == device_names[i] and device_type_data[i] == "laptop":
                         final_eid_data.append(value['eid'])
                         device_type_data[i] = value["device type"]
@@ -1495,6 +1509,7 @@ class RealBrowserTest(Realm):
                         device_type_data[i] = value["device type"]
 
         # Collect port data for each eid
+        logging.info(f"Checking final eid data {final_eid_data}")
         for eid in final_eid_data:
             port_data = self.local_realm.json_get("port/list?fields=ssid,mac,parent dev,signal,tx-rate,channel,down,ip")
             for interface in port_data['interfaces']:
@@ -1502,11 +1517,12 @@ class RealBrowserTest(Realm):
                     temp_eid = key.split(".")
                     comb_eid = temp_eid[0] + "." + temp_eid[1]
                     if (comb_eid == eid) and (value["parent dev"] != "") and (not value["down"]) and (value["ip"] != "0.0.0.0"):
-                        mac_data.append(value.get("mac", 'NA'))
-                        channel_data.append(value.get("channel", 'NA'))
-                        signal_data.append(value.get("signal", 'NA'))
-                        ssid_data.append(value.get("ssid", 'NA'))
-                        tx_rate_data.append(value.get("tx-rate", 'NA'))
+                        logging.info("checking whether we are able to fetch device data from port manager")
+                        mac_data.append(value.get("mac", 'None'))
+                        channel_data.append(value.get("channel", 'None'))
+                        signal_data.append(value.get("signal", 'None'))
+                        ssid_data.append(value.get("ssid", 'None'))
+                        tx_rate_data.append(value.get("tx-rate", 'None'))
 
         return final_eid_data, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data
 
@@ -1774,50 +1790,6 @@ def main():
                                   selected_profiles=selected_profiles
                                   )
 
-            # obj = RealBrowserTest(host=args.host,
-            #                       ssid=args.ssid,
-            #                       passwd=args.passwd,
-            #                       encryp=args.encryp,
-            #                     suporrted_release=["7.0", "10", "11", "12"],
-            #                     max_speed=args.max_speed,
-            #                     url=args.url, count=args.count,
-            #                     duration=args.duration,
-            #                     resource_ids = args.device_list,
-            #                     dowebgui = args.dowebgui,
-            #                     result_dir = args.result_dir,
-            #                     test_name = args.test_name,
-            #                     incremental = args.incremental,
-            #                     postcleanup=args.postcleanup,
-            #                     precleanup=args.precleanup,
-            #                     file_name=args.file_name,
-            #                     group_name=args.group_name,
-            #                     profile_name=args.profile_name,
-            #                     eap_method=args.eap_method,
-            #                     eap_identity=args.eap_identity,
-            #                     ieee80211=args.ieee80211,
-            #                     ieee80211u=args.ieee80211u,
-            #                     ieee80211w=args.ieee80211w,
-            #                     enable_pkc=args.enable_pkc,
-            #                     bss_transition=args.bss_transition,
-            #                     power_save=args.power_save,
-            #                     disable_ofdma=args.disable_ofdma,
-            #                     roam_ft_ds=args.roam_ft_ds,
-            #                     key_management=args.key_management,
-            #                     pairwise=args.pairwise,
-            #                     private_key=args.private_key,
-            #                     ca_cert=args.ca_cert,
-            #                     client_cert=args.client_cert,
-            #                     pk_passwd=args.pk_passwd,
-            #                     pac_file=args.pac_file,
-            #                     server_ip=args.server_ip,
-            #                     expected_passfail_value=args.expected_passfail_value,
-            #                     device_csv_name=args.device_csv_name,
-            #                     wait_time=args.wait_time,
-            #                     flask_ip='10.253.8.108',
-            #                     config=args.config,
-            #                     selected_groups=selected_groups,
-            #                     selected_profiles=selected_profiles
-            #                     )
             obj.run_flask_server()
 
             # Initialize empty lists and dictionaries for resource management
@@ -2193,8 +2165,6 @@ def main():
         if (args.dowebgui):
             try:
                 url = f"http://{args.host}:5454/update_status_yt"
-                # url = f"http://localhost:8000/update_status_yt"
-                # url = f"http://10.253.8.108:8000/update_status_yt"
 
                 headers = {
                     'Content-Type': 'application/json',

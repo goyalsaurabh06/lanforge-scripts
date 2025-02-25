@@ -655,80 +655,85 @@ class VideoStreamingTest(Realm):
     #     logging.info('Cleanup Successful')
 
     def my_monitor_runtime(self):
-        """
-            Retrieves monitoring data for the created CX endpoints based on specified data metrics.
+        try:
 
-            Parameters:
-            - data_mon (str): Data metrics to monitor, provided as a string.
+            """
+                Retrieves monitoring data for the created CX endpoints based on specified data metrics.
 
-            Returns:
-            - data1 (list): List containing monitoring data for the specified metrics across all created CX endpoints.
+                Parameters:
+                - data_mon (str): Data metrics to monitor, provided as a string.
 
-            This method performs the following actions:
-            1. Constructs a URL to retrieve monitoring data from LANforge layer 4 API for all created CX endpoints.
-            2. Retrieves JSON-formatted monitoring data using the constructed URL and specified metrics.
-            3. Iterates through the retrieved data to extract and append the specified metric values ('data_mon') to 'data1' list.
-            4. Returns 'data1', which contains monitoring data for the specified metrics across all created CX endpoints.
-        """
-        data = self.local_realm.json_get("layer4/%s/list?fields=name,status,total-urls,urls/s,total-err,video-format-bitrate,bytes-rd,total-wait-time,total-buffers,total-err,rx rate,frame-rate,video-quality" %
-                                        (','.join(self.created_cx.keys())))
+                Returns:
+                - data1 (list): List containing monitoring data for the specified metrics across all created CX endpoints.
+
+                This method performs the following actions:
+                1. Constructs a URL to retrieve monitoring data from LANforge layer 4 API for all created CX endpoints.
+                2. Retrieves JSON-formatted monitoring data using the constructed URL and specified metrics.
+                3. Iterates through the retrieved data to extract and append the specified metric values ('data_mon') to 'data1' list.
+                4. Returns 'data1', which contains monitoring data for the specified metrics across all created CX endpoints.
+            """
+            data = self.local_realm.json_get("layer4/%s/list?fields=name,status,total-urls,urls/s,total-err,video-format-bitrate,bytes-rd,total-wait-time,total-buffers,total-err,rx rate,frame-rate,video-quality" %
+                                            (','.join(self.created_cx.keys())))
+            
+            names = []
+            statuses = []
+            total_urls = []
+            urls_per_sec = []
+            total_err = []
+            video_format_bitrate=[]
+            bytes_rd=[]
+            total_wait_time=[]
+            total_buffer=[]
+            rx_rate = []
+            frame_rate=[]
+            video_quality = []
         
-        names = []
-        statuses = []
-        total_urls = []
-        urls_per_sec = []
-        total_err = []
-        video_format_bitrate=[]
-        bytes_rd=[]
-        total_wait_time=[]
-        total_buffer=[]
-        rx_rate = []
-        frame_rate=[]
-        video_quality = []
-    
-        if len(self.created_cx.keys()) >1:
-            data = data['endpoint']
-            for endpoint in data:
-                for key, value in endpoint.items():
-                    names.append(value['name'])
-                    statuses.append(value['status'])
-                    total_urls.append(value['total-urls'])
-                    urls_per_sec.append(value['urls/s'])
-                    total_err.append(value['total-err'])
-                    video_format_bitrate.append(value['video-format-bitrate'])
-                    bytes_rd.append(value['bytes-rd'])
-                    total_wait_time.append(value['total-wait-time'])
-                    total_buffer.append(value['total-buffers'])
-                    rx_rate.append(value['rx rate'])
-                    frame_rate.append(value['frame-rate'])
-                    video_quality.append(value['video-quality'])
-        elif len(self.created_cx.keys()) == 1:
-            endpoint = data.get('endpoint', {})
-            names = [endpoint.get('name', '')]
-            statuses = [endpoint.get('status', '')]
-            total_urls = [endpoint.get('total-urls', 0)]
-            urls_per_sec = [endpoint.get('urls/s', 0.0)]
-            total_err = [endpoint.get('total-err', 0)]
-            video_format_bitrate = [endpoint.get('video-format-bitrate', 0)]
-            bytes_rd.append(endpoint.get('bytes-rd', 0))
-            total_wait_time.append(endpoint.get('total-wait-time', 0))
-            total_buffer.append(endpoint.get('total-buffers', 0))
-            rx_rate.append(endpoint.get('rx rate',0))
-            frame_rate.append(endpoint.get('frame-rate',0))
-            video_quality.append(endpoint.get('video-quality',0))
+            if len(self.created_cx.keys()) >1:
+                data = data['endpoint']
+                for endpoint in data:
+                    for key, value in endpoint.items():
+                        names.append(value['name'])
+                        statuses.append(value['status'])
+                        total_urls.append(value['total-urls'])
+                        urls_per_sec.append(value['urls/s'])
+                        total_err.append(value['total-err'])
+                        video_format_bitrate.append(value['video-format-bitrate'])
+                        bytes_rd.append(value['bytes-rd'])
+                        total_wait_time.append(value['total-wait-time'])
+                        total_buffer.append(value['total-buffers'])
+                        rx_rate.append(value['rx rate'])
+                        frame_rate.append(value['frame-rate'])
+                        video_quality.append(value['video-quality'])
+            elif len(self.created_cx.keys()) == 1:
+                endpoint = data.get('endpoint', {})
+                names = [endpoint.get('name', '')]
+                statuses = [endpoint.get('status', '')]
+                total_urls = [endpoint.get('total-urls', 0)]
+                urls_per_sec = [endpoint.get('urls/s', 0.0)]
+                total_err = [endpoint.get('total-err', 0)]
+                video_format_bitrate = [endpoint.get('video-format-bitrate', 0)]
+                bytes_rd.append(endpoint.get('bytes-rd', 0))
+                total_wait_time.append(endpoint.get('total-wait-time', 0))
+                total_buffer.append(endpoint.get('total-buffers', 0))
+                rx_rate.append(endpoint.get('rx rate',0))
+                frame_rate.append(endpoint.get('frame-rate',0))
+                video_quality.append(endpoint.get('video-quality',0))
 
-        self.data['status'] = statuses
-        self.data["total_urls"] = total_urls
-        self.data["urls_per_sec"] = urls_per_sec
-        self.data["name"] = names
-        self.data["total_err"] = total_err
-        self.data["video_format_bitrate"]=video_format_bitrate
-        self.data["bytes_rd"]=bytes_rd
-        self.data["total_wait_time"]=total_wait_time
-        self.data["total_buffer"]=total_buffer
-        self.data["rx_rate"] = rx_rate
-        self.data['frame_rate']= frame_rate
-        self.data['video_quality']=video_quality
+            self.data['status'] = statuses
+            self.data["total_urls"] = total_urls
+            self.data["urls_per_sec"] = urls_per_sec
+            self.data["name"] = names
+            self.data["total_err"] = total_err
+            self.data["video_format_bitrate"]=video_format_bitrate
+            self.data["bytes_rd"]=bytes_rd
+            self.data["total_wait_time"]=total_wait_time
+            self.data["total_buffer"]=total_buffer
+            self.data["rx_rate"] = rx_rate
+            self.data['frame_rate']= frame_rate
+            self.data['video_quality']=video_quality
+        except Exception as e:
+            logger.error(f"Error in my_monitor_runtime function: {e}", exc_info=True)
+            logger.info(f"Layer 4 cx data {data}")
     
     def my_monitor(self, data_mon):
         # data in json format
@@ -737,7 +742,9 @@ class VideoStreamingTest(Realm):
         data1 = []
         
         if "endpoint" not in data.keys():
+            logger.error("error in my_monitor function")
             logger.error("Error: 'endpoint' key not found in port data")
+            logger.info(f"layer4 cx data {data}")
             exit(1)
         data = data['endpoint']
     
@@ -839,185 +846,193 @@ class VideoStreamingTest(Realm):
         rssi = [0 if i.strip() == "" else int(i) for i in rssi]
         return rssi,tx_rate
 
-    def monitor_for_runtime_csv(self,duration,file_path,individual_df,iteration,actual_start_time,resource_list_sorted = [],cx_list = [] ):        
-        self.all_cx_list.extend(cx_list) 
-        test_stopped_by_user=False
-        resource_ids = list(map(int, self.resource_ids.split(',')))
-        self.data_for_webui['resources'] = resource_ids
-        starttime = datetime.now()
-        self.data["name"] = self.my_monitor('name')
-        current_time = datetime.now()
-        endtime = ""
-        endtime = starttime + timedelta(minutes=duration)
-        endtime = endtime.isoformat()[0:19]
-        endtime_check = datetime.strptime(endtime, "%Y-%m-%dT%H:%M:%S")
-        self.data['status'] = self.my_monitor('status')
+    def monitor_for_runtime_csv(self,duration,file_path,individual_df,iteration,actual_start_time,resource_list_sorted = [],cx_list = [] ):
+        try:
 
-        # # self.data['required_count'] = [self.urls_per_tenm] * len(self.data['name'])
-        # self.data['duration'] = [duration] * len(self.data['name'])
-        # self.data['url'] = [self.url] * len(self.data['name'])
+            self.all_cx_list.extend(cx_list) 
+            test_stopped_by_user=False
+            resource_ids = list(map(int, self.resource_ids.split(',')))
+            self.data_for_webui['resources'] = resource_ids
+            starttime = datetime.now()
+            self.data["name"] = self.my_monitor('name')
+            current_time = datetime.now()
+            endtime = ""
+            endtime = starttime + timedelta(minutes=duration)
+            endtime = endtime.isoformat()[0:19]
+            endtime_check = datetime.strptime(endtime, "%Y-%m-%dT%H:%M:%S")
+            self.data['status'] = self.my_monitor('status')
 
-        device_type = []
-        username = []
-        ssid = []
-        mac = []
-        channel = []
-        mode = []
-        rssi = []
-        channel = []
-        tx_rate = []
-        rx_rate = []
+            # # self.data['required_count'] = [self.urls_per_tenm] * len(self.data['name'])
+            # self.data['duration'] = [duration] * len(self.data['name'])
+            # self.data['url'] = [self.url] * len(self.data['name'])
 
-        resource_ids = list(map(int, self.resource_ids.split(',')))
-        eid_data = self.json_get("ports?fields=alias,mac,mode,Parent Dev,rx-rate,tx-rate,ssid,signal,channel")
-        if "interfaces" not in eid_data.keys():
-            logger.error("Error: 'interfaces' key not found in port data")
-            exit(1)
+            device_type = []
+            username = []
+            ssid = []
+            mac = []
+            channel = []
+            mode = []
+            rssi = []
+            channel = []
+            tx_rate = []
+            rx_rate = []
 
-        for alias in eid_data["interfaces"]:
-            for i in alias:
-                # alias[i]['mac'] alias[i]['ssid'] alias[i]['mode'] resource_hw_data['resource']['user']  
-                if int(i.split(".")[1]) > 1 and alias[i]["alias"] == 'wlan0':
-                    resource_hw_data = self.json_get("/resource/" + i.split(".")[0] + "/" + i.split(".")[1])
-                    hw_version = resource_hw_data['resource']['hw version']
-                    if not hw_version.startswith(('Win', 'Linux', 'Apple')) and int(resource_hw_data['resource']['eid'].split('.')[1]) in resource_ids :
-                        device_type.append('Android')
-                        username.append(resource_hw_data['resource']['user'] )
-                        ssid.append(alias[i]['ssid'])
-                        mac.append(alias[i]['mac'])
-                        mode.append(alias[i]['mode'])
-                        rssi.append(alias[i]['signal'])
-                        channel.append(alias[i]['channel'])
-                        tx_rate.append(alias[i]['tx-rate'])
-                        rx_rate.append(alias[i]['rx-rate'])
-   
-        incremental_capacity_list=self.get_incremental_capacity_list()
-        video_rate_dict= {i: [] for i in range(len(device_type))}
+            resource_ids = list(map(int, self.resource_ids.split(',')))
+            eid_data = self.json_get("ports?fields=alias,mac,mode,Parent Dev,rx-rate,tx-rate,ssid,signal,channel")
+            if "interfaces" not in eid_data.keys():
+                logger.error("Error: 'interfaces' key not found in port data")
+                exit(1)
 
-        # Loop until the current time is less than the end time
-        while current_time < endtime_check or self.background_run:
-            
-            # Get signal data for RSSI and link speed
-            rssi_data,link_speed_data=self.get_signal_data()
+            for alias in eid_data["interfaces"]:
+                for i in alias:
+                    # alias[i]['mac'] alias[i]['ssid'] alias[i]['mode'] resource_hw_data['resource']['user']  
+                    if int(i.split(".")[1]) > 1 and alias[i]["alias"] == 'wlan0':
+                        resource_hw_data = self.json_get("/resource/" + i.split(".")[0] + "/" + i.split(".")[1])
+                        hw_version = resource_hw_data['resource']['hw version']
+                        if not hw_version.startswith(('Win', 'Linux', 'Apple')) and int(resource_hw_data['resource']['eid'].split('.')[1]) in resource_ids :
+                            device_type.append('Android')
+                            username.append(resource_hw_data['resource']['user'] )
+                            ssid.append(alias[i]['ssid'])
+                            mac.append(alias[i]['mac'])
+                            mode.append(alias[i]['mode'])
+                            rssi.append(alias[i]['signal'])
+                            channel.append(alias[i]['channel'])
+                            tx_rate.append(alias[i]['tx-rate'])
+                            rx_rate.append(alias[i]['rx-rate'])
+    
+            incremental_capacity_list=self.get_incremental_capacity_list()
+            video_rate_dict= {i: [] for i in range(len(device_type))}
 
-            individual_df_data=[]
+            # Loop until the current time is less than the end time
+            while current_time < endtime_check or self.background_run:
+                
+                # Get signal data for RSSI and link speed
+                rssi_data,link_speed_data=self.get_signal_data()
 
-            # Update the end time for the web GUI if necessary
-            if self.data['end_time_webGUI'][0] < current_time.strftime('%Y-%m-%d %H:%M:%S'):
-                self.data['end_time_webGUI'] = [current_time.strftime('%Y-%m-%d %H:%M:%S')] 
+                individual_df_data=[]
 
-            # Get the current time and calculate the remaining time
-            curr_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            endtime_dt = datetime.strptime(self.data['end_time_webGUI'][0], "%Y-%m-%d %H:%M:%S")
-            curr_time_dt = datetime.strptime(curr_time, "%Y-%m-%d %H:%M:%S")
-            remaining_time_dt = endtime_dt - curr_time_dt
-            one_minute = timedelta(minutes=1)
+                # Update the end time for the web GUI if necessary
+                if self.data['end_time_webGUI'][0] < current_time.strftime('%Y-%m-%d %H:%M:%S'):
+                    self.data['end_time_webGUI'] = [current_time.strftime('%Y-%m-%d %H:%M:%S')] 
 
-            # Update the remaining time for the web GUI
-            if remaining_time_dt < one_minute:
-                self.data['remaining_time_webGUI'] = ["< 1 min"] 
-            else:
-                self.data['remaining_time_webGUI'] = [str(datetime.strptime(self.data['end_time_webGUI'][0], "%Y-%m-%d %H:%M:%S") - datetime.strptime(curr_time, "%Y-%m-%d %H:%M:%S"))] 
-            
-            # Get the present time
+                # Get the current time and calculate the remaining time
+                curr_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                endtime_dt = datetime.strptime(self.data['end_time_webGUI'][0], "%Y-%m-%d %H:%M:%S")
+                curr_time_dt = datetime.strptime(curr_time, "%Y-%m-%d %H:%M:%S")
+                remaining_time_dt = endtime_dt - curr_time_dt
+                one_minute = timedelta(minutes=1)
+
+                # Update the remaining time for the web GUI
+                if remaining_time_dt < one_minute:
+                    self.data['remaining_time_webGUI'] = ["< 1 min"] 
+                else:
+                    self.data['remaining_time_webGUI'] = [str(datetime.strptime(self.data['end_time_webGUI'][0], "%Y-%m-%d %H:%M:%S") - datetime.strptime(curr_time, "%Y-%m-%d %H:%M:%S"))] 
+                
+                # Get the present time
+                present_time=datetime.now().strftime("%H:%M:%S")
+                self.my_monitor_runtime()
+        
+                overall_video_rate=[]
+
+                #print(self.data)
+                # Iterate through the total wait time data
+                for i in range(len(self.data["total_wait_time"])):
+                    # If the status is 'Stopped', append 0 to the video rate dictionary and overall video rate
+                    if self.data['status'][i] !='Run':
+
+                        video_rate_dict[i].append(0)
+                        overall_video_rate.append(0)
+                        min_value_video_rate = self.process_list(video_rate_dict[i])
+                        individual_df_data.extend([0,0,self.data["total_urls"][i],rssi_data[i],link_speed_data[i],self.data["total_buffer"][i],self.data["total_err"][i],min_value_video_rate,max(video_rate_dict[i]),sum(video_rate_dict[i])/len(video_rate_dict[i]),self.data["bytes_rd"][i],self.data["rx_rate"][i],self.data['frame_rate'][i],self.data['video_quality'][i]])
+                    
+                    # If the status is not 'Stopped', append the calculated video rate to the video rate dictionary and overall video rate
+                    else:
+
+                        video_rate_dict[i].append(round(self.data["video_format_bitrate"][i]/1000000,2))
+                        overall_video_rate.append(round(self.data["video_format_bitrate"][i]/1000000,2))
+                        min_value_video_rate = self.process_list(video_rate_dict[i])
+                        individual_df_data.extend([round(self.data["video_format_bitrate"][i]/1000000,2),round(self.data["total_wait_time"][i]/1000,2),self.data["total_urls"][i],int(rssi_data[i]),link_speed_data[i],self.data["total_buffer"][i],self.data["total_err"][i],min_value_video_rate,max(video_rate_dict[i]),sum(video_rate_dict[i])/len(video_rate_dict[i]),self.data["bytes_rd"][i],self.data["rx_rate"][i],self.data['frame_rate'][i],self.data['video_quality'][i]])
+                
+                individual_df_data.extend([sum(overall_video_rate),present_time,iteration+1,actual_start_time.strftime('%Y-%m-%d %H:%M:%S'),self.data['end_time_webGUI'][0],self.data['remaining_time_webGUI'][0],"Running"])
+                individual_df.loc[len(individual_df)]=individual_df_data
+                individual_df.to_csv('video_streaming_realtime_data.csv', index=False)
+
+                
+                if self.dowebgui == True:
+                    with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host,
+                                                                                                    self.test_name),'r') as file:
+                        data = json.load(file)
+                        if data["status"] != "Running":
+                            logging.info('Test is stopped by the user')
+                            test_stopped_by_user=True
+                            break
+
+                # df1 = pd.DataFrame(self.data)
+
+                if self.dowebgui == True:
+                    individual_df.to_csv('{}/video_streaming_realtime_data.csv'.format(self.result_dir), index=False)
+                else:
+                    individual_df.to_csv(file_path, mode='w', index=False)
+
+                time.sleep(1)
+                
+                current_time = datetime.now()
+                if self.stop_test :
+                    test_stopped_by_user=True
+                    break
+                if not self.background_run and self.background_run is not None:
+                    break
             present_time=datetime.now().strftime("%H:%M:%S")
-            self.my_monitor_runtime()
-       
+            individual_df_data=[]
             overall_video_rate=[]
 
-            #print(self.data)
-            # Iterate through the total wait time data
+            # Collecting data when test is stopped
             for i in range(len(self.data["total_wait_time"])):
-                # If the status is 'Stopped', append 0 to the video rate dictionary and overall video rate
-                if self.data['status'][i] !='Run':
-
+                if self.data['status'][i]!='Run':
                     video_rate_dict[i].append(0)
                     overall_video_rate.append(0)
                     min_value_video_rate = self.process_list(video_rate_dict[i])
                     individual_df_data.extend([0,0,self.data["total_urls"][i],rssi_data[i],link_speed_data[i],self.data["total_buffer"][i],self.data["total_err"][i],min_value_video_rate,max(video_rate_dict[i]),sum(video_rate_dict[i])/len(video_rate_dict[i]),self.data["bytes_rd"][i],self.data["rx_rate"][i],self.data['frame_rate'][i],self.data['video_quality'][i]])
-                
-                # If the status is not 'Stopped', append the calculated video rate to the video rate dictionary and overall video rate
                 else:
-
-                    video_rate_dict[i].append(round(self.data["video_format_bitrate"][i]/1000000,2))
                     overall_video_rate.append(round(self.data["video_format_bitrate"][i]/1000000,2))
+                    video_rate_dict[i].append(round(self.data["video_format_bitrate"][i]/1000000,2))
                     min_value_video_rate = self.process_list(video_rate_dict[i])
                     individual_df_data.extend([round(self.data["video_format_bitrate"][i]/1000000,2),round(self.data["total_wait_time"][i]/1000,2),self.data["total_urls"][i],int(rssi_data[i]),link_speed_data[i],self.data["total_buffer"][i],self.data["total_err"][i],min_value_video_rate,max(video_rate_dict[i]),sum(video_rate_dict[i])/len(video_rate_dict[i]),self.data["bytes_rd"][i],self.data["rx_rate"][i],self.data['frame_rate'][i],self.data['video_quality'][i]])
-            
-            individual_df_data.extend([sum(overall_video_rate),present_time,iteration+1,actual_start_time.strftime('%Y-%m-%d %H:%M:%S'),self.data['end_time_webGUI'][0],self.data['remaining_time_webGUI'][0],"Running"])
+
+            if iteration+1 == len(incremental_capacity_list): 
+                individual_df_data.extend([sum(overall_video_rate),present_time,iteration+1,actual_start_time.strftime('%Y-%m-%d %H:%M:%S'),self.data['end_time_webGUI'][0],0,"Stopped"])
+            else:
+                individual_df_data.extend([sum(overall_video_rate),present_time,iteration+1,actual_start_time.strftime('%Y-%m-%d %H:%M:%S'),self.data['end_time_webGUI'][0],self.data['remaining_time_webGUI'][0],"Stopped"])
             individual_df.loc[len(individual_df)]=individual_df_data
-            individual_df.to_csv('video_streaming_realtime_data.csv', index=False)
-
             
-            if self.dowebgui == True:
-                with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host,
-                                                                                                self.test_name),'r') as file:
-                    data = json.load(file)
-                    if data["status"] != "Running":
-                        logging.info('Test is stopped by the user')
-                        test_stopped_by_user=True
-                        break
-
-            # df1 = pd.DataFrame(self.data)
-
             if self.dowebgui == True:
                 individual_df.to_csv('{}/video_streaming_realtime_data.csv'.format(self.result_dir), index=False)
             else:
-                individual_df.to_csv(file_path, mode='w', index=False)
+                individual_df.to_csv('video_streaming_realtime_data.csv', index=False)
 
-            time.sleep(1)
-            
-            current_time = datetime.now()
-            if self.stop_test :
-                test_stopped_by_user=True
-                break
-            if not self.background_run and self.background_run is not None:
-                break
-        present_time=datetime.now().strftime("%H:%M:%S")
-        individual_df_data=[]
-        overall_video_rate=[]
+            if self.data['end_time_webGUI'][0] < current_time.strftime('%Y-%m-%d %H:%M:%S'):
+                self.data['end_time_webGUI'] = [current_time.strftime('%Y-%m-%d %H:%M:%S') ] 
 
-        # Collecting data when test is stopped
-        for i in range(len(self.data["total_wait_time"])):
-            if self.data['status'][i]!='Run':
-                video_rate_dict[i].append(0)
-                overall_video_rate.append(0)
-                min_value_video_rate = self.process_list(video_rate_dict[i])
-                individual_df_data.extend([0,0,self.data["total_urls"][i],rssi_data[i],link_speed_data[i],self.data["total_buffer"][i],self.data["total_err"][i],min_value_video_rate,max(video_rate_dict[i]),sum(video_rate_dict[i])/len(video_rate_dict[i]),self.data["bytes_rd"][i],self.data["rx_rate"][i],self.data['frame_rate'][i],self.data['video_quality'][i]])
+            curr_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            curr_time_dt = datetime.strptime(curr_time, "%Y-%m-%d %H:%M:%S")
+            endtime_dt = datetime.strptime(self.data['end_time_webGUI'][0], "%Y-%m-%d %H:%M:%S")
+
+            remaining_time_dt = endtime_dt - curr_time_dt
+            one_minute = timedelta(minutes=1)
+
+
+            if remaining_time_dt < one_minute:
+                self.data['remaining_time_webGUI'] = ["< 1 min"] 
             else:
-                overall_video_rate.append(round(self.data["video_format_bitrate"][i]/1000000,2))
-                video_rate_dict[i].append(round(self.data["video_format_bitrate"][i]/1000000,2))
-                min_value_video_rate = self.process_list(video_rate_dict[i])
-                individual_df_data.extend([round(self.data["video_format_bitrate"][i]/1000000,2),round(self.data["total_wait_time"][i]/1000,2),self.data["total_urls"][i],int(rssi_data[i]),link_speed_data[i],self.data["total_buffer"][i],self.data["total_err"][i],min_value_video_rate,max(video_rate_dict[i]),sum(video_rate_dict[i])/len(video_rate_dict[i]),self.data["bytes_rd"][i],self.data["rx_rate"][i],self.data['frame_rate'][i],self.data['video_quality'][i]])
+                self.data['remaining_time_webGUI'] = [str(datetime.strptime(self.data['end_time_webGUI'][0], "%Y-%m-%d %H:%M:%S") - datetime.strptime(curr_time, "%Y-%m-%d %H:%M:%S"))] 
 
-        if iteration+1 == len(incremental_capacity_list): 
-            individual_df_data.extend([sum(overall_video_rate),present_time,iteration+1,actual_start_time.strftime('%Y-%m-%d %H:%M:%S'),self.data['end_time_webGUI'][0],0,"Stopped"])
-        else:
-            individual_df_data.extend([sum(overall_video_rate),present_time,iteration+1,actual_start_time.strftime('%Y-%m-%d %H:%M:%S'),self.data['end_time_webGUI'][0],self.data['remaining_time_webGUI'][0],"Stopped"])
-        individual_df.loc[len(individual_df)]=individual_df_data
         
-        if self.dowebgui == True:
-            individual_df.to_csv('{}/video_streaming_realtime_data.csv'.format(self.result_dir), index=False)
-        else:
-            individual_df.to_csv('video_streaming_realtime_data.csv', index=False)
+            return test_stopped_by_user
+        except Exception as e:
+            logger.error(f"Error in monitor_for_runtime_csv function: {e}", exc_info=True)
+            logger.info(f"eid_data {eid_data}")
+            return test_stopped_by_user
 
-        if self.data['end_time_webGUI'][0] < current_time.strftime('%Y-%m-%d %H:%M:%S'):
-            self.data['end_time_webGUI'] = [current_time.strftime('%Y-%m-%d %H:%M:%S') ] 
-
-        curr_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        curr_time_dt = datetime.strptime(curr_time, "%Y-%m-%d %H:%M:%S")
-        endtime_dt = datetime.strptime(self.data['end_time_webGUI'][0], "%Y-%m-%d %H:%M:%S")
-
-        remaining_time_dt = endtime_dt - curr_time_dt
-        one_minute = timedelta(minutes=1)
-
-
-        if remaining_time_dt < one_minute:
-            self.data['remaining_time_webGUI'] = ["< 1 min"] 
-        else:
-            self.data['remaining_time_webGUI'] = [str(datetime.strptime(self.data['end_time_webGUI'][0], "%Y-%m-%d %H:%M:%S") - datetime.strptime(curr_time, "%Y-%m-%d %H:%M:%S"))] 
-
-        return test_stopped_by_user
     
     def get_incremental_capacity_list(self):
         keys=list(self.http_profile.created_cx.keys())
