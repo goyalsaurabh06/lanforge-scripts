@@ -89,6 +89,8 @@ lf_kpi_csv = importlib.import_module("py-scripts.lf_kpi_csv")
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 from lf_interop_qos import ThroughputQOS
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 class HttpDownload(Realm):
     def __init__(self, lfclient_host, lfclient_port, upstream, num_sta, security, ssid, password,ap_name,
@@ -486,17 +488,22 @@ class HttpDownload(Realm):
                                          (','.join(self.http_profile.created_cx.keys()), data_mon.replace(' ', '+')))
         # print(data)
         data1 = []
-        data = data['endpoint']
-        if self.client_type == "Real":
-            self.num_sta = len(self.port_list)
-        if self.num_sta == 1:
-            data1.append(data[data_mon])
-        else:
-            for cx in self.http_profile.created_cx.keys():
-                for info in data:
-                    if cx in info:
-                        data1.append(info[cx][data_mon])
-        return data1
+        try:
+            data = data['endpoint']
+            if self.client_type == "Real":
+                self.num_sta = len(self.port_list)
+            if self.num_sta == 1:
+                data1.append(data[data_mon])
+            else:
+                for cx in self.http_profile.created_cx.keys():
+                    for info in data:
+                        if cx in info:
+                            data1.append(info[cx][data_mon])
+            return data1
+        except Exception as e:
+            total_data = self.json_get("layer4/all")
+            logger.error(f"no endpoint found: {e}")
+            print(total_data)
 
     def postcleanup(self):
         self.http_profile.cleanup()
