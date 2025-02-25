@@ -1196,6 +1196,8 @@ class Throughput(Realm):
                 devices_on_running=[]
                 download_data=[]
                 upload_data=[]
+                upload_drop=[]
+                download_drop=[]
                 devices_data_to_create_bar_graph=[]
                 # signal_data=[]
                 direction_in_table=[]
@@ -1219,13 +1221,17 @@ class Throughput(Realm):
                     # Checking individual device download and upload rate by searching device name in dataframe
                     columns_with_substring = [col for col in data_iter.columns if k in col]
                     filtered_df = data_iter[columns_with_substring]
+                    dl_len=len(filtered_df[[col for col in  filtered_df.columns if "Download" in col][0]].values.tolist())-1
+                    ul_len=len(filtered_df[[col for col in  filtered_df.columns if "Upload" in col][0]].values.tolist())-1
                     if self.load_type=="wc_intended_load":
                         if self.direction=="Bi-direction": 
 
                             # Append download and upload data from filtered dataframe
-                            download_data.append(filtered_df[[col for col in  filtered_df.columns if "Download" in col][0]].values.tolist()[-1])
-                            upload_data.append(filtered_df[[col for col in  filtered_df.columns if "Upload" in col][0]].values.tolist()[-1])
-
+                            # Append download and upload data from filtered dataframe
+                            download_data.append(round((sum(filtered_df[[col for col in  filtered_df.columns if "Download" in col][0]].values.tolist()[1:dl_len])/(dl_len-1)),2))
+                            upload_data.append(round((sum(filtered_df[[col for col in  filtered_df.columns if "Upload" in col][0]].values.tolist()[1:ul_len])/(ul_len-1)),2))
+                            upload_drop.append(round((sum(filtered_df[[col for col in  filtered_df.columns if "Rx % Drop B" in col][0]].values.tolist()[1:ul_len])/(ul_len-1)),2))
+                            download_drop.append(round((sum(filtered_df[[col for col in  filtered_df.columns if "Rx % Drop A" in col][0]].values.tolist()[1:dl_len])/(dl_len-1)),2))
                             rssi_data.append(int(round(sum(filtered_df[[col for col in  filtered_df.columns if "RSSI" in col][0]].values.tolist())/len(filtered_df[[col for col in  filtered_df.columns if "RSSI" in col][0]].values.tolist()),2))*-1)
                             # Calculate and append upload and download throughput to lists
                             upload_list.append(str(round((int(self.cx_profile.side_a_min_bps)/1000000)/int(incremental_capacity_list[i]),2)) + "Mbps")
@@ -1239,7 +1245,8 @@ class Throughput(Realm):
                         elif self.direction=='Download':
 
                             # Append download data from filtered dataframe
-                            download_data.append(filtered_df[[col for col in  filtered_df.columns if "Download" in col][0]].values.tolist()[-1])
+                            download_data.append(round((sum(filtered_df[[col for col in  filtered_df.columns if "Download" in col][0]].values.tolist()[1:dl_len])/(dl_len-1)),2))
+                            #download_data.append(filtered_df[[col for col in  filtered_df.columns if "Download" in col][0]].values.tolist()[-1])
 
                             # Append 0 for upload data
                             upload_data.append(0)
@@ -1249,6 +1256,7 @@ class Throughput(Realm):
                             # Calculate and append upload and download throughput to lists
                             upload_list.append(str(round((int(self.cx_profile.side_a_min_bps)/1000000)/int(incremental_capacity_list[i]),2)) + "Mbps")
                             download_list.append(str(round((int(self.cx_profile.side_b_min_bps)/1000000)/int(incremental_capacity_list[i]),2)) + "Mbps")
+                            download_drop.append(round((sum(filtered_df[[col for col in  filtered_df.columns if "Rx % Drop A" in col][0]].values.tolist()[1:dl_len])/(dl_len-1)),2))    
                             if self.cx_profile.side_a_min_pdu==-1:
                                 packet_size_in_table.append('AUTO')
                             else:
@@ -1264,10 +1272,10 @@ class Throughput(Realm):
                             rssi_data.append(int(round(sum(filtered_df[[col for col in  filtered_df.columns if "RSSI" in col][0]].values.tolist())/len(filtered_df[[col for col in  filtered_df.columns if "RSSI" in col][0]].values.tolist()),2))*-1)
 
                             # Append upload data from filtered dataframe
-                            upload_data.append(filtered_df[[col for col in  filtered_df.columns if "Upload" in col][0]].values.tolist()[-1])
-
+                            upload_data.append(round((sum(filtered_df[[col for col in  filtered_df.columns if "Upload" in col][0]].values.tolist()[1:ul_len])/(ul_len-1)),2))
                             # Append 0 for download data
                             download_data.append(0)
+                            upload_drop.append(round((sum(filtered_df[[col for col in  filtered_df.columns if "Rx % Drop B" in col][0]].values.tolist()[1:ul_len])/(ul_len-1)),2))
 
                             if self.cx_profile.side_a_min_pdu==-1:
                                 packet_size_in_table.append('AUTO')
@@ -1278,10 +1286,12 @@ class Throughput(Realm):
                     else:
                         
                         if self.direction=="Bi-direction": 
-
                             # Append download and upload data from filtered dataframe
-                            download_data.append(filtered_df[[col for col in  filtered_df.columns if "Download" in col][0]].values.tolist()[-1])
-                            upload_data.append(filtered_df[[col for col in  filtered_df.columns if "Upload" in col][0]].values.tolist()[-1])
+                            download_data.append(round((sum(filtered_df[[col for col in  filtered_df.columns if "Download" in col][0]].values.tolist()[1:dl_len])/(dl_len-1)),2))
+                            upload_data.append(round((sum(filtered_df[[col for col in  filtered_df.columns if "Upload" in col][0]].values.tolist()[1:ul_len])/(ul_len-1)),2))
+                            upload_drop.append(round((sum(filtered_df[[col for col in  filtered_df.columns if "Rx % Drop B" in col][0]].values.tolist()[1:ul_len])/(ul_len-1)),2))
+                            download_drop.append(round((sum(filtered_df[[col for col in  filtered_df.columns if "Rx % Drop A" in col][0]].values.tolist()[1:dl_len])/(dl_len-1)),2))
+                            #upload_data.append(filtered_df[[col for col in  filtered_df.columns if "Upload" in col][0]].values.tolist()[-1])
                             rssi_data.append(int(round(sum(filtered_df[[col for col in  filtered_df.columns if "RSSI" in col][0]].values.tolist())/len(filtered_df[[col for col in  filtered_df.columns if "RSSI" in col][0]].values.tolist()),2))*-1)
 
                             # Calculate and append upload and download throughput to lists
@@ -1296,8 +1306,7 @@ class Throughput(Realm):
                         elif self.direction=='Download':
 
                             # Append download data from filtered dataframe
-                            download_data.append(filtered_df[[col for col in  filtered_df.columns if "Download" in col][0]].values.tolist()[-1])
-
+                            download_data.append(round((sum(filtered_df[[col for col in  filtered_df.columns if "Download" in col][0]].values.tolist()[1:dl_len])/(dl_len-1)),2))
                             # Append 0 for upload data
                             upload_data.append(0)
                             rssi_data.append(int(round(sum(filtered_df[[col for col in  filtered_df.columns if "RSSI" in col][0]].values.tolist())/len(filtered_df[[col for col in  filtered_df.columns if "RSSI" in col][0]].values.tolist()),2))*-1)
@@ -1305,7 +1314,7 @@ class Throughput(Realm):
                             # Calculate and append upload and download throughput to lists
                             upload_list.append(str(round(int(self.cx_profile.side_a_min_bps)/1000000,2)) + "Mbps")
                             download_list.append(str(round(int(self.cx_profile.side_b_min_bps)/1000000,2)) + "Mbps")
-
+                            download_drop.append(round((sum(filtered_df[[col for col in  filtered_df.columns if "Rx % Drop A" in col][0]].values.tolist()[1:dl_len])/(dl_len-1)),2))
                             if self.cx_profile.side_a_min_pdu==-1:
                                 packet_size_in_table.append('AUTO')
                             else:
@@ -1319,7 +1328,8 @@ class Throughput(Realm):
                             rssi_data.append(int(round(sum(filtered_df[[col for col in  filtered_df.columns if "RSSI" in col][0]].values.tolist())/len(filtered_df[[col for col in  filtered_df.columns if "RSSI" in col][0]].values.tolist()),2))*-1)
 
                             # Append upload data from filtered dataframe
-                            upload_data.append(filtered_df[[col for col in  filtered_df.columns if "Upload" in col][0]].values.tolist()[-1])
+                            upload_data.append(round((sum(filtered_df[[col for col in  filtered_df.columns if "Upload" in col][0]].values.tolist()[1:ul_len])/(ul_len-1)),2))
+                            upload_drop.append(round((sum(filtered_df[[col for col in  filtered_df.columns if "Rx % Drop B" in col][0]].values.tolist()[1:ul_len])/(ul_len-1)),2))
 
                             # Append 0 for download data
                             download_data.append(0)
@@ -1444,15 +1454,27 @@ class Throughput(Realm):
                             " MAC ":  self.mac_id_list[0:int(incremental_capacity_list[i])],
                             " Channel ":self.channel_list[0:int(incremental_capacity_list[i])],
                             " Mode" : self.mode_list[0:int(incremental_capacity_list[i])],
-                            " Direction":direction_in_table[0:int(incremental_capacity_list[i])],
-                            " Offered download rate(Mbps) " : download_list[0:int(incremental_capacity_list[i])],
-                            " Observed download rate(Mbps)" : [str(n)+" Mbps" for n in download_data[0:int(incremental_capacity_list[i])]],
-                            " Offered upload rate(Mbps) " : upload_list[0:int(incremental_capacity_list[i])],
-                            " Observed upload rate(Mbps) " : [str(n)+" Mbps" for n in upload_data[0:int(incremental_capacity_list[i])]],
+                            #" Direction":direction_in_table[0:int(incremental_capacity_list[i])],
+                            " Offered download rate " : download_list[0:int(incremental_capacity_list[i])],
+                            " Observed download rate " : [str(n)+" Mbps" for n in download_data[0:int(incremental_capacity_list[i])]],
+                            " Offered upload rate " : upload_list[0:int(incremental_capacity_list[i])],
+                            " Observed upload rate " : [str(n)+" Mbps" for n in upload_data[0:int(incremental_capacity_list[i])]],
                             " RSSI ": ['' if n == 0 else '-' + str(n) + " dbm" for n in rssi_data[0:int(incremental_capacity_list[i])]],
-                            " Link Speed ":self.link_speed_list[0:int(incremental_capacity_list[i])],
+                            #" Link Speed ":self.link_speed_list[0:int(incremental_capacity_list[i])],
                             " Packet Size(Bytes) ":[str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]]
                         }
+                if self.direction=="Bi-direction": 
+                    bk_dataframe[" Average Rx Drop B% "]=upload_drop[-1]
+                    bk_dataframe[" Average Rx Drop A% "]=download_drop[-1]
+                elif self.direction=='Download':
+                    bk_dataframe[" Average Rx Drop A% "]=download_drop[-1]
+                    #adding rx drop while uploading as 0
+                    bk_dataframe[" Average Rx Drop B% "]=[0.0]
+
+                else:
+                    bk_dataframe[" Average Rx Drop B% "]=upload_drop[-1]
+                    #adding rx drop while downloading as 0
+                    bk_dataframe[" Average Rx Drop A% "]=[0.0]
     
                 dataframe1 = pd.DataFrame(bk_dataframe)
                 report.set_table_dataframe(dataframe1)
@@ -1551,6 +1573,8 @@ class Throughput(Realm):
                 upload_data=[]
                 devices_data_to_create_bar_graph=[]
                 signal_data=[]
+                upload_drop=[]
+                download_drop=[]
                 direction_in_table=[]
                 # packet_size_in_table=[]
                 upload_list,download_list=[],[]
@@ -1566,12 +1590,15 @@ class Throughput(Realm):
                     # Checking individual device download and upload rate by searching device name in dataframe
                     columns_with_substring = [col for col in data_iter.columns if k in col]
                     filtered_df = data_iter[columns_with_substring]
-   
+                    dl_len=len(filtered_df[[col for col in  filtered_df.columns if "Download" in col][0]].values.tolist())-1
+                    ul_len=len(filtered_df[[col for col in  filtered_df.columns if "Upload" in col][0]].values.tolist())-1
                     if self.direction=="Bi-direction": 
 
                         # Append download and upload data from filtered dataframe
-                        download_data.append(filtered_df[[col for col in  filtered_df.columns if "Download" in col][0]].values.tolist()[-1])
-                        upload_data.append(filtered_df[[col for col in  filtered_df.columns if "Upload" in col][0]].values.tolist()[-1])
+                        download_data.append(round((sum(filtered_df[[col for col in  filtered_df.columns if "Download" in col][0]].values.tolist()[1:dl_len])/(dl_len-1)),2))
+                        upload_data.append(round((sum(filtered_df[[col for col in  filtered_df.columns if "Upload" in col][0]].values.tolist()[1:ul_len])/(ul_len-1)),2))
+                        upload_drop.append(round((sum(filtered_df[[col for col in  filtered_df.columns if "Rx % Drop B" in col][0]].values.tolist()[1:ul_len])/(ul_len-1)),2))
+                        download_drop.append(round((sum(filtered_df[[col for col in  filtered_df.columns if "Rx % Drop A" in col][0]].values.tolist()[1:dl_len])/(dl_len-1)),2))
                         rssi_data.append(int(round(sum(filtered_df[[col for col in  filtered_df.columns if "RSSI" in col][0]].values.tolist())/len(filtered_df[[col for col in  filtered_df.columns if "RSSI" in col][0]].values.tolist()),2))*-1)
 
                         # Calculate and append upload and download throughput to lists
@@ -1582,11 +1609,13 @@ class Throughput(Realm):
                     elif self.direction=='Download':
 
                         # Append download data from filtered dataframe
-                        download_data.append(filtered_df[[col for col in  filtered_df.columns if "Download" in col][0]].values.tolist()[-1])
+                        download_data.append(round((sum(filtered_df[[col for col in  filtered_df.columns if "Download" in col][0]].values.tolist()[1:dl_len])/(dl_len-1)),2))
+                        #download_data.append(filtered_df[[col for col in  filtered_df.columns if "Download" in col][0]].values.tolist()[-1])
 
                         # Append 0 for upload data
                         upload_data.append(0)
                         rssi_data.append(int(round(sum(filtered_df[[col for col in  filtered_df.columns if "RSSI" in col][0]].values.tolist())/len(filtered_df[[col for col in  filtered_df.columns if "RSSI" in col][0]].values.tolist()),2))*-1)
+                        download_drop.append(round((sum(filtered_df[[col for col in  filtered_df.columns if "Rx % Drop A" in col][0]].values.tolist()[1:dl_len])/(dl_len-1)),2))
 
                         # Calculate and append upload and download throughput to lists
                         upload_list.append(str(round(int(self.cx_profile.side_a_min_bps)/1000000,2)) + "Mbps")
@@ -1599,9 +1628,11 @@ class Throughput(Realm):
                         upload_list.append(str(round(int(self.cx_profile.side_a_min_bps)/1000000,2)) + "Mbps")
                         download_list.append(str(round(int(self.cx_profile.side_b_min_bps)/1000000,2)) + "Mbps")
                         rssi_data.append(int(round(sum(filtered_df[[col for col in  filtered_df.columns if "RSSI" in col][0]].values.tolist())/len(filtered_df[[col for col in  filtered_df.columns if "RSSI" in col][0]].values.tolist()),2))*-1)
+                        upload_drop.append(round((sum(filtered_df[[col for col in  filtered_df.columns if "Rx % Drop B" in col][0]].values.tolist()[1:ul_len])/(ul_len-1)),2))
 
                         # Append upload data from filtered dataframe
-                        upload_data.append(filtered_df[[col for col in  filtered_df.columns if "Upload" in col][0]].values.tolist()[-1])
+                        upload_data.append(round((sum(filtered_df[[col for col in  filtered_df.columns if "Upload" in col][0]].values.tolist()[1:ul_len])/(ul_len-1)),2))
+                        # upload_data.append(filtered_df[[col for col in  filtered_df.columns if "Upload" in col][0]].values.tolist()[-1])
 
                         # Append 0 for download data
                         download_data.append(0)
@@ -1721,16 +1752,24 @@ class Throughput(Realm):
                             " MAC " : self.mac_id_list[int(incremental_capacity_list[i])-1],
                             " Channel ":self.channel_list[int(incremental_capacity_list[i])-1],
                             " Mode" : self.mode_list[int(incremental_capacity_list[i])-1],
-                            " Direction":direction_in_table[-1],
-                            " Offered download rate(Mbps) " : download_list[-1],
-                            " Observed download rate(Mbps)" : [str(download_data[-1])+" Mbps"],
-                            " Offered upload rate(Mbps) " : upload_list[-1],
-                            " Observed upload rate(Mbps) " : [str(upload_data[-1])+" Mbps" ],
+                            #" Direction":direction_in_table[-1],
+                            " Offered download rate " : download_list[-1],
+                            " Average download rate " : [str(download_data[-1])+" Mbps"],
+                            " Offered upload rate " : upload_list[-1],
+                            " Average upload rate " : [str(upload_data[-1])+" Mbps" ],
                             " RSSI ":  ['' if rssi_data[-1] == 0 else '-'+str(rssi_data[-1])+ " dbm"],
-                            " Link Speed ":self.link_speed_list[int(incremental_capacity_list[i])-1],
+                            #" Link Speed ":self.link_speed_list[int(incremental_capacity_list[i])-1],
                             # " Packet Size(Bytes) ":[str(n)+" Bytes" for n in packet_size_in_table[0:int(incremental_capacity_list[i])]]
                         }
-    
+                if self.direction=="Bi-direction": 
+                    bk_dataframe[" Average Rx Drop B% "]=upload_drop[-1]
+                    bk_dataframe[" Average Rx Drop A% "]=download_drop[-1]
+                elif self.direction=='Download':
+                    bk_dataframe[" Average Rx Drop A% "]=download_drop[-1]
+                    bk_dataframe[" Average Rx Drop B% "]=[0.0]
+                else:
+                    bk_dataframe[" Average Rx Drop B% "]=upload_drop[-1]
+                    bk_dataframe[" Average Rx Drop A% "]=[0.0]
                 dataframe1 = pd.DataFrame(bk_dataframe)
                 report.set_table_dataframe(dataframe1)
                 report.build_table()
