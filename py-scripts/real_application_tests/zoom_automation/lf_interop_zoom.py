@@ -344,20 +344,24 @@ class ZoomAutomation(Realm):
         return [self.start_time, self.end_time]
 
     def check_gen_cx(self):
+        try:
 
-        for gen_endp in self.generic_endps_profile.created_endp:
-            generic_endpoint = self.json_get(f'/generic/{gen_endp}')
+            for gen_endp in self.generic_endps_profile.created_endp:
+                generic_endpoint = self.json_get(f'/generic/{gen_endp}')
 
-            if not generic_endpoint or "endpoint" not in generic_endpoint:
-                logging.info(f"Error fetching endpoint data for {gen_endp}")
-                return False
+                if not generic_endpoint or "endpoint" not in generic_endpoint:
+                    logging.info(f"Error fetching endpoint data for {gen_endp}")
+                    return False
 
-            endp_status = generic_endpoint["endpoint"].get("status", "")
+                endp_status = generic_endpoint["endpoint"].get("status", "")
 
-            if endp_status not in ["Stopped", "WAITING","NO-CX"]:
-                return False
+                if endp_status not in ["Stopped", "WAITING","NO-CX"]:
+                    return False
 
-        return True
+            return True
+        except Exception as e:
+            logging.error(f"Error in check_gen_cx function {e}",exc_info=True)
+            logging.info(f"generic endpoint data {generic_endpoint}")
 
     def run(self, duration, server_ip, sigin_email, sigin_passwd, participants):
         # Store the email and password in the instance

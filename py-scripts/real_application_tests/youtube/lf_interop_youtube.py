@@ -1103,21 +1103,24 @@ class Youtube(Realm):
         self.report.write_pdf()
 
     def check_gen_cx(self):
+        try:
 
-        for gen_endp in self.generic_endps_profile.created_endp:
-            generic_endpoint = self.json_get(f'/generic/{gen_endp}')
+            for gen_endp in self.generic_endps_profile.created_endp:
+                generic_endpoint = self.json_get(f'/generic/{gen_endp}')
 
-            if not generic_endpoint or "endpoint" not in generic_endpoint:
-                logging.error(f"Error fetching endpoint data for {gen_endp}")
-                return False
+                if not generic_endpoint or "endpoint" not in generic_endpoint:
+                    logging.error(f"Error fetching endpoint data for {gen_endp}")
+                    return False
 
-            endp_status = generic_endpoint["endpoint"].get("status", "")
+                endp_status = generic_endpoint["endpoint"].get("status", "")
 
-            if endp_status not in ["Stopped", "WAITING","NO-CX"]:
-                return False
+                if endp_status not in ["Stopped", "WAITING","NO-CX"]:
+                    return False
 
-        return True
-
+            return True
+        except Exception as e:
+            logging.error(f"Error in check_gen_cx funtion {e}",exc_info=True)
+            logging.info(f"Generic endpoint data {generic_endpoint}")
 
 def main():
     try:
