@@ -800,7 +800,7 @@ class FtpTest(LFCliBase):
                     int(remaining_minutes)) + " min" if int(total_hours) != 0 or int(
                     remaining_minutes) != 0 else '<1 min'][0]] * len(self.cx_list)
                 df1 = pd.DataFrame(self.data)
-                if self.dowebgui == "True":
+                if self.dowebgui:
                     df1.to_csv('{}/ftp_datavalues.csv'.format(self.result_dir), index=False)
                 if self.clients_type=='Real':
                     df1.to_csv("ftp_datavalues.csv",index=False)
@@ -920,6 +920,10 @@ class FtpTest(LFCliBase):
                 #         for created_cx in self.cx_list:
                 #             if CX == created_cx:                
                 #                 self.rx_rate.append(cx[CX]['rx rate'])
+        else:
+            total_data = self.json_get("layer4/all")
+            logger.info("No endpoint found")
+            print(total_data)
 
 
     def my_monitor(self):
@@ -1034,6 +1038,9 @@ class FtpTest(LFCliBase):
             self.data_for_webui = {
                 "client": self.cx_list,
                 "url_data": self.url_data,
+                "bytes rd":self.bytes_rd,
+                "uc_min":self.uc_min,
+                "uc_max":self.uc_max,
                 "uc_avg": self.uc_avg,
                 "start_time": self.data["start_time"],
                 "end_time": self.data["end_time"],
