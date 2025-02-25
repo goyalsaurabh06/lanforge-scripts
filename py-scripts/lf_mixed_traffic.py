@@ -341,6 +341,7 @@ class Mixed_Traffic(Realm):
         self.ftp_device=[]
         self.http_dev=[]
         self.http_mac=[]
+        self.rx_rate=[]
         if self.dowebgui:
             self.stopped = False
             self.ping_execution = False
@@ -492,7 +493,7 @@ class Mixed_Traffic(Realm):
                 filtered_list.append(device)
         for j in rc_list:
             for one_Dev in filtered_list:
-                if(j.split(' ')[0] in one_Dev):
+                if(j.split(' ')[0] == one_Dev.split('.')[0]+'.'+one_Dev.split('.')[1]):
                     real_list.append(j)
         if type(device_list) is str:
             filtered_list = ','.join(filtered_list)
@@ -1158,7 +1159,7 @@ class Mixed_Traffic(Realm):
                                                             traffic_duration=self.ftp_test_duration,
                                                             ssh_port=22,
                                                             clients_type=client_type,
-                                                            dowebgui = "True" if self.dowebgui else "False",
+                                                            dowebgui = True if self.dowebgui else False,
                                                             result_dir=self.result_dir,
                                                             test_name=self.test_name)
                     interation_num = interation_num + 1
@@ -1194,14 +1195,15 @@ class Mixed_Traffic(Realm):
                     time1 = datetime.datetime.now()
                     logger.info("FTP Traffic started running at {}".format(time1))
                     self.ftp_test_obj.start(False, False)
-                    if self.dowebgui:    
+                    if self.dowebgui or self.real:    
                         self.ftp_test_obj.monitor_for_runtime_csv()
+                        self.ftp_test_obj.my_monitor_for_real_devices()
                     else:
                         time.sleep(self.ftp_test_duration)
+                        self.ftp_test_obj.my_monitor()
 
                     self.ftp_test_obj.stop()
                     logger.info("FTP Traffic stopped running")
-                    self.ftp_test_obj.my_monitor()
                     self.ftp_test_obj.cx_profile.cleanup()
                     time2 = datetime.datetime.now()
                     logger.info("FTP Test ended at {}".format(time2))
@@ -1280,7 +1282,7 @@ class Mixed_Traffic(Realm):
                                                 ap_name=self.dut_model, ssid=ssid, password=password, security=security,
                                                 target_per_ten=target_per_ten, file_size=http_file_size, bands=self.band,
                                                 client_type=client_type, lf_username=self.lf_username,
-                                                lf_password=self.lf_password,dowebgui = "True" if self.dowebgui else "False",
+                                                lf_password=self.lf_password,dowebgui = True if self.dowebgui else False,
                                                 result_dir=self.result_dir,
                                                 test_name=self.test_name)
             self.http_obj.data={}
@@ -1343,16 +1345,23 @@ class Mixed_Traffic(Realm):
             test_time = datetime.datetime.now().strftime("%b %d %H:%M:%S")
             logger.info("HTTP Test started at {}".format(test_time))
             self.http_obj.start()
-            if self.dowebgui:
+            if self.dowebgui or self.real:
                 self.http_obj.monitor_for_runtime_csv(self.http_test_duration)
             else:    
                 time.sleep(self.http_test_duration)
             self.http_obj.stop()
-            uc_avg_val = self.http_obj.my_monitor('uc-avg')
-            url_times = self.http_obj.my_monitor('total-urls')
-            rx_bytes_val = self.http_obj.my_monitor('bytes-rd')
-            rx_rate_val = self.http_obj.my_monitor('rx rate')
-
+            if self.real:
+                uc_avg_val = self.http_obj.data['uc_avg']
+                url_times = self.http_obj.data['url_data']
+                rx_bytes_val = self.http_obj.data['bytes_rd']
+                rx_rate_val = self.http_obj.data['rx_rate']
+            else:
+                uc_avg_val = self.http_obj.my_monitor('uc-avg')
+                url_times = self.http_obj.my_monitor('total-urls')
+                rx_bytes_val = self.http_obj.my_monitor('bytes-rd')
+                rx_rate_val = self.http_obj.my_monitor('rx rate')
+            if self.dowebgui:   
+                self.http_obj.data_for_webui["url_data"] = url_times
             if bands == "2.4G":
                 list2G.extend(uc_avg_val)
                 list2G_bytes.extend(rx_bytes_val)
@@ -1441,7 +1450,10 @@ class Mixed_Traffic(Realm):
                 self.dataset = result_data[i]['dl_time']
                 self.dataset2 = result_data[i]['url_times']
                 self.bytes_rd = result_data[i]['bytes_rd']
-            self.dataset1 = [float(f"{(i / 1000000): .4f}") for i in self.bytes_rd]
+                self.rx_rate = result_data[i]['speed']
+
+            self.dataset1 = [round(i / 1000000,4) for i in self.bytes_rd]
+            self.rx_rate = [round(x / 1000000,4) for x in self.rx_rate]   #converting bps to mbps
             logger.info("data sets {} {}".format(self.dataset, self.dataset2))
             if self.band == "Both":
                 for i in range(1, len(http_sta_list) * 2 + 1):
@@ -1461,7 +1473,7 @@ class Mixed_Traffic(Realm):
                                         test_setup_info=test_setup_info, dataset=self.dataset, lis=self.lis,
                                         bands=Bands, threshold_2g="", threshold_5g="", threshold_both="",
                                         dataset1=self.dataset1,
-                                        dataset2=self.dataset2, result_data=result_data, test_rig="", test_tag="",
+                                        dataset2=self.dataset2, result_data=result_data,rx_rate=self.rx_rate, test_rig="", test_tag="",
                                         dut_hw_version="", dut_sw_version="", dut_model_num="", dut_serial_num="",
                                         test_id="", test_input_infor="", csv_outfile="",
                                         _results_dir_name=f'Webpage_Test_Report{band}',
@@ -1469,13 +1481,13 @@ class Mixed_Traffic(Realm):
             self.cleanup.layer4_endp_clean()
             self.http_test_status = True
             if(conn):
-                conn.send([self.http_obj, self.dataset, self.dataset1, self.dataset2, self.bytes_rd, self.lis, True])
+                conn.send([self.http_obj, self.dataset, self.dataset1, self.dataset2, self.bytes_rd,self.rx_rate, self.lis, True])
         except Exception as e:
             # traceback.print_exc()
             logging.exception(e)
             if(conn):
                 conn.send(
-                    [[], [], {}, {}, '', '', False]
+                    [[], [], {}, {}, '', '','', False]
                 )
 
     def multicast_test(self, endp_types=None, mc_tos=None, side_a_min=0, side_b_min=0, side_a_pdu=0, side_b_pdu=0,
@@ -2042,7 +2054,9 @@ class Mixed_Traffic(Realm):
                     " Mode": self.ftp_test_obj.mode_list,
                     " No of times File downloaded ": self.ftp_test_obj.url_data,
                     " Time Taken to Download file (ms)": self.ftp_test_obj.uc_avg,
-                    " Bytes-rd (Mega Bytes)" : self.ftp_test_obj.bytes_rd}
+                    " Bytes-rd (Mega Bytes)" : self.ftp_test_obj.bytes_rd,
+                    " RX RATE (Mbps) " : self.ftp_test_obj.rx_rate
+                    }
                 dataframe1 = pd.DataFrame(dataframe)
                 self.lf_report_mt.set_table_dataframe(dataframe1)
                 self.lf_report_mt.build_table()
@@ -2090,7 +2104,9 @@ class Mixed_Traffic(Realm):
                     " Mode": self.http_obj.mode_list,
                     " No of times File downloaded ": self.dataset2,
                     " Average time taken to Download file (ms)": self.dataset,
-                    " Bytes-rd (Mega Bytes) " : self.dataset1}
+                    " Bytes-rd (Mega Bytes) " : self.dataset1,
+                    " Rx Rate (Mbps) "  : self.rx_rate
+                    }
                 dataframe1 = pd.DataFrame(dataframe)
                 self.lf_report_mt.set_table_dataframe(dataframe1)
                 self.lf_report_mt.build_table()
@@ -2474,7 +2490,7 @@ INCLUDE_IN_README: False
                         action="store_true")
     
     # For webgui execution
-    parser.add_argument('--dowebgui', help='to run the tests with webgui',default=None,
+    parser.add_argument('--dowebgui', help='to run the tests with webgui',default=False,
                         action="store_true")
     parser.add_argument('--device_list', help='device list recieved from webgui tos', type=str, default="")
     parser.add_argument('--result_dir', help='result_dir for real time data for webui', type=str, default="")
@@ -2818,7 +2834,7 @@ INCLUDE_IN_README: False
                             mixed_obj.ftp_test_obj, mixed_obj.ftp_test_status = t3_parent.recv()
                             t3.join()
                         if "4" in args.tests:
-                            mixed_obj.http_obj, mixed_obj.dataset, mixed_obj.dataset1, mixed_obj.dataset2, mixed_obj.bytes_rd, mixed_obj.lis, mixed_obj.http_test_status = t4_parent.recv()
+                            mixed_obj.http_obj, mixed_obj.dataset, mixed_obj.dataset1, mixed_obj.dataset2, mixed_obj.bytes_rd, mixed_obj.rx_rate, mixed_obj.lis, mixed_obj.http_test_status = t4_parent.recv()
                             t4.join()
                         if "5" in args.tests:
                             class temp_multi_cast_obj():
@@ -3018,7 +3034,7 @@ INCLUDE_IN_README: False
                         mixed_obj.ftp_test_obj, mixed_obj.ftp_test_status = t3_parent.recv()
                         t3.join()
                     if "4" in args.tests:
-                        mixed_obj.http_obj, mixed_obj.dataset, mixed_obj.dataset1, mixed_obj.dataset2, mixed_obj.bytes_rd, mixed_obj.lis, mixed_obj.http_test_status = t4_parent.recv()
+                        mixed_obj.http_obj, mixed_obj.dataset, mixed_obj.dataset1, mixed_obj.dataset2, mixed_obj.bytes_rd, mixed_obj.rx_rate, mixed_obj.lis, mixed_obj.http_test_status = t4_parent.recv()
                         t4.join()
                     if "5" in args.tests:
                         class temp_multi_cast_obj():
