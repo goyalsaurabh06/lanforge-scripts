@@ -411,8 +411,8 @@ class ThroughputQOS(Realm):
             logger.info("cross connections with TOS type created.")
 
     def monitor(self):
-        throughput, upload,download,upload_throughput,download_throughput,connections_upload, connections_download = {}, [], [],[],[],{},{}
-        drop_a, drop_a_per, drop_b, drop_b_per = [], [], [], []
+        throughput, upload,download,upload_throughput,download_throughput,connections_upload, connections_download,avg_upload,avg_download,avg_upload_throughput,avg_download_throughput,connections_download_avg,connections_upload_avg,avg_drop_a,avg_drop_b ,dropa_connections,dropb_connections= {}, [], [],[],[],{},{},[],[],[],[],{},{},[],[],{},{}
+        drop_a, drop_a_per, drop_b, drop_b_per,avg_drop_b_per,avg_drop_a_per = [], [], [], [],[],[]
         if (self.test_duration is None) or (int(self.test_duration) <= 1):
             raise ValueError("Monitor test duration should be > 1 second")
         if self.cx_profile.created_cx is None:
@@ -426,10 +426,14 @@ class ThroughputQOS(Realm):
         self.overall = []
         index = -1
         connections_upload = dict.fromkeys(list(self.cx_profile.created_cx.keys()), float(0))
+        connections_upload_avg = dict.fromkeys(list(self.cx_profile.created_cx.keys()), float(0))
         connections_download = dict.fromkeys(list(self.cx_profile.created_cx.keys()), float(0))
+        connections_download_avg = dict.fromkeys(list(self.cx_profile.created_cx.keys()), float(0))
         connections_upload_realtime = dict.fromkeys(list(self.cx_profile.created_cx.keys()), float(0))
         connections_download_realtime = dict.fromkeys(list(self.cx_profile.created_cx.keys()), float(0))
-        [(upload.append([]), download.append([]), drop_a.append([]), drop_b.append([])) for i in
+        dropa_connections = dict.fromkeys(list(self.cx_profile.created_cx.keys()), float(0))
+        dropb_connections = dict.fromkeys(list(self.cx_profile.created_cx.keys()), float(0))
+        [(upload.append([]), download.append([]), drop_a.append([]), drop_b.append([]),avg_upload.append([]),avg_download.append([]),avg_drop_a.append([]),avg_drop_b.append([])) for i in
          range(len(self.cx_profile.created_cx))]
         if self.dowebgui == "True":
             runtime_dir = self.result_dir
@@ -473,22 +477,28 @@ class ThroughputQOS(Realm):
         while datetime.now() < end_time or getattr(self,"background_run",None):
             index += 1
             # removed the fields query from endp so that the cx names will be given in the reponse as keys instead of cx_ids
-            response = self.json_get('/cx/%s?' % (
-                    ','.join(self.cx_profile.created_cx.keys())))
-            del response['handler'], response['uri']
             t_response = {}
-            for item in response.items():
-                cx_name, cx_data = item
-                t_response[cx_name] = []
-                for key in cx_data.keys():
-                    if key in ['bps rx a', 'bps rx b', 'rx drop % a', 'rx drop % b']:
-                        t_response[cx_name].append(cx_data[key])
-                    traffic_tos = cx_name.split('_')[-1].split('-')[0]
-                    self.real_time_data[cx_name][traffic_tos]['time'].append(datetime.now().strftime('%H:%M:%S'))
-                    self.real_time_data[cx_name][traffic_tos]['bps rx a'].append(cx_data['bps rx a']/1000000)
-                    self.real_time_data[cx_name][traffic_tos]['bps rx b'].append(cx_data['bps rx b']/1000000)
-                    self.real_time_data[cx_name][traffic_tos]['rx drop % a'].append(cx_data['rx drop % a'])
-                    self.real_time_data[cx_name][traffic_tos]['rx drop % b'].append(cx_data['rx drop % b'])
+            overallresponse=self.json_get('/cx/all')
+            try:
+                response = self.json_get('/cx/%s?' % (
+                        ','.join(self.cx_profile.created_cx.keys())))
+                # print("response",response)
+                del response['handler'], response['uri']
+                for item in response.items():
+                    cx_name, cx_data = item
+                    t_response[cx_name] = []
+                    for key in cx_data.keys():
+                        if key in ['bps rx a', 'bps rx b', 'rx drop % a', 'rx drop % b']:
+                            t_response[cx_name].append(cx_data[key])
+                        traffic_tos = cx_name.split('_')[-1].split('-')[0]
+                        self.real_time_data[cx_name][traffic_tos]['time'].append(datetime.now().strftime('%H:%M:%S'))
+                        self.real_time_data[cx_name][traffic_tos]['bps rx a'].append(cx_data['bps rx a']/1000000)
+                        self.real_time_data[cx_name][traffic_tos]['bps rx b'].append(cx_data['bps rx b']/1000000)
+                        self.real_time_data[cx_name][traffic_tos]['rx drop % a'].append(cx_data['rx drop % a'])
+                        self.real_time_data[cx_name][traffic_tos]['rx drop % b'].append(cx_data['rx drop % b'])
+            except Exception as e:
+                logger.info(overallresponse)
+                logger.error(f"None type response{e}")
             response = t_response
             response_values = list(response.values())
             for value_index in range(len(response.values())):
@@ -621,27 +631,45 @@ class ThroughputQOS(Realm):
             else:
                 time.sleep(1)
         # # rx_rate list is calculated
+            for ind, k in enumerate(throughput):
+                avg_upload[ind].append(throughput[ind][1])
+                avg_download[ind].append(throughput[ind][0])
+                avg_drop_a[ind].append(throughput[ind][2])
+                avg_drop_b[ind].append(throughput[ind][3])
         for index, key in enumerate(throughput):
             upload[index].append(throughput[index][1])
             download[index].append(throughput[index][0])
             drop_a[index].append(throughput[index][2])
             drop_b[index].append(throughput[index][3])
         upload_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in upload]
+        avg_upload_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in avg_upload]
         download_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in download]
+        avg_download_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in avg_download]
         drop_a_per = [float(round(sum(i) / len(i), 2)) for i in drop_a]
+        avg_drop_a_per = [float(round(sum(i) / len(i), 2)) for i in avg_drop_a]
+        avg_drop_b_per = [float(round(sum(i) / len(i), 2)) for i in avg_drop_b]
         drop_b_per = [float(round(sum(i) / len(i), 2)) for i in drop_b]
         keys = list(connections_upload.keys())
         keys = list(connections_download.keys())
 
         for i in range(len(download_throughput)):
             connections_download.update({keys[i]: float(f"{(download_throughput[i] ):.2f}")})
+        for i in range(len(avg_download_throughput)):
+            connections_download_avg.update({keys[i]: float(f"{(avg_download_throughput[i] ):.2f}")})
         for i in range(len(upload_throughput)):
             connections_upload.update({keys[i]: float(f"{(upload_throughput[i] ):.2f}")})
+        for i in range(len(avg_upload_throughput)):
+            connections_upload_avg.update({keys[i]: float(f"{(avg_upload_throughput[i] ):.2f}")})
+        for i in range(len(avg_drop_a_per)):
+            dropa_connections.update({keys[i]: float(f"{(avg_drop_a_per[i] ):.2f}")})
+        for i in range(len(avg_drop_b_per)):
+            dropb_connections.update({keys[i]: float(f"{(avg_drop_b_per[i] ):.2f}")})
         logger.info("connections download {}".format(connections_download))
         logger.info("connections {}".format(connections_upload))
-
         self.connections_download,self.connections_upload,self.drop_a_per, self.drop_b_per = connections_download,connections_upload, drop_a_per, drop_b_per
-        return connections_download,connections_upload, drop_a_per, drop_b_per
+            
+        return connections_download,connections_upload, drop_a_per, drop_b_per,connections_download_avg,connections_upload_avg,dropa_connections,dropb_connections
+        
 
     def evaluate_qos(self, connections_download, connections_upload, drop_a_per, drop_b_per):
         case_upload = ""
@@ -841,7 +869,7 @@ class ThroughputQOS(Realm):
                 ssid_list.append('-')
         return ssid_list
 
-    def generate_report(self, data, input_setup_info, report_path='', result_dir_name='Qos_Test_report',
+    def generate_report(self, data, input_setup_info,connections_download_avg,connections_upload_avg,avg_drop_a,avg_drop_b, report_path='', result_dir_name='Qos_Test_report',
                         selected_real_clients_names=None):
         # getting ssid list for devices, on which the test ran
         self.ssid_list = self.get_ssid_list(self.input_devices_list)
@@ -908,7 +936,7 @@ class ThroughputQOS(Realm):
         
         test_setup_info = {
         "Device List": ", ".join(all_devices_names),
-        "Number of Stations" : self.num_stations,
+        "Number of Stations" : "Total"+ f"({self.num_stations})" + total_devices,
         "AP Model": self.ap_name,
         "SSID": self.ssid,
         "Traffic Duration in hours" : round(int(self.test_duration)/3600,2),
@@ -963,33 +991,75 @@ class ThroughputQOS(Realm):
         report.set_csv_filename(graph_png)
         report.move_csv_file()
         report.build_graph()
-        self.generate_individual_graph(res, report)
+        self.generate_individual_graph(res, report,connections_download_avg,connections_upload_avg,avg_drop_a,avg_drop_b)
         report.test_setup_table(test_setup_data=input_setup_info, value="Information")
         report.build_custom()
         report.build_footer()
         report.write_html()
         report.write_pdf()
 
-    def generate_individual_graph(self, res, report):
+    def generate_individual_graph(self, res, report,connections_download_avg,connections_upload_avg,avg_drop_a,avg_drop_b):
         load=""
         upload_list,download_list,individual_upload_list,individual_download_list=[],[],[],[]
         individual_set,colors,labels=[],[],[]
         individual_drop_a_list, individual_drop_b_list = [], []
         list=[[],[],[],[]]
         data_set={}
+        avg_res={'Upload':{
+                'VO':[],
+                'VI':[],
+                'BE':[],
+                'BK':[]
+        },
+        'Download':{
+                'VO':[],
+                'VI':[],
+                'BE':[],
+                'BK':[]
+        }
+        }
+        drop_res={'drop_a':{
+                'VO':[],
+                'VI':[],
+                'BE':[],
+                'BK':[]
+        },
+        'drop_b':{
+                'VO':[],
+                'VI':[],
+                'BE':[],
+                'BK':[]
+        }
+        }
+        
         rate_down= str(str(int(self.cx_profile.side_b_min_bps) / 1000000) +' '+'Mbps')
         rate_up= str(str(int(self.cx_profile.side_a_min_bps) / 1000000) +' '+'Mbps')
         if self.direction == 'Upload':
             load=rate_up
             data_set=res['test_results'][0][1]
             for client in range(len(self.real_client_list)):
-                individual_download_list.append('0')
+                individual_download_list.append('0.0')
+                individual_drop_a_list.append('0.0')
+            for key,val in connections_upload_avg.items():
+                tos=key.split('_')[-1].split('-')[0]
+                avg_res[self.direction][tos].append(val)
+            for key,val in avg_drop_b.items():
+                tos=key.split('_')[-1].split('-')[0]
+                drop_res['drop_b'][tos].append(val)
+                
         else:
             if self.direction =='Download':
                 load=rate_down
                 data_set=res['test_results'][0][0]
                 for client in range(len(self.real_client_list)):
-                    individual_upload_list.append('0')
+                    individual_upload_list.append('0.0')
+                    individual_drop_b_list.append('0.0')
+                for key,val in connections_download_avg.items():
+                    tos=key.split('_')[-1].split('-')[0]
+                    avg_res[self.direction][tos].append(val)
+                for key,val in avg_drop_a.items():
+                    tos=key.split('_')[-1].split('-')[0]
+                    drop_res['drop_a'][tos].append(val)
         tos_type = ['Background','Besteffort','Video','Voice']
         load_list = []
         traffic_type_list = []
@@ -1022,6 +1092,18 @@ class ThroughputQOS(Realm):
                 list[1].append(res['test_results'][0][1][key]['VO'])
                 list[2].append(res['test_results'][0][1][key]['BK'])
                 list[3].append(res['test_results'][0][1][key]['BE'])
+            for key,val in connections_upload_avg.items():
+                tos=key.split('_')[-1].split('-')[0]
+                avg_res['Upload'][tos].append(val)
+            for key,val in connections_download_avg.items():
+                tos=key.split('_')[-1].split('-')[0]
+                avg_res['Download'][tos].append(val)
+            for key,val in avg_drop_b.items():
+                tos=key.split('_')[-1].split('-')[0]
+                drop_res['drop_b'][tos].append(val)
+            for key,val in avg_drop_a.items():
+                tos=key.split('_')[-1].split('-')[0]
+                drop_res['drop_a'][tos].append(val)
         x_fig_size = 15
         y_fig_size = len(self.real_client_list1) * .5 + 4
         if len(res.keys()) > 0:
@@ -1035,10 +1117,10 @@ class ThroughputQOS(Realm):
                 if "BK" in self.tos:
                     if self.direction=="Bi-direction":
                         individual_set=list[2]
-                        individual_download_list=individual_set[0]
-                        individual_upload_list=individual_set[1]
-                        individual_drop_a_list = res['test_results'][0][2]['drop_per']['rx_drop_a']['BK']
-                        individual_drop_b_list = res['test_results'][0][2]['drop_per']['rx_drop_b']['BK']
+                        individual_download_list=avg_res['Download']['BK']
+                        individual_upload_list=avg_res['Upload']['BK']
+                        individual_drop_a_list = drop_res['drop_a']['BK']
+                        individual_drop_b_list = drop_res['drop_b']['BK']
                         colors=['orange','wheat']
                         labels=["Download","Upload"]
                     else:
@@ -1046,11 +1128,11 @@ class ThroughputQOS(Realm):
                         colors=['orange']
                         labels=['BK']
                         if self.direction == "Upload":
-                            individual_upload_list = [data_set[load]['BK']][0]
-                            individual_drop_b_list = res['test_results'][0][2]['drop_per']['rx_drop_b']['BK']
+                            individual_upload_list = avg_res['Upload']['BK']
+                            individual_drop_b_list = drop_res['drop_b']['BK']
                         elif self.direction == "Download":
-                            individual_download_list = [data_set[load]['BK']][0]
-                            individual_drop_a_list = res['test_results'][0][2]['drop_per']['rx_drop_a']['BK']
+                            individual_download_list = avg_res['Download']['BK']
+                            individual_drop_a_list = drop_res['drop_a']['BK']
                     report.set_obj_html(
                         _obj_title=f"Individual {self.direction} throughput with intended load {load}/station for traffic BK(WiFi).",
                         _obj=f"The below graph represents individual throughput for {len(self.input_devices_list)} clients running BK "
@@ -1083,17 +1165,23 @@ class ThroughputQOS(Realm):
                     report.set_csv_filename(graph_png)
                     report.move_csv_file()
                     report.build_graph()
+                    individual_avgupload_list=[]
+                    individual_avgdownload_list=[]
+                    for i in range(len(individual_upload_list)):
+                        individual_avgupload_list.append(str(str(individual_upload_list[i])+' '+'Mbps'))
+                    for j in range(len(individual_download_list)):
+                        individual_avgdownload_list.append(str(str(individual_download_list[j])+' '+'Mbps'))
                     bk_dataframe = {
                         " Client Name " : self.real_client_list,
                         " MAC " : self.mac_id_list,
                         " SSID " : self.ssid_list,
                         " Type of traffic " : bk_tos_list,
-                        " Traffic Direction " : traffic_direction_list,
-                        " Traffic Protocol " : traffic_type_list,
-                        " Offered upload rate(Mbps) " : upload_list,
-                        " Offered download rate(Mbps) " : download_list,
-                        " Observed upload rate(Mbps) " : individual_upload_list,
-                        " Observed download rate(Mbps)" : individual_download_list
+                        # " Traffic Direction " : traffic_direction_list,
+                        # " Traffic Protocol " : traffic_type_list,
+                        " Offered upload rate " : upload_list,
+                        " Offered download rate " : download_list,
+                        " Observed average upload rate " : individual_avgupload_list,
+                        " Observed average download rate" : individual_avgdownload_list
                     }
                     if self.direction == "Bi-direction":
                         bk_dataframe[" Observed Upload Drop (%)"] = individual_drop_b_list
@@ -1101,7 +1189,9 @@ class ThroughputQOS(Realm):
                     else:
                         if self.direction == "Upload":
                             bk_dataframe[" Observed Upload Drop (%)"] = individual_drop_b_list
+                            bk_dataframe[" Observed Download Drop (%)"] = individual_drop_a_list
                         elif self.direction == "Download":
+                            bk_dataframe[" Observed Upload Drop (%)"] = individual_drop_b_list
                             bk_dataframe[" Observed Download Drop (%)"] = individual_drop_a_list
                     dataframe1 = pd.DataFrame(bk_dataframe)
                     report.set_table_dataframe(dataframe1)
@@ -1110,8 +1200,8 @@ class ThroughputQOS(Realm):
                 if "BE" in self.tos:
                     if self.direction=="Bi-direction":
                         individual_set=list[3]
-                        individual_download_list=individual_set[0]
-                        individual_upload_list=individual_set[1]
+                        individual_download_list=avg_res['Download']['BE']
+                        individual_upload_list=avg_res['Upload']['BE']
                         individual_drop_a_list = res['test_results'][0][2]['drop_per']['rx_drop_a']['BE']
                         individual_drop_b_list = res['test_results'][0][2]['drop_per']['rx_drop_b']['BE']
                         colors=['lightcoral','mistyrose']
@@ -1121,10 +1211,10 @@ class ThroughputQOS(Realm):
                         colors=['violet']
                         labels=['BE']
                         if self.direction == "Upload":
-                            individual_upload_list = [data_set[load]['BE']][0]
+                            individual_upload_list = avg_res['Upload']['BE']
                             individual_drop_b_list = res['test_results'][0][2]['drop_per']['rx_drop_b']['BE']
                         elif self.direction == "Download":
-                            individual_download_list = [data_set[load]['BE']][0]
+                            individual_download_list = avg_res['Download']['BE']
                             individual_drop_a_list = res['test_results'][0][2]['drop_per']['rx_drop_a']['BE']
                     report.set_obj_html(
                         _obj_title=f"Individual {self.direction} throughput with intended load {load}/station for traffic BE(WiFi).",
@@ -1159,17 +1249,23 @@ class ThroughputQOS(Realm):
                     report.set_csv_filename(graph_png)
                     report.move_csv_file()
                     report.build_graph()
+                    individual_avgupload_list=[]
+                    individual_avgdownload_list=[]
+                    for i in range(len(individual_upload_list)):
+                        individual_avgupload_list.append(str(str(individual_upload_list[i])+' '+'Mbps'))
+                    for j in range(len(individual_download_list)):
+                        individual_avgdownload_list.append(str(str(individual_download_list[j])+' '+'Mbps'))
                     be_dataframe = {
                         " Client Name " : self.real_client_list,
                         " MAC " : self.mac_id_list,
                         " SSID " : self.ssid_list,
                         " Type of traffic " : be_tos_list,
-                        " Traffic Direction " : traffic_direction_list,
-                        " Traffic Protocol " : traffic_type_list,
-                        " Offered upload rate(Mbps) " : upload_list,
-                        " Offered download rate(Mbps) " : download_list,
-                        " Observed upload rate(Mbps) " : individual_upload_list,
-                        " Observed download rate(Mbps)" : individual_download_list
+                        # " Traffic Direction " : traffic_direction_list,
+                        # " Traffic Protocol " : traffic_type_list,
+                        " Offered upload rate " : upload_list,
+                        " Offered download rate " : download_list,
+                        " Observed average upload rate " : individual_avgupload_list,
+                        " Observed average download rate" : individual_avgdownload_list
                     }
                     if self.direction == "Bi-direction":
                         be_dataframe[" Observed Upload Drop (%)"] = individual_drop_b_list
@@ -1177,7 +1273,9 @@ class ThroughputQOS(Realm):
                     else:
                         if self.direction == "Upload":
                             be_dataframe[" Observed Upload Drop (%)"] = individual_drop_b_list
+                            be_dataframe[" Observed Download Drop (%)"] = individual_drop_a_list
                         elif self.direction == "Download":
+                            be_dataframe[" Observed Upload Drop (%)"] = individual_drop_b_list
                             be_dataframe[" Observed Download Drop (%)"] = individual_drop_a_list
                     dataframe2 = pd.DataFrame(be_dataframe)
                     report.set_table_dataframe(dataframe2)
@@ -1186,10 +1284,10 @@ class ThroughputQOS(Realm):
                 if "VI" in self.tos:
                     if self.direction=="Bi-direction":
                         individual_set=list[0]
-                        individual_download_list=individual_set[0]
-                        individual_upload_list=individual_set[1]
-                        individual_drop_a_list = res['test_results'][0][2]['drop_per']['rx_drop_a']['VI']
-                        individual_drop_b_list = res['test_results'][0][2]['drop_per']['rx_drop_b']['VI']
+                        individual_download_list=avg_res['Download']['VI']
+                        individual_upload_list=avg_res['Upload']['VI']
+                        individual_drop_a_list = drop_res['drop_a']['VI']
+                        individual_drop_b_list =drop_res['drop_b']['VI']
                         colors=['steelblue','lightskyblue']
                         labels=['Download','Upload']
                     else:
@@ -1197,11 +1295,11 @@ class ThroughputQOS(Realm):
                         colors=['steelblue']
                         labels=['VI']
                         if self.direction == "Upload":
-                            individual_upload_list = [data_set[load]['VI']][0]
-                            individual_drop_b_list = res['test_results'][0][2]['drop_per']['rx_drop_b']['VI']
+                            individual_upload_list = avg_res['Upload']['VI']
+                            individual_drop_b_list = drop_res['drop_b']['VI']
                         elif self.direction == "Download":
-                            individual_download_list = [data_set[load]['VI']][0]
-                            individual_drop_a_list = res['test_results'][0][2]['drop_per']['rx_drop_a']['VI']
+                            individual_download_list = avg_res['Download']['VI']
+                            individual_drop_a_list = drop_res['drop_a']['VI']
                     report.set_obj_html(
                         _obj_title=f"Individual {self.direction} throughput with intended load {load}/station for traffic VI(WiFi).",
                         _obj=f"The below graph represents individual throughput for {len(self.input_devices_list)} clients running VI "
@@ -1235,17 +1333,23 @@ class ThroughputQOS(Realm):
                     report.set_csv_filename(graph_png)
                     report.move_csv_file()
                     report.build_graph()
+                    individual_avgupload_list=[]
+                    individual_avgdownload_list=[]
+                    for i in range(len(individual_upload_list)):
+                        individual_avgupload_list.append(str(str(individual_upload_list[i])+' '+'Mbps'))
+                    for j in range(len(individual_download_list)):
+                        individual_avgdownload_list.append(str(str(individual_download_list[j])+' '+'Mbps'))
                     vi_dataframe = {
                         " Client Name " : self.real_client_list,
                         " MAC " : self.mac_id_list,
                         " SSID " : self.ssid_list,
                         " Type of traffic " : vi_tos_list,
-                        " Traffic Direction " : traffic_direction_list,
-                        " Traffic Protocol " : traffic_type_list,
-                        " Offered upload rate(Mbps) " : upload_list,
-                        " Offered download rate(Mbps) " : download_list,
-                        " Observed upload rate(Mbps) " : individual_upload_list,
-                        " Observed download rate(Mbps)" : individual_download_list
+                        # " Traffic Direction " : traffic_direction_list,
+                        # " Traffic Protocol " : traffic_type_list,
+                        " Offered upload rate " : upload_list,
+                        " Offered download rate " : download_list,
+                        " Observed average upload rate " : individual_avgupload_list,
+                        " Observed average download rate" : individual_avgdownload_list
                     }
                     if self.direction == "Bi-direction":
                         vi_dataframe[" Observed Upload Drop (%)"] = individual_drop_b_list
@@ -1253,7 +1357,9 @@ class ThroughputQOS(Realm):
                     else:
                         if self.direction == "Upload":
                             vi_dataframe[" Observed Upload Drop (%)"] = individual_drop_b_list
+                            vi_dataframe[" Observed Download Drop (%)"] = individual_drop_a_list
                         elif self.direction == "Download":
+                            vi_dataframe[" Observed Upload Drop (%)"] = individual_drop_b_list
                             vi_dataframe[" Observed Download Drop (%)"] = individual_drop_a_list
                     print("Df", vi_dataframe)
                     dataframe3 = pd.DataFrame(vi_dataframe)
@@ -1263,10 +1369,10 @@ class ThroughputQOS(Realm):
                 if "VO" in self.tos:
                     if self.direction=="Bi-direction":
                         individual_set=list[1]
-                        individual_download_list=individual_set[0]
-                        individual_upload_list=individual_set[1]
-                        individual_drop_a_list = res['test_results'][0][2]['drop_per']['rx_drop_a']['VO']
-                        individual_drop_b_list = res['test_results'][0][2]['drop_per']['rx_drop_b']['VO']
+                        individual_download_list=avg_res['Download']['VO']
+                        individual_upload_list=avg_res['Upload']['VO']
+                        individual_drop_a_list = drop_res['drop_a']['VO']
+                        individual_drop_b_list = drop_res['drop_b']['VO']
                         colors=['grey','lightgrey']
                         labels=['Download','Upload']
                     else:
@@ -1274,11 +1380,11 @@ class ThroughputQOS(Realm):
                         colors=['grey']
                         labels=['VO']
                         if self.direction == "Upload":
-                            individual_upload_list = [data_set[load]['VO']][0]
-                            individual_drop_b_list = res['test_results'][0][2]['drop_per']['rx_drop_b']['VO']
+                            individual_upload_list = avg_res['Upload']['VO']
+                            individual_drop_b_list = drop_res['drop_b']['VO']
                         elif self.direction == "Download":
-                            individual_download_list = [data_set[load]['VO']][0]
-                            individual_drop_a_list = res['test_results'][0][2]['drop_per']['rx_drop_a']['VO']
+                            individual_download_list = avg_res['Download']['VO']
+                            individual_drop_a_list = drop_res['drop_a']['VO']
                     report.set_obj_html(
                         _obj_title=f"Individual {self.direction} throughput with intended load {load}/station for traffic VO(WiFi).",
                         _obj=f"The below graph represents individual throughput for {len(self.input_devices_list)} clients running VO "
@@ -1311,18 +1417,24 @@ class ThroughputQOS(Realm):
                     report.move_graph_image()
                     report.set_csv_filename(graph_png)
                     report.move_csv_file()
-                    report.build_graph()   
+                    report.build_graph()
+                    individual_avgupload_list=[]
+                    individual_avgdownload_list=[]
+                    for i in range(len(individual_upload_list)):
+                        individual_avgupload_list.append(str(str(individual_upload_list[i])+' '+'Mbps'))
+                    for j in range(len(individual_download_list)):
+                        individual_avgdownload_list.append(str(str(individual_download_list[j])+' '+'Mbps'))
                     vo_dataframe = {
                         " Client Name " : self.real_client_list,
                         " MAC " : self.mac_id_list,
                         " SSID " : self.ssid_list,
                         " Type of traffic " : vo_tos_list,
-                        " Traffic Direction " : traffic_direction_list,
-                        " Traffic Protocol " : traffic_type_list,
-                        " Offered upload rate(Mbps) " : upload_list,
-                        " Offered download rate(Mbps) " : download_list,
-                        " Observed upload rate(Mbps) " : individual_upload_list,
-                        " Observed download rate(Mbps)" : individual_download_list
+                        # " Traffic Direction " : traffic_direction_list,
+                        # " Traffic Protocol " : traffic_type_list,
+                        " Offered upload rate " : upload_list,
+                        " Offered download rate " : download_list,
+                        " Observed average upload rate " : individual_avgupload_list,
+                        " Observed average download rate" : individual_avgdownload_list
                     }
                     if self.direction == "Bi-direction":
                         vo_dataframe[" Observed Upload Drop (%)"] = individual_drop_b_list
@@ -1330,7 +1442,9 @@ class ThroughputQOS(Realm):
                     else:
                         if self.direction == "Upload":
                             vo_dataframe[" Observed Upload Drop (%)"] = individual_drop_b_list
+                            vo_dataframe[" Observed Download Drop (%)"] = individual_drop_a_list
                         elif self.direction == "Download":
+                            vo_dataframe[" Observed Upload Drop (%)"] = individual_drop_b_list
                             vo_dataframe[" Observed Download Drop (%)"] = individual_drop_a_list
                     print("Df", vo_dataframe)
                     dataframe4 = pd.DataFrame(vo_dataframe)
@@ -1572,7 +1686,7 @@ def main():
         throughput_qos.build()
         throughput_qos.start(False, False)
         time.sleep(10)
-        connections_download, connections_upload, drop_a_per, drop_b_per = throughput_qos.monitor()
+        connections_download, connections_upload, drop_a_per, drop_b_per ,connections_download_avg,connections_upload_avg,avg_drop_a,avg_drop_b= throughput_qos.monitor()
         logger.info("connections download {}".format(connections_download))
         logger.info("connections upload {}".format(connections_upload))
         throughput_qos.stop()
@@ -1586,7 +1700,7 @@ def main():
         "contact": "support@candelatech.com"
     }
     throughput_qos.cleanup()
-    throughput_qos.generate_report(data=data, input_setup_info=input_setup_info, report_path=throughput_qos.result_dir)
+    throughput_qos.generate_report(data=data, input_setup_info=input_setup_info, report_path=throughput_qos.result_dir,connections_upload_avg=connections_upload_avg,connections_download_avg=connections_download_avg,avg_drop_a=avg_drop_a,avg_drop_b=avg_drop_b)
    #updating webgui running json with latest entry and test status completed 
     if throughput_qos.dowebgui == "True":
         last_entry = throughput_qos.overall[len(throughput_qos.overall) - 1]
