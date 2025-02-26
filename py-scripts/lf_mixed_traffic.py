@@ -948,9 +948,13 @@ class Mixed_Traffic(Realm):
                 self.qos_test_obj.mac_id_list = self.user_query[2]
                 self.qos_test_obj.build()
                 self.qos_test_obj.start()
+                self.qos_test_obj.connections_download_avg=[]
+                self.qos_test_obj.connections_upload_avg=[]
+                self.qos_test_obj.avg_drop_a=[]
+                self.qos_test_obj.avg_drop_b=[]
                 time.sleep(10)
                 try:
-                    connections_download, connections_upload, drop_a_per, drop_b_per = self.qos_test_obj.monitor()
+                    connections_download, connections_upload, drop_a_per, drop_b_per,self.qos_test_obj.connections_download_avg,self.qos_test_obj.connections_upload_avg,self.qos_test_obj.avg_drop_a,self.qos_test_obj.avg_drop_b = self.qos_test_obj.monitor()
                 except Exception as e:
                     print(f"Failed at Monitoring the CX... {e}")
                 self.qos_test_obj.stop()
@@ -997,7 +1001,7 @@ class Mixed_Traffic(Realm):
                 self.qos_test_obj.generate_report(data=self.data,
                                                 input_setup_info={"contact": "support@candelatech.com"},
                                                 report_path=self.report_path,
-                                                result_dir_name=f"Qos_Test_Report_{qos_tos_real}{band}")
+                                                result_dir_name=f"Qos_Test_Report_{qos_tos_real}{band}",connections_upload_avg=self.qos_test_obj.connections_upload_avg,connections_download_avg=self.qos_test_obj.connections_download_avg,avg_drop_a=self.qos_test_obj.avg_drop_a,avg_drop_b=self.qos_test_obj.avg_drop_b)
 
                 self.data_set, self.load, self.res = self.qos_test_obj.generate_graph_data_set(self.data)
 
@@ -1965,7 +1969,7 @@ class Mixed_Traffic(Realm):
                     self.lf_report_mt.set_csv_filename(graph_png)
                     self.lf_report_mt.move_csv_file()
                     self.lf_report_mt.build_graph()
-                    qos_obj.generate_individual_graph(self.res, self.lf_report_mt)
+                    qos_obj.generate_individual_graph(self.res, self.lf_report_mt,qos_obj.connections_download_avg,qos_obj.connections_upload_avg,qos_obj.avg_drop_a,qos_obj.avg_drop_b)
             if "3" in self.tests and self.ftp_test_status:
                 # 3.FTP test reporting in mixed traffic
                 self.lf_report_mt.set_obj_html(_obj_title="3. File Transfer Protocol (FTP) Test", _obj="")
