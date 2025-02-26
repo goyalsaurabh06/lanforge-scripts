@@ -672,9 +672,14 @@ class Throughput(Realm):
             signal_list = [int(i) if i != "" else 0 for i in signal_list]
 
             # Fetch required throughput data from Lanforge
-            response = list(
-                self.json_get('/cx/%s?fields=%s' % (
-                    ','.join(self.cx_profile.created_cx.keys()), ",".join(['bps rx a', 'bps rx b', 'rx drop %25 a', 'rx drop %25 b','state']))).values())[2:]
+            try:
+                response = list(
+                    self.json_get('/cx/%s?fields=%s' % (
+                        ','.join(self.cx_profile.created_cx.keys()), ",".join(['bps rx a', 'bps rx b', 'rx drop %25 a', 'rx drop %25 b','state']))).values())[2:]
+            except Exception as e:
+                overall_response=self.json_get('/cx/all/')
+                logger.info(overall_response)
+                logger.error(f"Endpoint not fetched from API {e}")
             # Extracting and storing throughput data
             throughput[index] = list(
                 map(lambda i: [x for x in i.values()], response))
@@ -1456,26 +1461,25 @@ class Throughput(Realm):
                             " Mode" : self.mode_list[0:int(incremental_capacity_list[i])],
                             #" Direction":direction_in_table[0:int(incremental_capacity_list[i])],
                             " Offered download rate " : download_list[0:int(incremental_capacity_list[i])],
-                            " Observed download rate " : [str(n)+" Mbps" for n in download_data[0:int(incremental_capacity_list[i])]],
+                            " Observed Average download rate " : [str(n)+" Mbps" for n in download_data[0:int(incremental_capacity_list[i])]],
                             " Offered upload rate " : upload_list[0:int(incremental_capacity_list[i])],
-                            " Observed upload rate " : [str(n)+" Mbps" for n in upload_data[0:int(incremental_capacity_list[i])]],
+                            " Observed Average upload rate " : [str(n)+" Mbps" for n in upload_data[0:int(incremental_capacity_list[i])]],
                             " RSSI ": ['' if n == 0 else '-' + str(n) + " dbm" for n in rssi_data[0:int(incremental_capacity_list[i])]],
                             #" Link Speed ":self.link_speed_list[0:int(incremental_capacity_list[i])],
                             " Packet Size(Bytes) ":[str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]]
                         }
                 if self.direction=="Bi-direction": 
-                    bk_dataframe[" Average Rx Drop B% "]=upload_drop[-1]
-                    bk_dataframe[" Average Rx Drop A% "]=download_drop[-1]
+                    bk_dataframe[" Average Rx Drop B% "]=upload_drop
+                    bk_dataframe[" Average Rx Drop A% "]=download_drop
                 elif self.direction=='Download':
-                    bk_dataframe[" Average Rx Drop A% "]=download_drop[-1]
+                    bk_dataframe[" Average Rx Drop A% "]=download_drop
                     #adding rx drop while uploading as 0
-                    bk_dataframe[" Average Rx Drop B% "]=[0.0]
+                    bk_dataframe[" Average Rx Drop B% "]=[0.0]*len(download_drop)
 
                 else:
-                    bk_dataframe[" Average Rx Drop B% "]=upload_drop[-1]
+                    bk_dataframe[" Average Rx Drop B% "]=upload_drop
                     #adding rx drop while downloading as 0
-                    bk_dataframe[" Average Rx Drop A% "]=[0.0]
-    
+                    bk_dataframe[" Average Rx Drop A% "]=[0.0]*len(upload_drop)
                 dataframe1 = pd.DataFrame(bk_dataframe)
                 report.set_table_dataframe(dataframe1)
                 report.build_table()
@@ -1754,22 +1758,22 @@ class Throughput(Realm):
                             " Mode" : self.mode_list[int(incremental_capacity_list[i])-1],
                             #" Direction":direction_in_table[-1],
                             " Offered download rate " : download_list[-1],
-                            " Average download rate " : [str(download_data[-1])+" Mbps"],
+                            " Observed Average download rate " : [str(download_data[-1])+" Mbps"],
                             " Offered upload rate " : upload_list[-1],
-                            " Average upload rate " : [str(upload_data[-1])+" Mbps" ],
+                            " Observed Average upload rate " : [str(upload_data[-1])+" Mbps" ],
                             " RSSI ":  ['' if rssi_data[-1] == 0 else '-'+str(rssi_data[-1])+ " dbm"],
                             #" Link Speed ":self.link_speed_list[int(incremental_capacity_list[i])-1],
                             # " Packet Size(Bytes) ":[str(n)+" Bytes" for n in packet_size_in_table[0:int(incremental_capacity_list[i])]]
                         }
                 if self.direction=="Bi-direction": 
-                    bk_dataframe[" Average Rx Drop B% "]=upload_drop[-1]
-                    bk_dataframe[" Average Rx Drop A% "]=download_drop[-1]
+                    bk_dataframe[" Average Rx Drop B% "]=upload_drop
+                    bk_dataframe[" Average Rx Drop A% "]=download_drop
                 elif self.direction=='Download':
-                    bk_dataframe[" Average Rx Drop A% "]=download_drop[-1]
-                    bk_dataframe[" Average Rx Drop B% "]=[0.0]
+                    bk_dataframe[" Average Rx Drop A% "]=download_drop
+                    bk_dataframe[" Average Rx Drop B% "]=[0.0]*len(download_drop)
                 else:
-                    bk_dataframe[" Average Rx Drop B% "]=upload_drop[-1]
-                    bk_dataframe[" Average Rx Drop A% "]=[0.0]
+                    bk_dataframe[" Average Rx Drop B% "]=upload_drop
+                    bk_dataframe[" Average Rx Drop A% "]=[0.0]*len(upload_drop)
                 dataframe1 = pd.DataFrame(bk_dataframe)
                 report.set_table_dataframe(dataframe1)
                 report.build_table()
