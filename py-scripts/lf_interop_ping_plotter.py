@@ -345,10 +345,15 @@ class Ping(Realm):
         # logging.info(self.generic_endps_profile.created_endp)
         results = self.json_get(
             "/generic/{}".format(','.join(self.generic_endps_profile.created_endp)))
+        overallres=self.json_get("/generic/all")
         if (len(self.generic_endps_profile.created_endp) > 1 and 'endpoints' in results.keys()):
             results = results['endpoints']
         else:
-            results = results['endpoint']
+            try:
+                results = results['endpoint']
+            except Exception as e:
+                logger.info(overallres)
+                logger.error(f"Endpoint not found {e}")
         return (results)
 
     def generate_remarks(self, station_ping_data):
@@ -1345,15 +1350,18 @@ connectivity problems.
         try:
             result_data = ping.get_results()
             if (type(result_data) == dict):
-                if ('UNKNOWN' in result_data['name']):
-                    raise ValueError("There are no valid generic endpoints to run the test")
+                try:
+                    if ('UNKNOWN' in result_data['name']):
+                        raise ValueError("There are no valid generic endpoints to run the test")
+                except Exception as e:
+                    logger.error(f"key not found{e}")
             else:
                 keys = [list(d.keys())[0] for d in result_data]
                 keys = [key for key in keys if 'UNKNOWN' not in key]
                 if len(keys) == 0:
                     raise ValueError("There are no valid generic endpoints to run the test")
         except ValueError as e:
-                logging.info(result_data)
+                logger.info(result_data)
                 print(e)
                 exit(0)
         # logging.info(result_data)
@@ -1532,98 +1540,101 @@ connectivity problems.
                 for station in ping.real_sta_list:
                     current_device_data = Devices.devices_data[station]
                     # logging.info(current_device_data)
-                    if (station in result_data['name']):
-                        # logging.info(result_data['last results'].split('\n'))
-                        if len(result_data['last results']) != 0:
-                                result= result_data['last results'].split('\n')
-                                if len(result)>1:
-                                    last_result=result[-2]
-                                else:
-                                    last_result=result[-1]
-                        else:
-                            last_result=""
-                        ping.result_json[station] = {
-                            'command': result_data['command'],
-                            'sent': result_data['tx pkts'],
-                            'recv': result_data['rx pkts'],
-                            'dropped': result_data['dropped'],
-                            # 'min_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[0] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'] else '0'][0],
-                            # 'avg_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[1] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'] else '0'][0],
-                            # 'max_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[2] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'] else '0'][0],
-                            'mac': current_device_data['mac'],
-                            'ip': current_device_data['ip'],
-                            'bssid': current_device_data['ap'],
-                            'ssid': current_device_data['ssid'],
-                            'channel': current_device_data['channel'],
-                            'mode': current_device_data['mode'],
-                            'name': [current_device_data['user'] if current_device_data['user'] != '' else current_device_data['hostname']][0],
-                            'os': ['Windows' if 'Win' in current_device_data['hw version'] else 'Linux' if 'Linux' in current_device_data['hw version'] else 'Mac' if 'Apple' in current_device_data['hw version'] else 'Android'][0],
-                            'remarks': [],
-                            'last_result': [last_result][0]
-                        }
-                        ping_stats[station]['sent'].append(result_data['tx pkts'])
-                        ping_stats[station]['received'].append(result_data['rx pkts'])
-                        ping_stats[station]['dropped'].append(result_data['dropped'])
-                        ping.result_json[station]['ping_stats'] = ping_stats[station]
-                        if(len(result_data['last results']) != 0):
-                            temp_last_results = result_data['last results'].split('\n')[0: len(result_data['last results']) -1 ]
-                            drop_count = 0 # let dropped = 0 initially
-                            dropped_packets = []
-                            for result in temp_last_results: # sample result - 64 bytes from 192.168.1.61: icmp_seq=28 time=3.66 ms *** drop: 0 (0, 0.000)  rx: 28  fail: 0  bytes: 1792 min/avg/max: 2.160/3.422/5.190
-                                try:
-                                    t_result, t_fail = result.split('***') # fetching the first part of the last result e.g., 64 bytes from 192.168.1.61: icmp_seq=28 time=3.66 ms into t_result and the remaining part into t_fail
-                                except:
-                                    continue
-                                t_result = t_result.split()
-                                if('icmp_seq=' not in result and 'time=' not in result):
-                                    continue
-                                for t_data in t_result:
-                                    if('icmp_seq=' in t_data):
-                                        seq_number = int(t_data.strip('icmp_seq='))
-                                    if('time=' in t_data):
-                                        rtt = float(t_data.strip('time='))
-                                rtts[station][seq_number] = rtt
-                                rtts_list.append(rtt)
-
-                                # finding dropped packets
-                                t_fail = t_fail.split() # [' drop:', '0', '(0, 0.000)', 'rx:', '28', 'fail:', '0', 'bytes:', '1792', 'min/avg/max:', '2.160/3.422/5.190']
-                                t_drop_val = t_fail[1] # t_drop_val = '0'
-                                t_drop_val = int(t_drop_val) # type cast string to int
-                                if(t_drop_val != drop_count):
-                                    current_drop_packets = t_drop_val - drop_count
-                                    drop_count = t_drop_val
-                                    for drop_packet in range(1, current_drop_packets + 1):
-                                        dropped_packets.append(seq_number - drop_packet)
-
-                        if(rtts_list == []):
-                            rtts_list = [0]
-                        min_rtt = str(min(rtts_list))
-                        avg_rtt = str(sum(rtts_list) / len(rtts_list))
-                        max_rtt = str(max(rtts_list))
-                        ping.result_json[station]['min_rtt'] = min_rtt
-                        ping.result_json[station]['avg_rtt'] = avg_rtt
-                        ping.result_json[station]['max_rtt'] = max_rtt
-                        if(ping.result_json[station]['os'] == 'Android' and type(rtts) is dict and rtts != {}):
-                            if(list(rtts[station].keys()) == []):
-                                ping.result_json[station]['sent'] = str(0)
-                                ping.result_json[station]['recv'] = str(0)
-                                ping.result_json[station]['dropped'] = str(0)
-                            else:
-                                ping.result_json[station]['sent'] = str(max(list(rtts[station].keys())))
-                                ping.result_json[station]['recv'] = str(len(rtts[station].keys()))
-                                ping.result_json[station]['dropped'] = str(int(ping.result_json[station]['sent']) - int(ping.result_json[station]['recv']))
-                        if(len(rtts[station].keys()) != 0):
-                            required_sequence_numbers = list(range(1, max(rtts[station].keys())))
-                            for seq in required_sequence_numbers:
-                                if(seq not in rtts[station].keys()):
-                                    if(seq in dropped_packets):
-                                        rtts[station][seq] = 0
+                    try:
+                        if (station in result_data['name']):
+                            # logging.info(result_data['last results'].split('\n'))
+                            if len(result_data['last results']) != 0:
+                                    result= result_data['last results'].split('\n')
+                                    if len(result)>1:
+                                        last_result=result[-2]
                                     else:
-                                        rtts[station][seq] = 0.11
-                                # print(station, rtts[station])
-                        ping.result_json[station]['rtts'] = rtts[station]
-                        ping.result_json[station]['remarks'] = ping.generate_remarks(ping.result_json[station])
-                        # ping.result_json[station]['dropped_packets'] = dropped_packets
+                                        last_result=result[-1]
+                            else:
+                                last_result=""
+                            ping.result_json[station] = {
+                                'command': result_data['command'],
+                                'sent': result_data['tx pkts'],
+                                'recv': result_data['rx pkts'],
+                                'dropped': result_data['dropped'],
+                                # 'min_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[0] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'] else '0'][0],
+                                # 'avg_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[1] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'] else '0'][0],
+                                # 'max_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[2] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'] else '0'][0],
+                                'mac': current_device_data['mac'],
+                                'ip': current_device_data['ip'],
+                                'bssid': current_device_data['ap'],
+                                'ssid': current_device_data['ssid'],
+                                'channel': current_device_data['channel'],
+                                'mode': current_device_data['mode'],
+                                'name': [current_device_data['user'] if current_device_data['user'] != '' else current_device_data['hostname']][0],
+                                'os': ['Windows' if 'Win' in current_device_data['hw version'] else 'Linux' if 'Linux' in current_device_data['hw version'] else 'Mac' if 'Apple' in current_device_data['hw version'] else 'Android'][0],
+                                'remarks': [],
+                                'last_result': [last_result][0]
+                            }
+                            ping_stats[station]['sent'].append(result_data['tx pkts'])
+                            ping_stats[station]['received'].append(result_data['rx pkts'])
+                            ping_stats[station]['dropped'].append(result_data['dropped'])
+                            ping.result_json[station]['ping_stats'] = ping_stats[station]
+                            if(len(result_data['last results']) != 0):
+                                temp_last_results = result_data['last results'].split('\n')[0: len(result_data['last results']) -1 ]
+                                drop_count = 0 # let dropped = 0 initially
+                                dropped_packets = []
+                                for result in temp_last_results: # sample result - 64 bytes from 192.168.1.61: icmp_seq=28 time=3.66 ms *** drop: 0 (0, 0.000)  rx: 28  fail: 0  bytes: 1792 min/avg/max: 2.160/3.422/5.190
+                                    try:
+                                        t_result, t_fail = result.split('***') # fetching the first part of the last result e.g., 64 bytes from 192.168.1.61: icmp_seq=28 time=3.66 ms into t_result and the remaining part into t_fail
+                                    except:
+                                        continue
+                                    t_result = t_result.split()
+                                    if('icmp_seq=' not in result and 'time=' not in result):
+                                        continue
+                                    for t_data in t_result:
+                                        if('icmp_seq=' in t_data):
+                                            seq_number = int(t_data.strip('icmp_seq='))
+                                        if('time=' in t_data):
+                                            rtt = float(t_data.strip('time='))
+                                    rtts[station][seq_number] = rtt
+                                    rtts_list.append(rtt)
+
+                                    # finding dropped packets
+                                    t_fail = t_fail.split() # [' drop:', '0', '(0, 0.000)', 'rx:', '28', 'fail:', '0', 'bytes:', '1792', 'min/avg/max:', '2.160/3.422/5.190']
+                                    t_drop_val = t_fail[1] # t_drop_val = '0'
+                                    t_drop_val = int(t_drop_val) # type cast string to int
+                                    if(t_drop_val != drop_count):
+                                        current_drop_packets = t_drop_val - drop_count
+                                        drop_count = t_drop_val
+                                        for drop_packet in range(1, current_drop_packets + 1):
+                                            dropped_packets.append(seq_number - drop_packet)
+
+                            if(rtts_list == []):
+                                rtts_list = [0]
+                            min_rtt = str(min(rtts_list))
+                            avg_rtt = str(sum(rtts_list) / len(rtts_list))
+                            max_rtt = str(max(rtts_list))
+                            ping.result_json[station]['min_rtt'] = min_rtt
+                            ping.result_json[station]['avg_rtt'] = avg_rtt
+                            ping.result_json[station]['max_rtt'] = max_rtt
+                            if(ping.result_json[station]['os'] == 'Android' and type(rtts) is dict and rtts != {}):
+                                if(list(rtts[station].keys()) == []):
+                                    ping.result_json[station]['sent'] = str(0)
+                                    ping.result_json[station]['recv'] = str(0)
+                                    ping.result_json[station]['dropped'] = str(0)
+                                else:
+                                    ping.result_json[station]['sent'] = str(max(list(rtts[station].keys())))
+                                    ping.result_json[station]['recv'] = str(len(rtts[station].keys()))
+                                    ping.result_json[station]['dropped'] = str(int(ping.result_json[station]['sent']) - int(ping.result_json[station]['recv']))
+                            if(len(rtts[station].keys()) != 0):
+                                required_sequence_numbers = list(range(1, max(rtts[station].keys())))
+                                for seq in required_sequence_numbers:
+                                    if(seq not in rtts[station].keys()):
+                                        if(seq in dropped_packets):
+                                            rtts[station][seq] = 0
+                                        else:
+                                            rtts[station][seq] = 0.11
+                                    # print(station, rtts[station])
+                            ping.result_json[station]['rtts'] = rtts[station]
+                            ping.result_json[station]['remarks'] = ping.generate_remarks(ping.result_json[station])
+                            # ping.result_json[station]['dropped_packets'] = dropped_packets
+                    except Exception as e:
+                        logger.error(f"key not found{e}")
             else:
                 for station in ping.real_sta_list:
                     current_device_data = Devices.devices_data[station]
