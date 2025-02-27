@@ -15,6 +15,7 @@ import requests
 import re
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+import random
 class YouTube(object):
     
     def __init__(self, url, resolution,host, port, duration, device_name, driver):
@@ -197,6 +198,17 @@ class YouTube(object):
         except:
             print("Unable to do full screen")
     
+    def simulate_human_movements(self):
+        try:
+            actions = ActionChains(self.driver)
+            for _ in range(random.randint(2, 5)):
+                actions.move_by_offset(random.randint(-20, 20), random.randint(-20, 20))
+                actions.perform()
+                time.sleep(random.uniform(0.1, 0.3))
+            print("Simulated human movements.")
+        except Exception as e:
+            print(f"Error simulating mouse movements: {e}")
+    
     def play(self):
         #initial_data = self.get_initial_data_from_api()
         #if initial_data:
@@ -205,6 +217,7 @@ class YouTube(object):
         if not self.load_video():
             self.stop()
             return
+        self.simulate_human_movements()
 
         if not self.enable_stats():
             self.stop()
