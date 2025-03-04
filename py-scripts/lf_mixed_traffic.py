@@ -718,6 +718,7 @@ class Mixed_Traffic(Realm):
             logger.info("Generic Cross-Connection List: {}".format(self.ping_test_obj.generic_endps_profile.created_cx))
             logger.info('Starting Running the Ping Test for {} minutes'.format(ping_test_duration))
             # start generate endpoint
+            time.sleep(20)
             self.ping_test_obj.start_generic()
             ports_data_dict = self.ping_test_obj.json_get('/ports/all/')['interfaces']
             ports_data = {}
@@ -814,9 +815,9 @@ class Mixed_Traffic(Realm):
                                     'sent': ping_data['tx pkts'],
                                     'recv': ping_data['rx pkts'],
                                     'dropped': ping_data['dropped'],
-                                    'min_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[0] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],
-                                    'avg_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[1] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],
-                                    'max_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[2] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],
+                                    'min_rtt': [(ping_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[0]).replace(',','') if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],
+                                    'avg_rtt': [(ping_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[1]).replace(',','') if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],
+                                    'max_rtt': [(ping_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[2]).replace(',','') if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],
                                     'mac': current_device_data['mac'],
                                     'channel': current_device_data['channel'],
                                     'ssid': current_device_data['ssid'],
@@ -946,6 +947,7 @@ class Mixed_Traffic(Realm):
                 self.qos_test_obj.real_client_list1 = self.user_query[1]
                 self.qos_test_obj.mac_id_list = self.user_query[2]
                 self.qos_test_obj.build()
+                time.sleep(20)
                 self.qos_test_obj.start()
                 self.qos_test_obj.connections_download_avg=[]
                 self.qos_test_obj.connections_upload_avg=[]
@@ -1197,6 +1199,7 @@ class Mixed_Traffic(Realm):
                         logger.info(self.ftp_test_obj.get_fail_message())
 
                     time1 = datetime.datetime.now()
+                    time.sleep(20)
                     logger.info("FTP Traffic started running at {}".format(time1))
                     self.ftp_test_obj.start(False, False)
                     if self.dowebgui or self.real:    
@@ -1347,6 +1350,7 @@ class Mixed_Traffic(Realm):
                                                         passwd=self.lf_password,
                                                         http_ip=ip_upstream + "/webpage.html", proxy_auth_type=0x200, timeout=1000)
             test_time = datetime.datetime.now().strftime("%b %d %H:%M:%S")
+            time.sleep(20)
             logger.info("HTTP Test started at {}".format(test_time))
             self.http_obj.start()
             if self.dowebgui or self.real:
@@ -1640,6 +1644,7 @@ class Mixed_Traffic(Realm):
             logger.info("create stations or use passed in station_list, build the test")
             # building the endpoints
             self.multicast_test_obj.build()
+            time.sleep(20)
             if not self.multicast_test_obj.passes():
                 logger.critical("build step failed.")
                 logger.critical(self.multicast_test_obj.get_fail_message())
