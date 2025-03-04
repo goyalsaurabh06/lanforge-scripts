@@ -43,7 +43,7 @@ class GenCXProfile(LFCliBase):
 
     # setting endpoint report timer
     def set_report_timer(self, endp_name=None, timer=5000):
-        if (endp_name is not None):
+        if endp_name is not None:
             # NOTE API needs the timer in milliseconds
             data = {
                 'endp_name': endp_name,
@@ -409,15 +409,15 @@ class GenCXProfile(LFCliBase):
             if real_client_os_types:
                 name = endp_tpl[2].split('.')[2]
                 ip_response = self.json_get('/port/{}/{}/{}?fields=ip'.format(endp_tpl[0], endp_tpl[1], name))
-                if (ip_response is None or ip_response == "" or ip_response == " " or (type(ip_response) is dict and 'interface' not in ip_response.keys())):
+                if ip_response is None or ip_response == "" or ip_response == " " or type(ip_response) is dict and 'interface' not in ip_response.keys():
                     logger.critical('Client {} not found'.format(endp_tpl[2]))
                     logger.info('Consider upgrading LANforge to 5.4.7 or later versions')
                 else:
-                    if ('ip' not in ip_response['interface']):
+                    if 'ip' not in ip_response['interface']:
                         logger.critical('Client {} has no attribute IP'.format(endp_tpl[2]))
                     else:
                         current_device_ip = ip_response['interface']['ip']
-                        if (current_device_ip == "" or current_device_ip is None):
+                        if current_device_ip == "" or current_device_ip is None:
                             logger.critical('IP Address not found for the Client {}'.format(endp_tpl[2]))
                             current_device_ip = None
                 self.parse_command(name, gen_name_a, client_type=real_client_os_types[ix], ip=current_device_ip)
