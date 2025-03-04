@@ -6595,7 +6595,7 @@ INCLUDE_IN_README: False
     test_l3_parser.add_argument(
         '--dowebgui',
         help='--dowebgui True  if running through webgui',
-        action='store_true')
+        default='False')
     test_l3_parser.add_argument(
         '--test_name',
         help='Test name when running through webgui'
