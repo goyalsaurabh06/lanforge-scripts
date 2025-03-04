@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-# flake8: noqa
 import sys
 import os
 import importlib
 from pprint import pformat
-from pprint import pprint
 import csv
 import pandas as pd
 import time
@@ -45,7 +43,7 @@ class GenCXProfile(LFCliBase):
 
     # setting endpoint report timer
     def set_report_timer(self, endp_name=None, timer=5000):
-        if(endp_name is not None):
+        if (endp_name is not None):
             # NOTE API needs the timer in milliseconds
             data = {
                 'endp_name': endp_name,
@@ -85,6 +83,13 @@ class GenCXProfile(LFCliBase):
             else:
                 logger.critical("Please ensure file_output has been set correctly")
                 raise ValueError("Please ensure file_output has been set correctly")
+
+        elif self.type == "zoom":
+            pass
+        elif self.type == 'youtube':
+            pass
+        elif self.type == "real_browser":
+            pass
         else:
             logger.critical("Unknown command type")
             raise ValueError("Unknown command type")
@@ -99,7 +104,7 @@ class GenCXProfile(LFCliBase):
             raise ValueError("Please ensure dest and interval have been set correctly")
 
         if client_type != "android" and client_type != "linux" and client_type != "macos" \
-            and client_type != "windows":
+                and client_type != "windows":
             logger.critical("Incorrect client type specified %s" % (client_type))
             raise ValueError("Incorrect client type specified %s" % (client_type))
 
@@ -114,7 +119,7 @@ class GenCXProfile(LFCliBase):
         elif client_type == "android":
             self.cmd = "ping -i %s %s" % (self.interval, self.dest)
 
-        else: # linux and virtual stations
+        else:  # linux and virtual stations
             self.cmd = "lfping -I %s -i %s %s" % (sta_name, self.interval, self.dest)
 
     def start_cx(self):
@@ -218,7 +223,7 @@ class GenCXProfile(LFCliBase):
         post_data = []
         endp_tpls = []
 
-        if type(sta_port) == str:
+        if isinstance(sta_port, str):
             if sta_port != "1.1.eth1":
                 count = 5
             else:
@@ -234,7 +239,7 @@ class GenCXProfile(LFCliBase):
                 endp_tpls.append((shelf, resource, name, gen_name_a, gen_name_b))
 
             print(endp_tpls)
-        elif type(sta_port) == list:
+        elif isinstance(sta_port, list):
             for port_name in sta_port:
                 logger.info("hello............{sta_port}".format(sta_port=sta_port))
                 for i in range(0, 5):
@@ -281,7 +286,7 @@ class GenCXProfile(LFCliBase):
             self.set_flags(gen_name_a, "ClearPortOnStart", 1)
         time.sleep(sleep_time)
 
-        if type(dest) == str:
+        if isinstance(dest, str):
             for endp_tpl in endp_tpls:
                 name = endp_tpl[2]
                 gen_name_a = endp_tpl[3]
@@ -290,7 +295,7 @@ class GenCXProfile(LFCliBase):
                 self.set_cmd(gen_name_a, self.cmd)
             time.sleep(sleep_time)
 
-        elif type(dest) == list:
+        elif isinstance(dest, list):
             mm = 0
             for endp_tpl in endp_tpls:
                 name = endp_tpl[2]
@@ -404,15 +409,15 @@ class GenCXProfile(LFCliBase):
             if real_client_os_types:
                 name = endp_tpl[2].split('.')[2]
                 ip_response = self.json_get('/port/{}/{}/{}?fields=ip'.format(endp_tpl[0], endp_tpl[1], name))
-                if(ip_response == None or ip_response == "" or ip_response == " " or (type(ip_response) is dict and 'interface' not in ip_response.keys())):
+                if (ip_response is None or ip_response == "" or ip_response == " " or (type(ip_response) is dict and 'interface' not in ip_response.keys())):
                     logger.critical('Client {} not found'.format(endp_tpl[2]))
                     logger.info('Consider upgrading LANforge to 5.4.7 or later versions')
                 else:
-                    if('ip' not in ip_response['interface']):
+                    if ('ip' not in ip_response['interface']):
                         logger.critical('Client {} has no attribute IP'.format(endp_tpl[2]))
                     else:
                         current_device_ip = ip_response['interface']['ip']
-                        if(current_device_ip == "" or current_device_ip is None):
+                        if (current_device_ip == "" or current_device_ip is None):
                             logger.critical('IP Address not found for the Client {}'.format(endp_tpl[2]))
                             current_device_ip = None
                 self.parse_command(name, gen_name_a, client_type=real_client_os_types[ix], ip=current_device_ip)
@@ -639,7 +644,7 @@ class GenCXProfile(LFCliBase):
 
             # get endp values
             gen_url = "/generic/%s?fields=%s" % (",".join(monitor_endps), generic_fields)
-            #print("gen-url: %s" % (gen_url))
+            # print("gen-url: %s" % (gen_url))
             generic_response = self.json_get(gen_url)
 
             if port_mgr_cols:
@@ -658,21 +663,21 @@ class GenCXProfile(LFCliBase):
                     raise ValueError("Cannot find columns requested to be searched. Exiting script, please retry.")
                 logger.debug("Json port_mgr_response from LANforge... {port_mgr_response}".format(port_mgr_response=port_mgr_response))
 
-            #print("generic response: ")
+            # print("generic response: ")
             # pprint(generic_response)
             if "endpoints" in generic_response:
                 endp_array = generic_response["endpoints"]
             elif "endpoint" in generic_response:
                 endp_array = generic_response["endpoint"]
                 # Second assignment to endp_array makes it consistent with the layout of multi-endpoint endp_array
-                endp_array = [{endp_array['name'] : endp_array}]
+                endp_array = [{endp_array['name']: endp_array}]
 
-            #print("endp-array: ")
+            # print("endp-array: ")
             # pprint(endp_array)
             for endpoint in endp_array:  # each endpoint is a dictionary
-                #print("endpoint: ")
+                # print("endpoint: ")
                 # pprint(endpoint)
-                #print("endpoint values: ")
+                # print("endpoint values: ")
                 # pprint(endpoint.values())
 
                 endp_values_list = list(endpoint.values())
@@ -687,12 +692,12 @@ class GenCXProfile(LFCliBase):
                 temp_list = basecolumns.copy()  # Must make a deep copy or we just keep appending to basecolumns object.
                 for columnname in generic_cols:
                     val = endp_values[columnname]
-                    #print("column-name: %s val: %s must-increase-cols: %s" % (columnname, val, must_increase_cols))
+                    # print("column-name: %s val: %s must-increase-cols: %s" % (columnname, val, must_increase_cols))
                     temp_list.append(val)
                     if must_increase_cols:
                         if columnname in must_increase_cols:
                             # Ensure this has increased since last sample.
-                            #print("endp_name: %s columname: %s value: %s  endpoint: %s" % (endp_name, columnname, val, endpoint))
+                            # print("endp_name: %s columname: %s value: %s  endpoint: %s" % (endp_name, columnname, val, endpoint))
                             if prev_results[endp_name][columnname] >= LFUtils.speed_to_int(val):
                                 self._fail("Endpoint %s column: %s did not increase, old: %s  new: %s" %
                                            (endp_name, columnname, prev_results[endp_name][columnname], val))
