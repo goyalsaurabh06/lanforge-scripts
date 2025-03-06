@@ -1939,7 +1939,7 @@ class Mixed_Traffic(Realm):
                         if res:
                             self.data_set, self.load, res1 = qos_obj.generate_graph_data_set(res)
                             qos_obj.tos = tos
-                            qos_obj.generate_individual_graph(res1, self.lf_report_mt)
+                            qos_obj.generate_individual_graph(res1, self.lf_report_mt,qos_obj.connections_download_avg,qos_obj.connections_upload_avg,qos_obj.avg_drop_a,qos_obj.avg_drop_b)
                 else:
                     df_throughput = pd.DataFrame(self.res["throughput_table_df"])
                     self.lf_report_mt.set_table_dataframe(df_throughput)
