@@ -939,6 +939,98 @@ class RealBrowserTest(Realm):
 
         # If all endpoints are in 'Stopped' or 'WAITING', return True
         return True
+    
+    def process_incremental_values(self, available_resources):
+        """
+        Process resource IDs and incremental values if specified.
+        """
+        if self.incremental or self.dowebgui:
+            incremental_capacity_list_values = self.get_incremental_capacity_list()
+            if incremental_capacity_list_values[-1] != len(available_resources):
+                logger.error("Incremental capacity doesn't match available devices")
+                if self.postCleanUp:
+                    self.postcleanup()
+                exit(1)
+
+        if self.resource_ids:
+            if self.incremental:
+                self.test_setup_info_incremental_values = ','.join(map(str, incremental_capacity_list_values))
+                if len(self.incremental) == len(available_resources):
+                    self.total_duration = self.duration
+                elif len(self.incremental) == 1 and len(available_resources) > 1:
+                    div, mod = divmod(len(available_resources), self.incremental[0])
+                    self.total_duration = self.duration * (div + (1 if mod else 0))
+                else:
+                    self.total_duration = self.duration * len(incremental_capacity_list_values)
+            elif self.dowebgui:
+                self.test_setup_info_incremental_values = ','.join(map(str, incremental_capacity_list_values))
+                self.total_duration = self.duration * len(incremental_capacity_list_values)
+            else:
+                self.test_setup_info_incremental_values = "No Incremental Value provided"
+                self.total_duration = self.duration
+
+    def handle_duration(self):
+        """
+        Convert duration string to minutes.
+        """
+        if isinstance(self.duration, str):
+            if self.duration.endswith(('s', 'S')):
+                self.duration = round(int(self.duration[:-1]) / 60, 2)
+            elif self.duration.endswith(('m', 'M')):
+                self.duration = int(self.duration[:-1])
+            elif self.duration.endswith(('h', 'H')):
+                self.duration = int(self.duration[:-1]) * 60
+            else:
+                self.duration = int(self.duration)
+    
+    def run_test(self, available_resources):
+        """
+        Runs the test with calculated parameters.
+        """
+        logging.info("Initiating Test...")
+        available_resources.sort()
+        self.set_available_resources_ids(",".join(map(str, available_resources)))
+        self.build()
+        
+        cx_order_list = self.calculate_cx_order_list()
+        
+        for i, cx_batch in enumerate(cx_order_list):
+            self.start_specific(cx_batch)
+            logging.info(f"Test started on Devices with resource Ids : {cx_batch}")
+            try:
+                self.get_stats(self.duration, "webBrowser.csv", i, available_resources, cx_batch, i, self.count)
+            except Exception as e:
+                logging.error(f"Error while monitoring stats {e}", exc_info=True)
+    
+    def calculate_cx_order_list(self):
+        """
+        Calculate and manage cx_order_list (list of cross connections to run) based on incremental values.
+        """
+        cx_order_list = []
+        keys = list(self.created_cx.keys()) + self.generic_endps_profile.created_cx
+        index = 0
+
+        if self.resource_ids:
+            if not self.incremental:
+                self.incremental = [len(keys)]
+            
+            if len(self.incremental) == 1 and self.incremental[0] == len(keys):
+                cx_order_list.append(keys[index:])
+            elif len(self.incremental) == 1 and len(keys) > 1:
+                incremental_value = self.incremental[0]
+                max_index = len(keys)
+                while index < max_index:
+                    next_index = min(index + incremental_value, max_index)
+                    cx_order_list.append(keys[index:next_index])
+                    index = next_index
+            else:
+                for num in self.incremental:
+                    cx_order_list.append(keys[index:num])
+                    index = num
+                if index < len(keys):
+                    cx_order_list.append(keys[index:])
+        
+        return cx_order_list
 
     def get_stats(self, duration, file_path, iteration_number, resource_list_sorted, cx_order_list, i, initial_target_urls):
 
@@ -1740,7 +1832,7 @@ def main():
                                   result_dir=args.result_dir,
                                   test_name=args.test_name,
                                   incremental=args.incremental,
-                                  postcleanup=args.postcleanup,
+                                  postcleanup=True,
                                   precleanup=args.precleanup,
                                   file_name=args.file_name,
                                   group_name=args.group_name,
@@ -1989,16 +2081,6 @@ def main():
                     logging.info("Exiting the program as the last incremental value must be equal to selected devices")
                     exit()
 
-            test_time = datetime.now()
-            test_time = test_time.strftime("%b %d %H:%M:%S")
-
-            logging.info("Initiating Test...")
-            available_resources = [int(n) for n in available_resources]
-            available_resources.sort()
-            available_resources_string = ",".join([str(n) for n in available_resources])
-            obj.set_available_resources_ids(available_resources_string)
-
-            obj.build()
 
             if args.dowebgui:
                 if len(obj.webui_hostnames) == 0:
@@ -2019,128 +2101,18 @@ def main():
                     }
                     obj.updating_webui_runningjson(data_obj)
 
-            time.sleep(10)
+            # time.sleep(10)
 
-            keys = list(obj.http_profile.created_cx.keys())
-            generic_keys = obj.generic_endps_profile.created_cx
-            keys = keys + generic_keys
-            if len(keys) == 0:
-                logger.error("Selected Devices are not available in the lanforge")
-                exit(1)
-            cx_order_list = []
-            index = 0
-            file_path = ""
-
-            if args.duration.endswith('s') or args.duration.endswith('S'):
-                args.duration = round(int(args.duration[0:-1]) / 60, 2)
-
-            elif args.duration.endswith('m') or args.duration.endswith('M'):
-                args.duration = int(args.duration[0:-1])
-
-            elif args.duration.endswith('h') or args.duration.endswith('H'):
-                args.duration = int(args.duration[0:-1]) * 60
-
-            elif args.duration.endswith(''):
-                args.duration = int(args.duration)
-
-            if args.incremental or args.webgui_incremental:
-                incremental_capacity_list_values = obj.get_incremental_capacity_list()
-                if incremental_capacity_list_values[-1] != len(available_resources):
-                    logger.error("Incremental capacity doesnt match available devices")
-                    if args.postcleanup:
-                        obj.postcleanup()
-                    exit(1)
-
-            # Process resource IDs and incremental values if specified
-            if obj.resource_ids:
-                if obj.incremental:
-                    obj.test_setup_info_incremental_values = ','.join(map(str, incremental_capacity_list_values))
-                    if len(obj.incremental) == len(available_resources):
-                        test_setup_info_total_duration = args.duration
-                    elif len(obj.incremental) == 1 and len(available_resources) > 1:
-                        if obj.incremental[0] == len(available_resources):
-                            test_setup_info_total_duration = args.duration
-                        else:
-                            div = len(available_resources) // obj.incremental[0]
-                            mod = len(available_resources) % obj.incremental[0]
-                            if mod == 0:
-                                test_setup_info_total_duration = args.duration * (div)
-                            else:
-                                test_setup_info_total_duration = args.duration * (div + 1)
-                    else:
-                        test_setup_info_total_duration = args.duration * len(incremental_capacity_list_values)
-                    # test_setup_info_duration_per_iteration= args.duration
-                elif args.webgui_incremental:
-                    obj.test_setup_info_incremental_values = ','.join(map(str, incremental_capacity_list_values))
-                    test_setup_info_total_duration = args.duration * len(incremental_capacity_list_values)
-                else:
-                    obj.test_setup_info_incremental_values = "No Incremental Value provided"
-                    test_setup_info_total_duration = args.duration
-                obj.total_duration = test_setup_info_total_duration
-                if args.dowebgui:
-                    if test_info:
-                        obj.test_setup_info_incremental_values = "No Incremental Value provided"
-
-            # Calculate and manage cx_order_list ( list of cross connections to run ) based on incremental values
-            gave_incremental, iteration_number = True, 0
-            if obj.resource_ids:
-                if not obj.incremental:
-                    obj.incremental = [len(keys)]
-                    gave_incremental = False
-                if obj.incremental or not gave_incremental:
-                    if len(obj.incremental) == 1 and obj.incremental[0] == len(keys):
-                        cx_order_list.append(keys[index:])
-                        # user_name_list.append(obj.user_name[index:])
-                    elif len(obj.incremental) == 1 and len(keys) > 1:
-                        incremental_value = obj.incremental[0]
-                        max_index = len(keys)
-                        index = 0
-
-                        while index < max_index:
-                            next_index = min(index + incremental_value, max_index)
-                            cx_order_list.append(keys[index:next_index])
-
-                            index = next_index
-                    elif len(obj.incremental) != 1 and len(keys) > 1:
-
-                        index = 0
-                        for num in obj.incremental:
-
-                            cx_order_list.append(keys[index: num])
-
-                            index = num
-
-                        if index < len(keys):
-                            cx_order_list.append(keys[index:])
-
-                    # Update start and end times for webGUI
-                    for i in range(len(cx_order_list)):
-                        if i == 0:
-                            obj.data["start_time_webGUI"] = [datetime.now().strftime('%Y-%m-%d %H:%M:%S')] * len(keys)
-                            end_time_webGUI = (datetime.now() + timedelta(minutes=args.duration * len(cx_order_list))).strftime('%Y-%m-%d %H:%M:%S')
-                            obj.data['end_time_webGUI'] = [end_time_webGUI] * len(keys)
-
-                        obj.start_specific(cx_order_list[i])
-
-                        iteration_number += len(cx_order_list[i])
-                        if cx_order_list[i]:
-                            logging.info("Test started on Devices with resource Ids : {selected}".format(selected=cx_order_list[i]))
-                        else:
-                            logging.info("Test started on Devices with resource Ids : {selected}".format(selected=cx_order_list[i]))
-
-                        # duration = 60 * args.duration
-                        file_path = "webBrowser.csv"
-
-                        if end_time_webGUI < datetime.now().strftime('%Y-%m-%d %H:%M:%S'):
-                            obj.data['remaining_time_webGUI'] = ['0:00'] * len(keys)
-                        else:
-                            date_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                            obj.data['remaining_time_webGUI'] = [datetime.strptime(end_time_webGUI, "%Y-%m-%d %H:%M:%S") - datetime.strptime(date_time, "%Y-%m-%d %H:%M:%S")] * len(keys)
-                        try:
-
-                            obj.get_stats(args.duration, file_path, iteration_number, resource_list_sorted, cx_order_list[i], i, args.count)
-                        except Exception as e:
-                            logging.error(f"Error while monitoring stats {e}", exc_info=True)
+            # keys = list(obj.http_profile.created_cx.keys())
+            # generic_keys = obj.generic_endps_profile.created_cx
+            # keys = keys + generic_keys
+            # if len(keys) == 0:
+            #     logger.error("Selected Devices are not available in the lanforge")
+            #     exit(1)
+        
+            obj.handle_duration()
+            obj.process_incremental_values(available_resources)
+            obj.run_test(available_resources)
             obj.create_report()
 
     except Exception as e:
