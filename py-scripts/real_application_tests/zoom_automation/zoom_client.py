@@ -146,25 +146,6 @@ class ZoomClient:
     def zoom_login(self):
 
         self.driver.get("https://app.zoom.us/wc/join")
-        
-        #print("checking self.meeting_link",self.meeting_link)
-        
-        #self.driver.get(str(self.meeting_link))
-        #time.sleep(200)
-        
-        # self.wait.until(EC.visibility_of_element_located(
-        #     (By.CSS_SELECTOR, "#joinMeeting input.join-meetingId"))).send_keys(Keys.CONTROL + 'v')
-        # time.sleep(200)
-        # Assuming testInputValue is your meeting ID or the value you want to input
-        # script = """
-        # var joinMeetingInput = document.querySelector('#joinMeeting input.join-meetingId');
-        # joinMeetingInput.click();
-        # joinMeetingInput.value = arguments[0];
-        # joinMeetingInput.dispatchEvent(new Event('change'));
-        # joinMeetingInput.dispatchEvent(new Event('input'));
-        # joinMeetingInput.dispatchEvent(new Event('blur'));
-
-        # """
         formatted_login_url = self.new_login_url[:3] + ' ' + self.new_login_url[3:7] + ' ' + self.new_login_url[7:]
 
         meeting_id = self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "#joinMeeting input.join-meetingId")))
@@ -177,7 +158,6 @@ class ZoomClient:
 
         self.wait.until(EC.element_to_be_clickable(
             (By.CSS_SELECTOR, "#joinMeeting ~ footer button.btn-join"))).click()
-        #self.driver.execute_script("document.getElementById('joinMeeting ~ footer button.btn-join').click()")
         time.sleep(1)
         vel = self.wait.until(EC.visibility_of_element_located((By.XPATH, '//*[@id="webclient"]')))
         self.driver.switch_to.frame(vel)
@@ -198,10 +178,6 @@ class ZoomClient:
         self.wait.until(EC.element_to_be_clickable(
             (By.CSS_SELECTOR, ".preview-meeting-info button.preview-join-button"))).click()
         time.sleep(1)
-        # self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR,
-        #                                              "#voip-tab button.join-audio-by-voip__join-btn")))
-        # self.driver.execute_script("document.querySelector('#voip-tab button.join-audio-by-voip__join-btn').click()")
-        # time.sleep(1)
         action = webdriver.ActionChains(self.driver)
         action.move_by_offset(10, 20).perform()
         time.sleep(1)
@@ -211,11 +187,6 @@ class ZoomClient:
         time.sleep(1)
         if audio_join_btn.text.lower() == "join audio":
             print("audio not joined")
-            # self.driver.execute_script("document.querySelector('button.footer-button-base__button.join-audio-container__btn').click()")
-            # self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR,
-            #                                          "#voip-tab button.join-audio-by-voip__join-btn")))
-            # self.driver.execute_script("document.querySelector('#voip-tab button.join-audio-by-voip__join-btn').click()")
-            # time.sleep(3)
             self.driver.execute_script("document.querySelector('button.footer-button-base__button.join-audio-container__btn').click()")
 
         elif audio_join_btn.text.lower() == "unmute":

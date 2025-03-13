@@ -121,15 +121,10 @@ class RealBrowser():
                 print(f"error occured")
                 self.send_stats(laptop_stats)
         print("checking whether statments are reaching upto this or not")
-        self.driver.close()
-        self.stop()
         
     
     def stop(self):
-        #os._exit(0)
         self.driver.close()
-        # self.driver.quit()
-        # sys.exit(0)
     def check_stop_signal(self):
         """Check the stop signal from the Flask server."""
         try:
@@ -194,6 +189,8 @@ class RealBrowser():
         # options.add_experimental_option("detach", True)
         options.add_argument("--no-cache")
         options.add_argument('--disk-cache-size=0')
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option("useAutomationExtension", False)
         self.driver = webdriver.Chrome(service=service, options=options)# Or choose the appropriate webdriver for your browser
         self.driver.execute_cdp_cmd("Network.setCacheDisabled", {"cacheDisabled":True})
         
