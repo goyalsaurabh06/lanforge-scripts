@@ -10,7 +10,6 @@ import subprocess
 
 
 class RealBrowser():
-
     def __init__(self, url, count, driver, duration, device_name, server):
         self.url = url
 
@@ -218,14 +217,24 @@ def main():
         exit(0)
 
     rb = RealBrowser(url=url, count=args.count, duration=duration, driver=None, device_name=args.device_name, server=args.server)
-    # rb.kill_chrome_processs()
+    laptop_stats = {
+                        rb.hostname: {
+                            "url": rb.url,
+                            "name": rb.hostname,
+                            "url_loaded": 0,
+                            "total_urls": 0,
+                            "total_err": 0,
+                            "uc_min": 0,
+                            "uc_max": 0,
+                            "uc_avg": 0,
+                            "start_time": datetime.now().isoformat()
+                        }
+                    }
+    rb.send_stats(laptop_stats)
     rb.init_driver()
     rb.start()
-
     print(f"Total Tries: {rb.tries},Total Successfull Count :{rb.successful_load} ,Error Count :{rb.error}")
     rb.stop()
-
-    # rb.kill_chrome_processs()
 
 
 if __name__ == '__main__':
