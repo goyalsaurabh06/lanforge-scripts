@@ -845,7 +845,7 @@ class LAPTOPS(Realm):
                 })
 
             # fetching data for Mac
-            elif ('Apple' in hw_version):
+            elif ('Apple' in hw_version and resource['device type'] != 'IOS'):
                 resources_list.append({
                     'os': 'Apple',
                     'shelf': shelf,
@@ -1285,6 +1285,7 @@ class DeviceConfig(Realm):
                 details["enc"] = encrypt_match
                 details["passwd"] = match
                 details["Profile"] = profile_name
+                details["Lanforge"] = self.lanforge_ip
                 profile_conf.append(details)
         elif delete_profiles:
             logger.info("Deleting profiles")
@@ -1309,19 +1310,30 @@ class DeviceConfig(Realm):
             # Create an empty DataFrame with the same columns as new_data
             df_existing = pd.DataFrame(columns=df_new.columns)
 
+        # Separate existing data into: current IP and others
+        df_current_ip = df_existing[df_existing['Lanforge'] == self.lanforge_ip]
+        df_other_ips = df_existing[df_existing['Lanforge'] != self.lanforge_ip]
+
         # Handle deletion if delete_key is provided
         if delete_key is not None:
             if key_field not in df_existing.columns:
                 raise ValueError(f"The specified key field '{key_field}' does not exist in the existing data.")
-            df_existing = df_existing[~df_existing[key_field].isin(delete_key)]
+            df_current_ip = df_current_ip[~df_current_ip[key_field].isin(delete_key)]
 
-        if len(new_data) > 0:
-            # Update existing data with new data
-            df_existing = df_new.set_index(key_field).combine_first(df_existing.set_index(key_field)).reset_index()
+        # Filter new data to include only current IP
+        df_new = df_new[df_new['Lanforge'] == self.lanforge_ip]
 
-        # Write the updated DataFrame to CSV
-        df_existing.to_csv(file_path, index=False)
-        return df_existing
+        if len(df_new) > 0:
+            # Drop existing rows in df_current_ip that have the same key_field values as new_data
+            df_current_ip = df_current_ip[~df_current_ip[key_field].isin(df_new[key_field])]
+            # Append new data
+            df_current_ip = pd.concat([df_current_ip, df_new], ignore_index=True)
+
+        # Combine all data and write back to file
+        df_final = pd.concat([df_current_ip, df_other_ips], ignore_index=True)
+        df_final.to_csv(file_path, index=False)
+
+        return df_final
 
     def display_profiles(self):
         file_path = "profile.csv"
@@ -1331,6 +1343,8 @@ class DeviceConfig(Realm):
             df = pd.read_csv(file_path)
             df = df.where(pd.notnull(df), None)
             df = df.applymap(lambda x: None if x == "" else x)
+            # Filter rows for current IP
+            df = df[df['Lanforge'] == self.lanforge_ip]
             json_data = df.set_index('Profile').to_dict(orient='index')
             self.profile_data = json_data
             data = [{key: json_data[key]['ssid']} for key in json_data.keys()]
@@ -1369,6 +1383,8 @@ class DeviceConfig(Realm):
         # Replace empty strings with None
         df = df.applymap(lambda x: None if x == "" else x)
 
+        # Filter rows for current IP
+        df = df[df['Lanforge'] == self.lanforge_ip]
         json_data = df.set_index('Profile').to_dict(orient='index')
 
         self.profile_data = json_data
