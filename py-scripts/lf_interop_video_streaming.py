@@ -44,7 +44,36 @@
     python3 lf_interop_video_streaming.py --mgr 192.168.214.219 --url "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" --media_source hls
     --media_quality 1080P --duration 1m --device_list 1.10,1.11 --incremental_capacity 1,2 --debug --test_name video_streaming_test
 
+    Example-8:
+    Command Line Interface to run the Video Streaming test with wifi interface configuration to particular ssid
+    python3 lf_interop_video_streaming.py --mgr 192.168.213.218 --url "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" --media_source hls
+    --media_quality 1080P --duration 1m  --debug --test_name video_streaming_test --ssid VINTROP_wpa2 --passwd lanforge --encryp wpa2 --server_ip 192.168.214.121 --config
 
+    Example-9:
+    Command Line Interface to run the Video Streaming with particular group of devices configured to particular ssid profile
+    python3 lf_interop_video_streaming.py --mgr 192.168.213.218 --url "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" --media_source hls
+    --media_quality 1080P --duration 1m  --debug --test_name video_streaming_test --server_ip 192.168.214.121 --file_name laxmi_csv --group_name group1 --profile_name Openwpa2
+
+    Command to Create Group Profile
+
+    python3 DeviceConfig.py --lanforge_ip 192.168.214.61 --create_file --create_group --file_name grp61
+
+    To add a new group to an existing group file
+
+    python3 DeviceConfig.py --lanforge_ip 192.168.214.61  --create_group --file_name grp61
+
+    Command to Create a CSV file
+
+    python3 DeviceConfig.py --create_csv --lanforge_ip 192.168.214.61 --csv_name demo.csv
+
+    python3 DeviceConfig.py --create_csv --lanforge_ip 192.168.214.219
+
+
+    Command to Create SSID profile
+
+    python3 DeviceConfig.py --lanforge_ip 192.168.214.61 --create_profile --profile_config 'Openx=<ssid=test_wpa2><passwd lanforge><enc wpa2><server_ip 192.168.214.61>'
+
+    python3 DeviceConfig.py --lanforge_ip 192.168.214.61 --create_profile --profile_config 'Openy=<ssid=test_wpa3><passwd lanforge><enc wpa3><server_ip 192.168.214.61>'
 
     SCRIPT CLASSIFICATION: Test
 
@@ -76,6 +105,8 @@ import pandas as pd
 import logging
 import json
 import shutil
+import asyncio
+import csv
 from datetime import datetime, timedelta
 from lf_graph import lf_bar_graph_horizontal
 from lf_graph import lf_line_graph
@@ -98,16 +129,19 @@ logger = logging.getLogger(__name__)
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 port_utils = importlib.import_module("py-json.port_utils")
 PortUtils = port_utils.PortUtils
+DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
 
 
 class VideoStreamingTest(Realm):
     def __init__(self, host, ssid, passwd, encryp, media_source, media_quality, suporrted_release=None, max_speed=None, url=None,
-                 urls_per_tenm=None, duration=None, resource_ids=None, dowebgui=False, result_dir="", test_name=None, incremental=None, postcleanup=False, precleanup=False):
+                 urls_per_tenm=None, duration=None, resource_ids=None, dowebgui=False, result_dir="", test_name=None, incremental=None,
+                 postcleanup=False, precleanup=False, pass_fail_val=None, csv_name=None, selected_groups=None, selected_profiles=None, config=None):
         super().__init__(lfclient_host=host, lfclient_port=8080)
         self.adb_device_list = None
         self.host = host
         self.phn_name = []
         self.ssid = ssid
+        self.report_ssid = ssid
         self.passwd = passwd
         self.encryp = encryp
         self.media_source = media_source
@@ -154,6 +188,11 @@ class VideoStreamingTest(Realm):
         self.generic_endps_profile.name_prefix = "yt"
         self.background_run = None
         self.stop_test = False
+        self.expected_passfail_val = pass_fail_val
+        self.csv_name = csv_name
+        self.selected_groups = selected_groups
+        self.selected_profiles = selected_profiles
+        self.config = config
 
     @property
     def run(self):
@@ -1143,7 +1182,19 @@ class VideoStreamingTest(Realm):
         report.build_objective()
         report.set_table_title("Input Parameters")
         report.build_table_title()
+        if self.config:
+            test_setup_info["SSID"] = self.report_ssid
+            test_setup_info["Password"] = self.passwd
+            test_setup_info["ENCRYPTION"] = self.encryp
+        elif len(self.selected_groups) > 0 and len(self.selected_profiles) > 0:
+            # Map each group with a profile
+            gp_pairs = zip(self.selected_groups, self.selected_profiles)
+            # Create a string by joining the mapped pairs
+            gp_map = ", ".join(f"{group} -> {profile}" for group, profile in gp_pairs)
+            test_setup_info["Configuration"] = gp_map
 
+        # print("checking test setup information")
+        # print(test_setup_info)
         report.test_setup_table(value="Test Setup Information", test_setup_data=test_setup_info)
 
         device_type = []
@@ -1358,30 +1409,117 @@ class VideoStreamingTest(Realm):
             report.move_graph_image()
             report.build_graph()
 
-        # Table 1
-            report.set_obj_html("Overall - Detailed Result Table", "The below tables provides detailed information for the web browsing test.")
+            # Table 1
+            report.set_obj_html("Overall - Detailed Result Table", "The below tables provides detailed information for the web Video Streaming Test")
             report.build_objective()
 
-            # Create a dataframe for the detailed result table and append it to the report
-            dataframe = {
-                " DEVICE TYPE ": device_type[:created_incremental_values[iter]],
-                " Username ": username[:created_incremental_values[iter]],
-                " SSID ": ssid[:created_incremental_values[iter]],
-                " MAC ": mac[:created_incremental_values[iter]],
-                " Channel ": channel[:created_incremental_values[iter]],
-                " Mode ": mode[:created_incremental_values[iter]],
-                " Buffers": total_buffer[:created_incremental_values[iter]],
-                " Wait-Time(Sec)": wait_time_data,
-                " Min Video Rate(Mbps) ": min_video_rate[:created_incremental_values[iter]],
-                " Avg Video Rate(Mbps) ": avg_video_rate[:created_incremental_values[iter]],
-                " Max Video Rate(Mbps) ": max_video_rate[:created_incremental_values[iter]],
-                " Total URLs ": total_urls[:created_incremental_values[iter]],
-                " Total Errors ": total_err[:created_incremental_values[iter]],
-                " RSSI (dbm)": ['' if n == 0 else '-' + str(n) + " dbm" for n in rssi_data[:created_incremental_values[iter]]],
-                " Link Speed ": tx_rate[:created_incremental_values[iter]],
-                "Bytes Read (bytes)": max_bytes_rd_list,  # Added here
-                'Average Rx Rate (Mbps)': avg_rx_rate_list
-            }
+            if self.expected_passfail_val or self.csv_name:
+
+                if (not self.expected_passfail_val):
+                    res_list = []
+                    test_input_list = []
+                    pass_fail_list = []
+                    interop_tab_data = self.json_get('/adb/')["devices"]
+                    for client in range(len(device_type[:created_incremental_values[iter]])):
+                        if (device_type[client] != 'Android'):
+                            res_list.append(username[:created_incremental_values[iter]][client])
+                        else:
+                            for dev in interop_tab_data:
+                                for item in dev.values():
+                                    if (item['user-name'] == username[:created_incremental_values[iter]][client]):
+                                        res_list.append(item['name'].split('.')[2])
+                    if self.csv_name is None:
+                        self.csv_name = "device.csv"
+                    with open(self.csv_name, mode='r') as file:
+                        reader = csv.DictReader(file)
+                        rows = list(reader)
+                    for device in res_list:
+                        found = False
+                        for row in rows:
+                            if row['DeviceList'] == device and row['Videostreaming URLcount'].strip() != '':
+                                test_input_list.append(row['Videostreaming URLcount'])
+                                found = True
+                                break
+                        if not found:
+                            logging.info(f"Pass Fail Value for Device {device} not found in CSV. Using default value 5")
+                            test_input_list.append(5)  # Default value
+                    for i in range(len(test_input_list)):
+                        if (float(test_input_list[i]) <= total_urls[:created_incremental_values[iter]][i]):
+                            pass_fail_list.append('PASS')
+                        else:
+                            pass_fail_list.append('FAIL')
+
+                        dataframe = {
+                            " DEVICE TYPE ": device_type[:created_incremental_values[iter]],
+                            " Username ": username[:created_incremental_values[iter]],
+                            " SSID ": ssid[:created_incremental_values[iter]],
+                            " MAC ": mac[:created_incremental_values[iter]],
+                            " Channel ": channel[:created_incremental_values[iter]],
+                            " Mode ": mode[:created_incremental_values[iter]],
+                            " Buffers": total_buffer[:created_incremental_values[iter]],
+                            " Wait-Time(Sec)": wait_time_data,
+                            " Min Video Rate(Mbps) ": min_video_rate[:created_incremental_values[iter]],
+                            " Avg Video Rate(Mbps) ": avg_video_rate[:created_incremental_values[iter]],
+                            " Max Video Rate(Mbps) ": max_video_rate[:created_incremental_values[iter]],
+                            " Total URLs ": total_urls[:created_incremental_values[iter]],
+                            " Expected URLs ": test_input_list,
+                            " Total Errors ": total_err[:created_incremental_values[iter]],
+                            " RSSI (dbm)": ['' if n == 0 else '-' + str(n) + " dbm" for n in rssi_data[:created_incremental_values[iter]]],
+                            " Link Speed ": tx_rate[:created_incremental_values[iter]],
+                            " Status ": pass_fail_list,
+                            "Bytes Read (bytes)": max_bytes_rd_list,
+                            'Average Rx Rate (Mbps)': avg_rx_rate_list
+                        }
+                else:
+                    test_input_list = [self.expected_passfail_val for val in range(len(username[:created_incremental_values[iter]]))]
+                    pass_fail_list = []
+                    for i in range(len(test_input_list)):
+                        if (int(self.expected_passfail_val) <= total_urls[:created_incremental_values[iter]][i]):
+                            pass_fail_list.append("PASS")
+                        else:
+                            pass_fail_list.append("FAIL")
+                        dataframe = {
+                            " DEVICE TYPE ": device_type[:created_incremental_values[iter]],
+                            " Username ": username[:created_incremental_values[iter]],
+                            " SSID ": ssid[:created_incremental_values[iter]],
+                            " MAC ": mac[:created_incremental_values[iter]],
+                            " Channel ": channel[:created_incremental_values[iter]],
+                            " Mode ": mode[:created_incremental_values[iter]],
+                            " Buffers": total_buffer[:created_incremental_values[iter]],
+                            " Wait-Time(Sec)": wait_time_data,
+                            " Min Video Rate(Mbps) ": min_video_rate[:created_incremental_values[iter]],
+                            " Avg Video Rate(Mbps) ": avg_video_rate[:created_incremental_values[iter]],
+                            " Max Video Rate(Mbps) ": max_video_rate[:created_incremental_values[iter]],
+                            " Total URLs ": total_urls[:created_incremental_values[iter]],
+                            " Expected URLs ": test_input_list,
+                            " Total Errors ": total_err[:created_incremental_values[iter]],
+                            " RSSI (dbm)": ['' if n == 0 else '-' + str(n) + " dbm" for n in rssi_data[:created_incremental_values[iter]]],
+                            " Link Speed ": tx_rate[:created_incremental_values[iter]],
+                            " Status ": pass_fail_list,
+                            "Bytes Read (bytes)": max_bytes_rd_list,  # Added here
+                            'Average Rx Rate (Mbps)': avg_rx_rate_list
+                        }
+            else:
+                # Create a dataframe for the detailed result table and append it to the report
+                dataframe = {
+                    " DEVICE TYPE ": device_type[:created_incremental_values[iter]],
+                    " Username ": username[:created_incremental_values[iter]],
+                    " SSID ": ssid[:created_incremental_values[iter]],
+                    " MAC ": mac[:created_incremental_values[iter]],
+                    " Channel ": channel[:created_incremental_values[iter]],
+                    " Mode ": mode[:created_incremental_values[iter]],
+                    " Buffers": total_buffer[:created_incremental_values[iter]],
+                    " Wait-Time(Sec)": wait_time_data,
+                    " Min Video Rate(Mbps) ": min_video_rate[:created_incremental_values[iter]],
+                    " Avg Video Rate(Mbps) ": avg_video_rate[:created_incremental_values[iter]],
+                    " Max Video Rate(Mbps) ": max_video_rate[:created_incremental_values[iter]],
+                    " Total URLs ": total_urls[:created_incremental_values[iter]],
+                    " Total Errors ": total_err[:created_incremental_values[iter]],
+                    " RSSI (dbm)": ['' if n == 0 else '-' + str(n) + " dbm" for n in rssi_data[:created_incremental_values[iter]]],
+                    " Link Speed ": tx_rate[:created_incremental_values[iter]],
+                    "Bytes Read (bytes)": max_bytes_rd_list,
+                    'Average Rx Rate (Mbps)': avg_rx_rate_list
+                }
             dataframe1 = pd.DataFrame(dataframe)
             report.set_table_dataframe(dataframe1)
             report.build_table()
@@ -1484,6 +1622,42 @@ def main():
         python3 lf_interop_video_streaming.py --mgr 192.168.214.219 --url "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" --media_source hls
         --media_quality 1080P --duration 1m --device_list 1.10,1.11 --incremental_capacity 1,2 --debug --test_name video_streaming_test
 
+        Example-8:
+        Command Line Interface to run the Video Streaming test with wifi interface configuration to particular ssid
+        python3 lf_interop_video_streaming.py --mgr 192.168.213.218 --url "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" --media_source hls
+        --media_quality 1080P --duration 1m  --debug --test_name video_streaming_test --ssid VINTROP_wpa2 --passwd lanforge --encryp wpa2 --server_ip 192.168.214.121 --config
+
+        Example-9:
+        Command Line Interface to run the Video Streaming with particular group of devices configured to particular ssid profile
+        python3 lf_interop_video_streaming.py --mgr 192.168.213.218 --url "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" --media_source hls
+        --media_quality 1080P --duration 1m  --debug --test_name video_streaming_test --server_ip 192.168.214.121 --file_name laxmi_csv --group_name group1 --profile_name Openwpa2
+
+        Example-10:
+        Command Line Interface to run the Video Streaming with expected pass fail value
+        python3 lf_interop_video_streaming.py --mgr 192.168.214.219 --url "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" --media_source hls
+        --media_quality 1080P --duration 1m --device_list 1.10,1.12 --debug --test_name video_streaming_test --expected_passfail_value 5
+
+        Command to Create Group Profile
+
+        python3 DeviceConfig.py --lanforge_ip 192.168.214.61 --create_file --create_group --file_name grp61
+
+        To add a new group to an existing group file
+
+        python3 DeviceConfig.py --lanforge_ip 192.168.214.61  --create_group --file_name grp61
+
+        Command to Create a CSV file
+
+        python3 DeviceConfig.py --create_csv --lanforge_ip 192.168.214.61 --csv_name demo.csv
+
+        python3 DeviceConfig.py --create_csv --lanforge_ip 192.168.214.219
+
+
+        Command to Create SSID profile
+
+        python3 DeviceConfig.py --lanforge_ip 192.168.214.61 --create_profile --profile_config 'Openx=<ssid=test_wpa2><passwd lanforge><enc wpa2><server_ip 192.168.214.61>'
+
+        python3 DeviceConfig.py --lanforge_ip 192.168.214.61 --create_profile --profile_config 'Openy=<ssid=test_wpa3><passwd lanforge><enc wpa3><server_ip 192.168.214.61>'
+
         SCRIPT CLASSIFICATION: Test
 
         SCRIPT_CATEGORIES:   Performance,  Functional, Report Generation
@@ -1508,7 +1682,7 @@ def main():
 
     parser.add_argument("--host", "--mgr", required=True, help='specify the GUI to connect to, assumes port '
                         '8080')
-    parser.add_argument("--ssid", default="ssid_wpa_2g", help='specify ssid on which the test will be running')
+    parser.add_argument("--ssid", help='specify ssid on which the test will be running')
     parser.add_argument("--passwd", default="something", help='specify encryption password  on which the test will '
                         'be running')
     parser.add_argument("--encryp", default="psk", help='specify the encryption type  on which the test will be '
@@ -1536,6 +1710,36 @@ def main():
     parser.add_argument('--postcleanup', help="Cleanup the cross connections after test is stopped", action='store_true')
     parser.add_argument('--precleanup', help="Cleanup the cross connections before test is started", action='store_true')
     parser.add_argument('--help_summary', help='Show summary of what this script does', default=None)
+
+    # Arguments related to groups and profile and pass fail values configuration
+    parser.add_argument('--group_name', type=str, help='Enter group name')
+    parser.add_argument('--profile_name', type=str, help='Enter profile name')
+    parser.add_argument('--file_name', type=str, help='Enter file name')
+
+    parser.add_argument("--eap_method", type=str, default='DEFAULT', help="Specify the EAP method for authentication.")
+    parser.add_argument("--eap_identity", type=str, default='DEFAULT', help="Specify the EAP identity for authentication.")
+    parser.add_argument("--ieee80211", action="store_true", help='Enables IEEE 802.11 support.')
+    parser.add_argument("--ieee80211u", action="store_true", help='Enables IEEE 802.11u (Hotspot 2.0) support.')
+    parser.add_argument("--ieee80211w", type=int, default=1, help='Enables IEEE 802.11w (Management Frame Protection) support.')
+    parser.add_argument("--enable_pkc", action="store_true", help='Enables pkc support.')
+    parser.add_argument("--bss_transition", action="store_true", help='Enables BSS transition support.')
+    parser.add_argument("--power_save", action="store_true", help='Enables power-saving features.')
+    parser.add_argument("--disable_ofdma", action="store_true", help='Disables OFDMA support.')
+    parser.add_argument("--roam_ft_ds", action="store_true", help='Enables fast BSS transition (FT) support')
+    parser.add_argument("--key_management", type=str, default='DEFAULT', help='Specify the key management method (e.g., WPA-PSK, WPA-EAP)')
+    parser.add_argument("--pairwise", type=str, default='NA')
+    parser.add_argument("--private_key", type=str, default='NA', help='Specify EAP private key certificate file.')
+    parser.add_argument("--ca_cert", type=str, default='NA', help='Specify the CA certificate file name')
+    parser.add_argument("--client_cert", type=str, default='NA', help='Specify the client certificate file name')
+    parser.add_argument("--pk_passwd", type=str, default='NA', help='Specify the password for the private key')
+    parser.add_argument("--pac_file", type=str, default='NA', help='Specify the pac file name')
+    parser.add_argument("--server_ip", type=str, default='NA', help='Specify the server ip address')
+    parser.add_argument('--expected_passfail_value', help='Enter the expected number of urls ', default=None)
+    parser.add_argument('--csv_name', type=str, help='Enter the csv name to store expected values', default=None)
+    parser.add_argument("--wait_time", type=int, help="Specify the time for configuration", default=60)
+    parser.add_argument('--config', action='store_true', help='specify this flag whether to config devices or not')
+    parser.add_argument("--device_csv_name", type=str, help="Specify the device csv name for pass/fail", default=None)
+
     args = parser.parse_args()
 
     if args.help_summary:
@@ -1580,12 +1784,124 @@ def main():
 
     # url = args.url.replace("http://", "").replace("https://", "")
 
+    if args.expected_passfail_value is not None and args.device_csv_name is not None:
+        logging.error("Specify either expected_passfail_value or device_csv_name")
+        exit(1)
+
+    if args.group_name is not None:
+        args.group_name = args.group_name.strip()
+        selected_groups = args.group_name.split(',')
+    else:
+        selected_groups = []
+
+    if args.profile_name is not None:
+        args.profile_name = args.profile_name.strip()
+        selected_profiles = args.profile_name.split(',')
+    else:
+        selected_profiles = []
+
+    if len(selected_groups) != len(selected_profiles):
+        logging.error("Number of groups should match number of profiles")
+        exit(0)
+
+    elif args.group_name is not None and args.profile_name is not None and args.file_name is not None and args.device_list is not None:
+        logging.error("Either group name or device list should be entered not both")
+        exit(0)
+    elif args.ssid is not None and args.profile_name is not None:
+        logging.error("Either ssid or profile name should be given")
+        exit(0)
+    elif args.file_name is not None and (args.group_name is None or args.profile_name is None):
+        logging.error("Please enter the correct set of arguments")
+        exit(0)
+    elif args.config and ((args.ssid is None or (args.passwd is None and args.security.lower() != 'open') or (args.passwd is None and args.security is None))):
+        logging.error("Please provide ssid password and security for configuration of devices")
+        exit(0)
     obj = VideoStreamingTest(host=args.host, ssid=args.ssid, passwd=args.passwd, encryp=args.encryp,
                              suporrted_release=["7.0", "10", "11", "12"], max_speed=args.max_speed,
                              url=args.url, urls_per_tenm=args.urls_per_tenm, duration=args.duration,
                              resource_ids=args.device_list, dowebgui=args.dowebgui, media_quality=args.media_quality, media_source=args.media_source,
                              result_dir=args.result_dir, test_name=args.test_name, incremental=args.incremental, postcleanup=args.postcleanup,
-                             precleanup=args.precleanup)
+                             precleanup=args.precleanup, pass_fail_val=args.expected_passfail_value, csv_name=args.device_csv_name,
+                             selected_groups=selected_groups, selected_profiles=selected_profiles, config=args.config)
+
+    config_obj = DeviceConfig.DeviceConfig(lanforge_ip=args.host, file_name=args.file_name)
+    if not args.expected_passfail_value and args.device_csv_name is None:
+        config_obj.device_csv_file(csv_name="device.csv")
+
+    if args.group_name is not None and args.file_name is not None and args.profile_name is not None:
+        selected_groups = args.group_name.split(',')
+        selected_profiles = args.profile_name.split(',')
+        config_devices = {}
+        for i in range(len(selected_groups)):
+            config_devices[selected_groups[i]] = selected_profiles[i]
+        config_obj.initiate_group()
+        asyncio.run(config_obj.connectivity(config_devices))
+
+        adbresponse = config_obj.adb_obj.get_devices()
+        resource_manager = config_obj.laptop_obj.get_devices()
+        all_res = {}
+        df1 = config_obj.display_groups(config_obj.groups)
+        groups_list = df1.to_dict(orient='list')
+        group_devices = {}
+        for adb in adbresponse:
+            group_devices[adb['serial']] = adb['eid']
+        for res in resource_manager:
+            all_res[res['hostname']] = res['shelf'] + '.' + res['resource']
+        eid_list = []
+        for grp_name in groups_list.keys():
+            for g_name in selected_groups:
+                if grp_name == g_name:
+                    for j in groups_list[grp_name]:
+                        if j in group_devices.keys():
+                            eid_list.append(group_devices[j])
+                        elif j in all_res.keys():
+                            eid_list.append(all_res[j])
+        args.device_list = ",".join(id for id in eid_list)
+    else:
+        config_dict = {
+            'ssid': args.ssid,
+            'passwd': args.passwd,
+            'enc': args.encryp,
+            'eap_method': args.eap_method,
+            'eap_identity': args.eap_identity,
+            'ieee80211': args.ieee80211,
+            'ieee80211u': args.ieee80211u,
+            'ieee80211w': args.ieee80211w,
+            'enable_pkc': args.enable_pkc,
+            'bss_transition': args.bss_transition,
+            'power_save': args.power_save,
+            'disable_ofdma': args.disable_ofdma,
+            'roam_ft_ds': args.roam_ft_ds,
+            'key_management': args.key_management,
+            'pairwise': args.pairwise,
+            'private_key': args.private_key,
+            'ca_cert': args.ca_cert,
+            'client_cert': args.client_cert,
+            'pk_passwd': args.pk_passwd,
+            'pac_file': args.pac_file,
+            'server_ip': args.server_ip
+        }
+        if args.device_list:
+            all_devices = config_obj.get_all_devices()
+            if args.group_name is None and args.file_name is None and args.profile_name is None:
+                dev_list = args.device_list.split(',')
+                if args.config:
+                    asyncio.run(config_obj.connectivity(device_list=dev_list, wifi_config=config_dict))
+        else:
+            all_devices = config_obj.get_all_devices()
+            device_list = []
+            for device in all_devices:
+                if device["type"] != 'laptop':
+                    device_list.append(device["shelf"] + '.' + device["resource"] + " " + device["serial"])
+                elif device["type"] == 'laptop':
+                    device_list.append(device["shelf"] + '.' + device["resource"] + " " + device["hostname"])
+            print("Available devices:")
+            for device in device_list:
+                print(device)
+            args.device_list = input("Enter the desired resources to run the test:")
+            dev1_list = args.device_list.split(',')
+            if args.config:
+                asyncio.run(config_obj.connectivity(device_list=dev1_list, wifi_config=config_dict))
 
     resource_ids_sm = []
     resource_set = set()
@@ -1608,90 +1924,29 @@ def main():
         obj.resource_ids = ",".join(id.split(".")[1] for id in args.device_list.split(","))
         available_resources = [int(num) for num in obj.resource_ids.split(',')]
     else:
-        # Case where args.no_laptops flag is set
-        # if args.no_laptops:
-        # Retrieve all Android devices if no_laptops flag is True
         obj.android_devices = obj.devices.get_devices(only_androids=True)
-
-        # else:
-        #     # Retrieve all devices and their OS types if no_laptops flag is False
-        #     devices,os_types_dict = obj.devices.get_devices(androids=True,laptops = True)
-
-        #     # Extract prefixes from device interfaces
-        #     device_prefixes = ['.'.join(interface.split('.')[:2]) for interface in devices]
-        #     # Categorize devices into Android and other OS types based on prefixes
-        #     for index, prefix in enumerate(device_prefixes):
-        #         os_type = os_types_dict.get(prefix)
-        #         if os_type == 'android':
-        #             obj.android_devices.append(devices[index])
-        #         else:
-        #             obj.other_os_list.append(devices[index])
-
-        # Process resource IDs if provided
         if args.device_list:
-            # Extract second part of resource IDs and sort them
-            obj.resource_ids = ",".join(id.split(".")[1] for id in args.device_list.split(","))
-            resource_ids_sm = obj.resource_ids
-            resource_list = resource_ids_sm.split(',')
-            resource_set = set(resource_list)
-            resource_list_sorted = sorted(resource_set)
-            resource_ids_generated = ','.join(resource_list_sorted)
+            device_list = args.device_list.split(',')
+            # Extract resource IDs (after the dot), remove duplicates, and sort them
+            resource_ids = sorted(set(int(item.split('.')[1]) for item in device_list if '.' in item))
+            resource_list_sorted = resource_ids
+            obj.resource_ids = ','.join(map(str, resource_ids))
+            # Create a set of Android device IDs (e.g., "resource.123")
+            android_device_ids = set(obj.android_devices)
+            # print("checking the values of android devices", android_device_ids)
+            # print("checking device list", device_list)
+            # Extract only the '1.1' part
+            android_device_short_ids = {device.split('.')[0] + '.' + device.split('.')[1] for device in android_device_ids}
+            # print("Short android device IDs:", android_device_short_ids)
+            # Filter device list to include only valid Android devices
+            obj.android_list = [dev for dev in android_device_short_ids if dev in device_list]
+            # Log any devices in the list that are not available
+            for dev in device_list:
+                if dev not in android_device_short_ids:
+                    logger.info(f"{dev} device is not available")
 
-            # Convert resource IDs into a list of integers
-            num_list = list(map(int, obj.resource_ids.split(',')))
-
-            # Sort the list
-            num_list.sort()
-
-            # Join the sorted list back into a string
-            sorted_string = ','.join(map(str, num_list))
-            obj.resource_ids = sorted_string
-
-            # Extract the second part of each Android device ID and convert to integers
-            modified_list = list(map(lambda item: int(item.split('.')[1]), obj.android_devices))
-            # modified_other_os_list = list(map(lambda item: int(item.split('.')[1]), obj.other_os_list))
-
-            # Verify if all resource IDs are valid for Android devices
-            resource_ids = [int(x) for x in sorted_string.split(',')]
-            # if not args.no_laptops:
-            #     new_list_android = [item.split('.')[0] + '.' + item.split('.')[1] for item in obj.android_devices]
-            #     new_list_other = [item.split('.')[0] + '.' + item.split('.')[1] for item in obj.other_os_list]
-            #     resources_list = args.device_list.split(",")
-            #     # Filter Android devices based on resource IDs
-            #     for element in resources_list:
-            #         if element in new_list_android:
-            #             for ele in obj.android_devices:
-            #                 if ele.startswith(element):
-            #                     obj.android_list.append(ele)
-            #         else:
-            #             for ele in obj.other_os_list:
-            #                 if ele.startswith(element):
-            #                     obj.other_list.append(ele)
-            #     new_android = [int(item.split('.')[1]) for item in obj.android_list]
-
-            #     resource_ids = sorted(new_android)
-            #     resource_list = sorted(new_android)
-            #     obj.resource_ids = ','.join(str(num) for num in sorted(new_android))
-            #     resource_set = set(resource_list)
-            #     resource_list_sorted = sorted(resource_set)
-
-            # else:
-
-            # Process Android devices when no_laptops flag is True
-            new_list_android = [item.split('.')[0] + '.' + item.split('.')[1] for item in obj.android_devices]
-
-            resources_list = args.device_list.split(",")
-            for element in resources_list:
-                if element in new_list_android:
-                    for ele in obj.android_devices:
-                        if ele.startswith(element):
-                            obj.android_list.append(ele)
-                else:
-                    logger.info("{} device is not available".format(element))
-            new_android = [int(item.split('.')[1]) for item in obj.android_list]
-
-            resource_ids = sorted(new_android)
-            available_resources = list(set(resource_ids))
+            # Final list of available Android resource IDs
+            available_resources = sorted(set(int(dev.split('.')[1]) for dev in obj.android_list))
 
         else:
             # Query user to select devices if no resource IDs are provided
@@ -1701,21 +1956,8 @@ def main():
             if not selected_devices:
                 logging.info("devices donot exist..!!")
                 return
-            # Categorize selected devices into Android and other OS types if no_laptops flag is False
-            # if not args.no_laptops:
-            #     for device in selected_devices:
-            #         if device in obj.android_devices:
-            #             obj.android_list.append(device)
-            #         else:
-            #             obj.other_list.append(device)
-            # else:
-                # Assign all selected devices as Android devices if no_laptops flag is True
 
             obj.android_list = selected_devices
-
-            # if args.incremental and  (not obj.android_list):
-            #     logging.info("Incremental Values are not needed as no android devices are selected")
-
             # Verify if all resource IDs are valid for Android devices
             if obj.android_list:
                 resource_ids = ",".join([item.split(".")[1] for item in obj.android_list])
@@ -1744,9 +1986,6 @@ def main():
         logger.info("No devices which are selected are available in the lanforge")
         exit()
     gave_incremental = False
-    if len(resource_list_sorted) == 0:
-        logger.error("Selected Devices are not available in the lanforge")
-        exit(1)
     if args.incremental and not args.webgui_incremental:
         if obj.resource_ids:
             logging.info("The total available devices are {}".format(len(available_resources)))
@@ -1762,10 +2001,6 @@ def main():
         incremental = [int(x) for x in args.webgui_incremental.split(',')]
         if (len(args.webgui_incremental) == 1 and incremental[0] != len(resource_list_sorted)) or (len(args.webgui_incremental) > 1):
             obj.incremental = incremental
-
-    # if obj.incremental and (not obj.resource_ids):
-    #     logging.info("incremental values are not needed as Android devices are not selected.")
-    #     exit()
 
     if obj.incremental and obj.resource_ids:
         if obj.incremental[-1] > len(available_resources):
