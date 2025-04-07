@@ -30,7 +30,7 @@ python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --duration 1m --ur
     If not specified it takes the default count value (default count is 1)
 Example-4:
 Command Line Interface to run the Real Browser Test with Device Configuration
-python3 lf_interop_real_browser_test.py --mgr 192.168.204.74 --url "https://google.com" --duration 1m --debug --flask_ip 192.168.200.164 
+python3 lf_interop_real_browser_test.py --mgr 192.168.204.74 --url "https://google.com" --duration 1m --debug --flask_ip 192.168.200.164
 --ssid NETGEAR_5G_wpa2 --passwd Password@123 --encryp wpa2 --config
 
 Example-5:
@@ -1822,7 +1822,7 @@ def main():
 
             Example-4:
             Command Line Interface to run the Real Browser Test with Device Configuration
-            python3 lf_interop_real_browser_test.py --mgr 192.168.204.74 --url "https://google.com" --duration 1m --debug --flask_ip 192.168.200.164 
+            python3 lf_interop_real_browser_test.py --mgr 192.168.204.74 --url "https://google.com" --duration 1m --debug --flask_ip 192.168.200.164
             --ssid NETGEAR_5G_wpa2 --passwd Password@123 --encryp wpa2 --config
 
             Example-5:
@@ -1904,7 +1904,7 @@ def main():
         parser.add_argument("--pk_passwd", type=str, default='NA', help='Specify the password for the private key')
         parser.add_argument("--pac_file", type=str, default='NA', help='Specify the pac file name')
         parser.add_argument("--server_ip", type=str, default='NA', help='Specify the server ip address')
-        parser.add_argument("--flask_ip", type=str, default=None,required=True, help='specify the flask ip to run the test')
+        parser.add_argument("--flask_ip", type=str, default=None, required=True, help='specify the flask ip to run the test')
         parser.add_argument('--help_summary', help='Show summary of what this script does', default=None)
         parser.add_argument("--expected_passfail_value", help="Specify the expected urlcount value for pass/fail")
         parser.add_argument("--device_csv_name", type=str, help="Specify the device csv name for pass/fail", default=None)
@@ -2017,7 +2017,7 @@ def main():
         logging.error(f"Error occured {e}")
         traceback.print_exc()
     finally:
-        if not('--help' in sys.argv or '-h' in sys.argv):
+        if not ('--help' in sys.argv or '-h' in sys.argv):
             obj.create_report()
             if (args.dowebgui):
                 obj.webui_stop()
