@@ -1503,7 +1503,8 @@ def main():
         if not ('--help' in sys.argv or '-h' in sys.argv):
             if args.do_webUI:
                 try:
-                    url = f"http://{args.lanforge_ip}:5454/update_status_yt"
+                    #url = f"http://{args.lanforge_ip}:5454/update_status_yt"
+                    url = "http://localhost:5454/update_status_yt"
                     headers = {
                         'Content-Type': 'application/json',
                     }

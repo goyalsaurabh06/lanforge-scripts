@@ -606,7 +606,8 @@ class Youtube(Realm):
 
     def stop_test_yt(self,):
         try:
-            url = f"http://{self.host}:5454/update_status_yt"
+            #url = f"http://{self.host}:5454/update_status_yt"
+            url = "http://localhost:5454/update_status_yt"
             headers = {
                 'Content-Type': 'application/json',
             }

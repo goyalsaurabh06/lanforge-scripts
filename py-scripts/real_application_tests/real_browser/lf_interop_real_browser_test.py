@@ -971,7 +971,8 @@ class RealBrowserTest(Realm):
 
     def webui_stop(self):
         try:
-            url = f"http://{self.host}:5454/update_status_yt"
+            #url = f"http://{self.host}:5454/update_status_yt"
+            url = "http://localhost:5454/update_status_yt"
             headers = {
                 'Content-Type': 'application/json',
             }
