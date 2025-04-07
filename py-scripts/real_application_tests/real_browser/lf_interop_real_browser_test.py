@@ -28,7 +28,15 @@ python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --duration 1m --ur
 
     CASE-1:
     If not specified it takes the default count value (default count is 1)
+Example-4:
+Command Line Interface to run the Real Browser Test with Device Configuration
+python3 lf_interop_real_browser_test.py --mgr 192.168.204.74 --url "https://google.com" --duration 1m --debug --flask_ip 192.168.200.164 
+--ssid NETGEAR_5G_wpa2 --passwd Password@123 --encryp wpa2 --config
 
+Example-5:
+Command Line Interface to run the Real Browser Test with groups and profiles
+python3 lf_interop_real_browser_test.py --mgr 192.168.204.74 --url "https://google.com" --duration 1m --debug --flask_ip 192.168.200.164
+ --file_name grplaptops --group_name group1,group2 --profile_name netgear2g,netgear2g
 
 SCRIPT CLASSIFICATION: Test
 
@@ -683,10 +691,6 @@ class RealBrowserTest(Realm):
                 }, debug_=self.debug)
 
     def stop(self):
-        """
-            Stops the layer 4-7 traffic for created CX endpoints.
-            Stops the generic cross connections
-        """
         self.http_profile.stop_cx()
         self.generic_endps_profile.stop_cx()
         self.stop_signal = True
@@ -832,6 +836,11 @@ class RealBrowserTest(Realm):
         def check_stop():
             return jsonify({"stop": self.stop_signal})
 
+        # New route to check the health of the Flask server
+        @self.app.route('/check_health', methods=['GET'])
+        def check_health():
+            return jsonify({"status": "healthy"}), 200
+
         try:
             self.app.run(host='0.0.0.0', port=5003, debug=True, threaded=True, use_reloader=False)
 
@@ -844,8 +853,7 @@ class RealBrowserTest(Realm):
         flask_thread = threading.Thread(target=self.start_flask_server)
         flask_thread.daemon = True
         flask_thread.start()
-        # Give the Flask server some time to start
-        time.sleep(5)
+        self.wait_for_flask()
 
     def check_gen_cx(self):
         """
@@ -866,6 +874,365 @@ class RealBrowserTest(Realm):
         # If all endpoints are in 'Stopped' or 'WAITING', return True
         return True
 
+    def process_incremental_values(self, available_resources):
+        """
+        Process resource IDs and incremental values if specified.
+        """
+        if self.incremental or self.dowebgui:
+            incremental_capacity_list_values = self.get_incremental_capacity_list()
+            if incremental_capacity_list_values[-1] != len(available_resources):
+                logger.error("Incremental capacity doesn't match available devices")
+                if self.postCleanUp:
+                    self.postcleanup()
+                exit(1)
+
+        if self.resource_ids:
+            if self.incremental:
+                self.test_setup_info_incremental_values = ','.join(map(str, incremental_capacity_list_values))
+                if len(self.incremental) == len(available_resources):
+                    self.total_duration = self.duration
+                elif len(self.incremental) == 1 and len(available_resources) > 1:
+                    div, mod = divmod(len(available_resources), self.incremental[0])
+                    self.total_duration = self.duration * (div + (1 if mod else 0))
+                else:
+                    self.total_duration = self.duration * len(incremental_capacity_list_values)
+            elif self.dowebgui:
+                self.test_setup_info_incremental_values = ','.join(map(str, incremental_capacity_list_values))
+                self.total_duration = self.duration * len(incremental_capacity_list_values)
+            else:
+                self.test_setup_info_incremental_values = "No Incremental Value provided"
+                self.total_duration = self.duration
+
+    def handle_duration(self):
+        """
+        Convert duration string to minutes.
+        """
+        if isinstance(self.duration, str):
+            if self.duration.endswith(('s', 'S')):
+                self.duration = round(int(self.duration[:-1]) / 60, 2)
+            elif self.duration.endswith(('m', 'M')):
+                self.duration = int(self.duration[:-1])
+            elif self.duration.endswith(('h', 'H')):
+                self.duration = int(self.duration[:-1]) * 60
+            else:
+                self.duration = int(self.duration)
+
+    def run_test(self, available_resources):
+        """
+        Runs the test with calculated parameters.
+        """
+        logging.info("Initiating Test...")
+        available_resources.sort()
+        self.set_available_resources_ids(",".join(map(str, available_resources)))
+        self.build()
+        self.process_incremental_values(available_resources)
+        if not self.update_webui_json():
+            sys.exit(1)
+
+        cx_order_list = self.calculate_cx_order_list()
+
+        for i, cx_batch in enumerate(cx_order_list):
+            self.start_specific(cx_batch)
+            logging.info(f"Test started on Devices with resource Ids : {cx_batch}")
+            try:
+                self.get_stats(self.duration, "webBrowser.csv", i, available_resources, cx_batch, i, self.count)
+            except Exception as e:
+                logging.error(f"Error while monitoring stats {e}", exc_info=True)
+
+    def calculate_cx_order_list(self):
+        """
+        Calculate and manage cx_order_list (list of cross connections to run) based on incremental values.
+        """
+        cx_order_list = []
+        keys = list(self.created_cx.keys()) + self.generic_endps_profile.created_cx
+        index = 0
+
+        if self.resource_ids:
+            if not self.incremental:
+                self.incremental = [len(keys)]
+
+            if len(self.incremental) == 1 and self.incremental[0] == len(keys):
+                cx_order_list.append(keys[index:])
+            elif len(self.incremental) == 1 and len(keys) > 1:
+                incremental_value = self.incremental[0]
+                max_index = len(keys)
+                while index < max_index:
+                    next_index = min(index + incremental_value, max_index)
+                    cx_order_list.append(keys[index:next_index])
+                    index = next_index
+            else:
+                for num in self.incremental:
+                    cx_order_list.append(keys[index:num])
+                    index = num
+                if index < len(keys):
+                    cx_order_list.append(keys[index:])
+
+        return cx_order_list
+
+    def webui_stop(self):
+        try:
+            url = f"http://{self.host}:5454/update_status_yt"
+            headers = {
+                'Content-Type': 'application/json',
+            }
+            data = {
+                'status': 'Completed',
+                'name': self.test_name
+            }
+            response = requests.post(url, json=data, headers=headers)
+            if response.status_code == 200:
+                logging.info("Successfully updated STOP status to 'Completed'")
+                pass
+            else:
+                logging.error(f"Failed to update STOP status: {response.status_code} - {response.text}")
+
+        except Exception as e:
+            logging.error(f"An error occurred while updating status: {e}")
+
+    def validate_and_process_args(self, args):
+        """
+        Processes and validates the provided arguments.
+        Returns:
+            selected_groups (list): List of groups parsed from args.group_name.
+            selected_profiles (list): List of profiles parsed from args.profile_name.
+        """
+        # Process group_name and profile_name into lists
+        if args.group_name is not None:
+            args.group_name = args.group_name.strip()
+            self.selected_groups = args.group_name.split(',')
+        else:
+            self.selected_groups = []
+
+        if args.profile_name is not None:
+            args.profile_name = args.profile_name.strip()
+            self.selected_profiles = args.profile_name.split(',')
+        else:
+            self.selected_profiles = []
+
+        # Validation checks
+        if args.expected_passfail_value is not None and args.device_csv_name is not None:
+            logging.error("Specify either expected_passfail_value or device_csv_name")
+            exit(0)
+
+        if len(self.selected_groups) != len(self.selected_profiles):
+            logging.error("Number of groups should match number of profiles")
+            exit(0)
+
+        if args.group_name is not None and args.profile_name is not None and args.file_name is not None and args.device_list is not None:
+            logging.error("Either group name or device list should be entered not both")
+            exit(0)
+
+        if args.ssid is not None and args.profile_name is not None:
+            logging.error("Either ssid or profile name should be given")
+            exit(0)
+
+        if args.file_name is not None and (args.group_name is None or args.profile_name is None):
+            logging.error("Please enter the correct set of arguments")
+            exit(0)
+
+        if args.config and ((args.ssid is None or
+                            (args.passwd is None and args.encryp and args.encryp.lower() != 'open') or
+                            (args.passwd is None and args.encryp is None))):
+            logging.error("Please provide ssid password and security for configuration of devices")
+            exit(0)
+
+    def initialize_config(self, args):
+        """
+        Process file name and create a DeviceConfig object.
+        """
+        if args.file_name:
+            new_filename = args.file_name.removesuffix(".csv")
+        else:
+            new_filename = None
+
+        config_obj = DeviceConfig.DeviceConfig(lanforge_ip=args.host, file_name=new_filename, wait_time=args.wait_time)
+        if not args.expected_passfail_value and args.device_csv_name is None:
+            config_obj.device_csv_file(csv_name="device.csv")
+        return config_obj
+
+    def process_group_profiles(self, args, config_obj):
+        """
+        Process group and profile names and update the device_list in args if provided.
+        """
+        if args.group_name and args.file_name and args.profile_name:
+            selected_groups = args.group_name.split(',')
+            selected_profiles = args.profile_name.split(',')
+            config_devices = {}
+            for i in range(len(selected_groups)):
+                config_devices[selected_groups[i]] = selected_profiles[i]
+            config_obj.initiate_group()
+            config_list = asyncio.run(config_obj.connectivity(config_devices))
+            resource_ids = sorted(set(int(item.split('.')[1]) for item in config_list if '.' in item))
+            print("checking resource_ids in process_group_profiles argument")
+            print(config_list)
+            return resource_ids
+
+    def process_resources(self, args, config_obj, obj, config_dict):
+        """
+        Processes resource IDs and returns:
+            available_resources (list): List of available resource IDs (integers)
+            resource_list_sorted (list): Sorted list of resource IDs (as strings)
+            resource_ids_generated (str): Resource IDs joined as a comma-separated string
+        """
+        available_resources = []
+
+        # Web GUI Mode: Extract and sort resources from the given device list
+        if args.dowebgui and args.group_name:
+            print("checking args.device list in process_resources")
+            print(args.device_list)
+            resource_list = sorted(set(args.device_list.split(',')))
+            resource_ids_generated = ','.join(resource_list)
+
+            # Query additional device info using webgui
+            selected_devices, report_labels, selected_macs = obj.devices.query_user(
+                dowebgui=args.dowebgui, device_list=resource_ids_generated)
+
+            obj.resource_ids = ",".join(id.split(".")[1] for id in args.device_list.split(","))
+            available_resources = sorted(set(int(num) for num in obj.resource_ids.split(',')))
+
+        else:
+            # Fetch all available devices
+            all_devices = config_obj.get_all_devices()
+
+            # If device_list is provided, process it
+            if args.device_list:
+                device_list = args.device_list.split(',')
+
+                # Establish connectivity if required
+                if args.config:
+                    _ = asyncio.run(config_obj.connectivity(device_list=device_list, wifi_config=config_dict))
+
+                # Extract resource IDs and filter them
+                obj.devices = obj.devices.get_devices()
+                resource_ids = sorted(set(int(item.split('.')[1]) for item in device_list if '.' in item))
+                # obj.resource_ids = ','.join(map(str, resource_ids))
+
+                available_resources = [res_id for res_id in resource_ids if any(
+                    int(device.split('.')[1]) == res_id for device in obj.devices if '.' in device
+                )]
+
+            else:
+                # Display available devices for manual selection
+                if args.config:
+                    device_info_list = [
+                        f"{device['shelf']}.{device['resource']} {device.get('serial', device.get('hostname', 'Unknown'))}"
+                        for device in all_devices
+                    ]
+
+                    print("Available devices:")
+                    for device in device_info_list:
+                        print(device)
+
+                    # Get user input for selecting resources
+                    args.device_list = input("Enter the desired resources to run the test (comma-separated, e.g., 1.10,1.12): ")
+                    device_list = args.device_list.split(',')
+                else:
+                    self.devices.get_devices()
+                    args.device_list, _, _ = self.devices.query_user()
+                    device_list = args.device_list
+                    print(args.device_list)
+
+                # Establish connectivity if required
+                if args.config:
+                    _ = asyncio.run(config_obj.connectivity(device_list=device_list, wifi_config=config_dict))
+
+                obj.devices = obj.devices.get_devices()
+                resource_ids = sorted(set(int(item.split('.')[1]) for item in device_list if '.' in item))
+                # obj.resource_ids = ','.join(map(str, resource_ids))
+
+                available_resources = [res_id for res_id in resource_ids if any(
+                    int(device.split('.')[1]) == res_id for device in obj.devices if '.' in device
+                )]
+
+        return available_resources
+
+    def update_passfail_value(self, args, config_obj, obj, available_resources):
+        """
+        If no expected_passfail_value and no device_csv_name provided, ask for expected values
+        and update the device CSV.
+        """
+        if len(available_resources) == 0:
+            logging.info("There are no devices available which are selected")
+            exit()
+        device_map = {}
+        if (not args.expected_passfail_value) and (args.device_csv_name is None):
+            expected_val = input("Enter the expected value for the following devices {} eg 8,6,2: ".format(available_resources)).split(',')
+            if len(available_resources) == len(expected_val):
+                for i in range(len(available_resources)):
+                    # Using the first two parts (shelf.resource) as key from android_list
+                    key = obj.android_list[i].split('.')[0] + '.' + obj.android_list[i].split('.')[1]
+                    device_map[key] = expected_val[i]
+                config_obj.update_device_csv('device.csv', 'RealBrowser URLcount', device_map)
+            else:
+                logging.error("Enter correct number of values")
+                exit(0)
+
+    def handle_incremental(self, args, obj, available_resources, resource_list_sorted):
+        """
+        Process incremental values from user input or args.
+        """
+        if args.incremental and not args.webgui_incremental:
+            if obj.resource_ids:
+                inc_input = input('Specify incremental values as 1,2,3 : ')
+                obj.incremental = [int(x) for x in inc_input.split(',')]
+            else:
+                logging.info("Incremental values are not needed as Android devices are not selected.")
+        if args.webgui_incremental:
+            if args.webgui_incremental == "no_increment":
+                args.webgui_incremental = str(len(available_resources))
+            incremental = [int(x) for x in args.webgui_incremental.split(',')]
+            # Validate length and assign incremental values
+            if (len(args.webgui_incremental) == 1 and incremental[0] != len(resource_list_sorted)) or (len(args.webgui_incremental) > 1):
+                obj.incremental = incremental
+            elif len(args.webgui_incremental) == 1:
+                obj.incremental = incremental
+        if (obj.incremental and obj.resource_ids) or args.webgui_incremental:
+            # Check if the last incremental value is valid
+            if obj.incremental[-1] > len(available_resources):
+                logging.info("Exiting the program as incremental values are greater than the resource ids provided")
+                exit()
+            elif obj.incremental[-1] < len(available_resources) and len(obj.incremental) > 1:
+                logging.info("Exiting the program as the last incremental value must be equal to selected devices")
+                exit()
+
+    def update_webui_json(self):
+        """
+        Update web GUI status based on available devices.
+        Returns True if execution should continue, False if it should exit.
+        """
+        if self.dowebgui:
+            if len(self.webui_hostnames) == 0:
+                logging.info("No device is available to run the test")
+                data_obj = {
+                    "status": "Stopped",
+                    "configuration_status": "configured"
+                }
+                self.updating_webui_runningjson(data_obj)
+                return False
+            else:
+                data_obj = {
+                    "configured_devices": self.webui_hostnames,
+                    "configuration_status": "configured",
+                    "no_of_devices": self.webui_devices,
+                    "device_list": self.hostname_os_combination,
+                }
+                self.updating_webui_runningjson(data_obj)
+        return True
+
+    def wait_for_flask(self, url="http://127.0.0.1:5003/check_health", timeout=10):
+        """Wait until the Flask server is up, but exit if it takes longer than `timeout` seconds."""
+        start_time = time.time()  # Record the start time
+        while time.time() - start_time < timeout:
+            try:
+                response = requests.get(url, timeout=1)
+                if response.status_code == 200:
+                    logging.info("✅ Flask server is up and running!")
+                    return
+            except requests.exceptions.ConnectionError:
+                time.sleep(1)
+        logging.error("❌ Flask server did not start within 10 seconds. Exiting.")
+        sys.exit(1)
+
     def get_stats(self, duration, file_path, iteration_number, resource_list_sorted, cx_order_list, i, initial_target_urls):
 
         try:
@@ -883,10 +1250,9 @@ class RealBrowserTest(Realm):
                 os.chdir(self.result_dir)
 
             start_time = datetime.now()
-            while datetime.now() <= end_time or not self.check_gen_cx():
+            while (datetime.now() <= end_time or (not self.check_gen_cx())):
                 try:
-
-                    if datetime.now() > est_end_time:
+                    if (datetime.now() > est_end_time):
                         break
                     if datetime.now() > end_time and self.stop_mobile_cx:
                         self.http_profile.stop_cx()
@@ -895,7 +1261,7 @@ class RealBrowserTest(Realm):
                     with open('real_time_data.csv', mode='w', newline='') as file:
                         writer = csv.DictWriter(file, fieldnames=headers)
                         writer.writeheader()
-                        if self.laptop_stats is not None:
+                        if (self.laptop_stats is not None):
                             for laptop, stats in self.laptop_stats.items():
                                 if laptop not in self.device_targets:
                                     self.device_targets[laptop] = initial_target_urls
@@ -952,7 +1318,7 @@ class RealBrowserTest(Realm):
                                             if hostname not in self.device_targets:
                                                 self.device_targets[hostname] = initial_target_urls
                                             # Check if the mobile device reaches the current target URL count
-                                            if pass_url >= self.device_targets[hostname] and hostname not in time_taken:
+                                            if (pass_url >= self.device_targets[hostname] and hostname not in time_taken):
                                                 time_taken[hostname] = (datetime.now() - start_time).total_seconds()
                                 # Save each mobile device's data to the CSV
                                 for i in range(len(total_urls)):
@@ -982,7 +1348,7 @@ class RealBrowserTest(Realm):
                                         self.device_targets[hostname] = initial_target_urls
                                     # Check if the mobile device reaches the current target URL count
                                     pass_url = endpoint.get('total-urls', 0)
-                                    if pass_url >= self.device_targets[hostname]:
+                                    if (pass_url >= self.device_targets[hostname]):
                                         if hostname not in time_taken:
                                             time_taken[hostname] = (datetime.now() - start_time).total_seconds()
                                     row = {
@@ -1042,304 +1408,309 @@ class RealBrowserTest(Realm):
             json.dump(data, file, indent=4)
 
     def create_report(self,):
-        if self.dowebgui:
-            report = lf_report(_output_pdf='Real_Browser_Report',
-                               _output_html='Real_Browser_Report.html',
-                               _results_dir_name="Real_Browser_Report",
-                               _path=self.result_dir)
-            self.report_path_date_time = report.get_path_date_time()
-        else:
-
-            report = lf_report(_output_pdf='Real_Browser_Report',
-                               _output_html='Real_Browser_Report.html',
-                               _results_dir_name="Real_Browser_Report",
-                               _path='')
-            self.report_path_date_time = report.get_path_date_time()
-
-        report.set_title("Web Browser Test")
-        report.build_banner()
-
-        report.set_table_title("Objective:")
-        report.build_table_title()
-        report.set_text("The Candela Web browser test is designed to measure the Access Point performance and stability by browsing multiple websites in real clients like android, Linux, windows" +
-                        "and IOS which are connected to the access point. This test allows the user to choose the options like website link," +
-                        "the number of times the page has to browse, and the Time taken to browse the page." +
-                        "The expected behavior is for the AP to be able to handle several stations(within the limitations of the AP specs) and make sure all clients can browse the page.")
-        report.build_text_simple()
-
-        report.set_table_title("Test Parameters:")
-        report.build_table_title()
-
-        final_eid_data = []
-        mac_data = []
-        channel_data = []
-        signal_data = []
-        ssid_data = []
-        tx_rate_data = []
-        device_type_data = []
-        device_names = []
-        total_urls = []
-        time_to_target_urls = []
-        uc_min_data = []
-        uc_max_data = []
-        uc_avg_data = []
-        total_err_data = []
-
-        final_eid_data, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = self.extract_device_data('real_time_data.csv')
-
-        if self.config:
-
-            # Test setup info
-            test_setup_info = {
-                'Configured Devies': self.hostname_os_combination,
-                'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac}), A({self.android})',
-                'Incremental Values': self.test_setup_info_incremental_values,
-                'Required URL Count': self.count,
-                'URL': self.url,
-                'Test Duration (min)': self.duration,
-                'SSID': self.report_ssid,
-                "Security": self.encryp
-
-            }
-        elif len(self.selected_groups) > 0 and len(self.selected_profiles) > 0:
-            # Map each group with a profile
-            gp_pairs = zip(self.selected_groups, self.selected_profiles)
-
-            # Create a string by joining the mapped pairs
-            gp_map = ", ".join(f"{group} -> {profile}" for group, profile in gp_pairs)
-
-            # Test setup info
-            test_setup_info = {
-                'Configuration': gp_map,
-                'Configured Devies': self.hostname_os_combination,
-                'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac}), A({self.android})',
-                'Incremental Values': self.test_setup_info_incremental_values,
-                'Required URL Count': self.count,
-                'URL': self.url,
-                'Test Duration (min)': self.duration,
-
-            }
-        else:
-            # Test setup info
-            test_setup_info = {
-
-                'Configured Devies': self.hostname_os_combination,
-                'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac}), A({self.android})',
-                'Incremental Values': self.test_setup_info_incremental_values,
-                'Required URL Count': self.count,
-                'URL': self.url,
-                'Test Duration (min)': self.duration,
-
-            }
-
-        report.test_setup_table(
-            test_setup_data=test_setup_info, value='Test Parameters')
-
-        for i in range(0, len(self.csv_file_names)):
-
-            final_eid_data, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = self.extract_device_data(self.csv_file_names[i])
-            report.set_graph_title(f"Iteration {i + 1} Successful URL's per Device")
-            report.build_graph_title()
-
-            data = pd.read_csv(self.csv_file_names[i])
-
-            # Extract device names from CSV
-            if 'total_urls' in data.columns:
-                total_urls = data['total_urls'].tolist()
+        try:
+            if self.dowebgui:
+                report = lf_report(_output_pdf='Real_Browser_Report',
+                                   _output_html='Real_Browser_Report.html',
+                                   _results_dir_name="Real_Browser_Report",
+                                   _path=self.result_dir)
+                self.report_path_date_time = report.get_path_date_time()
             else:
-                raise ValueError("The 'total_urls' column was not found in the CSV file.")
 
-            x_fig_size = 18
-            y_fig_size = len(device_type_data) * 1 + 4
-            bar_graph_horizontal = lf_bar_graph_horizontal(
-                _data_set=[total_urls],
-                _xaxis_name="URL",
-                _yaxis_name="Devices",
-                _yaxis_label=device_names,
-                _yaxis_categories=device_names,
-                _yaxis_step=1,
-                _yticks_font=8,
-                _bar_height=.20,
-                _show_bar_value=True,
-                _figsize=(x_fig_size, y_fig_size),
-                _graph_title="URLs",
-                _graph_image_name=f"{self.csv_file_names[i]}_urls_per_device",
-                _label=["URLs"]
-            )
-            graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
-            report.set_graph_image(graph_image)
-            report.move_graph_image()
-            report.build_graph()
+                report = lf_report(_output_pdf='Real_Browser_Report',
+                                   _output_html='Real_Browser_Report.html',
+                                   _results_dir_name="Real_Browser_Report",
+                                   _path='')
+                self.report_path_date_time = report.get_path_date_time()
 
-            report.set_graph_title(f"Iteration {i + 1} - Time Taken Vs Device For Completing {self.count} RealTime URLs")
-            report.build_graph_title()
+            report.set_title("Web Browser Test")
+            report.build_banner()
 
-            # Extract device names from CSV
-            if 'time_to_target_urls' in data.columns:
-                time_to_target_urls = data['time_to_target_urls'].tolist()
-            else:
-                raise ValueError("The 'time_to_target_urls' column was not found in the CSV file.")
+            report.set_table_title("Objective:")
+            report.build_table_title()
+            report.set_text("The Candela Web browser test is designed to measure the Access Point performance and stability by browsing multiple websites in real clients" +
+                            " like android, Linux, windows" +
+                            "and IOS which are connected to the access point. This test allows the user to choose the options like website link," +
+                            "the number of times the page has to browse, and the Time taken to browse the page." +
+                            "The expected behavior is for the AP to be able to handle several stations(within the limitations of the AP specs) and make sure all clients can browse the page.")
+            report.build_text_simple()
 
-            x_fig_size = 18
-            y_fig_size = len(device_type_data) * 1 + 4
-            bar_graph_horizontal = lf_bar_graph_horizontal(
-                _data_set=[time_to_target_urls],
-                _xaxis_name="Time (in Seconds)",
-                _yaxis_name="Devices",
-                _yaxis_label=device_names,
-                _yaxis_categories=device_names,
-                _yaxis_step=1,
-                _yticks_font=8,
-                _bar_height=.20,
-                _show_bar_value=True,
-                _figsize=(x_fig_size, y_fig_size),
-                _graph_title="Time Taken",
-                _graph_image_name=f"{self.csv_file_names[i]}_time_taken_for_urls",
-                _label=["Time (in sec)"]
-            )
-            graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
-            report.set_graph_image(graph_image)
-            report.move_graph_image()
-            report.build_graph()
-
-            report.set_table_title(f"Detailed Result Table - Iteration {i + 1}")
+            report.set_table_title("Test Parameters:")
             report.build_table_title()
 
-            if 'uc_min' in data.columns:
-                uc_min_data = data['uc_min'].tolist()
+            final_eid_data = []
+            mac_data = []
+            channel_data = []
+            signal_data = []
+            ssid_data = []
+            tx_rate_data = []
+            device_type_data = []
+            device_names = []
+            total_urls = []
+            time_to_target_urls = []
+            uc_min_data = []
+            uc_max_data = []
+            uc_avg_data = []
+            total_err_data = []
+
+            final_eid_data, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = self.extract_device_data('real_time_data.csv')
+
+            if self.config:
+
+                # Test setup info
+                test_setup_info = {
+                    'Configured Devies': self.hostname_os_combination,
+                    'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac}), A({self.android})',
+                    # 'Incremental Values': self.test_setup_info_incremental_values,
+                    'Required URL Count': self.count,
+                    'URL': self.url,
+                    'Test Duration (min)': self.duration,
+                    'SSID': self.report_ssid,
+                    "Security": self.encryp
+                }
+            elif len(self.selected_groups) > 0 and len(self.selected_profiles) > 0:
+                # Map each group with a profile
+                gp_pairs = zip(self.selected_groups, self.selected_profiles)
+
+                # Create a string by joining the mapped pairs
+                gp_map = ", ".join(f"{group} -> {profile}" for group, profile in gp_pairs)
+
+                # Test setup info
+                test_setup_info = {
+                    'Configuration': gp_map,
+                    'Configured Devies': self.hostname_os_combination,
+                    'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac}), A({self.android})',
+                    # 'Incremental Values': self.test_setup_info_incremental_values,
+                    'Required URL Count': self.count,
+                    'URL': self.url,
+                    'Test Duration (min)': self.duration,
+                }
             else:
-                raise ValueError("The 'uc_min' column was not found in the CSV file.")
+                # Test setup info
+                test_setup_info = {
 
-            if 'uc_max' in data.columns:
-                uc_max_data = data['uc_max'].tolist()
+                    'Configured Devies': self.hostname_os_combination,
+                    'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac}), A({self.android})',
+                    # 'Incremental Values': self.test_setup_info_incremental_values,
+                    'Required URL Count': self.count,
+                    'URL': self.url,
+                    'Test Duration (min)': self.duration,
+
+                }
+
+            report.test_setup_table(
+                test_setup_data=test_setup_info, value='Test Parameters')
+
+            for i in range(0, len(self.csv_file_names)):
+
+                final_eid_data, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = self.extract_device_data(self.csv_file_names[i])
+                report.set_graph_title("Successful URL's per Device")
+                report.build_graph_title()
+
+                data = pd.read_csv(self.csv_file_names[i])
+
+                # Extract device names from CSV
+                if 'total_urls' in data.columns:
+                    total_urls = data['total_urls'].tolist()
+                else:
+                    raise ValueError("The 'total_urls' column was not found in the CSV file.")
+
+                x_fig_size = 18
+                y_fig_size = len(device_type_data) * 1 + 4
+                bar_graph_horizontal = lf_bar_graph_horizontal(
+                    _data_set=[total_urls],
+                    _xaxis_name="URL",
+                    _yaxis_name="Devices",
+                    _yaxis_label=device_names,
+                    _yaxis_categories=device_names,
+                    _yaxis_step=1,
+                    _yticks_font=8,
+                    _bar_height=.20,
+                    _show_bar_value=True,
+                    _figsize=(x_fig_size, y_fig_size),
+                    _graph_title="URLs",
+                    _graph_image_name=f"{self.csv_file_names[i]}_urls_per_device",
+                    _label=["URLs"]
+                )
+                graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
+                report.set_graph_image(graph_image)
+                report.move_graph_image()
+                report.build_graph()
+
+                report.set_graph_title(f"Time Taken Vs Device For Completing {self.count} RealTime URLs")
+                report.build_graph_title()
+
+                # Extract device names from CSV
+                if 'time_to_target_urls' in data.columns:
+                    time_to_target_urls = data['time_to_target_urls'].tolist()
+                else:
+                    raise ValueError("The 'time_to_target_urls' column was not found in the CSV file.")
+
+                x_fig_size = 18
+                y_fig_size = len(device_type_data) * 1 + 4
+                bar_graph_horizontal = lf_bar_graph_horizontal(
+                    _data_set=[time_to_target_urls],
+                    _xaxis_name="Time (in Seconds)",
+                    _yaxis_name="Devices",
+                    _yaxis_label=device_names,
+                    _yaxis_categories=device_names,
+                    _yaxis_step=1,
+                    _yticks_font=8,
+                    _bar_height=.20,
+                    _show_bar_value=True,
+                    _figsize=(x_fig_size, y_fig_size),
+                    _graph_title="Time Taken",
+                    _graph_image_name=f"{self.csv_file_names[i]}_time_taken_for_urls",
+                    _label=["Time (in sec)"]
+                )
+                graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
+                report.set_graph_image(graph_image)
+                report.move_graph_image()
+                report.build_graph()
+
+                if 'uc_min' in data.columns:
+                    uc_min_data = data['uc_min'].tolist()
+                else:
+                    raise ValueError("The 'uc_min' column was not found in the CSV file.")
+
+                if 'uc_max' in data.columns:
+                    uc_max_data = data['uc_max'].tolist()
+                else:
+                    raise ValueError("The 'uc_max' column was not found in the CSV file.")
+
+                if 'uc_avg' in data.columns:
+                    uc_avg_data = data['uc_avg'].tolist()
+                else:
+                    raise ValueError("The 'uc_avg' column was not found in the CSV file.")
+
+                if 'total_err' in data.columns:
+                    total_err_data = data['total_err'].tolist()
+                else:
+                    raise ValueError("The 'total_err' column was not found in the CSV file.")
+
+            report.set_table_title("Final Test Results")
+            report.build_table_title()
+            if self.expected_passfail_value or self.device_csv_name:
+                if not self.expected_passfail_value:
+                    res_list = []
+                    test_input_list = []
+                    pass_fail_list = []
+                    interop_tab_data = self.json_get('/adb/')["devices"]
+                    for i in range(len(device_type_data)):
+                        if device_type_data[i] != 'Android':
+                            res_list.append(device_names[i])
+                        else:
+                            for dev in interop_tab_data:
+                                for item in dev.values():
+                                    if (item['user-name'] in device_names):
+                                        name_to_append = item['name'].split('.')[2]
+                                        if name_to_append not in res_list:
+                                            res_list.append(item['name'].split('.')[2])
+
+                    if self.dowebgui:
+                        os.chdir(self.original_dir)
+
+                    if self.device_csv_name is None:
+                        self.device_csv_name = "device.csv"
+
+                    file_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../", self.device_csv_name))
+                    with open(file_path, mode='r') as file:
+                        reader = csv.DictReader(file)
+                        rows = list(reader)
+
+                    for device in res_list:
+                        found = False
+                        for row in rows:
+                            if row['DeviceList'] == device and row['RealBrowser URLcount'].strip() != '':
+                                test_input_list.append(row['RealBrowser URLcount'])
+                                found = True
+                                break
+                        if not found:
+                            logging.info(f"Pass Fail Value for Device {device} not found in CSV. Using default value 5")
+                            test_input_list.append(5)  # Default value
+                    for j in range(len(test_input_list)):
+                        if (float(test_input_list[j]) <= float(total_urls[j])):
+                            pass_fail_list.append('PASS')
+                        else:
+                            pass_fail_list.append('FAIL')
+                    if self.dowebgui:
+
+                        os.chdir(self.result_dir)
+                else:
+                    test_input_list = [self.expected_passfail_value for val in range(len(device_type_data))]
+                    pass_fail_list = []
+                    for j in range(len(test_input_list)):
+                        if (float(self.expected_passfail_value) <= float(total_urls[j])):
+                            pass_fail_list.append("PASS")
+                        else:
+                            pass_fail_list.append("FAIL")
+
+                final_test_results = {
+
+                    "Device Type": device_type_data,
+                    "Hostname": device_names,
+                    "SSID": ssid_data,
+                    "MAC": mac_data,
+                    "Channel": channel_data,
+                    "UC-MIN (ms)": uc_min_data,
+                    "UC-MAX (ms)": uc_max_data,
+                    "UC-AVG (ms)": uc_avg_data,
+                    "Total Successful URLs": total_urls,
+                    "Expected URLS": test_input_list,
+                    "Total Erros": total_err_data,
+                    "RSSI": signal_data,
+                    "Link Speed": tx_rate_data,
+                    "Status ": pass_fail_list
+
+                }
             else:
-                raise ValueError("The 'uc_max' column was not found in the CSV file.")
+                final_test_results = {
 
-            if 'uc_avg' in data.columns:
-                uc_avg_data = data['uc_avg'].tolist()
-            else:
-                raise ValueError("The 'uc_avg' column was not found in the CSV file.")
+                    "Device Type": device_type_data,
+                    "Hostname": device_names,
+                    "SSID": ssid_data,
+                    "MAC": mac_data,
+                    "Channel": channel_data,
+                    "UC-MIN (ms)": uc_min_data,
+                    "UC-MAX (ms)": uc_max_data,
+                    "UC-AVG (ms)": uc_avg_data,
+                    "Total Successful URLs": total_urls,
+                    "Total Erros": total_err_data,
+                    "RSSI": signal_data,
+                    "Link Speed": tx_rate_data,
 
-            if 'total_err' in data.columns:
-                total_err_data = data['total_err'].tolist()
-            else:
-                raise ValueError("The 'total_err' column was not found in the CSV file.")
-
-            test_results = {
-
-                "Device Type": device_type_data,
-                "Hostname": device_names,
-                "SSID": ssid_data,
-                "MAC": mac_data,
-                "Channel": channel_data,
-                "UC-MIN (ms)": uc_min_data,
-                "UC-MAX (ms)": uc_max_data,
-                "UC-AVG (ms)": uc_avg_data,
-                "Total Successful URLs": total_urls,
-                "Total Erros": total_err_data,
-                "RSSI": signal_data,
-                "Link Speed": tx_rate_data
-
-            }
-            test_results_df = pd.DataFrame(test_results)
+                }
+            test_results_df = pd.DataFrame(final_test_results)
             report.set_table_dataframe(test_results_df)
             report.build_table()
 
-        report.set_table_title("Final Test Results")
-        report.build_table_title()
-        if not self.expected_passfail_value:
-            res_list = []
-            test_input_list = []
-            pass_fail_list = []
-            interop_tab_data = self.json_get('/adb/')["devices"]
-            for i in range(len(device_type_data)):
-                if device_type_data[i] != 'Android':
-                    res_list.append(device_names[i])
-                else:
-                    for dev in interop_tab_data:
-                        for item in dev.values():
-                            if item['user-name'] in device_names:
-                                name_to_append = item['name'].split('.')[2]
-                                if name_to_append not in res_list:
-                                    res_list.append(item['name'].split('.')[2])
-
             if self.dowebgui:
+
                 os.chdir(self.original_dir)
 
-            if self.device_csv_name is None:
-                self.device_csv_name = "device.csv"
-            with open(self.device_csv_name, mode='r') as file:
-                reader = csv.DictReader(file)
-                rows = list(reader)
+            report.build_custom()
+            report.build_footer()
+            report.write_html()
+            report.write_pdf()
+        except Exception as e:
+            logging.error(f"Error in create_report function {e}", exc_info=True)
+        finally:
+            if not self.dowebgui:
+                source_dir = "."
+                destination_dir = self.report_path_date_time
 
-            for row in rows:
-                device = row['DeviceList']
-                if device in res_list:
-                    test_input_list.append(row['RealBrowser URLcount'])
-            for j in range(len(test_input_list)):
-                if float(test_input_list[j]) <= float(total_urls[j]):
-                    pass_fail_list.append('PASS')
-                else:
-                    pass_fail_list.append('FAIL')
-            if self.dowebgui:
+                # Stop the test execution
+                self.csv_file_names.append('real_time_data.csv')
 
-                os.chdir(self.result_dir)
-        else:
-            test_input_list = [self.expected_passfail_value for val in range(len(device_type_data))]
-            pass_fail_list = []
-            for j in range(len(test_input_list)):
-                if float(self.expected_passfail_value) <= float(total_urls[j]):
-                    pass_fail_list.append("PASS")
-                else:
-                    pass_fail_list.append("FAIL")
+                for filename in self.csv_file_names:
+                    source_path = os.path.join(source_dir, filename)
+                    destination_path = os.path.join(destination_dir, filename)
 
-        final_test_results = {
-
-            "Device Type": device_type_data,
-            "Hostname": device_names,
-            "SSID": ssid_data,
-            "MAC": mac_data,
-            "Channel": channel_data,
-            "UC-MIN (ms)": uc_min_data,
-            "UC-MAX (ms)": uc_max_data,
-            "UC-AVG (ms)": uc_avg_data,
-            "Total Successful URLs": total_urls,
-            "Expected URLS": test_input_list,
-            "Total Erros": total_err_data,
-            "RSSI": signal_data,
-            "Link Speed": tx_rate_data,
-            "Status ": pass_fail_list
-
-        }
-        test_results_df = pd.DataFrame(final_test_results)
-        report.set_table_dataframe(test_results_df)
-        report.build_table()
-
-        if self.dowebgui:
-
-            os.chdir(self.original_dir)
-
-        report.build_custom()
-        report.build_footer()
-        report.write_html()
-        report.write_pdf()
-
-        if not self.dowebgui:
-            source_dir = "."
-            destination_dir = self.report_path_date_time
-
-            # Stop the test execution
-            self.csv_file_names.append('real_time_data.csv')
-
-            for filename in self.csv_file_names:
-                source_path = os.path.join(source_dir, filename)
-                destination_path = os.path.join(destination_dir, filename)
-
-                if os.path.isfile(source_path):
-                    shutil.move(source_path, destination_path)
-                    logging.info(f"Moved {filename} to {destination_dir}")
-                else:
-                    logging.info(f"{filename} not found in the current directory")
+                    if os.path.isfile(source_path):
+                        shutil.move(source_path, destination_path)
+                        logging.info(f"Moved {filename} to {destination_dir}")
+                    else:
+                        logging.info(f"{filename} not found in the current directory")
 
     def extract_device_data(self, file_path):
         # Load the CSV file
@@ -1424,41 +1795,41 @@ def main():
 
             Example-1 :
             Command Line Interface to run url in the Browser with specified URL and duration:
-            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --debug
+            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --debug --flask_ip 192.168.208.9
 
                 CASE-1:
                 If not specified it takes the default url (default url is www.google.com)
 
             Example-2:
             Command Line Interface to run url in the Browser with specified Resources:
-            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --debug
+            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --debug --flask_ip 192.168.208.9
 
             Example-3:
             Command Line Interface to run url in the Browser with specified urls_per_tennm (specify the number of url you want to test in the given duration):
-            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --count 10 --debug
+            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --count 10 --debug --flask_ip 192.168.208.9
 
                 CASE-1:
-                If not specified it takes the default count value (default count is 100)
+                If not specified it takes the default count value (default count is 1)
+
 
             Example-4:
-            Command Line Interface to run the the Real Browser test with incremental Capacity by specifying the --incremental flag
-            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --count 10 --incremental --debug
+            Command Line Interface to run url in the Browser with precleanup:
+            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --precleanup --debug --flask_ip 192.168.208.9
 
             Example-5:
-            Command Line Interface to run the the Real Browser test in webGUI by specifying the --dowebgui flag
-            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --count 10 --dowebgui --debug
-
-            Example-6:
-            Command Line Interface to run url in the Browser with precleanup:
-            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --precleanup --debug
-
-            Example-7:
             Command Line Interface to run url in the Browser with postcleanup:
-            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --postcleanup --debug
+            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --postcleanup --debug --flask_ip 192.168.208.9
 
-            Example-8:
-            Command Line Interface to run url in the Browser with incremental capacity:
-            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --incremental_capacity 1 --debug
+            Example-4:
+            Command Line Interface to run the Real Browser Test with Device Configuration
+            python3 lf_interop_real_browser_test.py --mgr 192.168.204.74 --url "https://google.com" --duration 1m --debug --flask_ip 192.168.200.164 
+            --ssid NETGEAR_5G_wpa2 --passwd Password@123 --encryp wpa2 --config
+
+            Example-5:
+            Command Line Interface to run the Real Browser Test with groups and profiles
+            python3 lf_interop_real_browser_test.py --mgr 192.168.204.74 --url "https://google.com" --duration 1m --debug --flask_ip 192.168.200.164
+            --file_name grplaptops --group_name group1,group2 --profile_name netgear2g,netgear2g
+
 
             SCRIPT CLASSIFICATION: Test
 
@@ -1514,27 +1885,28 @@ def main():
         parser.add_argument('--file_name', type=str, help='specify the file name')
         parser.add_argument('--group_name', type=str, help='specify the group name')
         parser.add_argument('--profile_name', type=str, help='specify the profile name')
-        parser.add_argument("--eap_method", type=str, default='DEFAULT')
-        parser.add_argument("--eap_identity", type=str, default='')
-        parser.add_argument("--ieee80211", action="store_true")
-        parser.add_argument("--ieee80211u", action="store_true")
-        parser.add_argument("--ieee80211w", type=int, default=1)
-        parser.add_argument("--enable_pkc", action="store_true")
-        parser.add_argument("--bss_transition", action="store_true")
-        parser.add_argument("--power_save", action="store_true")
-        parser.add_argument("--disable_ofdma", action="store_true")
-        parser.add_argument("--roam_ft_ds", action="store_true")
-        parser.add_argument("--key_management", type=str, default='DEFAULT')
-        parser.add_argument("--pairwise", type=str, default='[BLANK]')
-        parser.add_argument("--private_key", type=str, default='[BLANK]')
-        parser.add_argument("--ca_cert", type=str, default='[BLANK]')
-        parser.add_argument("--client_cert", type=str, default='[BLANK]')
-        parser.add_argument("--pk_passwd", type=str, default='[BLANK]')
-        parser.add_argument("--pac_file", type=str, default='[BLANK]')
-        parser.add_argument("--server_ip", type=str, default=None)
-        parser.add_argument("--flask_ip", type=str, default=None)
+
+        parser.add_argument("--eap_method", type=str, default='DEFAULT', help="Specify the EAP method for authentication.")
+        parser.add_argument("--eap_identity", type=str, default='DEFAULT', help="Specify the EAP identity for authentication.")
+        parser.add_argument("--ieee80211", action="store_true", help='Enables IEEE 802.11 support.')
+        parser.add_argument("--ieee80211u", action="store_true", help='Enables IEEE 802.11u (Hotspot 2.0) support.')
+        parser.add_argument("--ieee80211w", type=int, default=1, help='Enables IEEE 802.11w (Management Frame Protection) support.')
+        parser.add_argument("--enable_pkc", action="store_true", help='Enables pkc support.')
+        parser.add_argument("--bss_transition", action="store_true", help='Enables BSS transition support.')
+        parser.add_argument("--power_save", action="store_true", help='Enables power-saving features.')
+        parser.add_argument("--disable_ofdma", action="store_true", help='Disables OFDMA support.')
+        parser.add_argument("--roam_ft_ds", action="store_true", help='Enables fast BSS transition (FT) support')
+        parser.add_argument("--key_management", type=str, default='DEFAULT', help='Specify the key management method (e.g., WPA-PSK, WPA-EAP)')
+        parser.add_argument("--pairwise", type=str, default='NA')
+        parser.add_argument("--private_key", type=str, default='NA', help='Specify EAP private key certificate file.')
+        parser.add_argument("--ca_cert", type=str, default='NA', help='Specify the CA certificate file name')
+        parser.add_argument("--client_cert", type=str, default='NA', help='Specify the client certificate file name')
+        parser.add_argument("--pk_passwd", type=str, default='NA', help='Specify the password for the private key')
+        parser.add_argument("--pac_file", type=str, default='NA', help='Specify the pac file name')
+        parser.add_argument("--server_ip", type=str, default='NA', help='Specify the server ip address')
+        parser.add_argument("--flask_ip", type=str, default=None,required=True, help='specify the flask ip to run the test')
         parser.add_argument('--help_summary', help='Show summary of what this script does', default=None)
-        parser.add_argument("--expected_passfail_value", help="Specify the expected urlcount value for pass/fail", default=5)
+        parser.add_argument("--expected_passfail_value", help="Specify the expected urlcount value for pass/fail")
         parser.add_argument("--device_csv_name", type=str, help="Specify the device csv name for pass/fail", default=None)
         parser.add_argument("--wait_time", type=int, help="Specify the time for configuration", default=60)
         parser.add_argument('--config', action='store_true', help='specify this flag whether to config devices or not')
@@ -1553,469 +1925,106 @@ def main():
         if args.lf_logger_config_json:
             logger_config.lf_logger_config_json = args.lf_logger_config_json
             logger_config.load_lf_logger_config()
-
-        # TODO refactor to be logger for consistency
-        if args.expected_passfail_value is not None and args.device_csv_name is not None:
-            logging.error("Specify either expected_passfail_value or device_csv_name")
-            exit(1)
-
-        if args.group_name is not None:
-            selected_groups = args.group_name.split(',')
-        else:
-            selected_groups = []
-        if args.profile_name is not None:
-            selected_profiles = args.profile_name.split(',')
-        else:
-            selected_profiles = []
-
-        if args.dowebgui:
-            url = f"http://{args.host}:5454/update_status_yt"
-            response = requests.post(url)
-
-            if response.status_code == 200:
-                logging.info('device_data has been cleared.')
-            else:
-                logging.info(f'Error: {response.status_code}')
-
-        if True:
-
-            if args.expected_passfail_value is not None and args.device_csv_name is not None:
-                logging.error("Specify either expected_passfail_value or device_csv_name")
-                exit(0)
-
-            if args.group_name is not None:
-                args.group_name = args.group_name.strip()
-                selected_groups = args.group_name.split(',')
-            else:
-                selected_groups = []
-
-            if args.profile_name is not None:
-                args.profile_name = args.profile_name.strip()
-                selected_profiles = args.profile_name.split(',')
-            else:
-                selected_profiles = []
-
-            if len(selected_groups) != len(selected_profiles):
-                logging.error("Number of groups should match number of profiles")
-                exit(0)
-
-            elif args.group_name is not None and args.profile_name is not None and args.file_name is not None and args.device_list is not None:
-                logging.error("Either group name or device list should be entered not both")
-                exit(0)
-            elif args.ssid is not None and args.profile_name is not None:
-                logging.error("Either ssid or profile name should be given")
-                exit(0)
-            elif args.file_name is not None and (args.group_name is None or args.profile_name is None):
-                logging.error("Please enter the correct set of arguments")
-                exit(0)
-            elif args.config and ((args.ssid is None or (args.passwd is None and args.security.lower() != 'open') or (args.passwd is None and args.security is None))):
-                logging.error("Please provide ssid password and security for configuration of devices")
-                exit(0)
-
             # Initialize an instance of RealBrowserTest with various parameters
-            obj = RealBrowserTest(host=args.host,
-                                  ssid=args.ssid,
-                                  passwd=args.passwd,
-                                  encryp=args.encryp,
-                                  suporrted_release=["7.0", "10", "11", "12"],
-                                  max_speed=args.max_speed,
-                                  url=args.url, count=args.count,
-                                  duration=args.duration,
-                                  resource_ids=args.device_list,
-                                  dowebgui=args.dowebgui,
-                                  result_dir=args.result_dir,
-                                  test_name=args.test_name,
-                                  incremental=args.incremental,
-                                  postcleanup=args.postcleanup,
-                                  precleanup=args.precleanup,
-                                  file_name=args.file_name,
-                                  group_name=args.group_name,
-                                  profile_name=args.profile_name,
-                                  eap_method=args.eap_method,
-                                  eap_identity=args.eap_identity,
-                                  ieee80211=args.ieee80211,
-                                  ieee80211u=args.ieee80211u,
-                                  ieee80211w=args.ieee80211w,
-                                  enable_pkc=args.enable_pkc,
-                                  bss_transition=args.bss_transition,
-                                  power_save=args.power_save,
-                                  disable_ofdma=args.disable_ofdma,
-                                  roam_ft_ds=args.roam_ft_ds,
-                                  key_management=args.key_management,
-                                  pairwise=args.pairwise,
-                                  private_key=args.private_key,
-                                  ca_cert=args.ca_cert,
-                                  client_cert=args.client_cert,
-                                  pk_passwd=args.pk_passwd,
-                                  pac_file=args.pac_file,
-                                  server_ip=args.server_ip,
-                                  expected_passfail_value=args.expected_passfail_value,
-                                  device_csv_name=args.device_csv_name,
-                                  wait_time=args.wait_time,
-                                  flask_ip=args.flask_ip,
-                                  config=args.config,
-                                  selected_groups=selected_groups,
-                                  selected_profiles=selected_profiles
-                                  )
+        obj = RealBrowserTest(host=args.host,
+                              ssid=args.ssid,
+                              passwd=args.passwd,
+                              encryp=args.encryp,
+                              suporrted_release=["7.0", "10", "11", "12"],
+                              max_speed=args.max_speed,
+                              url=args.url, count=args.count,
+                              duration=args.duration,
+                              resource_ids=args.device_list,
+                              dowebgui=args.dowebgui,
+                              result_dir=args.result_dir,
+                              test_name=args.test_name,
+                              incremental=args.incremental,
+                              postcleanup=True,
+                              precleanup=args.precleanup,
+                              file_name=args.file_name,
+                              group_name=args.group_name,
+                              profile_name=args.profile_name,
+                              eap_method=args.eap_method,
+                              eap_identity=args.eap_identity,
+                              ieee80211=args.ieee80211,
+                              ieee80211u=args.ieee80211u,
+                              ieee80211w=args.ieee80211w,
+                              enable_pkc=args.enable_pkc,
+                              bss_transition=args.bss_transition,
+                              power_save=args.power_save,
+                              disable_ofdma=args.disable_ofdma,
+                              roam_ft_ds=args.roam_ft_ds,
+                              key_management=args.key_management,
+                              pairwise=args.pairwise,
+                              private_key=args.private_key,
+                              ca_cert=args.ca_cert,
+                              client_cert=args.client_cert,
+                              pk_passwd=args.pk_passwd,
+                              pac_file=args.pac_file,
+                              server_ip=args.server_ip,
+                              expected_passfail_value=args.expected_passfail_value,
+                              device_csv_name=args.device_csv_name,
+                              wait_time=args.wait_time,
+                              flask_ip=args.flask_ip,
+                              config=args.config,
+                              )
 
-            obj.run_flask_server()
-            resource_ids_sm = []
-            resource_set = set()
-            resource_list = []
-            resource_ids_generated = ""
-            if args.file_name:
-                if args.dowebgui:
-                    new_filename = args.file_name[:-4]
-                else:
-                    new_filename = args.file_name
-            else:
-                new_filename = None
-            config_obj = DeviceConfig.DeviceConfig(lanforge_ip=args.host, file_name=new_filename, wait_time=args.wait_time)
-            if not args.expected_passfail_value and args.device_csv_name is None:
-                config_obj.device_csv_file(csv_name="device.csv")
-            if args.group_name is not None and args.file_name is not None and args.profile_name is not None:
-                selected_groups = args.group_name.split(',')
-                selected_profiles = args.profile_name.split(',')
-                config_devices = {}
-                for i in range(len(selected_groups)):
-                    config_devices[selected_groups[i]] = selected_profiles[i]
-
-                config_obj.initiate_group()
-                config_list = asyncio.run(config_obj.connectivity(config_devices))
-
-                args.device_list = ",".join(id for id in config_list)
-
-            #  Process resource IDs when web GUI is enabled
-            if args.dowebgui and args.group_name:
-                resource_ids_sm = args.device_list.split(',')
-                resource_set = set(resource_ids_sm)
-                resource_list = sorted(resource_set)
-                resource_ids_generated = ','.join(resource_list)
-                resource_list_sorted = resource_list
-                selected_devices, report_labels, selected_macs = obj.devices.query_user(dowebgui=args.dowebgui, device_list=resource_ids_generated)
-                obj.resource_ids = ",".join(id.split(".")[1] for id in args.device_list.split(","))
-                available_resources = [int(num) for num in obj.resource_ids.split(',')]
-            else:
-                config_dict = {
-                        'ssid': args.ssid,
-                        'passwd': args.passwd,
-                        'enc': args.encryp,
-                        'eap_method': args.eap_method,
-                        'eap_identity': args.eap_identity,
-                        'ieee80211': args.ieee80211,
-                        'ieee80211u': args.ieee80211u,
-                        'ieee80211w': args.ieee80211w,
-                        'enable_pkc': args.enable_pkc,
-                        'bss_transition': args.bss_transition,
-                        'power_save': args.power_save,
-                        'disable_ofdma': args.disable_ofdma,
-                        'roam_ft_ds': args.roam_ft_ds,
-                        'key_management': args.key_management,
-                        'pairwise': args.pairwise,
-                        'private_key': args.private_key,
-                        'ca_cert': args.ca_cert,
-                        'client_cert': args.client_cert,
-                        'pk_passwd': args.pk_passwd,
-                        'pac_file': args.pac_file,
-                        'server_ip': args.server_ip,
-
-                }
-                if args.device_list:
-                    all_devices = config_obj.get_all_devices()
-                    if args.group_name is None and args.file_name is None and args.profile_name is None:
-                        dev_list = args.device_list.split(',')
-                        if args.config:
-                            config_list = asyncio.run(config_obj.connectivity(device_list=dev_list, wifi_config=config_dict))
-                        # args.device_list = ",".join(id for id in config_list)
-
-                    obj.android_devices = obj.devices.get_devices()
-                    eid = args.device_list.split(',')
-                    resource_ids = [int(item.split('.')[1]) for item in eid]
-
-                    available_resources = []
-                    for device in obj.android_devices:
-                        parts = device.split('.')
-                        if len(parts) >= 2:
-                            extracted_value = int(parts[1])
-
-                            if extracted_value in resource_ids:
-                                available_resources.append(extracted_value)
-                    available_resources = list(set(available_resources))
-                    resource_list_sorted = sorted(available_resources)
-
-                else:
-                    all_devices = config_obj.get_all_devices()
-                    device_list = []
-                    for device in all_devices:
-                        if device["type"] != 'laptop':
-                            device_list.append(device["shelf"] + '.' + device["resource"] + " " + device["serial"])
-                        elif device["type"] == 'laptop':
-                            device_list.append(device["shelf"] + '.' + device["resource"] + " " + device["hostname"])
-                    print("Available devices:")
-                    for device in device_list:
-                        print(device)
-                    args.device_list = input("Enter the desired resources to run the test:")
-                    dev1_list = args.device_list.split(',')
-                    if args.config:
-
-                        config_list = asyncio.run(config_obj.connectivity(device_list=dev1_list, wifi_config=config_dict))
-
-                    obj.android_devices = obj.devices.get_devices()
-                    temp_device_list = args.device_list.split(",")
-
-                    obj.android_list = temp_device_list
-
-                    if obj.android_list:
-                        resource_ids = ",".join([item.split(".")[1] for item in obj.android_list])
-                        num_list = list(map(int, resource_ids.split(',')))
-                        num_list.sort()
-                        sorted_string = ','.join(map(str, num_list))
-                        obj.resource_ids = sorted_string
-                        resource_ids1 = list(map(int, sorted_string.split(',')))
-                        modified_list = list(map(lambda item: int(item.split('.')[1]), obj.android_devices))
-                        if not all(x in modified_list for x in resource_ids1):
-                            logging.error("Verify Resource ids, as few are invalid...!!")
-                            exit()
-                        resource_ids_sm = obj.resource_ids
-                        resource_list = resource_ids_sm.split(',')
-                        resource_set = set(resource_list)
-                        resource_list_sorted = sorted(resource_set)
-                        resource_ids_generated = ','.join(resource_list_sorted)
-                        available_resources = list(resource_set)
-
-            logger.info("Devices available: {}".format(available_resources))
-            if len(available_resources) == 0:
-                logging.info("There no devices available which are selected")
-                exit()
-            if len(available_resources) > 0:
-                device_map = {}
-                if not args.expected_passfail_value and args.device_csv_name is None:
-                    expected_val = input("Enter the expected value for the following devices{} eg 8,6,2: ".format(available_resources)).split(',')
-                    if len(available_resources) == len(expected_val):
-                        for i in range(len(available_resources)):
-                            device_map[obj.android_list[i].split('.')[0] + '.' + obj.android_list[i].split('.')[1]] = expected_val[i]
-                        config_obj.update_device_csv('device.csv', 'RealBrowser URLcount', device_map)
-                    else:
-                        logging.error("Enter correct number of values")
-                        exit(0)
-                elif args.expected_passfail_value:
-                    pass
-            # Handle incremental values input if resource IDs are specified and in not specified case.
-            if args.incremental and not args.webgui_incremental:
-                if obj.resource_ids:
-                    obj.incremental = input('Specify incremental values as 1,2,3 : ')
-                    obj.incremental = [int(x) for x in obj.incremental.split(',')]
-                else:
-                    logging.info("incremental Values are not needed as Android devices are not selected..")
-            test_info = False
-
-            # Handle webgui_incremental argument
-            if args.webgui_incremental:
-                if args.webgui_incremental == "no_increment":
-                    args.webgui_incremental = str(len(available_resources))
-                    test_info = True
-                incremental = [int(x) for x in args.webgui_incremental.split(',')]
-                # Validate the length and assign incremental values
-                if (len(args.webgui_incremental) == 1 and incremental[0] != len(resource_list_sorted)) or (len(args.webgui_incremental) > 1):
-                    obj.incremental = incremental
-                elif len(args.webgui_incremental) == 1:
-                    obj.incremental = incremental
-
-            if (obj.incremental and obj.resource_ids) or (args.webgui_incremental):
-                # Check if the last incremental value is greater or less than resources provided
-                if obj.incremental[-1] > len(available_resources):
-                    logging.info("Exiting the program as incremental values are greater than the resource ids provided")
-                    exit()
-                elif obj.incremental[-1] < len(available_resources) and len(obj.incremental) > 1:
-                    logging.info("Exiting the program as the last incremental value must be equal to selected devices")
-                    exit()
-
-            test_time = datetime.now()
-            test_time = test_time.strftime("%b %d %H:%M:%S")
-
-            logging.info("Initiating Test...")
-            available_resources = [int(n) for n in available_resources]
-            available_resources.sort()
-            available_resources_string = ",".join([str(n) for n in available_resources])
-            obj.set_available_resources_ids(available_resources_string)
-
-            obj.build()
-
-            if args.dowebgui:
-                if len(obj.webui_hostnames) == 0:
-                    logging.info("No device is available to run the test")
-                    data_obj = {
-                        "status": "Stopped",
-                        "configuration_status": "configured"
-                    }
-                    obj.updating_webui_runningjson(data_obj)
-                    return
-                else:
-                    data_obj = {
-                        "configured_devices": obj.webui_hostnames,
-                        "configuration_status": "configured",
-                        "no_of_devices": obj.webui_devices,
-                        "device_list": obj.hostname_os_combination,
-
-                    }
-                    obj.updating_webui_runningjson(data_obj)
-
-            time.sleep(10)
-
-            keys = list(obj.http_profile.created_cx.keys())
-            generic_keys = obj.generic_endps_profile.created_cx
-            keys = keys + generic_keys
-            if len(keys) == 0:
-                logger.error("Selected Devices are not available in the lanforge")
-                exit(1)
-            cx_order_list = []
-            index = 0
-            file_path = ""
-
-            if args.duration.endswith('s') or args.duration.endswith('S'):
-                args.duration = round(int(args.duration[0:-1]) / 60, 2)
-
-            elif args.duration.endswith('m') or args.duration.endswith('M'):
-                args.duration = int(args.duration[0:-1])
-
-            elif args.duration.endswith('h') or args.duration.endswith('H'):
-                args.duration = int(args.duration[0:-1]) * 60
-
-            elif args.duration.endswith(''):
-                args.duration = int(args.duration)
-
-            if args.incremental or args.webgui_incremental:
-                incremental_capacity_list_values = obj.get_incremental_capacity_list()
-                if incremental_capacity_list_values[-1] != len(available_resources):
-                    logger.error("Incremental capacity doesnt match available devices")
-                    if args.postcleanup:
-                        obj.postcleanup()
-                    exit(1)
-
-            # Process resource IDs and incremental values if specified
-            if obj.resource_ids:
-                if obj.incremental:
-                    obj.test_setup_info_incremental_values = ','.join(map(str, incremental_capacity_list_values))
-                    if len(obj.incremental) == len(available_resources):
-                        test_setup_info_total_duration = args.duration
-                    elif len(obj.incremental) == 1 and len(available_resources) > 1:
-                        if obj.incremental[0] == len(available_resources):
-                            test_setup_info_total_duration = args.duration
-                        else:
-                            div = len(available_resources) // obj.incremental[0]
-                            mod = len(available_resources) % obj.incremental[0]
-                            if mod == 0:
-                                test_setup_info_total_duration = args.duration * (div)
-                            else:
-                                test_setup_info_total_duration = args.duration * (div + 1)
-                    else:
-                        test_setup_info_total_duration = args.duration * len(incremental_capacity_list_values)
-                    # test_setup_info_duration_per_iteration= args.duration
-                elif args.webgui_incremental:
-                    obj.test_setup_info_incremental_values = ','.join(map(str, incremental_capacity_list_values))
-                    test_setup_info_total_duration = args.duration * len(incremental_capacity_list_values)
-                else:
-                    obj.test_setup_info_incremental_values = "No Incremental Value provided"
-                    test_setup_info_total_duration = args.duration
-                obj.total_duration = test_setup_info_total_duration
-                if args.dowebgui:
-                    if test_info:
-                        obj.test_setup_info_incremental_values = "No Incremental Value provided"
-
-            # Calculate and manage cx_order_list ( list of cross connections to run ) based on incremental values
-            gave_incremental, iteration_number = True, 0
-            if obj.resource_ids:
-                if not obj.incremental:
-                    obj.incremental = [len(keys)]
-                    gave_incremental = False
-                if obj.incremental or not gave_incremental:
-                    if len(obj.incremental) == 1 and obj.incremental[0] == len(keys):
-                        cx_order_list.append(keys[index:])
-                        # user_name_list.append(obj.user_name[index:])
-                    elif len(obj.incremental) == 1 and len(keys) > 1:
-                        incremental_value = obj.incremental[0]
-                        max_index = len(keys)
-                        index = 0
-
-                        while index < max_index:
-                            next_index = min(index + incremental_value, max_index)
-                            cx_order_list.append(keys[index:next_index])
-
-                            index = next_index
-                    elif len(obj.incremental) != 1 and len(keys) > 1:
-
-                        index = 0
-                        for num in obj.incremental:
-
-                            cx_order_list.append(keys[index: num])
-
-                            index = num
-
-                        if index < len(keys):
-                            cx_order_list.append(keys[index:])
-
-                    # Update start and end times for webGUI
-                    for i in range(len(cx_order_list)):
-                        if i == 0:
-                            obj.data["start_time_webGUI"] = [datetime.now().strftime('%Y-%m-%d %H:%M:%S')] * len(keys)
-                            end_time_webGUI = (datetime.now() + timedelta(minutes=args.duration * len(cx_order_list))).strftime('%Y-%m-%d %H:%M:%S')
-                            obj.data['end_time_webGUI'] = [end_time_webGUI] * len(keys)
-
-                        obj.start_specific(cx_order_list[i])
-
-                        iteration_number += len(cx_order_list[i])
-                        if cx_order_list[i]:
-                            logging.info("Test started on Devices with resource Ids : {selected}".format(selected=cx_order_list[i]))
-                        else:
-                            logging.info("Test started on Devices with resource Ids : {selected}".format(selected=cx_order_list[i]))
-
-                        # duration = 60 * args.duration
-                        file_path = "webBrowser.csv"
-
-                        if end_time_webGUI < datetime.now().strftime('%Y-%m-%d %H:%M:%S'):
-                            obj.data['remaining_time_webGUI'] = ['0:00'] * len(keys)
-                        else:
-                            date_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                            obj.data['remaining_time_webGUI'] = [datetime.strptime(end_time_webGUI, "%Y-%m-%d %H:%M:%S") - datetime.strptime(date_time, "%Y-%m-%d %H:%M:%S")] * len(keys)
-                        try:
-
-                            obj.get_stats(args.duration, file_path, iteration_number, resource_list_sorted, cx_order_list[i], i, args.count)
-                        except Exception as e:
-                            logging.error(f"Error while monitoring stats {e}", exc_info=True)
-            obj.create_report()
+        obj.validate_and_process_args(args)
+        obj.run_flask_server()
+        config_obj = obj.initialize_config(args)
+        if args.group_name and args.profile_name and args.file_name:
+            available_resources = obj.process_group_profiles(args, config_obj)
+        else:
+            # --- Build configuration dictionary for WiFi parameters ---
+            config_dict = {
+                'ssid': args.ssid,
+                'passwd': args.passwd,
+                'enc': args.encryp,
+                'eap_method': args.eap_method,
+                'eap_identity': args.eap_identity,
+                'ieee80211': args.ieee80211,
+                'ieee80211u': args.ieee80211u,
+                'ieee80211w': args.ieee80211w,
+                'enable_pkc': args.enable_pkc,
+                'bss_transition': args.bss_transition,
+                'power_save': args.power_save,
+                'disable_ofdma': args.disable_ofdma,
+                'roam_ft_ds': args.roam_ft_ds,
+                'key_management': args.key_management,
+                'pairwise': args.pairwise,
+                'private_key': args.private_key,
+                'ca_cert': args.ca_cert,
+                'client_cert': args.client_cert,
+                'pk_passwd': args.pk_passwd,
+                'pac_file': args.pac_file,
+                'server_ip': args.server_ip,
+            }
+            available_resources = obj.process_resources(args, config_obj, obj, config_dict)
+        if len(available_resources) == 0:
+            logging.error("No devices available to run the test. Exiting...")
+            exit(1)
+        # --- Print available resources ---
+        logging.info("Devices available: {}".format(available_resources))
+        # prompt user for expected pass fail value and update device csv if no expected pass fail value or device csv is mentioned
+        if args.expected_passfail_value or args.device_csv_name:
+            obj.update_passfail_value(args, config_obj, obj, available_resources)
+        # --- Handle incremental values ---
+        obj.handle_incremental(args, obj, available_resources, available_resources)
+        obj.handle_duration()
+        obj.run_test(available_resources)
 
     except Exception as e:
-        logging.error("Error occured", e)
+        logging.error(f"Error occured {e}")
         traceback.print_exc()
     finally:
-        if args.dowebgui:
-            try:
-                url = f"http://{args.host}:5454/update_status_yt"
+        if not('--help' in sys.argv or '-h' in sys.argv):
+            obj.create_report()
+            if (args.dowebgui):
+                obj.webui_stop()
+            obj.stop()
 
-                headers = {
-                    'Content-Type': 'application/json',
-                }
-
-                data = {
-                    'status': 'Completed',
-                    'name': args.test_name
-                }
-
-                response = requests.post(url, json=data, headers=headers)
-
-                if response.status_code == 200:
-                    logging.info("Successfully updated STOP status to 'Completed'")
-                    pass
-                else:
-                    logging.error(f"Failed to update STOP status: {response.status_code} - {response.text}")
-
-            except Exception as e:
-                logging.error(f"An error occurred while updating status: {e}")
-
-        obj.stop()
-
-        if args.postcleanup:
-            obj.postcleanup()
+            if args.postcleanup:
+                obj.postcleanup()
 
 
 if __name__ == '__main__':
