@@ -21,7 +21,7 @@
 
     Example-4:
     Command Line Interface to run Zoom on multiple devices with Groups and Profiles
-    python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.204.74" --signin_email "lnawscloud@gmail.com" --signin_passwd "Demo@10203000" --participants 2 --audio --video 
+    python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.204.74" --signin_email "lnawscloud@gmail.com" --signin_passwd "Demo@10203000" --participants 2 --audio --video
     --wait_time 30  --group_name group1,group2 --profile_name netgear5g,netgear2g --file_name grplaptops.csv --zoom_host 1.95 --server_ip 192.168.200.167
 
     NOTES:
@@ -1200,14 +1200,14 @@ def main():
         parser = argparse.ArgumentParser(
             prog=__file__,
             formatter_class=argparse.RawTextHelpFormatter,
-            description=
-            '''\
+            description='''
             Zoom Automation Script
             PURPOSE: lf_interop_zoom.py provides the available devices and allows the user to start Zoom call conference meeting for the user-specified duration
 
             EXAMPLE-1:
             Command Line Interface to run Zoom with specified duration:
-            python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.214.219" --signin_email "demo@gmail.com" --signin_passwd "Demo@123" --participants 3 --audio --video --server_ip 192.168.214.123
+            python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.214.219" --signin_email "demo@gmail.com" --signin_passwd "Demo@123" --participants 3
+            --audio --video --server_ip 192.168.214.123
 
 
             EXAMPLE-2:
@@ -1222,7 +1222,7 @@ def main():
 
             Example-4:
             Command Line Interface to run Zoom on multiple devices with Groups and Profiles
-            python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.204.74" --signin_email "lnawscloud@gmail.com" --signin_passwd "Demo@10203000" --participants 2 --audio --video 
+            python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.204.74" --signin_email "lnawscloud@gmail.com" --signin_passwd "Demo@10203000" --participants 2 --audio --video
             --wait_time 30  --group_name group1,group2 --profile_name netgear5g,netgear2g --file_name grplaptops.csv --zoom_host 1.95 --server_ip 192.168.200.167
 
             ''')
@@ -1271,9 +1271,7 @@ def main():
         parser.add_argument("--client_cert", type=str, default='NA', help='Specify the client certificate file name')
         parser.add_argument("--pk_passwd", type=str, default='NA', help='Specify the password for the private key')
         parser.add_argument("--pac_file", type=str, default='NA', help='Specify the pac file name')
-        parser.add_argument("--server_ip", type=str, default='NA', help='Specify the server ip address',required=True)
-
-
+        parser.add_argument("--server_ip", type=str, default='NA', help='Specify the server ip address', required=True)
         parser.add_argument('--help_summary', help='Show summary of what this script does', default=None)
         parser.add_argument("--expected_passfail_value", help="Specify the expected urlcount value for pass/fail")
         parser.add_argument("--device_csv_name", type=str, help="Specify the device csv name for pass/fail", default=None)
@@ -1502,7 +1500,7 @@ def main():
         logging.error(f"AN ERROR OCCURED WHILE RUNNING TEST {e}")
         traceback.print_exc()
     finally:
-        if not('--help' in sys.argv or '-h' in sys.argv):
+        if not ('--help' in sys.argv or '-h' in sys.argv):
             if args.do_webUI:
                 try:
                     url = f"http://{args.lanforge_ip}:5454/update_status_yt"
