@@ -1353,7 +1353,7 @@ def main():
         logging.error("Error occured", e)
         traceback.print_exc()
     finally:
-        if not('--help' in sys.argv or '-h' in sys.argv):
+        if not ('--help' in sys.argv or '-h' in sys.argv):
             youtube.stop()
             # Stopping the Youtube test
             if do_webUI:
