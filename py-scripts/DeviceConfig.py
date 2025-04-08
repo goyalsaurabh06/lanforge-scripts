@@ -1249,7 +1249,7 @@ class DeviceConfig(Realm):
             for profile_name, profile_details in profile_matches:
                 # Extract key-value pairs for each profile
                 encrypt_match = encrypt_pattern.findall(profile_details)[0].lower()
-                match = pass_pattern.findall(profile_details)[0] if encrypt_match != 'open' else 'NA'
+                match = pass_pattern.findall(profile_details)[0] if encrypt_match != 'open' else '[BLANK]'
                 eap_method_match = eap_method_pattern.findall(profile_details)
                 eap_identity_match = eap_identity_pattern.findall(profile_details)
                 ieee80211w_match = ieee80211w_pattern.findall(profile_details)

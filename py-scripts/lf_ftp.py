@@ -2294,7 +2294,7 @@ INCLUDE_IN_README: False
     required.add_argument('--group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
     required.add_argument('--profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
     required.add_argument('--file_name', type=str, help='Specify the file name containing group details. Example:file1')
-    required.add_argument('--passwd', type=str, help='Enter password for ssid provided', default='NA')
+    required.add_argument('--passwd', type=str, help='Enter password for ssid provided', default='[BLANK]')
     required.add_argument('--security', type=str, help='Enter the security')
     required.add_argument('--ap_name', type=str, help='Enter the Access point or router name')
     optional.add_argument('--ap_ip', type=str, help='Enter ip of accesspoint or router')
