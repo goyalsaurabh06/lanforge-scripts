@@ -7017,7 +7017,7 @@ INCLUDE_IN_README: False
     )
     test_l3_parser.add_argument(
         '--passwd',
-        default="NA",
+        default="[BLANK]",
         help='Specify password for ssid provided'
     )
     test_l3_parser.add_argument(
