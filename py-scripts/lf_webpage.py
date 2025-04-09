@@ -1561,7 +1561,7 @@ def main():
     optional.add_argument('--help_summary', action="store_true", help='Show summary of what this script does')
 
     optional.add_argument('--ssid', help='WiFi SSID for script object to associate for clients')
-    optional.add_argument('--passwd', help='Specify password for ssid provided', default='NA')
+    optional.add_argument('--passwd', help='Specify password for ssid provided', default='[BLANK]')
     optional.add_argument('--security', help='Specify the security')
     optional.add_argument('--file_name', type=str, help='Specify the file name containing group details. Example:file1')
     optional.add_argument('--group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
