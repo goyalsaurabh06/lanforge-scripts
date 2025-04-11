@@ -6,37 +6,38 @@ Purpose: To be generic script for LANforge-Interop devices(Real clients) which r
 Pre-requisites: Real clients should be connected to the LANforge MGR and Interop app should be open on the real clients which are connected to Lanforge
 
 
-Example: (python3 or ./)lf_interop_real_browser_test.py --mgr 192.168.214.219 --duration 1m --url "https://google.com" --flask_ip 192.168.214.131
---server_ip 192.168.214.131  --postcleanup --expected_passfail_value 8"
+Example: python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --duration 1m --url "https://google.com"
+--upstream_port 1.1.eth1  --postcleanup --expected_passfail_value 8"
 
 Example-1 :
 Command Line Interface to run url in the Browser with specified URL and duration:
-python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --duration 1m --url "https://google.com" --flask_ip 192.168.214.131 --server_ip 192.168.214.131  --postcleanup --expected_passfail_value 8
+python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --duration 1m --url "https://google.com" --upstream_port 1.1.eth1  --postcleanup --expected_passfail_value 8
 
     CASE-1:
     If not specified it takes the default url (default url is https://google.com)
 
 Example-2:
 Command Line Interface to run url in the Browser with specified Resources:
-python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --duration 1m --url "https://google.com" --flask_ip 192.168.214.131 --server_ip 192.168.214.131
+python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --duration 1m --url "https://google.com" --upstream_port 1.1.eth1
 --postcleanup --expected_passfail_value 8 --device_list 1.92,1.95,1.22
 
 Example-3:
 Command Line Interface to run url in the Browser with specified urls_per_tennm (specify the number of url you want to test in the given duration):
-python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --duration 1m --url "https://google.com" --flask_ip 192.168.214.131 --server_ip 192.168.214.131
+python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --duration 1m --url "https://google.com" --upstream_port 1.1.eth1
 --postcleanup --expected_passfail_value 8 --device_list 1.92,1.95,1.22 --count 10
 
     CASE-1:
     If not specified it takes the default count value (default count is 1)
+
 Example-4:
 Command Line Interface to run the Real Browser Test with Device Configuration
-python3 lf_interop_real_browser_test.py --mgr 192.168.204.74 --url "https://google.com" --duration 1m --debug --flask_ip 192.168.200.164
+python3 lf_interop_real_browser_test.py --mgr 192.168.204.74 --url "https://google.com" --duration 1m --debug --upstream_port 1.1.eth1
 --ssid NETGEAR_5G_wpa2 --passwd Password@123 --encryp wpa2 --config
 
 Example-5:
 Command Line Interface to run the Real Browser Test with groups and profiles
-python3 lf_interop_real_browser_test.py --mgr 192.168.204.74 --url "https://google.com" --duration 1m --debug --flask_ip 192.168.200.164
- --file_name grplaptops --group_name group1,group2 --profile_name netgear2g,netgear2g
+python3 lf_interop_real_browser_test.py --mgr 192.168.204.74 --url "https://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+--file_name grplaptops --group_name group1,group2 --profile_name netgear2g,netgear2g
 
 SCRIPT CLASSIFICATION: Test
 
@@ -156,10 +157,10 @@ class RealBrowserTest(Realm):
                  client_cert=None,
                  pk_passwd=None,
                  pac_file=None,
-                 server_ip=None, device_csv_name=None,
+                 upstream_port=None,
+                 device_csv_name=None,
                  expected_passfail_value=None,
                  wait_time=60,
-                 flask_ip=None,
                  config=None,
                  selected_groups=None,
                  selected_profiles=None):
@@ -244,11 +245,10 @@ class RealBrowserTest(Realm):
         self.client_cert = client_cert
         self.pk_passwd = pk_passwd
         self.pac_file = pac_file
-        self.server_ip = server_ip
+        self.upstream_port = upstream_port
         self.expected_passfail_value = expected_passfail_value
         self.device_csv_name = device_csv_name
         self.wait_time = wait_time
-        self.flask_ip = flask_ip
         self.config = config
         self.selected_groups = selected_groups
         self.selected_profiles = selected_profiles
@@ -330,13 +330,13 @@ class RealBrowserTest(Realm):
 
         for i in range(0, len(self.laptop_os_types)):
             if self.laptop_os_types[i] == 'windows':
-                cmd = "real_browser.bat --url %s --server %s --duration %s" % (self.url, self.flask_ip, self.duration)
+                cmd = "real_browser.bat --url %s --server %s --duration %s" % (self.url, self.upstream_port, self.duration)
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
             elif self.laptop_os_types[i] == 'linux':
-                cmd = "su -l lanforge  ctrb.bash %s %s %s %s" % (self.new_port_list[i], self.url, self.flask_ip, self.duration)
+                cmd = "su -l lanforge  ctrb.bash %s %s %s %s" % (self.new_port_list[i], self.url, self.upstream_port, self.duration)
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
             elif self.laptop_os_types[i] == 'macos':
-                cmd = "sudo bash ctrb.bash --url %s --server %s  --duration %s" % (self.url, self.flask_ip, self.duration)
+                cmd = "sudo bash ctrb.bash --url %s --server %s  --duration %s" % (self.url, self.upstream_port, self.duration)
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
 
         if len(self.phone_data) != 0:
@@ -345,6 +345,7 @@ class RealBrowserTest(Realm):
 
             if 'https' in self.url:
                 self.url = self.url.replace("http://", "").replace("https://", "")
+                print("checking the value of self.url after removing http and https",self.url)
                 self.create_real(ports=self.phone_data, sleep_time=.5,
                                  suppress_related_commands_=None, https=True,
                                  https_ip=self.url, interop=True, timeout=1000, media_source='1', media_quality='0', upload_name=upload_name)
@@ -1062,7 +1063,7 @@ class RealBrowserTest(Realm):
             for i in range(len(selected_groups)):
                 config_devices[selected_groups[i]] = selected_profiles[i]
             config_obj.initiate_group()
-            config_list = asyncio.run(config_obj.connectivity(config_devices))
+            config_list = asyncio.run(config_obj.connectivity(config_devices, upstream=args.upstream_port))
             resource_ids = sorted(set(int(item.split('.')[1]) for item in config_list if '.' in item))
             print("checking resource_ids in process_group_profiles argument")
             print(config_list)
@@ -1768,6 +1769,48 @@ class RealBrowserTest(Realm):
 
         return final_eid_data, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data
 
+    def change_port_to_ip(self, upstream_port):
+        if upstream_port.count('.') != 3:
+            target_port_list = self.name_to_eid(upstream_port)
+            shelf, resource, port, _ = target_port_list
+            try:
+                target_port_ip = self.json_get(f'/port/{shelf}/{resource}/{port}?fields=ip')['interface']['ip']
+                upstream_port = target_port_ip
+            except BaseException:
+                logging.warning(f'The upstream port is not an ethernet port. Proceeding with the given upstream_port {upstream_port}.')
+            logging.info(f"Upstream port IP {upstream_port}")
+        else:
+            logging.info(f"Upstream port IP {upstream_port}")
+        
+        return upstream_port
+    
+    def filter_iOS_devices(self, device_list):
+        modified_device_list = device_list
+        if type(device_list) is str:
+            modified_device_list = device_list.split(',')
+        filtered_list = []
+        for device in modified_device_list:
+            if device.count('.') == 1:
+                shelf, resource = device.split('.')
+            elif device.count('.') == 2:
+                shelf, resource, port = device.split('.')
+            elif device.count('.') == 0:
+                shelf, resource = 1, device
+            response_code, device_data = self.api_get('/resource/{}/{}'.format(shelf, resource))
+            if 'status' in device_data and device_data['status'] == 'NOT_FOUND':
+                logger.info("Device %s is not found.", device)
+                continue
+            device_data = device_data['resource']
+            # print(device_data)
+            if 'Apple' in device_data['hw version'] and (device_data['app-id'] != '') and (device_data['app-id'] != '0' or device_data['kernel'] == ''):
+                logger.info("%s is an iOS device. Currently, we do not support iOS devices.", device)
+            else:
+                filtered_list.append(device)
+        if type(device_list) is str:
+            filtered_list = ','.join(filtered_list)
+        self.device_list = filtered_list
+        return filtered_list
+
 
 def main():
     try:
@@ -1796,18 +1839,18 @@ def main():
 
             Example-1 :
             Command Line Interface to run url in the Browser with specified URL and duration:
-            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --debug --flask_ip 192.168.208.9
+            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --debug --upstream_port 1.1.eth1
 
                 CASE-1:
                 If not specified it takes the default url (default url is www.google.com)
 
             Example-2:
             Command Line Interface to run url in the Browser with specified Resources:
-            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --debug --flask_ip 192.168.208.9
+            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --debug --upstream_port 1.1.eth1
 
             Example-3:
             Command Line Interface to run url in the Browser with specified urls_per_tennm (specify the number of url you want to test in the given duration):
-            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --count 10 --debug --flask_ip 192.168.208.9
+            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --count 10 --debug --upstream_port 1.1.eth1
 
                 CASE-1:
                 If not specified it takes the default count value (default count is 1)
@@ -1815,20 +1858,20 @@ def main():
 
             Example-4:
             Command Line Interface to run url in the Browser with precleanup:
-            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --precleanup --debug --flask_ip 192.168.208.9
+            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --precleanup --debug --upstream_port 1.1.eth1
 
             Example-5:
             Command Line Interface to run url in the Browser with postcleanup:
-            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --postcleanup --debug --flask_ip 192.168.208.9
+            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --postcleanup --debug --upstream_port 1.1.eth1
 
             Example-4:
             Command Line Interface to run the Real Browser Test with Device Configuration
-            python3 lf_interop_real_browser_test.py --mgr 192.168.204.74 --url "https://google.com" --duration 1m --debug --flask_ip 192.168.200.164
+            python3 lf_interop_real_browser_test.py --mgr 192.168.204.74 --url "https://google.com" --duration 1m --debug --upstream_port 1.1.eth1
             --ssid NETGEAR_5G_wpa2 --passwd Password@123 --encryp wpa2 --config
 
             Example-5:
             Command Line Interface to run the Real Browser Test with groups and profiles
-            python3 lf_interop_real_browser_test.py --mgr 192.168.204.74 --url "https://google.com" --duration 1m --debug --flask_ip 192.168.200.164
+            python3 lf_interop_real_browser_test.py --mgr 192.168.204.74 --url "https://google.com" --duration 1m --debug --upstream_port 1.1.eth1
             --file_name grplaptops --group_name group1,group2 --profile_name netgear2g,netgear2g
 
 
@@ -1904,8 +1947,7 @@ def main():
         parser.add_argument("--client_cert", type=str, default='NA', help='Specify the client certificate file name')
         parser.add_argument("--pk_passwd", type=str, default='NA', help='Specify the password for the private key')
         parser.add_argument("--pac_file", type=str, default='NA', help='Specify the pac file name')
-        parser.add_argument("--server_ip", type=str, default='NA', help='Specify the server ip address')
-        parser.add_argument("--flask_ip", type=str, default=None, required=True, help='specify the flask ip to run the test')
+        parser.add_argument("--upstream_port", type=str, default='NA', help='Specify the Upstream Port',required=True)
         parser.add_argument('--help_summary', help='Show summary of what this script does', default=None)
         parser.add_argument("--expected_passfail_value", help="Specify the expected urlcount value for pass/fail")
         parser.add_argument("--device_csv_name", type=str, help="Specify the device csv name for pass/fail", default=None)
@@ -1926,8 +1968,10 @@ def main():
         if args.lf_logger_config_json:
             logger_config.lf_logger_config_json = args.lf_logger_config_json
             logger_config.load_lf_logger_config()
-        if args.url.startswith("http"):
-            args.url = args.url.replace("http", "https",1)
+        if args.url.lower().startswith("www."):
+            args.url = "https://" + args.url
+        if args.url.lower().startswith("http://"):
+            args.url = "https://" + args.url.removeprefix("http://")
 
         # Initialize an instance of RealBrowserTest with various parameters
         obj = RealBrowserTest(host=args.host,
@@ -1965,14 +2009,13 @@ def main():
                               client_cert=args.client_cert,
                               pk_passwd=args.pk_passwd,
                               pac_file=args.pac_file,
-                              server_ip=args.server_ip,
+                              upstream_port=args.upstream_port,
                               expected_passfail_value=args.expected_passfail_value,
                               device_csv_name=args.device_csv_name,
                               wait_time=args.wait_time,
-                              flask_ip=args.flask_ip,
                               config=args.config,
                               )
-
+        args.upstream_port = obj.change_port_to_ip(args.upstream_port)
         obj.validate_and_process_args(args)
         obj.run_flask_server()
         config_obj = obj.initialize_config(args)
@@ -2001,12 +2044,15 @@ def main():
                 'client_cert': args.client_cert,
                 'pk_passwd': args.pk_passwd,
                 'pac_file': args.pac_file,
-                'server_ip': args.server_ip,
+                'server_ip': args.upstream_port,
             }
             available_resources = obj.process_resources(args, config_obj, obj, config_dict)
+        if len(available_resources) !=0:
+             available_resources = obj.filter_iOS_devices(available_resources)
         if len(available_resources) == 0:
             logging.error("No devices available to run the test. Exiting...")
             exit(1)
+        
         # --- Print available resources ---
         logging.info("Devices available: {}".format(available_resources))
         # prompt user for expected pass fail value and update device csv if no expected pass fail value or device csv is mentioned
