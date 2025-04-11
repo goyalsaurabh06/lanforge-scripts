@@ -6,7 +6,7 @@
 
     EXAMPLE-1:
     Command Line Interface to run YouTube with the specified URL and duration:
-    python3 lf_interop_youtube.py --mgr 192.168.214.219 --url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" --duration 1 --res 1080p --flask_ip 192.168.214.131
+    python3 lf_interop_youtube.py --mgr 192.168.214.219 --url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" --duration 1 --res 1080p --upstream_port 1.1.eth1
 
         CASE-1:
         If the given duration is longer than the actual video duration, the video will loop.
@@ -16,23 +16,22 @@
 
     EXAMPLE-2:
     Command Line Interface to run YouTube on multiple devices:
-    python3 lf_interop_youtube.py --mgr 192.168.214.219 --url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" --duration 2 --res 1080p --flask_ip 192.168.214.131 --resources 1.13,1.14...
+    python3 lf_interop_youtube.py --mgr 192.168.214.219 --url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" --duration 2 --res 1080p --upstream_port 1.1.eth1 --resources 1.13,1.14...
 
 
     EXAMPLE-3:
     Command Line Interface to run YouTube without post-cleanup of cross-connections:
     python3 lf_interop_youtube.py --mgr 192.168.214.219 --url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" --duration 2 --res 1080p
-    --flask_ip 192.168.214.131 --resources 1.13,1.14... --no_post_cleanup
+    --upstream_port 1.1.eth1 --resources 1.13,1.14... --no_post_cleanup
 
     EXAMPLE-4:
     Command Line Interface to run YouTube with multiple groups and profiles:
     python3 lf_interop_youtube.py --mgr 192.168.204.74 --url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" --duration 1
-    --group_name group1,group2 --profile_name netgear5g,netgear2g --file_name grplaptops.csv --flask_ip 192.168.204.56
-
+    --group_name group1,group2 --profile_name netgear5g,netgear2g --file_name grplaptops.csv --upstream_port 1.1.eth1
     EXAMPLE-5:
     Command Line Interface to run YouTube with Device Configuration:
     python3 lf_interop_youtube.py --mgr 192.168.204.74 --url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" --duration 1
-    --ssid NETGEAR_2g_wpa2 --passwd Password@123 --encryp wpa2 --flask_ip 192.168.204.56 --config
+    --ssid NETGEAR_2g_wpa2 --passwd Password@123 --encryp wpa2 --upstream_port 1.1.eth1 --config
 
     SCRIPT CLASSIFICATION: Test
 
@@ -126,7 +125,7 @@ class Youtube(Realm):
                  band=None,
                  base_dir=None,
                  test_name=None,
-                 flask_ip=None,
+                 upstream_port=None,
                  config=None,
                  selected_groups=None,
                  selected_profiles=None
@@ -193,7 +192,7 @@ class Youtube(Realm):
         self.mydatajson = {}
         self.final_data = None
         self.stats_api_response = {}
-        self.flask_ip = flask_ip
+        self.upstream_port = upstream_port
         self.stop_signal = False
         self.config = config
         self.selected_groups = selected_groups
@@ -226,6 +225,21 @@ class Youtube(Realm):
         self.generic_endps_profile.created_cx = []
         self.generic_endps_profile.created_endp = []
         # Log cleanup completion
+
+    def change_port_to_ip(self, upstream_port):
+        if upstream_port.count('.') != 3:
+            target_port_list = self.name_to_eid(upstream_port)
+            shelf, resource, port, _ = target_port_list
+            try:
+                target_port_ip = self.json_get(f'/port/{shelf}/{resource}/{port}?fields=ip')['interface']['ip']
+                upstream_port = target_port_ip
+            except BaseException:
+                logging.warning(f'The upstream port is not an ethernet port. Proceeding with the given upstream_port {upstream_port}.')
+            logging.info(f"Upstream port IP {upstream_port}")
+        else:
+            logging.info(f"Upstream port IP {upstream_port}")
+        
+        return upstream_port
 
     def check_tab_exists(self):
         """
@@ -347,15 +361,15 @@ class Youtube(Realm):
         for i in range(0, len(self.real_sta_os_types)):
             if self.real_sta_os_types[i] == 'windows':
                 # cmd = "youtube_stream.bat --url %s --host %s --device_name %s --duration %s --res %s" % (self.url, self.lfclient_host, self.real_sta_hostname[i], self.duration,self.resolution)
-                cmd = "youtube_stream.bat --url %s --host %s --device_name %s --duration %s --res %s" % (self.url, self.flask_ip, self.real_sta_hostname[i], self.duration, self.resolution)
+                cmd = "youtube_stream.bat --url %s --host %s --device_name %s --duration %s --res %s" % (self.url, self.upstream_port, self.real_sta_hostname[i], self.duration, self.resolution)
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
             elif self.real_sta_os_types[i] == 'linux':
                 # cmd = "su -l lanforge  ctyt.bash %s %s %s %s %s %s" % (self.new_port_list[i], self.url, self.lfclient_host, self.real_sta_hostname[i], self.duration,self.resolution)
-                cmd = "su -l lanforge  ctyt.bash %s %s %s %s %s %s" % (self.new_port_list[i], self.url, self.flask_ip, self.real_sta_hostname[i], self.duration, self.resolution)
+                cmd = "su -l lanforge  ctyt.bash %s %s %s %s %s %s" % (self.new_port_list[i], self.url, self.upstream_port, self.real_sta_hostname[i], self.duration, self.resolution)
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
 
             elif self.real_sta_os_types[i] == 'macos':
-                cmd = "sudo bash ctyt.bash --url %s --host %s --device_name %s --duration %s --res %s" % (self.url, self.flask_ip, self.real_sta_hostname[i], self.duration, self.resolution)
+                cmd = "sudo bash ctyt.bash --url %s --host %s --device_name %s --duration %s --res %s" % (self.url, self.upstream_port, self.real_sta_hostname[i], self.duration, self.resolution)
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
 
     def select_real_devices(self, real_devices, real_sta_list=None, base_interop_obj=None):
@@ -416,6 +430,7 @@ class Youtube(Realm):
             logger.error('There are no real devices in this testbed. Aborting test')
             exit(0)
         real_devices.get_devices()
+        self.real_sta_list = self.filter_iOS_devices(self.real_sta_list)
         for sta_name in self.real_sta_list:
             if sta_name not in real_devices.devices_data:
                 logger.error(f"Real station '{sta_name}' not in devices data, ignoring it from testing")
@@ -442,7 +457,7 @@ class Youtube(Realm):
                 self.linux = self.linux + 1
             elif self.real_sta_os_types[i] == 'macos':
                 self.mac = self.mac + 1
-
+        
         return self.real_sta_list
 
     def start_generic(self):
@@ -924,6 +939,33 @@ class Youtube(Realm):
         self.report.write_html()
         self.report.write_pdf()
 
+    def filter_iOS_devices(self, device_list):
+        modified_device_list = device_list
+        if type(device_list) is str:
+            modified_device_list = device_list.split(',')
+        filtered_list = []
+        for device in modified_device_list:
+            if device.count('.') == 1:
+                shelf, resource = device.split('.')
+            elif device.count('.') == 2:
+                shelf, resource, port = device.split('.')
+            elif device.count('.') == 0:
+                shelf, resource = 1, device
+            response_code, device_data = self.api_get('/resource/{}/{}'.format(shelf, resource))
+            if 'status' in device_data and device_data['status'] == 'NOT_FOUND':
+                logger.info("Device %s is not found.", device)
+                continue
+            device_data = device_data['resource']
+            # print(device_data)
+            if 'Apple' in device_data['hw version'] and (device_data['app-id'] != '') and (device_data['app-id'] != '0' or device_data['kernel'] == ''):
+                logger.info("%s is an iOS device. Currently, we do not support iOS devices.", device)
+            else:
+                filtered_list.append(device)
+        if type(device_list) is str:
+            filtered_list = ','.join(filtered_list)
+        self.device_list = filtered_list
+        return filtered_list
+    
     def check_gen_cx(self):
         try:
 
@@ -964,7 +1006,7 @@ def main():
 
             EXAMPLE-1:
             Command Line Interface to run YouTube with the specified URL and duration:
-            python3 lf_interop_youtube.py --mgr 192.168.214.219 --url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" --duration 1 --res 1080p --flask_ip 192.168.214.131
+            python3 lf_interop_youtube.py --mgr 192.168.214.219 --url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" --duration 1 --res 1080p --upstream_port 1.1.eth1
 
                 CASE-1:
                 If the given duration is longer than the actual video duration, the video will loop.
@@ -974,23 +1016,23 @@ def main():
 
             EXAMPLE-2:
             Command Line Interface to run YouTube on multiple devices:
-            python3 lf_interop_youtube.py --mgr 192.168.214.219 --url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" --duration 2 --res 1080p --flask_ip 192.168.214.131 --resources 1.13,1.14...
+            python3 lf_interop_youtube.py --mgr 192.168.214.219 --url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" --duration 2 --res 1080p --upstream_port 1.1.eth1 --resources 1.13,1.14...
 
 
             EXAMPLE-3:
             Command Line Interface to run YouTube without post-cleanup of cross-connections:
             python3 lf_interop_youtube.py --mgr 192.168.214.219 --url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" --duration 2 --res 1080p
-            --flask_ip 192.168.214.131 --resources 1.13,1.14... --no_post_cleanup
+            --upstream_port 1.1.eth1 --resources 1.13,1.14... --no_post_cleanup
 
             EXAMPLE-4:
             Command Line Interface to run YouTube with multiple groups and profiles:
             python3 lf_interop_youtube.py --mgr 192.168.204.74 --url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" --duration 1
-            --group_name group1,group2 --profile_name netgear5g,netgear2g --file_name grplaptops.csv --flask_ip 192.168.204.56
+            --group_name group1,group2 --profile_name netgear5g,netgear2g --file_name grplaptops.csv --upstream_port 1.1.eth1
 
             EXAMPLE-5:
             Command Line Interface to run YouTube with Device Configuration:
             python3 lf_interop_youtube.py --mgr 192.168.204.74 --url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" --duration 1
-            --ssid NETGEAR_2g_wpa2 --passwd Password@123 --encryp wpa2 --flask_ip 192.168.204.56 --config
+            --ssid NETGEAR_2g_wpa2 --passwd Password@123 --encryp wpa2 --upstream_port 1.1.eth1 --config
 
             '''
         )
@@ -1010,7 +1052,6 @@ def main():
         required.add_argument('--sec', type=str, default="wpa2", help="security type used")
         required.add_argument('--band', type=str, default="5GHZ", help="Name of the Frequency band used")
         required.add_argument('--test_name', type=str, help="Test name while running through webgui")
-        required.add_argument('--flask_ip', type=str, help='IP for flask server', required=True)
 
         # Add optional arguments
         optional.add_argument('--resources', help='Specify the real device ports seperated by comma')
@@ -1053,7 +1094,7 @@ def main():
         parser.add_argument("--client_cert", type=str, default='NA', help='Specify the client certificate file name')
         parser.add_argument("--pk_passwd", type=str, default='NA', help='Specify the password for the private key')
         parser.add_argument("--pac_file", type=str, default='NA', help='Specify the pac file name')
-        parser.add_argument("--server_ip", type=str, default='NA', help='Specify the server ip address')
+        parser.add_argument("--upstream_port", type=str, default='NA', help='Specify the Upstream Port',required=True)
         parser.add_argument('--help_summary', help='Show summary of what this script does', default=None)
         parser.add_argument("--expected_passfail_value", help="Specify the expected urlcount value for pass/fail")
         parser.add_argument("--device_csv_name", type=str, help="Specify the device csv name for pass/fail", default=None)
@@ -1160,11 +1201,12 @@ def main():
                 security=args.encryp,
                 band=args.band,
                 test_name=args.test_name,
-                flask_ip=args.flask_ip,
+                upstream_port = args.upstream_port,
                 config=args.config,
                 selected_groups=selected_groups,
                 selected_profiles=selected_profiles)
             youtube.start_flask_server()
+            args.upstream_port = youtube.change_port_to_ip(args.upstream_port)
 
             resources = []
             youtube.Devices = Devices
@@ -1184,7 +1226,7 @@ def main():
 
                 config_obj.initiate_group()
 
-                asyncio.run(config_obj.connectivity(config_devices))
+                asyncio.run(config_obj.connectivity(config_devices, upstream=args.upstream_port))
 
                 adbresponse = config_obj.adb_obj.get_devices()
                 resource_manager = config_obj.laptop_obj.get_devices()
@@ -1229,7 +1271,7 @@ def main():
                     'client_cert': args.client_cert,
                     'pk_passwd': args.pk_passwd,
                     'pac_file': args.pac_file,
-                    'server_ip': args.server_ip
+                    'server_ip': args.upstream_port
                 }
                 if args.resources:
                     all_devices = config_obj.get_all_devices()
@@ -1238,22 +1280,25 @@ def main():
                         if args.config:
                             asyncio.run(config_obj.connectivity(device_list=dev_list, wifi_config=config_dict))
                 else:
-                    all_devices = config_obj.get_all_devices()
-                    device_list = []
-                    for device in all_devices:
-                        if device["type"] != 'laptop':
-                            device_list.append(device["shelf"] + '.' + device["resource"] + " " + device["serial"])
-                        elif device["type"] == 'laptop':
-                            device_list.append(device["shelf"] + '.' + device["resource"] + " " + device["hostname"])
-
-                    print("Available devices:")
-                    for device in device_list:
-                        print(device)
-
-                    args.resources = input("Enter the desired resources to run the test:")
-                    dev1_list = args.resources.split(',')
                     if args.config:
+                        all_devices = config_obj.get_all_devices()
+                        device_list = []
+                        for device in all_devices:
+                            if device["type"] != 'laptop':
+                                device_list.append(device["shelf"] + '.' + device["resource"] + " " + device["serial"])
+                            elif device["type"] == 'laptop':
+                                device_list.append(device["shelf"] + '.' + device["resource"] + " " + device["hostname"])
+
+                        print("Available devices:")
+                        for device in device_list:
+                            print(device)
+
+                        args.resources = input("Enter the desired resources to run the test:")
+                        dev1_list = args.resources.split(',')
                         asyncio.run(config_obj.connectivity(device_list=dev1_list, wifi_config=config_dict))
+
+
+
 
             if not do_webUI:
                 if args.resources:
