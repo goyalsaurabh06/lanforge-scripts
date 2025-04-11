@@ -5,24 +5,24 @@
 
     EXAMPLE-1:
     Command Line Interface to run Zoom with specified duration:
-    python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.214.219" --signin_email "demo@gmail.com" --signin_passwd "Demo@123" --participants 3 --audio --video --server_ip 192.168.214.123
+    python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.214.219" --signin_email "demo@gmail.com" --signin_passwd "Demo@123" --participants 3 --audio --video --upstream_port 1.1.eth1
 
 
 
     EXAMPLE-2:
     Command Line Interface to run Zoom on multiple devices:
     python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.214.219" --signin_email "demo@gmail.com" --signin_passwd "Demo@123" --participants 3 --audio --video
-    --resources 1.400,1.375 --zoom_host 1.95 --server_ip 192.168.214.123
+    --resources 1.400,1.375 --zoom_host 1.95 --upstream_port 1.1.eth1
 
     Example-3:
     Command Line Interface to run Zoom on multiple devices with Device Configuration
     python3 lf_interop_zoom.py --duration 1 --lanforge_ip "192.168.204.74" --signin_email "lnawscloud@gmail.com" --signin_passwd "Demo@10203000" --participants 2 --audio --video
-    --server_ip 192.168.200.167 --zoom_host 1.95 --resources 1.400,1.360 --ssid NETGEAR_2G_wpa2 --passwd Password@123 --encryp wpa2 --config
+    --upstream_port 1.1.eth1 --zoom_host 1.95 --resources 1.400,1.360 --ssid NETGEAR_2G_wpa2 --passwd Password@123 --encryp wpa2 --config
 
     Example-4:
     Command Line Interface to run Zoom on multiple devices with Groups and Profiles
     python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.204.74" --signin_email "lnawscloud@gmail.com" --signin_passwd "Demo@10203000" --participants 2 --audio --video
-    --wait_time 30  --group_name group1,group2 --profile_name netgear5g,netgear2g --file_name grplaptops.csv --zoom_host 1.95 --server_ip 192.168.200.167
+    --wait_time 30  --group_name group1,group2 --profile_name netgear5g,netgear2g --file_name grplaptops.csv --zoom_host 1.95 --upstream_port 1.1.eth1
 
     NOTES:
     1. Use './lf_interop_zoom.py --help' to see command line usage and options.
@@ -87,16 +87,14 @@ lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 
 class ZoomAutomation(Realm):
     def __init__(self, ssid="SSID", band="5G", security="wpa2", apname="AP Name", audio=True, video=True, lanforge_ip=None,
-                 server_ip='0.0.0.0', wait_time=30, devices=None, testname=None, config=None, selected_groups=None, selected_profiles=None):
+                 upstream_port='0.0.0.0', wait_time=30, devices=None, testname=None, config=None, selected_groups=None, selected_profiles=None):
 
         super().__init__(lfclient_host=lanforge_ip)
-        self.flask_ip = server_ip
+        self.upstream_port = upstream_port
         self.mgr_ip = lanforge_ip
-        # self.flask_ip = '10.253.8.108'
         self.app = Flask(__name__)
         self.redis_client = redis.StrictRedis(host='localhost', port=6379, db=0)
         self.redis_client.set('login_completed', 0)
-        # self.ALLOWED_HOSTS = []
         self.secret_key = secrets.token_hex(32)
         self.app.config['SECRET_KEY'] = self.secret_key
         CORS(self.app)
@@ -361,13 +359,13 @@ class ZoomAutomation(Realm):
         logging.error("❌ Flask server did not start within 10 seconds. Exiting.")
         sys.exit(1)
 
-    def run(self, duration, server_ip, signin_email, signin_passwd, participants):
+    def run(self, duration, upstream_port, signin_email, signin_passwd, participants):
         # Store the email and password in the instance
         self.signin_email = signin_email
         self.signin_passwd = signin_passwd
         self.duration = duration
-        self.flask_ip = server_ip
-        # self.flask_ip = '10.253.8.108'
+        self.upstream_port = upstream_port
+        # self.upstream_port = '10.253.8.108'
         self.participants_req = participants
         flask_thread = threading.Thread(target=self.start_flask_server)
         flask_thread.daemon = True
@@ -464,16 +462,16 @@ class ZoomAutomation(Realm):
             exit(0)
 
         if self.real_sta_os_type[0] == "windows":
-            cmd = f"py zoom_host.py --ip {self.flask_ip}"
-            # cmd = "zoom_test.bat --ip %s --type %s" % (self.flask_ip,"host")
+            cmd = f"py zoom_host.py --ip {self.upstream_port}"
+            # cmd = "zoom_test.bat --ip %s --type %s" % (self.upstream_port,"host")
             self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[0], cmd)
         elif self.real_sta_os_type[0] == 'linux':
 
-            cmd = "su -l lanforge ctzoom.bash %s %s %s" % (self.new_port_list[0], self.flask_ip, "host")
+            cmd = "su -l lanforge ctzoom.bash %s %s %s" % (self.new_port_list[0], self.upstream_port, "host")
 
             self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[0], cmd)
         elif self.real_sta_os_type[0] == 'macos':
-            cmd = "sudo bash ctzoom.bash %s %s" % (self.flask_ip, "host")
+            cmd = "sudo bash ctzoom.bash %s %s" % (self.upstream_port, "host")
             self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[0], cmd)
         self.generic_endps_profile.start_cx()
         time.sleep(5)
@@ -501,15 +499,15 @@ class ZoomAutomation(Realm):
         for i in range(1, len(self.real_sta_os_type)):
 
             if self.real_sta_os_type[i] == "windows":
-                cmd = f"py zoom_client.py --ip {self.flask_ip}"
-                # cmd = "zoom_test.bat --ip %s --type %s" % (self.flask_ip,"client")
+                cmd = f"py zoom_client.py --ip {self.upstream_port}"
+                # cmd = "zoom_test.bat --ip %s --type %s" % (self.upstream_port,"client")
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
             elif self.real_sta_os_type[i] == 'linux':
-                cmd = "su -l lanforge ctzoom.bash %s %s %s" % (self.new_port_list[i], self.flask_ip, "client")
+                cmd = "su -l lanforge ctzoom.bash %s %s %s" % (self.new_port_list[i], self.upstream_port, "client")
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
             elif self.real_sta_os_type[i] == 'macos':
-                # cmd = f"sudo bash zoom_test.bash %s %s" % ( self.flask_ip, "client")
-                cmd = "sudo bash ctzoom.bash %s %s" % (self.flask_ip, "client")
+                # cmd = f"sudo bash zoom_test.bash %s %s" % ( self.upstream_port, "client")
+                cmd = "sudo bash ctzoom.bash %s %s" % (self.upstream_port, "client")
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
 
         self.generic_endps_profile.start_cx()
@@ -577,6 +575,7 @@ class ZoomAutomation(Realm):
             exit(0)
 
         # # Add real station data to `self.real_sta_data_dict`
+        self.real_sta_list = self.filter_iOS_devices(self.real_sta_list)
         for sta_name in self.real_sta_list:
             if sta_name not in real_device_obj.devices_data:
                 self.real_sta_list.remove(sta_name)
@@ -603,6 +602,7 @@ class ZoomAutomation(Realm):
                 self.linux = self.linux + 1
 
         # Return the sorted list of selected real station names
+        
         return self.real_sta_list
 
     def check_tab_exists(self):
@@ -663,7 +663,49 @@ class ZoomAutomation(Realm):
 
         with open(file_path, 'w') as file:
             json.dump(data, file, indent=4)
-
+    
+    def change_port_to_ip(self, upstream_port):
+        if upstream_port.count('.') != 3:
+            target_port_list = self.name_to_eid(upstream_port)
+            shelf, resource, port, _ = target_port_list
+            try:
+                target_port_ip = self.json_get(f'/port/{shelf}/{resource}/{port}?fields=ip')['interface']['ip']
+                upstream_port = target_port_ip
+            except BaseException:
+                logging.warning(f'The upstream port is not an ethernet port. Proceeding with the given upstream_port {upstream_port}.')
+            logging.info(f"Upstream port IP {upstream_port}")
+        else:
+            logging.info(f"Upstream port IP {upstream_port}")
+        
+        return upstream_port
+    
+    def filter_iOS_devices(self, device_list):
+        modified_device_list = device_list
+        if type(device_list) is str:
+            modified_device_list = device_list.split(',')
+        filtered_list = []
+        for device in modified_device_list:
+            if device.count('.') == 1:
+                shelf, resource = device.split('.')
+            elif device.count('.') == 2:
+                shelf, resource, port = device.split('.')
+            elif device.count('.') == 0:
+                shelf, resource = 1, device
+            response_code, device_data = self.api_get('/resource/{}/{}'.format(shelf, resource))
+            if 'status' in device_data and device_data['status'] == 'NOT_FOUND':
+                logger.info("Device %s is not found.", device)
+                continue
+            device_data = device_data['resource']
+            # print(device_data)
+            if 'Apple' in device_data['hw version'] and (device_data['app-id'] != '') and (device_data['app-id'] != '0' or device_data['kernel'] == ''):
+                logger.info("%s is an iOS device. Currently, we do not support iOS devices.", device)
+            else:
+                filtered_list.append(device)
+        if type(device_list) is str:
+            filtered_list = ','.join(filtered_list)
+        self.device_list = filtered_list
+        return filtered_list
+    
     def generate_report(self):
         report = lf_report(_output_pdf='zoom_call_report.pdf',
                            _output_html='zoom_call_report.html',
@@ -1207,23 +1249,23 @@ def main():
             EXAMPLE-1:
             Command Line Interface to run Zoom with specified duration:
             python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.214.219" --signin_email "demo@gmail.com" --signin_passwd "Demo@123" --participants 3
-            --audio --video --server_ip 192.168.214.123
+            --audio --video --upstream_port 1.1.eth1
 
 
             EXAMPLE-2:
             Command Line Interface to run Zoom on multiple devices:
             python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.214.219" --signin_email "demo@gmail.com" --signin_passwd "Demo@123" --participants 3 --audio --video
-            --resources 1.400,1.375 --zoom_host 1.95 --server_ip 192.168.214.123
+            --resources 1.400,1.375 --zoom_host 1.95 --upstream_port 1.1.eth1
 
             Example-3:
             Command Line Interface to run Zoom on multiple devices with Device Configuration
             python3 lf_interop_zoom.py --duration 1 --lanforge_ip "192.168.204.74" --signin_email "lnawscloud@gmail.com" --signin_passwd "Demo@10203000" --participants 2 --audio --video
-            --server_ip 192.168.200.167 --zoom_host 1.95 --resources 1.400,1.360 --ssid NETGEAR_2G_wpa2 --passwd Password@123 --encryp wpa2 --config
+            --upstream_port 1.1.eth1 --zoom_host 1.95 --resources 1.400,1.360 --ssid NETGEAR_2G_wpa2 --passwd Password@123 --encryp wpa2 --config
 
             Example-4:
             Command Line Interface to run Zoom on multiple devices with Groups and Profiles
             python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.204.74" --signin_email "lnawscloud@gmail.com" --signin_passwd "Demo@10203000" --participants 2 --audio --video
-            --wait_time 30  --group_name group1,group2 --profile_name netgear5g,netgear2g --file_name grplaptops.csv --zoom_host 1.95 --server_ip 192.168.200.167
+            --wait_time 30  --group_name group1,group2 --profile_name netgear5g,netgear2g --file_name grplaptops.csv --zoom_host 1.95 --upstream_port 1.1.eth1
 
             ''')
         parser.add_argument('--duration', type=int, required=True, help="Duration of the Zoom meeting in minutes")
@@ -1271,7 +1313,7 @@ def main():
         parser.add_argument("--client_cert", type=str, default='NA', help='Specify the client certificate file name')
         parser.add_argument("--pk_passwd", type=str, default='NA', help='Specify the password for the private key')
         parser.add_argument("--pac_file", type=str, default='NA', help='Specify the pac file name')
-        parser.add_argument("--server_ip", type=str, default='NA', help='Specify the server ip address', required=True)
+        parser.add_argument("--upstream_port", type=str, default='NA', help='Specify the upstream port', required=True)
         parser.add_argument('--help_summary', help='Show summary of what this script does', default=None)
         parser.add_argument("--expected_passfail_value", help="Specify the expected urlcount value for pass/fail")
         parser.add_argument("--device_csv_name", type=str, help="Specify the device csv name for pass/fail", default=None)
@@ -1323,7 +1365,8 @@ def main():
                 exit(0)
 
             zoom_automation = ZoomAutomation(audio=args.audio, video=args.video, lanforge_ip=args.lanforge_ip, wait_time=args.wait_time, testname=args.testname,
-                                             server_ip=args.server_ip, config=args.config, selected_groups=selected_groups, selected_profiles=selected_profiles)
+                                             upstream_port=args.upstream_port, config=args.config, selected_groups=selected_groups, selected_profiles=selected_profiles)
+            args.upstream_port = zoom_automation.change_port_to_ip(args.upstream_port)
 
             realdevice = RealDevice(manager_ip=args.lanforge_ip,
                                     server_ip="192.168.1.61",
@@ -1355,7 +1398,7 @@ def main():
                     config_devices[selected_groups[i]] = selected_profiles[i]
 
                 config_obj.initiate_group()
-                asyncio.run(config_obj.connectivity(config_devices))
+                asyncio.run(config_obj.connectivity(config_devices, upstream=args.upstream_port))
 
                 adbresponse = config_obj.adb_obj.get_devices()
                 resource_manager = config_obj.laptop_obj.get_devices()
@@ -1406,7 +1449,7 @@ def main():
                     'client_cert': args.client_cert,
                     'pk_passwd': args.pk_passwd,
                     'pac_file': args.pac_file,
-                    'server_ip': args.server_ip,
+                    'server_ip': args.upstream_port,
 
                 }
                 if args.resources:
@@ -1422,22 +1465,22 @@ def main():
                             asyncio.run(config_obj.connectivity(device_list=dev_list, wifi_config=config_dict))
                         args.resources = ",".join(id for id in dev_list)
                 else:
-                    all_devices = config_obj.get_all_devices()
-                    device_list = []
-                    for device in all_devices:
-                        if device["type"] != 'laptop':
-                            device_list.append(device["shelf"] + '.' + device["resource"] + " " + device["serial"])
-                        elif device["type"] == 'laptop':
-                            device_list.append(device["shelf"] + '.' + device["resource"] + " " + device["hostname"])
-                    print("Available Devices For Testing")
-                    for device in device_list:
-                        print(device)
-                    zm_host = input("Enter Host Resource for the Test : ")
-                    zm_host = zm_host.strip()
-                    args.resources = input("Enter client Resources to run the test :")
-                    args.resources = zm_host + "," + args.resources
-                    dev1_list = args.resources.split(',')
                     if args.config:
+                        all_devices = config_obj.get_all_devices()
+                        device_list = []
+                        for device in all_devices:
+                            if device["type"] != 'laptop':
+                                device_list.append(device["shelf"] + '.' + device["resource"] + " " + device["serial"])
+                            elif device["type"] == 'laptop':
+                                device_list.append(device["shelf"] + '.' + device["resource"] + " " + device["hostname"])
+                        print("Available Devices For Testing")
+                        for device in device_list:
+                            print(device)
+                        zm_host = input("Enter Host Resource for the Test : ")
+                        zm_host = zm_host.strip()
+                        args.resources = input("Enter client Resources to run the test :")
+                        args.resources = zm_host + "," + args.resources
+                        dev1_list = args.resources.split(',')
                         asyncio.run(config_obj.connectivity(device_list=dev1_list, wifi_config=config_dict))
 
             result_list = []
@@ -1492,7 +1535,7 @@ def main():
                 logging.error('Generic Tab is not available.\nAborting the test.')
                 exit(0)
 
-            zoom_automation.run(args.duration, args.server_ip, args.signin_email, args.signin_passwd, args.participants)
+            zoom_automation.run(args.duration, args.upstream_port, args.signin_email, args.signin_passwd, args.participants)
             zoom_automation.data_store.clear()
             zoom_automation.generate_report()
             logging.info("Test Completed Sucessfully")
