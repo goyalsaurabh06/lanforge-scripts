@@ -1394,7 +1394,7 @@ class DeviceConfig(Realm):
             filtered_profiles = {key: json_data[key] for key in data if key in json_data}
             return filtered_profiles or None
 
-    async def connectivity(self, config=None, disconnect=False, reboot=False, device_list=None, wifi_config=None, flag=0):
+    async def connectivity(self, config=None, disconnect=False, reboot=False, device_list=None, wifi_config=None, flag=0, upstream=None):
 
         # print("checking config")
         # print("=========================")
@@ -1445,7 +1445,7 @@ class DeviceConfig(Realm):
 
                     selected_laptop_devices.append(device_obj)
                 else:
-                    device_obj["server_ip"] = profiles[config[maped_group]].get("server_ip")
+                    device_obj["server_ip"] = upstream
                     selected_adb_devices.append(device_obj)
         elif device_list and wifi_config:
             # based on the basis of just device list
