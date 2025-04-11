@@ -47,33 +47,13 @@
     Example-8:
     Command Line Interface to run the Video Streaming test with wifi interface configuration to particular ssid
     python3 lf_interop_video_streaming.py --mgr 192.168.213.218 --url "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" --media_source hls
-    --media_quality 1080P --duration 1m  --debug --test_name video_streaming_test --ssid VINTROP_wpa2 --passwd lanforge --encryp wpa2 --server_ip 192.168.214.121 --config
+    --media_quality 1080P --duration 1m  --debug --test_name video_streaming_test --ssid VINTROP_wpa2 --passwd lanforge --encryp wpa2 --upstream_port 1.1.eth1 --config
 
     Example-9:
     Command Line Interface to run the Video Streaming with particular group of devices configured to particular ssid profile
     python3 lf_interop_video_streaming.py --mgr 192.168.213.218 --url "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" --media_source hls
-    --media_quality 1080P --duration 1m  --debug --test_name video_streaming_test --server_ip 192.168.214.121 --file_name laxmi_csv --group_name group1 --profile_name Openwpa2
+    --media_quality 1080P --duration 1m  --debug --test_name video_streaming_test --upstream_port 1.1.eth1 --file_name laxmi_csv --group_name group1 --profile_name Openwpa2
 
-    Command to Create Group Profile
-
-    python3 DeviceConfig.py --lanforge_ip 192.168.214.61 --create_file --create_group --file_name grp61
-
-    To add a new group to an existing group file
-
-    python3 DeviceConfig.py --lanforge_ip 192.168.214.61  --create_group --file_name grp61
-
-    Command to Create a CSV file
-
-    python3 DeviceConfig.py --create_csv --lanforge_ip 192.168.214.61 --csv_name demo.csv
-
-    python3 DeviceConfig.py --create_csv --lanforge_ip 192.168.214.219
-
-
-    Command to Create SSID profile
-
-    python3 DeviceConfig.py --lanforge_ip 192.168.214.61 --create_profile --profile_config 'Openx=<ssid=test_wpa2><passwd lanforge><enc wpa2><server_ip 192.168.214.61>'
-
-    python3 DeviceConfig.py --lanforge_ip 192.168.214.61 --create_profile --profile_config 'Openy=<ssid=test_wpa3><passwd lanforge><enc wpa3><server_ip 192.168.214.61>'
 
     SCRIPT CLASSIFICATION: Test
 
@@ -242,6 +222,21 @@ class VideoStreamingTest(Realm):
         logging.info("Phone List : {phone_data}".format(phone_data=self.phone_data))
 
         time.sleep(5)
+
+    def change_port_to_ip(self, upstream_port):
+        if upstream_port.count('.') != 3:
+            target_port_list = self.name_to_eid(upstream_port)
+            shelf, resource, port, _ = target_port_list
+            try:
+                target_port_ip = self.json_get(f'/port/{shelf}/{resource}/{port}?fields=ip')['interface']['ip']
+                upstream_port = target_port_ip
+            except BaseException:
+                logging.warning(f'The upstream port is not an ethernet port. Proceeding with the given upstream_port {upstream_port}.')
+            logging.info(f"Upstream port IP {upstream_port}")
+        else:
+            logging.info(f"Upstream port IP {upstream_port}")
+        
+        return upstream_port
 
     def convert_to_dict(self, input_list):
         """
@@ -1538,13 +1533,6 @@ class VideoStreamingTest(Realm):
         report.write_html()
         report.write_pdf()
 
-        # if self.dowebgui == True:
-        #     for i in range(len(self.data["end_time"])):
-        #         if self.data["status"][i] == "Run":
-        #             self.data["status"][i] = "Completed"
-        #     df = pd.DataFrame(self.data)
-        #     if self.dowebgui == True:
-        #         df.to_csv('{}/rb_datavalues.csv'.format(self.result_dir), index=False)
     def copy_reports_to_home_dir(self):
         curr_path = self.result_dir
         home_dir = os.path.expanduser("~")  # it returns the home directory [ base : home/username]
@@ -1559,6 +1547,122 @@ class VideoStreamingTest(Realm):
         if not os.path.exists(test_name_dir):
             os.makedirs(test_name_dir)
         shutil.copytree(curr_path, test_name_dir, dirs_exist_ok=True)
+    
+    def filter_iOS_devices(self, device_list):
+        modified_device_list = device_list
+        if type(device_list) is str:
+            modified_device_list = device_list.split(',')
+        filtered_list = []
+        for device in modified_device_list:
+            if device.count('.') == 1:
+                shelf, resource = device.split('.')
+            elif device.count('.') == 2:
+                shelf, resource, port = device.split('.')
+            elif device.count('.') == 0:
+                shelf, resource = 1, device
+            response_code, device_data = self.api_get('/resource/{}/{}'.format(shelf, resource))
+            if 'status' in device_data and device_data['status'] == 'NOT_FOUND':
+                logger.info("Device %s is not found.", device)
+                continue
+            device_data = device_data['resource']
+            # print(device_data)
+            if 'Apple' in device_data['hw version'] and (device_data['app-id'] != '') and (device_data['app-id'] != '0' or device_data['kernel'] == ''):
+                logger.info("%s is an iOS device. Currently, we do not support iOS devices.", device)
+            else:
+                filtered_list.append(device)
+        if type(device_list) is str:
+            filtered_list = ','.join(filtered_list)
+        self.device_list = filtered_list
+        return filtered_list
+    
+    def update_webui_json(self):
+        """
+        Update web GUI status based on available devices.
+        Returns True if execution should continue, False if it should exit.
+        """
+        resource_ids = list(map(int, self.resource_ids.split(',')))
+
+        # Initialize counters and lists
+        webui_android = 0
+        webui_windows = 0
+        webui_linux = 0
+        webui_mac = 0
+
+        self.webui_hostnames = []
+        self.webui_ostypes = []
+
+        try:
+            eid_data = self.json_get("ports?fields=alias,mac,mode,Parent Dev,rx-rate,tx-rate,ssid,signal,channel")
+        except KeyError:
+            logger.error("Error: 'interfaces' key not found in port data")
+            exit(1)
+
+        # Loop through interfaces
+        for alias in eid_data["interfaces"]:
+            for i in alias:
+                if int(i.split(".")[1]) > 1 and alias[i]["alias"] == 'wlan0':
+                    resource_hw_data = self.json_get("/resource/" + i.split(".")[0] + "/" + i.split(".")[1])
+                    hostname = resource_hw_data['resource']['user']
+                    device_type = resource_hw_data['resource']['device type']  # Use device type instead of hw version
+
+                    if int(resource_hw_data['resource']['eid'].split('.')[1]) in resource_ids:
+                        if device_type == "Windows":
+                            webui_windows += 1
+                            self.webui_ostypes.append("Windows")
+                        elif device_type == "Linux":
+                            webui_linux += 1
+                            self.webui_ostypes.append("Linux/Interop")
+                        elif device_type == "Mac":
+                            webui_mac += 1
+                            self.webui_ostypes.append("Mac OS")
+                        elif device_type == "Android":
+                            webui_android += 1
+                            self.webui_ostypes.append("Android")
+
+                        self.webui_hostnames.append(hostname)
+
+        #Final formatted data
+        self.webui_devices = f"Total({len(self.webui_ostypes)}) : A({webui_android}), W({webui_windows}),L({webui_linux}),M({webui_mac})"
+
+        self.hostname_os_combination = [
+            f"{hostname} ({os_type})"
+            for hostname, os_type in zip(self.webui_hostnames, self.webui_ostypes)
+        ]
+
+
+        if self.dowebgui:
+            if len(self.webui_hostnames) == 0:
+                logging.info("No device is available to run the test")
+                data_obj = {
+                    "status": "Stopped",
+                    "configuration_status": "configured"
+                }
+                self.updating_webui_runningjson(data_obj)
+                return False
+            else:
+                data_obj = {
+                    "configured_devices": self.webui_hostnames,
+                    "configuration_status": "configured",
+                    "no_of_devices": self.webui_devices,
+                    "device_list": self.hostname_os_combination,
+                }
+                self.updating_webui_runningjson(data_obj)
+        return True
+    
+    def updating_webui_runningjson(self, obj):
+        data = {}
+        file_path = self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host, self.test_name)
+        # Wait until the file exists
+        while not os.path.exists(file_path):
+            logging.info("Waiting for the Running Json file to be created")
+            time.sleep(1)
+        logging.info("Running Json file created")
+        with open(file_path, 'r') as file:
+            data = json.load(file)
+        for key in obj:
+            data[key] = obj[key]
+        with open(file_path, 'w') as file:
+            json.dump(data, file, indent=4)
 
 
 def main():
@@ -1625,38 +1729,17 @@ def main():
         Example-8:
         Command Line Interface to run the Video Streaming test with wifi interface configuration to particular ssid
         python3 lf_interop_video_streaming.py --mgr 192.168.213.218 --url "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" --media_source hls
-        --media_quality 1080P --duration 1m  --debug --test_name video_streaming_test --ssid VINTROP_wpa2 --passwd lanforge --encryp wpa2 --server_ip 192.168.214.121 --config
+        --media_quality 1080P --duration 1m  --debug --test_name video_streaming_test --ssid VINTROP_wpa2 --passwd lanforge --encryp wpa2 --upstream_port 1.1.eth1 --config
 
         Example-9:
         Command Line Interface to run the Video Streaming with particular group of devices configured to particular ssid profile
         python3 lf_interop_video_streaming.py --mgr 192.168.213.218 --url "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" --media_source hls
-        --media_quality 1080P --duration 1m  --debug --test_name video_streaming_test --server_ip 192.168.214.121 --file_name laxmi_csv --group_name group1 --profile_name Openwpa2
+        --media_quality 1080P --duration 1m  --debug --test_name video_streaming_test --upstream_port 1.1.eth1 --file_name laxmi_csv --group_name group1 --profile_name Openwpa2
 
         Example-10:
         Command Line Interface to run the Video Streaming with expected pass fail value
         python3 lf_interop_video_streaming.py --mgr 192.168.214.219 --url "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" --media_source hls
         --media_quality 1080P --duration 1m --device_list 1.10,1.12 --debug --test_name video_streaming_test --expected_passfail_value 5
-
-        Command to Create Group Profile
-
-        python3 DeviceConfig.py --lanforge_ip 192.168.214.61 --create_file --create_group --file_name grp61
-
-        To add a new group to an existing group file
-
-        python3 DeviceConfig.py --lanforge_ip 192.168.214.61  --create_group --file_name grp61
-
-        Command to Create a CSV file
-
-        python3 DeviceConfig.py --create_csv --lanforge_ip 192.168.214.61 --csv_name demo.csv
-
-        python3 DeviceConfig.py --create_csv --lanforge_ip 192.168.214.219
-
-
-        Command to Create SSID profile
-
-        python3 DeviceConfig.py --lanforge_ip 192.168.214.61 --create_profile --profile_config 'Openx=<ssid=test_wpa2><passwd lanforge><enc wpa2><server_ip 192.168.214.61>'
-
-        python3 DeviceConfig.py --lanforge_ip 192.168.214.61 --create_profile --profile_config 'Openy=<ssid=test_wpa3><passwd lanforge><enc wpa3><server_ip 192.168.214.61>'
 
         SCRIPT CLASSIFICATION: Test
 
@@ -1733,7 +1816,7 @@ def main():
     parser.add_argument("--client_cert", type=str, default='NA', help='Specify the client certificate file name')
     parser.add_argument("--pk_passwd", type=str, default='NA', help='Specify the password for the private key')
     parser.add_argument("--pac_file", type=str, default='NA', help='Specify the pac file name')
-    parser.add_argument("--server_ip", type=str, default='NA', help='Specify the server ip address')
+    parser.add_argument("--upstream_port", type=str, default='NA', help='Specify the Upstream Port')
     parser.add_argument('--expected_passfail_value', help='Enter the expected number of urls ', default=None)
     parser.add_argument('--csv_name', type=str, help='Enter the csv name to store expected values', default=None)
     parser.add_argument("--wait_time", type=int, help="Specify the time for configuration", default=60)
@@ -1782,7 +1865,6 @@ def main():
 
     logger = logging.getLogger(__name__)
 
-    # url = args.url.replace("http://", "").replace("https://", "")
 
     if args.expected_passfail_value is not None and args.device_csv_name is not None:
         logging.error("Specify either expected_passfail_value or device_csv_name")
@@ -1824,6 +1906,9 @@ def main():
                              precleanup=args.precleanup, pass_fail_val=args.expected_passfail_value, csv_name=args.device_csv_name,
                              selected_groups=selected_groups, selected_profiles=selected_profiles, config=args.config)
 
+    args.upstream_port = obj.change_port_to_ip(args.upstream_port)
+    if args.file_name:
+        args.file_name = args.file_name.removesuffix('.csv')
     config_obj = DeviceConfig.DeviceConfig(lanforge_ip=args.host, file_name=args.file_name)
     if not args.expected_passfail_value and args.device_csv_name is None:
         config_obj.device_csv_file(csv_name="device.csv")
@@ -1835,7 +1920,7 @@ def main():
         for i in range(len(selected_groups)):
             config_devices[selected_groups[i]] = selected_profiles[i]
         config_obj.initiate_group()
-        asyncio.run(config_obj.connectivity(config_devices))
+        asyncio.run(config_obj.connectivity(config_devices, upstream = args.upstream_port))
 
         adbresponse = config_obj.adb_obj.get_devices()
         resource_manager = config_obj.laptop_obj.get_devices()
@@ -1857,6 +1942,7 @@ def main():
                         elif j in all_res.keys():
                             eid_list.append(all_res[j])
         args.device_list = ",".join(id for id in eid_list)
+        print("checking the value of args.device_list in groups and profiles",args.device_list)
     else:
         config_dict = {
             'ssid': args.ssid,
@@ -1879,7 +1965,7 @@ def main():
             'client_cert': args.client_cert,
             'pk_passwd': args.pk_passwd,
             'pac_file': args.pac_file,
-            'server_ip': args.server_ip
+            'server_ip': args.upstream_port
         }
         if args.device_list:
             all_devices = config_obj.get_all_devices()
@@ -1888,20 +1974,53 @@ def main():
                 if args.config:
                     asyncio.run(config_obj.connectivity(device_list=dev_list, wifi_config=config_dict))
         else:
-            all_devices = config_obj.get_all_devices()
-            device_list = []
-            for device in all_devices:
-                if device["type"] != 'laptop':
-                    device_list.append(device["shelf"] + '.' + device["resource"] + " " + device["serial"])
-                elif device["type"] == 'laptop':
-                    device_list.append(device["shelf"] + '.' + device["resource"] + " " + device["hostname"])
-            print("Available devices:")
-            for device in device_list:
-                print(device)
-            args.device_list = input("Enter the desired resources to run the test:")
-            dev1_list = args.device_list.split(',')
             if args.config:
+                all_devices = config_obj.get_all_devices()
+                device_list = []
+                for device in all_devices:
+                    if device["type"] != 'laptop':
+                        device_list.append(device["shelf"] + '.' + device["resource"] + " " + device["serial"])
+                    elif device["type"] == 'laptop':
+                        device_list.append(device["shelf"] + '.' + device["resource"] + " " + device["hostname"])
+                print("Available devices:")
+                for device in device_list:
+                    print(device)
+                args.device_list = input("Enter the desired resources to run the test:")
+                dev1_list = args.device_list.split(',')
                 asyncio.run(config_obj.connectivity(device_list=dev1_list, wifi_config=config_dict))
+            else:
+                obj.android_devices = obj.devices.get_devices(only_androids=True)
+                selected_devices, report_labels, selected_macs = obj.devices.query_user()
+                if not selected_devices:
+                    logging.info("devices donot exist..!!")
+                    return
+
+                obj.android_list = selected_devices
+                # Verify if all resource IDs are valid for Android devices
+                if obj.android_list:
+                    resource_ids = ",".join([item.split(".")[1] for item in obj.android_list])
+
+                    num_list = list(map(int, resource_ids.split(',')))
+
+                    # Sort the list
+                    num_list.sort()
+
+                    # Join the sorted list back into a string
+                    sorted_string = ','.join(map(str, num_list))
+
+                    obj.resource_ids = sorted_string
+                    resource_ids1 = list(map(int, sorted_string.split(',')))
+                    modified_list = list(map(lambda item: int(item.split('.')[1]), obj.android_devices))
+                    if not all(x in modified_list for x in resource_ids1):
+                        logging.info("Verify Resource ids, as few are invalid...!!")
+                        exit()
+                    resource_ids_sm = obj.resource_ids
+                    resource_list = resource_ids_sm.split(',')
+                    resource_set = set(resource_list)
+                    resource_list_sorted = sorted(resource_set)
+                    resource_ids_generated = ','.join(resource_list_sorted)
+                    available_resources = list(resource_set)
+
 
     resource_ids_sm = []
     resource_set = set()
@@ -1909,20 +2028,15 @@ def main():
     resource_ids_generated = ""
 
     if args.dowebgui:
-        # Split resource IDs from args into a list
         resource_ids_sm = args.device_list.split(',')
-        # Convert list to set to remove duplicates
         resource_set = set(resource_ids_sm)
-        # Sort the set to maintain order
         resource_list = sorted(resource_set)
-        # Generate a comma-separated string of sorted resource IDs
         resource_ids_generated = ','.join(resource_list)
         resource_list_sorted = resource_list
-        # Query devices based on the generated resource IDs
         selected_devices, report_labels, selected_macs = obj.devices.query_user(dowebgui=args.dowebgui, device_list=resource_ids_generated)
-        # Modify obj.resource_ids to include only the second part of each ID (after '.')
         obj.resource_ids = ",".join(id.split(".")[1] for id in args.device_list.split(","))
         available_resources = [int(num) for num in obj.resource_ids.split(',')]
+        print("checking the available resources", available_resources)
     else:
         obj.android_devices = obj.devices.get_devices(only_androids=True)
         if args.device_list:
@@ -1933,55 +2047,17 @@ def main():
             obj.resource_ids = ','.join(map(str, resource_ids))
             # Create a set of Android device IDs (e.g., "resource.123")
             android_device_ids = set(obj.android_devices)
-            # print("checking the values of android devices", android_device_ids)
-            # print("checking device list", device_list)
-            # Extract only the '1.1' part
             android_device_short_ids = {device.split('.')[0] + '.' + device.split('.')[1] for device in android_device_ids}
-            # print("Short android device IDs:", android_device_short_ids)
-            # Filter device list to include only valid Android devices
             obj.android_list = [dev for dev in android_device_short_ids if dev in device_list]
             # Log any devices in the list that are not available
             for dev in device_list:
                 if dev not in android_device_short_ids:
                     logger.info(f"{dev} device is not available")
-
             # Final list of available Android resource IDs
             available_resources = sorted(set(int(dev.split('.')[1]) for dev in obj.android_list))
+    if len(available_resources) != 0:
+        available_resources = obj.filter_iOS_devices(available_resources)
 
-        else:
-            # Query user to select devices if no resource IDs are provided
-            selected_devices, report_labels, selected_macs = obj.devices.query_user()
-            # Handle cases where no devices are selected
-
-            if not selected_devices:
-                logging.info("devices donot exist..!!")
-                return
-
-            obj.android_list = selected_devices
-            # Verify if all resource IDs are valid for Android devices
-            if obj.android_list:
-                resource_ids = ",".join([item.split(".")[1] for item in obj.android_list])
-
-                num_list = list(map(int, resource_ids.split(',')))
-
-                # Sort the list
-                num_list.sort()
-
-                # Join the sorted list back into a string
-                sorted_string = ','.join(map(str, num_list))
-
-                obj.resource_ids = sorted_string
-                resource_ids1 = list(map(int, sorted_string.split(',')))
-                modified_list = list(map(lambda item: int(item.split('.')[1]), obj.android_devices))
-                if not all(x in modified_list for x in resource_ids1):
-                    logging.info("Verify Resource ids, as few are invalid...!!")
-                    exit()
-                resource_ids_sm = obj.resource_ids
-                resource_list = resource_ids_sm.split(',')
-                resource_set = set(resource_list)
-                resource_list_sorted = sorted(resource_set)
-                resource_ids_generated = ','.join(resource_list_sorted)
-                available_resources = list(resource_set)
     if len(available_resources) == 0:
         logger.info("No devices which are selected are available in the lanforge")
         exit()
@@ -2009,6 +2085,8 @@ def main():
         elif obj.incremental[-1] < len(available_resources) and len(obj.incremental) > 1:
             logging.info("Exiting the program as the last incremental value must be equal to selected devices")
             exit()
+
+    obj.update_webui_json()
 
     # To create cx for selected devices
     obj.build()
@@ -2219,9 +2297,6 @@ def main():
             "Media Source": media_source.upper(),
             "Media Quality": media_quality
         }
-        # if obj.incremental:
-        #     if len(incremental_capacity_list_values) != len(available_resources):
-        #         test_setup_info['Duration per Iteration (min)']= str(test_setup_info_duration_per_iteration)
         test_setup_info['Incremental Values'] = test_setup_info_incremental_values
         test_setup_info['Total Duration (min)'] = str(test_setup_info_total_duration)
 
@@ -2239,10 +2314,6 @@ def main():
 
     if args.dowebgui:
         obj.copy_reports_to_home_dir()
-
-    # Clean up resources based on operating system types
-    # if args.postcleanup==True:
-    #     obj.cleanup(os_types_dict)
 
 
 if __name__ == '__main__':
