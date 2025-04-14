@@ -7,7 +7,7 @@
     Command Line Interface to run Zoom with specified duration:
     python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.214.219" --signin_email "demo@gmail.com" --signin_passwd "Demo@123" --participants 3 --audio --video --upstream_port 1.1.eth1
 
-
+    In above CLI whatever Device we given first will be taken as host for the test
 
     EXAMPLE-2:
     Command Line Interface to run Zoom on multiple devices:
@@ -16,12 +16,12 @@
 
     Example-3:
     Command Line Interface to run Zoom on multiple devices with Device Configuration
-    python3 lf_interop_zoom.py --duration 1 --lanforge_ip "192.168.204.74" --signin_email "lnawscloud@gmail.com" --signin_passwd "Demo@10203000" --participants 2 --audio --video
+    python3 lf_interop_zoom.py --duration 1 --lanforge_ip "192.168.204.74" --signin_email "Demo@gmail.com" --signin_passwd "Demo@10203000" --participants 2 --audio --video
     --upstream_port 1.1.eth1 --zoom_host 1.95 --resources 1.400,1.360 --ssid NETGEAR_2G_wpa2 --passwd Password@123 --encryp wpa2 --config
 
     Example-4:
     Command Line Interface to run Zoom on multiple devices with Groups and Profiles
-    python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.204.74" --signin_email "lnawscloud@gmail.com" --signin_passwd "Demo@10203000" --participants 2 --audio --video
+    python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.204.74" --signin_email "Demo@gmail.com" --signin_passwd "Demo@10203000" --participants 2 --audio --video
     --wait_time 30  --group_name group1,group2 --profile_name netgear5g,netgear2g --file_name grplaptops.csv --zoom_host 1.95 --upstream_port 1.1.eth1
 
     NOTES:
@@ -575,7 +575,7 @@ class ZoomAutomation(Realm):
             exit(0)
 
         # # Add real station data to `self.real_sta_data_dict`
-        self.real_sta_list = self.filter_iOS_devices(self.real_sta_list)
+        self.real_sta_list = self.filter_ios_devices(self.real_sta_list)
         for sta_name in self.real_sta_list:
             if sta_name not in real_device_obj.devices_data:
                 self.real_sta_list.remove(sta_name)
@@ -602,7 +602,7 @@ class ZoomAutomation(Realm):
                 self.linux = self.linux + 1
 
         # Return the sorted list of selected real station names
-        
+
         return self.real_sta_list
 
     def check_tab_exists(self):
@@ -663,7 +663,7 @@ class ZoomAutomation(Realm):
 
         with open(file_path, 'w') as file:
             json.dump(data, file, indent=4)
-    
+
     def change_port_to_ip(self, upstream_port):
         if upstream_port.count('.') != 3:
             target_port_list = self.name_to_eid(upstream_port)
@@ -676,36 +676,54 @@ class ZoomAutomation(Realm):
             logging.info(f"Upstream port IP {upstream_port}")
         else:
             logging.info(f"Upstream port IP {upstream_port}")
-        
+
         return upstream_port
-    
-    def filter_iOS_devices(self, device_list):
+
+    def filter_ios_devices(self, device_list):
         modified_device_list = device_list
-        if type(device_list) is str:
+        if isinstance(device_list, str):
             modified_device_list = device_list.split(',')
+
         filtered_list = []
+
         for device in modified_device_list:
-            if device.count('.') == 1:
-                shelf, resource = device.split('.')
-            elif device.count('.') == 2:
-                shelf, resource, port = device.split('.')
-            elif device.count('.') == 0:
-                shelf, resource = 1, device
-            response_code, device_data = self.api_get('/resource/{}/{}'.format(shelf, resource))
-            if 'status' in device_data and device_data['status'] == 'NOT_FOUND':
-                logger.info("Device %s is not found.", device)
+            device = str(device).strip()
+            try:
+                if device.count('.') == 1:
+                    shelf, resource = device.split('.')
+                elif device.count('.') == 2:
+                    shelf, resource, port = device.split('.')
+                elif device.count('.') == 0:
+                    shelf, resource = 1, device
+                else:
+                    logger.warning("Invalid device format: %s", device)
+                    continue
+
+                device_data_resp = self.json_get(f'/resource/{shelf}/{resource}')
+                if not device_data_resp or 'resource' not in device_data_resp:
+                    logger.warning("Device data not found for %s", device)
+                    continue
+
+                device_data = device_data_resp['resource']
+                hw_version = device_data.get('hw version', '')
+                app_id = device_data.get('app-id', '')
+                kernel = device_data.get('kernel', '')
+
+                if 'Apple' in hw_version and app_id != '' and (app_id != '0' or kernel == ''):
+                    logger.info("%s is an iOS device. Currently, we do not support iOS devices.", device)
+                else:
+                    filtered_list.append(device)
+
+            except Exception as e:
+                logger.exception(f"Error processing device {device}: {e}")
                 continue
-            device_data = device_data['resource']
-            # print(device_data)
-            if 'Apple' in device_data['hw version'] and (device_data['app-id'] != '') and (device_data['app-id'] != '0' or device_data['kernel'] == ''):
-                logger.info("%s is an iOS device. Currently, we do not support iOS devices.", device)
-            else:
-                filtered_list.append(device)
-        if type(device_list) is str:
+
+        if isinstance(device_list, str):
             filtered_list = ','.join(filtered_list)
+
         self.device_list = filtered_list
         return filtered_list
-    
+
     def generate_report(self):
         report = lf_report(_output_pdf='zoom_call_report.pdf',
                            _output_html='zoom_call_report.html',
@@ -1013,7 +1031,6 @@ class ZoomAutomation(Realm):
 
         report.set_table_title("Test Devices:")
         report.build_table_title()
-
         device_details = pd.DataFrame({
             'Hostname': self.real_sta_hostname,
             'OS Type': self.real_sta_os_type,
@@ -1251,6 +1268,8 @@ def main():
             python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.214.219" --signin_email "demo@gmail.com" --signin_passwd "Demo@123" --participants 3
             --audio --video --upstream_port 1.1.eth1
 
+            NOTE : In above CLI whatever Device we given first will be taken as host for the test
+
 
             EXAMPLE-2:
             Command Line Interface to run Zoom on multiple devices:
@@ -1259,12 +1278,12 @@ def main():
 
             Example-3:
             Command Line Interface to run Zoom on multiple devices with Device Configuration
-            python3 lf_interop_zoom.py --duration 1 --lanforge_ip "192.168.204.74" --signin_email "lnawscloud@gmail.com" --signin_passwd "Demo@10203000" --participants 2 --audio --video
+            python3 lf_interop_zoom.py --duration 1 --lanforge_ip "192.168.204.74" --signin_email "demo@gmail.com" --signin_passwd "Demo@10203000" --participants 2 --audio --video
             --upstream_port 1.1.eth1 --zoom_host 1.95 --resources 1.400,1.360 --ssid NETGEAR_2G_wpa2 --passwd Password@123 --encryp wpa2 --config
 
             Example-4:
             Command Line Interface to run Zoom on multiple devices with Groups and Profiles
-            python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.204.74" --signin_email "lnawscloud@gmail.com" --signin_passwd "Demo@10203000" --participants 2 --audio --video
+            python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.204.74" --signin_email "demo@gmail.com" --signin_passwd "Demo@10203000" --participants 2 --audio --video
             --wait_time 30  --group_name group1,group2 --profile_name netgear5g,netgear2g --file_name grplaptops.csv --zoom_host 1.95 --upstream_port 1.1.eth1
 
             ''')
@@ -1546,8 +1565,8 @@ def main():
         if not ('--help' in sys.argv or '-h' in sys.argv):
             if args.do_webUI:
                 try:
-                    #url = f"http://{args.lanforge_ip}:5454/update_status_yt"
-                    url = "http://localhost:5454/update_status_yt"
+                    url = f"http://{args.lanforge_ip}:5454/update_status_yt"
+                    # url = "http://localhost:5454/update_status_yt"
                     headers = {
                         'Content-Type': 'application/json',
                     }
