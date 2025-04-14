@@ -1550,30 +1550,50 @@ class VideoStreamingTest(Realm):
     
     def filter_iOS_devices(self, device_list):
         modified_device_list = device_list
-        if type(device_list) is str:
+        if isinstance(device_list, str):
             modified_device_list = device_list.split(',')
+
         filtered_list = []
+
         for device in modified_device_list:
-            if device.count('.') == 1:
-                shelf, resource = device.split('.')
-            elif device.count('.') == 2:
-                shelf, resource, port = device.split('.')
-            elif device.count('.') == 0:
-                shelf, resource = 1, device
-            response_code, device_data = self.api_get('/resource/{}/{}'.format(shelf, resource))
-            if 'status' in device_data and device_data['status'] == 'NOT_FOUND':
-                logger.info("Device %s is not found.", device)
+            device = str(device).strip()
+            try:
+                if device.count('.') == 1:
+                    shelf, resource = device.split('.')
+                elif device.count('.') == 2:
+                    shelf, resource, port = device.split('.')
+                elif device.count('.') == 0:
+                    shelf, resource = 1, device
+                else:
+                    logger.warning("Invalid device format: %s", device)
+                    continue
+
+                device_data_resp = self.json_get(f'/resource/{shelf}/{resource}')
+                if not device_data_resp or 'resource' not in device_data_resp:
+                    logger.warning("Device data not found for %s", device)
+                    continue
+
+                device_data = device_data_resp['resource']
+                hw_version = device_data.get('hw version', '')
+                app_id = device_data.get('app-id', '')
+                kernel = device_data.get('kernel', '')
+
+                if 'Apple' in hw_version and app_id != '' and (app_id != '0' or kernel == ''):
+                    logger.info("%s is an iOS device. Currently, we do not support iOS devices.", device)
+                else:
+                    device = int(device)
+                    filtered_list.append(device)
+
+            except Exception as e:
+                logger.exception(f"Error processing device {device}: {e}")
                 continue
-            device_data = device_data['resource']
-            # print(device_data)
-            if 'Apple' in device_data['hw version'] and (device_data['app-id'] != '') and (device_data['app-id'] != '0' or device_data['kernel'] == ''):
-                logger.info("%s is an iOS device. Currently, we do not support iOS devices.", device)
-            else:
-                filtered_list.append(device)
-        if type(device_list) is str:
+
+        if isinstance(device_list, str):
             filtered_list = ','.join(filtered_list)
+
         self.device_list = filtered_list
         return filtered_list
+
     
     def update_webui_json(self):
         """
@@ -1967,6 +1987,8 @@ def main():
             'pac_file': args.pac_file,
             'server_ip': args.upstream_port
         }
+        logging.warning("============================================")
+        logging.warning("Network configuration Values %s", config_dict)
         if args.device_list:
             all_devices = config_obj.get_all_devices()
             if args.group_name is None and args.file_name is None and args.profile_name is None:
