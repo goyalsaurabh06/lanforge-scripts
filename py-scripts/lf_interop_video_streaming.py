@@ -235,7 +235,7 @@ class VideoStreamingTest(Realm):
             logging.info(f"Upstream port IP {upstream_port}")
         else:
             logging.info(f"Upstream port IP {upstream_port}")
-        
+
         return upstream_port
 
     def convert_to_dict(self, input_list):
@@ -1547,8 +1547,8 @@ class VideoStreamingTest(Realm):
         if not os.path.exists(test_name_dir):
             os.makedirs(test_name_dir)
         shutil.copytree(curr_path, test_name_dir, dirs_exist_ok=True)
-    
-    def filter_iOS_devices(self, device_list):
+
+    def filter_ios_devices(self, device_list):
         modified_device_list = device_list
         if isinstance(device_list, str):
             modified_device_list = device_list.split(',')
@@ -1594,7 +1594,6 @@ class VideoStreamingTest(Realm):
         self.device_list = filtered_list
         return filtered_list
 
-    
     def update_webui_json(self):
         """
         Update web GUI status based on available devices.
@@ -1641,14 +1640,13 @@ class VideoStreamingTest(Realm):
 
                         self.webui_hostnames.append(hostname)
 
-        #Final formatted data
+        # Final formatted data
         self.webui_devices = f"Total({len(self.webui_ostypes)}) : A({webui_android}), W({webui_windows}),L({webui_linux}),M({webui_mac})"
 
         self.hostname_os_combination = [
             f"{hostname} ({os_type})"
             for hostname, os_type in zip(self.webui_hostnames, self.webui_ostypes)
         ]
-
 
         if self.dowebgui:
             if len(self.webui_hostnames) == 0:
@@ -1668,7 +1666,7 @@ class VideoStreamingTest(Realm):
                 }
                 self.updating_webui_runningjson(data_obj)
         return True
-    
+
     def updating_webui_runningjson(self, obj):
         data = {}
         file_path = self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host, self.test_name)
@@ -1885,7 +1883,6 @@ def main():
 
     logger = logging.getLogger(__name__)
 
-
     if args.expected_passfail_value is not None and args.device_csv_name is not None:
         logging.error("Specify either expected_passfail_value or device_csv_name")
         exit(1)
@@ -1940,7 +1937,7 @@ def main():
         for i in range(len(selected_groups)):
             config_devices[selected_groups[i]] = selected_profiles[i]
         config_obj.initiate_group()
-        asyncio.run(config_obj.connectivity(config_devices, upstream = args.upstream_port))
+        asyncio.run(config_obj.connectivity(config_devices, upstream=args.upstream_port))
 
         adbresponse = config_obj.adb_obj.get_devices()
         resource_manager = config_obj.laptop_obj.get_devices()
@@ -1962,7 +1959,6 @@ def main():
                         elif j in all_res.keys():
                             eid_list.append(all_res[j])
         args.device_list = ",".join(id for id in eid_list)
-        print("checking the value of args.device_list in groups and profiles",args.device_list)
     else:
         config_dict = {
             'ssid': args.ssid,
@@ -2043,7 +2039,6 @@ def main():
                     resource_ids_generated = ','.join(resource_list_sorted)
                     available_resources = list(resource_set)
 
-
     resource_ids_sm = []
     resource_set = set()
     resource_list = []
@@ -2058,7 +2053,6 @@ def main():
         selected_devices, report_labels, selected_macs = obj.devices.query_user(dowebgui=args.dowebgui, device_list=resource_ids_generated)
         obj.resource_ids = ",".join(id.split(".")[1] for id in args.device_list.split(","))
         available_resources = [int(num) for num in obj.resource_ids.split(',')]
-        print("checking the available resources", available_resources)
     else:
         obj.android_devices = obj.devices.get_devices(only_androids=True)
         if args.device_list:
@@ -2078,7 +2072,7 @@ def main():
             # Final list of available Android resource IDs
             available_resources = sorted(set(int(dev.split('.')[1]) for dev in obj.android_list))
     if len(available_resources) != 0:
-        available_resources = obj.filter_iOS_devices(available_resources)
+        available_resources = obj.filter_ios_devices(available_resources)
 
     if len(available_resources) == 0:
         logger.info("No devices which are selected are available in the lanforge")
