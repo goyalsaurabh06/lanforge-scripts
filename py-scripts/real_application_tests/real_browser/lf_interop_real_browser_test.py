@@ -1760,7 +1760,7 @@ class RealBrowserTest(Realm):
                     temp_eid = key.split(".")
                     comb_eid = temp_eid[0] + "." + temp_eid[1]
                     if (comb_eid == eid) and (value["parent dev"] != "") and (not value["down"]) and (value["ip"] != "0.0.0.0"):
-                        logging.info("checking whether we are able to fetch device data from port manager")
+                        #logging.info("checking whether we are able to fetch device data from port manager")
                         mac_data.append(value.get("mac", 'None'))
                         channel_data.append(value.get("channel", 'None'))
                         signal_data.append(value.get("signal", 'None'))
@@ -1786,28 +1786,47 @@ class RealBrowserTest(Realm):
     
     def filter_iOS_devices(self, device_list):
         modified_device_list = device_list
-        if type(device_list) is str:
+        if isinstance(device_list, str):
             modified_device_list = device_list.split(',')
+
         filtered_list = []
+
         for device in modified_device_list:
-            if device.count('.') == 1:
-                shelf, resource = device.split('.')
-            elif device.count('.') == 2:
-                shelf, resource, port = device.split('.')
-            elif device.count('.') == 0:
-                shelf, resource = 1, device
-            response_code, device_data = self.api_get('/resource/{}/{}'.format(shelf, resource))
-            if 'status' in device_data and device_data['status'] == 'NOT_FOUND':
-                logger.info("Device %s is not found.", device)
+            device = str(device).strip()
+            try:
+                if device.count('.') == 1:
+                    shelf, resource = device.split('.')
+                elif device.count('.') == 2:
+                    shelf, resource, port = device.split('.')
+                elif device.count('.') == 0:
+                    shelf, resource = 1, device
+                else:
+                    logger.warning("Invalid device format: %s", device)
+                    continue
+
+                device_data_resp = self.json_get(f'/resource/{shelf}/{resource}')
+                if not device_data_resp or 'resource' not in device_data_resp:
+                    logger.warning("Device data not found for %s", device)
+                    continue
+
+                device_data = device_data_resp['resource']
+                hw_version = device_data.get('hw version', '')
+                app_id = device_data.get('app-id', '')
+                kernel = device_data.get('kernel', '')
+
+                if 'Apple' in hw_version and app_id != '' and (app_id != '0' or kernel == ''):
+                    logger.info("%s is an iOS device. Currently, we do not support iOS devices.", device)
+                else:
+                    device = int(device)
+                    filtered_list.append(device)
+
+            except Exception as e:
+                logger.exception(f"Error processing device {device}: {e}")
                 continue
-            device_data = device_data['resource']
-            # print(device_data)
-            if 'Apple' in device_data['hw version'] and (device_data['app-id'] != '') and (device_data['app-id'] != '0' or device_data['kernel'] == ''):
-                logger.info("%s is an iOS device. Currently, we do not support iOS devices.", device)
-            else:
-                filtered_list.append(device)
-        if type(device_list) is str:
+
+        if isinstance(device_list, str):
             filtered_list = ','.join(filtered_list)
+
         self.device_list = filtered_list
         return filtered_list
 
@@ -1924,8 +1943,8 @@ def main():
         parser.add_argument('--webgui_incremental', '--incremental_capacity', help="Specify the incremental values <1,2,3..>", dest='webgui_incremental', type=str)
         parser.add_argument('--incremental', help="to add incremental capacity to run the test", action='store_true')
         optional.add_argument('--no_laptops', help="run the test without laptop devices", action='store_false')
-        parser.add_argument('--postcleanup', help="Cleanup the cross connections after test is stopped", action='store_true')
-        parser.add_argument('--precleanup', help="Cleanup the cross connections before test is started", action='store_true')
+        parser.add_argument('--postcleanup', help="Cleanup the cross connections after test is stopped", action='store_true',default=True)
+        parser.add_argument('--precleanup', help="Cleanup the cross connections before test is started", action='store_true',default=True)
         parser.add_argument('--file_name', type=str, help='specify the file name')
         parser.add_argument('--group_name', type=str, help='specify the group name')
         parser.add_argument('--profile_name', type=str, help='specify the profile name')
