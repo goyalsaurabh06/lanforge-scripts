@@ -238,7 +238,9 @@ class Youtube(Realm):
             logging.info(f"Upstream port IP {upstream_port}")
         else:
             logging.info(f"Upstream port IP {upstream_port}")
-        
+
+        self.upstream_port = upstream_port
+
         return upstream_port
 
     def check_tab_exists(self):
@@ -430,7 +432,7 @@ class Youtube(Realm):
             logger.error('There are no real devices in this testbed. Aborting test')
             exit(0)
         real_devices.get_devices()
-        self.real_sta_list = self.filter_iOS_devices(self.real_sta_list)
+        self.real_sta_list = self.filter_ios_devices(self.real_sta_list)
         for sta_name in self.real_sta_list:
             if sta_name not in real_devices.devices_data:
                 logger.error(f"Real station '{sta_name}' not in devices data, ignoring it from testing")
@@ -457,7 +459,7 @@ class Youtube(Realm):
                 self.linux = self.linux + 1
             elif self.real_sta_os_types[i] == 'macos':
                 self.mac = self.mac + 1
-        
+
         return self.real_sta_list
 
     def start_generic(self):
@@ -621,8 +623,8 @@ class Youtube(Realm):
 
     def stop_test_yt(self,):
         try:
-            #url = f"http://{self.host}:5454/update_status_yt"
-            url = "http://localhost:5454/update_status_yt"
+            url = f"http://{self.host}:5454/update_status_yt"
+            # url = "http://localhost:5454/update_status_yt"
             headers = {
                 'Content-Type': 'application/json',
             }
@@ -939,33 +941,51 @@ class Youtube(Realm):
         self.report.write_html()
         self.report.write_pdf()
 
-    def filter_iOS_devices(self, device_list):
+    def filter_ios_devices(self, device_list):
         modified_device_list = device_list
-        if type(device_list) is str:
+        if isinstance(device_list, str):
             modified_device_list = device_list.split(',')
+
         filtered_list = []
+
         for device in modified_device_list:
-            if device.count('.') == 1:
-                shelf, resource = device.split('.')
-            elif device.count('.') == 2:
-                shelf, resource, port = device.split('.')
-            elif device.count('.') == 0:
-                shelf, resource = 1, device
-            response_code, device_data = self.api_get('/resource/{}/{}'.format(shelf, resource))
-            if 'status' in device_data and device_data['status'] == 'NOT_FOUND':
-                logger.info("Device %s is not found.", device)
+            device = str(device).strip()
+            try:
+                if device.count('.') == 1:
+                    shelf, resource = device.split('.')
+                elif device.count('.') == 2:
+                    shelf, resource, port = device.split('.')
+                elif device.count('.') == 0:
+                    shelf, resource = 1, device
+                else:
+                    logger.warning("Invalid device format: %s", device)
+                    continue
+
+                device_data_resp = self.json_get(f'/resource/{shelf}/{resource}')
+                if not device_data_resp or 'resource' not in device_data_resp:
+                    logger.warning("Device data not found for %s", device)
+                    continue
+
+                device_data = device_data_resp['resource']
+                hw_version = device_data.get('hw version', '')
+                app_id = device_data.get('app-id', '')
+                kernel = device_data.get('kernel', '')
+
+                if 'Apple' in hw_version and app_id != '' and (app_id != '0' or kernel == ''):
+                    logger.info("%s is an iOS device. Currently, we do not support iOS devices.", device)
+                else:
+                    filtered_list.append(device)
+
+            except Exception as e:
+                logger.exception(f"Error processing device {device}: {e}")
                 continue
-            device_data = device_data['resource']
-            # print(device_data)
-            if 'Apple' in device_data['hw version'] and (device_data['app-id'] != '') and (device_data['app-id'] != '0' or device_data['kernel'] == ''):
-                logger.info("%s is an iOS device. Currently, we do not support iOS devices.", device)
-            else:
-                filtered_list.append(device)
-        if type(device_list) is str:
+
+        if isinstance(device_list, str):
             filtered_list = ','.join(filtered_list)
+
         self.device_list = filtered_list
         return filtered_list
-    
+
     def check_gen_cx(self):
         try:
 
@@ -1047,7 +1067,7 @@ def main():
         # Add required arguments
         required.add_argument('--mgr', type=str, help="hostname where LANforge GUI is running", required=True)
         required.add_argument('--url', type=str, help='youtube url', required=True)
-        required.add_argument('--duration', type=int, help='duration to run the test in sec', required=True)
+        required.add_argument('--duration', type=int, help='duration to run the test in min', required=True)
         required.add_argument('--ap_name', type=str, default="TIP", help="Name of the AP in which we run the test")
         required.add_argument('--sec', type=str, default="wpa2", help="security type used")
         required.add_argument('--band', type=str, default="5GHZ", help="Name of the Frequency band used")
@@ -1094,14 +1114,13 @@ def main():
         parser.add_argument("--client_cert", type=str, default='NA', help='Specify the client certificate file name')
         parser.add_argument("--pk_passwd", type=str, default='NA', help='Specify the password for the private key')
         parser.add_argument("--pac_file", type=str, default='NA', help='Specify the pac file name')
-        parser.add_argument("--upstream_port", type=str, default='NA', help='Specify the Upstream Port',required=True)
+        parser.add_argument("--upstream_port", type=str, default='NA', help='Specify the Upstream Port', required=True)
         parser.add_argument('--help_summary', help='Show summary of what this script does', default=None)
         parser.add_argument("--expected_passfail_value", help="Specify the expected urlcount value for pass/fail")
         parser.add_argument("--device_csv_name", type=str, help="Specify the device csv name for pass/fail", default=None)
         parser.add_argument('--config', action='store_true', help='specify this flag whether to config devices or not')
 
         args = parser.parse_args()
-
         if args.help_summary:
             logging.info(help_summary)
             exit(0)
@@ -1201,7 +1220,7 @@ def main():
                 security=args.encryp,
                 band=args.band,
                 test_name=args.test_name,
-                upstream_port = args.upstream_port,
+                upstream_port=args.upstream_port,
                 config=args.config,
                 selected_groups=selected_groups,
                 selected_profiles=selected_profiles)
@@ -1296,9 +1315,6 @@ def main():
                         args.resources = input("Enter the desired resources to run the test:")
                         dev1_list = args.resources.split(',')
                         asyncio.run(config_obj.connectivity(device_list=dev1_list, wifi_config=config_dict))
-
-
-
 
             if not do_webUI:
                 if args.resources:
