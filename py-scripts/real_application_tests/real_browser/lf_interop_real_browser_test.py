@@ -345,7 +345,6 @@ class RealBrowserTest(Realm):
 
             if 'https' in self.url:
                 self.url = self.url.replace("http://", "").replace("https://", "")
-                print("checking the value of self.url after removing http and https",self.url)
                 self.create_real(ports=self.phone_data, sleep_time=.5,
                                  suppress_related_commands_=None, https=True,
                                  https_ip=self.url, interop=True, timeout=1000, media_source='1', media_quality='0', upload_name=upload_name)
@@ -972,8 +971,8 @@ class RealBrowserTest(Realm):
 
     def webui_stop(self):
         try:
-            #url = f"http://{self.host}:5454/update_status_yt"
-            url = "http://localhost:5454/update_status_yt"
+            url = f"http://{self.host}:5454/update_status_yt"
+            # url = "http://localhost:5454/update_status_yt"
             headers = {
                 'Content-Type': 'application/json',
             }
@@ -1065,8 +1064,6 @@ class RealBrowserTest(Realm):
             config_obj.initiate_group()
             config_list = asyncio.run(config_obj.connectivity(config_devices, upstream=args.upstream_port))
             resource_ids = sorted(set(int(item.split('.')[1]) for item in config_list if '.' in item))
-            print("checking resource_ids in process_group_profiles argument")
-            print(config_list)
             return resource_ids
 
     def process_resources(self, args, config_obj, obj, config_dict):
@@ -1080,8 +1077,6 @@ class RealBrowserTest(Realm):
 
         # Web GUI Mode: Extract and sort resources from the given device list
         if args.dowebgui and args.group_name:
-            print("checking args.device list in process_resources")
-            print(args.device_list)
             resource_list = sorted(set(args.device_list.split(',')))
             resource_ids_generated = ','.join(resource_list)
 
@@ -1132,7 +1127,6 @@ class RealBrowserTest(Realm):
                     self.devices.get_devices()
                     args.device_list, _, _ = self.devices.query_user()
                     device_list = args.device_list
-                    print(args.device_list)
 
                 # Establish connectivity if required
                 if args.config:
@@ -1760,7 +1754,7 @@ class RealBrowserTest(Realm):
                     temp_eid = key.split(".")
                     comb_eid = temp_eid[0] + "." + temp_eid[1]
                     if (comb_eid == eid) and (value["parent dev"] != "") and (not value["down"]) and (value["ip"] != "0.0.0.0"):
-                        #logging.info("checking whether we are able to fetch device data from port manager")
+                        # logging.info("checking whether we are able to fetch device data from port manager")
                         mac_data.append(value.get("mac", 'None'))
                         channel_data.append(value.get("channel", 'None'))
                         signal_data.append(value.get("signal", 'None'))
@@ -1781,10 +1775,10 @@ class RealBrowserTest(Realm):
             logging.info(f"Upstream port IP {upstream_port}")
         else:
             logging.info(f"Upstream port IP {upstream_port}")
-        
+
         return upstream_port
-    
-    def filter_iOS_devices(self, device_list):
+
+    def filter_ios_devices(self, device_list):
         modified_device_list = device_list
         if isinstance(device_list, str):
             modified_device_list = device_list.split(',')
@@ -1943,8 +1937,8 @@ def main():
         parser.add_argument('--webgui_incremental', '--incremental_capacity', help="Specify the incremental values <1,2,3..>", dest='webgui_incremental', type=str)
         parser.add_argument('--incremental', help="to add incremental capacity to run the test", action='store_true')
         optional.add_argument('--no_laptops', help="run the test without laptop devices", action='store_false')
-        parser.add_argument('--postcleanup', help="Cleanup the cross connections after test is stopped", action='store_true',default=True)
-        parser.add_argument('--precleanup', help="Cleanup the cross connections before test is started", action='store_true',default=True)
+        parser.add_argument('--postcleanup', help="Cleanup the cross connections after test is stopped", action='store_true', default=True)
+        parser.add_argument('--precleanup', help="Cleanup the cross connections before test is started", action='store_true', default=True)
         parser.add_argument('--file_name', type=str, help='specify the file name')
         parser.add_argument('--group_name', type=str, help='specify the group name')
         parser.add_argument('--profile_name', type=str, help='specify the profile name')
@@ -1966,7 +1960,7 @@ def main():
         parser.add_argument("--client_cert", type=str, default='NA', help='Specify the client certificate file name')
         parser.add_argument("--pk_passwd", type=str, default='NA', help='Specify the password for the private key')
         parser.add_argument("--pac_file", type=str, default='NA', help='Specify the pac file name')
-        parser.add_argument("--upstream_port", type=str, default='NA', help='Specify the Upstream Port',required=True)
+        parser.add_argument("--upstream_port", type=str, default='NA', help='Specify the Upstream Port', required=True)
         parser.add_argument('--help_summary', help='Show summary of what this script does', default=None)
         parser.add_argument("--expected_passfail_value", help="Specify the expected urlcount value for pass/fail")
         parser.add_argument("--device_csv_name", type=str, help="Specify the device csv name for pass/fail", default=None)
@@ -2066,12 +2060,12 @@ def main():
                 'server_ip': args.upstream_port,
             }
             available_resources = obj.process_resources(args, config_obj, obj, config_dict)
-        if len(available_resources) !=0:
-             available_resources = obj.filter_iOS_devices(available_resources)
+        if len(available_resources) != 0:
+            available_resources = obj.filter_ios_devices(available_resources)
         if len(available_resources) == 0:
             logging.error("No devices available to run the test. Exiting...")
             exit(1)
-        
+
         # --- Print available resources ---
         logging.info("Devices available: {}".format(available_resources))
         # prompt user for expected pass fail value and update device csv if no expected pass fail value or device csv is mentioned
