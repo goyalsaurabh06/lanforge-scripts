@@ -253,7 +253,7 @@ class FtpTest(LFCliBase):
     def query_realclients(self):
         config_devices = {}
         obj = DeviceConfig.DeviceConfig(lanforge_ip=self.host, file_name=self.file_name, wait_time=self.wait_time)
-        upstream=self.change_port_to_ip(self.upstream)
+        upstream = self.change_port_to_ip(self.upstream)
         config_dict = {
             'ssid': self.ssid,
             'passwd': self.password,
@@ -285,7 +285,7 @@ class FtpTest(LFCliBase):
             obj.initiate_group()
             self.group_device_map = obj.get_groups_devices(data=selected_groups, groupdevmap=True)
             # Configure devices in the selected group with the selected profile
-            self.device_list = asyncio.run(obj.connectivity(config_devices,upstream=upstream))
+            self.device_list = asyncio.run(obj.connectivity(config_devices, upstream=upstream))
         elif (self.device_list != []):
             all_devices = obj.get_all_devices()
             if isinstance(self.device_list, str):
@@ -2311,7 +2311,7 @@ INCLUDE_IN_README: False
     optional.add_argument('--local_lf_report_dir', help='--local_lf_report_dir override the report path, primary use when running test in test suite', default="")
     required.add_argument('--upstream_port', help='non-station port that generates traffic: eg: eth1 [default = eth1]', default='eth1')
     required.add_argument('--ssid', type=str, help='Enter ssid')
-    optional.add_argument('--passwd',type=str,nargs='?',const='',help="Enter password for ssid provided")
+    optional.add_argument('--passwd', type=str, nargs='?', const='', help="Enter password for ssid provided")
     required.add_argument('--security', type=str, help='Enter the security')
     required.add_argument('--group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
     required.add_argument('--profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
@@ -2495,7 +2495,7 @@ some amount of file data from the FTP server while measuring the time taken by c
             elif args.security.lower() == 'open' and args.passwd != '[BLANK]':
                 logger.info("For a open type security there will be no password or the password should be left blank (i.e., set to '' or [BLANK]).")
                 exit(0)
-        elif args.ssid and args.passwd=='[BLANK]' and args.security and args.security.lower() != 'open':
+        elif args.ssid and args.passwd == '[BLANK]' and args.security and args.security.lower() != 'open':
             logger.info('Please provide valid passwd and security configuration')
             exit(0)
 
@@ -2503,7 +2503,7 @@ some amount of file data from the FTP server while measuring the time taken by c
         logger.warning("Number of groups should match number of profiles")
         exit(0)
     elif ((args.group_name is not None and (args.file_name is None or args.profile_name is None)) or (args.file_name is not None and (args.group_name is None or args.profile_name is None)) or (args.profile_name is not None and (args.group_name is None or args.file_name is None))):
-        if((args.group_name is not None and (args.file_name is None or args.profile_name is None))):
+        if ((args.group_name is not None and (args.file_name is None or args.profile_name is None))):
             logger.warning("Please provide file name and profile name for group configuration")
             exit(0)
         elif (args.file_name is not None and (args.group_name is None or args.profile_name is None)):
