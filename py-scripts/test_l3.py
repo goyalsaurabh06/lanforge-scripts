@@ -570,6 +570,7 @@ class L3VariableTime(Realm):
     query data for relevant LANforge ports and traffic pairs during
     the test, and generate reports upon completion.
     """
+
     def __init__(self,
                  endp_types,
                  args,
@@ -5710,7 +5711,7 @@ class L3VariableTime(Realm):
                 self.report.build_graph()
                 self.report.set_csv_filename(graph_png)
                 self.report.move_csv_file()
-              
+
                 if self.real:
                     off_up, off_down, up, down = [], [], [], []
                     for i in self.client_dict_A[tos]['offered_upload_rate_A']:
@@ -6122,7 +6123,8 @@ class L3VariableTime(Realm):
 
         self.copy_reports_to_home_dir()
 
-def change_port_to_ip(upstream_port,lfclient_host,lfclient_port):
+
+def change_port_to_ip(upstream_port, lfclient_host, lfclient_port):
     if upstream_port.count('.') != 3:
         target_port_list = LFUtils.name_to_eid(upstream_port)
         shelf, resource, port, _ = target_port_list
@@ -6135,10 +6137,12 @@ def change_port_to_ip(upstream_port,lfclient_host,lfclient_port):
         logging.info(f"Upstream port IP {upstream_port}")
     else:
         logging.info(f"Upstream port IP {upstream_port}")
-    
+
     return upstream_port
 
 # Only used by argparser, so safe to exit in this function
+
+
 def valid_endp_types(_endp_type):
     etypes = _endp_type.split(',')
     for endp_type in etypes:
@@ -7095,7 +7099,7 @@ INCLUDE_IN_README: False
     )
     test_l3_parser.add_argument(
         '--passwd',
-        type=str,nargs='?',const='',
+        type=str, nargs='?', const='',
         help='Password for the SSID specified with --ssid; only applicable when --ssid is set.'
     )
     test_l3_parser.add_argument(
@@ -7227,7 +7231,7 @@ and generate a report.
                 logger.info("For a open type security there will be no password or the password should be left blank (i.e., set to '' or [BLANK]).")
                 exit(0)
 
-        elif args.ssid and args.passwd=='[BLANK]' and args.security and args.security.lower() != 'open':
+        elif args.ssid and args.passwd == '[BLANK]' and args.security and args.security.lower() != 'open':
             logger.info('Please provide valid passwd and security configuration')
             exit(0)
 
@@ -7249,7 +7253,7 @@ and generate a report.
             json_port = args.lfmgr_port
         else:
             json_port = 8080
-        upstream_port_ip = change_port_to_ip(args.upstream_port,args.lfmgr,json_port)
+        upstream_port_ip = change_port_to_ip(args.upstream_port, args.lfmgr, json_port)
         config_obj = DeviceConfig.DeviceConfig(lanforge_ip=args.lfmgr, file_name=args.file_name, wait_time=args.wait_time)
         config_devices = {}
         group_device_map = {}
@@ -7286,7 +7290,7 @@ and generate a report.
             config_obj.initiate_group()
             group_device_map = config_obj.get_groups_devices(data=selected_groups, group_device_map=True)
             # Configuration of group of devices for the corresponding profiles
-            args.device_list = [','.join(i for i in asyncio.run(config_obj.connectivity(config_devices,upstream=upstream_port_ip)))]
+            args.device_list = [','.join(i for i in asyncio.run(config_obj.connectivity(config_devices, upstream=upstream_port_ip)))]
         elif (args.device_list is not None):
             all_devices = config_obj.get_all_devices()
             if (args.group_name is None and args.file_name is None and args.profile_name is None):
