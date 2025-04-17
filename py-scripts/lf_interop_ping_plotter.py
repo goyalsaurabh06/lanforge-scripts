@@ -1655,7 +1655,7 @@ connectivity problems.
                 obj.initiate_group()
                 group_device_map = obj.get_groups_devices(data=selected_groups, groupdevmap=True)
                 # Configure devices in the selected group with the selected profile
-                eid_list = asyncio.run(obj.connectivity(config=config_devices,upstream=server_ip))
+                eid_list = asyncio.run(obj.connectivity(config=config_devices, upstream=server_ip))
                 ping.select_real_devices(real_devices=Devices, device_list=eid_list)
             else:
                 all_devices = obj.get_all_devices()
