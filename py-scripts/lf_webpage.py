@@ -216,6 +216,7 @@ class HttpDownload(Realm):
 
 
 # The 'phantom_check' will be handled within the 'get_real_client_list' function
+
     def get_real_client_list(self):
         user_list2, real_client_list2, real_client_list12, android_list2, mac_list2, windows_list2, linux_list2, working_resources_list2, eid_list2, devices_available2, input_devices_list2, mac_id1_list2, mac_id_list2 = [
         ], [], [], [], [], [], [], [], [], [], [], [], []
@@ -223,7 +224,7 @@ class HttpDownload(Realm):
         port_eid_list, same_eid_list, original_port_list = [], [], []
         obj = DeviceConfig.DeviceConfig(lanforge_ip=self.host, file_name=self.file_name, wait_time=self.wait_time)
         config_devices = {}
-        #upstream port IP for configuration
+        # upstream port IP for configuration
         upstream_port_ip = self.change_port_to_ip(self.upstream)
         config_dict = {
             'ssid': self.ssid,
@@ -258,7 +259,7 @@ class HttpDownload(Realm):
             obj.initiate_group()
             self.group_device_map = obj.get_groups_devices(data=selected_groups, groupdevmap=True)
             # Configuration of group of devices for the corresponding profiles
-            self.device_list = asyncio.run(obj.connectivity(config_devices,upstream=upstream_port_ip))
+            self.device_list = asyncio.run(obj.connectivity(config_devices, upstream=upstream_port_ip))
             if (len(self.device_list) == 0):
                 devices_list = ""
         elif (self.device_list != []):
@@ -1224,7 +1225,7 @@ class HttpDownload(Realm):
             report.set_table_title("Overall Results")
         report.build_table_title()
         if self.client_type == "Real":
-            #When pass_fail criteria specified (expected_passfail_value / device_csv_name)
+            # When pass_fail criteria specified (expected_passfail_value / device_csv_name)
             if (self.expected_passfail_value is not None or self.device_csv_name is not None):
                 if (self.expected_passfail_value == '' or self.expected_passfail_value is None):
                     res_list = []
@@ -1257,8 +1258,8 @@ class HttpDownload(Realm):
                         if (int(test_input_list[i]) <= dataset2[i]):
                             pass_fail_list.append('PASS')
                         else:
-                           pass_fail_list.append('FAIL')
-                #When device_csv specified for pass_fail criteria
+                            pass_fail_list.append('FAIL')
+                # When device_csv specified for pass_fail criteria
                 else:
                     test_input_list = [self.expected_passfail_value for val in range(len(self.devices))]
                     pass_fail_list = []
@@ -1412,6 +1413,7 @@ class HttpDownload(Realm):
         else:
             return 0
     # Updates the status in the running.json file while running a test from the Web UI
+
     def updating_webui_runningjson(self, obj):
         data = {}
         with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host, self.test_name),
@@ -1436,8 +1438,9 @@ class HttpDownload(Realm):
             logging.info(f"Upstream port IP {upstream_port}")
         else:
             logging.info(f"Upstream port IP {upstream_port}")
-        
+
         return upstream_port
+
 
 def main():
     # set up logger
@@ -1577,9 +1580,9 @@ def main():
     optional.add_argument('--file_path', help='Specify the path of the file, which has the URLs to download'
                                               ' or upload the URLs', default=None)
     optional.add_argument('--help_summary', action="store_true", help='Show summary of what this script does')
-    #Arguments for Configurations and pass_fail criteria (Applicable for real cleints)
+    # Arguments for Configurations and pass_fail criteria (Applicable for real cleints)
     optional.add_argument('--ssid', help='WiFi SSID for script object to associate for Real clients')
-    optional.add_argument('--passwd',type=str,nargs='?',const='',help="Specify password for ssid provided")
+    optional.add_argument('--passwd', type=str, nargs='?', const='', help="Specify password for ssid provided")
     optional.add_argument('--security', help='Specify the security')
     optional.add_argument('--file_name', type=str, help='Specify the file name containing group details. Example:file1')
     optional.add_argument('--group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
@@ -1664,14 +1667,14 @@ times the file is downloaded.
         if args.ssid is None or args.passwd is None or args.passwd == '':
             logger.info('For configuration need to Specify SSID , Password(Optional for "open" type security) , Security')
             exit(0)
-        elif args.ssid and args.passwd=='[BLANK]' and args.security and args.security.lower() != 'open':
+        elif args.ssid and args.passwd == '[BLANK]' and args.security and args.security.lower() != 'open':
             logger.info('Please provide valid passwd and security configuration')
             exit(0)
         elif args.ssid and args.passwd:
             if args.security is None:
                 logger.info('Security must be provided when SSID and Password specified')
                 exit(0)
-            elif args.ssid and args.passwd=='[BLANK]' and args.security and args.security.lower() != 'open':
+            elif args.ssid and args.passwd == '[BLANK]' and args.security and args.security.lower() != 'open':
                 logger.info('Please provide valid passwd and security configuration')
                 exit(0)
             elif args.security.lower() == 'open' and args.passwd != '[BLANK]':
@@ -1691,7 +1694,7 @@ times the file is downloaded.
     list5G, list5G_bytes, list5G_speed, list5G_urltimes = [], [], [], []
     list2G, list2G_bytes, list2G_speed, list2G_urltimes = [], [], [], []
     Both, Both_bytes, Both_speed, Both_urltimes = [], [], [], []
-    listReal,listReal_bytes,listReal_speed,listReal_urltimes = [],[],[],[] #For real devices (not band specific)
+    listReal, listReal_bytes, listReal_speed, listReal_urltimes = [], [], [], []  # For real devices (not band specific)
     real_data = []
     dict_keys = []
     dict_keys.extend(args.bands)
@@ -1716,7 +1719,7 @@ times the file is downloaded.
     avg_both = []
     port_list, device_list, macid_list = [], [], []
     for bands in args.bands:
-        #For real devices while ensuring no blocker for Virtual devices
+        # For real devices while ensuring no blocker for Virtual devices
         if args.client_type == 'Real':
             ssid = args.ssid
             passwd = args.passwd
@@ -1948,7 +1951,7 @@ times the file is downloaded.
                 final_dict['Both']['avg'] = avg_both
                 final_dict['Both']['bytes_rd'] = Both_bytes
                 final_dict['Both']['speed'] = Both_speed
-                final_dict['Both']['url_times'] = Both_urltimes            
+                final_dict['Both']['url_times'] = Both_urltimes
 
     result_data = final_dict
     print("result", result_data)
@@ -1963,7 +1966,7 @@ times the file is downloaded.
 
     info_ssid = []
     info_security = []
-    #For real clients
+    # For real clients
     if args.client_type == 'Real':
         info_ssid.append(args.ssid)
         info_security.append(args.security)
