@@ -5563,7 +5563,7 @@ class L3VariableTime(Realm):
         self.report.build_table_title()
         self.report.test_setup_table(value="Device Under Test",
                                      test_setup_data=test_setup_info)
-        #For real devices when groups specified for configuration
+        # For real devices when groups specified for configuration
         if (self.real and self.group_name is not None):
             group_names = ', '.join(config_devices.keys())
             profile_names = ', '.join(config_devices.values())
@@ -5728,7 +5728,7 @@ class L3VariableTime(Realm):
                     pass_fail_list = []
 
                     interop_tab_data = self.json_get('/adb/')["devices"]
-                    #if either 'expected_passfail_value' or 'device_csv_name' is provided for pass/fail evaluation
+                    # if either 'expected_passfail_value' or 'device_csv_name' is provided for pass/fail evaluation
                     if (self.expected_passfail_value is not None or self.device_csv_name is not None):
                         # When device_csv_name specified
                         if (self.expected_passfail_value == '' or self.expected_passfail_value is None):
@@ -5760,7 +5760,7 @@ class L3VariableTime(Realm):
                                     logger.info(f'Pass Fail Value for Device {device} not found in CSV. Using default value 5')
                                     test_input_list.append(5)
 
-                        #When expected_passfail_value argument specified , common value appended for all devices
+                        # When expected_passfail_value argument specified , common value appended for all devices
                         else:
                             test_input_list = [self.expected_passfail_value for val in range(len(self.client_dict_A[tos]['resource_alias_A']))]
                         for k in range(len(test_input_list)):
