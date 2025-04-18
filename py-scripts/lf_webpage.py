@@ -10,7 +10,7 @@ times the file is downloaded.
 
 EXAMPLE-1:
 Command Line Interface to run download scenario for Real clients
-python3 lf_webpage.py --ap_name "Cisco" --mgr 192.168.200.165 --fiveg_ssid Cisco-5g --fiveg_security wpa2 --fiveg_passwd sharedsecret
+python3 lf_webpage.py --ap_name "Cisco" --mgr 192.168.200.165 --ssid Cisco-5g --security wpa2 --passwd sharedsecret
 --upstream_port eth1 --duration 10m --bands 5G --client_type Real --file_size 2MB
 
 EXAMPLE-2:
@@ -30,8 +30,25 @@ python3 lf_webpage.py --ap_name "Cisco" --mgr 192.168.200.165 --sixg_ssid Cisco-
 
 EXAMPLE-5:
 Command Line Interface to run download scenario for Real clients with device list
-python3 lf_webpage.py --ap_name "Cisco" --mgr 192.168.214.219 --fiveg_ssid Cisco-5g --fiveg_security wpa2 --fiveg_passwd sharedsecret  --upstream_port eth1
+python3 lf_webpage.py --ap_name "Cisco" --mgr 192.168.214.219 --ssid Cisco-5g --security wpa2 --passwd sharedsecret  --upstream_port eth1
 --duration 1m --bands 5G --client_type Real --file_size 2MB --device_list 1.12,1.22
+
+EXAMPLE-6:
+Command Line Interface to run download scenario for Real clients with device list and Expected Pass/Fail CSV
+python3 lf_webpage.py  --file_size 1MB --mgr 192.168.213.218 --duration 1m --client_type Real --bands 5G --upstream_port eth1 --device_list 1.11,1.95 --device_csv_name test.csv
+
+EXAMPLE-7:
+Command Line Interface to run download scenario for Real clients with device list and expected passfail value
+python3 lf_webpage.py  --file_size 1MB --mgr 192.168.204.74 --duration 1m --client_type Real --bands 5G --upstream_port eth1 --device_list 1.11,1.95 --expected_passfail_value 5
+
+EXAMPLE-8:
+Command Line Interface to run download scenario for Real clients with Groups and Profiles
+python3 lf_webpage.py  --file_size 1MB --mgr 192.168.213.218 --duration 1m --client_type Real --bands 5G --upstream_port eth1 --file_name grp218 --group_name laptops --profile_name Opensd
+
+EXAMPLE-9:
+Command Line Interface to run download scenario for Real clients with device list and config
+python3 lf_webpage.py --file_size 1MB --mgr 192.168.244.97 --duration 1m --client_type Real --bands 5G --upstream_port eth1 --ssid
+xiab_2G_WPA2 --passwd lanforge --security wpa2 --device_list 1.160,1.146,1.13,1.20 --config
 
 SCRIPT_CLASSIFICATION : Test
 
@@ -75,6 +92,8 @@ import shutil
 import json
 from lf_graph import lf_bar_graph_horizontal
 
+import asyncio
+import csv
 
 sys.path.append(os.path.join(os.path.abspath(__file__ + "../../../")))
 
@@ -88,6 +107,7 @@ lf_report = importlib.import_module("py-scripts.lf_report")
 lf_graph = importlib.import_module("py-scripts.lf_graph")
 lf_kpi_csv = importlib.import_module("py-scripts.lf_kpi_csv")
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
+DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -97,9 +117,30 @@ class HttpDownload(Realm):
     def __init__(self, lfclient_host, lfclient_port, upstream, num_sta, security, ssid, password, ap_name,
                  target_per_ten, file_size, bands, start_id=0, twog_radio=None, fiveg_radio=None, sixg_radio=None, _debug_on=False, _exit_on_error=False,
                  _exit_on_fail=False, client_type="", port_list=[], devices_list=[], macid_list=[], lf_username="lanforge", lf_password="lanforge", result_dir="", dowebgui=False, device_list=[], test_name=None,
-                 get_url_from_file=None, file_path=None):
-        # super().__init__(lfclient_host=lfclient_host,
-        #                  lfclient_port=lfclient_port)
+                 get_url_from_file=None, file_path=None, file_name=None, group_name=None, profile_name=None,
+                 eap_method=None,
+                 eap_identity=None,
+                 ieee80211=None,
+                 ieee80211u=None,
+                 ieee80211w=None,
+                 enable_pkc=None,
+                 bss_transition=None,
+                 power_save=None,
+                 disable_ofdma=None,
+                 roam_ft_ds=None,
+                 key_management=None,
+                 pairwise=None,
+                 private_key=None,
+                 ca_cert=None,
+                 client_cert=None,
+                 pk_passwd=None,
+                 pac_file=None,
+                 device_csv_name='',
+                 expected_passfail_value=None,
+                 config=False,
+                 wait_time=60
+                 ):
+        super().__init__(lfclient_host=lfclient_host, lfclient_port=lfclient_port),
         self.ssid_list = []
         self.devices = []
         self.mode_list = []
@@ -145,84 +186,168 @@ class HttpDownload(Realm):
         self.radio = []
         self.get_url_from_file = get_url_from_file
         self.file_path = file_path
+        self.file_name = file_name
+        self.group_name = group_name
+        self.profile_name = profile_name
+        # for advanced config
+        self.eap_method = eap_method
+        self.eap_identity = eap_identity
+        self.ieee80211 = ieee80211
+        self.ieee80211u = ieee80211u
+        self.ieee80211w = ieee80211w
+        self.enable_pkc = enable_pkc
+        self.bss_transition = bss_transition
+        self.power_save = power_save
+        self.disable_ofdma = disable_ofdma
+        self.roam_ft_ds = roam_ft_ds
+        self.key_management = key_management
+        self.pairwise = pairwise
+        self.private_key = private_key
+        self.ca_cert = ca_cert
+        self.client_cert = client_cert
+        self.pk_passwd = pk_passwd
+        self.pac_file = pac_file
+        self.expected_passfail_value = expected_passfail_value
+        self.device_csv_name = device_csv_name
+        self.wait_time = wait_time
+        self.config = config
         self.api_url = 'http://{}:{}'.format(self.host, self.port)
-        self.device_found = False
+        self.group_device_map = {}
 
-    def phantom_check(self):
-        port_eid_list, same_eid_list, original_port_list = [], [], []
-        working_resources_list, android_list, eid_list, windows_list, devices_available, linux_list, mac_list, mac_id1_list, user_list, input_devices_list, real_client_list, real_client_list1, mac_id_list = [
+
+# The 'phantom_check' will be handled within the 'get_real_client_list' function
+    def get_real_client_list(self):
+        user_list2, real_client_list2, real_client_list12, android_list2, mac_list2, windows_list2, linux_list2, working_resources_list2, eid_list2, devices_available2, input_devices_list2, mac_id1_list2, mac_id_list2 = [
         ], [], [], [], [], [], [], [], [], [], [], [], []
-        response = self.local_realm.json_get("/resource/all")
+        device_found = False
+        port_eid_list, same_eid_list, original_port_list = [], [], []
+        obj = DeviceConfig.DeviceConfig(lanforge_ip=self.host, file_name=self.file_name, wait_time=self.wait_time)
+        config_devices = {}
+        #upstream port IP for configuration
+        upstream_port_ip = self.change_port_to_ip(self.upstream)
+        config_dict = {
+            'ssid': self.ssid,
+            'passwd': self.password,
+            'enc': self.security,
+            'eap_method': self.eap_method,
+            'eap_identity': self.eap_identity,
+            'ieee80211': self.ieee80211,
+            'ieee80211u': self.ieee80211u,
+            'ieee80211w': self.ieee80211w,
+            'enable_pkc': self.enable_pkc,
+            'bss_transition': self.bss_transition,
+            'power_save': self.power_save,
+            'disable_ofdma': self.disable_ofdma,
+            'roam_ft_ds': self.roam_ft_ds,
+            'key_management': self.key_management,
+            'pairwise': self.pairwise,
+            'private_key': self.private_key,
+            'ca_cert': self.ca_cert,
+            'client_cert': self.client_cert,
+            'pk_passwd': self.pk_passwd,
+            'pac_file': self.pac_file,
+            'server_ip': upstream_port_ip,
+        }
+
+        if (self.group_name is not None and self.file_name is not None and self.device_list == [] and self.profile_name is not None):
+            selected_groups = self.group_name.split(',')
+            selected_profiles = self.profile_name.split(',')
+            if (len(selected_groups) == len(selected_profiles)):
+                for i in range(len(selected_groups)):
+                    config_devices[selected_groups[i]] = selected_profiles[i]
+            obj.initiate_group()
+            self.group_device_map = obj.get_groups_devices(data=selected_groups, groupdevmap=True)
+            # Configuration of group of devices for the corresponding profiles
+            self.device_list = asyncio.run(obj.connectivity(config_devices,upstream=upstream_port_ip))
+            if (len(self.device_list) == 0):
+                devices_list = ""
+        elif (self.device_list != []):
+            obj.get_all_devices()
+            self.device_list = self.device_list.split(',')
+            # Configuration of devices with SSID,Password and Security when device list is specified
+            if self.config:
+                self.device_list = asyncio.run(obj.connectivity(device_list=self.device_list, wifi_config=config_dict))
+
+        elif (self.device_list == [] and self.config):
+            all_devices = obj.get_all_devices()
+            device_list = []
+            for device in all_devices:
+                if (device["type"] == 'laptop'):
+                    device_list.append(device["shelf"] + '.' + device["resource"] + " " + device["hostname"])
+                else:
+                    device_list.append(device["shelf"] + '.' + device["resource"] + " " + device["serial"])
+            logger.info("Available devices: %s", device_list)
+            self.device_list = input("Enter the desired resources to run the test:").split(',')
+            # Configuration of devices with SSID , Password and Security when the device list is not specified
+            if self.config:
+                self.device_list = asyncio.run(obj.connectivity(device_list=self.device_list, wifi_config=config_dict))
+
+        response = self.json_get("/resource/all")
         for key, value in response.items():
             if key == "resources":
                 for element in value:
                     for a, b in element.items():
                         if b['phantom'] == False:
-                            working_resources_list.append(b["hw version"])
+                            working_resources_list2.append(b["hw version"])
                             if "Win" in b['hw version']:
-                                eid_list.append(b['eid'])
-                                windows_list.append(b['hw version'])
+                                eid_list2.append(b['eid'])
+                                windows_list2.append(b['hw version'])
                                 # self.hostname_list.append(b['eid']+ " " +b['hostname'])
-                                devices_available.append(b['eid'] + " " + 'Win' + " " + b['hostname'])
+                                devices_available2.append(b['eid'] + " " + 'Win' + " " + b['hostname'])
                             elif "Linux" in b['hw version']:
                                 if ('ct' not in b['hostname']):
                                     if ('lf' not in b['hostname']):
-                                        eid_list.append(b['eid'])
-                                        linux_list.append(b['hw version'])
+                                        eid_list2.append(b['eid'])
+                                        linux_list2.append(b['hw version'])
                                         # self.hostname_list.append(b['eid']+ " " +b['hostname'])
-                                        devices_available.append(b['eid'] + " " + 'Lin' + " " + b['hostname'])
+                                        devices_available2.append(b['eid'] + " " + 'Lin' + " " + b['hostname'])
                             elif "Apple" in b['hw version']:
-                                if b['kernel'] == '':
-                                    continue
-                                else:
-                                    eid_list.append(b['eid'])
-                                    mac_list.append(b['hw version'])
-                                    # self.hostname_list.append(b['eid']+ " " +b['hostname'])
-                                    devices_available.append(b['eid'] + " " + 'Mac' + " " + b['hostname'])
+                                eid_list2.append(b['eid'])
+                                mac_list2.append(b['hw version'])
+                                devices_available2.append(b['eid'] + " " + 'Mac' + " " + b['hostname'])
                             else:
-                                eid_list.append(b['eid'])
-                                android_list.append(b['hw version'])
+                                eid_list2.append(b['eid'])
+                                android_list2.append(b['hw version'])
                                 # self.username_list.append(b['eid']+ " " +b['user'])
-                                devices_available.append(b['eid'] + " " + 'android' + " " + b['user'])
-        # print("hostname list :",self.hostname_list)
-        # print("username list :", self.username_list)
-        # print("Available resources in resource tab :", devices_available)
-        # print("eid_list : ",eid_list)
+                                devices_available2.append(b['eid'] + " " + 'android' + " " + b['user'])
+
         # All the available resources are fetched from resource mgr tab ----
 
-        response_port = self.local_realm.json_get("/port/all")
-        # print(response_port)
+        response_port = self.json_get("/port/all")
+
         mac_id1_list = []
         for interface in response_port['interfaces']:
             for port, port_data in interface.items():
                 if (not port_data['phantom'] and not port_data['down'] and port_data['parent dev'] == "wiphy0" and port_data['alias'] != 'p2p0'):
-                    for id in eid_list:
+                    for id in eid_list2:
                         if (id + '.' in port):
                             original_port_list.append(port)
-                            port_eid_list.append(str(self.name_to_eid(port)[0]) + '.' + str(self.name_to_eid(port)[1]))
-                            mac_id1_list.append(str(self.name_to_eid(port)[0]) + '.' + str(self.name_to_eid(port)[1]) + ' ' + port_data['mac'])
-        # print("port eid list",port_eid_list)
-        for i in range(len(eid_list)):
+                            port_eid_list.append(str(LFUtils.name_to_eid(port)[0]) + '.' + str(LFUtils.name_to_eid(port)[1]))
+                            mac_id1_list2.append(str(LFUtils.name_to_eid(port)[0]) + '.' + str(LFUtils.name_to_eid(port)[1]) + ' ' + port_data['mac'])
+        for i in range(len(eid_list2)):
             for j in range(len(port_eid_list)):
-                if eid_list[i] == port_eid_list[j]:
-                    same_eid_list.append(eid_list[i])
+                if eid_list2[i] == port_eid_list[j]:
+                    same_eid_list.append(eid_list2[i])
         same_eid_list = [_eid + ' ' for _eid in same_eid_list]
-        # print("same eid list",same_eid_list)
-        # print("mac_id list",mac_id_list)
         # All the available ports from port manager are fetched from port manager tab ---
+
         for eid in same_eid_list:
-            for device in devices_available:
+            for device in devices_available2:
                 if eid in device:
-                    logger.info("%s %s", eid, device)
-                    user_list.append(device)
+                    user_list2.append(device)
+
+        if (not self.config and len(self.device_list) == 0 and self.group_name is None):
+            logger.info("AVAILABLE DEVICES TO RUN TEST : {}".format(user_list2))
+            self.device_list = input("Enter the desired resources to run the test:")
+            self.device_list = self.filter_iOS_devices(self.device_list).split(',')
         # checking for the availability of slected devices to run test
         if len(self.device_list) != 0:
             devices_list = self.device_list
             available_list = []
             not_available = []
-            for input_device in devices_list.split(','):
+            for input_device in devices_list:
                 found = False
-                for device in devices_available:
+                for device in user_list2:
                     if input_device + " " in device:
                         available_list.append(input_device)
                         found = True
@@ -230,20 +355,23 @@ class HttpDownload(Realm):
                 if found == False:
                     not_available.append(input_device)
                     logger.warning(input_device + " is not available to run test")
-            if len(available_list) > 0:
 
+            if len(available_list) > 0:
                 logger.info("Test is initiated on devices: {}".format(available_list))
                 devices_list = ','.join(available_list)
-                self.device_found = True
+                device_found = True
             else:
                 devices_list = ""
-                self.device_found = False
+                device_found = False
                 logger.warning("Test can not be initiated on any selected devices")
-
         else:
-            logger.info("AVAILABLE DEVICES TO RUN TEST : {}".format(user_list))
+            devices_list = ""
 
-            devices_list = input("Enter the desired resources to run the test:")
+        if (devices_list == "" or devices_list == ","):
+            logger.error("Selected Devices are not available in the lanforge")
+            exit(1)
+            return input_devices_list2, real_client_list2, mac_id_list2
+
         resource_eid_list = devices_list.split(',')
         logger.info("devices list {}".format(devices_list, resource_eid_list))
         resource_eid_list2 = [eid + ' ' for eid in resource_eid_list]
@@ -255,34 +383,28 @@ class HttpDownload(Realm):
         for eid in resource_eid_list1:
             for ports_m in original_port_list:
                 if eid in ports_m:
-                    input_devices_list.append(ports_m)
-        logger.info("INPUT DEVICES LIST {}".format(input_devices_list))
-
+                    input_devices_list2.append(ports_m)
+        logger.info("INPUT DEVICES LIST {}".format(input_devices_list2))
         # user desired real client list 1.1 wlan0 ---
 
         for i in resource_eid_list2:
-            for j in range(len(user_list)):
-                if i in user_list[j]:
-                    real_client_list.append(user_list[j])
-                    real_client_list1.append((user_list[j])[:25])
-        logger.info("REAL CLIENT LIST: %s", real_client_list)
-        # print("REAL CLIENT LIST1", real_client_list1)
+            for j in range(len(user_list2)):
+                if i in user_list2[j]:
+                    real_client_list2.append(user_list2[j])
+                    real_client_list12.append((user_list2[j])[:25])
+        logger.info("REAL CLIENT LIST: %s", real_client_list2)
 
-        self.num_stations = len(real_client_list)
+        self.num_sta = len(real_client_list2)
 
         for eid in resource_eid_list2:
-            for i in mac_id1_list:
+            for i in mac_id1_list2:
                 if eid in i:
-                    mac_id_list.append(i.strip(eid + ' '))
-        logger.info("MAC CLIENT LIST: %s", mac_id_list)
-        return input_devices_list, real_client_list, mac_id_list
-        # user desired real client list 1.1 OnePlus, 1.1 Apple for report generation ---
-    # Todo- Make use of lf_base_interop_profile.py : Real device class to fetch available devices data
+                    mac_id_list2.append(i.strip(eid + ' '))
+        logger.info("MAC ID LIST: %s", mac_id_list2)
+        self.port_list, self.devices_list, self.macid_list = input_devices_list2, real_client_list2, mac_id_list2
 
-    def get_real_client_list(self):
-        self.port_list, self.devices_list, self.macid_list = self.phantom_check()
         for port in self.port_list:
-            eid = self.name_to_eid(port)
+            eid = LFUtils.name_to_eid(port)
             self.eid_list.append(str(eid[0]) + '.' + str(eid[1]))
         for eid in self.eid_list:
             for device in self.devices_list:
@@ -294,7 +416,7 @@ class HttpDownload(Realm):
                 if eid + '.' in port:
                     self.windows_ports.append(port)
         if self.dowebgui == "True":
-            if self.device_found == False:
+            if device_found == False:
                 print("No Device is available to run the test hence aborting the testllmlml")
                 df1 = pd.DataFrame([{
                     "client": [],
@@ -304,7 +426,7 @@ class HttpDownload(Realm):
                 )
                 df1.to_csv('{}/http_datavalues.csv'.format(self.result_dir), index=False)
                 raise ValueError("Aborting the test....")
-        return self.port_list, self.devices_list, self.macid_list
+        return self.port_list, self.devices_list, self.macid_list, config_devices
 
     def api_get(self, endp: str):
         """
@@ -1096,22 +1218,115 @@ class HttpDownload(Realm):
         test_setup = pd.DataFrame(download_table_value_dup)
         report.set_table_dataframe(test_setup)
         report.build_table()
-        report.set_table_title("Overall Results")
+        if self.group_name is not None:
+            report.set_table_title("Overall Results for Groups")
+        else:
+            report.set_table_title("Overall Results")
         report.build_table_title()
-        dataframe = {
-            " Clients": self.devices,
-            " MAC ": self.macid_list,
-            " Channel": self.channel_list,
-            " SSID ": self.ssid_list,
-            " Mode": self.mode_list,
-            " No of times File downloaded ": dataset2,
-            " Average time taken to Download file (ms)": dataset,
-            " Bytes-rd (Mega Bytes) ": dataset1,
-            "Rx Rate (Mbps)": rx_rate
-        }
-        dataframe1 = pd.DataFrame(dataframe)
-        report.set_table_dataframe(dataframe1)
-        report.build_table()
+        if self.client_type == "Real":
+            #When pass_fail criteria specified (expected_passfail_value / device_csv_name)
+            if (self.expected_passfail_value is not None or self.device_csv_name is not None):
+                if (self.expected_passfail_value == '' or self.expected_passfail_value is None):
+                    res_list = []
+                    test_input_list = []
+                    pass_fail_list = []
+
+                    interop_tab_data = self.json_get('/adb/')["devices"]
+                    for client in self.devices:
+                        if (client.split(' ')[1] != 'android'):
+                            res_list.append(client.split(' ')[2])
+                        else:
+                            for dev in interop_tab_data:
+                                for item in dev.values():
+                                    if (item['user-name'] == client.split(' ')[2]):
+                                        res_list.append(item['name'].split('.')[2])
+                    with open(self.device_csv_name, mode='r') as file:
+                        reader = csv.DictReader(file)
+                        rows = list(reader)
+                    for device in res_list:
+                        found = False
+                        for row in rows:
+                            if row['DeviceList'] == device and row['HTTP URLcount'].strip() != '':
+                                test_input_list.append(row['HTTP URLcount'])
+                                found = True
+                                break
+                        if not found:
+                            logger.info(f'Pass Fail Value for Device {device} not found in CSV. Using default value 5')
+                            test_input_list.append(5)
+                    for i in range(len(test_input_list)):
+                        if (int(test_input_list[i]) <= dataset2[i]):
+                            pass_fail_list.append('PASS')
+                        else:
+                           pass_fail_list.append('FAIL')
+                #When device_csv specified for pass_fail criteria
+                else:
+                    test_input_list = [self.expected_passfail_value for val in range(len(self.devices))]
+                    pass_fail_list = []
+                    for i in range(len(test_input_list)):
+                        if (int(self.expected_passfail_value) <= dataset2[i]):
+                            pass_fail_list.append("PASS")
+                        else:
+                            pass_fail_list.append("FAIL")
+            if self.group_name is not None:
+                for key, val in self.group_device_map.items():
+                    # Generating Dataframe when Groups with their profiles and pass_fail case is specified
+                    if (self.expected_passfail_value is not None or self.device_csv_name is not None):
+                        dataframe = self.generate_dataframe(
+                            val,
+                            self.devices,
+                            self.macid_list,
+                            self.channel_list,
+                            self.ssid_list,
+                            self.mode_list,
+                            dataset2,
+                            test_input_list,
+                            dataset,
+                            dataset1,
+                            rx_rate,
+                            pass_fail_list)
+                    # Generating Dataframe for groups when pass_fail case is not specified
+                    else:
+                        dataframe = self.generate_dataframe(val, self.devices, self.macid_list, self.channel_list, self.ssid_list, self.mode_list, dataset2, [], dataset, dataset1, rx_rate, [])
+
+                    if dataframe != 0:
+                        report.set_obj_html("", "Group: {}".format(key))
+                        report.build_objective()
+                        dataframe1 = pd.DataFrame(dataframe)
+                        report.set_table_dataframe(dataframe1)
+                        report.build_table()
+            else:
+                dataframe = {
+                    " Clients": self.devices,
+                    " MAC ": self.macid_list,
+                    " Channel": self.channel_list,
+                    " SSID ": self.ssid_list,
+                    " Mode": self.mode_list,
+                    " No of times File downloaded ": dataset2,
+                    " Average time taken to Download file (ms)": dataset,
+                    " Bytes-rd (Mega Bytes) ": dataset1,
+                    "Rx Rate (Mbps)": rx_rate
+                }
+                if (self.expected_passfail_value is not None or self.device_csv_name is not None):
+                    dataframe[" Expected value of no of times file downloaded"] = test_input_list
+                    dataframe["Status"] = pass_fail_list
+                dataframe1 = pd.DataFrame(dataframe)
+                report.set_table_dataframe(dataframe1)
+                report.build_table()
+        else:
+            dataframe = {
+                " Clients": self.devices,
+                " MAC ": self.macid_list,
+                " Channel": self.channel_list,
+                " SSID ": self.ssid_list,
+                " Mode": self.mode_list,
+                " No of times File downloaded ": dataset2,
+                " Average time taken to Download file (ms)": dataset,
+                " Bytes-rd (Mega Bytes) ": dataset1
+
+            }
+            dataframe1 = pd.DataFrame(dataframe)
+            report.set_table_dataframe(dataframe1)
+            report.build_table()
         report.build_footer()
         html_file = report.write_html()
         print("returned file {}".format(html_file))
@@ -1133,6 +1348,96 @@ class HttpDownload(Realm):
             os.makedirs(test_name_dir)
         shutil.copytree(curr_path, test_name_dir, dirs_exist_ok=True)
 
+    # Creates a separate DataFrame for each group of devices.
+    def generate_dataframe(self, groupdevlist, clients_list, mac, channel, ssid, mode, file_download, test_input, averagetime, bytes_read, rx_rate, status):
+        clients = []
+        macids = []
+        channels = []
+        ssids = []
+        modes = []
+        downloadtimes = []
+        input_list = []
+        avgtimes = []
+        readbytes = []
+        statuslist = []
+        rxratelist = []
+        interop_tab_data = self.json_get('/adb/')["devices"]
+        for i in range(len(clients_list)):
+            for j in groupdevlist:
+                if (j == clients_list[i].split(" ")[2] and clients_list[i].split(" ")[1] != 'android'):
+                    clients.append(clients_list[i])
+                    macids.append(mac[i])
+                    channels.append(channel[i])
+                    ssids.append(ssid[i])
+                    modes.append(mode[i])
+                    downloadtimes.append(file_download[i])
+                    avgtimes.append(averagetime[i])
+                    readbytes.append(bytes_read[i])
+                    rxratelist.append(rx_rate[i])
+                    if (self.expected_passfail_value is not None or self.device_csv_name is not None):
+                        input_list.append(test_input[i])
+                        statuslist.append(status[i])
+                else:
+                    for dev in interop_tab_data:
+                        for item in dev.values():
+                            if (item['user-name'] == clients_list[i].split(' ')[2] and j == item['name'].split('.')[2]):
+                                clients.append(clients_list[i])
+                                macids.append(mac[i])
+                                channels.append(channel[i])
+                                ssids.append(ssid[i])
+                                modes.append(mode[i])
+                                downloadtimes.append(file_download[i])
+                                avgtimes.append(averagetime[i])
+                                readbytes.append(bytes_read[i])
+                                rxratelist.append(rx_rate[i])
+                                if (self.expected_passfail_value is not None or self.device_csv_name is not None):
+                                    input_list.append(test_input[i])
+                                    statuslist.append(status[i])
+        if len(clients) != 0:
+            dataframe = {
+                " Clients": clients,
+                " MAC ": macids,
+                " Channel": channels,
+                " SSID ": ssids,
+                " Mode": modes,
+                " No of times File downloaded ": downloadtimes,
+                " Average time taken to Download file (ms)": avgtimes,
+                " Bytes-rd (Mega Bytes) ": readbytes,
+                "Rx Rate (Mbps)": rxratelist
+            }
+            if (self.expected_passfail_value is not None or self.device_csv_name is not None):
+                dataframe[" Expected value of no of times file downloaded"] = input_list
+                dataframe[" Status "] = statuslist
+            return dataframe
+        else:
+            return 0
+    # Updates the status in the running.json file while running a test from the Web UI
+    def updating_webui_runningjson(self, obj):
+        data = {}
+        with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host, self.test_name),
+                  'r') as file:
+            data = json.load(file)
+            for key in obj:
+                data[key] = obj[key]
+        with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host, self.test_name),
+                  'w') as file:
+            json.dump(data, file, indent=4)
+
+    # Converting the upstream_port to IP address for configuration purposes
+    def change_port_to_ip(self, upstream_port):
+        if upstream_port.count('.') != 3:
+            target_port_list = self.name_to_eid(upstream_port)
+            shelf, resource, port, _ = target_port_list
+            try:
+                target_port_ip = self.json_get(f'/port/{shelf}/{resource}/{port}?fields=ip')['interface']['ip']
+                upstream_port = target_port_ip
+            except BaseException:
+                logging.warning(f'The upstream port is not an ethernet port. Proceeding with the given upstream_port {upstream_port}.')
+            logging.info(f"Upstream port IP {upstream_port}")
+        else:
+            logging.info(f"Upstream port IP {upstream_port}")
+        
+        return upstream_port
 
 def main():
     # set up logger
@@ -1272,6 +1577,34 @@ def main():
     optional.add_argument('--file_path', help='Specify the path of the file, which has the URLs to download'
                                               ' or upload the URLs', default=None)
     optional.add_argument('--help_summary', action="store_true", help='Show summary of what this script does')
+    #Arguments for Configurations and pass_fail criteria (Applicable for real cleints)
+    optional.add_argument('--ssid', help='WiFi SSID for script object to associate for Real clients')
+    optional.add_argument('--passwd',type=str,nargs='?',const='',help="Specify password for ssid provided")
+    optional.add_argument('--security', help='Specify the security')
+    optional.add_argument('--file_name', type=str, help='Specify the file name containing group details. Example:file1')
+    optional.add_argument('--group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
+    optional.add_argument('--profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
+    optional.add_argument("--eap_method", type=str, default='DEFAULT', help="Specify the EAP method for authentication.")
+    optional.add_argument("--eap_identity", type=str, default='', help="Specify the EAP identity for authentication.")
+    optional.add_argument("--ieee80211", action="store_true", help='Enables IEEE 802.11 support.')
+    optional.add_argument("--ieee80211u", action="store_true", help='Enables IEEE 802.11u (Hotspot 2.0) support.')
+    optional.add_argument("--ieee80211w", type=int, default=1, help='Enables IEEE 802.11w (Management Frame Protection) support.')
+    optional.add_argument("--enable_pkc", action="store_true", help='Enables pkc support.')
+    optional.add_argument("--bss_transition", action="store_true", help='Enables BSS transition support.')
+    optional.add_argument("--power_save", action="store_true", help='Enables power-saving features.')
+    optional.add_argument("--disable_ofdma", action="store_true", help='Disables OFDMA support.')
+    optional.add_argument("--roam_ft_ds", action="store_true", help='Enables fast BSS transition (FT) support')
+    optional.add_argument("--key_management", type=str, default='DEFAULT', help='Specify the key management method (e.g., WPA-PSK, WPA-EAP')
+    optional.add_argument("--pairwise", type=str, default='NA')
+    optional.add_argument("--private_key", type=str, default='NA', help='Specify EAP private key certificate file.')
+    optional.add_argument("--ca_cert", type=str, default='NA', help='Specifiy the CA certificate file name')
+    optional.add_argument("--client_cert", type=str, default='NA', help='Specify the client certificate file name')
+    optional.add_argument("--pk_passwd", type=str, default='NA', help='Specify the password for the private key')
+    optional.add_argument("--pac_file", type=str, default='NA', help='Specify the pac file name')
+    optional.add_argument("--expected_passfail_value", help="Specify the expected number of urls", default=None)
+    optional.add_argument("--device_csv_name", type=str, help='Specify the csv name to store expected url values', default=None)
+    optional.add_argument("--wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
+    optional.add_argument("--config", action="store_true", help="Specify for configuring the devices")
 
     help_summary = '''\
 lf_webpage.py will verify that N clients are connected on a specified band and can download
@@ -1301,6 +1634,50 @@ times the file is downloaded.
     if len(args.bands) > 1 and "Both" in args.bands:
         raise ValueError("'Both' test type must be used independently!")
 
+    if (args.expected_passfail_value is not None and args.device_csv_name is not None):
+        logger.info("Specify either expected_passfail_value or device_csv_name")
+        exit(0)
+    if (args.group_name is not None):
+        selected_groups = args.group_name.split(',')
+    else:
+        selected_groups = []
+    if (args.profile_name is not None):
+        selected_profiles = args.profile_name.split(',')
+    else:
+        selected_profiles = []
+
+    if (len(selected_groups) != len(selected_profiles)):
+        logger.info("Number of groups should match number of profiles")
+        exit(0)
+    elif (args.group_name is not None and args.profile_name is not None and args.file_name is not None and args.device_list != []):
+        logger.info("Either group name or device list should be entered not both")
+        exit(0)
+    elif (args.ssid is not None and args.profile_name is not None):
+        logger.info("Either ssid or profile name should be given")
+        exit(0)
+    elif (args.file_name is not None and (args.group_name is None or args.profile_name is None)):
+        logger.info("Please enter the correct set of arguments")
+        exit(0)
+    if args.client_type == 'Real' and args.config and args.group_name is None:
+        if args.ssid and args.security and args.security.lower() == 'open' and (args.passwd is None or args.passwd == ''):
+            args.passwd = '[BLANK]'
+        if args.ssid is None or args.passwd is None or args.passwd == '':
+            logger.info('For configuration need to Specify SSID , Password(Optional for "open" type security) , Security')
+            exit(0)
+        elif args.ssid and args.passwd=='[BLANK]' and args.security and args.security.lower() != 'open':
+            logger.info('Please provide valid passwd and security configuration')
+            exit(0)
+        elif args.ssid and args.passwd:
+            if args.security is None:
+                logger.info('Security must be provided when SSID and Password specified')
+                exit(0)
+            elif args.ssid and args.passwd=='[BLANK]' and args.security and args.security.lower() != 'open':
+                logger.info('Please provide valid passwd and security configuration')
+                exit(0)
+            elif args.security.lower() == 'open' and args.passwd != '[BLANK]':
+                logger.info("For a open type security there will be no password or the password should be left blank (i.e., set to '' or [BLANK]).")
+                exit(0)
+
     if args.duration.endswith('s') or args.duration.endswith('S'):
         args.duration = int(args.duration[0:-1])
     elif args.duration.endswith('m') or args.duration.endswith('M'):
@@ -1314,6 +1691,7 @@ times the file is downloaded.
     list5G, list5G_bytes, list5G_speed, list5G_urltimes = [], [], [], []
     list2G, list2G_bytes, list2G_speed, list2G_urltimes = [], [], [], []
     Both, Both_bytes, Both_speed, Both_urltimes = [], [], [], []
+    listReal,listReal_bytes,listReal_speed,listReal_urltimes = [],[],[],[] #For real devices (not band specific)
     real_data = []
     dict_keys = []
     dict_keys.extend(args.bands)
@@ -1338,7 +1716,12 @@ times the file is downloaded.
     avg_both = []
     port_list, device_list, macid_list = [], [], []
     for bands in args.bands:
-        if bands == "2.4G":
+        #For real devices while ensuring no blocker for Virtual devices
+        if args.client_type == 'Real':
+            ssid = args.ssid
+            passwd = args.passwd
+            security = args.security
+        elif bands == "2.4G":
             security = [args.twog_security]
             ssid = [args.twog_ssid]
             passwd = [args.twog_passwd]
@@ -1370,7 +1753,31 @@ times the file is downloaded.
                             device_list=args.device_list,
                             test_name=args.test_name,  # FOR WEBGUI
                             get_url_from_file=args.get_url_from_file,
-                            file_path=args.file_path
+                            file_path=args.file_path,
+                            file_name=args.file_name,
+                            group_name=args.group_name,
+                            profile_name=args.profile_name,
+                            eap_method=args.eap_method,
+                            eap_identity=args.eap_identity,
+                            ieee80211=args.ieee80211,
+                            ieee80211u=args.ieee80211u,
+                            ieee80211w=args.ieee80211w,
+                            enable_pkc=args.enable_pkc,
+                            bss_transition=args.bss_transition,
+                            power_save=args.power_save,
+                            disable_ofdma=args.disable_ofdma,
+                            roam_ft_ds=args.roam_ft_ds,
+                            key_management=args.key_management,
+                            pairwise=args.pairwise,
+                            private_key=args.private_key,
+                            ca_cert=args.ca_cert,
+                            client_cert=args.client_cert,
+                            pk_passwd=args.pk_passwd,
+                            pac_file=args.pac_file,
+                            expected_passfail_value=args.expected_passfail_value,
+                            device_csv_name=args.device_csv_name,
+                            wait_time=args.wait_time,
+                            config=args.config
                             )
         if args.client_type == "Real":
             if not isinstance(args.device_list, list):
@@ -1378,7 +1785,22 @@ times the file is downloaded.
                 if len(http.device_list) == 0:
                     logger.info("There are no devices available")
                     exit(1)
-            port_list, device_list, macid_list = http.get_real_client_list()
+            port_list, device_list, macid_list, configuration = http.get_real_client_list()
+            if (args.dowebgui and args.group_name is not None):
+                if len(device_list) == 0:
+                    logger.info("No device is available to run the test")
+                    obj = {
+                        "status": "Stopped",
+                        "configuration_status": "configured"
+                    }
+                    http.updating_webui_runningjson(obj)
+                    return
+                else:
+                    obj = {
+                        "configured_devices": device_list,
+                        "configuration_status": "configured"
+                    }
+                    http.updating_webui_runningjson(obj)
             android_devices, windows_devices, linux_devices, mac_devices = 0, 0, 0, 0
             all_devices_names = []
             device_type = []
@@ -1448,68 +1870,85 @@ times the file is downloaded.
             rx_rate_val = http.my_monitor('rx rate')
         if args.dowebgui:
             http.data_for_webui["url_data"] = url_times  # storing the layer-4 url data at the end of test
-        if bands == "5G":
-            list5G.extend(uc_avg_val)
-            list5G_bytes.extend(rx_bytes_val)
-            list5G_speed.extend(rx_rate_val)
-            list5G_urltimes.extend(url_times)
-            logger.info("%s %s %s %s", list5G, list5G_bytes, list5G_speed, list5G_urltimes)
-            final_dict['5G']['dl_time'] = list5G
-            min5.append(min(list5G))
-            final_dict['5G']['min'] = min5
-            max5.append(max(list5G))
-            final_dict['5G']['max'] = max5
-            avg5.append((sum(list5G) / args.num_stations))
-            final_dict['5G']['avg'] = avg5
-            final_dict['5G']['bytes_rd'] = list5G_bytes
-            final_dict['5G']['speed'] = list5G_speed
-            final_dict['5G']['url_times'] = list5G_urltimes
-        elif bands == "6G":
-            list6G.extend(uc_avg_val)
-            list6G_bytes.extend(rx_bytes_val)
-            list6G_speed.extend(rx_rate_val)
-            list6G_urltimes.extend(url_times)
-            final_dict['6G']['dl_time'] = list6G
-            min6.append(min(list6G))
-            final_dict['6G']['min'] = min6
-            max6.append(max(list6G))
-            final_dict['6G']['max'] = max6
-            avg6.append((sum(list6G) / args.num_stations))
-            final_dict['6G']['avg'] = avg6
-            final_dict['6G']['bytes_rd'] = list6G_bytes
-            final_dict['6G']['speed'] = list6G_speed
-            final_dict['6G']['url_times'] = list6G_urltimes
-        elif bands == "2.4G":
-            list2G.extend(uc_avg_val)
-            list2G_bytes.extend(rx_bytes_val)
-            list2G_speed.extend(rx_rate_val)
-            list2G_urltimes.extend(url_times)
-            logger.info("%s %s %s", list2G, list2G_bytes, list2G_speed)
-            final_dict['2.4G']['dl_time'] = list2G
-            min2.append(min(list2G))
-            final_dict['2.4G']['min'] = min2
-            max2.append(max(list2G))
-            final_dict['2.4G']['max'] = max2
-            avg2.append((sum(list2G) / args.num_stations))
-            final_dict['2.4G']['avg'] = avg2
-            final_dict['2.4G']['bytes_rd'] = list2G_bytes
-            final_dict['2.4G']['speed'] = list2G_speed
-            final_dict['2.4G']['url_times'] = list2G_urltimes
-        elif bands == "Both":
-            Both.extend(uc_avg_val)
-            Both_bytes.extend(rx_bytes_val)
-            Both_speed.extend(rx_rate_val)
-            Both_urltimes.extend(url_times)
-            final_dict['Both']['dl_time'] = Both
-            min_both.append(min(Both))
-            final_dict['Both']['min'] = min_both
-            max_both.append(max(Both))
-            final_dict['Both']['max'] = max_both
-            avg_both.append((sum(Both) / args.num_stations))
-            final_dict['Both']['avg'] = avg_both
-            final_dict['Both']['bytes_rd'] = Both_bytes
-            final_dict['Both']['speed'] = Both_speed
-            final_dict['Both']['url_times'] = Both_urltimes
+        if args.client_type == 'Real':
+            listReal.extend(uc_avg_val)
+            listReal_bytes.extend(rx_bytes_val)
+            listReal_speed.extend(rx_rate_val)
+            listReal_urltimes.extend(url_times)
+            logger.info("%s %s %s", listReal, listReal_bytes, listReal_speed)
+            final_dict[bands]['dl_time'] = listReal
+            min2.append(min(listReal))
+            final_dict[bands]['min'] = min2
+            max2.append(max(listReal))
+            final_dict[bands]['max'] = max2
+            avg2.append((sum(listReal) / args.num_stations))
+            final_dict[bands]['avg'] = avg2
+            final_dict[bands]['bytes_rd'] = listReal_bytes
+            final_dict[bands]['speed'] = listReal_speed
+            final_dict[bands]['url_times'] = listReal_urltimes
+        else:
+            if bands == "5G":
+                list5G.extend(uc_avg_val)
+                list5G_bytes.extend(rx_bytes_val)
+                list5G_speed.extend(rx_rate_val)
+                list5G_urltimes.extend(url_times)
+                logger.info("%s %s %s %s", list5G, list5G_bytes, list5G_speed, list5G_urltimes)
+                final_dict['5G']['dl_time'] = list5G
+                min5.append(min(list5G))
+                final_dict['5G']['min'] = min5
+                max5.append(max(list5G))
+                final_dict['5G']['max'] = max5
+                avg5.append((sum(list5G) / args.num_stations))
+                final_dict['5G']['avg'] = avg5
+                final_dict['5G']['bytes_rd'] = list5G_bytes
+                final_dict['5G']['speed'] = list5G_speed
+                final_dict['5G']['url_times'] = list5G_urltimes
+            elif bands == "6G":
+                list6G.extend(uc_avg_val)
+                list6G_bytes.extend(rx_bytes_val)
+                list6G_speed.extend(rx_rate_val)
+                list6G_urltimes.extend(url_times)
+                final_dict['6G']['dl_time'] = list6G
+                min6.append(min(list6G))
+                final_dict['6G']['min'] = min6
+                max6.append(max(list6G))
+                final_dict['6G']['max'] = max6
+                avg6.append((sum(list6G) / args.num_stations))
+                final_dict['6G']['avg'] = avg6
+                final_dict['6G']['bytes_rd'] = list6G_bytes
+                final_dict['6G']['speed'] = list6G_speed
+                final_dict['6G']['url_times'] = list6G_urltimes
+            elif bands == "2.4G":
+                list2G.extend(uc_avg_val)
+                list2G_bytes.extend(rx_bytes_val)
+                list2G_speed.extend(rx_rate_val)
+                list2G_urltimes.extend(url_times)
+                logger.info("%s %s %s", list2G, list2G_bytes, list2G_speed)
+                final_dict['2.4G']['dl_time'] = list2G
+                min2.append(min(list2G))
+                final_dict['2.4G']['min'] = min2
+                max2.append(max(list2G))
+                final_dict['2.4G']['max'] = max2
+                avg2.append((sum(list2G) / args.num_stations))
+                final_dict['2.4G']['avg'] = avg2
+                final_dict['2.4G']['bytes_rd'] = list2G_bytes
+                final_dict['2.4G']['speed'] = list2G_speed
+                final_dict['2.4G']['url_times'] = list2G_urltimes
+            elif bands == "Both":
+                Both.extend(uc_avg_val)
+                Both_bytes.extend(rx_bytes_val)
+                Both_speed.extend(rx_rate_val)
+                Both_urltimes.extend(url_times)
+                final_dict['Both']['dl_time'] = Both
+                min_both.append(min(Both))
+                final_dict['Both']['min'] = min_both
+                max_both.append(max(Both))
+                final_dict['Both']['max'] = max_both
+                avg_both.append((sum(Both) / args.num_stations))
+                final_dict['Both']['avg'] = avg_both
+                final_dict['Both']['bytes_rd'] = Both_bytes
+                final_dict['Both']['speed'] = Both_speed
+                final_dict['Both']['url_times'] = Both_urltimes            
 
     result_data = final_dict
     print("result", result_data)
@@ -1524,21 +1963,26 @@ times the file is downloaded.
 
     info_ssid = []
     info_security = []
-    for band in args.bands:
-        if band == "2.4G":
-            info_ssid.append(args.twog_ssid)
-            info_security.append(args.twog_security)
-        elif band == "5G":
-            info_ssid.append(args.fiveg_ssid)
-            info_security.append(args.fiveg_security)
-        elif band == "6G":
-            info_ssid.append(args.sixg_ssid)
-            info_security.append(args.sixg_security)
-        elif band == "Both":
-            info_ssid.append(args.fiveg_ssid)
-            info_security.append(args.fiveg_security)
-            info_ssid.append(args.twog_ssid)
-            info_security.append(args.twog_security)
+    #For real clients
+    if args.client_type == 'Real':
+        info_ssid.append(args.ssid)
+        info_security.append(args.security)
+    else:
+        for band in args.bands:
+            if band == "2.4G":
+                info_ssid.append(args.twog_ssid)
+                info_security.append(args.twog_security)
+            elif band == "5G":
+                info_ssid.append(args.fiveg_ssid)
+                info_security.append(args.fiveg_security)
+            elif band == "6G":
+                info_ssid.append(args.sixg_ssid)
+                info_security.append(args.sixg_security)
+            elif band == "Both":
+                info_ssid.append(args.fiveg_ssid)
+                info_security.append(args.fiveg_security)
+                info_ssid.append(args.twog_ssid)
+                info_security.append(args.twog_security)
 
     print("total test duration ", test_duration)
     date = str(datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
@@ -1552,15 +1996,28 @@ times the file is downloaded.
             duration = str(duration / 3600) + "h"
 
     if args.client_type == "Real":
-        test_setup_info = {
-            "AP Name": args.ap_name,
-            "SSID": ssid,
-            "Device List": ", ".join(all_devices_names),
-            "Security": security,
-            "No of Devices": "Total" + f"({args.num_stations})" + total_devices,
-            "Traffic Direction": "Download",
-            "Traffic Duration ": duration
-        }
+        if args.group_name is not None:
+            group_names = ', '.join(configuration.keys())
+            profile_names = ', '.join(configuration.values())
+            configmap = "Groups:" + group_names + " -> Profiles:" + profile_names
+            test_setup_info = {
+                "AP name": args.ap_name,
+                "Configuration": configmap,
+                "Configured Devices": ", ".join(all_devices_names),
+                "No of Devices": "Total" + f"({args.num_stations})" + total_devices,
+                "Traffic Direction": "Download",
+                "Traffic Duration ": duration
+            }
+        else:
+            test_setup_info = {
+                "AP Name": args.ap_name,
+                "SSID": ssid,
+                "Device List": ", ".join(all_devices_names),
+                "Security": security,
+                "No of Devices": "Total" + f"({args.num_stations})" + total_devices,
+                "Traffic Direction": "Download",
+                "Traffic Duration ": duration
+            }
     else:
         test_setup_info = {
             "AP Name": args.ap_name,
