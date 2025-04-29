@@ -1131,7 +1131,8 @@ effectively over the network and pinpoint potential issues affecting connectivit
 
     # ping object creation
     ping = Ping(host=mgr_ip, port=mgr_port, ssid=ssid, security=security, password=password, radio=radio,
-                lanforge_password=mgr_password, target=target, interval=interval, sta_list=[], virtual=args.virtual, real=args.real, duration=duration, debug=debug)
+                lanforge_password=mgr_password, target=target, interval=interval, sta_list=[], virtual=args.virtual, real=args.real, duration=duration, debug=debug, csv_name=args.device_csv_name,
+                expected_passfail_val=args.expected_passfail_value, wait_time=args.wait_time, group_name=group_name)
 
     # changing the target from port to IP
     ping.change_target_to_ip()
@@ -1141,7 +1142,7 @@ effectively over the network and pinpoint potential issues affecting connectivit
 
         logging.info('Proceeding to create {} virtual stations on {}'.format(num_sta, radio))
         station_list = LFUtils.portNameSeries(
-            prefix_='sta', start_id_=0, end_id_=num_sta-1, padding_number_=100000, radio=radio)
+            prefix_='sta', start_id_=0, end_id_=num_sta - 1, padding_number_=100000, radio=radio)
         ping.sta_list = station_list
         if (debug):
             logging.info('Virtual Stations: {}'.format(station_list).replace(
@@ -1152,50 +1153,67 @@ effectively over the network and pinpoint potential issues affecting connectivit
         Devices = RealDevice(manager_ip=mgr_ip, selected_bands=[])
         Devices.get_devices()
         ping.Devices = Devices
-        ping.select_real_devices(real_devices=Devices)
-
+        # ping.select_real_devices(real_devices=Devices)
+        # If config is True, attempt to bring up all devices in the list and perform tests on those that become active
         if (configure):
-
-            # for androids
-            logger.info('Configuring Wi-Fi on the selected devices')
-            if (Devices.android_list == []):
-                logging.info('There are no Androids to configure Wi-Fi')
+            config_devices = {}
+            obj = DeviceConfig.DeviceConfig(lanforge_ip=mgr_ip, file_name=file_name, wait_time=args.wait_time)
+            # Case 1: Group name, file name, and profile name are provided
+            if (group_name is not None and file_name is not None and profile_name is not None):
+                selected_groups = group_name.split(',')
+                selected_profiles = profile_name.split(',')
+                for i in range(len(selected_groups)):
+                    config_devices[selected_groups[i]] = selected_profiles[i]
+                obj.initiate_group()
+                group_device_map = obj.get_groups_devices(data=selected_groups, groupdevmap=True)
+                # Configure devices in the selected group with the selected profile
+                eid_list = asyncio.run(obj.connectivity(config=config_devices, upstream=server_ip))
+                Devices.get_devices()
+                ping.select_real_devices(real_devices=Devices, device_list=eid_list)
+            # Case 2: Device list is empty but config flag is True — prompt the user to input device details for configuration
             else:
-                androids = interop_connectivity.Android(lanforge_ip=mgr_ip, port=mgr_port, server_ip=server_ip, ssid=ssid, passwd=password, encryption=security)
-                androids_data = androids.get_serial_from_port(port_list=Devices.android_list)
-
-                androids.stop_app(port_list=androids_data)
-
-                # androids.set_wifi_state(port_list=androids_data, state='disable')
-
-                # time.sleep(5)
-
-                androids.set_wifi_state(port_list=androids_data, state='enable')
-
-                androids.configure_wifi(port_list=androids_data)
-
-            # for laptops
-            laptops = interop_connectivity.Laptop(lanforge_ip=mgr_ip, port=8080, server_ip=server_ip, ssid=ssid, passwd=password, encryption=security)
-            all_laptops = Devices.windows_list + Devices.linux_list + Devices.mac_list
-
-            if (all_laptops == []):
-                logging.info('There are no laptops selected to configure Wi-Fi')
-            else:
-
-                laptops_data = laptops.get_laptop_from_port(port_list=all_laptops)
-
-                # works only for linux
-                laptops.rm_station(port_list=laptops_data)
-                time.sleep(2)
-
-                laptops.add_station(port_list=laptops_data)
-                time.sleep(2)
-
-                laptops.set_port(port_list=laptops_data)
-
-            if (Devices.android_list != [] or all_laptops != []):
-                logging.info('Waiting 20s for the devices to configure to Wi-Fi')
-                time.sleep(20)
+                all_devices = obj.get_all_devices()
+                device_list = []
+                config_dict = {
+                    'ssid': ssid,
+                    'passwd': password,
+                    'enc': security,
+                    'eap_method': eap_method,
+                    'eap_identity': eap_identity,
+                    'ieee80211': ieee80211,
+                    'ieee80211u': ieee80211u,
+                    'ieee80211w': ieee80211w,
+                    'enable_pkc': enable_pkc,
+                    'bss_transition': bss_transition,
+                    'power_save': power_save,
+                    'disable_ofdma': disable_ofdma,
+                    'roam_ft_ds': roam_ft_ds,
+                    'key_management': key_management,
+                    'pairwise': pairwise,
+                    'private_key': private_key,
+                    'ca_cert': ca_cert,
+                    'client_cert': client_cert,
+                    'pk_passwd': pk_passwd,
+                    'pac_file': pac_file,
+                    'server_ip': server_ip,
+                }
+                for device in all_devices:
+                    if (device["type"] == 'laptop'):
+                        device_list.append(device["shelf"] + '.' + device["resource"] + " " + device["hostname"])
+                    else:
+                        device_list.append(device["eid"] + " " + device["serial"])
+                logger.info(f"Available devices: {device_list}")
+                dev_list = input("Enter the desired resources to run the test:").split(',')
+                dev_list = asyncio.run(obj.connectivity(device_list=dev_list, wifi_config=config_dict))
+                Devices.get_devices()
+                ping.select_real_devices(real_devices=Devices, device_list=dev_list)
+        # Case 3: Config is False, no device list is provided, and no group is selected
+        # Prompt the user to manually input devices for running the test
+        else:
+            device_list = ping.Devices.get_devices()
+            logger.info(f"Available devices: {device_list}")
+            dev_list = input("Enter the desired resources to run the test:").split(',')
+            ping.select_real_devices(real_devices=Devices, device_list=dev_list)
 
     # station precleanup
     ping.cleanup()
@@ -1270,9 +1288,9 @@ effectively over the network and pinpoint potential issues affecting connectivit
                                 'sent': result_data['tx pkts'],
                                 'recv': result_data['rx pkts'],
                                 'dropped': result_data['dropped'],
-                                'min_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split('/')[0] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0], # noqa E501
-                                'avg_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split('/')[1] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0], # noqa E501
-                                'max_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split('/')[2] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0], # noqa E501
+                                'min_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split('/')[0] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                'avg_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split('/')[1] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                'max_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split('/')[2] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
                                 'mac': current_device_data['mac'],
                                 'channel': current_device_data['channel'],
                                 'ssid': current_device_data['ssid'],
@@ -1315,9 +1333,9 @@ effectively over the network and pinpoint potential issues affecting connectivit
                                     'sent': ping_data['tx pkts'],
                                     'recv': ping_data['rx pkts'],
                                     'dropped': ping_data['dropped'],
-                                    'min_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split('/')[0] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0], # noqa E501
-                                    'avg_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split('/')[1] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0], # noqa E501
-                                    'max_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split('/')[2] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0], # noqa E501
+                                    'min_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split('/')[0] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                    'avg_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split('/')[1] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                    'max_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split('/')[2] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
                                     'mac': current_device_data['mac'],
                                     'ssid': current_device_data['ssid'],
                                     'channel': current_device_data['channel'],
@@ -1344,15 +1362,15 @@ effectively over the network and pinpoint potential issues affecting connectivit
                             'sent': result_data['tx pkts'],
                             'recv': result_data['rx pkts'],
                             'dropped': result_data['dropped'],
-                            'min_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[0] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0], # noqa E501
-                            'avg_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[1] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0], # noqa E501
-                            'max_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[2] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0], # noqa E501
+                            'min_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[0] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                            'avg_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[1] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                            'max_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[2] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
                             'mac': current_device_data['mac'],
                             'ssid': current_device_data['ssid'],
                             'channel': current_device_data['channel'],
                             'mode': current_device_data['mode'],
                             'name': [current_device_data['user'] if current_device_data['user'] != '' else current_device_data['hostname']][0],
-                            'os': ['Windows' if 'Win' in current_device_data['hw version'] else 'Linux' if 'Linux' in current_device_data['hw version'] else 'Mac' if 'Apple' in current_device_data['hw version'] else 'Android'][0], # noqa E501
+                            'os': ['Windows' if 'Win' in current_device_data['hw version'] else 'Linux' if 'Linux' in current_device_data['hw version'] else 'Mac' if 'Apple' in current_device_data['hw version'] else 'Android'][0],  # noqa E501
                             'remarks': [],
                             'last_result': [result_data['last results'].split('\n')[-2] if len(result_data['last results']) != 0 else ""][0]
                         }
@@ -1372,15 +1390,15 @@ effectively over the network and pinpoint potential issues affecting connectivit
                                 'sent': ping_data['tx pkts'],
                                 'recv': ping_data['rx pkts'],
                                 'dropped': ping_data['dropped'],
-                                'min_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[0] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0], # noqa E501
-                                'avg_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[1] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0], # noqa E501
-                                'max_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[2] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0], # noqa E501
+                                'min_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[0] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                'avg_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[1] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                'max_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[2] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
                                 'mac': current_device_data['mac'],
                                 'ssid': current_device_data['ssid'],
                                 'channel': current_device_data['channel'],
                                 'mode': current_device_data['mode'],
                                 'name': [current_device_data['user'] if current_device_data['user'] != '' else current_device_data['hostname']][0],
-                                'os': ['Windows' if 'Win' in current_device_data['hw version'] else 'Linux' if 'Linux' in current_device_data['hw version'] else 'Mac' if 'Apple' in current_device_data['hw version'] else 'Android'][0], # noqa E501
+                                'os': ['Windows' if 'Win' in current_device_data['hw version'] else 'Linux' if 'Linux' in current_device_data['hw version'] else 'Mac' if 'Apple' in current_device_data['hw version'] else 'Android'][0],  # noqa E501
                                 'remarks': [],
                                 'last_result': [ping_data['last results'].split('\n')[-2] if len(ping_data['last results']) != 0 else ""][0]
                             }
@@ -1391,12 +1409,18 @@ effectively over the network and pinpoint potential issues affecting connectivit
     logging.info(ping.result_json)
 
     # station post cleanup
-    # ping.cleanup()
+    ping.cleanup()
 
     if args.local_lf_report_dir == "":
-        ping.generate_report()
+        if (args.group_name is not None):
+            ping.generate_report(config_devices=config_devices, group_device_map=group_device_map)
+        else:
+            ping.generate_report()
     else:
-        ping.generate_report(report_path=args.local_lf_report_dir)
+        if (args.group_name is not None):
+            ping.generate_report(config_devices=config_devices, group_device_map=group_device_map, report_path=args.local_lf_report_dir)
+        else:
+            ping.generate_report(report_path=args.local_lf_report_dir)
 
 
 if __name__ == "__main__":
