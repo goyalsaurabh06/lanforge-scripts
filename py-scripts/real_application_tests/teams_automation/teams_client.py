@@ -56,8 +56,8 @@ class TeamsClient:
         #self.opt.add_experimental_option("debuggerAddress","localhost:8989")
         #self.opt.add_argument("--disable-extensions")
         self.opt.add_experimental_option("prefs", self.prefs)
-        #self.opt.add_argument("--use-fake-ui-for-media-stream")
-        #self.opt.add_argument("--use-fake-device-for-media-stream")
+        self.opt.add_argument("--use-fake-ui-for-media-stream")
+        self.opt.add_argument("--use-fake-device-for-media-stream")
         #self.opt.add_experimental_option("debuggerAddress","localhost:8989")
         self.opt.add_argument("--disable-extensions")
         self.opt.add_argument("--disable-infobars")
@@ -305,7 +305,7 @@ class TeamsClient:
             self.au_recv_codec=self.wait_for_element("//span[@data-tid='audio-received-codec']").text
             if self.au_recv_codec and  self.au_recv_codec == "--":
                 self.au_recv_codec = "NA"
-            
+            #time.sleep(3)
             back=self.wait_for_element("//button[@data-tid='rail-header-back-button']")
             back.click()
 
@@ -326,7 +326,6 @@ class TeamsClient:
             # print(audio_stats_data)
             print("checking au_recevied jitter")
             print(self.au_recv_jitter)
-
             return audio_stats_data
             
         except Exception as e:
@@ -398,7 +397,7 @@ class TeamsClient:
 
             # Video processing type
             self.vi_processing=self.wait_for_element("//span[@data-tid='video-processing-type']").text
-
+            #time.sleep(3)
             back=self.wait_for_element("//button[@data-tid='rail-header-back-button']")
 
             back.click()
@@ -417,7 +416,6 @@ class TeamsClient:
                 "vi_sent_codec": self.vi_sent_codec,
                 "vi_processing": self.vi_processing
             }
-    
             return video_stats_data
         
         except Exception as e:

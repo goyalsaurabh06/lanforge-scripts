@@ -42,8 +42,8 @@ class TeamsHost:
         #self.opt.add_experimental_option("debuggerAddress","localhost:8989")
         #self.opt.add_argument("--disable-extensions")
         self.opt.add_experimental_option("prefs", self.prefs)
-        #self.opt.add_argument("--use-fake-ui-for-media-stream")
-        #self.opt.add_argument("--use-fake-device-for-media-stream")
+        self.opt.add_argument("--use-fake-ui-for-media-stream")
+        self.opt.add_argument("--use-fake-device-for-media-stream")
         #self.opt.add_experimental_option("debuggerAddress","localhost:8989")
         self.opt.add_argument("--disable-extensions")
         self.opt.add_argument("--disable-popup-blocking")
@@ -163,11 +163,6 @@ class TeamsHost:
             # Switch back to the new window
             self.driver.switch_to.window(new_window)
 
-            # calendar=WebDriverWait(self.driver,30).until(EC.element_to_be_clickable((By.XPATH,'//*[@id="ef56c0de-36fc-4ef8-b417-3d82ba9d073c"]')))
-            # calendar.click()
-
-            # meet_now=WebDriverWait(self.driver,60).until(EC.element_to_be_clickable((By.XPATH,'//*[@id="app"]/div/div/div/div[5]/div/div/div[3]/button[2]')))
-            #meet_now=self.wait_for_element('//*[@id="app"]/div/div/div/div[5]/div/div/div[3]/button[2]')
             meet_now = WebDriverWait(self.driver, 60).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, 'button[data-tid="calendar_header_open_meet_now_flyout_button"]'))
             )
@@ -207,33 +202,30 @@ class TeamsHost:
 
             time.sleep(3)
 
-            show_more=self.wait_for_element('//button[@id="callingButtons-showMoreBtn"]')
+            # show_more=self.wait_for_element('//button[@id="callingButtons-showMoreBtn"]')
 
-            show_more.click()
+            # show_more.click()
             
-            time.sleep(3)
+            # time.sleep(3)
 
-            settings=self.wait_for_element('//div[@id="SettingsMenuControl-id"]')
+            # settings=self.wait_for_element('//div[@id="SettingsMenuControl-id"]')
 
-            settings.click()
+            # settings.click()
 
-            meeting_options=self.wait_for_element('//div[@role="menuitemcheckbox" and @aria-label="Meeting options" and @id="meeting-options-ubar"]')
-            meeting_options.click()
+            # meeting_options=self.wait_for_element('//div[@role="menuitemcheckbox" and @aria-label="Meeting options" and @id="meeting-options-ubar"]')
+            # meeting_options.click()
 
-            bypass_option=self.wait_for_element("//button[@id='AutoAdmittedUsers']")
-            bypass_option.click()
+            # bypass_option=self.wait_for_element("//button[@id='AutoAdmittedUsers']")
+            # bypass_option.click()
 
-            everyone=self.wait_for_element("//div[@id='option1' and @role='option' and @data-tid='Everyone']")
+            # everyone=self.wait_for_element("//div[@id='option1' and @role='option' and @data-tid='Everyone']")
 
-            everyone.click()
+            # everyone.click()
 
-
-            # save_button=self.wait_for_element("//button[@data-tid='Save button']")
-            # save_button.click()
-            apply_button = WebDriverWait(self.driver, 60).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "button[title='Apply']"))
-            )
-            apply_button.click()
+            # apply_button = WebDriverWait(self.driver, 60).until(
+            #     EC.element_to_be_clickable((By.CSS_SELECTOR, "button[title='Apply']"))
+            # )
+            # apply_button.click()
 
 
         except Exception as e:
@@ -370,7 +362,7 @@ class TeamsHost:
             self.au_recv_codec=self.wait_for_element("//span[@data-tid='audio-received-codec']").text
             if self.au_recv_codec and  self.au_recv_codec == "--":
                 self.au_recv_codec = "NA"
-
+            #time.sleep(3)
             back=self.wait_for_element("//button[@data-tid='rail-header-back-button']")
             back.click()
 
@@ -391,7 +383,6 @@ class TeamsHost:
             # print(audio_stats_data)
             print("checking au_recevied jitter")
             print(self.au_recv_jitter)
-
             return audio_stats_data
             
         except Exception as e:
@@ -463,6 +454,7 @@ class TeamsHost:
 
             # Video processing type
             self.vi_processing=self.wait_for_element("//span[@data-tid='video-processing-type']").text
+            # time.sleep(3)
             back=self.wait_for_element("//button[@data-tid='rail-header-back-button']")
 
             back.click()

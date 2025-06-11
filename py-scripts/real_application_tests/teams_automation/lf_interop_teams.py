@@ -15,6 +15,7 @@ import json
 import asyncio
 import sys
 import traceback
+import glob
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
@@ -508,6 +509,8 @@ class TeamsAutomation(Realm):
                     if self.audio and self.video:
                         audio = stats.get('audio_stats', {})
                         video = stats.get('video_stats', {})
+                        #print(f"Audio Stats: {audio}")
+                        #print(f"Video Stats: {video}")
                         row = [
                             timestamp,
                             audio.get("au_sent_bitrate", 0),
@@ -554,26 +557,6 @@ class TeamsAutomation(Realm):
                             video.get("vi_sent_codec", "NA"),
                             video.get("vi_processing", "NA"),
                         ]
-
-                    row = [
-                        timestamp,
-                        audio.get("au_sent_bitrate", 0),
-                        audio.get("au_sent_pkts", 0),
-                        audio.get("au_rtt", 0),
-                        audio.get("au_sent_codec", "NA"),
-                        audio.get("au_recv_jitter", 0),
-                        audio.get("au_recv_pkt_loss", 0),
-                        audio.get("au_recv_pkts", 0),
-                        audio.get("au_recv_codec", "NA"),
-                        video.get("vi_sent_bitrate", 0),
-                        video.get("vi_recv_bitrate", 0),
-                        video.get("vi_sent_frame_rate", 0),
-                        video.get("vi_sent_res", "NA"),
-                        video.get("vi_rtt", 0),
-                        video.get("vi_ent_pkts", 0),
-                        video.get("vi_sent_codec", "NA"),
-                        video.get("vi_processing", "NA"),
-                    ]
                     writer.writerow(row)
 
             return jsonify({"status": "success"}), 200
@@ -587,6 +570,36 @@ class TeamsAutomation(Realm):
             sys.exit(0)
     
 
+    def create_avg_data(self):
+        # Get the current directory (where the script is running)
+        csv_directory = os.getcwd()
+        output_file = "teams_call_avg_data.csv"
+
+        summary_rows = []
+
+        for csv_path in glob.glob(os.path.join(csv_directory, "*.csv")):
+            if csv_path.endswith("teams_cred.csv"):
+                continue
+            df = pd.read_csv(csv_path)
+
+            device_name = os.path.splitext(os.path.basename(csv_path))[0]
+            df = df.drop(columns=["timestamp"], errors="ignore")
+
+            numeric_cols = df.select_dtypes(include="number").columns
+            averages = df[numeric_cols].mean().round(2)
+
+            row = averages.to_dict()
+            row["Device Name"] = device_name
+            summary_rows.append(row)
+
+        summary_df = pd.DataFrame(summary_rows)
+
+        # Put 'Device Name' as the first column
+        cols = ["Device Name"] + [col for col in summary_df.columns if col != "Device Name"]
+        summary_df = summary_df[cols]
+
+        summary_df.to_csv(output_file, index=False)
+        logger.info(f"Avg data saved to {output_file}")
 
 
 
@@ -662,6 +675,9 @@ def main():
         teams.select_real_devices(real_sta_list=args.resources)
         teams.load_credentials()
         teams.run()
+        time.sleep(10)
+        teams.create_avg_data()
+
     
     except Exception as e:
         logging.error(f"AN ERROR OCCURED WHILE RUNNING TEST {e}")
