@@ -527,7 +527,7 @@ class Candela:
         self.ftp_test.start(False, False)
         self.ftp_test.monitor_for_runtime_csv()
         if not background:
-            time.sleep(int(self.ftp_test.traffic_duration))
+            # time.sleep(int(self.ftp_test.traffic_duration))
             self.stop_ftp_test()
             self.generate_report_ftp_test()
         
@@ -666,7 +666,7 @@ class Candela:
         self.http_test.Bands = Bands
         self.http_test.start_time = test_time
         if not background:
-            time.sleep(self.http_test.http_test_duration)
+            # time.sleep(self.http_test.http_test_duration)
             self.stop_http_test()
             self.generate_report_http_test()
 
@@ -2192,12 +2192,12 @@ candela_apis.start_http_test(ssid='Walkin_open', password='[BLANK]',
                              device_list=['1.12.wlan0', '1.15.wlan0'],target_per_ten=1000, upstream='eth1',
                              band='5G', ap_name='Netgear', background=False)
 
-# # TO RUN QOS TEST don't uncomment candela_apis.generate_qos_report() 
+# # TO RUN QOS TEST
 candela_apis.start_qos_test(ssid='Walkin_open', password='[BLANK]', security='open',
                             ap_name='Netgear', upstream='eth1', tos=['VI', 'BK'],
                             traffic_type='lf_tcp', device_list=['1.12.wlan0', '1.15.wlan0'], qos_serial_run=False,background_run=True)
-time.sleep(60)
-candela_apis.stop_qos_test()
+# time.sleep(60)
+# candela_apis.stop_qos_test()
 
 # TO RUN PING TEST
 candela_apis.start_ping_test(ssid='Walkin_open', password='[BLANK]', encryption='open',
@@ -2228,22 +2228,22 @@ candela_apis.generate_report_throughput_test()
 
 
 # TO RUN INTEROPERABILITY TEST
-candela_apis.start_th_test(traffic_type="lf_udp",
-                                   device_list='1.12,1.15',
-                                   upload=1000000,
-                                   download=100000,
-                                   upstream_port="eth1",
-                                   test_duration="20s",
-                                   do_interopability=True,
-                                   precleanup=True,
-                                   postcleanup=True,
-                                   test_name="Interoperabaility_test"
-                                   )
-print("waiting started")
-time.sleep(60)
-print("waiting finished")
-candela_apis.stop_throughput_test()
-candela_apis.generate_report_throughput_test()
+# candela_apis.start_th_test(traffic_type="lf_udp",
+#                                    device_list='1.12,1.15',
+#                                    upload=1000000,
+#                                    download=100000,
+#                                    upstream_port="eth1",
+#                                    test_duration="20s",
+#                                    do_interopability=True,
+#                                    precleanup=True,
+#                                    postcleanup=True,
+#                                    test_name="Interoperabaility_test"
+#                                    )
+# print("waiting started")
+# time.sleep(60)
+# print("waiting finished")
+# candela_apis.stop_throughput_test()
+# candela_apis.generate_report_throughput_test()
 
 # TO RUN VIDEO STREAMING TEST
 candela_apis.start_vs_test(url="https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
@@ -2263,7 +2263,12 @@ candela_apis.stop_video_streaming_test()
 candela_apis.generate_report_video_streaming_test()
 
 
-
+# # To RUN MULTICAST TEST
+candela_apis.start_mc_test(mc_tos="VO", endp_types="mc_udp", side_a_min=10000000,
+                                  side_b_min=100000000, upstream_port='eth1', test_duration=30, device_list=['1.12.wlan0', '1.15.wlan0'], background_run=True)
+time.sleep(60)
+candela_apis.stop_multicast_test()
+candela_apis.generate_report_multicast_test()
 
 #TO RUN WEB BROWSER TEST
 candela_apis.start_wb_test(device_list='1.12,1.15', 
@@ -2278,9 +2283,3 @@ candela_apis.stop_web_browser_test()
 candela_apis.generate_report_web_browser_test()
 
 
-# # To RUN MULTICAST TEST
-candela_apis.start_mc_test(mc_tos="VO", endp_types="mc_udp", side_a_min=10000000,
-                                  side_b_min=100000000, upstream_port='eth1', test_duration=30, device_list=['1.12.wlan0', '1.15.wlan0'], background_run=True)
-time.sleep(60)
-candela_apis.stop_multicast_test()
-candela_apis.generate_report_multicast_test()
