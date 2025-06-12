@@ -689,6 +689,8 @@ def main():
         logger.info("Waiting for Browser Cleanup at Client Side")
         time.sleep(10)
         logger.info("Browser Cleanup Completed")
+        teams.generic_endps_profile.cleanup()
+        logger.info("Test Completed")
 
         
 
