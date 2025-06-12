@@ -21,6 +21,7 @@ import sys
 import pytz
 import logging
 import traceback
+import pyautogui
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -156,9 +157,8 @@ class TeamsClient:
             self.driver.switch_to.window(windows[1])
             
             self.driver.get(self.meeting_link)
-
-            #self.joinfrombrowser=WebDriverWait(self.driver,10).until(EC.visibility_of_element_located((By.XPATH,'//button[@aria-label="Join meeting from this browser"]')))
-
+            time.sleep(10)
+            pyautogui.press('enter')
             self.joinfrombrowser=self.wait_for_element_with_time('//button[@aria-label="Join meeting from this browser"]',timeout=10)
 
             if(self.joinfrombrowser):
@@ -166,9 +166,6 @@ class TeamsClient:
             join_meeting=self.wait_for_element("//button[@id='prejoin-join-button']")
 
             join_meeting.click()
-
-            # join_now=self.wait_for_element('//*[@id="prejoin-join-button"]')
-            # join_now.click()
 
             camera_button=self.wait_for_element('//*[@id="video-button"]')
             camera_button.click()
