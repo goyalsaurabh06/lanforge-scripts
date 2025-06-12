@@ -62,7 +62,7 @@ class TeamsClient:
         #self.opt.add_experimental_option("debuggerAddress","localhost:8989")
         self.opt.add_argument("--disable-extensions")
         self.opt.add_argument("--disable-infobars")
-        self.opt.add_argument("--disable-popup-blocking")
+        #self.opt.add_argument("--disable-popup-blocking")
         #self.opt.add_argument("--incognito")
         self.driver = webdriver.Chrome(options=self.opt)
         self.driver.maximize_window()

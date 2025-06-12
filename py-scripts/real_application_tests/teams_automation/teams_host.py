@@ -46,7 +46,7 @@ class TeamsHost:
         #self.opt.add_argument("--use-fake-device-for-media-stream")
         #self.opt.add_experimental_option("debuggerAddress","localhost:8989")
         self.opt.add_argument("--disable-extensions")
-        self.opt.add_argument("--disable-popup-blocking")
+        #self.opt.add_argument("--disable-popup-blocking")
         self.opt.add_argument("--disable-blink-features=AutomationControlled")
         self.opt.add_experimental_option("excludeSwitches", ["enable-automation"])
         self.opt.add_experimental_option("useAutomationExtension", False)
