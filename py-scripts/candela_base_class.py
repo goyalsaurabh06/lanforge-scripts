@@ -448,7 +448,7 @@ class Candela:
                        ap_name='',
                        band='5g',
                        direction='Download',
-                       file_size='12MB',
+                       file_size='1MB',
                        traffic_duration=60,
                        upstream='eth1',
                        lf_username='lanforge',
@@ -525,6 +525,7 @@ class Candela:
         logger.info("Traffic started running at {}".format(test_start_time))
         self.ftp_test.start_time = test_start_time
         self.ftp_test.start(False, False)
+        self.ftp_test.monitor_for_runtime_csv()
         if not background:
             time.sleep(int(self.ftp_test.traffic_duration))
             self.stop_ftp_test()
@@ -537,7 +538,7 @@ class Candela:
         """
         self.ftp_test.stop()
         logger.info("Traffic stopped running")
-        self.ftp_test.my_monitor()
+        # self.ftp_test.my_monitor()
         self.ftp_test.postcleanup()
         test_end_time = datetime.now()
         logger.info("Test ended at {}".format(test_end_time))
@@ -570,7 +571,7 @@ class Candela:
                         local_lf_report_dir="")
         return self.ftp_test.data
 
-    def start_http_test(self, ssid, password, security, http_file_size, device_list, report_labels, device_macs,
+    def start_http_test(self, ssid, password, security, http_file_size, device_list,
                   target_per_ten, upstream='eth1', ap_name='', http_test=http_test, all_bands=False, windows_ports=[],
                   band='5G', lf_username='lanforge', lf_password='lanforge', 
                   test_duration=60, background = False):
@@ -629,28 +630,40 @@ class Candela:
         num_stations = 0
         
         num_stations = len(device_list)
+        dev_list=[]
+        for dev in device_list:
+            dev_list.append(dev.split('.')[0]+'.'+dev.split('.')[1])
+        if device_list!=[]:
+            arg_dev_list=','.join(dev_list)
+        else:
+            arg_dev_list=[]
         self.http_test = http_test.HttpDownload(lfclient_host=self.lanforge_ip, lfclient_port=self.port,
                                                upstream=upstream,
                                                num_sta=num_stations,
                                                ap_name=ap_name, ssid=ssid, password=password, security=security,
                                                target_per_ten=target_per_ten, file_size=http_file_size, bands=band,
                                                client_type="Real", lf_username=lf_username,
-                                               lf_password=lf_password)
-        self.http_test.http_test_duration = http_test_duration
-        self.http_test.Bands = Bands
-        self.http_test.data = {}
-        self.http_test.port_list = device_list
-        self.http_test.devices_list = report_labels
-        self.http_test.macid_list = device_macs
-        self.http_test.user_query = [device_list, report_labels, device_macs]
-        self.http_test.windows_ports = windows_ports
+                                               lf_password=lf_password,device_list=arg_dev_list)
+        http_port_list,http_dev_list,http_mac=self.http_test.get_real_client_list()
+        print("http_dev_list",http_dev_list)
+        if(len(http_dev_list)==0):
+            print('No devices')
+            exit(1)
+        self.http_test.port_list = http_port_list
+        self.http_test.devices_list = http_dev_list
+        self.http_test.macid_list = http_mac
+        self.http_test.user_query = [http_port_list, http_dev_list, http_mac]
+        # self.http_test.windows_ports = windows_ports
         self.http_test.file_create(ssh_port=22)
         self.http_test.set_values()
         self.http_test.precleanup()
         self.http_test.build()
         test_time = datetime.now()
+        self.http_test.http_test_duration = http_test_duration
         logger.info("HTTP Test started at {}".format(test_time))
         self.http_test.start()
+        self.http_test.monitor_for_runtime_csv(http_test_duration)
+        self.http_test.Bands = Bands
         self.http_test.start_time = test_time
         if not background:
             time.sleep(self.http_test.http_test_duration)
@@ -784,7 +797,9 @@ class Candela:
             dataset = result_data[i]['dl_time']
             dataset2 = result_data[i]['url_times']
             bytes_rd = result_data[i]['bytes_rd']
+            rx_rate = result_data[i]['speed']
         dataset1 = [float(f"{(i / 1000000): .4f}") for i in bytes_rd]
+        rx_rate = [round(x / 1000000, 4) for x in rx_rate]
         logger.info("data sets {} {}".format(dataset, dataset2))
         if band == "Both":
             for i in range(1, len(http_sta_list) * 2 + 1):
@@ -801,7 +816,7 @@ class Candela:
                                         dataset2=dataset2, result_data=result_data, test_rig="", test_tag="",
                                         dut_hw_version="", dut_sw_version="", dut_model_num="", dut_serial_num="",
                                         test_id="", test_input_infor="", csv_outfile="",
-                                        _results_dir_name=f'Webpage_Test_Report{band}',
+                                        _results_dir_name=f'Webpage_Test_Report{band}', rx_rate=rx_rate,
                                         report_path="")
         self.cleanup.layer4_endp_clean()
         return result_data
@@ -856,10 +871,17 @@ class Candela:
             qos_test_duration = test_duration
         else:
             qos_serial_run=False
-            qos_test_duration = 2
+            qos_test_duration = 60
 
         test_results = {'test_results': []}
         data = {}
+        dev_list=[]
+        for dev in device_list:
+            dev_list.append(dev.split('.')[0]+'.'+dev.split('.')[1])
+        if device_list!=[]:
+            arg_dev_list=','.join(dev_list)
+        else:
+            arg_dev_list=[]
         # qos test for real clients
         def qos_test_overall_real(qos_tos_real=None):
             self.qos_test = qos_test.ThroughputQOS(host=self.lanforge_ip,
@@ -874,6 +896,7 @@ class Candela:
                                                     upstream=upstream,
                                                     test_duration=qos_test_duration,
                                                     use_ht160=False,
+                                                    device_list=arg_dev_list,
                                                     side_a_min_rate=int(side_a_min),
                                                     side_b_min_rate=int(side_b_min),
                                                     side_a_max_rate=int(side_a_max),
@@ -883,19 +906,20 @@ class Candela:
                                                     _debug_on=False)
 
             data = {}
+            qos_port_list,qos_dev_list,qos_mac=self.qos_test.phantom_check()
             self.qos_test.background_run = background_run
-            self.qos_test.input_devices_list = device_list
-            self.qos_test.real_client_list = report_labels
-            self.qos_test.real_client_list1 = report_labels
-            self.qos_test.mac_id_list = device_macs
+            self.qos_test.input_devices_list = qos_port_list
+            self.qos_test.real_client_list = qos_dev_list
+            self.qos_test.real_client_list1 = qos_dev_list
+            self.qos_test.mac_id_list = qos_mac
             self.qos_test.build()
             self.qos_test.start()
             time.sleep(10)
             try:
-                connections_download, connections_upload, drop_a_per, drop_b_per = self.qos_test.monitor()
+                connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b= self.qos_test.monitor()
             except Exception as e:
                 logger.info(f"Failed at Monitoring the CX... {e}")    
-            if not background_run:
+            if background_run:
                 self.qos_test.stop()
                 time.sleep(5)
                 test_results['test_results'].append(
@@ -934,6 +958,10 @@ class Candela:
                         data1 = result4
                     data = data1
                 self.qos_test.generate_report(data=data,
+                                              connections_download_avg=connections_download_avg,
+                                              connections_upload_avg=connections_upload_avg ,
+                                                avg_drop_a=avg_drop_a,
+                                                  avg_drop_b=avg_drop_b,
                                                 input_setup_info={"contact": "support@candelatech.com"},
                                                 report_path="",
                                                 result_dir_name=f"Qos_Test_Report")
@@ -955,8 +983,8 @@ class Candela:
         if getattr(self.qos_test,"background_run",None):
             print("setting the flag to false")
             self.qos_test.background_run = False
+            self.qos_monitoring_thread.join()
         print("setting throughput test to stop")
-        self.qos_monitoring_thread.join()
         self.qos_test.stop()
 
     def generate_qos_report(self):
@@ -1005,7 +1033,7 @@ class Candela:
         # starting part of the ping test
         ping_test_obj = ping_test.Ping(host=self.lanforge_ip, port=self.port, ssid=ssid, security=encryption,
                                             password=password, lanforge_password="lanforge", target=target,
-                                            interval=interval, sta_list=[], duration=ping_test_duration)
+                                            interval=interval, sta_list=[], duration=ping_test_duration/60)
         ping_test_obj.enable_real = True
         if not ping_test_obj.check_tab_exists():
             logger.info('Generic Tab is not available for Ping Test.\nAborting the test.')
@@ -1013,7 +1041,8 @@ class Candela:
         base_interop_profile = RealDevice(manager_ip=self.lanforge_ip,
                                         ssid_5g=ssid,
                                         passwd_5g=password,
-                                        encryption_5g=encryption)
+                                        encryption_5g=encryption,
+                                        selected_bands=[])
         self.base_interop_profile = base_interop_profile
         base_interop_profile.get_devices()
         ping_test_obj.select_real_devices(real_devices=base_interop_profile,
@@ -1035,7 +1064,7 @@ class Candela:
             ports_data[port] = port_data
         if background:
             self.ping_test_obj = ping_test_obj
-            return True
+            # return True
         time.sleep(ping_test_duration)
         logger.info('Stopping the PING Test...')
         ping_test_obj.stop_generic()
@@ -1291,8 +1320,10 @@ class Candela:
         to_run_cxs,to_run_cxs_len,created_cx_lists_keys,incremental_capacity_list = self.throughput_test.get_incremental_capacity_list()
         for i in range(len(clients_to_run)):
             # Extend individual_dataframe_column with dynamically generated column names
-            individual_dataframe_column.extend([f'Download{clients_to_run[i]}', f'Upload{clients_to_run[i]}', f'Rx % Drop A {clients_to_run[i]}', f'Rx % Drop B{clients_to_run[i]}',f'RSSI {clients_to_run[i]} ',f'Link Speed {clients_to_run[i]} '])
-        individual_dataframe_column.extend(['Overall Download', 'Overall Upload', 'Overall Rx % Drop A', 'Overall Rx % Drop B','Iteration','TIMESTAMP','Start_time','End_time','Remaining_Time','Incremental_list','status'])
+            individual_dataframe_column.extend([f'Download{clients_to_run[i]}', f'Upload{clients_to_run[i]}', f'Rx % Drop A {clients_to_run[i]}',
+                                               f'Rx % Drop B{clients_to_run[i]}', f'RSSI {clients_to_run[i]} ', f'Link Speed {clients_to_run[i]} '])
+        individual_dataframe_column.extend(['Overall Download', 'Overall Upload', 'Overall Rx % Drop A', 'Overall Rx % Drop B', 'Iteration',
+                                           'TIMESTAMP', 'Start_time', 'End_time', 'Remaining_Time', 'Incremental_list', 'status'])
         individual_df=pd.DataFrame(columns=individual_dataframe_column)
         overall_start_time=datetime.now()
         overall_end_time=overall_start_time + timedelta(seconds=int(test_duration)*len(incremental_capacity_list))
@@ -1590,7 +1621,22 @@ class Candela:
 
         # Extend individual_dataframe_column with dynamically generated column names
         for i in range(len(keys)):
-            individual_dataframe_columns.extend([f'video_format_bitrate{keys[i]}', f'total_wait_time{keys[i]}',f'total_urls{keys[i]}',f'RSSI{keys[i]}',f'Link Speed{keys[i]}',f'Total Buffer {keys[i]}',f'Total Errors {keys[i]}',f'Min_Video_Rate{keys[i]}',f'Max_Video_Rate{keys[i]}',f'Avg_Video_Rate{keys[i]}'])
+            individual_dataframe_columns.extend([
+                f'video_format_bitrate_{keys[i]}',
+                f'total_wait_time_{keys[i]}',
+                f'total_urls_{keys[i]}',
+                f'RSSI_{keys[i]}',
+                f'Link Speed_{keys[i]}',
+                f'Total Buffer_{keys[i]}',
+                f'Total Errors_{keys[i]}',
+                f'Min_Video_Rate_{keys[i]}',
+                f'Max_Video_Rate_{keys[i]}',
+                f'Avg_Video_Rate_{keys[i]}',
+                f'bytes_rd_{keys[i]}',
+                f'rx rate_{keys[i]} bps',
+                f'frame_rate_{keys[i]}',
+                f'Video Quality_{keys[i]}'
+            ])
         individual_dataframe_columns.extend(['overall_video_format_bitrate','timestamp','iteration','start_time','end_time','remaining_Time','status'])
         individual_df=pd.DataFrame(columns=individual_dataframe_columns)
         
@@ -1776,12 +1822,12 @@ class Candela:
         if getattr(self.video_streaming_test,"background_run",None):
             print("setting the flag to false")
             self.video_streaming_test.background_run = False
+            self.monitoring_thread.join()
         elif self.video_streaming_test.incremental:
             print("setting the flag to false")
             # self.video_streaming_test.background_run = False
             self.video_streaming_test.stop_test=True
         print("setting video streaming test to stop")
-        self.monitoring_thread.join()
         self.video_streaming_test.stop() 
     def generate_report_video_streaming_test(self):
         """
@@ -2122,7 +2168,7 @@ class Candela:
 
 
 logger_config = lf_logger_config.lf_logger_config()
-candela_apis = Candela(ip='192.168.224.200', port=8080)
+candela_apis = Candela(ip='192.168.204.74', port=8080)
 
 # candela_apis.get_client_connection_details(['1.208.wlan0', '1.19.wlan0'])
 
@@ -2138,115 +2184,103 @@ candela_apis = Candela(ip='192.168.224.200', port=8080)
 # logger.info('{} {} {}'.format(device_list, report_labels, device_macs))
  
 # TO RUN FTP TEST
-# candela_apis.start_ftp_test(ssid='Walkin_open', password='[BLANK]', security='open',
-#                                 device_list=','.join(['1.80', '1.11', '1.81']),background=True)
-
-# time.sleep(600)
-# candela_apis.stop_ftp_test()
-# candela_apis.generate_report_ftp_test()
-#                                device_list=','.join(['1.16', '1.19']))
-
+candela_apis.start_ftp_test(ssid='Walkin_open', password='[BLANK]', security='open',
+                                device_list=','.join(['1.12', '1.15', '1.95']),background=False)
 # TO RUN HTTP TEST
-# candela_apis.start_http_test(ssid='Walkin_open', password='[BLANK]',
-#                              security='open', http_file_size='10MB',
-#                              device_list=['1.80.en0', '1.81.en0', '1.11.wlan0'], report_labels=['1.16 android test41', '1.19 android test46', '1.16 android test41'],
-#                              device_macs=['48:e7:da:fe:0d:ed', '48:e7:da:fe:0d:91', '48:e7:da:fe:0d:ed'], target_per_ten=1000, upstream='eth1',
-#                              band='5G', ap_name='Netgear', background=True)
-# time.sleep(120)
-# candela_apis.stop_http_test()
-# candela_apis.generate_report_http_test()
+candela_apis.start_http_test(ssid='Walkin_open', password='[BLANK]',
+                             security='open', http_file_size='10MB',
+                             device_list=['1.12.wlan0', '1.15.wlan0'],target_per_ten=1000, upstream='eth1',
+                             band='5G', ap_name='Netgear', background=False)
 
-# TO RUN QOS TEST
-# candela_apis.start_qos_test(ssid='Walkin_open', password='[BLANK]', security='open',
-#                             ap_name='Netgear', upstream='eth1', tos=['VI', 'BK'],
-#                             traffic_type='lf_tcp', device_list=['1.80.en0', '1.11.wlan0'], report_labels=['1.80 Lin test41', '1.11 android test46'],
-#                             device_macs=['48:e7:da:fe:0d:ed', '48:e7:da:fe:0d:91'], qos_serial_run=False,background_run=True)
-# time.sleep(60)
-# candela_apis.stop_qos_test()
-# candela_apis.generate_qos_report()
+# # TO RUN QOS TEST don't uncomment candela_apis.generate_qos_report() 
+candela_apis.start_qos_test(ssid='Walkin_open', password='[BLANK]', security='open',
+                            ap_name='Netgear', upstream='eth1', tos=['VI', 'BK'],
+                            traffic_type='lf_tcp', device_list=['1.12.wlan0', '1.15.wlan0'], qos_serial_run=False,background_run=True)
+time.sleep(60)
+candela_apis.stop_qos_test()
 
 # TO RUN PING TEST
-# candela_apis.start_ping_test(ssid='Walkin_open', password='[BLANK]', encryption='open',
-#                              target='192.168.1.95', device_list=['1.11.wlan0', '1.36.wlan0'], background=True)
+candela_apis.start_ping_test(ssid='Walkin_open', password='[BLANK]', encryption='open',
+                             target='192.168.204.74', device_list=['1.12.wlan0', '1.15.wlan0'], background=True)
 
 # TO RUN THROUGHPUT TEST
-# candela_apis.start_th_test(traffic_type="lf_udp",
-#                             device_list='1.80,1.81,1.11',
-#                             upload=1000000,
-#                             download=100000,
-#                             upstream_port="eth1",
-#                             report_timer="5s",
-#                             load_type="wc_intended_load",
-#                             # incremental_capacity="2",
-#                             # test_duration="5m",
-#                             # precleanup=True,
-#                             # postcleanup=True,
-#                             packet_size=18,
-#                             test_name="Throughput_test",
-#                             background_run=True
-#                             )
-# print("waiting started")
-# time.sleep(60)
-# print("waiting finished")
-# candela_apis.stop_throughput_test()
-# candela_apis.generate_report_throughput_test()
+candela_apis.start_th_test(traffic_type="lf_udp",
+                            device_list='1.12,1.15',
+                            upload=1000000,
+                            download=100000,
+                            upstream_port="eth1",
+                            report_timer="5s",
+                            load_type="wc_intended_load",
+                            # incremental_capacity="2",
+                            # test_duration="5m",
+                            # precleanup=True,
+                            # postcleanup=True,
+                            packet_size=18,
+                            test_name="Throughput_test",
+                            background_run=True
+                            )
+print("waiting started")
+time.sleep(60)
+print("waiting finished")
+candela_apis.stop_throughput_test()
+candela_apis.generate_report_throughput_test()
 
 
 
 # TO RUN INTEROPERABILITY TEST
-# candela_apis.start_th_test(traffic_type="lf_udp",
-#                                    device_list='1.13,1.18,1.11,1.12',
-#                                    upload=1000000,
-#                                    download=100000,
-#                                    upstream_port="eth1",
-#                                    test_duration="20s",
-#                                    do_interopability=True,
-#                                    precleanup=True,
-#                                    postcleanup=True,
-#                                    test_name="Interoperabaility_test"
-#                                    )
-# print("waiting started")
-# time.sleep(60)
-# print("waiting finished")
-# candela_apis.stop_throughput_test()
-# candela_apis.generate_report_throughput_test()
+candela_apis.start_th_test(traffic_type="lf_udp",
+                                   device_list='1.12,1.15',
+                                   upload=1000000,
+                                   download=100000,
+                                   upstream_port="eth1",
+                                   test_duration="20s",
+                                   do_interopability=True,
+                                   precleanup=True,
+                                   postcleanup=True,
+                                   test_name="Interoperabaility_test"
+                                   )
+print("waiting started")
+time.sleep(60)
+print("waiting finished")
+candela_apis.stop_throughput_test()
+candela_apis.generate_report_throughput_test()
 
 # TO RUN VIDEO STREAMING TEST
-# candela_apis.start_vs_test(url="https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-#                                         media_source="hls",
-#                                         media_quality="4k",
-#                                         duration="1m",
-#                                         device_list='1.11,1.80,1.81',
-#                                         precleanup=True,
-#                                         postcleanup=True,
-#                                         # incremental_capacity="3",
-#                                         background_run=True
-#                                         )
-# print("waiting started")
-# time.sleep(60)
-# print("waiting finished")
-# candela_apis.stop_video_streaming_test()
-# candela_apis.generate_report_video_streaming_test()
+candela_apis.start_vs_test(url="https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+                                        media_source="hls",
+                                        media_quality="4k",
+                                        duration="1m",
+                                        device_list='1.12,1.15',
+                                        precleanup=True,
+                                        postcleanup=True,
+                                        # incremental_capacity="3",
+                                        background_run=True
+                                        )
+print("waiting started")
+time.sleep(60)
+print("waiting finished")
+candela_apis.stop_video_streaming_test()
+candela_apis.generate_report_video_streaming_test()
 
 
 
 
 #TO RUN WEB BROWSER TEST
-candela_apis.start_wb_test(device_list='1.3,1.4,1.2,1.14', 
+candela_apis.start_wb_test(device_list='1.12,1.15', 
                                         duration="1m",
                                         url="https://www.google.com",
                                         background_run=False,
                                         count=5,
-                                        flask_ip="10.253.8.108",
+                                        flask_ip="10.253.8.126",
                                         expected_passfail_value=5
                                         )
 candela_apis.stop_web_browser_test()
 candela_apis.generate_report_web_browser_test()
 
 
-# To RUN MULTICAST TEST
-# candela_apis.start_mc_test(mc_tos="VO", endp_types="mc_udp", side_a_min=10000000,
-#                                   side_b_min=100000000, upstream_port='eth1', test_duration=30, device_list=['1.80.wlan0', '1.11.wlan0'], background_run=True)
-# time.sleep(60)
-# candela_apis.stop_multicast_test()
-# candela_apis.generate_report_multicast_test()
+# # To RUN MULTICAST TEST
+candela_apis.start_mc_test(mc_tos="VO", endp_types="mc_udp", side_a_min=10000000,
+                                  side_b_min=100000000, upstream_port='eth1', test_duration=30, device_list=['1.12.wlan0', '1.15.wlan0'], background_run=True)
+time.sleep(60)
+candela_apis.stop_multicast_test()
+candela_apis.generate_report_multicast_test()
