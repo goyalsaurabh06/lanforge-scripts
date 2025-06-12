@@ -149,6 +149,7 @@ import shutil
 import asyncio
 import csv
 import matplotlib.pyplot as plt
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +207,8 @@ class Throughput(Realm):
                  dowebgui=False,
                  precleanup=False,
                  do_interopability=False,
+                 get_heatmap=False,
+                 total_floors=0,
                  ip="localhost",
                  csv_direction='',
                  device_csv_name=None,
@@ -302,6 +305,8 @@ class Throughput(Realm):
         self.overall_avg_rssi = overall_avg_rssi if overall_avg_rssi is not None else []
         self.dowebgui = dowebgui
         self.do_interopability = do_interopability
+        self.get_heatmap = get_heatmap
+        self.total_floors = total_floors
         self.ip = ip
         self.device_found = False
         self.gave_incremental = False
@@ -335,6 +340,7 @@ class Throughput(Realm):
         self.config = config
         self.configdevices = {}
         self.group_device_map = {}
+        self.config_dict = {}
 
     def os_type(self):
         """
@@ -372,16 +378,61 @@ class Throughput(Realm):
                     self.android_list.append(hw_version)
         self.laptop_list = self.windows_list + self.linux_list + self.mac_list
 
+    def disconnect_all_devices(self,devices_to_disconnect=[]):
+        """
+        Disconnects either all devices or a specific list of devices from Wi-Fi networks.
+        """
+        obj = DeviceConfig.DeviceConfig(lanforge_ip=self.host, file_name=self.file_name, wait_time=self.wait_time)
+        # all_devices = obj.get_all_devices()
+        # GET ANDROIDS FROM DEVICE LIST
+        adb_obj = DeviceConfig.ADB_DEVICES(lanforge_ip=self.host)
+
+        async def do_disconnect():
+            all_devices = obj.get_all_devices()
+            # TO DISCONNECT ALL DEVICES
+            if len(devices_to_disconnect) == 0:
+                android_resources = [d for d in all_devices if d.get('os') == 'Android' and d.get('eid') in self.device_list]
+                if(len(android_resources)>0):
+                    # TO STOP APP FOR ALL DEVICES FOR ANDROIDS
+                    await adb_obj.stop_app(port_list=android_resources)
+                # TO FORGET ALL NETWORKS FOR ALL OS TYPES
+                await obj.connectivity(device_list=self.device_list, wifi_config=self.config_dict, disconnect=True)
+            # TO DISCONNECT SPECIFIC DEVICES
+            else:
+                android_resources = [d for d in all_devices if d.get('os') == 'Android' and d.get('eid') in devices_to_disconnect]
+                if(len(android_resources)>0):
+                    await adb_obj.stop_app(port_list=android_resources)
+                await obj.connectivity(device_list=devices_to_disconnect, wifi_config=self.config_dict, disconnect=True)
+
+        asyncio.run(do_disconnect())
+    
+    def configure_specific(self,device_to_configure_list):
+        """
+        Configure specific devices using the provided list of device IDs or names.
+        """
+        obj = DeviceConfig.DeviceConfig(lanforge_ip=self.host, file_name=self.file_name, wait_time=self.wait_time)
+        # all_devices = obj.get_all_devices()
+        asyncio.run(obj.connectivity(device_list=device_to_configure_list, wifi_config=self.config_dict))
+
+
+    def extract_digits_until_alpha(self,s):
+        """
+        Extracts digits (including decimals) from the start of a string until the first alphabet.
+        """
+        match = re.match(r'^[\d.]+', s)
+        return match.group() if match else ''
+
     def phantom_check(self):
         """
         Checks for non-phantom resources and ports, categorizes them, and prepares a list of available devices for testing.
 
         """
         port_eid_list, same_eid_list, original_port_list = [], [], []
+        interop_response = self.json_get("/adb")
         obj = DeviceConfig.DeviceConfig(lanforge_ip=self.host, file_name=self.file_name, wait_time=self.wait_time)
         upstream_port_ip = self.change_port_to_ip(self.upstream)
         config_devices = {}
-        config_dict = {
+        self.config_dict = {
             'ssid': self.ssid,
             'passwd': self.password,
             'enc': self.security,
@@ -422,7 +473,7 @@ class Throughput(Realm):
 
             self.device_list = self.device_list.split(',')
             if self.config:
-                self.device_list = asyncio.run(obj.connectivity(device_list=self.device_list, wifi_config=config_dict))
+                self.device_list = asyncio.run(obj.connectivity(device_list=self.device_list, wifi_config=self.config_dict))
         # Configuration of devices with SSID , Password and Security when the device list is not specified
         elif self.device_list == [] and self.config:
             all_devices = obj.get_all_devices()
@@ -435,7 +486,7 @@ class Throughput(Realm):
             logger.info("AVAILABLE RESOURCES", device_list)
             self.device_list = input("Enter the desired resources to run the test:").split(',')
             if self.config:
-                self.device_list = asyncio.run(obj.connectivity(device_list=self.device_list, wifi_config=config_dict))
+                self.device_list = asyncio.run(obj.connectivity(device_list=self.device_list, wifi_config=self.config_dict))
 
         # Retrieve all resources from the LANforge
         response = self.json_get("/resource/all")
@@ -469,7 +520,15 @@ class Throughput(Realm):
                                 if b['kernel'] == '':
                                     self.eid_list.append(b['eid'])
                                     self.mac_list.append(b['hw version'])
-                                    self.devices_available.append(b['eid'] + " " + 'iOS' + " " + b['hostname'])
+                                    if "devices"  in interop_response.keys():
+                                        interop_devices = interop_response['devices']
+                                        if(len([v['user-name'] for d in interop_devices for k, v in d.items() if v.get('resource-id') == b['eid']]) == 0):
+                                            self.devices_available.append(b['eid'] + " " + 'iOS' + " " + b['hostname'])
+                                        else:
+                                            ios_username = [v['user-name'] for d in interop_devices for k, v in d.items() if v.get('resource-id') == b['eid']][0]
+                                            self.devices_available.append(b['eid'] + " " + 'iOS' + " " + ios_username)
+                                    else:
+                                        self.devices_available.append(b['eid'] + " " + 'iOS' + " " + b['hostname'])
                                 else:
                                     self.eid_list.append(b['eid'])
                                     self.mac_list.append(b['hw version'])
@@ -969,9 +1028,9 @@ class Throughput(Realm):
                 if (current_time - previous_time).total_seconds() >= time_break:
                     individual_df_for_webui.loc[len(individual_df_for_webui)] = individual_df_data
                     if self.group_name is None:
-                        individual_df_for_webui.to_csv('{}/throughput_data.csv'.format(runtime_dir), index=False)
+                        individual_df.to_csv('{}/throughput_data.csv'.format(runtime_dir), index=False)
                     else:
-                        individual_df_for_webui.to_csv('{}/overall_throughput.csv'.format(runtime_dir), index=False)
+                        individual_df.to_csv('{}/overall_throughput.csv'.format(runtime_dir), index=False)
                     previous_time = current_time
 
                 # Append data to individual_df and save to CSV
@@ -1150,7 +1209,7 @@ class Throughput(Realm):
                 individual_df_for_webui.to_csv('{}/overall_throughput.csv'.format(runtime_dir), index=False)
                 individual_df.to_csv('overall_throughput.csv', index=False)
             else:
-                individual_df_for_webui.to_csv('{}/throughput_data.csv'.format(runtime_dir), index=False)
+                individual_df.to_csv('{}/throughput_data.csv'.format(runtime_dir), index=False)
                 individual_df.to_csv('throughput_data.csv', index=False)
         else:
             individual_df.to_csv('throughput_data.csv', index=False)
@@ -1803,6 +1862,40 @@ class Throughput(Realm):
                 report.set_graph_image(graph_png)
                 report.move_graph_image()
                 report.build_graph()
+                if(self.dowebgui and self.get_heatmap):
+                    for floor in range(0,int(self.total_floors)):
+                        script_dir = os.path.dirname(os.path.abspath(__file__))
+                        throughput_image_path = os.path.join(script_dir, "heatmap_images", f"{self.test_name}_throughput_{floor+1}.png")
+                        rssi_image_path = os.path.join(script_dir, "heatmap_images", f"{self.test_name}_rssi_{floor+1}.png")
+                        timeout = 60  # seconds
+                        start_time = time.time()
+
+                        while not (os.path.exists(throughput_image_path) and os.path.exists(rssi_image_path)):
+                            if time.time() - start_time > timeout:
+                                print("Timeout: Images not found within 60 seconds.")
+                                break
+                            time.sleep(1)
+                        while not os.path.exists(throughput_image_path) and not os.path.exists(rssi_image_path):
+                            if os.path.exists(throughput_image_path) and os.path.exists(rssi_image_path):
+                                break
+                            # time.sleep(10) 
+                        if os.path.exists(throughput_image_path):
+                            report.set_custom_html('<div style="page-break-before: always;"></div>')
+                            report.build_custom()
+                            # report.set_custom_html("<h2>Average Throughput Heatmap: </h2>")
+                            # report.build_custom()
+                            report.set_custom_html(f'<img src="file://{throughput_image_path}"></img>')
+                            report.build_custom()
+                            # os.remove(throughput_image_path)
+
+                        if os.path.exists(rssi_image_path):
+                            report.set_custom_html('<div style="page-break-before: always;"></div>')
+                            report.build_custom()
+                            # report.set_custom_html("<h2>Average RSSI Heatmap: </h2>")
+                            # report.build_custom()
+                            report.set_custom_html(f'<img src="file://{rssi_image_path}"></img>')
+                            report.build_custom()
+                            # os.remove(rssi_image_path)
                 if self.group_name:
                     report.set_obj_html(
                         _obj_title="Detailed Result Table For Groups ",
@@ -2228,10 +2321,52 @@ class Throughput(Realm):
                 report.set_custom_html('<hr>')
                 report.build_custom()
 
+            if(self.dowebgui and self.get_heatmap and self.do_interopability):
+                for floor in range(0,int(self.total_floors)):
+                    script_dir = os.path.dirname(os.path.abspath(__file__))
+                    throughput_image_path = os.path.join(script_dir, "heatmap_images", f"{self.test_name}_throughput_{floor+1}.png")
+                    rssi_image_path = os.path.join(script_dir, "heatmap_images", f"{self.test_name}_rssi_{floor+1}.png")
+                    timeout = 60  # seconds
+                    start_time = time.time()
+
+                    while not (os.path.exists(throughput_image_path) and os.path.exists(rssi_image_path)):
+                        if time.time() - start_time > timeout:
+                            print("Timeout: Images not found within 60 seconds.")
+                            break
+                        time.sleep(1)
+                    while not os.path.exists(throughput_image_path) and not os.path.exists(rssi_image_path):
+                        if os.path.exists(throughput_image_path) and os.path.exists(rssi_image_path):
+                            break
+                        # time.sleep(10) 
+                    if os.path.exists(throughput_image_path):
+                        report.set_custom_html('<div style="page-break-before: always;"></div>')
+                        report.build_custom()
+                        # report.set_custom_html("<h2>Average Throughput Heatmap: </h2>")
+                        # report.build_custom()
+                        report.set_custom_html(f'<img src="file://{throughput_image_path}"  style="width:1200px; height:800px;"></img>')
+                        report.build_custom()
+                        # os.remove(throughput_image_path)
+
+                    if os.path.exists(rssi_image_path):
+                        report.set_custom_html('<div style="page-break-before: always;"></div>')
+                        report.build_custom()
+                        # report.set_custom_html("<h2>Average RSSI Heatmap: </h2>")
+                        # report.build_custom()
+                        report.set_custom_html(f'<img src="file://{rssi_image_path}"  style="width:1200px; height:800px;"></img>')
+                        report.build_custom()
+            
+
         # report.build_custom()
         report.build_footer()
         report.write_html()
         report.write_pdf(_orientation="Landscape")
+        if(self.get_heatmap):
+            folder_path = os.path.join(script_dir, "heatmap_images")
+
+            for f in os.listdir(folder_path):
+                file_path = os.path.join(folder_path, f)
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
 
     # Creates a separate DataFrame for each group of devices.
     def generate_dataframe(self, groupdevlist, typeofdevice, devusername, devssid, devmac, devchannel, devmode, devdirection, devofdownload, devobsdownload,
@@ -2684,7 +2819,7 @@ Copyright 2023 Candela Technologies Inc.
     required.add_argument('--upload', help='--upload traffic load per connection (upload rate)', default='2560')
     required.add_argument('--download', help='--download traffic load per connection (download rate)', default='2560')
     required.add_argument('--test_duration', help='--test_duration sets the duration of the test', default="")
-    required.add_argument('--report_timer', help='--duration to collect data', default="5s")
+    required.add_argument('--report_timer', help='--duration to collect data', default="1s")
     required.add_argument('--ap_name', help="AP Model Name", default="Test-AP")
     required.add_argument('--dowebgui', help="If true will execute script for webgui", action='store_true')
     required.add_argument('--tos', default="Best_Efforts")
@@ -2703,6 +2838,8 @@ Copyright 2023 Candela Technologies Inc.
     optional.add_argument('--security', help='WiFi Security protocol: < open | wep | wpa | wpa2 | wpa3 >', default="open")
     optional.add_argument('--test_name', help='Specify test name to store the runtime csv results', default=None)
     optional.add_argument('--result_dir', help='Specify the result dir to store the runtime logs', default='')
+    optional.add_argument('--get_heatmap', help="If true will heatmap will be generated from testhouse automation WebGui ", action='store_true')
+    optional.add_argument('--total_floors', help="Total floors from testhouse automation WebGui ", default="0")
     optional.add_argument("--expected_passfail_value", help="Specify the expected number of urls", default=None)
     optional.add_argument("--device_csv_name", type=str, help='Specify the csv name to store expected url values', default=None)
     optional.add_argument("--eap_method", type=str, default='DEFAULT', help="Specify the EAP method for authentication.")
@@ -2836,6 +2973,8 @@ Copyright 2023 Candela Technologies Inc.
                                 do_interopability=args.do_interopability,
                                 incremental=args.incremental,
                                 precleanup=args.precleanup,
+                                get_heatmap= args.get_heatmap,
+                                total_floors = args.total_floors,
                                 csv_direction=csv_direction,
                                 expected_passfail_value=args.expected_passfail_value,
                                 device_csv_name=args.device_csv_name,
@@ -2903,6 +3042,9 @@ Copyright 2023 Candela Technologies Inc.
         overall_end_time = overall_start_time + timedelta(seconds=int(args.test_duration) * len(incremental_capacity_list))
 
         for i in range(len(to_run_cxs)):
+            if args.do_interopability:
+                # To get resource of device under test in interopability
+                device_to_run_resource = throughput.extract_digits_until_alpha(to_run_cxs[i][0])
             # Check the load type specified by the user
             if args.load_type == "wc_intended_load":
                 # Perform intended load for the current iteration
@@ -2918,6 +3060,11 @@ Copyright 2023 Candela Technologies Inc.
                 if (args.do_interopability and i != 0):
                     throughput.stop_specific(to_run_cxs[i - 1])
                     time.sleep(5)
+                if (args.do_interopability and i == 0):
+                    throughput.disconnect_all_devices()
+                if args.do_interopability and "iOS" not in to_run_cxs[i][0]:
+                    logger.info("Configuring device of resource{}".format(to_run_cxs[i][0]))
+                    throughput.configure_specific([device_to_run_resource])
                 throughput.start_specific(to_run_cxs[i])
 
             # Determine device names based on the current iteration
@@ -2925,7 +3072,9 @@ Copyright 2023 Candela Technologies Inc.
 
             # Monitor throughput and capture all dataframes and test stop status
             all_dataframes, test_stopped_by_user = throughput.monitor(i, individual_df, device_names, incremental_capacity_list, overall_start_time, overall_end_time)
-
+            if args.do_interopability and "iOS" not in to_run_cxs[i][0]:
+                # logger.info("Disconnecting device of resource{}".format(to_run_cxs[i][0]))
+                throughput.disconnect_all_devices([device_to_run_resource])
             # Check if the test was stopped by the user
             if test_stopped_by_user == False:
 

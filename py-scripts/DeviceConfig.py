@@ -130,11 +130,9 @@ class ADB_DEVICES(Realm):
                 'adb_cmd': command
             }
             data_list.append(data)
-
         loop = asyncio.get_event_loop()
         tasks = [loop.run_in_executor(None, self.json_post, self.adb_post_url, data) for data in data_list]
 
-        # Use asyncio.gather to await the completion of all tasks
         await asyncio.gather(*tasks)
 
     # toggle wifi
@@ -172,8 +170,7 @@ class ADB_DEVICES(Realm):
             logger.info('Port list is empty')
             return
 
-        url = 'http://{}:{}/cli-json/clear_wifi_profiles'.format(self.lanforge_ip, self.port)
-
+        url = 'cli-json/clear_wifi_profiles'.format(self.lanforge_ip, self.port)
         data_list = []
         for port_data in port_list:
 
@@ -185,7 +182,6 @@ class ADB_DEVICES(Realm):
             }
             data_list.append(data)
         logger.info(f"DATA LIST: {data_list}")
-
         loop = asyncio.get_event_loop()
         tasks = [loop.run_in_executor(None, self.json_post, url, data) for data in data_list]
         await asyncio.gather(*tasks)
@@ -780,6 +776,7 @@ class LAPTOPS(Realm):
         logger.info(f"DATA LIST: {data_list}")
         loop = asyncio.get_event_loop()
         tasks = [loop.run_in_executor(None, self.post_data, url, data) for data in data_list]
+        print("laptops",url,data_list)
 
         # Use asyncio.gather to await the completion of all tasks
         await asyncio.gather(*tasks)
