@@ -498,7 +498,7 @@ class TeamsHost:
         
     def wait_for_clients_to_join(self,):
         start_time = time.time()
-        max_duration = 2*60
+        max_duration = 3*60
         
         while True:
             no_of_client_element = self.wait_for_element('//*[@id="roster-title-section-2"]/span').text

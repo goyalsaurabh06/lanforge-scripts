@@ -69,8 +69,15 @@ class TeamsClient:
     def login(self,):
         try:
             self.driver.get("https://teams.microsoft.com/v2/")
-            #wait for the emailid field
-            email_input = self.wait_for_element('//*[@id="i0116"]')
+            
+            # wait for the emailid field
+            email_input = self.wait_for_element_with_time('//*[@id="i0116"]', 10)
+            while not email_input:
+                print("Waiting for email input field to be visible... Refreshing page.")
+                self.driver.refresh()
+                email_input = self.wait_for_element_with_time('//*[@id="i0116"]', 10)
+
+
             # enter email id into the field
             email_input.send_keys(self.email)
 
