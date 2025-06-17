@@ -285,7 +285,7 @@ class TeamsAutomation(Realm):
 
             bar_graph_horizontal = lf_bar_graph_horizontal(
                 _data_set=[df[column].tolist()],
-                _xaxis_name=title,
+                _xaxis_name=f"AVG {title}",
                 _yaxis_name="Devices",
                 _yaxis_label=df["Device Name"].tolist(),
                 _yaxis_categories=df["Device Name"].tolist(),
@@ -295,7 +295,7 @@ class TeamsAutomation(Realm):
                 _color_name=["orange"],
                 _show_bar_value=True,
                 _figsize=(16, len(df) * 1 + 4),
-                _graph_title=f"{title} Per Device",
+                _graph_title=f"AVG {title} Per Device",
                 _graph_image_name=title.replace(" ", "_"),
                 _label=[title]
             )
