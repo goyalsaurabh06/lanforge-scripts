@@ -171,7 +171,9 @@ class ThroughputQOS(Realm):
                  csv_direction=None,
                  expected_passfail_val=None,
                  csv_name=None,
-                 wait_time=60):
+                 wait_time=60,
+                 get_live_view=False,
+                 total_floors=0):
         super().__init__(lfclient_host=host,
                          lfclient_port=port),
         self.ssid_list = []
@@ -256,6 +258,8 @@ class ThroughputQOS(Realm):
         self.wait_time = wait_time
         self.group_device_map = {}
         self.config = config
+        self.get_live_view = get_live_view
+        self.total_floors = total_floors
 
     def os_type(self):
         response = self.json_get("/resource/all")
@@ -702,6 +706,11 @@ class ThroughputQOS(Realm):
         time_break = 0
         # Added background_run to allow the test to continue running, bypassing the duration limit for nile requirement.
         rates_data = defaultdict(list)
+        individual_device_data = {}
+        cx_list = list(self.cx_profile.created_cx.keys())
+        for cx in cx_list:
+            columns = ['bps rx a', 'bps rx b']
+            individual_device_data[cx] = pd.DataFrame(columns=columns)
         while datetime.now() < end_time or getattr(self, "background_run", None):
             index += 1
             current_time = datetime.now()
@@ -709,6 +718,7 @@ class ThroughputQOS(Realm):
             t_response = {}
             overallresponse = self.json_get('/cx/all')
 
+            # rssi_list = {}
             try:
                 # for dynamic data, taken rx rate (last) from layer3 endp tab
                 l3_endp_data = list(self.json_get('/endp/list?fields=rx rate (last),rx drop %25,name')['endpoint'])
@@ -719,6 +729,7 @@ class ThroughputQOS(Realm):
                             rates_data['.'.join(port.split('.')[:2]) + ' rx_rate'].append(port_data['rx-rate'])
                             rates_data['.'.join(port.split('.')[:2]) + ' tx_rate'].append(port_data['tx-rate'])
                             rates_data['.'.join(port.split('.')[:2]) + ' RSSI'].append(port_data['signal'])
+                            # rssi_list[self.input_devices_list.index(port)] = port_data['signal']
                 cx_list = list(self.cx_profile.created_cx.keys())
                 # t_response data order - [rx rate(last)_A,rx rate(last)_B,rx drop % A,rx drop %B] A or B will considered based upon the name in L3 Endps tab
                 for cx in cx_list:
@@ -859,6 +870,11 @@ class ThroughputQOS(Realm):
                         self.df_for_webui.append(self.overall[-1])
                         previous_time = current_time
             if self.dowebgui == "True":
+                for key,value in t_response.items():
+                    row_data = [value[0],value[1]]
+                    individual_device_data[key].loc[len(individual_device_data[key])] = row_data
+                for port, df in individual_device_data.items():
+                    df.to_csv(f"{runtime_dir}/{port}.csv", index=False)
                 df1 = pd.DataFrame(self.df_for_webui)
                 df1.to_csv('{}/overall_throughput.csv'.format(runtime_dir), index=False)
 
@@ -1281,10 +1297,17 @@ class ThroughputQOS(Realm):
         report.build_graph()
         self.generate_individual_graph(res, report, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b)
         report.test_setup_table(test_setup_data=input_setup_info, value="Information")
-        report.build_custom()
         report.build_footer()
         report.write_html()
         report.write_pdf()
+
+        # if(self.get_live_view):
+        #     script_dir = os.path.dirname(os.path.abspath(__file__))
+        #     folder_path = os.path.join(script_dir, "heatmap_images")
+        #     for f in os.listdir(folder_path):
+        #         file_path = os.path.join(folder_path, f)
+        #         if os.path.isfile(file_path):
+        #             os.remove(file_path)
 
     # Generates a separate table in the report for each group, including its respective devices.
     def generate_dataframe(self, groupdevlist, clients_list, mac, ssid, tos, upload, download, individual_upload,
@@ -1382,13 +1405,61 @@ class ThroughputQOS(Realm):
         else:
             return None
 
-    def generate_individual_graph(self, res, report, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b):
+    def get_live_view_images(self, multicast_exists=False):
+        image_paths_by_tos = {}      # { "BE": [img1, img2, ...], "VO": [...], ... }
+        rssi_image_paths_by_floor = {} if not multicast_exists else {}  # Empty if skipping RSSI
+        print('tos tos', self.tos)
+
+        for floor in range(int(self.total_floors)):
+            for tos in self.tos:
+                timeout = 60  # seconds
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+
+                throughput_image_path = os.path.join(
+                    script_dir, "heatmap_images", f"{self.test_name}_throughput_{tos}_{floor+1}.png"
+                )
+
+                if not multicast_exists:
+                    rssi_image_path = os.path.join(
+                        script_dir, "heatmap_images", f"{self.test_name}_rssi_{floor+1}.png"
+                    )
+
+                start_time = time.time()
+
+                while True:
+                    throughput_ready = os.path.exists(throughput_image_path)
+                    rssi_ready = True if multicast_exists else os.path.exists(rssi_image_path)
+
+                    if throughput_ready and rssi_ready:
+                        break
+
+                    if time.time() - start_time > timeout:
+                        print(f"Timeout: Images for TOS '{tos}' on Floor {floor+1} not found within 60 seconds.")
+                        break
+                    time.sleep(1)
+
+                if throughput_ready:
+                    image_paths_by_tos.setdefault(tos, []).append(throughput_image_path)
+
+            # Only check and store RSSI if not multicast
+            if not multicast_exists and os.path.exists(rssi_image_path):
+                rssi_image_paths_by_floor[floor + 1] = rssi_image_path
+
+        return image_paths_by_tos, rssi_image_paths_by_floor
+
+
+
+    def generate_individual_graph(self, res, report, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b,totalfloors=None,multicast_exists=False):
+        if totalfloors!=None:
+            self.total_floors = totalfloors
         load = ""
         upload_list, download_list, individual_upload_list, individual_download_list = [], [], [], []
         individual_set, colors, labels = [], [], []
         individual_drop_a_list, individual_drop_b_list = [], []
         list1 = [[], [], [], []]
         data_set = {}
+        if (self.dowebgui and self.get_live_view) or multicast_exists:
+            tos_images,rssi_images = self.get_live_view_images()
         # Initialized dictionaries to store average upload ,download and drop values with respect to tos
         avg_res = {'Upload': {
             'VO': [],
@@ -1554,6 +1625,14 @@ class ThroughputQOS(Realm):
                     report.set_csv_filename(graph_png)
                     report.move_csv_file()
                     report.build_graph()
+                    if (self.dowebgui and self.get_live_view) or multicast_exists:
+                        for image_path in tos_images['BK']:
+                            report.set_custom_html('<div style="page-break-before: always;"></div>')
+                            report.build_custom()
+                            # report.set_custom_html("<h2>Average Throughput Heatmap: </h2>")
+                            # report.build_custom()
+                            report.set_custom_html(f'<img src="file://{image_path}" style="width: 1200px; height: 800px;"></img>')
+                            report.build_custom()
                     individual_avgupload_list = []
                     individual_avgdownload_list = []
                     for i in range(len(individual_upload_list)):
@@ -1624,6 +1703,15 @@ class ThroughputQOS(Realm):
                         dataframe1 = pd.DataFrame(bk_dataframe)
                         report.set_table_dataframe(dataframe1)
                         report.build_table()
+                    # if (self.dowebgui and self.get_live_view) or multicast_exists:
+                    #     for image_path in tos_images['BK']:
+                    #         report.set_custom_html('<div style="page-break-before: always;"></div>')
+                    #         report.build_custom()
+                    #         # report.set_custom_html("<h2>Average Throughput Heatmap: </h2>")
+                    #         # report.build_custom()
+                    #         report.set_custom_html(f'<img src="file://{image_path}"></img>')
+                    #         report.build_custom()
+
                 logger.info("Graph and table for BK tos are built")
                 if "BE" in self.tos:
                     if self.direction == "Bi-direction":
@@ -1677,6 +1765,14 @@ class ThroughputQOS(Realm):
                     report.set_csv_filename(graph_png)
                     report.move_csv_file()
                     report.build_graph()
+                    if (self.dowebgui and self.get_live_view) or multicast_exists:
+                        for image_path in tos_images['BE']:
+                            report.set_custom_html('<div style="page-break-before: always;"></div>')
+                            report.build_custom()
+                            # report.set_custom_html("<h2>Average Throughput Heatmap: </h2>")
+                            # report.build_custom()
+                            report.set_custom_html(f'<img src="file://{image_path}" style="width: 1200px; height: 800px;"></img>')
+                            report.build_custom()
                     individual_avgupload_list = []
                     individual_avgdownload_list = []
                     for i in range(len(individual_upload_list)):
@@ -1745,6 +1841,14 @@ class ThroughputQOS(Realm):
                         dataframe2 = pd.DataFrame(be_dataframe)
                         report.set_table_dataframe(dataframe2)
                         report.build_table()
+                    # if (self.dowebgui and self.get_live_view) or multicast_exists:
+                    #     for image_path in tos_images['BE']:
+                    #         report.set_custom_html('<div style="page-break-before: always;"></div>')
+                    #         report.build_custom()
+                    #         # report.set_custom_html("<h2>Average Throughput Heatmap: </h2>")
+                    #         # report.build_custom()
+                    #         report.set_custom_html(f'<img src="file://{image_path}"></img>')
+                    #         report.build_custom()
                 logger.info("Graph and table for BE tos are built")
                 if "VI" in self.tos:
                     if self.direction == "Bi-direction":
@@ -1798,6 +1902,14 @@ class ThroughputQOS(Realm):
                     report.set_csv_filename(graph_png)
                     report.move_csv_file()
                     report.build_graph()
+                    if (self.dowebgui and self.get_live_view) or multicast_exists:
+                        for image_path in tos_images['VI']:
+                            report.set_custom_html('<div style="page-break-before: always;"></div>')
+                            report.build_custom()
+                            # report.set_custom_html("<h2>Average Throughput Heatmap: </h2>")
+                            # report.build_custom()
+                            report.set_custom_html(f'<img src="file://{image_path}" style="width: 1200px; height: 800px;"></img>')
+                            report.build_custom()
                     individual_avgupload_list = []
                     individual_avgdownload_list = []
                     for i in range(len(individual_upload_list)):
@@ -1866,6 +1978,14 @@ class ThroughputQOS(Realm):
                         dataframe3 = pd.DataFrame(vi_dataframe)
                         report.set_table_dataframe(dataframe3)
                         report.build_table()
+                    # if (self.dowebgui and self.get_live_view) or multicast_exists:
+                    #     for image_path in tos_images['VI']:
+                    #         report.set_custom_html('<div style="page-break-before: always;"></div>')
+                    #         report.build_custom()
+                    #         # report.set_custom_html("<h2>Average Throughput Heatmap: </h2>")
+                    #         # report.build_custom()
+                    #         report.set_custom_html(f'<img src="file://{image_path}"></img>')
+                    #         report.build_custom()
                 logger.info("Graph and table for VI tos are built")
                 if "VO" in self.tos:
                     if self.direction == "Bi-direction":
@@ -1919,6 +2039,14 @@ class ThroughputQOS(Realm):
                     report.set_csv_filename(graph_png)
                     report.move_csv_file()
                     report.build_graph()
+                    if (self.dowebgui and self.get_live_view) or multicast_exists:
+                        for image_path in tos_images['VO']:
+                            report.set_custom_html('<div style="page-break-before: always;"></div>')
+                            report.build_custom()
+                            # report.set_custom_html("<h2>Average Throughput Heatmap: </h2>")
+                            # report.build_custom()
+                            report.set_custom_html(f'<img src="file://{image_path}" style="width: 1200px; height: 800px;"></img>')
+                            report.build_custom()
                     individual_avgupload_list = []
                     individual_avgdownload_list = []
                     for i in range(len(individual_upload_list)):
@@ -1989,6 +2117,13 @@ class ThroughputQOS(Realm):
                         report.set_table_dataframe(dataframe4)
                         report.build_table()
                 logger.info("Graph and table for VO tos are built")
+            if self.dowebgui and self.get_live_view and not multicast_exists:
+                for floor,rssi_image_path in rssi_images.items():
+                    if os.path.exists(rssi_image_path):
+                        report.set_custom_html('<div style="page-break-before: always;"></div>')
+                        report.build_custom()
+                        report.set_custom_html(f'<img src="file://{rssi_image_path}" style="width: 1000px; height: 800px;"></img>')
+                        report.build_custom()
         else:
             print("No individual graph to generate.")
         # storing overall throughput CSV in the report directory
@@ -2281,6 +2416,8 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
     optional.add_argument('--device_csv_name', type=str, help='Enter the csv name to store expected values', default=None)
     optional.add_argument("--wait_time", type=int, help="Enter the maximum wait time for configurations to apply", default=60)
     optional.add_argument("--config", action="store_true", help="Specify for configuring the devices")
+    optional.add_argument('--get_live_view', help="If true will heatmap will be generated from testhouse automation WebGui ", action='store_true')
+    optional.add_argument('--total_floors', help="Total floors from testhouse automation WebGui ", default="0")
     args = parser.parse_args()
 
     # help summary
@@ -2375,7 +2512,9 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
                                        expected_passfail_val=args.expected_passfail_value,
                                        csv_name=args.device_csv_name,
                                        wait_time=args.wait_time,
-                                       config=args.config
+                                       config=args.config,
+                                       get_live_view=args.get_live_view,
+                                       total_floors=args.total_floors
                                        )
         throughput_qos.os_type()
         _, configured_device, _, configuration = throughput_qos.phantom_check()
@@ -2431,6 +2570,22 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
         "contact": "support@candelatech.com"
     }
     throughput_qos.cleanup()
+
+    # Update webgui running json with latest entry and test status completed
+    if throughput_qos.dowebgui == "True":
+        last_entry = throughput_qos.overall[len(throughput_qos.overall) - 1]
+        last_entry["status"] = "Stopped"
+        last_entry["timestamp"] = datetime.now().strftime("%d/%m %I:%M:%S %p")
+        last_entry["remaining_time"] = "0"
+        last_entry["end_time"] = last_entry["timestamp"]
+        throughput_qos.df_for_webui.append(
+            last_entry
+        )
+        df1 = pd.DataFrame(throughput_qos.df_for_webui)
+        df1.to_csv('{}/overall_throughput.csv'.format(args.result_dir, ), index=False)
+
+        # copying to home directory i.e home/user_name
+        throughput_qos.copy_reports_to_home_dir()
     if args.group_name:
         throughput_qos.generate_report(
             data=data,
@@ -2449,22 +2604,6 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
             connections_download_avg=connections_download_avg,
             avg_drop_a=avg_drop_a,
             avg_drop_b=avg_drop_b)
-
-    # Update webgui running json with latest entry and test status completed
-    if throughput_qos.dowebgui == "True":
-        last_entry = throughput_qos.overall[len(throughput_qos.overall) - 1]
-        last_entry["status"] = "Stopped"
-        last_entry["timestamp"] = datetime.now().strftime("%d/%m %I:%M:%S %p")
-        last_entry["remaining_time"] = "0"
-        last_entry["end_time"] = last_entry["timestamp"]
-        throughput_qos.df_for_webui.append(
-            last_entry
-        )
-        df1 = pd.DataFrame(throughput_qos.df_for_webui)
-        df1.to_csv('{}/overall_throughput.csv'.format(args.result_dir, ), index=False)
-
-        # copying to home directory i.e home/user_name
-        throughput_qos.copy_reports_to_home_dir()
 
 
 if __name__ == "__main__":
