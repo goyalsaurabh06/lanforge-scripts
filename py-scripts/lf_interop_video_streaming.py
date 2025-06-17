@@ -1449,6 +1449,34 @@ class VideoStreamingTest(Realm):
             report.build_graph()
             self.add_buffer_and_wait_time_images(report=report)
 
+            if self.dowebgui and self.get_liveview:
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+
+                report.set_custom_html("<h2>No of Buffers and Wait Time %</h2>")
+                report.build_custom()
+
+                for floor in range(int(self.floors)):
+                    # Construct expected image paths
+                    vs_buffer_image = os.path.join(script_dir, "heatmap_images", f"{self.test_name}_vs_buffer_{floor+1}.png")
+                    vs_wait_time_image = os.path.join(script_dir, "heatmap_images", f"{self.test_name}_vs_wait_time_{floor+1}.png")
+
+
+                    # Wait for all required images to be generated (up to timeout)
+                    timeout = 60  # seconds
+                    start_time = time.time()
+
+                    while not (os.path.exists(vs_buffer_image) and os.path.exists(vs_wait_time_image)):
+                        if time.time() - start_time > timeout:
+                            print(f"Timeout: Heatmap images for floor {floor + 1} not found within {timeout} seconds.")
+                            break
+                        time.sleep(1)
+
+                    # Generate report sections for each image if it exists
+                    for image_path in [vs_buffer_image, vs_wait_time_image,]:
+                        if os.path.exists(image_path):
+                            report.set_custom_html(f'<img src="file://{image_path}"  style="width:1200px; height:800px;"></img>')
+                            report.build_custom()
+
             # Table 1
             report.set_obj_html("Overall - Detailed Result Table", "The below tables provides detailed information for the Video Streaming test.")
             report.build_objective()

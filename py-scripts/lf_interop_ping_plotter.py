@@ -1518,6 +1518,16 @@ connectivity problems.
                           action="store_true",
                           help='specify this flag to stop cleaning up generic cxs after the test')
 
+    optional.add_argument('--get_live_view',
+                          action="store_true",
+                          help='specify this flag to get the liveview of the devices')
+
+    optional.add_argument('--floors',
+                          type=int,
+                          default=0,
+                          help='specify the Number of floors there in the house')
+
+
     # webUI arguments
     webUI_args.add_argument('--do_webUI',
                             action='store_true',

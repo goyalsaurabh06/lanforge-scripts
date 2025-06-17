@@ -733,6 +733,7 @@ class ThroughputQOS(Realm):
             t_response = {}
             overallresponse = self.json_get('/cx/all')
 
+            # rssi_list = {}
             try:
                 # for dynamic data, taken rx rate (last) from layer3 endp tab
                 l3_endp_data = list(self.json_get('/endp/list?fields=rx rate (last),rx drop %25,name')['endpoint'])
@@ -743,6 +744,7 @@ class ThroughputQOS(Realm):
                             rates_data['.'.join(port.split('.')[:2]) + ' rx_rate'].append(port_data['rx-rate'])
                             rates_data['.'.join(port.split('.')[:2]) + ' tx_rate'].append(port_data['tx-rate'])
                             rates_data['.'.join(port.split('.')[:2]) + ' RSSI'].append(port_data['signal'])
+                            # rssi_list[self.input_devices_list.index(port)] = port_data['signal']
                 cx_list = list(self.cx_profile.created_cx.keys())
                 # t_response data order - [rx rate(last)_A,rx rate(last)_B,rx drop % A,rx drop %B] A or B will considered based upon the name in L3 Endps tab
                 for cx in cx_list:
@@ -1319,6 +1321,14 @@ class ThroughputQOS(Realm):
         report.write_html()
         report.write_pdf()
 
+        # if(self.get_live_view):
+        #     script_dir = os.path.dirname(os.path.abspath(__file__))
+        #     folder_path = os.path.join(script_dir, "heatmap_images")
+        #     for f in os.listdir(folder_path):
+        #         file_path = os.path.join(folder_path, f)
+        #         if os.path.isfile(file_path):
+        #             os.remove(file_path)
+
     # Generates a separate table in the report for each group, including its respective devices.
     def generate_dataframe(self, groupdevlist, clients_list, mac, ssid, tos, upload, download, individual_upload,
                            individual_download, test_input, individual_drop_b, individual_drop_a, pass_fail_list):
@@ -1718,6 +1728,15 @@ class ThroughputQOS(Realm):
                         dataframe1 = pd.DataFrame(bk_dataframe)
                         report.set_table_dataframe(dataframe1)
                         report.build_table()
+                    # if (self.dowebgui and self.get_live_view) or multicast_exists:
+                    #     for image_path in tos_images['BK']:
+                    #         report.set_custom_html('<div style="page-break-before: always;"></div>')
+                    #         report.build_custom()
+                    #         # report.set_custom_html("<h2>Average Throughput Heatmap: </h2>")
+                    #         # report.build_custom()
+                    #         report.set_custom_html(f'<img src="file://{image_path}"></img>')
+                    #         report.build_custom()
+
                 logger.info("Graph and table for BK tos are built")
                 if "BE" in self.tos:
                     if self.direction == "Bi-direction":
@@ -1845,6 +1864,14 @@ class ThroughputQOS(Realm):
                         dataframe2 = pd.DataFrame(be_dataframe)
                         report.set_table_dataframe(dataframe2)
                         report.build_table()
+                    # if (self.dowebgui and self.get_live_view) or multicast_exists:
+                    #     for image_path in tos_images['BE']:
+                    #         report.set_custom_html('<div style="page-break-before: always;"></div>')
+                    #         report.build_custom()
+                    #         # report.set_custom_html("<h2>Average Throughput Heatmap: </h2>")
+                    #         # report.build_custom()
+                    #         report.set_custom_html(f'<img src="file://{image_path}"></img>')
+                    #         report.build_custom()
                 logger.info("Graph and table for BE tos are built")
                 if "VI" in self.tos:
                     if self.direction == "Bi-direction":
@@ -1972,6 +1999,14 @@ class ThroughputQOS(Realm):
                         dataframe3 = pd.DataFrame(vi_dataframe)
                         report.set_table_dataframe(dataframe3)
                         report.build_table()
+                    # if (self.dowebgui and self.get_live_view) or multicast_exists:
+                    #     for image_path in tos_images['VI']:
+                    #         report.set_custom_html('<div style="page-break-before: always;"></div>')
+                    #         report.build_custom()
+                    #         # report.set_custom_html("<h2>Average Throughput Heatmap: </h2>")
+                    #         # report.build_custom()
+                    #         report.set_custom_html(f'<img src="file://{image_path}"></img>')
+                    #         report.build_custom()
                 logger.info("Graph and table for VI tos are built")
                 if "VO" in self.tos:
                     if self.direction == "Bi-direction":

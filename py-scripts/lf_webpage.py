@@ -119,7 +119,11 @@ class HttpDownload(Realm):
                  test_name=None, _exit_on_fail=False, client_type="", port_list=None, devices_list=None, macid_list=None, lf_username="lanforge", lf_password="lanforge", result_dir="", dowebgui=False,
                  device_list=None, get_url_from_file=None, file_path=None, device_csv_name='', expected_passfail_value=None, file_name=None, group_name=None, profile_name=None, eap_method=None,
                  eap_identity=None, ieee80211=None, ieee80211u=None, ieee80211w=None, enable_pkc=None, bss_transition=None, power_save=None, disable_ofdma=None, roam_ft_ds=None, key_management=None,
+<<<<<<< HEAD
                  pairwise=None, private_key=None, ca_cert=None, client_cert=None, pk_passwd=None, pac_file=None, config=False, wait_time=60, get_live_view=False, total_floors=0,):
+=======
+                 pairwise=None, private_key=None, ca_cert=None, client_cert=None, pk_passwd=None, pac_file=None, config=False, wait_time=60,get_live_view=False,total_floors=0,):
+>>>>>>> 210955c1 (mixed traffic compatible tests)
         # super().__init__(lfclient_host=lfclient_host,
         #                  lfclient_port=lfclient_port)
         self.ssid_list = []
@@ -1177,8 +1181,38 @@ class HttpDownload(Realm):
         report.move_csv_file()
         report.move_graph_image()
         report.build_graph()
+<<<<<<< HEAD
         if (self.dowebgui and self.get_live_view):
             self.add_live_view_images_to_report(report)
+=======
+        if(self.dowebgui and self.get_live_view):
+            print('total floors',self.total_floors)
+            for floor in range(0,int(self.total_floors)):
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                throughput_image_path = os.path.join(script_dir, "heatmap_images", f"http_{self.test_name}_{floor+1}.png")
+                print('image_path',f"{self.test_name}_{floor+1}.png")
+                # rssi_image_path = os.path.join(script_dir, "heatmap_images", f"{self.test_name}_rssi_{floor+1}.png")
+                timeout = 60  # seconds
+                start_time = time.time()
+
+                while not (os.path.exists(throughput_image_path)):
+                    if time.time() - start_time > timeout:
+                        print("Timeout: Images not found within 60 seconds.")
+                        break
+                    time.sleep(1)
+                while not os.path.exists(throughput_image_path):
+                    if os.path.exists(throughput_image_path):
+                        break
+                    # time.sleep(10)
+                if os.path.exists(throughput_image_path):
+                    report.set_custom_html('<div style="page-break-before: always;"></div>')
+                    report.build_custom()
+                    # report.set_custom_html("<h2>Average Throughput Heatmap: </h2>")
+                    # report.build_custom()
+                    report.set_custom_html(f'<img src="file://{throughput_image_path}"></img>')
+                    report.build_custom()
+                    # os.remove(throughput_image_path)
+>>>>>>> 210955c1 (mixed traffic compatible tests)
 
         # report.set_obj_html("Summary Table Description", "This Table shows you the summary "
         #                     "result of Webpage Download Test as PASS or FAIL criteria. If the average time taken by " +
@@ -1401,6 +1435,12 @@ class HttpDownload(Realm):
         print("returned file {}".format(html_file))
         print(html_file)
         report.write_pdf()
+        # if(self.get_live_view):
+        #     folder_path = os.path.join(script_dir, "heatmap_images")
+        #     for f in os.listdir(folder_path):
+        #         file_path = os.path.join(folder_path, f)
+        #         if os.path.isfile(file_path):
+        #             os.remove(file_path)
 
     def copy_reports_to_home_dir(self):
         curr_path = self.result_dir
@@ -1630,7 +1670,11 @@ class HttpDownload(Realm):
                 try:
                     _ = self.local_realm.json_get("layer4/%s/list?fields=%s" %
                                                   (created_cxs, 'status'))['endpoint']['status']
+<<<<<<< HEAD
                 except Exception:
+=======
+                except BaseException:
+>>>>>>> 210955c1 (mixed traffic compatible tests)
                     logger.error(f'cx not created for {self.port_list[i]}')
                     failed_cx.append(created_cxs)
                     del_device_list.append(self.device_list[i])
@@ -2002,8 +2046,13 @@ times the file is downloaded.
                             device_csv_name=args.device_csv_name,
                             wait_time=args.wait_time,
                             config=args.config,
+<<<<<<< HEAD
                             get_live_view=args.get_live_view,
                             total_floors=args.total_floors
+=======
+                            get_live_view= args.get_live_view,
+                            total_floors = args.total_floors
+>>>>>>> 210955c1 (mixed traffic compatible tests)
                             )
         if args.client_type == "Real":
             if not isinstance(args.device_list, list):
@@ -2059,6 +2108,10 @@ times the file is downloaded.
             uc_avg_val = http.data['uc_avg']
             url_times = http.data['url_data']
             rx_bytes_val = http.data['bytes_rd']
+<<<<<<< HEAD
+=======
+            print('rx_rate_Val',http.data['rx rate (1m)'])
+>>>>>>> 210955c1 (mixed traffic compatible tests)
             rx_rate_val = list(http.data['rx rate (1m)'])
         else:
             uc_avg_val = http.my_monitor('uc-avg')
@@ -2192,6 +2245,38 @@ times the file is downloaded.
         if int(duration == 3600) or (int(duration) > 3600):
             duration = str(duration / 3600) + "h"
 
+    android_devices, windows_devices, linux_devices, mac_devices = 0, 0, 0, 0
+    all_devices_names = []
+    device_type = []
+    total_devices = ""
+    for i in http.devices_list:
+        split_device_name = i.split(" ")
+        if 'android' in split_device_name:
+            all_devices_names.append(split_device_name[2] + ("(Android)"))
+            device_type.append("Android")
+            android_devices += 1
+        elif 'Win' in split_device_name:
+            all_devices_names.append(split_device_name[2] + ("(Windows)"))
+            device_type.append("Windows")
+            windows_devices += 1
+        elif 'Lin' in split_device_name:
+            all_devices_names.append(split_device_name[2] + ("(Linux)"))
+            device_type.append("Linux")
+            linux_devices += 1
+        elif 'Mac' in split_device_name:
+            all_devices_names.append(split_device_name[2] + ("(Mac)"))
+            device_type.append("Mac")
+            mac_devices += 1
+
+    # Build total_devices string based on counts
+    if android_devices > 0:
+        total_devices += f" Android({android_devices})"
+    if windows_devices > 0:
+        total_devices += f" Windows({windows_devices})"
+    if linux_devices > 0:
+        total_devices += f" Linux({linux_devices})"
+    if mac_devices > 0:
+        total_devices += f" Mac({mac_devices})"
     if args.client_type == "Real":
         android_devices, windows_devices, linux_devices, mac_devices = 0, 0, 0, 0
         all_devices_names = []
@@ -2305,7 +2390,10 @@ times the file is downloaded.
     if args.dowebgui:
         http.data_for_webui["status"] = ["STOPPED"] * len(http.devices_list)
         http.data_for_webui['rx rate (1m)'] = http.data['rx rate (1m)']
+<<<<<<< HEAD
         http.data_for_webui['total_err'] = http.data['total_err']
+=======
+>>>>>>> 210955c1 (mixed traffic compatible tests)
         http.data_for_webui["start_time"] = http.data["start_time"]
         http.data_for_webui["end_time"] = http.data["end_time"]
         http.data_for_webui["remaining_time"] = http.data["remaining_time"]

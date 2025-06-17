@@ -2387,6 +2387,13 @@ class Throughput(Realm):
         report.build_footer()
         report.write_html()
         report.write_pdf(_orientation="Landscape")
+        if(self.get_heatmap):
+            folder_path = os.path.join(script_dir, "heatmap_images")
+
+            for f in os.listdir(folder_path):
+                file_path = os.path.join(folder_path, f)
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
 
     # Creates a separate DataFrame for each group of devices.
     def generate_dataframe(self, groupdevlist, typeofdevice, devusername, devssid, devmac, devchannel, devmode, devdirection, devofdownload, devobsdownload,
@@ -2878,7 +2885,7 @@ Copyright 2023 Candela Technologies Inc.
     required.add_argument('--upload', help='--upload traffic load per connection (upload rate)', default='2560')
     required.add_argument('--download', help='--download traffic load per connection (download rate)', default='2560')
     required.add_argument('--test_duration', help='--test_duration sets the duration of the test', default="")
-    required.add_argument('--report_timer', help='--duration to collect data', default="5s")
+    required.add_argument('--report_timer', help='--duration to collect data', default="1s")
     required.add_argument('--ap_name', help="AP Model Name", default="Test-AP")
     required.add_argument('--dowebgui', help="If true will execute script for webgui", action='store_true')
     required.add_argument('--tos', default="Best_Efforts")

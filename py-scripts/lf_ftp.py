@@ -1351,6 +1351,7 @@ class FtpTest(LFCliBase):
                     self.channel_list.append(str(port_data['channel']))
                     self.mode_list.append(str(port_data['mode']))
                     self.ssid_list.append(str(port_data['ssid']))
+
         if self.dowebgui:
             client_id_list = []
             for port in self.input_devices_list:
@@ -2095,6 +2096,12 @@ class FtpTest(LFCliBase):
         logger.info("returned file {}".format(html_file))
         logger.info(html_file)
         self.report.write_pdf()
+        if(self.get_live_view):
+            folder_path = os.path.join(script_dir, "heatmap_images")
+            for f in os.listdir(folder_path):
+                file_path = os.path.join(folder_path, f)
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
 
         # The following lines can be used when the kpi results are needed
         # self.kpi_results
@@ -3001,6 +3008,15 @@ some amount of file data from the FTP server while measuring the time taken by c
 
     if args.dowebgui:
         obj.copy_reports_to_home_dir()
+
+# FOR WEB-UI // to fetch the last logs of the execution.
+    # if args.dowebgui:
+    #     obj.data_for_webui["status"] = ["STOPPED"] * len(obj.url_data)
+
+    #     df1 = pd.DataFrame(obj.data_for_webui)
+    #     df1.to_csv('{}/ftp_datavalues.csv'.format(obj.result_dir), index=False)
+    #     # copying to home directory i.e home/user_name
+    #     obj.copy_reports_to_home_dir()
 
 
 if __name__ == '__main__':
