@@ -2387,13 +2387,6 @@ class Throughput(Realm):
         report.build_footer()
         report.write_html()
         report.write_pdf(_orientation="Landscape")
-        if(self.get_heatmap):
-            folder_path = os.path.join(script_dir, "heatmap_images")
-
-            for f in os.listdir(folder_path):
-                file_path = os.path.join(folder_path, f)
-                if os.path.isfile(file_path):
-                    os.remove(file_path)
 
     # Creates a separate DataFrame for each group of devices.
     def generate_dataframe(self, groupdevlist, typeofdevice, devusername, devssid, devmac, devchannel, devmode, devdirection, devofdownload, devobsdownload,

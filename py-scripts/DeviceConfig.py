@@ -185,7 +185,6 @@ class ADB_DEVICES(Realm):
             }
             data_list.append(data)
         logger.info(f"DATA LIST: {data_list}")
-
         loop = asyncio.get_event_loop()
         tasks = [loop.run_in_executor(None, self.json_post, url, data) for data in data_list]
         await asyncio.gather(*tasks)
