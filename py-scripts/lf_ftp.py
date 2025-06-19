@@ -909,12 +909,10 @@ class FtpTest(LFCliBase):
         rx_rate_val = []
         individual_device_data = {}
         client_id_list = []
-        print('listtttt',self.input_devices_list)
         for port in self.input_devices_list:
             columns = ['TIMESTAMP', 'Bytes-rd', 'total urls', 'download_rate', 'rx_rate', 'tx_rate', 'RSSI']
             individual_device_data[port] = pd.DataFrame(columns=columns)
             kk = port.split('.')
-            print('kk',kk)
             client_id_list.append('.'.join(kk[:2]))
 
         while (current_time < endtime):

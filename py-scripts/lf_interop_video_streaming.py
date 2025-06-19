@@ -125,7 +125,7 @@ DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
 class VideoStreamingTest(Realm):
     def __init__(self, host, ssid, passwd, encryp, media_source, media_quality, suporrted_release=None, max_speed=None, url=None,
                  urls_per_tenm=None, duration=None, resource_ids=None, dowebgui=False, result_dir="", test_name=None, incremental=None, postcleanup=False, precleanup=False,
-                 pass_fail_val=None, csv_name=None, groups=None, profiles=None, config=None, file_name=None, floors=None, get_liveview=None ):
+                 pass_fail_val=None, csv_name=None, groups=None, profiles=None, config=None, file_name=None, floors=None, get_live_view=None ):
         super().__init__(lfclient_host=host, lfclient_port=8080)
         self.adb_device_list = None
         self.host = host
@@ -184,7 +184,7 @@ class VideoStreamingTest(Realm):
         self.config = config
         self.file_name = file_name
         self.floors = floors
-        self.get_liveview = get_liveview
+        self.get_live_view = get_live_view
 
     @property
     def run(self):
@@ -1438,7 +1438,7 @@ class VideoStreamingTest(Realm):
             report.move_graph_image()
             report.build_graph()
 
-            if self.dowebgui and self.get_liveview:
+            if self.dowebgui and self.get_live_view:
                 script_dir = os.path.dirname(os.path.abspath(__file__))
 
                 report.set_custom_html("<h2>No of Buffers and Wait Time %</h2>")
@@ -1792,7 +1792,7 @@ def main():
     parser.add_argument("--wait_time", type=int, help="Specify the time for configuration", default=60)
     parser.add_argument('--config', action='store_true', help='specify this flag whether to config devices or not')
     parser.add_argument("--device_csv_name", type=str, help="Specify the device csv name for pass/fail", default=None)
-    parser.add_argument('--get_liveview',
+    parser.add_argument('--get_live_view',
                           action="store_true",
                           help='specify this flag to get the liveview of the devices')
 
@@ -1866,7 +1866,7 @@ def main():
                              config=args.config,
                              file_name=args.file_name,
                              floors=args.floors,
-                             get_liveview=args.get_liveview
+                             get_live_view=args.get_live_view
                              )
     args.upstream_port = obj.change_port_to_ip(args.upstream_port)
     obj.validate_args()
