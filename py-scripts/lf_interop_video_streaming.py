@@ -1449,7 +1449,7 @@ class VideoStreamingTest(Realm):
             report.build_graph()
             self.add_buffer_and_wait_time_images(report=report)
 
-            if self.dowebgui and self.get_liveview:
+            if self.dowebgui and self.get_live_view:
                 script_dir = os.path.dirname(os.path.abspath(__file__))
 
                 report.set_custom_html("<h2>No of Buffers and Wait Time %</h2>")
