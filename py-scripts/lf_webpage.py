@@ -669,6 +669,11 @@ class HttpDownload(Realm):
             url_times = self.my_monitor('total-urls')
             rx_rate = self.my_monitor('rx rate (1m)')
             bytes_rd = self.my_monitor('bytes-rd')
+            total_err = self.my_monitor('total-err')
+            urls_downloaded = []
+            for i in range(len(total_err)):
+                urls_downloaded.append(url_times[i]-total_err[i])
+            url_times = list(urls_downloaded)
             self.data["MAC"] = self.macid_list
             self.data["SSID"] = self.ssid_list
             self.data["Channel"] = self.channel_list
@@ -708,6 +713,7 @@ class HttpDownload(Realm):
                 self.data["uc_avg"] = uc_avg_data
                 self.data["bytes_rd"] = bytes_rd
                 self.data["rx rate (1m)"] = rx_rate
+                self.data["total_err"] = total_err
             else:
                 self.data["status"] = ["RUNNING"] * len(self.devices_list)
                 self.data["url_data"] = [0] * len(self.devices_list)
@@ -716,6 +722,7 @@ class HttpDownload(Realm):
                 self.data["uc_min"] = [0] * len(self.devices_list)
                 self.data["bytes_rd"] = [0] * len(self.devices_list)
                 self.data["rx rate (1m)"] = [0] * len(self.devices_list)
+                self.data["total_err"] = [0] * len(self.devices_list)
             time_difference = abs(end_time - datetime.now())
             total_hours = time_difference.total_seconds() / 3600
             remaining_minutes = (total_hours % 1) * 60
@@ -747,6 +754,57 @@ class HttpDownload(Realm):
             df.to_csv(f"{endtime}-http-{port}.csv", index=False)
             individual_device_csv_names.append(f'{endtime}-http-{port}')
         self.individual_device_csv_names = individual_device_csv_names
+        try:
+            all_l4_data = self.get_all_l4_data()
+            df = pd.DataFrame(all_l4_data)
+            df.to_csv("all_l4_data.csv", index=False)
+        except:
+            logger.error("All l4 data not found")
+
+
+    def get_all_l4_data(self):
+        # List of all fields to collect
+        fields = [
+            "name", "eid", "type", "status", "total-urls", "urls/s", "bytes-rd", "bytes-wr",
+            "total-buffers", "total-rebuffers", "total-wait-time", "video-format-bitrate",
+            "audio-format-bitrate", "frame-rate", "video-quality", "tx rate", "tx-rate-1m",
+            "rx rate", "rx rate (1m)", "fb-min", "fb-avg", "fb-max", "uc-min", "uc-avg",
+            "uc-max", "dns-min", "dns-avg", "dns-max", "total-err", "bad-proto", "bad-url",
+            "rslv-p", "rslv-h", "!conn", "timeout", "nf (4xx)", "http-r", "http-p", "http-t",
+            "acc. denied", "ftp-host", "ftp-stor", "ftp-port", "write", "read", "redir",
+            "login-denied", "other-err", "elapsed", "rpt timer", "time-stamp"
+        ]
+
+        # Fetch all data in one go
+        data = self.local_realm.json_get(f"layer4/list?fields={','.join(fields)}")
+
+        # Initialize result dict
+        result = {field: [] for field in fields}
+
+        # Access 'endpoint' field
+        endpoint = data.get("endpoint", {})
+        cx_list = self.http_profile.created_cx.keys()
+        if isinstance(endpoint, dict):
+            # Single endpoint format
+            for field in fields:
+                result[field].append(endpoint.get(field, None))
+        else:
+            # Multiple endpoints
+            for created_cx in cx_list:
+                for cx in endpoint:
+                    if created_cx in cx:
+                        for field in fields:
+                            result[field].append(cx[created_cx].get(field, None))
+                        break
+
+        # Example transformation for specific fields (e.g., bytes-rd in MB)
+        if "bytes-rd" in result:
+            result["bytes-rd"] = [
+                float(f"{int(x) / 1_000_000:.4f}") if x is not None else None
+                for x in result["bytes-rd"]
+            ]
+
+        return result
 
     def my_monitor(self, data_mon):
         # data in json format
@@ -1060,6 +1118,10 @@ class HttpDownload(Realm):
         # It ensures no blocker for virtual clients
         if self.client_type == 'Real':
             shutil.move('http_datavalues.csv', report_path_date_time)
+            try:
+                shutil.move('all_l4_data.csv', report_path_date_time)
+            except:
+                logging.info("failed to generate all l4 data")
             # Moving indiviudal csv's to report directory
             for csv_name in self.individual_device_csv_names:
                 shutil.move(f"{csv_name}.csv", report_path_date_time)
@@ -1318,7 +1380,8 @@ class HttpDownload(Realm):
                     " No of times File downloaded ": dataset2,
                     " Average time taken to Download file (ms)": dataset,
                     " Bytes-rd (Mega Bytes) ": dataset1,
-                    "Rx Rate (Mbps)": rx_rate
+                    "Rx Rate (Mbps)": rx_rate,
+                    "Failed url's": self.data["total_err"]
                 }
                 if self.expected_passfail_value or self.device_csv_name:
                     dataframe[" Expected value of no of times file downloaded"] = test_input_list
@@ -2257,6 +2320,7 @@ times the file is downloaded.
     if args.dowebgui:
         http.data_for_webui["status"] = ["STOPPED"] * len(http.devices_list)
         http.data_for_webui['rx rate (1m)'] = http.data['rx rate (1m)']
+        http.data_for_webui['total_err'] = http.data['total_err']
         http.data_for_webui["start_time"] = http.data["start_time"]
         http.data_for_webui["end_time"] = http.data["end_time"]
         http.data_for_webui["remaining_time"] = http.data["remaining_time"]

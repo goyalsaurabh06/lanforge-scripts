@@ -1137,6 +1137,11 @@ class FtpTest(LFCliBase):
                             self.total_err.append(cx[created_cx]['total-err'])
                             break
                 self.bytes_rd = [float(f"{(i / 1000000): .4f}") for i in dataset]
+            urls_downloaded = []
+            for i in range(len(self.total_err)):
+                urls_downloaded.append(self.url_data[i]-self.total_err[i])
+            self.url_data = list(urls_downloaded)
+
                 # for cx in uc_avg_data['endpoint']:
                 #     for CX in cx:
                 #         for created_cx in self.cx_list:
@@ -2056,7 +2061,8 @@ class FtpTest(LFCliBase):
                     " No of times File downloaded ": self.url_data,
                     " Time Taken to Download file (ms)": self.uc_avg,
                     " Bytes-rd (Mega Bytes)": self.bytes_rd,
-                    " RX RATE (Mbps) ": self.rx_rate
+                    " RX RATE (Mbps) ": self.rx_rate,
+                    "Failed Urls": self.total_err
                 }
                 if self.expected_passfail_val or self.csv_name:
                     dataframe[" Expected output "] = self.test_input_list
