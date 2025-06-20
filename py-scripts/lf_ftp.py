@@ -233,6 +233,7 @@ class FtpTest(LFCliBase):
         self.url_data = []
         self.bytes_rd = []
         self.rx_rate = []
+        self.total_err = []
         self.channel_list = []
         self.mode_list = []
         self.cx_list = []
@@ -891,6 +892,51 @@ class FtpTest(LFCliBase):
         # assume data is MB if no designator is on end of str
         else:
             return float(upper[:-2]) * 10 ** 6
+
+    def get_all_l4_data(self):
+        # List of all fields to collect
+        fields = [
+            "name", "eid", "type", "status", "total-urls", "urls/s", "bytes-rd", "bytes-wr",
+            "total-buffers", "total-rebuffers", "total-wait-time", "video-format-bitrate",
+            "audio-format-bitrate", "frame-rate", "video-quality", "tx rate", "tx-rate-1m",
+            "rx rate", "rx rate (1m)", "fb-min", "fb-avg", "fb-max", "uc-min", "uc-avg",
+            "uc-max", "dns-min", "dns-avg", "dns-max", "total-err", "bad-proto", "bad-url",
+            "rslv-p", "rslv-h", "!conn", "timeout", "nf (4xx)", "http-r", "http-p", "http-t",
+            "acc. denied", "ftp-host", "ftp-stor", "ftp-port", "write", "read", "redir",
+            "login-denied", "other-err", "elapsed", "rpt timer", "time-stamp"
+        ]
+
+        # Fetch all data in one go
+        data = self.json_get(f"layer4/list?fields={','.join(fields)}")
+
+        # Initialize result dict
+        result = {field: [] for field in fields}
+
+        # Access 'endpoint' field
+        endpoint = data.get("endpoint", {})
+
+        if isinstance(endpoint, dict):
+            # Single endpoint format
+            for field in fields:
+                result[field].append(endpoint.get(field, None))
+        else:
+            # Multiple endpoints
+            for created_cx in self.cx_list:
+                for cx in endpoint:
+                    if created_cx in cx:
+                        for field in fields:
+                            result[field].append(cx[created_cx].get(field, None))
+                        break
+
+        # Example transformation for specific fields (e.g., bytes-rd in MB)
+        if "bytes-rd" in result:
+            result["bytes-rd"] = [
+                float(f"{int(x) / 1_000_000:.4f}") if x is not None else None
+                for x in result["bytes-rd"]
+            ]
+
+        return result
+
     # FOR WEB-UI // function usd to fetch runtime values and fill the csv.
 
     def monitor_for_runtime_csv(self):
@@ -935,6 +981,7 @@ class FtpTest(LFCliBase):
             self.data['UC-AVG'] = self.uc_avg
             self.data['UC-MAX'] = self.uc_max
             self.data['client_id'] = client_id_list
+            self.data['total_err'] = self.total_err
 
             rx_rate_val.append(list(self.rx_rate))
             for i, port in enumerate(self.input_devices_list):
@@ -1018,12 +1065,19 @@ class FtpTest(LFCliBase):
             df.to_csv(f"{endtime}-ftp-{port}.csv", index=False)
             individual_device_csv_names.append(f'{endtime}-ftp-{port}')
         self.individual_device_csv_names = individual_device_csv_names
+        try:
+            all_l4_data = self.get_all_l4_data()
+            df = pd.DataFrame(all_l4_data)
+            df.to_csv("all_l4_data.csv", index=False)
+        except:
+            logger.error("All l4 data not found")
 
     # Created a function to get uc-avg,uc,min,uc-max,ssid and all other details of the devices
 
     def get_device_details(self):
         dataset = []
         self.channel_list, self.mode_list, self.ssid_list, self.uc_avg, self.uc_max, self.url_data, self.uc_min, self.bytes_rd, self.rx_rate = [], [], [], [], [], [], [], [], []
+        self.total_err = []
         if self.clients_type == "Real":
             self.get_port_data()
         # data in json format
@@ -1034,6 +1088,7 @@ class FtpTest(LFCliBase):
         total_url_data = self.json_get("layer4/list?fields=total-urls")
         bytes_rd = self.json_get("layer4/list?fields=bytes-rd")
         rx_rate = self.json_get("layer4/list?fields=rx rate (1m)")
+        total_err = self.json_get("layer4/list?fields=total-err")
         if 'endpoint' in uc_avg_data.keys():
             # list of layer 4 connections name
             if type(uc_avg_data['endpoint']) is dict:
@@ -1041,6 +1096,7 @@ class FtpTest(LFCliBase):
                 self.uc_max.append(uc_max_data['endpoint']['uc-max'])
                 self.uc_min.append(uc_min_data['endpoint']['uc-min'])
                 self.rx_rate.append(rx_rate['endpoint']['rx rate (1m)'])
+                self.total_err.append(total_err['endpoint']['total-err'])
                 # reading uc-avg data in json format
                 self.url_data.append(total_url_data['endpoint']['total-urls'])
                 dataset.append(bytes_rd['endpoint']['bytes-rd'])
@@ -1075,6 +1131,10 @@ class FtpTest(LFCliBase):
                     for cx in rx_rate['endpoint']:
                         if created_cx in cx:
                             self.rx_rate.append(cx[created_cx]['rx rate (1m)'])
+                            break
+                    for cx in total_err['endpoint']:
+                        if created_cx in cx:
+                            self.total_err.append(cx[created_cx]['total-err'])
                             break
                 self.bytes_rd = [float(f"{(i / 1000000): .4f}") for i in dataset]
                 # for cx in uc_avg_data['endpoint']:
@@ -1300,7 +1360,8 @@ class FtpTest(LFCliBase):
                 "uc_avg": self.uc_avg,
                 "start_time": self.data["start_time"],
                 "end_time": self.data["end_time"],
-                "remaining_time": [0] * len(self.cx_list)
+                "remaining_time": [0] * len(self.cx_list),
+                "total_err" : self.total_err
             }
 
         logger.info("Monitoring complete")
@@ -1782,7 +1843,12 @@ class FtpTest(LFCliBase):
         # To move ftp_datavalues.csv in report folder
         report_path_date_time = self.report.get_path_date_time()
         if self.clients_type == "Real":
+
             shutil.move('ftp_datavalues.csv', report_path_date_time)
+            try:
+                shutil.move('all_l4_data.csv',report_path_date_time)
+            except:
+                logger.error("failed to create all layer 4 csv")
             for csv_name in self.individual_device_csv_names:
                 shutil.move(f"{csv_name}.csv", report_path_date_time)
         self.report.set_title("FTP Test")
