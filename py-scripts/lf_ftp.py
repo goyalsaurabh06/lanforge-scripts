@@ -1877,6 +1877,7 @@ class FtpTest(LFCliBase):
         # To move ftp_datavalues.csv in report folder
         report_path_date_time = self.report.get_path_date_time()
         if self.clients_type == "Real":
+
             shutil.move('ftp_datavalues.csv', report_path_date_time)
             try:
                 shutil.move('all_l4_data.csv', report_path_date_time)
