@@ -109,7 +109,7 @@
 
         EXAMPLE-9:
         Command Line Interface to run the test with individual configuration
-        python3 lf_interop_throughput.py --mgr 192.168.204.74 --mgr_port 8080 --upstream_port eth0 --test_duration 30s --traffic_type lf_udp --ssid NETGEAR_2G_wpa2
+        python3 lf_interop_throughput.py --mgr 192.168.204.74 --mgr_port 8080 --upstream_port eth1 --test_duration 30s --traffic_type lf_udp --ssid NETGEAR_2G_wpa2
         --passwd Password@123 --security wpa2 --do_interopability --device_list 1.15,1.400 --download 10000000 --interopability_config
 
     SCRIPT_CLASSIFICATION :  Test
@@ -2153,6 +2153,8 @@ class Throughput(Realm):
                 if self.interopability_config and devices_on_running[0] in self.configured_devices_check and not self.configured_devices_check[devices_on_running[0]]:
                     continue
 
+                print("devicesssssss",devices_on_running[0])
+
                 for k in devices_on_running:
                     # individual_device_data=[]
 
@@ -3147,6 +3149,7 @@ Copyright 2023 Candela Technologies Inc.
 
             # Determine device names based on the current iteration
             device_names = created_cx_lists_keys[:to_run_cxs_len[i][-1]]
+            print("oooooooooooopssssssssss",device_names)
 
             # Monitor throughput and capture all dataframes and test stop status
             all_dataframes, test_stopped_by_user = throughput.monitor(i, individual_df, device_names, incremental_capacity_list, overall_start_time, overall_end_time, is_device_configured)
