@@ -676,7 +676,11 @@ class HttpDownload(Realm):
             total_err = self.my_monitor('total-err')
             urls_downloaded = []
             for i in range(len(total_err)):
+<<<<<<< HEAD
                 urls_downloaded.append(url_times[i] - total_err[i])
+=======
+                urls_downloaded.append(url_times[i]-total_err[i])
+>>>>>>> 1accecd0 (updated ftp and http for testhouse)
             url_times = list(urls_downloaded)
             self.data["MAC"] = self.macid_list
             self.data["SSID"] = self.ssid_list
@@ -762,6 +766,7 @@ class HttpDownload(Realm):
             all_l4_data = self.get_all_l4_data()
             df = pd.DataFrame(all_l4_data)
             df.to_csv("all_l4_data.csv", index=False)
+<<<<<<< HEAD
         except Exception:
             logger.error("All l4 data not found")
 
@@ -771,6 +776,14 @@ class HttpDownload(Realm):
         Returns:
             dict: A dictionary mapping each Layer 4 field to a list of values in the order of CXs.
         """
+=======
+        except:
+            logger.error("All l4 data not found")
+
+
+    def get_all_l4_data(self):
+        # List of all fields to collect
+>>>>>>> 1accecd0 (updated ftp and http for testhouse)
         fields = [
             "name", "eid", "type", "status", "total-urls", "urls/s", "bytes-rd", "bytes-wr",
             "total-buffers", "total-rebuffers", "total-wait-time", "video-format-bitrate",
@@ -782,6 +795,7 @@ class HttpDownload(Realm):
             "login-denied", "other-err", "elapsed", "rpt timer", "time-stamp"
         ]
 
+<<<<<<< HEAD
         data = self.local_realm.json_get(f"layer4/list?fields={','.join(fields)}")
 
         result = {field: [] for field in fields}
@@ -792,6 +806,23 @@ class HttpDownload(Realm):
             for field in fields:
                 result[field].append(endpoint.get(field, None))
         else:
+=======
+        # Fetch all data in one go
+        data = self.local_realm.json_get(f"layer4/list?fields={','.join(fields)}")
+
+        # Initialize result dict
+        result = {field: [] for field in fields}
+
+        # Access 'endpoint' field
+        endpoint = data.get("endpoint", {})
+        cx_list = self.http_profile.created_cx.keys()
+        if isinstance(endpoint, dict):
+            # Single endpoint format
+            for field in fields:
+                result[field].append(endpoint.get(field, None))
+        else:
+            # Multiple endpoints
+>>>>>>> 1accecd0 (updated ftp and http for testhouse)
             for created_cx in cx_list:
                 for cx in endpoint:
                     if created_cx in cx:
@@ -799,6 +830,10 @@ class HttpDownload(Realm):
                             result[field].append(cx[created_cx].get(field, None))
                         break
 
+<<<<<<< HEAD
+=======
+        # Example transformation for specific fields (e.g., bytes-rd in MB)
+>>>>>>> 1accecd0 (updated ftp and http for testhouse)
         if "bytes-rd" in result:
             result["bytes-rd"] = [
                 float(f"{int(x) / 1_000_000:.4f}") if x is not None else None
@@ -1141,8 +1176,13 @@ class HttpDownload(Realm):
             shutil.move('http_datavalues.csv', report_path_date_time)
             try:
                 shutil.move('all_l4_data.csv', report_path_date_time)
+<<<<<<< HEAD
             except Exception:
                 logging.info("failed to generate all l4 data csv")
+=======
+            except:
+                logging.info("failed to generate all l4 data")
+>>>>>>> 1accecd0 (updated ftp and http for testhouse)
             # Moving indiviudal csv's to report directory
             for csv_name in self.individual_device_csv_names:
                 shutil.move(f"{csv_name}.csv", report_path_date_time)
@@ -2391,9 +2431,13 @@ times the file is downloaded.
         http.data_for_webui["status"] = ["STOPPED"] * len(http.devices_list)
         http.data_for_webui['rx rate (1m)'] = http.data['rx rate (1m)']
 <<<<<<< HEAD
+<<<<<<< HEAD
         http.data_for_webui['total_err'] = http.data['total_err']
 =======
 >>>>>>> 210955c1 (mixed traffic compatible tests)
+=======
+        http.data_for_webui['total_err'] = http.data['total_err']
+>>>>>>> 1accecd0 (updated ftp and http for testhouse)
         http.data_for_webui["start_time"] = http.data["start_time"]
         http.data_for_webui["end_time"] = http.data["end_time"]
         http.data_for_webui["remaining_time"] = http.data["remaining_time"]
