@@ -1513,6 +1513,12 @@ class Throughput(Realm):
         logger.debug("{}.csv".format(graph_image_name))
 
         return f"{graph_image_name}.png"
+    
+    def convert_to_table(self,configured_devices_check):
+        return {
+            "Username": list(configured_devices_check.keys()),
+            "Configuration Status": ["Pass" if status else "Fail" for status in configured_devices_check.values()]
+        }
 
     def convert_to_table(self, configured_devices_check):
         """
@@ -2153,7 +2159,8 @@ class Throughput(Realm):
                 if self.interopability_config and devices_on_running[0] in self.configured_devices_check and not self.configured_devices_check[devices_on_running[0]]:
                     continue
 
-                print("devicesssssss",devices_on_running[0])
+                if(not self.default_config and not self.configured_devices_check[devices_on_running[0]]):
+                    continue
 
                 for k in devices_on_running:
                     # individual_device_data=[]
@@ -3149,7 +3156,6 @@ Copyright 2023 Candela Technologies Inc.
 
             # Determine device names based on the current iteration
             device_names = created_cx_lists_keys[:to_run_cxs_len[i][-1]]
-            print("oooooooooooopssssssssss",device_names)
 
             # Monitor throughput and capture all dataframes and test stop status
             all_dataframes, test_stopped_by_user = throughput.monitor(i, individual_df, device_names, incremental_capacity_list, overall_start_time, overall_end_time, is_device_configured)
