@@ -2159,7 +2159,7 @@ class Throughput(Realm):
                 if self.interopability_config and devices_on_running[0] in self.configured_devices_check and not self.configured_devices_check[devices_on_running[0]]:
                     continue
 
-                if(not self.default_config and not self.configured_devices_check[devices_on_running[0]]):
+                if not self.default_config and devices_on_running[0] in self.configured_devices_check and not self.configured_devices_check[devices_on_running[0]]:
                     continue
 
                 for k in devices_on_running:
