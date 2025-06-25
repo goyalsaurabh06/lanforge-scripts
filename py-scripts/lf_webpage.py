@@ -1655,8 +1655,7 @@ class HttpDownload(Realm):
         it's added to the `report` on a new page; otherwise, it's skipped.
         """
         for floor in range(0,int(self.total_floors)):
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            http_image_path = os.path.join(script_dir, "heatmap_images", f"http_{self.test_name}_{floor+1}.png")
+            http_image_path = os.path.join(self.result_dir, "live_view_images", f"http_{self.test_name}_{floor+1}.png")
             timeout = 60  # seconds
             start_time = time.time()
 
