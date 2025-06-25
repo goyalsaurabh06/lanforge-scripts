@@ -175,7 +175,6 @@ from lf_graph import lf_bar_graph_horizontal
 from lf_graph import lf_line_graph
 
 from datetime import datetime, timedelta
-import requests
 DeviceConfig=importlib.import_module("py-scripts.DeviceConfig")
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 
@@ -412,9 +411,11 @@ class Throughput(Realm):
             else:
                 android_resources = [d for d in all_devices if d.get('os') == 'Android' and d.get('eid') in devices_to_disconnect]
                 if(len(android_resources)>0):
+                    # To disable stop app for androids
                     await adb_obj.stop_app(port_list=android_resources)
                 await obj.connectivity(device_list=devices_to_disconnect, wifi_config=self.config_dict, disconnect=True)
                 if(len(android_resources)>0):
+                    # To disable wifi for androids
                     adb_obj.set_wifi_state(port_list=android_resources, state = 'disable')
 
         asyncio.run(do_disconnect())
@@ -548,8 +549,10 @@ class Throughput(Realm):
                                     self.mac_list.append(b['hw version'])
                                     if "devices"  in interop_response.keys():
                                         interop_devices = interop_response['devices']
+                                        # Extract usernames of devices that match the current eid
                                         if(len([v['user-name'] for d in interop_devices for k, v in d.items() if v.get('resource-id') == b['eid']]) == 0):
                                             self.devices_available.append(b['eid'] + " " + 'iOS' + " " + b['hostname'])
+                                        # If username is found
                                         else:
                                             ios_username = [v['user-name'] for d in interop_devices for k, v in d.items() if v.get('resource-id') == b['eid']][0]
                                             self.devices_available.append(b['eid'] + " " + 'iOS' + " " + ios_username)
@@ -952,6 +955,7 @@ class Throughput(Realm):
                     throughput[i][3] = value['rx drop %']
                 if value['name'] == endp_a or value['name'] == endp_b:
                     throughput[i][4] = 'Run' if value['run'] else 'Stopped'
+            # To add average RTT
             for j in l3_cx_data:
                 if(j == "handler" or j == "uri"):
                     continue
@@ -1181,6 +1185,7 @@ class Throughput(Realm):
                 break
             if not self.background_run and self.background_run is not None:
                 break
+            # Exit the loop if the device is not connected or configured to match the provided SSID
             if not is_device_configured and not self.default_config:
                 break
         for index, key in enumerate(throughput):
@@ -1502,6 +1507,9 @@ class Throughput(Realm):
         return f"{graph_image_name}.png"
     
     def convert_to_table(self,configured_devices_check):
+        """
+        Returns usernames and their config status ('Pass' or 'Fail') as a dictionary.
+        """
         return {
             "Username": list(configured_devices_check.keys()),
             "Configuration Status": ["Pass" if status else "Fail" for status in configured_devices_check.values()]
@@ -1911,6 +1919,7 @@ class Throughput(Realm):
                 report.move_graph_image()
                 report.build_graph()
                 if(self.dowebgui and self.get_live_view):
+                    # To add live view images coming from the Web-GUI in report
                     self.add_live_view_images_to_report(report)
                     
                 if self.group_name:
@@ -2130,7 +2139,7 @@ class Throughput(Realm):
 
                 # Fetch devices_on_running from real_client_list
                 devices_on_running.append(self.real_client_list[data1[i][-1] - 1].split(" ")[-1])
-
+                # If the device fails to configure, skip its data in the report
                 if not self.default_config and devices_on_running[0] in self.configured_devices_check and not self.configured_devices_check[devices_on_running[0]]:
                     continue
 
@@ -2359,7 +2368,6 @@ class Throughput(Realm):
             if(self.dowebgui and self.get_live_view and self.do_interopability):
                 self.add_live_view_images_to_report(report)
             
-
         # report.build_custom()
         report.build_footer()
         report.write_html()
@@ -2656,14 +2664,10 @@ class Throughput(Realm):
 
     def add_live_view_images_to_report(self,report):
         """
-        This function looks for throughput and RSSI images for each floor
+        This function looks for live view images for each floor
         in the 'live_view_images' folder within `self.result_dir`.
         It waits up to **60 seconds** for each image. If an image is found,
         it's added to the `report` on a new page; otherwise, it's skipped.
-
-        **Args:**
-            self: An object containing `total_floors`, `result_dir`, and `test_name`.
-            report: An object with `set_custom_html()` and `build_custom()` methods.
         """
         for floor in range(0,int(self.total_floors)):
             throughput_image_path = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_throughput_{floor+1}.png")
@@ -3112,9 +3116,11 @@ Copyright 2023 Candela Technologies Inc.
                     time.sleep(5)
                 if not args.default_config:
                     if (args.do_interopability and i == 0):
+                        # To disconnect all the devices at the starting which are selected 
                         throughput.disconnect_all_devices()
                     if args.do_interopability and "iOS" not in to_run_cxs[i][0]:
                         logger.info("Configuring device of resource{}".format(to_run_cxs[i][0]))
+                        # To configure device which is under test
                         is_device_configured = throughput.configure_specific([device_to_run_resource])
                 if is_device_configured:
                     throughput.start_specific(to_run_cxs[i])
@@ -3125,7 +3131,7 @@ Copyright 2023 Candela Technologies Inc.
             # Monitor throughput and capture all dataframes and test stop status
             all_dataframes, test_stopped_by_user = throughput.monitor(i, individual_df, device_names, incremental_capacity_list, overall_start_time, overall_end_time, is_device_configured)
             if args.do_interopability and "iOS" not in to_run_cxs[i][0] and not args.default_config:
-                # logger.info("Disconnecting device of resource{}".format(to_run_cxs[i][0]))
+                # Disconnecting device after running the test
                 throughput.disconnect_all_devices([device_to_run_resource])
             # Check if the test was stopped by the user
             if test_stopped_by_user == False:

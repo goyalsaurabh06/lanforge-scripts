@@ -1994,30 +1994,8 @@ class FtpTest(LFCliBase):
         self.report.move_csv_file()
         self.report.build_graph()
         if(self.dowebgui and self.get_live_view):
-            for floor in range(0,int(self.total_floors)):
-                script_dir = os.path.dirname(os.path.abspath(__file__))
-                throughput_image_path = os.path.join(script_dir, "heatmap_images", f"ftp_{self.test_name}_{floor+1}.png")
-                # rssi_image_path = os.path.join(script_dir, "heatmap_images", f"{self.test_name}_rssi_{floor+1}.png")
-                timeout = 60  # seconds
-                start_time = time.time()
-
-                while not (os.path.exists(throughput_image_path)):
-                    if time.time() - start_time > timeout:
-                        print("Timeout: Images not found within 60 seconds.")
-                        break
-                    time.sleep(1)
-                while not os.path.exists(throughput_image_path):
-                    if os.path.exists(throughput_image_path):
-                        break
-                    # time.sleep(10)
-                if os.path.exists(throughput_image_path):
-                    self.report.set_custom_html('<div style="page-break-before: always;"></div>')
-                    self.report.build_custom()
-                    # self.report.set_custom_html("<h2>Average Throughput Heatmap: </h2>")
-                    # self.report.build_custom()
-                    self.report.set_custom_html(f'<img src="file://{throughput_image_path}"></img>')
-                    self.report.build_custom()
-                    # os.remove(throughput_image_path)
+            self.add_live_view_images_to_report(self.report)
+        
         self.report.set_obj_html("File Download Time (sec)", "The below table will provide information of "
                                  "minimum, maximum and the average time taken by clients to download a file in seconds")
         self.report.build_objective()
@@ -2092,12 +2070,6 @@ class FtpTest(LFCliBase):
         logger.info("returned file {}".format(html_file))
         logger.info(html_file)
         self.report.write_pdf()
-        if(self.get_live_view):
-            folder_path = os.path.join(script_dir, "heatmap_images")
-            for f in os.listdir(folder_path):
-                file_path = os.path.join(folder_path, f)
-                if os.path.isfile(file_path):
-                    os.remove(file_path)
 
         # The following lines can be used when the kpi results are needed
         # self.kpi_results
@@ -2491,6 +2463,32 @@ class FtpTest(LFCliBase):
         if len(self.input_devices_list) == 0:
             logger.error('No cross connections created, aborting test')
             exit(1)
+
+    def add_live_view_images_to_report(self,report):
+        """
+        This function looks for live view images for each floor
+        in the 'live_view_images' folder within `self.result_dir`.
+        It waits up to **60 seconds** for each image. If an image is found,
+        it's added to the `report` on a new page; otherwise, it's skipped.
+        """
+        for floor in range(0,int(self.total_floors)):
+            ftp_image_path = os.path.join(self.result_dir, "live_view_images", f"ftp_{self.test_name}_{floor+1}.png")
+            timeout = 60  # seconds
+            start_time = time.time()
+
+            while not (os.path.exists(ftp_image_path)):
+                if time.time() - start_time > timeout:
+                    print("Timeout: Images not found within 60 seconds.")
+                    break
+                time.sleep(1)
+            while not os.path.exists(ftp_image_path):
+                if os.path.exists(ftp_image_path):
+                    break
+            if os.path.exists(ftp_image_path):
+                self.report.set_custom_html('<div style="page-break-before: always;"></div>')
+                self.report.build_custom()
+                self.report.set_custom_html(f'<img src="file://{ftp_image_path}"></img>')
+                self.report.build_custom()
 
 
 def validate_args(args):

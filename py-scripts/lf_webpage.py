@@ -1161,32 +1161,7 @@ class HttpDownload(Realm):
         report.move_graph_image()
         report.build_graph()
         if(self.dowebgui and self.get_live_view):
-            print('total floors',self.total_floors)
-            for floor in range(0,int(self.total_floors)):
-                script_dir = os.path.dirname(os.path.abspath(__file__))
-                throughput_image_path = os.path.join(script_dir, "heatmap_images", f"http_{self.test_name}_{floor+1}.png")
-                print('image_path',f"{self.test_name}_{floor+1}.png")
-                # rssi_image_path = os.path.join(script_dir, "heatmap_images", f"{self.test_name}_rssi_{floor+1}.png")
-                timeout = 60  # seconds
-                start_time = time.time()
-
-                while not (os.path.exists(throughput_image_path)):
-                    if time.time() - start_time > timeout:
-                        print("Timeout: Images not found within 60 seconds.")
-                        break
-                    time.sleep(1)
-                while not os.path.exists(throughput_image_path):
-                    if os.path.exists(throughput_image_path):
-                        break
-                    # time.sleep(10)
-                if os.path.exists(throughput_image_path):
-                    report.set_custom_html('<div style="page-break-before: always;"></div>')
-                    report.build_custom()
-                    # report.set_custom_html("<h2>Average Throughput Heatmap: </h2>")
-                    # report.build_custom()
-                    report.set_custom_html(f'<img src="file://{throughput_image_path}"></img>')
-                    report.build_custom()
-                    # os.remove(throughput_image_path)
+            self.add_live_view_images_to_report(report)
 
         # report.set_obj_html("Summary Table Description", "This Table shows you the summary "
         #                     "result of Webpage Download Test as PASS or FAIL criteria. If the average time taken by " +
@@ -1672,6 +1647,32 @@ class HttpDownload(Realm):
             logger.error('No cross connections created, aborting test')
             exit(1)
 
+    def add_live_view_images_to_report(self,report):
+        """
+        This function looks for live view images for each floor
+        in the 'live_view_images' folder within `self.result_dir`.
+        It waits up to **60 seconds** for each image. If an image is found,
+        it's added to the `report` on a new page; otherwise, it's skipped.
+        """
+        for floor in range(0,int(self.total_floors)):
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            http_image_path = os.path.join(script_dir, "heatmap_images", f"http_{self.test_name}_{floor+1}.png")
+            timeout = 60  # seconds
+            start_time = time.time()
+
+            while not (os.path.exists(http_image_path)):
+                if time.time() - start_time > timeout:
+                    print("Timeout: Images not found within 60 seconds.")
+                    break
+                time.sleep(1)
+            while not os.path.exists(http_image_path):
+                if os.path.exists(http_image_path):
+                    break
+            if os.path.exists(http_image_path):
+                report.set_custom_html('<div style="page-break-before: always;"></div>')
+                report.build_custom()
+                report.set_custom_html(f'<img src="file://{http_image_path}"></img>')
+                report.build_custom()
 
 def validate_args(args):
     if args.expected_passfail_value and args.device_csv_name:
