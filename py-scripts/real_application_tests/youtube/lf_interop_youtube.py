@@ -446,6 +446,7 @@ class Youtube(Realm):
 
 
         """
+        real_devices.get_devices()
         # Query and retrieve all user-defined real stations if `real_sta_list` is not provided
         if real_sta_list is None:
             self.real_sta_list, _, _ = real_devices.query_user()

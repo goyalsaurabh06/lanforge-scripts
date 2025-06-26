@@ -549,6 +549,7 @@ class ZoomAutomation(Realm):
         9. Returns the sorted list of selected real station names.
 
         """
+        real_device_obj.get_devices()
         # Query and retrieve all user-defined real stations if `real_sta_list` is not provided
         if real_sta_list is None:
             self.real_sta_list, _, _ = real_device_obj.query_user()
@@ -732,17 +733,7 @@ class ZoomAutomation(Realm):
                 "TEST TYPE": testtype,
 
             }])
-
-        test_parameters = pd.DataFrame([{
-
-            'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac})',
-            'Test Duration(min)': self.duration,
-            'EMAIL ID': self.signin_email,
-            "PASSWORD": self.signin_passwd,
-            "HOST": self.real_sta_list[0],
-            "TEST TYPE": testtype
-
-        }])
+            
         report.set_table_dataframe(test_parameters)
         report.build_table()
 

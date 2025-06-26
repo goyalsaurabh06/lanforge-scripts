@@ -1070,6 +1070,7 @@ class RealBrowserTest(Realm):
             resource_ids_generated (str): Resource IDs joined as a comma-separated string
         """
         available_resources = []
+        self.devices = self.devices.get_devices()
 
         # Web GUI Mode: Extract and sort resources from the given device list
         if self.dowebgui and self.group_name:
