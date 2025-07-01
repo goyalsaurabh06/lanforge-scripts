@@ -15,11 +15,12 @@ import lf_interop_ping as ping_test
 from lf_interop_throughput import Throughput
 from lf_interop_video_streaming import VideoStreamingTest
 # from lf_interop_real_browser_test import RealBrowserTest
-from test_l3 import L3VariableTime,change_port_to_ip,configure_reporting,query_real_clients
+from test_l3 import L3VariableTime,change_port_to_ip,configure_reporting,query_real_clients,valid_endp_types
 from lf_kpi_csv import lf_kpi_csv
 import lf_cleanup
 import os
 import sys
+import argparse
 import json
 from types import SimpleNamespace
 base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -30,12 +31,14 @@ sys.path.insert(0, os.path.join(base_path, 'py-scripts'))  # for lf_logger_confi
 througput_test=importlib.import_module("py-scripts.lf_interop_throughput")
 video_streaming_test=importlib.import_module("py-scripts.lf_interop_video_streaming")
 web_browser_test=importlib.import_module("py-scripts.real_application_tests.real_browser.lf_interop_real_browser_test")
+zoom_test=importlib.import_module("py-scripts.real_application_tests.zoom_automation.lf_interop_zoom")
 yt_test=importlib.import_module("py-scripts.real_application_tests.youtube.lf_interop_youtube")
 lf_report_pdf = importlib.import_module("py-scripts.lf_report")
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 logger = logging.getLogger(__name__)
 RealBrowserTest = getattr(web_browser_test, "RealBrowserTest")
 Youtube = getattr(yt_test, "Youtube")
+ZoomAutomation = getattr(zoom_test, "ZoomAutomation")
 DeviceConfig=importlib.import_module("py-scripts.DeviceConfig")
 # from py_scripts import lf_logger_config, interop_connectivity
 from lf_interop_ping import Ping
@@ -291,216 +294,421 @@ class Candela:
                     logger.error("For a open type security there will be no password or the password should be left blank (i.e., set to '' or [BLANK]).")
                     exit(1)
 
-    def run_ping_test(self,
-                  mgr_passwd='lanforge',
-                  server_ip=None,
-                  ssid=None,
-                  security='open',
-                  passwd='[BLANK]',
-                  target='1.1.eth1',
-                  ping_interval='1',
-                  ping_duration=1.0,
-                  virtual=False,
-                  real=True,
-                  radio=None,
-                  num_sta=1,
-                  use_default_config=False,
-                  debug=False,
-                  local_lf_report_dir="",
-                  log_level=None,
-                  lf_logger_config_json=None,
-                  help_summary=None):
+    def run_ping_test(
+        self,
+        target: str = '1.1.eth1',
+        ping_interval: str = '1',
+        ping_duration: float = 1,
+        ssid: str = None,
+        mgr_passwd: str = 'lanforge',
+        server_ip: str = None,
+        security: str = 'open',
+        passwd: str = '[BLANK]',
+        virtual: bool = False,
+        num_sta: int = 1,
+        radio: str = None,
+        real: bool = True,
+        use_default_config: bool = False,
+        debug: bool = False,
+        local_lf_report_dir: str = "",
+        log_level: str = None,
+        lf_logger_config_json: str = None,
+        help_summary: bool = False,
+        group_name: str = None,
+        profile_name: str = None,
+        file_name: str = None,
+        eap_method: str = 'DEFAULT',
+        eap_identity: str = '',
+        ieee8021x: bool = False,
+        ieee80211u: bool = False,
+        ieee80211w: int = 1,
+        enable_pkc: bool = False,
+        bss_transition: bool = False,
+        power_save: bool = False,
+        disable_ofdma: bool = False,
+        roam_ft_ds: bool = False,
+        key_management: str = 'DEFAULT',
+        pairwise: str = '[BLANK]',
+        private_key: str = '[BLANK]',
+        ca_cert: str = '[BLANK]',
+        client_cert: str = '[BLANK]',
+        pk_passwd: str = '[BLANK]',
+        pac_file: str = '[BLANK]',
+        expected_passfail_value: str = None,
+        device_csv_name: str = None,
+        wait_time: int = 60,
+        dev_list: str = None
+    ):
 
         if help_summary:
             print(help_summary)
-            return
+            exit(0)
 
-        # Logger setup
+        # set the logger level to debug
         logger_config = lf_logger_config.lf_logger_config()
+
         if log_level:
             logger_config.set_level(level=log_level)
+
         if lf_logger_config_json:
+            # logger_config.lf_logger_config_json = "lf_logger_config.json"
             logger_config.lf_logger_config_json = lf_logger_config_json
             logger_config.load_lf_logger_config()
+        # validate_args(args)
 
-        if not (virtual or real):
-            print('At least one of --real or --virtual is required')
-            return
-        if virtual:
-            if not radio:
-                print('--radio required')
-                return
-            if not ssid:
-                print('--ssid required for virtual stations')
-                return
-        if security != 'open' and passwd == '[BLANK]':
-            print('--passwd required')
-            return
-        if not use_default_config:
-            if not ssid:
-                print('--ssid required for Wi-Fi configuration')
-                return
-            if security.lower() != 'open' and passwd == '[BLANK]':
-                print('--passwd required for Wi-Fi configuration')
-                return
-            if server_ip is None:
-                print('--server_ip or upstream ip required for Wi-Fi configuration')
-                return
+        mgr_ip = self.lanforge_ip
+        mgr_password = mgr_passwd
+        mgr_port = self.port
+        server_ip = server_ip
+        ssid = ssid
+        security = security
+        password = passwd
+        num_sta = num_sta
+        radio = radio
+        target = target
+        interval = ping_interval
+        duration = ping_duration
+        configure = not use_default_config
+        debug = debug
+        group_name = group_name
+        file_name = file_name
+        profile_name = profile_name
+        eap_method = eap_method
+        eap_identity = eap_identity
+        ieee80211 = ieee8021x
+        ieee80211u = ieee80211u
+        ieee80211w = ieee80211w
+        enable_pkc = enable_pkc
+        bss_transition = bss_transition
+        power_save = power_save
+        disable_ofdma = disable_ofdma
+        roam_ft_ds = roam_ft_ds
+        key_management = key_management
+        pairwise = pairwise
+        private_key = private_key
+        ca_cert = ca_cert
+        client_cert = client_cert
+        pk_passwd = pk_passwd
+        pac_file = pac_file
 
-        if debug:
-            print(f"""Specified configuration:
-            ip:                       {self.lanforge_ip}
-            port:                     {self.port}
-            ssid:                     {ssid}
-            security:                 {security}
-            password:                 {passwd}
-            target:                   {target}
-            Ping interval:            {ping_interval}
-            Packet Duration (min):    {ping_duration}
-            virtual:                  {virtual}
-            num virtual stations:     {num_sta}
-            radio:                    {radio}
-            real:                     {real}
-            debug:                    {debug}
-            """)
+        if (debug):
+            print('''Specified configuration:
+                ip:                       {}
+                port:                     {}
+                ssid:                     {}
+                security:                 {}
+                password:                 {}
+                target:                   {}
+                Ping interval:            {}
+                Packet Duration (in min): {}
+                virtual:                  {}
+                num of virtual stations:  {}
+                radio:                    {}
+                real:                     {}
+                debug:                    {}
+                '''.format(mgr_ip, mgr_port, ssid, security, password, target, interval, duration, virtual, num_sta, radio, real, debug))
 
-        ping = Ping(
-            host=self.lanforge_ip,
-            port=self.port,
-            ssid=ssid,
-            security=security,
-            password=passwd,
-            radio=radio,
-            lanforge_password=mgr_passwd,
-            target=target,
-            interval=ping_interval,
-            sta_list=[],
-            virtual=virtual,
-            real=real,
-            duration=ping_duration,
-            debug=debug
-        )
+        # ping object creation
+        ping = Ping(host=mgr_ip, port=mgr_port, ssid=ssid, security=security, password=password, radio=radio,
+                    lanforge_password=mgr_password, target=target, interval=interval, sta_list=[], virtual=virtual, real=real, duration=duration, debug=debug, csv_name=device_csv_name,
+                    expected_passfail_val=expected_passfail_value, wait_time=wait_time, group_name=group_name)
 
+        # changing the target from port to IP
         ping.change_target_to_ip()
 
+        # creating virtual stations if --virtual flag is specified
+        if (virtual):
 
-        if real:
-            Devices = RealDevice(manager_ip=self.lanforge_ip, selected_bands=[])
+            logging.info('Proceeding to create {} virtual stations on {}'.format(num_sta, radio))
+            station_list = LFUtils.portNameSeries(
+                prefix_='sta', start_id_=0, end_id_=num_sta - 1, padding_number_=100000, radio=radio)
+            ping.sta_list = station_list
+            if (debug):
+                logging.info('Virtual Stations: {}'.format(station_list).replace(
+                    '[', '').replace(']', '').replace('\'', ''))
+
+        # selecting real clients if --real flag is specified
+        if (real):
+            Devices = RealDevice(manager_ip=mgr_ip, selected_bands=[])
             Devices.get_devices()
             ping.Devices = Devices
-            ping.select_real_devices(real_devices=Devices)
+            # ping.select_real_devices(real_devices=Devices)
+            # If config is True, attempt to bring up all devices in the list and perform tests on those that become active
+            if (configure):
+                config_devices = {}
+                obj = DeviceConfig.DeviceConfig(lanforge_ip=mgr_ip, file_name=file_name, wait_time=wait_time)
+                # Case 1: Group name, file name, and profile name are provided
+                if group_name and file_name and profile_name:
+                    selected_groups = group_name.split(',')
+                    selected_profiles = profile_name.split(',')
+                    for i in range(len(selected_groups)):
+                        config_devices[selected_groups[i]] = selected_profiles[i]
+                    obj.initiate_group()
+                    group_device_map = obj.get_groups_devices(data=selected_groups, groupdevmap=True)
+                    # Configure devices in the selected group with the selected profile
+                    eid_list = asyncio.run(obj.connectivity(config=config_devices, upstream=server_ip))
+                    Devices.get_devices()
+                    ping.select_real_devices(real_devices=Devices, device_list=eid_list)
+                # Case 2: Device list is empty but config flag is True — prompt the user to input device details for configuration
+                else:
+                    all_devices = obj.get_all_devices()
+                    device_list = []
+                    config_dict = {
+                        'ssid': ssid,
+                        'passwd': password,
+                        'enc': security,
+                        'eap_method': eap_method,
+                        'eap_identity': eap_identity,
+                        'ieee80211': ieee80211,
+                        'ieee80211u': ieee80211u,
+                        'ieee80211w': ieee80211w,
+                        'enable_pkc': enable_pkc,
+                        'bss_transition': bss_transition,
+                        'power_save': power_save,
+                        'disable_ofdma': disable_ofdma,
+                        'roam_ft_ds': roam_ft_ds,
+                        'key_management': key_management,
+                        'pairwise': pairwise,
+                        'private_key': private_key,
+                        'ca_cert': ca_cert,
+                        'client_cert': client_cert,
+                        'pk_passwd': pk_passwd,
+                        'pac_file': pac_file,
+                        'server_ip': server_ip,
+                    }
+                    for device in all_devices:
+                        if device["type"] == 'laptop':
+                            device_list.append(device["shelf"] + '.' + device["resource"] + " " + device["hostname"])
+                        else:
+                            device_list.append(device["eid"] + " " + device["serial"])
+                    logger.info(f"Available devices: {device_list}")
+                    if dev_list is None:
+                        dev_list = input("Enter the desired resources to run the test:")
+                    dev_list = dev_list.split(',')
+                    dev_list = asyncio.run(obj.connectivity(device_list=dev_list, wifi_config=config_dict))
+                    Devices.get_devices()
+                    ping.select_real_devices(real_devices=Devices, device_list=dev_list)
+            # Case 3: Config is False, no device list is provided, and no group is selected
+            # Prompt the user to manually input devices for running the test
+            else:
+                device_list = ping.Devices.get_devices()
+                logger.info(f"Available devices: {device_list}")
+                if dev_list is None:    
+                    dev_list = input("Enter the desired resources to run the test:")
+                dev_list = dev_list.split(',')
+                # dev_list = input("Enter the desired resources to run the test:").split(',')
+                ping.select_real_devices(real_devices=Devices, device_list=dev_list)
 
-            if not use_default_config:
-                if Devices.android_list:
-                    androids = interop_connectivity.Android(self.lanforge_ip, self.port, server_ip, ssid, passwd, security)
-                    androids_data = androids.get_serial_from_port(Devices.android_list)
-                    androids.stop_app(androids_data)
-                    androids.set_wifi_state(androids_data, state='enable')
-                    androids.configure_wifi(androids_data)
-                if Devices.windows_list or Devices.linux_list or Devices.mac_list:
-                    laptops = interop_connectivity.Laptop(self.lanforge_ip, self.port, server_ip, ssid, passwd, security)
-                    all_laptops = Devices.windows_list + Devices.linux_list + Devices.mac_list
-                    laptops_data = laptops.get_laptop_from_port(all_laptops)
-                    laptops.rm_station(laptops_data)
-                    time.sleep(2)
-                    laptops.add_station(laptops_data)
-                    time.sleep(2)
-                    laptops.set_port(laptops_data)
-                time.sleep(20)
-
+        # station precleanup
         ping.cleanup()
-        if virtual:
+
+        # building station if virtual
+        if (virtual):
             ping.buildstation()
-        if not ping.check_tab_exists():
-            logging.error("Generic Tab not available. Aborting test.")
-            return
+
+        # check if generic tab is enabled or not
+        if (not ping.check_tab_exists()):
+            logging.error('Generic Tab is not available.\nAborting the test.')
+            exit(0)
 
         ping.sta_list += ping.real_sta_list
+
+        # creating generic endpoints
         ping.create_generic_endp()
+
+        logging.info(ping.generic_endps_profile.created_cx)
+
+        # run the test for the given duration
+        logging.info('Running the ping test for {} minutes'.format(duration))
+
+        # start generate endpoint
         ping.start_generic()
-        time.sleep(ping_duration * 60)
+        # time_counter = 0
+        ports_data_dict = ping.json_get('/ports/all/')['interfaces']
+        ports_data = {}
+        for ports in ports_data_dict:
+            port, port_data = list(ports.keys())[0], list(ports.values())[0]
+            ports_data[port] = port_data
+
+        time.sleep(duration * 60)
+
+        logging.info('Stopping the test')
         ping.stop_generic()
 
         result_data = ping.get_results()
-        ports_data_dict = ping.json_get('/ports/all/')['interfaces']
-        ports_data = {list(p.keys())[0]: list(p.values())[0] for p in ports_data_dict}
-
-        # Initialize result storage
-        ping.result_json = {}
-
-        # Parsing Virtual Device Results
-        if virtual:
-            for station in ping.sta_list:
-                if station not in ping.real_sta_list:
-                    current_device_data = ports_data.get(station, {})
-                    for ping_device in result_data if isinstance(result_data, list) else [result_data]:
-                        key, data = (list(ping_device.items())[0] if isinstance(ping_device, dict) else (station, result_data))
-                        if station.split('.')[-1] in key:
+        # logging.info(result_data)
+        logging.info(ping.result_json)
+        if (virtual):
+            ports_data_dict = ping.json_get('/ports/all/')['interfaces']
+            ports_data = {}
+            for ports in ports_data_dict:
+                port, port_data = list(ports.keys())[0], list(ports.values())[0]
+                ports_data[port] = port_data
+            if (isinstance(result_data, dict)):
+                for station in ping.sta_list:
+                    if (station not in ping.real_sta_list):
+                        current_device_data = ports_data[station]
+                        if (station.split('.')[2] in result_data['name']):
+                            # t_rtt = 0
+                            # min_rtt = 10000
+                            # max_rtt = 0
+                            # for result in result_data['last results'].split('\n'):
+                            #     # logging.info(result)
+                            #     if (result == ''):
+                            #         continue
+                            #     rt_time = result.split()[6]
+                            #     logging.info(rt_time.split('time='))
+                            #     time_value = float(rt_time.split('time=')[1])
+                            #     t_rtt += time_value
+                            #     if (time_value < min_rtt):
+                            #         min_rtt = time_value
+                            #     if (max_rtt < time_value):
+                            #         max_rtt = time_value
+                            # avg_rtt = t_rtt / float(result_data['rx pkts'])
+                            # logging.info(t_rtt, min_rtt, max_rtt, avg_rtt)
                             try:
-                                last_line = data['last results'].split('\n')[-2] if 'last results' in data and len(data['last results'].split('\n')) > 1 else ""
-                                parts = last_line.split()[-1].split('/')
                                 ping.result_json[station] = {
-                                    'command': data['command'],
-                                    'sent': data['tx pkts'],
-                                    'recv': data['rx pkts'],
-                                    'dropped': data['dropped'],
-                                    'min_rtt': parts[0] if len(parts) == 3 else '0',
-                                    'avg_rtt': parts[1] if len(parts) == 3 else '0',
-                                    'max_rtt': parts[2] if len(parts) == 3 else '0',
-                                    'mac': current_device_data.get('mac', ''),
-                                    'channel': current_device_data.get('channel', ''),
-                                    'ssid': current_device_data.get('ssid', ''),
-                                    'mode': current_device_data.get('mode', ''),
+                                    'command': result_data['command'],
+                                    'sent': result_data['tx pkts'],
+                                    'recv': result_data['rx pkts'],
+                                    'dropped': result_data['dropped'],
+                                    'min_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split('/')[0] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                    'avg_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split('/')[1] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                    'max_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split('/')[2] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                    'mac': current_device_data['mac'],
+                                    'channel': current_device_data['channel'],
+                                    'ssid': current_device_data['ssid'],
+                                    'mode': current_device_data['mode'],
                                     'name': station,
                                     'os': 'Virtual',
                                     'remarks': [],
-                                    'last_result': last_line
+                                    'last_result': [result_data['last results'].split('\n')[-2] if len(result_data['last results']) != 0 else ""][0]
                                 }
                                 ping.result_json[station]['remarks'] = ping.generate_remarks(ping.result_json[station])
-                            except Exception as e:
-                                logging.error(f'Failed parsing virtual station {station}: {e}')
+                            except BaseException:
+                                logging.error('Failed parsing the result for the station {}'.format(station))
 
-        # Parsing Real Device Results
-        if real:
-            for station in ping.real_sta_list:
-                current_device_data = Devices.devices_data.get(station, {})
-                for ping_device in result_data if isinstance(result_data, list) else [result_data]:
-                    key, data = (list(ping_device.items())[0] if isinstance(ping_device, dict) else (station, result_data))
-                    if station.split('.')[-1] in key:
+            else:
+                for station in ping.sta_list:
+                    if (station not in ping.real_sta_list):
+                        current_device_data = ports_data[station]
+                        for ping_device in result_data:
+                            ping_endp, ping_data = list(ping_device.keys())[
+                                0], list(ping_device.values())[0]
+                            if (station.split('.')[2] in ping_endp):
+                                # t_rtt = 0
+                                # min_rtt = 10000
+                                # max_rtt = 0
+                                # for result in ping_data['last results'].split('\n'):
+                                #     if (result == ''):
+                                #         continue
+                                #     rt_time = result.split()[6]
+                                #     time_value = float(rt_time.split('time=')[1])
+                                #     t_rtt += time_value
+                                #     if (time_value < min_rtt):
+                                #         min_rtt = time_value
+                                #     if (max_rtt < time_value):
+                                #         max_rtt = time_value
+                                # avg_rtt = t_rtt / float(ping_data['rx pkts'])
+                                # logging.info(t_rtt, min_rtt, max_rtt, avg_rtt)
+                                try:
+                                    ping.result_json[station] = {
+                                        'command': ping_data['command'],
+                                        'sent': ping_data['tx pkts'],
+                                        'recv': ping_data['rx pkts'],
+                                        'dropped': ping_data['dropped'],
+                                        'min_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split('/')[0] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                        'avg_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split('/')[1] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                        'max_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split('/')[2] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                        'mac': current_device_data['mac'],
+                                        'ssid': current_device_data['ssid'],
+                                        'channel': current_device_data['channel'],
+                                        'mode': current_device_data['mode'],
+                                        'name': station,
+                                        'os': 'Virtual',
+                                        'remarks': [],
+                                        'last_result': [ping_data['last results'].split('\n')[-2] if len(ping_data['last results']) != 0 else ""][0]
+                                    }
+                                    ping.result_json[station]['remarks'] = ping.generate_remarks(ping.result_json[station])
+                                except BaseException:
+                                    logging.error('Failed parsing the result for the station {}'.format(station))
+
+        if (real):
+            if (isinstance(result_data, dict)):
+                for station in ping.real_sta_list:
+                    current_device_data = Devices.devices_data[station]
+                    # logging.info(current_device_data)
+                    if (station in result_data['name']):
                         try:
-                            last_line = data['last results'].split('\n')[-2] if 'last results' in data and len(data['last results'].split('\n')) > 1 else ""
-                            parts = last_line.split(':')[-1].split('/') if ':' in last_line else last_line.split('/')
+                            # logging.info(result_data['last results'].split('\n'))
                             ping.result_json[station] = {
-                                'command': data['command'],
-                                'sent': data['tx pkts'],
-                                'recv': data['rx pkts'],
-                                'dropped': data['dropped'],
-                                'min_rtt': parts[0] if len(parts) == 3 else '0',
-                                'avg_rtt': parts[1] if len(parts) == 3 else '0',
-                                'max_rtt': parts[2] if len(parts) == 3 else '0',
-                                'mac': current_device_data.get('mac', ''),
-                                'channel': current_device_data.get('channel', ''),
-                                'ssid': current_device_data.get('ssid', ''),
-                                'mode': current_device_data.get('mode', ''),
-                                'name': current_device_data.get('user', '') or current_device_data.get('hostname', ''),
-                                'os': (
-                                    'Windows' if 'Win' in current_device_data.get('hw version', '') else
-                                    'Linux' if 'Linux' in current_device_data.get('hw version', '') else
-                                    'Mac' if 'Apple' in current_device_data.get('hw version', '') else 'Android'
-                                ),
+                                'command': result_data['command'],
+                                'sent': result_data['tx pkts'],
+                                'recv': result_data['rx pkts'],
+                                'dropped': result_data['dropped'],
+                                'min_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[0] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                'avg_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[1] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                'max_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[2] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                'mac': current_device_data['mac'],
+                                'ssid': current_device_data['ssid'],
+                                'channel': current_device_data['channel'],
+                                'mode': current_device_data['mode'],
+                                'name': [current_device_data['user'] if current_device_data['user'] != '' else current_device_data['hostname']][0],
+                                'os': ['Windows' if 'Win' in current_device_data['hw version'] else 'Linux' if 'Linux' in current_device_data['hw version'] else 'Mac' if 'Apple' in current_device_data['hw version'] else 'Android'][0],  # noqa E501
                                 'remarks': [],
-                                'last_result': last_line
+                                'last_result': [result_data['last results'].split('\n')[-2] if len(result_data['last results']) != 0 else ""][0]
                             }
                             ping.result_json[station]['remarks'] = ping.generate_remarks(ping.result_json[station])
-                        except Exception as e:
-                            logging.error(f'Failed parsing real station {station}: {e}')
+                        except BaseException:
+                            logging.error('Failed parsing the result for the station {}'.format(station))
+            else:
+                for station in ping.real_sta_list:
+                    current_device_data = Devices.devices_data[station]
+                    for ping_device in result_data:
+                        ping_endp, ping_data = list(ping_device.keys())[
+                            0], list(ping_device.values())[0]
+                        if (station in ping_endp):
+                            try:
+                                ping.result_json[station] = {
+                                    'command': ping_data['command'],
+                                    'sent': ping_data['tx pkts'],
+                                    'recv': ping_data['rx pkts'],
+                                    'dropped': ping_data['dropped'],
+                                    'min_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[0] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                    'avg_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[1] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                    'max_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[2] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                    'mac': current_device_data['mac'],
+                                    'ssid': current_device_data['ssid'],
+                                    'channel': current_device_data['channel'],
+                                    'mode': current_device_data['mode'],
+                                    'name': [current_device_data['user'] if current_device_data['user'] != '' else current_device_data['hostname']][0],
+                                    'os': ['Windows' if 'Win' in current_device_data['hw version'] else 'Linux' if 'Linux' in current_device_data['hw version'] else 'Mac' if 'Apple' in current_device_data['hw version'] else 'Android'][0],  # noqa E501
+                                    'remarks': [],
+                                    'last_result': [ping_data['last results'].split('\n')[-2] if len(ping_data['last results']) != 0 else ""][0]
+                                }
+                                ping.result_json[station]['remarks'] = ping.generate_remarks(ping.result_json[station])
+                            except BaseException:
+                                logging.error('Failed parsing the result for the station {}'.format(station))
 
         logging.info(ping.result_json)
 
-        if local_lf_report_dir:
-            ping.generate_report(report_path=local_lf_report_dir)
+        # station post cleanup
+        ping.cleanup()
+
+        if local_lf_report_dir == "":
+            # Report generation when groups are specified but no custom report path is provided
+            if group_name:
+                ping.generate_report(config_devices=config_devices, group_device_map=group_device_map)
+            # Report generation when no group is specified and no custom report path is provided
+            else:
+                ping.generate_report()
         else:
-            ping.generate_report()
+            # Report generation when groups are specified and a custom report path is provided
+            if group_name:
+                ping.generate_report(config_devices=config_devices, group_device_map=group_device_map, report_path=local_lf_report_dir)
+            # Report generation when no group is specified but a custom report path is provided
+            else:
+                ping.generate_report(report_path=local_lf_report_dir)
 
     def run_http_test(
         self,
@@ -1330,7 +1538,7 @@ class Candela:
                        file_name=None,
                  profile_name=None,group_name=None,eap_method=None,
                  eap_identity=None,
-                 ieee80211=None,
+                 ieee8021x=None,
                  ieee80211u=None,
                  ieee80211w=None,
                  enable_pkc=None,
@@ -1344,7 +1552,7 @@ class Candela:
                  ca_cert=None,
                  client_cert=None,
                  pk_passwd=None,
-                 pac_file=None,expected_passfail_val=None,csv_name=None,wait_time=60,config=False):
+                 pac_file=None,expected_passfail_val=None,device_csv_name=None,wait_time=60,config=False):
         """
         Method to start FTP test on the given device list
 
@@ -1372,6 +1580,14 @@ class Candela:
         #     for direction in directions:
         #         for file_size in file_sizes:
         # Start Test
+        print(traffic_duration)
+        if type(traffic_duration) == str:
+            if traffic_duration[-1].lower()=='s':
+                traffic_duration = int(traffic_duration[:-1])
+            elif traffic_duration[-1].lower()=='m':
+                traffic_duration = int(traffic_duration[:-1])*60
+            elif traffic_duration[-1].lower()=='h':
+                traffic_duration = int(traffic_duration[:-1])*60*60
         device_list = self.filter_iOS_devices(device_list)
         if not group_name and len(device_list) == 0:
             print('No devices specified.')
@@ -1385,7 +1601,7 @@ class Candela:
         else:
             selected_profiles = []  # Default to empty list if profile name is not provided
 
-        if csv_name and expected_passfail_val:
+        if device_csv_name and expected_passfail_val:
             logger.error("Enter either --device_csv_name or --expected_passfail_value")
             exit(1)
         if clients_type == 'Real' and config and group_name is None:
@@ -1449,7 +1665,7 @@ class Candela:
                         profile_name=profile_name,
                         file_name=file_name,eap_method=eap_method,
                         eap_identity=eap_identity,
-                        ieee80211=ieee80211,
+                        ieee80211=ieee8021x,
                         ieee80211u=ieee80211u,
                         ieee80211w=ieee80211w,
                         enable_pkc=enable_pkc,
@@ -1464,7 +1680,7 @@ class Candela:
                         client_cert=client_cert,
                         pk_passwd=pk_passwd,
                         pac_file=pac_file,
-                        csv_name=csv_name,expected_passfail_val=expected_passfail_val,wait_time=wait_time,config=config)
+                        csv_name=device_csv_name,expected_passfail_val=expected_passfail_val,wait_time=wait_time,config=config)
 
         self.ftp_test.data = {}
         self.ftp_test.file_create()
@@ -1760,7 +1976,7 @@ class Candela:
         max_speed=0,
         urls_per_tenm=100,
         duration=None,
-        test_name=None,
+        test_name="video_streaming_test",
         dowebgui=False,
         result_dir='',
         lf_logger_config_json=None,
@@ -2312,7 +2528,6 @@ class Candela:
         thpt_mbps=False,
         help_summary=False
     ):
-
         if help_summary:
             print(help_summary)
             exit(0)
@@ -2452,7 +2667,8 @@ class Candela:
                                     pk_passwd=pk_passwd,
                                     pac_file=pac_file,
                                     wait_time=wait_time,
-                                    config=config
+                                    config=config,
+                                    default_config = default_config
                                     )
 
             if gave_incremental:
@@ -2484,10 +2700,10 @@ class Candela:
             for i in range(len(clients_to_run)):
 
                 # Extend individual_dataframe_column with dynamically generated column names
-                individual_dataframe_column.extend([f'Download{clients_to_run[i]}', f'Upload{clients_to_run[i]}', f'Rx % Drop A {clients_to_run[i]}',
-                                                f'Rx % Drop B{clients_to_run[i]}', f'RSSI {clients_to_run[i]} ', f'Tx-Rate {clients_to_run[i]} ', f'Rx-Rate {clients_to_run[i]} '])
+                individual_dataframe_column.extend([f'Download{clients_to_run[i]}', f'Upload{clients_to_run[i]}', f'Rx % Drop  {clients_to_run[i]}',
+                                                f'Tx % Drop{clients_to_run[i]}', f'Average RTT {clients_to_run[i]} ', f'RSSI {clients_to_run[i]} ', f'Tx-Rate {clients_to_run[i]} ', f'Rx-Rate {clients_to_run[i]} '])
 
-            individual_dataframe_column.extend(['Overall Download', 'Overall Upload', 'Overall Rx % Drop A', 'Overall Rx % Drop B', 'Iteration',
+            individual_dataframe_column.extend(['Overall Download', 'Overall Upload', 'Overall Rx % Drop ', 'Overall Tx % Drop', 'Iteration',
                                             'TIMESTAMP', 'Start_time', 'End_time', 'Remaining_Time', 'Incremental_list', 'status'])
             individual_df = pd.DataFrame(columns=individual_dataframe_column)
 
@@ -2495,9 +2711,11 @@ class Candela:
             overall_end_time = overall_start_time + timedelta(seconds=int(test_duration) * len(incremental_capacity_list))
 
             for i in range(len(to_run_cxs)):
+                is_device_configured = True
                 if do_interopability:
                     # To get resource of device under test in interopability
                     device_to_run_resource = throughput.extract_digits_until_alpha(to_run_cxs[i][0])
+
                 # Check the load type specified by the user
                 if load_type == "wc_intended_load":
                     # Perform intended load for the current iteration
@@ -2518,14 +2736,15 @@ class Candela:
                             throughput.disconnect_all_devices()
                         if do_interopability and "iOS" not in to_run_cxs[i][0]:
                             logger.info("Configuring device of resource{}".format(to_run_cxs[i][0]))
-                            throughput.configure_specific([device_to_run_resource])
-                    throughput.start_specific(to_run_cxs[i])
+                            is_device_configured = throughput.configure_specific([device_to_run_resource])
+                    if is_device_configured:
+                        throughput.start_specific(to_run_cxs[i])
 
                 # Determine device names based on the current iteration
                 device_names = created_cx_lists_keys[:to_run_cxs_len[i][-1]]
 
                 # Monitor throughput and capture all dataframes and test stop status
-                all_dataframes, test_stopped_by_user = throughput.monitor(i, individual_df, device_names, incremental_capacity_list, overall_start_time, overall_end_time)
+                all_dataframes, test_stopped_by_user = throughput.monitor(i, individual_df, device_names, incremental_capacity_list, overall_start_time, overall_end_time, is_device_configured)
                 if do_interopability and "iOS" not in to_run_cxs[i][0] and not default_config:
                     # logger.info("Disconnecting device of resource{}".format(to_run_cxs[i][0]))
                     throughput.disconnect_all_devices([device_to_run_resource])
@@ -3296,16 +3515,16 @@ class Candela:
         debug=False,
         log_level=None,
         interopt_mode=False,
-        endp_type="lf_udp",
+        endp_type="mc_udp",
         upstream_port="eth1",
         downstream_port=None,
-        polling_interval="60s",
+        polling_interval="5s",
         radio=None,
         side_a_min_bps="0",
         side_a_min_pdu="MTU",
         side_b_min_bps="256000",
         side_b_min_pdu="MTU",
-        rates_are_totals=False,
+        rates_are_totals=True,
         multiconn=1,
         attenuators="",
         atten_vals="",
@@ -3368,7 +3587,7 @@ class Candela:
         pac_file="NA",
         config=False,
         wait_time=60,
-        real=False,
+        real=True,
         get_live_view=False,
         total_floors="0",
         help_summary=False
@@ -3727,25 +3946,1240 @@ class Candela:
                 logging.info("Waiting for Cleanup of Browsers in Devices")
                 time.sleep(10)
 
+    def run_zoom_test(
+            self,
+        duration: int,
+        signin_email: str,
+        signin_passwd: str,
+        participants: int,
+        audio: bool = False,
+        video: bool = False,
+        wait_time: int = 30,
+        log_level: str = None,
+        lf_logger_config_json: str = None,
+        resource_list: str = None,
+        do_webUI: bool = False,
+        report_dir: str = None,
+        testname: str = None,
+        zoom_host: str = None,
+        file_name: str = None,
+        group_name: str = None,
+        profile_name: str = None,
+        ssid: str = None,
+        passwd: str = None,
+        encryp: str = None,
+        eap_method: str = 'DEFAULT',
+        eap_identity: str = 'DEFAULT',
+        ieee8021x: bool = False,
+        ieee80211u: bool = False,
+        ieee80211w: int = 1,
+        enable_pkc: bool = False,
+        bss_transition: bool = False,
+        power_save: bool = False,
+        disable_ofdma: bool = False,
+        roam_ft_ds: bool = False,
+        key_management: str = 'DEFAULT',
+        pairwise: str = 'NA',
+        private_key: str = 'NA',
+        ca_cert: str = 'NA',
+        client_cert: str = 'NA',
+        pk_passwd: str = 'NA',
+        pac_file: str = 'NA',
+        upstream_port: str = 'NA',
+        help_summary: str = None,
+        expected_passfail_value: str = None,
+        device_csv_name: str = None,
+        config: bool = False
+    ):
+        try:
+            lanforge_ip = self.lanforge_ip
+
+            if True:
+                if expected_passfail_value is not None and device_csv_name is not None:
+                    logging.error("Specify either expected_passfail_value or device_csv_name")
+                    exit(1)
+
+                if group_name is not None:
+                    group_name = group_name.strip()
+                    selected_groups = group_name.split(',')
+                else:
+                    selected_groups = []
+
+                if profile_name is not None:
+                    profile_name = profile_name.strip()
+                    selected_profiles = profile_name.split(',')
+                else:
+                    selected_profiles = []
+
+                if len(selected_groups) != len(selected_profiles):
+                    logging.error("Number of groups should match number of profiles")
+                    exit(0)
+                elif group_name is not None and profile_name is not None and file_name is not None and resource_list is not None:
+                    logging.error("Either group name or device list should be entered not both")
+                    exit(0)
+                elif ssid is not None and profile_name is not None:
+                    logging.error("Either ssid or profile name should be given")
+                    exit(0)
+                elif file_name is not None and (group_name is None or profile_name is None):
+                    logging.error("Please enter the correct set of arguments")
+                    exit(0)
+                elif config and ((ssid is None or (passwd is None and security.lower() != 'open') or (passwd is None and security is None))):
+                    logging.error("Please provide ssid password and security for configuration of devices")
+                    exit(0)
+
+                zoom_automation = ZoomAutomation(audio=audio, video=video, lanforge_ip=lanforge_ip, wait_time=wait_time, testname=testname,
+                                                upstream_port=upstream_port, config=config, selected_groups=selected_groups, selected_profiles=selected_profiles)
+                upstream_port = zoom_automation.change_port_to_ip(upstream_port)
+                realdevice = RealDevice(manager_ip=lanforge_ip,
+                                        server_ip="192.168.1.61",
+                                        ssid_2g='Test Configured',
+                                        passwd_2g='',
+                                        encryption_2g='',
+                                        ssid_5g='Test Configured',
+                                        passwd_5g='',
+                                        encryption_5g='',
+                                        ssid_6g='Test Configured',
+                                        passwd_6g='',
+                                        encryption_6g='',
+                                        selected_bands=['5G'])
+                laptops = realdevice.get_devices()
+
+                if file_name:
+                    new_filename = file_name.removesuffix(".csv")
+                else:
+                    new_filename = file_name
+                config_obj = DeviceConfig.DeviceConfig(lanforge_ip=lanforge_ip, file_name=new_filename)
+
+                if not expected_passfail_value and device_csv_name is None:
+                    config_obj.device_csv_file(csv_name="device.csv")
+                if group_name is not None and file_name is not None and profile_name is not None:
+                    selected_groups = group_name.split(',')
+                    selected_profiles = profile_name.split(',')
+                    config_devices = {}
+                    for i in range(len(selected_groups)):
+                        config_devices[selected_groups[i]] = selected_profiles[i]
+
+                    config_obj.initiate_group()
+                    asyncio.run(config_obj.connectivity(config_devices))
+
+                    adbresponse = config_obj.adb_obj.get_devices()
+                    resource_manager = config_obj.laptop_obj.get_devices()
+                    all_res = {}
+                    df1 = config_obj.display_groups(config_obj.groups)
+                    groups_list = df1.to_dict(orient='list')
+                    group_devices = {}
+
+                    for adb in adbresponse:
+                        group_devices[adb['serial']] = adb['eid']
+                    for res in resource_manager:
+                        all_res[res['hostname']] = res['shelf'] + '.' + res['resource']
+                    eid_list = []
+                    for grp_name in groups_list.keys():
+                        for g_name in selected_groups:
+                            if grp_name == g_name:
+                                for j in groups_list[grp_name]:
+                                    if j in group_devices.keys():
+                                        eid_list.append(group_devices[j])
+                                    elif j in all_res.keys():
+                                        eid_list.append(all_res[j])
+                    if zoom_host in eid_list:
+                        # Remove the existing instance of zoom_host from the list
+                        eid_list.remove(zoom_host)
+                        # Insert zoom_host at the beginning of the list
+                        eid_list.insert(0, zoom_host)
+
+                    resource_list = ",".join(id for id in eid_list)
+                else:
+                    config_dict = {
+                        'ssid': ssid,
+                        'passwd': passwd,
+                        'enc': encryp,
+                        'eap_method': eap_method,
+                        'eap_identity': eap_identity,
+                        'ieee80211': ieee8021x,
+                        'ieee80211u': ieee80211u,
+                        'ieee80211w': ieee80211w,
+                        'enable_pkc': enable_pkc,
+                        'bss_transition': bss_transition,
+                        'power_save': power_save,
+                        'disable_ofdma': disable_ofdma,
+                        'roam_ft_ds': roam_ft_ds,
+                        'key_management': key_management,
+                        'pairwise': pairwise,
+                        'private_key': private_key,
+                        'ca_cert': ca_cert,
+                        'client_cert': client_cert,
+                        'pk_passwd': pk_passwd,
+                        'pac_file': pac_file,
+                        'server_ip': upstream_port,
+
+                    }
+                    if resource_list:
+                        all_devices = config_obj.get_all_devices()
+                        if group_name is None and file_name is None and profile_name is None:
+                            dev_list = resource_list.split(',')
+                            if not do_webUI:
+                                zoom_host = zoom_host.strip()
+                                if zoom_host in dev_list:
+                                    dev_list.remove(zoom_host)
+                                dev_list.insert(0, zoom_host)
+                            if config:
+                                asyncio.run(config_obj.connectivity(device_list=dev_list, wifi_config=config_dict))
+                            resource_list = ",".join(id for id in dev_list)
+                    else:
+                        # If no resources provided, prompt user to select devices manually
+                        if config:
+                            all_devices = config_obj.get_all_devices()
+                            device_list = []
+                            for device in all_devices:
+                                if device["type"] != 'laptop':
+                                    device_list.append(device["shelf"] + '.' + device["resource"] + " " + device["serial"])
+                                elif device["type"] == 'laptop':
+                                    device_list.append(device["shelf"] + '.' + device["resource"] + " " + device["hostname"])
+                            print("Available Devices For Testing")
+                            for device in device_list:
+                                print(device)
+                            zm_host = input("Enter Host Resource for the Test : ")
+                            zm_host = zm_host.strip()
+                            resource_list = input("Enter client Resources to run the test :")
+                            resource_list = zm_host + "," + resource_list
+                            dev1_list = resource_list.split(',')
+                            asyncio.run(config_obj.connectivity(device_list=dev1_list, wifi_config=config_dict))
+
+                result_list = []
+                if not do_webUI:
+                    if resource_list:
+                        resources = resource_list.split(',')
+                        resources = [r for r in resources if len(r.split('.')) > 1]
+                        # resources = sorted(resources, key=lambda x: int(x.split('.')[1]))
+                        get_data = zoom_automation.select_real_devices(real_device_obj=realdevice, real_sta_list=resources)
+                        for item in get_data:
+                            item = item.strip()
+                            # Find and append the matching lap to result_list
+                            matching_laps = [lap for lap in laptops if lap.startswith(item)]
+                            result_list.extend(matching_laps)
+                        if not result_list:
+                            logging.info("Resources donot exist hence Terminating the test.")
+                            return
+                        if len(result_list) != len(get_data):
+                            logging.info("Few Resources donot exist")
+                    else:
+                        resources = zoom_automation.select_real_devices(real_device_obj=realdevice)
+                else:
+                    if do_webUI:
+                        zoom_automation.path = report_dir
+                    resources = resource_list.split(',')
+                    extracted_parts = [res.split('.')[:2] for res in resources]
+                    formatted_parts = ['.'.join(parts) for parts in extracted_parts]
+
+                    zoom_automation.select_real_devices(real_device_obj=realdevice, real_sta_list=formatted_parts)
+                    if do_webUI:
+
+                        if len(zoom_automation.real_sta_hostname) == 0:
+                            logging.info("No device is available to run the test")
+                            obj = {
+                                "status": "Stopped",
+                                "configuration_status": "configured"
+                            }
+                            zoom_automation.updating_webui_runningjson(obj)
+                            return
+                        else:
+                            obj = {
+                                "configured_devices": zoom_automation.real_sta_hostname,
+                                "configuration_status": "configured",
+                                "no_of_devices": f' Total({len(zoom_automation.real_sta_os_type)}) : W({zoom_automation.windows}),L({zoom_automation.linux}),M({zoom_automation.mac})',
+                                "device_list": zoom_automation.hostname_os_combination,
+                                # "zoom_host":zoom_automation.zoom_host
+
+                            }
+                            zoom_automation.updating_webui_runningjson(obj)
+
+                if not zoom_automation.check_tab_exists():
+                    logging.error('Generic Tab is not available.\nAborting the test.')
+                    exit(0)
+
+                zoom_automation.run(duration, upstream_port, signin_email, signin_passwd, participants)
+                zoom_automation.data_store.clear()
+                zoom_automation.generate_report()
+                logging.info("Test Completed Sucessfully")
+        except Exception as e:
+            logging.error(f"AN ERROR OCCURED WHILE RUNNING TEST {e}")
+            # traceback.print_exc()
+        finally:
+            if not ('--help' in sys.argv or '-h' in sys.argv):
+                if do_webUI:
+                    try:
+                        url = f"http://{lanforge_ip}:5454/update_status_yt"
+                        headers = {
+                            'Content-Type': 'application/json',
+                        }
+
+                        data = {
+                            'status': 'Completed',
+                            'name': testname
+                        }
+
+                        response = requests.post(url, json=data, headers=headers)
+
+                        if response.status_code == 200:
+                            logging.info("Successfully updated STOP status to 'Completed'")
+                            pass
+                        else:
+                            logging.error(f"Failed to update STOP status: {response.status_code} - {response.text}")
+
+                    except Exception as e:
+                        # Print an error message if an exception occurs during the request
+                        logging.error(f"An error occurred while updating status: {e}")
+
+                zoom_automation.redis_client.set('login_completed', 0)
+                zoom_automation.stop_signal = True
+                logging.info("Waiting for Browser Cleanup in Laptops")
+                time.sleep(10)
+                zoom_automation.generic_endps_profile.cleanup()
+
+    def run_rb_test1(self,args):
+        try:
+            logger_config = lf_logger_config.lf_logger_config()
+
+            if args.log_level:
+                logger_config.set_level(level=args.log_level)
+
+            if args.lf_logger_config_json:
+                logger_config.lf_logger_config_json = args.lf_logger_config_json
+                logger_config.load_lf_logger_config()
+            if args.url.lower().startswith("www."):
+                args.url = "https://" + args.url
+            if args.url.lower().startswith("http://"):
+                args.url = "https://" + args.url.removeprefix("http://")
+
+            # Initialize an instance of RealBrowserTest with various parameters
+            obj = RealBrowserTest(host=args.host,
+                                ssid=args.ssid,
+                                passwd=args.passwd,
+                                encryp=args.encryp,
+                                suporrted_release=["7.0", "10", "11", "12"],
+                                max_speed=args.max_speed,
+                                url=args.url, count=args.count,
+                                duration=args.duration,
+                                resource_ids=args.device_list,
+                                dowebgui=args.dowebgui,
+                                result_dir=args.result_dir,
+                                test_name=args.test_name,
+                                incremental=args.incremental,
+                                no_postcleanup=args.no_postcleanup,
+                                no_precleanup=args.no_precleanup,
+                                file_name=args.file_name,
+                                group_name=args.group_name,
+                                profile_name=args.profile_name,
+                                eap_method=args.eap_method,
+                                eap_identity=args.eap_identity,
+                                ieee80211=args.ieee80211,
+                                ieee80211u=args.ieee80211u,
+                                ieee80211w=args.ieee80211w,
+                                enable_pkc=args.enable_pkc,
+                                bss_transition=args.bss_transition,
+                                power_save=args.power_save,
+                                disable_ofdma=args.disable_ofdma,
+                                roam_ft_ds=args.roam_ft_ds,
+                                key_management=args.key_management,
+                                pairwise=args.pairwise,
+                                private_key=args.private_key,
+                                ca_cert=args.ca_cert,
+                                client_cert=args.client_cert,
+                                pk_passwd=args.pk_passwd,
+                                pac_file=args.pac_file,
+                                upstream_port=args.upstream_port,
+                                expected_passfail_value=args.expected_passfail_value,
+                                device_csv_name=args.device_csv_name,
+                                wait_time=args.wait_time,
+                                config=args.config,
+                                selected_groups=args.group_name,
+                                selected_profiles=args.profile_name
+                                )
+            obj.change_port_to_ip()
+            obj.validate_and_process_args()
+            obj.config_obj = DeviceConfig.DeviceConfig(lanforge_ip=obj.host, file_name=obj.file_name, wait_time=obj.wait_time)
+            if not obj.expected_passfail_value and obj.device_csv_name is None:
+                obj.config_obj.device_csv_file(csv_name="device.csv")
+            obj.run_flask_server()
+            if obj.group_name and obj.profile_name and obj.file_name:
+                available_resources = obj.process_group_profiles()
+            else:
+                # --- Build configuration dictionary for WiFi parameters ---
+                config_dict = {
+                    'ssid': args.ssid,
+                    'passwd': args.passwd,
+                    'enc': args.encryp,
+                    'eap_method': args.eap_method,
+                    'eap_identity': args.eap_identity,
+                    'ieee80211': args.ieee80211,
+                    'ieee80211u': args.ieee80211u,
+                    'ieee80211w': args.ieee80211w,
+                    'enable_pkc': args.enable_pkc,
+                    'bss_transition': args.bss_transition,
+                    'power_save': args.power_save,
+                    'disable_ofdma': args.disable_ofdma,
+                    'roam_ft_ds': args.roam_ft_ds,
+                    'key_management': args.key_management,
+                    'pairwise': args.pairwise,
+                    'private_key': args.private_key,
+                    'ca_cert': args.ca_cert,
+                    'client_cert': args.client_cert,
+                    'pk_passwd': args.pk_passwd,
+                    'pac_file': args.pac_file,
+                    'server_ip': obj.upstream_port,
+                }
+                available_resources = obj.process_resources(config_dict)
+            if len(available_resources) != 0:
+                available_resources = obj.filter_ios_devices(available_resources)
+            if len(available_resources) == 0:
+                logging.error("No devices available to run the test. Exiting...")
+                exit(1)
+
+            # --- Print available resources ---
+            logging.info("Devices available: {}".format(available_resources))
+            if obj.expected_passfail_value or obj.device_csv_name:
+                obj.update_passfail_value(available_resources)
+            # --- Handle incremental values ---
+            obj.handle_incremental(args, obj, available_resources, available_resources)
+            obj.handle_duration()
+            obj.run_test(available_resources)
+
+        except Exception as e:
+            logging.error("Error occured", e)
+            # traceback.print_exc()
+        finally:
+            if '--help' not in sys.argv and '-h' not in sys.argv:
+                obj.create_report()
+                if obj.dowebgui:
+                    obj.webui_stop()
+                obj.stop()
+
+                if not args.no_postcleanup:
+                    obj.postcleanup()
+        
+
+    def run_rb_test(
+        self,
+        ssid: str = None,
+        passwd: str = None,
+        encryp: str = None,
+        url: str = "https://google.com",
+        max_speed: int = 0,
+        count: int = 1,
+        duration: str = None,
+        test_name: str = None,
+        dowebgui: bool = False,
+        result_dir: str = '',
+        lf_logger_config_json: str = None,
+        log_level: str = None,
+        debug: bool = False,
+        device_list: str = None,
+        webgui_incremental: str = None,
+        incremental: bool = False,
+        no_laptops: bool = False,
+        no_postcleanup: bool = False,
+        no_precleanup: bool = False,
+        file_name: str = None,
+        group_name: str = None,
+        profile_name: str = None,
+        eap_method: str = 'DEFAULT',
+        eap_identity: str = 'DEFAULT',
+        ieee80211: bool = False,
+        ieee80211u: bool = False,
+        ieee80211w: int = 1,
+        enable_pkc: bool = False,
+        bss_transition: bool = False,
+        power_save: bool = False,
+        disable_ofdma: bool = False,
+        roam_ft_ds: bool = False,
+        key_management: str = 'DEFAULT',
+        pairwise: str = 'NA',
+        private_key: str = 'NA',
+        ca_cert: str = 'NA',
+        client_cert: str = 'NA',
+        pk_passwd: str = 'NA',
+        pac_file: str = 'NA',
+        upstream_port: str = 'NA',
+        help_summary: str = None,
+        expected_passfail_value: str = None,
+        device_csv_name: str = None,
+        wait_time: int = 60,
+        config: bool = False
+    ):
+        args = SimpleNamespace(**locals())
+        args.host = self.lanforge_ip
+        self.run_rb_test1(args)
 
 
+def main():
+       
+    parser = argparse.ArgumentParser(
+    prog="lf_interop_throughputput.py",
+    formatter_class=argparse.RawTextHelpFormatter,
+    )
+    parser = argparse.ArgumentParser(description="Run Candela API Tests")
+    #Always Common
+    parser.add_argument('--mgr', '--lfmgr', default='localhost', help='hostname for where LANforge GUI is running')
+    parser.add_argument('--mgr_port', '--port', default=8080, help='port LANforge GUI HTTP service is running on')
+    parser.add_argument('--upstream_port', '-u', default='eth1', help='non-station port that generates traffic: <resource>.<port>, e.g: 1.eth1')
+    #Common
+    parser.add_argument('--device_list', help="Enter the devices on which the test should be run", default=[])
+    parser.add_argument('--duration', help='Please enter the duration in s,m,h (seconds or minutes or hours).Eg: 30s,5m,48h')
+    #NOt common
+    #ping
+    #without config
+    parser.add_argument('--ping_test',
+                          action="store_true",
+                          help='ping_test consists')
+    parser.add_argument('--ping_target',
+                          type=str,
+                          help='Target URL or port for ping test',
+                          default='1.1.eth1')
+    parser.add_argument('--ping_interval',
+                          type=str,
+                          help='Interval (in seconds) between the echo requests',
+                          default='1')
 
+    parser.add_argument('--ping_duration',
+                          type=float,
+                          help='Duration (in minutes) to run the ping test',
+                          default=1)
+    parser.add_argument('--ping_use_default_config',
+                          action='store_true',
+                          help='specify this flag if wanted to proceed with existing Wi-Fi configuration of the devices')
+    parser.add_argument('--ping_device_list', help="Enter the devices on which the ping test should be run", default=[])
+    #ping pass fail value
+    parser.add_argument("--ping_expected_passfail_value", help="Specify the expected number of urls", default=None)
+    parser.add_argument("--ping_device_csv_name", type=str, help='Specify the csv name to store expected url values', default=None)
+    #ping with groups and profile configuration
+    parser.add_argument('--ping_file_name', type=str, help='Specify the file name containing group details. Example:file1')
+    parser.add_argument('--ping_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
+    parser.add_argument('--ping_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
 
-candela_apis = Candela(ip='192.168.204.74', port=8080)
+    #ping configuration with --config
+    parser.add_argument("--ping_config", action="store_true", help="Specify for configuring the devices")
+    parser.add_argument('--ping_ssid', help='WiFi SSID for script objects to associate to')
+    parser.add_argument('--ping_passwd', '--ping_password', '--ping_key', default="[BLANK]", help='WiFi passphrase/password/key')
+    parser.add_argument('--ping_security', help='WiFi Security protocol: < open | wep | wpa | wpa2 | wpa3 >', default="open")
+    parser.add_argument("--ping_eap_method", type=str, default='DEFAULT', help="Specify the EAP method for authentication.")
+    parser.add_argument("--ping_eap_identity", type=str, default='', help="Specify the EAP identity for authentication.")
+    parser.add_argument("--ping_ieee8021x", action="store_true", help='Enables 802.1X enterprise authentication for test stations.')
+    parser.add_argument("--ping_ieee80211u", action="store_true", help='Enables IEEE 802.11u (Hotspot 2.0) support.')
+    parser.add_argument("--ping_ieee80211w", type=int, default=1, help='Enables IEEE 802.11w (Management Frame Protection) support.')
+    parser.add_argument("--ping_enable_pkc", action="store_true", help='Enables pkc support.')
+    parser.add_argument("--ping_bss_transition", action="store_true", help='Enables BSS transition support.')
+    parser.add_argument("--ping_power_save", action="store_true", help='Enables power-saving features.')
+    parser.add_argument("--ping_disable_ofdma", action="store_true", help='Disables OFDMA support.')
+    parser.add_argument("--ping_roam_ft_ds", action="store_true", help='Enables fast BSS transition (FT) support')
+    parser.add_argument("--ping_key_management", type=str, default='DEFAULT', help='Specify the key management method (e.g., WPA-PSK, WPA-EAP')
+    parser.add_argument("--ping_pairwise", type=str, default='NA')
+    parser.add_argument("--ping_private_key", type=str, default='NA', help='Specify EAP private key certificate file.')
+    parser.add_argument("--ping_ca_cert", type=str, default='NA', help='Specifiy the CA certificate file name')
+    parser.add_argument("--ping_client_cert", type=str, default='NA', help='Specify the client certificate file name')
+    parser.add_argument("--ping_pk_passwd", type=str, default='NA', help='Specify the password for the private key')
+    parser.add_argument("--ping_pac_file", type=str, default='NA', help='Specify the pac file name')
+    # parser.add_argument('--ping_file_name', type=str, help='Specify the file name containing group details. Example:file1')
+    # parser.add_argument('--ping_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
+    # parser.add_argument('--ping_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
+    parser.add_argument("--ping_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
+    #http
+    parser.add_argument('--http_test',
+                          action="store_true",
+                          help='http consists')
+    parser.add_argument('--http_bands', nargs="+", help='specify which band testing you want to run eg 5G, 2.4G, 6G',
+                          default=["5G", "2.4G", "6G"])
+    parser.add_argument('--http_duration', help='Please enter the duration in s,m,h (seconds or minutes or hours).Eg: 30s,5m,48h')
+    parser.add_argument('--http_file_size', type=str, help='specify the size of file you want to download', default='5MB')
+    parser.add_argument('--http_device_list', help="Enter the devices on which the ping test should be run", default=[])
+    #http pass fail value
+    parser.add_argument("--http_expected_passfail_value", help="Specify the expected number of urls", default=None)
+    parser.add_argument("--http_device_csv_name", type=str, help='Specify the csv name to store expected url values', default=None)
+    #http with groups and profile configuration
+    parser.add_argument('--http_file_name', type=str, help='Specify the file name containing group details. Example:file1')
+    parser.add_argument('--http_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
+    parser.add_argument('--http_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
+
+    #http configuration with --config
+    parser.add_argument("--http_config", action="store_true", help="Specify for configuring the devices")
+    parser.add_argument('--http_ssid', help='WiFi SSID for script objects to associate to')
+    parser.add_argument('--http_passwd', '--http_password', '--http_key', default="[BLANK]", help='WiFi passphrase/password/key')
+    parser.add_argument('--http_security', help='WiFi Security protocol: < open | wep | wpa | wpa2 | wpa3 >', default="open")
+    parser.add_argument("--http_eap_method", type=str, default='DEFAULT', help="Specify the EAP method for authentication.")
+    parser.add_argument("--http_eap_identity", type=str, default='', help="Specify the EAP identity for authentication.")
+    parser.add_argument("--http_ieee8021x", action="store_true", help='Enables 802.1X enterprise authentication for test stations.')
+    parser.add_argument("--http_ieee80211u", action="store_true", help='Enables IEEE 802.11u (Hotspot 2.0) support.')
+    parser.add_argument("--http_ieee80211w", type=int, default=1, help='Enables IEEE 802.11w (Management Frame Protection) support.')
+    parser.add_argument("--http_enable_pkc", action="store_true", help='Enables pkc support.')
+    parser.add_argument("--http_bss_transition", action="store_true", help='Enables BSS transition support.')
+    parser.add_argument("--http_power_save", action="store_true", help='Enables power-saving features.')
+    parser.add_argument("--http_disable_ofdma", action="store_true", help='Disables OFDMA support.')
+    parser.add_argument("--http_roam_ft_ds", action="store_true", help='Enables fast BSS transition (FT) support')
+    parser.add_argument("--http_key_management", type=str, default='DEFAULT', help='Specify the key management method (e.g., WPA-PSK, WPA-EAP')
+    parser.add_argument("--http_pairwise", type=str, default='NA')
+    parser.add_argument("--http_private_key", type=str, default='NA', help='Specify EAP private key certificate file.')
+    parser.add_argument("--http_ca_cert", type=str, default='NA', help='Specifiy the CA certificate file name')
+    parser.add_argument("--http_client_cert", type=str, default='NA', help='Specify the client certificate file name')
+    parser.add_argument("--http_pk_passwd", type=str, default='NA', help='Specify the password for the private key')
+    parser.add_argument("--http_pac_file", type=str, default='NA', help='Specify the pac file name')
+    # parser.add_argument('--http_file_name', type=str, help='Specify the file name containing group details. Example:file1')
+    # parser.add_argument('--http_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
+    # parser.add_argument('--http_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
+    parser.add_argument("--http_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
+    
+    #ftp
+    parser.add_argument('--ftp_test',
+                          action="store_true",
+                          help='ftp_test consists')
+    parser.add_argument('--ftp_bands', nargs="+", help='specify which band testing you want to run eg 5G, 2.4G, 6G',
+                          default=["5G", "2.4G", "6G"])
+    parser.add_argument('--ftp_duration', help='Please enter the duration in s,m,h (seconds or minutes or hours).Eg: 30s,5m,48h')
+    parser.add_argument('--ftp_file_size', type=str, help='specify the size of file you want to download', default='5MB')
+    parser.add_argument('--ftp_device_list', help="Enter the devices on which the ping test should be run", default=[])
+    #ftp pass fail value
+    parser.add_argument("--ftp_expected_passfail_value", help="Specify the expected number of urls", default=None)
+    parser.add_argument("--ftp_device_csv_name", type=str, help='Specify the csv name to store expected url values', default=None)
+    #ftp with groups and profile configuration
+    parser.add_argument('--ftp_file_name', type=str, help='Specify the file name containing group details. Example:file1')
+    parser.add_argument('--ftp_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
+    parser.add_argument('--ftp_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
+
+    #ftp configuration with --config
+    parser.add_argument("--ftp_config", action="store_true", help="Specify for configuring the devices")
+    parser.add_argument('--ftp_ssid', help='WiFi SSID for script objects to associate to')
+    parser.add_argument('--ftp_passwd', '--ftp_password', '--ftp_key', default="[BLANK]", help='WiFi passphrase/password/key')
+    parser.add_argument('--ftp_security', help='WiFi Security protocol: < open | wep | wpa | wpa2 | wpa3 >', default="open")
+    parser.add_argument("--ftp_eap_method", type=str, default='DEFAULT', help="Specify the EAP method for authentication.")
+    parser.add_argument("--ftp_eap_identity", type=str, default='', help="Specify the EAP identity for authentication.")
+    parser.add_argument("--ftp_ieee8021x", action="store_true", help='Enables 802.1X enterprise authentication for test stations.')
+    parser.add_argument("--ftp_ieee80211u", action="store_true", help='Enables IEEE 802.11u (Hotspot 2.0) support.')
+    parser.add_argument("--ftp_ieee80211w", type=int, default=1, help='Enables IEEE 802.11w (Management Frame Protection) support.')
+    parser.add_argument("--ftp_enable_pkc", action="store_true", help='Enables pkc support.')
+    parser.add_argument("--ftp_bss_transition", action="store_true", help='Enables BSS transition support.')
+    parser.add_argument("--ftp_power_save", action="store_true", help='Enables power-saving features.')
+    parser.add_argument("--ftp_disable_ofdma", action="store_true", help='Disables OFDMA support.')
+    parser.add_argument("--ftp_roam_ft_ds", action="store_true", help='Enables fast BSS transition (FT) support')
+    parser.add_argument("--ftp_key_management", type=str, default='DEFAULT', help='Specify the key management method (e.g., WPA-PSK, WPA-EAP')
+    parser.add_argument("--ftp_pairwise", type=str, default='NA')
+    parser.add_argument("--ftp_private_key", type=str, default='NA', help='Specify EAP private key certificate file.')
+    parser.add_argument("--ftp_ca_cert", type=str, default='NA', help='Specifiy the CA certificate file name')
+    parser.add_argument("--ftp_client_cert", type=str, default='NA', help='Specify the client certificate file name')
+    parser.add_argument("--ftp_pk_passwd", type=str, default='NA', help='Specify the password for the private key')
+    parser.add_argument("--ftp_pac_file", type=str, default='NA', help='Specify the pac file name')
+    # parser.add_argument('--ftp_file_name', type=str, help='Specify the file name containing group details. Example:file1')
+    # parser.add_argument('--ftp_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
+    # parser.add_argument('--ftp_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
+    parser.add_argument("--ftp_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
+
+    #qos
+    parser.add_argument('--qos_test',
+                          action="store_true",
+                          help='qos_test consists')
+    parser.add_argument('--qos_duration', help='--qos_duration sets the duration of the test', default="2m")
+    parser.add_argument('--qos_upload', help='--upload traffic load per connection (upload rate)')
+    parser.add_argument('--qos_download', help='--download traffic load per connection (download rate)')
+    parser.add_argument('--qos_traffic_type', help='Select the Traffic Type [lf_udp, lf_tcp]', required=False)
+    parser.add_argument('--qos_tos', help='Enter the tos. Example1 : "BK,BE,VI,VO" , Example2 : "BK,VO", Example3 : "VI" ')
+    parser.add_argument('--qos_device_list', help="Enter the devices on which the ping test should be run", default=[])
+    #qos pass fail value
+    parser.add_argument("--qos_expected_passfail_value", help="Specify the expected number of urls", default=None)
+    parser.add_argument("--qos_device_csv_name", type=str, help='Specify the csv name to store expected url values', default=None)
+    #qos with groups and profile configuration
+    parser.add_argument('--qos_file_name', type=str, help='Specify the file name containing group details. Example:file1')
+    parser.add_argument('--qos_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
+    parser.add_argument('--qos_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
+
+    #qos configuration with --config
+    parser.add_argument("--qos_config", action="store_true", help="Specify for configuring the devices")
+    parser.add_argument('--qos_ssid', help='WiFi SSID for script objects to associate to')
+    parser.add_argument('--qos_passwd', '--qos_password', '--qos_key', default="[BLANK]", help='WiFi passphrase/password/key')
+    parser.add_argument('--qos_security', help='WiFi Security protocol: < open | wep | wpa | wpa2 | wpa3 >', default="open")
+    #Optional qos config args
+    parser.add_argument("--qos_eap_method", type=str, default='DEFAULT', help="Specify the EAP method for authentication.")
+    parser.add_argument("--qos_eap_identity", type=str, default='', help="Specify the EAP identity for authentication.")
+    parser.add_argument("--qos_ieee8021x", action="store_true", help='Enables 802.1X enterprise authentication for test stations.')
+    parser.add_argument("--qos_ieee80211u", action="store_true", help='Enables IEEE 802.11u (Hotspot 2.0) support.')
+    parser.add_argument("--qos_ieee80211w", type=int, default=1, help='Enables IEEE 802.11w (Management Frame Protection) support.')
+    parser.add_argument("--qos_enable_pkc", action="store_true", help='Enables pkc support.')
+    parser.add_argument("--qos_bss_transition", action="store_true", help='Enables BSS transition support.')
+    parser.add_argument("--qos_power_save", action="store_true", help='Enables power-saving features.')
+    parser.add_argument("--qos_disable_ofdma", action="store_true", help='Disables OFDMA support.')
+    parser.add_argument("--qos_roam_ft_ds", action="store_true", help='Enables fast BSS transition (FT) support')
+    parser.add_argument("--qos_key_management", type=str, default='DEFAULT', help='Specify the key management method (e.g., WPA-PSK, WPA-EAP')
+    parser.add_argument("--qos_pairwise", type=str, default='NA')
+    parser.add_argument("--qos_private_key", type=str, default='NA', help='Specify EAP private key certificate file.')
+    parser.add_argument("--qos_ca_cert", type=str, default='NA', help='Specifiy the CA certificate file name')
+    parser.add_argument("--qos_client_cert", type=str, default='NA', help='Specify the client certificate file name')
+    parser.add_argument("--qos_pk_passwd", type=str, default='NA', help='Specify the password for the private key')
+    parser.add_argument("--qos_pac_file", type=str, default='NA', help='Specify the pac file name')
+    # parser.add_argument('--qos_file_name', type=str, help='Specify the file name containing group details. Example:file1')
+    # parser.add_argument('--qos_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
+    # parser.add_argument('--qos_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
+    parser.add_argument("--qos_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
+    
+    
+    #vs
+    parser.add_argument('--vs_test',
+                          action="store_true",
+                          help='vs_test consists')
+    parser.add_argument("--vs_url", default="www.google.com", help='specify the url you want to test on')
+    parser.add_argument("--vs_media_source", type=str, default='1')
+    parser.add_argument("--vs_media_quality", type=str, default='0')
+    parser.add_argument('--vs_duration', type=str, help='time to run traffic')
+    parser.add_argument('--vs_device_list', help="Enter the devices on which the ping test should be run", default=[])
+    #vs pass fail value
+    parser.add_argument("--vs_expected_passfail_value", help="Specify the expected number of urls", default=None)
+    parser.add_argument("--vs_device_csv_name", type=str, help='Specify the csv name to store expected url values', default=None)
+    #vs with groups and profile configuration
+    parser.add_argument('--vs_file_name', type=str, help='Specify the file name containing group details. Example:file1')
+    parser.add_argument('--vs_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
+    parser.add_argument('--vs_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
+
+    #vs configuration with --config
+    parser.add_argument("--vs_config", action="store_true", help="Specify for configuring the devices")
+    parser.add_argument('--vs_ssid', help='WiFi SSID for script objects to associate to')
+    parser.add_argument('--vs_passwd', '--vs_password', '--vs_key', default="[BLANK]", help='WiFi passphrase/password/key')
+    parser.add_argument('--vs_security', help='WiFi Security protocol: < open | wep | wpa | wpa2 | wpa3 >', default="open")
+    #Optional vs config args
+    parser.add_argument("--vs_eap_method", type=str, default='DEFAULT', help="Specify the EAP method for authentication.")
+    parser.add_argument("--vs_eap_identity", type=str, default='', help="Specify the EAP identity for authentication.")
+    parser.add_argument("--vs_ieee8021x", action="store_true", help='Enables 802.1X enterprise authentication for test stations.')
+    parser.add_argument("--vs_ieee80211u", action="store_true", help='Enables IEEE 802.11u (Hotspot 2.0) support.')
+    parser.add_argument("--vs_ieee80211w", type=int, default=1, help='Enables IEEE 802.11w (Management Frame Protection) support.')
+    parser.add_argument("--vs_enable_pkc", action="store_true", help='Enables pkc support.')
+    parser.add_argument("--vs_bss_transition", action="store_true", help='Enables BSS transition support.')
+    parser.add_argument("--vs_power_save", action="store_true", help='Enables power-saving features.')
+    parser.add_argument("--vs_disable_ofdma", action="store_true", help='Disables OFDMA support.')
+    parser.add_argument("--vs_roam_ft_ds", action="store_true", help='Enables fast BSS transition (FT) support')
+    parser.add_argument("--vs_key_management", type=str, default='DEFAULT', help='Specify the key management method (e.g., WPA-PSK, WPA-EAP')
+    parser.add_argument("--vs_pairwise", type=str, default='NA')
+    parser.add_argument("--vs_private_key", type=str, default='NA', help='Specify EAP private key certificate file.')
+    parser.add_argument("--vs_ca_cert", type=str, default='NA', help='Specifiy the CA certificate file name')
+    parser.add_argument("--vs_client_cert", type=str, default='NA', help='Specify the client certificate file name')
+    parser.add_argument("--vs_pk_passwd", type=str, default='NA', help='Specify the password for the private key')
+    parser.add_argument("--vs_pac_file", type=str, default='NA', help='Specify the pac file name')
+    # parser.add_argument('--vs_file_name', type=str, help='Specify the file name containing group details. Example:file1')
+    # parser.add_argument('--vs_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
+    # parser.add_argument('--vs_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
+    parser.add_argument("--vs_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
+    
+    #thput
+    parser.add_argument('--thput_test',
+                          action="store_true",
+                          help='thput_test consists')
+    parser.add_argument('--thput_test_duration', help='--thput_test_duration sets the duration of the test', default="")
+    parser.add_argument('--thput_download', help='--thput_download traffic load per connection (download rate)', default='2560')
+    parser.add_argument('--thput_traffic_type', help='Select the Traffic Type [lf_udp, lf_tcp]', required=False)
+    parser.add_argument('--thput_upload', help='--thput_download traffic load per connection (download rate)', default='2560')
+    parser.add_argument('--thput_device_list', help="Enter the devices on which the test should be run", default=[])
+    parser.add_argument('--thput_do_interopability', action='store_true', help='Ensures test on devices run sequentially, capturing each device’s data individually for plotting in the final report.')
+    parser.add_argument("--thput_default_config", action="store_true", help="To stop configuring the devices in interoperability")
+    #thput pass fail value
+    parser.add_argument("--thput_expected_passfail_value", help="Specify the expected number of urls", default=None)
+    parser.add_argument("--thput_device_csv_name", type=str, help='Specify the csv name to store expected url values', default=None)
+    #thput with groups and profile configuration
+    parser.add_argument('--thput_file_name', type=str, help='Specify the file name containing group details. Example:file1')
+    parser.add_argument('--thput_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
+    parser.add_argument('--thput_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
+
+    #thput configuration with --config
+    parser.add_argument("--thput_config", action="store_true", help="Specify for configuring the devices")
+    parser.add_argument('--thput_ssid', help='WiFi SSID for script objects to associate to')
+    parser.add_argument('--thput_passwd', '--thput_password', '--thput_key', default="[BLANK]", help='WiFi passphrase/password/key')
+    parser.add_argument('--thput_security', help='WiFi Security protocol: < open | wep | wpa | wpa2 | wpa3 >', default="open")
+    #Optional thput config args
+    parser.add_argument("--thput_eap_method", type=str, default='DEFAULT', help="Specify the EAP method for authentication.")
+    parser.add_argument("--thput_eap_identity", type=str, default='', help="Specify the EAP identity for authentication.")
+    parser.add_argument("--thput_ieee8021x", action="store_true", help='Enables 802.1X enterprise authentication for test stations.')
+    parser.add_argument("--thput_ieee80211u", action="store_true", help='Enables IEEE 802.11u (Hotspot 2.0) support.')
+    parser.add_argument("--thput_ieee80211w", type=int, default=1, help='Enables IEEE 802.11w (Management Frame Protection) support.')
+    parser.add_argument("--thput_enable_pkc", action="store_true", help='Enables pkc support.')
+    parser.add_argument("--thput_bss_transition", action="store_true", help='Enables BSS transition support.')
+    parser.add_argument("--thput_power_save", action="store_true", help='Enables power-saving features.')
+    parser.add_argument("--thput_disable_ofdma", action="store_true", help='Disables OFDMA support.')
+    parser.add_argument("--thput_roam_ft_ds", action="store_true", help='Enables fast BSS transition (FT) support')
+    parser.add_argument("--thput_key_management", type=str, default='DEFAULT', help='Specify the key management method (e.g., WPA-PSK, WPA-EAP')
+    parser.add_argument("--thput_pairwise", type=str, default='NA')
+    parser.add_argument("--thput_private_key", type=str, default='NA', help='Specify EAP private key certificate file.')
+    parser.add_argument("--thput_ca_cert", type=str, default='NA', help='Specifiy the CA certificate file name')
+    parser.add_argument("--thput_client_cert", type=str, default='NA', help='Specify the client certificate file name')
+    parser.add_argument("--thput_pk_passwd", type=str, default='NA', help='Specify the password for the private key')
+    parser.add_argument("--thput_pac_file", type=str, default='NA', help='Specify the pac file name')
+    # parser.add_argument('--thput_file_name', type=str, help='Specify the file name containing group details. Example:file1')
+    # parser.add_argument('--thput_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
+    # parser.add_argument('--thput_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
+    parser.add_argument("--thput_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
+    #mcast
+    parser.add_argument('--mcast_test',
+                          action="store_true",
+                          help='mcast_test consists')
+    parser.add_argument(
+        '--mcast_test_duration',
+        help='--test_duration <how long to run>  example --time 5d (5 days) default: 3m options: number followed by d, h, m or s',
+        default='3m')
+    parser.add_argument(
+        '--mcast_endp_type',
+        help=(
+            '--endp_type <types of traffic> example --endp_type \"lf_udp lf_tcp mc_udp\" '
+            ' Default: lf_udp , options: lf_udp, lf_udp6, lf_tcp, lf_tcp6, mc_udp, mc_udp6'),
+        default='lf_udp',
+        type=valid_endp_types)
+    parser.add_argument(
+        '--mcast_upstream_port',
+        help='--mcast_upstream_port <cross connect upstream_port> example: --mcast_upstream_port eth1',
+        default='eth1')
+    parser.add_argument(
+        '--mcast_side_b_min_bps',
+        help='''--side_b_min_bps or --download_min_bps, requested upstream min tx rate, comma separated list for multiple iterations.  Default 256000
+                When runnign with tcp/udp and mcast will use this value''',
+        default="256000")
+    parser.add_argument(
+        '--mcast_tos',
+        help='--tos:  Support different ToS settings: BK,BE,VI,VO,numeric',
+        default="BE")
+    parser.add_argument(
+        '--mcast_device_list',
+        action='append',
+        help='Specify the Resource IDs for real clients. Accepts a comma-separated list (e.g., 1.11,1.95,1.360).'
+    )
+    #mcast pass fail value
+    parser.add_argument("--mcast_expected_passfail_value", help="Specify the expected number of urls", default=None)
+    parser.add_argument("--mcast_device_csv_name", type=str, help='Specify the csv name to store expected url values', default=None)
+    #mcast with groups and profile configuration
+    parser.add_argument('--mcast_file_name', type=str, help='Specify the file name containing group details. Example:file1')
+    parser.add_argument('--mcast_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
+    parser.add_argument('--mcast_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
+
+    #mcast configuration with --config
+    parser.add_argument("--mcast_config", action="store_true", help="Specify for configuring the devices")
+    parser.add_argument('--mcast_ssid', help='WiFi SSID for script objects to associate to')
+    parser.add_argument('--mcast_passwd', '--mcast_password', '--mcast_key', default="[BLANK]", help='WiFi passphrase/password/key')
+    parser.add_argument('--mcast_security', help='WiFi Security protocol: < open | wep | wpa | wpa2 | wpa3 >', default="open")
+    #Optional mcast config args
+    parser.add_argument("--mcast_eap_method", type=str, default='DEFAULT', help="Specify the EAP method for authentication.")
+    parser.add_argument("--mcast_eap_identity", type=str, default='', help="Specify the EAP identity for authentication.")
+    parser.add_argument("--mcast_ieee8021x", action="store_true", help='Enables 802.1X enterprise authentication for test stations.')
+    parser.add_argument("--mcast_ieee80211u", action="store_true", help='Enables IEEE 802.11u (Hotspot 2.0) support.')
+    parser.add_argument("--mcast_ieee80211w", type=int, default=1, help='Enables IEEE 802.11w (Management Frame Protection) support.')
+    parser.add_argument("--mcast_enable_pkc", action="store_true", help='Enables pkc support.')
+    parser.add_argument("--mcast_bss_transition", action="store_true", help='Enables BSS transition support.')
+    parser.add_argument("--mcast_power_save", action="store_true", help='Enables power-saving features.')
+    parser.add_argument("--mcast_disable_ofdma", action="store_true", help='Disables OFDMA support.')
+    parser.add_argument("--mcast_roam_ft_ds", action="store_true", help='Enables fast BSS transition (FT) support')
+    parser.add_argument("--mcast_key_management", type=str, default='DEFAULT', help='Specify the key management method (e.g., WPA-PSK, WPA-EAP')
+    parser.add_argument("--mcast_pairwise", type=str, default='NA')
+    parser.add_argument("--mcast_private_key", type=str, default='NA', help='Specify EAP private key certificate file.')
+    parser.add_argument("--mcast_ca_cert", type=str, default='NA', help='Specifiy the CA certificate file name')
+    parser.add_argument("--mcast_client_cert", type=str, default='NA', help='Specify the client certificate file name')
+    parser.add_argument("--mcast_pk_passwd", type=str, default='NA', help='Specify the password for the private key')
+    parser.add_argument("--mcast_pac_file", type=str, default='NA', help='Specify the pac file name')
+    # parser.add_argument('--mcast_file_name', type=str, help='Specify the file name containing group details. Example:file1')
+    # parser.add_argument('--mcast_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
+    # parser.add_argument('--mcast_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
+    parser.add_argument("--mcast_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
+    args = parser.parse_args()
+    candela_apis = Candela(ip=args.mgr, port=args.mgr_port)
+
+    print(args)
+    # if args.ping_test:
+    #     candela_apis.run_ping_test(
+    #         real=True,
+    #         target=args.ping_target,
+    #         ping_interval=args.ping_interval,
+    #         ping_duration=args.ping_duration,
+    #         # ssid=args.ping_ssid,
+    #         # passwd=args.ping_passwd,
+    #         # security=args.ping_security,
+    #         use_default_config=True,
+    #         dev_list=args.ping_device_list
+    #     )
+
+    # if args.http_test:
+    #     candela_apis.run_http_test(
+    #         upstream_port=args.upstream_port,
+    #         bands=args.http_bands,
+    #         duration=args.http_duration,
+    #         file_size=args.http_file_size,
+    #         device_list=args.http_device_list
+    #     )
+
+    # if args.ftp_test:
+    #     candela_apis.start_ftp_test(
+    #         # ssid=args.ftp_ssid,
+    #         # password=args.ftp_passwd,
+    #         # security=args.ftp_security,
+    #         device_list=args.ftp_device_list,
+    #         background=False,
+    #         file_size=args.ftp_file_size
+    #     )
+
+    # if args.qos_test:
+    #     candela_apis.run_qos_test(
+    #         upstream_port=args.upstream_port,
+    #         test_duration=args.qos_duration,
+    #         download=args.qos_download,
+    #         upload=args.qos_upload,
+    #         traffic_type=args.qos_traffic_type,
+    #         tos=args.qos_tos,
+    #         device_list=args.qos_device_list
+    #     )
+
+    # if args.vs_test:
+    #     candela_apis.run_vs_test(
+    #         url=args.vs_url,
+    #         media_source=args.vs_media_source,
+    #         media_quality=args.vs_media_quality,
+    #         duration=args.vs_duration,
+    #         device_list=args.vs_device_list,
+    #         # debug=args.vs_debug,
+    #         # test_name=args.vs_test_name
+    #     )
+
+    # if args.thput_test:
+    #     candela_apis.run_throughput_test(
+    #         upstream_port=args.upstream_port,
+    #         test_duration=args.thput_test_duration,
+    #         download=args.thput_download,
+    #         traffic_type=args.thput_traffic_type,
+    #         device_list=args.thput_device_list,
+    #         do_interopability=args.thput_do_interopability,
+    #         default_config=args.thput_default_config
+    #     )
+
+    # if args.mcast_test:
+    #     candela_apis.run_mc_test1(
+    #         test_duration=args.mcast_test_duration,
+    #         # polling_interval=args.mcast_polling_interval,
+    #         upstream_port=args.upstream_port,
+    #         endp_type=args.mcast_endp_type,
+    #         # rates_are_totals=args.mcast_rates_are_totals,
+    #         side_b_min_bps=args.mcast_side_b_min_bps,
+    #         tos=args.mcast_tos,
+    #         # real=args.mcast_real,
+    #         # ssid=args.mcast_ssid,
+    #         # passwd=args.mcast_passwd,
+    #         # security=args.mcast_security,
+    #         # log_level=args.mcast_log_level,
+    #         device_list=args.mcast_device_list
+    #     )
+
+    # if args.yt_test:
+    #     candela_apis.run_yt_test(
+    #         url=args.url,
+    #         duration=args.duration,
+    #         res=args.res,
+    #         upstream_port=args.upstream_port,
+    #         resource_list=args.resource_list
+    #     )
+
+    # if args.zoom_test:
+    #     candela_apis.run_zoom_test(
+    #         duration=args.duration,
+    #         signin_email=args.signin_email,
+    #         signin_passwd=args.signin_passwd,
+    #         participants=args.participants,
+    #         audio=args.audio,
+    #         video=args.video,
+    #         upstream_port=args.upstream_port,
+    #         resource_list=args.resource_list,
+    #         zoom_host=args.zoom_host
+    #     )
+
+    # if args.rb_test:
+    #     candela_apis.run_rb_test(
+    #         url=args.url,
+    #         duration=args.duration,
+    #         device_list=args.device_list,
+    #         debug=args.debug,
+    #         upstream_port=args.upstream_port
+    #     )
+
+    #plan 2
+
+    # args = parser.parse_args()
+    # candela_apis = Candela(ip=args.mgr, port=args.mgr_port)
+    # print(args)
+
+    # Ping Test
+    # if args.ping_test:
+    #     candela_apis.run_ping_test(
+    #         real=True,
+    #         target=args.ping_target,
+    #         ping_interval=args.ping_interval,
+    #         ping_duration=args.ping_duration,
+    #         use_default_config=args.ping_use_default_config & args.ping_config,
+    #         dev_list=args.ping_device_list,
+    #         expected_passfail_value=args.ping_expected_passfail_value,
+    #         device_csv_name=args.ping_device_csv_name,
+    #         file_name=args.ping_file_name,
+    #         group_name=args.ping_group_name,
+    #         profile_name=args.ping_profile_name,
+    #         ssid=args.ping_ssid,
+    #         passwd=args.ping_passwd,
+    #         security=args.ping_security,
+    #         eap_method=args.ping_eap_method,
+    #         eap_identity=args.ping_eap_identity,
+    #         ieee8021x=args.ping_ieee8021x,
+    #         ieee80211u=args.ping_ieee80211u,
+    #         ieee80211w=args.ping_ieee80211w,
+    #         enable_pkc=args.ping_enable_pkc,
+    #         bss_transition=args.ping_bss_transition,
+    #         power_save=args.ping_power_save,
+    #         disable_ofdma=args.ping_disable_ofdma,
+    #         roam_ft_ds=args.ping_roam_ft_ds,
+    #         key_management=args.ping_key_management,
+    #         pairwise=args.ping_pairwise,
+    #         private_key=args.ping_private_key,
+    #         ca_cert=args.ping_ca_cert,
+    #         client_cert=args.ping_client_cert,
+    #         pk_passwd=args.ping_pk_passwd,
+    #         pac_file=args.ping_pac_file,
+    #         wait_time=args.ping_wait_time
+    #     )
+
+    # HTTP Test
+    if args.http_test:
+        candela_apis.run_http_test(
+            upstream_port=args.upstream_port,
+            bands=args.http_bands,
+            duration=args.http_duration,
+            file_size=args.http_file_size,
+            device_list=args.http_device_list,
+            expected_passfail_value=args.http_expected_passfail_value,
+            device_csv_name=args.http_device_csv_name,
+            file_name=args.http_file_name,
+            group_name=args.http_group_name,
+            profile_name=args.http_profile_name,
+            config=args.http_config,
+            ssid=args.http_ssid,
+            passwd=args.http_passwd,
+            security=args.http_security,
+            eap_method=args.http_eap_method,
+            eap_identity=args.http_eap_identity,
+            ieee8021x=args.http_ieee8021x,
+            ieee80211u=args.http_ieee80211u,
+            ieee80211w=args.http_ieee80211w,
+            enable_pkc=args.http_enable_pkc,
+            bss_transition=args.http_bss_transition,
+            power_save=args.http_power_save,
+            disable_ofdma=args.http_disable_ofdma,
+            roam_ft_ds=args.http_roam_ft_ds,
+            key_management=args.http_key_management,
+            pairwise=args.http_pairwise,
+            private_key=args.http_private_key,
+            ca_cert=args.http_ca_cert,
+            client_cert=args.http_client_cert,
+            pk_passwd=args.http_pk_passwd,
+            pac_file=args.http_pac_file,
+            wait_time=args.http_wait_time
+        )
+
+    # FTP Test
+    if args.ftp_test:
+        candela_apis.start_ftp_test(
+            device_list=args.ftp_device_list,
+            background=False,
+            file_size=args.ftp_file_size,
+            traffic_duration=args.ftp_duration,
+            band=args.ftp_bands,
+            expected_passfail_val=args.ftp_expected_passfail_value,
+            device_csv_name=args.ftp_device_csv_name,
+            file_name=args.ftp_file_name,
+            group_name=args.ftp_group_name,
+            profile_name=args.ftp_profile_name,
+            config=args.ftp_config,
+            ssid=args.ftp_ssid,
+            password=args.ftp_passwd,
+            security=args.ftp_security,
+            eap_method=args.ftp_eap_method,
+            eap_identity=args.ftp_eap_identity,
+            ieee8021x=args.ftp_ieee8021x,
+            ieee80211u=args.ftp_ieee80211u,
+            ieee80211w=args.ftp_ieee80211w,
+            enable_pkc=args.ftp_enable_pkc,
+            bss_transition=args.ftp_bss_transition,
+            power_save=args.ftp_power_save,
+            disable_ofdma=args.ftp_disable_ofdma,
+            roam_ft_ds=args.ftp_roam_ft_ds,
+            key_management=args.ftp_key_management,
+            pairwise=args.ftp_pairwise,
+            private_key=args.ftp_private_key,
+            ca_cert=args.ftp_ca_cert,
+            client_cert=args.ftp_client_cert,
+            pk_passwd=args.ftp_pk_passwd,
+            pac_file=args.ftp_pac_file,
+            wait_time=args.ftp_wait_time
+        )
+
+    # QoS Test
+    if args.qos_test:
+        candela_apis.run_qos_test(
+            upstream_port=args.upstream_port,
+            test_duration=args.qos_duration,
+            download=args.qos_download,
+            upload=args.qos_upload,
+            traffic_type=args.qos_traffic_type,
+            tos=args.qos_tos,
+            device_list=args.qos_device_list,
+            expected_passfail_value=args.qos_expected_passfail_value,
+            device_csv_name=args.qos_device_csv_name,
+            file_name=args.qos_file_name,
+            group_name=args.qos_group_name,
+            profile_name=args.qos_profile_name,
+            config=args.qos_config,
+            ssid=args.qos_ssid,
+            passwd=args.qos_passwd,
+            security=args.qos_security,
+            eap_method=args.qos_eap_method,
+            eap_identity=args.qos_eap_identity,
+            ieee8021x=args.qos_ieee8021x,
+            ieee80211u=args.qos_ieee80211u,
+            ieee80211w=args.qos_ieee80211w,
+            enable_pkc=args.qos_enable_pkc,
+            bss_transition=args.qos_bss_transition,
+            power_save=args.qos_power_save,
+            disable_ofdma=args.qos_disable_ofdma,
+            roam_ft_ds=args.qos_roam_ft_ds,
+            key_management=args.qos_key_management,
+            pairwise=args.qos_pairwise,
+            private_key=args.qos_private_key,
+            ca_cert=args.qos_ca_cert,
+            client_cert=args.qos_client_cert,
+            pk_passwd=args.qos_pk_passwd,
+            pac_file=args.qos_pac_file,
+            wait_time=args.qos_wait_time
+        )
+
+    # Video Streaming (VS) Test
+    if args.vs_test:
+        candela_apis.run_vs_test(
+            url=args.vs_url,
+            media_source=args.vs_media_source,
+            media_quality=args.vs_media_quality,
+            duration=args.vs_duration,
+            device_list=args.vs_device_list,
+            expected_passfail_value=args.vs_expected_passfail_value,
+            device_csv_name=args.vs_device_csv_name,
+            file_name=args.vs_file_name,
+            group_name=args.vs_group_name,
+            profile_name=args.vs_profile_name,
+            config=args.vs_config,
+            ssid=args.vs_ssid,
+            passwd=args.vs_passwd,
+            encryp=args.vs_security,
+            eap_method=args.vs_eap_method,
+            eap_identity=args.vs_eap_identity,
+            ieee8021x=args.vs_ieee8021x,
+            ieee80211u=args.vs_ieee80211u,
+            ieee80211w=args.vs_ieee80211w,
+            enable_pkc=args.vs_enable_pkc,
+            bss_transition=args.vs_bss_transition,
+            power_save=args.vs_power_save,
+            disable_ofdma=args.vs_disable_ofdma,
+            roam_ft_ds=args.vs_roam_ft_ds,
+            key_management=args.vs_key_management,
+            pairwise=args.vs_pairwise,
+            private_key=args.vs_private_key,
+            ca_cert=args.vs_ca_cert,
+            client_cert=args.vs_client_cert,
+            pk_passwd=args.vs_pk_passwd,
+            pac_file=args.vs_pac_file,
+            wait_time=args.vs_wait_time
+        )
+
+    # Throughput (thput) Test
+    if args.thput_test:
+        candela_apis.run_throughput_test(
+            upstream_port=args.upstream_port,
+            test_duration=args.thput_test_duration,
+            download=args.thput_download,
+            upload=args.thput_upload,
+            traffic_type=args.thput_traffic_type,
+            device_list=args.thput_device_list,
+            do_interopability=args.thput_do_interopability,
+            default_config=args.thput_default_config,
+            expected_passfail_value=args.thput_expected_passfail_value,
+            device_csv_name=args.thput_device_csv_name,
+            file_name=args.thput_file_name,
+            group_name=args.thput_group_name,
+            profile_name=args.thput_profile_name,
+            config=args.thput_config,
+            ssid=args.thput_ssid,
+            passwd=args.thput_passwd,
+            security=args.thput_security,
+            eap_method=args.thput_eap_method,
+            eap_identity=args.thput_eap_identity,
+            ieee8021x=args.thput_ieee8021x,
+            ieee80211u=args.thput_ieee80211u,
+            ieee80211w=args.thput_ieee80211w,
+            enable_pkc=args.thput_enable_pkc,
+            bss_transition=args.thput_bss_transition,
+            power_save=args.thput_power_save,
+            disable_ofdma=args.thput_disable_ofdma,
+            roam_ft_ds=args.thput_roam_ft_ds,
+            key_management=args.thput_key_management,
+            pairwise=args.thput_pairwise,
+            private_key=args.thput_private_key,
+            ca_cert=args.thput_ca_cert,
+            client_cert=args.thput_client_cert,
+            pk_passwd=args.thput_pk_passwd,
+            pac_file=args.thput_pac_file,
+            wait_time=args.thput_wait_time
+        )
+
+    # Multicast (mcast) Test
+    if args.mcast_test:
+        candela_apis.run_mc_test1(
+            test_duration=args.mcast_test_duration,
+            upstream_port=args.mcast_upstream_port,
+            endp_type=args.mcast_endp_type,
+            side_b_min_bps=args.mcast_side_b_min_bps,
+            tos=args.mcast_tos,
+            device_list=args.mcast_device_list,
+            expected_passfail_value=args.mcast_expected_passfail_value,
+            device_csv_name=args.mcast_device_csv_name,
+            file_name=args.mcast_file_name,
+            group_name=args.mcast_group_name,
+            profile_name=args.mcast_profile_name,
+            config=args.mcast_config,
+            ssid=args.mcast_ssid,
+            passwd=args.mcast_passwd,
+            security=args.mcast_security,
+            eap_method=args.mcast_eap_method,
+            eap_identity=args.mcast_eap_identity,
+            ieee8021x=args.mcast_ieee8021x,
+            ieee80211u=args.mcast_ieee80211u,
+            ieee80211w=args.mcast_ieee80211w,
+            enable_pkc=args.mcast_enable_pkc,
+            bss_transition=args.mcast_bss_transition,
+            power_save=args.mcast_ieee8021x,
+            disable_ofdma=args.mcast_disable_ofdma,
+            roam_ft_ds=args.mcast_roam_ft_ds,
+            key_management=args.mcast_key_management,
+            pairwise=args.mcast_pairwise,
+            private_key=args.mcast_private_key,
+            ca_cert=args.mcast_ca_cert,
+            client_cert=args.mcast_client_cert,
+            pk_passwd=args.mcast_pk_passwd,
+            pac_file=args.mcast_pac_file,
+            wait_time=args.mcast_wait_time
+        )
+    
 
 
 #WITHOUT CONFIG
-# candela_apis.run_ping_test(real=True,target="192.168.204.59",ping_interval='5',ping_duration=1,passwd="Openwifi",use_default_config=True)
+# candela_apis.run_ping_test(real=True,target="192.168.204.59",ping_interval='5',ping_duration=1,ssid="NETGEAR_2G_wpa2",passwd="Password@123",security="wpa2",use_default_config=True,dev_list="1.12,1.400")
 # candela_apis.run_http_test(upstream_port='eth1',bands=["5G"],duration='1m',file_size="2MB",device_list="1.95,1.12")
 # candela_apis.start_ftp_test(ssid='Walkin_open', password='[BLANK]', security='open',
 #                                 device_list='1.16,1.95',background=False)
 # candela_apis.run_qos_test(upstream_port="eth1",test_duration="1m",download ="0",upload="1000000",traffic_type ="lf_udp",tos="BK,BE,VI,VO",device_list="1.12,1.16,1.95")
+# candela_apis = Candela(ip="192.168.242.2",port="8080")
 # candela_apis.run_vs_test(
 #     url="https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
 #     media_source="hls",
 #     media_quality="1080P",
 #     duration="1m",
-#     device_list="1.12,1.15",
+#     device_list="1.10,1.11",
 #     debug=True,
 #     test_name="video_streaming_test"
 # )
@@ -3754,7 +5188,7 @@ candela_apis = Candela(ip='192.168.204.74', port=8080)
 #     test_duration="1m",
 #     download="1000000",
 #     traffic_type="lf_udp",
-#     device_list="1.15,1.12,1.95,1.400",
+#     device_list="1.12,1.95",
 #     do_interopability=True,
 #     default_config=True
 # )
@@ -3771,7 +5205,7 @@ candela_apis = Candela(ip='192.168.204.74', port=8080)
 #     passwd="Password@123",
 #     security="wpa2",
 #     log_level="info",
-#     device_list=["1.11,1.95,1.360"]
+#     device_list=["1.12,1.95"]
 # )
 
 
@@ -3780,5 +5214,161 @@ candela_apis = Candela(ip='192.168.204.74', port=8080)
 #     duration=1,
 #     res="1080p",
 #     upstream_port="1.1.eth1",
-#     resource_list="1.12,1.15"
+#     resource_list="1.12,1.95"
 # )
+
+# candela_apis.run_zoom_test(
+#     duration=1,
+#     signin_email="lnawscloud@gmail.com",
+#     signin_passwd="Demo@10203000",
+#     participants=3,
+#     audio=True,
+#     video=True,
+#     upstream_port="192.168.200.193",
+#     resource_list="1.400,1.360",
+#     zoom_host="1.95"
+# )
+# candela_apis.run_rb_test(
+#     url="www.google.com",
+#     duration="1m",
+#     device_list="1.95,1.400,1.360",
+#     debug=True,
+#     upstream_port="192.168.200.193"
+# )
+
+
+
+
+#WITH CONFIG
+# candela_apis.run_ping_test(real=True,target="192.168.204.59",ping_interval='5',ping_duration=1,passwd="Openwifi",use_default_config=True)
+# candela_apis.run_http_test(upstream_port='eth1',bands=["5G"],duration='1m',file_size="2MB",device_list="1.95,1.12",config=True,ssid="NETGEAR_2G_wpa2",passwd="Password@123",security="wpa2")
+# candela_apis.start_ftp_test(device_list='1.16,1.95',background=False,config=True,ssid="NETGEAR_2G_wpa2",passwd="Password@123",security="wpa2")
+# candela_apis.run_qos_test(upstream_port="eth1",test_duration="1m",download ="0",upload="1000000",traffic_type ="lf_udp",tos="BK,BE,VI,VO",device_list="1.12,1.360",config=True,ssid="NETGEAR_2G_wpa2",passwd="Password@123",security="wpa2")
+# candela_apis.run_vs_test(
+#     url="https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+#     media_source="hls",
+#     media_quality="1080P",
+#     duration="1m",
+#     device_list="1.15,1.360",
+#     debug=True,
+#     test_name="video_streaming_test",
+#     config=True,
+#     ssid="NETGEAR_2G_wpa2",
+#     passwd="Password@123",
+#     encryp="wpa2",
+#     upstream_port="1.1.eth1"
+# )
+# candela_apis.run_throughput_test(
+#     upstream_port="eth1",
+#     test_duration="1m",
+#     download="1000000",
+#     traffic_type="lf_udp",
+#     device_list="1.12,1.95",
+#     do_interopability=True,
+#     # default_config=True
+#     config=True,
+#     ssid="NETGEAR_2G_wpa2",
+#     passwd="Password@123",
+#     security="wpa2",
+# )
+# candela_apis.run_mc_test1(
+#     test_duration="1m",
+#     polling_interval="5s",
+#     upstream_port="1.1.eth1",
+#     endp_type="mc_udp",
+#     rates_are_totals=True,
+#     side_b_min_bps="30000000",
+#     tos="VI",
+#     real=True,
+#     ssid="NETGEAR_2G_wpa2",
+#     passwd="Password@123",
+#     security="wpa2",
+#     log_level="info",
+#     device_list=["1.12,1.360"],
+#     config=True
+# )
+
+
+# candela_apis.run_yt_test(
+#     url="https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1",
+#     duration=1,
+#     res="1080p",
+#     upstream_port="1.1.eth1",
+#     resource_list="1.360,1.400"
+# )
+
+# candela_apis.run_zoom_test(
+#     duration=1,
+#     signin_email="lnawscloud@gmail.com",
+#     signin_passwd="Demo@10203000",
+#     participants=3,
+#     audio=True,
+#     video=True,
+#     upstream_port="192.168.200.193",
+#     resource_list="1.400,1.360",
+#     zoom_host="1.95"
+# )
+
+
+
+#WITHOUT CONFIG
+# candela_apis.run_ping_test(real=True,target="192.168.204.59",ping_interval='5',ping_duration=1,passwd="Openwifi",use_default_config=True)
+# candela_apis.run_http_test(upstream_port='eth1',bands=["5G"],duration='1m',file_size="2MB",device_list="1.95,1.12")
+# candela_apis.start_ftp_test(ssid='Walkin_open', password='[BLANK]', security='open',
+#                                 device_list='1.16,1.95',background=False)
+# candela_apis.run_qos_test(upstream_port="eth1",test_duration="1m",download ="0",upload="1000000",traffic_type ="lf_udp",tos="BK,BE,VI,VO",device_list="1.12,1.16,1.95")
+# candela_apis.run_vs_test(
+#     url="https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+#     media_source="hls",
+#     media_quality="1080P",
+#     duration="1m",
+#     device_list="1.12,1.95",
+#     debug=True,
+#     test_name="video_streaming_test"
+# )
+# candela_apis.run_throughput_test(
+#     upstream_port="eth1",
+#     test_duration="1m",
+#     download="1000000",
+#     traffic_type="lf_udp",
+#     device_list="1.12,1.95",
+#     do_interopability=True,
+#     default_config=True
+# )
+# candela_apis.run_mc_test1(
+#     test_duration="1m",
+#     polling_interval="5s",
+#     upstream_port="1.1.eth1",
+#     endp_type="mc_udp",
+#     rates_are_totals=True,
+#     side_b_min_bps="30000000",
+#     tos="VI",
+#     real=True,
+#     ssid="NETGEAR_5G_wpa2",
+#     passwd="Password@123",
+#     security="wpa2",
+#     log_level="info",
+#     device_list=["1.12,1.95"]
+# )
+
+
+# candela_apis.run_yt_test(
+#     url="https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1",
+#     duration=1,
+#     res="1080p",
+#     upstream_port="1.1.eth1",
+#     resource_list="1.12,1.95"
+# )
+
+# candela_apis.run_zoom_test(
+#     duration=1,
+#     signin_email="lnawscloud@gmail.com",
+#     signin_passwd="Demo@10203000",
+#     participants=3,
+#     audio=True,
+#     video=True,
+#     upstream_port="192.168.200.193",
+#     resource_list="1.400,1.360",
+#     zoom_host="1.95"
+# )
+main()
