@@ -252,7 +252,7 @@ class Candela:
     def http_parmeter_validate(self,http_val):
         if http_val["expected_passfail_value"] and http_val["device_csv_name"]:
             logger.error("Specify either --expected_passfail_value or --device_csv_name")
-            exit(1)
+            return False
         if http_val["group_name"]:
             selected_groups = http_val["group_name"].split(',')
         else:
@@ -264,35 +264,35 @@ class Candela:
 
         if len(selected_groups) != len(selected_profiles):
             logger.error("Number of groups should match number of profiles")
-            exit(1)
+            return False
         elif http_val["group_name"] and http_val["profile_name"] and http_val["file_name"] and http_val["device_list"] != []:
             logger.error("Either --group_name or --device_list should be entered not both")
-            exit(1)
+            return False
         elif http_val["ssid"] and http_val["profile_name"]:
             logger.error("Either --ssid or --profile_name should be given")
-            exit(1)
+            return False
         elif http_val["file_name"] and (http_val["group_name"] is None or http_val["profile_name"] is None):
             logger.error("Please enter the correct set of arguments for configuration")
-            exit(1)
+            return False
         if http_val["config"] and http_val["group_name"] is None:
             if http_val["ssid"] and http_val["security"] and http_val["security"].lower() == 'open' and (http_val["passwd"] is None or http_val["passwd"] == ''):
                 http_val["passwd"] = '[BLANK]'
             if http_val["ssid"] is None or http_val["passwd"] is None or http_val["passwd"] == '':
                 logger.error('For configuration need to Specify --ssid , --passwd (Optional for "open" type security) , --security')
-                exit(1)
+                return False
             elif http_val["ssid"] and http_val["passwd"] == '[BLANK]' and http_val["security"] and http_val["security"].lower() != 'open':
                 logger.error('Please provide valid --passwd and --security configuration')
-                exit(1)
+                return False
             elif http_val["ssid"] and http_val["passwd"]:
                 if http_val["security"] is None:
                     logger.error('Security must be provided when --ssid and --password specified')
-                    exit(1)
+                    return False
                 elif http_val["ssid"] and http_val["passwd"] == '[BLANK]' and http_val["security"] and http_val["security"].lower() != 'open':
                     logger.error('Please provide valid passwd and security configuration')
-                    exit(1)
+                    return False
                 elif http_val["security"].lower() == 'open' and http_val["passwd"] != '[BLANK]':
                     logger.error("For a open type security there will be no password or the password should be left blank (i.e., set to '' or [BLANK]).")
-                    exit(1)
+                    return False
 
     def run_ping_test(
         self,
@@ -342,7 +342,7 @@ class Candela:
 
         if help_summary:
             print(help_summary)
-            exit(0)
+            return False
 
         # set the logger level to debug
         logger_config = lf_logger_config.lf_logger_config()
@@ -493,7 +493,7 @@ class Candela:
             else:
                 device_list = ping.Devices.get_devices()
                 logger.info(f"Available devices: {device_list}")
-                if dev_list is None:    
+                if dev_list is None:
                     dev_list = input("Enter the desired resources to run the test:")
                 dev_list = dev_list.split(',')
                 # dev_list = input("Enter the desired resources to run the test:").split(',')
@@ -509,7 +509,7 @@ class Candela:
         # check if generic tab is enabled or not
         if (not ping.check_tab_exists()):
             logging.error('Generic Tab is not available.\nAborting the test.')
-            exit(0)
+            return False
 
         ping.sta_list += ping.real_sta_list
 
@@ -786,7 +786,7 @@ class Candela:
     ):
             if help_summary:
                 print(help_summary)
-                exit(0)
+                return False
 
             bands.sort()
 
@@ -914,7 +914,7 @@ class Candela:
                         http.device_list = http.filter_iOS_devices(device_list)
                         if len(http.device_list) == 0:
                             logger.info("There are no devices available")
-                            exit(1)
+                            return False
                     port_list, dev_list, macid_list, configuration = http.get_real_client_list()
                     if dowebgui and group_name:
                         if len(dev_list) == 0:
@@ -937,7 +937,7 @@ class Candela:
                 else:
                     if file_path is None:
                         print("WARNING: Please Specify the path of the file, if you select the --get_url_from_file")
-                        exit(0)
+                        return False
                 http.set_values()
                 http.precleanup()
                 http.build()
@@ -1296,10 +1296,10 @@ class Candela:
     #     help_summary=False
     # ):
     #     print('bands',bands)
-    #     # exit(0)
+    #     # return False
     #     if help_summary:
     #         print(help_summary)
-    #         exit(0)
+    #         return False
 
     #     # set up logger
     #     logger_config = lf_logger_config.lf_logger_config()
@@ -1414,7 +1414,7 @@ class Candela:
     #                         obj.device_list = obj.filter_iOS_devices(device_list)
     #                         if len(obj.device_list) == 0:
     #                             logger.info("There are no devices available")
-    #                             exit(1)
+    #                             return False
     #                     endp_input_list, graph_input_list, config_devices, group_device_map = query_real_clients(args)
 
     #                 if dowebgui and group_name:
@@ -1439,7 +1439,7 @@ class Candela:
     #                 obj.build()
     #                 if not obj.passes():
     #                     logger.info(obj.get_fail_message())
-    #                     exit(1)
+    #                     return False
 
     #                 if obj.clients_type == 'Real':
     #                     obj.monitor_cx()
@@ -1591,7 +1591,7 @@ class Candela:
         device_list = self.filter_iOS_devices(device_list)
         if not group_name and len(device_list) == 0:
             print('No devices specified.')
-            exit(1)
+            return False
         if group_name:
             selected_groups = group_name.split(',')
         else:
@@ -1603,47 +1603,47 @@ class Candela:
 
         if device_csv_name and expected_passfail_val:
             logger.error("Enter either --device_csv_name or --expected_passfail_value")
-            exit(1)
+            return False
         if clients_type == 'Real' and config and group_name is None:
             if ssid and security and security.lower() == 'open' and (password is None or password == ''):
                 password = '[BLANK]'
             if ssid is None:
                 logger.error('Specify SSID for confiuration, Password(Optional for "open" type security) , Security')
-                exit(1)
+                return False
             elif ssid and password:
                 if security is None:
                     logger.error('Security must be provided when SSID and Password specified')
-                    exit(1)
+                    return False
                 elif security.lower() == 'open' and password != '[BLANK]':
                     logger.error("For a open type security there will be no password or the password should be left blank (i.e., set to '' or [BLANK]).")
-                    exit(1)
+                    return False
             elif ssid and password == '[BLANK]' and security and security.lower() != 'open':
                 logger.error('Please provide valid password and security configuration')
-                exit(1)
+                return False
         if group_name and (file_name is None or profile_name is None):
             logger.error("Please provide file name and profile name for group configuration")
-            exit(1)
+            return False
         elif file_name and (group_name is None or profile_name is None):
             logger.error("Please provide group name and profile name for file configuration")
-            exit(1)
+            return False
         elif profile_name and (group_name is None or file_name is None):
             logger.error("Please provide group name and file name for profile configuration")
-            exit(1)
+            return False
         if len(selected_groups) != len(selected_profiles):
             logger.error("Number of groups should match number of profiles")
-            exit(1)
+            return False
         elif group_name and profile_name and file_name and device_list != []:
             logger.error("Either group name or device list should be entered, not both")
-            exit(1)
+            return False
         elif ssid and profile_name:
             logger.error("Either SSID or profile name should be given")
-            exit(1)
+            return False
         elif config and group_name is None and ((ssid is None or (password is None and security != 'open') or (password is None and security is None))):
             logger.error("Please provide SSID, password, and security for configuration of devices")
-            exit(1)
+            return False
         elif config and device_list != [] and (ssid is None or password is None or security is None):
             logger.error("Please provide SSID, password, and security when device list is given")
-            exit(1)
+            return False
         self.ftp_test = FtpTest(lfclient_host=self.lanforge_ip,
                         lfclient_port=self.port,
                         upstream=upstream,
@@ -1694,7 +1694,7 @@ class Candela:
         self.ftp_test.build()
         if not self.ftp_test.passes():
             logger.info(self.ftp_test.get_fail_message())
-            exit(1)
+            return False
 
         # First time stamp
         test_start_time = datetime.now()
@@ -1967,65 +1967,12 @@ class Candela:
                 avg_drop_a=avg_drop_a,
                 avg_drop_b=avg_drop_b)
 
-    def run_vs_test(
-        self,
-        ssid=None,
-        passwd="something",
-        encryp="psk",
-        url="www.google.com",
-        max_speed=0,
-        urls_per_tenm=100,
-        duration=None,
-        test_name="video_streaming_test",
-        dowebgui=False,
-        result_dir='',
-        lf_logger_config_json=None,
-        log_level=None,
-        debug=False,
-        media_source='1',
-        media_quality='0',
-        device_list=None,
-        webgui_incremental=None,
-        incremental=False,
-        no_laptops=True,
-        postcleanup=False,
-        precleanup=False,
-        help_summary=False,
-        group_name=None,
-        profile_name=None,
-        file_name=None,
-        eap_method='DEFAULT',
-        eap_identity='DEFAULT',
-        ieee8021x=False,
-        ieee80211u=False,
-        ieee80211w=1,
-        enable_pkc=False,
-        bss_transition=False,
-        power_save=False,
-        disable_ofdma=False,
-        roam_ft_ds=False,
-        key_management='DEFAULT',
-        pairwise='NA',
-        private_key='NA',
-        ca_cert='NA',
-        client_cert='NA',
-        pk_passwd='NA',
-        pac_file='NA',
-        upstream_port='NA',
-        expected_passfail_value=None,
-        csv_name=None,
-        wait_time=60,
-        config=False,
-        device_csv_name=None,
-        get_live_view=False,
-        floors=0
-    ):
-
-        if self.lanforge_ip is None:
+    def run_vs_test(self,args):
+        if args.host is None:
             print("--host/--mgr required")
             exit(1)
 
-        if test_name is None:
+        if args.test_name is None:
             print("--test_name required")
             exit(1)
 
@@ -2044,49 +1991,49 @@ class Candela:
             '360p': '4'
         }
 
-        if file_name:
-            file_name = file_name.removesuffix('.csv')
+        if args.file_name:
+            args.file_name = args.file_name.removesuffix('.csv')
 
-        media_source, media_quality = media_source.capitalize(), media_quality
-        media_source = media_source.lower()
-        media_quality = media_quality.lower()
+        media_source, media_quality = args.media_source.capitalize(), args.media_quality
+        args.media_source = args.media_source.lower()
+        args.media_quality = args.media_quality.lower()
 
-        if any(char.isalpha() for char in media_source):
-            media_source = media_source_dict[media_source]
+        if any(char.isalpha() for char in args.media_source):
+            args.media_source = media_source_dict[args.media_source]
 
-        if any(char.isalpha() for char in media_quality):
-            media_quality = media_quality_dict[media_quality]
+        if any(char.isalpha() for char in args.media_quality):
+            args.media_quality = media_quality_dict[args.media_quality]
 
         logger_config = lf_logger_config.lf_logger_config()
 
-        if log_level:
-            logger_config.set_level(level=log_level)
+        if args.log_level:
+            logger_config.set_level(level=args.log_level)
 
-        if lf_logger_config_json:
-            logger_config.lf_logger_config_json = lf_logger_config_json
+        if args.lf_logger_config_json:
+            logger_config.lf_logger_config_json = args.lf_logger_config_json
             logger_config.load_lf_logger_config()
 
         logger = logging.getLogger(__name__)
 
-        obj = VideoStreamingTest(host=self.lanforge_ip, ssid=ssid, passwd=passwd, encryp=encryp,
-                                suporrted_release=["7.0", "10", "11", "12"], max_speed=max_speed,
-                                url=url, urls_per_tenm=urls_per_tenm, duration=duration,
-                                resource_ids=device_list, dowebgui=dowebgui, media_quality=media_quality, media_source=media_source,
-                                result_dir=result_dir, test_name=test_name, incremental=incremental, postcleanup=postcleanup,
-                                precleanup=precleanup,
-                                pass_fail_val=expected_passfail_value,
-                                csv_name=device_csv_name,
-                                groups=group_name,
-                                profiles=profile_name,
-                                config=config,
-                                file_name=file_name,
-                                floors=floors,
-                                get_live_view=get_live_view
+        obj = VideoStreamingTest(host=args.host, ssid=args.ssid, passwd=args.passwd, encryp=args.encryp,
+                                suporrted_release=["7.0", "10", "11", "12"], max_speed=args.max_speed,
+                                url=args.url, urls_per_tenm=args.urls_per_tenm, duration=args.duration,
+                                resource_ids=args.device_list, dowebgui=args.dowebgui, media_quality=args.media_quality, media_source=args.media_source,
+                                result_dir=args.result_dir, test_name=args.test_name, incremental=args.incremental, postcleanup=args.postcleanup,
+                                precleanup=args.precleanup,
+                                pass_fail_val=args.expected_passfail_value,
+                                csv_name=args.device_csv_name,
+                                groups=args.group_name,
+                                profiles=args.profile_name,
+                                config=args.config,
+                                file_name=args.file_name,
+                                floors=args.floors,
+                                get_live_view=args.get_live_view
                                 )
-        upstream_port = obj.change_port_to_ip(upstream_port)
+        args.upstream_port = obj.change_port_to_ip(args.upstream_port)
         obj.validate_args()
-        config_obj = DeviceConfig.DeviceConfig(lanforge_ip=self.lanforge_ip, file_name=file_name)
-        if not expected_passfail_value and device_csv_name is None:
+        config_obj = DeviceConfig.DeviceConfig(lanforge_ip=args.host, file_name=args.file_name)
+        if not args.expected_passfail_value and args.device_csv_name is None:
             config_obj.device_csv_file(csv_name="device.csv")
 
         resource_ids_sm = []
@@ -2094,14 +2041,14 @@ class Candela:
         resource_list = []
         resource_ids_generated = ""
 
-        if group_name and file_name and profile_name:
-            selected_groups = group_name.split(',')
-            selected_profiles = profile_name.split(',')
+        if args.group_name and args.file_name and args.profile_name:
+            selected_groups = args.group_name.split(',')
+            selected_profiles = args.profile_name.split(',')
             config_devices = {}
             for i in range(len(selected_groups)):
                 config_devices[selected_groups[i]] = selected_profiles[i]
             config_obj.initiate_group()
-            asyncio.run(config_obj.connectivity(config_devices, upstream=upstream_port))
+            asyncio.run(config_obj.connectivity(config_devices, upstream=args.upstream_port))
 
             adbresponse = config_obj.adb_obj.get_devices()
             resource_manager = config_obj.laptop_obj.get_devices()
@@ -2122,40 +2069,40 @@ class Candela:
                                 eid_list.append(group_devices[j])
                             elif j in all_res.keys():
                                 eid_list.append(all_res[j])
-            device_list = ",".join(id for id in eid_list)
+            args.device_list = ",".join(id for id in eid_list)
         else:
             # When group/profile are not provided
             config_dict = {
-                'ssid': ssid,
-                'passwd': passwd,
-                'enc': encryp,
-                'eap_method': eap_method,
-                'eap_identity': eap_identity,
-                'ieee80211': ieee8021x,
-                'ieee80211u': ieee80211u,
-                'ieee80211w': ieee80211w,
-                'enable_pkc': enable_pkc,
-                'bss_transition': bss_transition,
-                'power_save': power_save,
-                'disable_ofdma': disable_ofdma,
-                'roam_ft_ds': roam_ft_ds,
-                'key_management': key_management,
-                'pairwise': pairwise,
-                'private_key': private_key,
-                'ca_cert': ca_cert,
-                'client_cert': client_cert,
-                'pk_passwd': pk_passwd,
-                'pac_file': pac_file,
-                'server_ip': upstream_port
+                'ssid': args.ssid,
+                'passwd': args.passwd,
+                'enc': args.encryp,
+                'eap_method': args.eap_method,
+                'eap_identity': args.eap_identity,
+                'ieee80211': args.ieee8021x,
+                'ieee80211u': args.ieee80211u,
+                'ieee80211w': args.ieee80211w,
+                'enable_pkc': args.enable_pkc,
+                'bss_transition': args.bss_transition,
+                'power_save': args.power_save,
+                'disable_ofdma': args.disable_ofdma,
+                'roam_ft_ds': args.roam_ft_ds,
+                'key_management': args.key_management,
+                'pairwise': args.pairwise,
+                'private_key': args.private_key,
+                'ca_cert': args.ca_cert,
+                'client_cert': args.client_cert,
+                'pk_passwd': args.pk_passwd,
+                'pac_file': args.pac_file,
+                'server_ip': args.upstream_port
             }
-            if device_list:
+            if args.device_list:
                 all_devices = config_obj.get_all_devices()
-                if group_name is None and file_name is None and profile_name is None:
-                    dev_list = device_list.split(',')
-                    if config:
+                if args.group_name is None and args.file_name is None and args.profile_name is None:
+                    dev_list = args.device_list.split(',')
+                    if args.config:
                         asyncio.run(config_obj.connectivity(device_list=dev_list, wifi_config=config_dict))
             else:
-                if config:
+                if args.config:
                     all_devices = config_obj.get_all_devices()
                     device_list = []
                     for device in all_devices:
@@ -2166,8 +2113,8 @@ class Candela:
                     print("Available devices:")
                     for device in device_list:
                         print(device)
-                    device_list = input("Enter the desired resources to run the test:")
-                    dev1_list = device_list.split(',')
+                    args.device_list = input("Enter the desired resources to run the test:")
+                    dev1_list = args.device_list.split(',')
                     asyncio.run(config_obj.connectivity(device_list=dev1_list, wifi_config=config_dict))
                 else:
                     obj.android_devices = obj.devices.get_devices(only_androids=True)
@@ -2202,19 +2149,19 @@ class Candela:
                         resource_ids_generated = ','.join(resource_list_sorted)
                         available_resources = list(resource_set)
 
-        if dowebgui:
-            resource_ids_sm = device_list.split(',')
+        if args.dowebgui:
+            resource_ids_sm = args.device_list.split(',')
             resource_set = set(resource_ids_sm)
             resource_list = sorted(resource_set)
             resource_ids_generated = ','.join(resource_list)
             resource_list_sorted = resource_list
-            selected_devices, report_labels, selected_macs = obj.devices.query_user(dowebgui=dowebgui, device_list=resource_ids_generated)
-            obj.resource_ids = ",".join(id.split(".")[1] for id in device_list.split(","))
+            selected_devices, report_labels, selected_macs = obj.devices.query_user(dowebgui=args.dowebgui, device_list=resource_ids_generated)
+            obj.resource_ids = ",".join(id.split(".")[1] for id in args.device_list.split(","))
             available_resources = [int(num) for num in obj.resource_ids.split(',')]
         else:
             obj.android_devices = obj.devices.get_devices(only_androids=True)
-            if device_list:
-                device_list = device_list.split(',')
+            if args.device_list:
+                device_list = args.device_list.split(',')
                 # Extract resource IDs (after the dot), remove duplicates, and sort them
                 resource_ids = sorted(set(int(item.split('.')[1]) for item in device_list if '.' in item))
                 resource_list_sorted = resource_ids
@@ -2236,20 +2183,20 @@ class Candela:
             logger.info("No devices which are selected are available in the lanforge")
             exit()
         gave_incremental = False
-        if incremental and not webgui_incremental:
+        if args.incremental and not args.webgui_incremental:
             if obj.resource_ids:
                 logging.info("The total available devices are {}".format(len(available_resources)))
                 obj.incremental = input('Specify incremental values as 1,2,3 : ')
                 obj.incremental = [int(x) for x in obj.incremental.split(',')]
             else:
                 logging.info("incremental Values are not needed as Android devices are not selected..")
-        elif not incremental:
+        elif not args.incremental:
             gave_incremental = True
             obj.incremental = [len(available_resources)]
 
-        if webgui_incremental:
-            incremental = [int(x) for x in webgui_incremental.split(',')]
-            if (len(webgui_incremental) == 1 and incremental[0] != len(resource_list_sorted)) or (len(webgui_incremental) > 1):
+        if args.webgui_incremental:
+            incremental = [int(x) for x in args.webgui_incremental.split(',')]
+            if (len(args.webgui_incremental) == 1 and incremental[0] != len(resource_list_sorted)) or (len(args.webgui_incremental) > 1):
                 obj.incremental = incremental
 
         if obj.incremental and obj.resource_ids:
@@ -2303,22 +2250,22 @@ class Candela:
         file_path = ""
 
         # Parsing test_duration
-        if duration.endswith('s') or duration.endswith('S'):
-            duration = round(int(duration[0:-1]) / 60, 2)
+        if args.duration.endswith('s') or args.duration.endswith('S'):
+            args.duration = round(int(args.duration[0:-1]) / 60, 2)
 
-        elif duration.endswith('m') or duration.endswith('M'):
-            duration = int(duration[0:-1])
+        elif args.duration.endswith('m') or args.duration.endswith('M'):
+            args.duration = int(args.duration[0:-1])
 
-        elif duration.endswith('h') or duration.endswith('H'):
-            duration = int(duration[0:-1]) * 60
+        elif args.duration.endswith('h') or args.duration.endswith('H'):
+            args.duration = int(args.duration[0:-1]) * 60
 
-        elif duration.endswith(''):
-            duration = int(duration)
+        elif args.duration.endswith(''):
+            args.duration = int(args.duration)
 
         incremental_capacity_list_values = obj.get_incremental_capacity_list()
         if incremental_capacity_list_values[-1] != len(available_resources):
             logger.error("Incremental capacity doesnt match available devices")
-            if postcleanup:
+            if args.postcleanup:
                 obj.postcleanup()
             exit(1)
         # Process resource IDs and incremental values if specified
@@ -2326,23 +2273,23 @@ class Candela:
             if obj.incremental:
                 test_setup_info_incremental_values = ','.join([str(n) for n in incremental_capacity_list_values])
                 if len(obj.incremental) == len(available_resources):
-                    test_setup_info_total_duration = duration
+                    test_setup_info_total_duration = args.duration
                 elif len(obj.incremental) == 1 and len(available_resources) > 1:
                     if obj.incremental[0] == len(available_resources):
-                        test_setup_info_total_duration = duration
+                        test_setup_info_total_duration = args.duration
                     else:
                         div = len(available_resources) // obj.incremental[0]
                         mod = len(available_resources) % obj.incremental[0]
                         if mod == 0:
-                            test_setup_info_total_duration = duration * (div)
+                            test_setup_info_total_duration = args.duration * (div)
                         else:
-                            test_setup_info_total_duration = duration * (div + 1)
+                            test_setup_info_total_duration = args.duration * (div + 1)
                 else:
-                    test_setup_info_total_duration = duration * len(incremental_capacity_list_values)
+                    test_setup_info_total_duration = args.duration * len(incremental_capacity_list_values)
             else:
-                test_setup_info_total_duration = duration
+                test_setup_info_total_duration = args.duration
 
-            if webgui_incremental:
+            if args.webgui_incremental:
                 test_setup_info_incremental_values = ','.join([str(n) for n in incremental_capacity_list_values])
             elif gave_incremental:
                 test_setup_info_incremental_values = "No Incremental Value provided"
@@ -2406,16 +2353,16 @@ class Candela:
                         date_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                         obj.data['remaining_time_webGUI'] = [datetime.strptime(end_time_webGUI, "%Y-%m-%d %H:%M:%S") - datetime.strptime(date_time, "%Y-%m-%d %H:%M:%S")]
 
-                    if dowebgui:
+                    if args.dowebgui:
                         file_path = os.path.join(obj.result_dir, "../../Running_instances/{}_{}_running.json".format(obj.host, obj.test_name))
                         if os.path.exists(file_path):
                             with open(file_path, 'r') as file:
                                 data = json.load(file)
                                 if data["status"] != "Running":
                                     break
-                        test_stopped_by_user = obj.monitor_for_runtime_csv(duration, file_path, individual_df, i, actual_start_time, resource_list_sorted, cx_order_list[i])
+                        test_stopped_by_user = obj.monitor_for_runtime_csv(args.duration, file_path, individual_df, i, actual_start_time, resource_list_sorted, cx_order_list[i])
                     else:
-                        test_stopped_by_user = obj.monitor_for_runtime_csv(duration, file_path, individual_df, i, actual_start_time, resource_list_sorted, cx_order_list[i])
+                        test_stopped_by_user = obj.monitor_for_runtime_csv(args.duration, file_path, individual_df, i, actual_start_time, resource_list_sorted, cx_order_list[i])
                     if not test_stopped_by_user:
                         # Append current iteration index to iterations_before_test_stopped_by_user
                         iterations_before_test_stopped_by_user.append(i)
@@ -2448,11 +2395,11 @@ class Candela:
             device_list_str = ','.join([f"{name} ( Android )" for name in username])
 
             test_setup_info = {
-                "Testname": test_name,
+                "Testname": args.test_name,
                 "Device List": device_list_str,
                 "No of Devices": "Total" + "( " + str(len(keys)) + " ): Android(" + str(len(keys)) + ")",
                 "Incremental Values": "",
-                "URL": url,
+                "URL": args.url,
                 "Media Source": media_source.upper(),
                 "Media Quality": media_quality
             }
@@ -2468,11 +2415,69 @@ class Candela:
             obj.generate_report(date, list(set(iterations_before_test_stopped_by_user)), test_setup_info=test_setup_info, realtime_dataset=individual_df)
 
         # Perform post-cleanup operations
-        if postcleanup:
+        if args.postcleanup:
             obj.postcleanup()
 
-        if dowebgui:
+        if args.dowebgui:
             obj.copy_reports_to_home_dir()
+
+
+    def run_vs_test1(
+        self,
+        ssid=None,
+        passwd="something",
+        encryp="psk",
+        url="www.google.com",
+        max_speed=0,
+        urls_per_tenm=100,
+        duration=None,
+        test_name="video_streaming_test",
+        dowebgui=False,
+        result_dir='',
+        lf_logger_config_json=None,
+        log_level=None,
+        debug=False,
+        media_source='1',
+        media_quality='0',
+        device_list=None,
+        webgui_incremental=None,
+        incremental=False,
+        no_laptops=True,
+        postcleanup=False,
+        precleanup=False,
+        help_summary=False,
+        group_name=None,
+        profile_name=None,
+        file_name=None,
+        eap_method='DEFAULT',
+        eap_identity='DEFAULT',
+        ieee8021x=False,
+        ieee80211u=False,
+        ieee80211w=1,
+        enable_pkc=False,
+        bss_transition=False,
+        power_save=False,
+        disable_ofdma=False,
+        roam_ft_ds=False,
+        key_management='DEFAULT',
+        pairwise='NA',
+        private_key='NA',
+        ca_cert='NA',
+        client_cert='NA',
+        pk_passwd='NA',
+        pac_file='NA',
+        upstream_port='NA',
+        expected_passfail_value=None,
+        csv_name=None,
+        wait_time=60,
+        config=False,
+        device_csv_name=None,
+        get_live_view=False,
+        floors=0
+    ):
+        args = SimpleNamespace(**locals())
+        args.host = self.lanforge_ip
+        self.run_vs_test(args)
 
     def run_throughput_test(
         self,
@@ -2524,13 +2529,13 @@ class Candela:
         profile_name=None,
         wait_time=60,
         config=False,
-        default_config=False,
+        default_config=True,
         thpt_mbps=False,
         help_summary=False
     ):
         if help_summary:
             print(help_summary)
-            exit(0)
+            return False
 
         if dowebgui:
             if (upload == '0'):
@@ -2785,7 +2790,7 @@ class Candela:
 
         if args.help_summary:
             print(help_summary)
-            exit(0)
+            return False
 
         test_name = ""
         ip = ""
@@ -2820,11 +2825,11 @@ class Candela:
         # Validate existing station list configuration if specified before starting test
         if not args.use_existing_station_list and args.existing_station_list:
             logger.error("Existing stations specified, but argument \'--use_existing_station_list\' not specified")
-            exit(1)
+            return False
         elif args.use_existing_station_list and not args.existing_station_list:
             logger.error(
                 "Argument \'--use_existing_station_list\' specified, but no existing stations provided. See \'--existing_station_list\'")
-            exit(1)
+            return False
 
         # Gather data for test reporting and KPI generation
         logger.info("Read in command line paramaters")
@@ -2917,7 +2922,7 @@ class Candela:
                         logger.critical(
                             "missing config, for the {}, all of the following need to be present {} ".format(
                                 key, radio_keys))
-                        exit(1)
+                        return False
 
                 radio_name_list.append(radio_info_dict['radio'])
                 number_of_stations_per_radio_list.append(
@@ -3194,7 +3199,7 @@ class Candela:
                         logger.debug("wifi_settings is present wifi_mode, enable_flags need to be set "
                                     "or remove the wifi_settings or set wifi_settings==False flag on "
                                     "the radio for defaults")
-                        exit(1)
+                        return False
                     wifi_mode_list.append(radio_info_dict['wifi_mode'])
                     enable_flags_str = radio_info_dict['enable_flags'].replace(
                         '(', '').replace(')', '').replace('|', ',').replace('&&', ',')
@@ -3423,7 +3428,7 @@ class Candela:
         if not ip_var_test.passes():
             logger.critical("Test configuration build failed")
             logger.critical(ip_var_test.get_fail_message())
-            exit(1)
+            return False
 
         # Run test
         logger.info("Starting test")
@@ -3647,7 +3652,15 @@ class Candela:
         try:
             if help_summary:
                 logging.info(help_summary)
-                exit(0)
+                return False
+            if duration.endswith('s') or duration.endswith('S'):
+                duration = int(duration[0:-1])
+            elif duration.endswith('m') or duration.endswith('M'):
+                duration = int(duration[0:-1]) * 60
+            elif duration.endswith('h') or duration.endswith('H'):
+                duration = int(duration[0:-1]) * 60 * 60
+            elif duration.endswith(''):
+                duration = int(duration)
 
             # set the logger level to debug
             logger_config = lf_logger_config.lf_logger_config()
@@ -3680,7 +3693,7 @@ class Candela:
 
                 if expected_passfail_value is not None and device_csv_name is not None:
                     logging.error("Specify either expected_passfail_value or device_csv_name")
-                    exit(1)
+                    return False
 
                 if group_name is not None:
                     group_name = group_name.strip()
@@ -3696,20 +3709,20 @@ class Candela:
 
                 if len(selected_groups) != len(selected_profiles):
                     logging.error("Number of groups should match number of profiles")
-                    exit(0)
+                    return False
 
                 elif group_name is not None and profile_name is not None and file_name is not None and resource_list is not None:
                     logging.error("Either group name or device list should be entered not both")
-                    exit(0)
+                    return False
                 elif ssid is not None and profile_name is not None:
                     logging.error("Either ssid or profile name should be given")
-                    exit(0)
+                    return False
                 elif file_name is not None and (group_name is None or profile_name is None):
                     logging.error("Please enter the correct set of arguments")
-                    exit(0)
+                    return False
                 elif config and ((ssid is None or (passwd is None and sec.lower() != 'open') or (passwd is None and sec is None))):
                     logging.error("Please provide ssid password and security for configuration of devices")
-                    exit(0)
+                    return False
 
                 Devices = RealDevice(manager_ip=mgr_ip,
                                     server_ip='192.168.1.61',
@@ -3882,7 +3895,7 @@ class Candela:
                 # Check if the required tab exists, and exit if not
                 if not youtube.check_tab_exists():
                     logging.error('Generic Tab is not available.\nAborting the test.')
-                    exit(0)
+                    return False
 
                 if len(youtube.real_sta_list) > 0:
                     logging.info(f"checking real sta list while creating endpionts {youtube.real_sta_list}")
@@ -3890,7 +3903,7 @@ class Candela:
                 else:
                     logging.info(f"checking real sta list while creating endpionts {youtube.real_sta_list}")
                     logging.error("No Real Devies Available")
-                    exit(0)
+                    return False
 
                 logging.info("TEST STARTED")
                 logging.info('Running the Youtube Streaming test for {} minutes'.format(duration))
@@ -3997,7 +4010,7 @@ class Candela:
             if True:
                 if expected_passfail_value is not None and device_csv_name is not None:
                     logging.error("Specify either expected_passfail_value or device_csv_name")
-                    exit(1)
+                    return False
 
                 if group_name is not None:
                     group_name = group_name.strip()
@@ -4013,19 +4026,19 @@ class Candela:
 
                 if len(selected_groups) != len(selected_profiles):
                     logging.error("Number of groups should match number of profiles")
-                    exit(0)
+                    return False
                 elif group_name is not None and profile_name is not None and file_name is not None and resource_list is not None:
                     logging.error("Either group name or device list should be entered not both")
-                    exit(0)
+                    return False
                 elif ssid is not None and profile_name is not None:
                     logging.error("Either ssid or profile name should be given")
-                    exit(0)
+                    return False
                 elif file_name is not None and (group_name is None or profile_name is None):
                     logging.error("Please enter the correct set of arguments")
-                    exit(0)
+                    return False
                 elif config and ((ssid is None or (passwd is None and security.lower() != 'open') or (passwd is None and security is None))):
                     logging.error("Please provide ssid password and security for configuration of devices")
-                    exit(0)
+                    return False
 
                 zoom_automation = ZoomAutomation(audio=audio, video=video, lanforge_ip=lanforge_ip, wait_time=wait_time, testname=testname,
                                                 upstream_port=upstream_port, config=config, selected_groups=selected_groups, selected_profiles=selected_profiles)
@@ -4196,7 +4209,7 @@ class Candela:
 
                 if not zoom_automation.check_tab_exists():
                     logging.error('Generic Tab is not available.\nAborting the test.')
-                    exit(0)
+                    return False
 
                 zoom_automation.run(duration, upstream_port, signin_email, signin_passwd, participants)
                 zoom_automation.data_store.clear()
@@ -4334,7 +4347,7 @@ class Candela:
                 available_resources = obj.filter_ios_devices(available_resources)
             if len(available_resources) == 0:
                 logging.error("No devices available to run the test. Exiting...")
-                exit(1)
+                return False
 
             # --- Print available resources ---
             logging.info("Devices available: {}".format(available_resources))
@@ -4357,7 +4370,7 @@ class Candela:
 
                 if not args.no_postcleanup:
                     obj.postcleanup()
-        
+
 
     def run_rb_test(
         self,
@@ -4413,7 +4426,7 @@ class Candela:
 
 
 def main():
-       
+
     parser = argparse.ArgumentParser(
     prog="lf_interop_throughputput.py",
     formatter_class=argparse.RawTextHelpFormatter,
@@ -4526,7 +4539,7 @@ def main():
     # parser.add_argument('--http_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
     # parser.add_argument('--http_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
     parser.add_argument("--http_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
-    
+
     #ftp
     parser.add_argument('--ftp_test',
                           action="store_true",
@@ -4616,8 +4629,8 @@ def main():
     # parser.add_argument('--qos_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
     # parser.add_argument('--qos_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
     parser.add_argument("--qos_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
-    
-    
+
+
     #vs
     parser.add_argument('--vs_test',
                           action="store_true",
@@ -4662,7 +4675,7 @@ def main():
     # parser.add_argument('--vs_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
     # parser.add_argument('--vs_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
     parser.add_argument("--vs_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
-    
+
     #thput
     parser.add_argument('--thput_test',
                           action="store_true",
@@ -4777,6 +4790,94 @@ def main():
     # parser.add_argument('--mcast_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
     # parser.add_argument('--mcast_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
     parser.add_argument("--mcast_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
+    #YOUTUBE
+    parser.add_argument('--yt_test',
+                          action="store_true",
+                          help='mcast_test consists')
+    parser.add_argument('--yt_url', type=str, help='youtube url')
+    parser.add_argument('--yt_duration', type=int, help='duration to run the test in sec')
+    parser.add_argument('--yt_res', default='Auto', help="to set resolution to  144p,240p,720p")
+    # parser.add_argument('--yt_upstream_port', type=str, help='Specify The Upstream Port name or IP address', required=True)
+    parser.add_argument('--yt_device_list', help='Specify the real device ports seperated by comma')
+    #mcast pass fail value
+    parser.add_argument("--yt_expected_passfail_value", help="Specify the expected number of urls", default=None)
+    parser.add_argument("--yt_device_csv_name", type=str, help='Specify the csv name to store expected url values', default=None)
+    #yt with groups and profile configuration
+    parser.add_argument('--yt_file_name', type=str, help='Specify the file name containing group details. Example:file1')
+    parser.add_argument('--yt_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
+    parser.add_argument('--yt_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
+
+    #yt configuration with --config
+    parser.add_argument("--yt_config", action="store_true", help="Specify for configuring the devices")
+    parser.add_argument('--yt_ssid', help='WiFi SSID for script objects to associate to')
+    parser.add_argument('--yt_passwd', '--yt_password', '--yt_key', default="[BLANK]", help='WiFi passphrase/password/key')
+    parser.add_argument('--yt_security', help='WiFi Security protocol: < open | wep | wpa | wpa2 | wpa3 >', default="open")
+    #Optional yt config args
+    parser.add_argument("--yt_eap_method", type=str, default='DEFAULT', help="Specify the EAP method for authentication.")
+    parser.add_argument("--yt_eap_identity", type=str, default='', help="Specify the EAP identity for authentication.")
+    parser.add_argument("--yt_ieee8021x", action="store_true", help='Enables 802.1X enterprise authentication for test stations.')
+    parser.add_argument("--yt_ieee80211u", action="store_true", help='Enables IEEE 802.11u (Hotspot 2.0) support.')
+    parser.add_argument("--yt_ieee80211w", type=int, default=1, help='Enables IEEE 802.11w (Management Frame Protection) support.')
+    parser.add_argument("--yt_enable_pkc", action="store_true", help='Enables pkc support.')
+    parser.add_argument("--yt_bss_transition", action="store_true", help='Enables BSS transition support.')
+    parser.add_argument("--yt_power_save", action="store_true", help='Enables power-saving features.')
+    parser.add_argument("--yt_disable_ofdma", action="store_true", help='Disables OFDMA support.')
+    parser.add_argument("--yt_roam_ft_ds", action="store_true", help='Enables fast BSS transition (FT) support')
+    parser.add_argument("--yt_key_management", type=str, default='DEFAULT', help='Specify the key management method (e.g., WPA-PSK, WPA-EAP')
+    parser.add_argument("--yt_pairwise", type=str, default='NA')
+    parser.add_argument("--yt_private_key", type=str, default='NA', help='Specify EAP private key certificate file.')
+    parser.add_argument("--yt_ca_cert", type=str, default='NA', help='Specifiy the CA certificate file name')
+    parser.add_argument("--yt_client_cert", type=str, default='NA', help='Specify the client certificate file name')
+    parser.add_argument("--yt_pk_passwd", type=str, default='NA', help='Specify the password for the private key')
+    parser.add_argument("--yt_pac_file", type=str, default='NA', help='Specify the pac file name')
+    # parser.add_argument('--yt_file_name', type=str, help='Specify the file name containing group details. Example:file1')
+    # parser.add_argument('--yt_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
+    # parser.add_argument('--yt_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
+    parser.add_argument("--yt_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
+    #real browser
+    parser.add_argument('--rb_test',
+                          action="store_true",
+                          help='mcast_test consists')
+    parser.add_argument("--rb_url", default="https://google.com", help='specify the url you want to test on')
+    parser.add_argument('--rb_duration', type=str, help='time to run traffic')
+    parser.add_argument('--rb_device_list', type=str, help='provide resource_ids of android devices. for instance: "10,12,14"')
+    parser.add_argument('--rb_webgui_incremental', '--rb_incremental_capacity', help="Specify the incremental values <1,2,3..>", dest='webgui_incremental', type=str)
+    parser.add_argument('--rb_incremental', help="to add incremental capacity to run the test", action='store_true')
+    #mcast pass fail value
+    parser.add_argument("--rb_expected_passfail_value", help="Specify the expected number of urls", default=None)
+    parser.add_argument("--rb_device_csv_name", type=str, help='Specify the csv name to store expected url values', default=None)
+    #rb with groups and profile configuration
+    parser.add_argument('--rb_file_name', type=str, help='Specify the file name containing group details. Example:file1')
+    parser.add_argument('--rb_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
+    parser.add_argument('--rb_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
+
+    #rb configuration with --config
+    parser.add_argument("--rb_config", action="store_true", help="Specify for configuring the devices")
+    parser.add_argument('--rb_ssid', help='WiFi SSID for script objects to associate to')
+    parser.add_argument('--rb_passwd', '--rb_password', '--rb_key', default="[BLANK]", help='WiFi passphrase/password/key')
+    parser.add_argument('--rb_security', help='WiFi Security protocol: < open | wep | wpa | wpa2 | wpa3 >', default="open")
+    #Optional rb config args
+    parser.add_argument("--rb_eap_method", type=str, default='DEFAULT', help="Specify the EAP method for authentication.")
+    parser.add_argument("--rb_eap_identity", type=str, default='', help="Specify the EAP identity for authentication.")
+    parser.add_argument("--rb_ieee80211", action="store_true", help='Enables 802.1X enterprise authentication for test stations.')
+    parser.add_argument("--rb_ieee80211u", action="store_true", help='Enables IEEE 802.11u (Hotspot 2.0) support.')
+    parser.add_argument("--rb_ieee80211w", type=int, default=1, help='Enables IEEE 802.11w (Management Frame Protection) support.')
+    parser.add_argument("--rb_enable_pkc", action="store_true", help='Enables pkc support.')
+    parser.add_argument("--rb_bss_transition", action="store_true", help='Enables BSS transition support.')
+    parser.add_argument("--rb_power_save", action="store_true", help='Enables power-saving features.')
+    parser.add_argument("--rb_disable_ofdma", action="store_true", help='Disables OFDMA support.')
+    parser.add_argument("--rb_roam_ft_ds", action="store_true", help='Enables fast BSS transition (FT) support')
+    parser.add_argument("--rb_key_management", type=str, default='DEFAULT', help='Specify the key management method (e.g., WPA-PSK, WPA-EAP')
+    parser.add_argument("--rb_pairwise", type=str, default='NA')
+    parser.add_argument("--rb_private_key", type=str, default='NA', help='Specify EAP private key certificate file.')
+    parser.add_argument("--rb_ca_cert", type=str, default='NA', help='Specifiy the CA certificate file name')
+    parser.add_argument("--rb_client_cert", type=str, default='NA', help='Specify the client certificate file name')
+    parser.add_argument("--rb_pk_passwd", type=str, default='NA', help='Specify the password for the private key')
+    parser.add_argument("--rb_pac_file", type=str, default='NA', help='Specify the pac file name')
+    # parser.add_argument('--rb_file_name', type=str, help='Specify the file name containing group details. Example:file1')
+    # parser.add_argument('--rb_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
+    # parser.add_argument('--rb_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
+    parser.add_argument("--rb_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
     args = parser.parse_args()
     candela_apis = Candela(ip=args.mgr, port=args.mgr_port)
 
@@ -5052,7 +5153,7 @@ def main():
 
     # Video Streaming (VS) Test
     if args.vs_test:
-        candela_apis.run_vs_test(
+        candela_apis.run_vs_test1(
             url=args.vs_url,
             media_source=args.vs_media_source,
             media_quality=args.vs_media_quality,
@@ -5089,6 +5190,9 @@ def main():
 
     # Throughput (thput) Test
     if args.thput_test:
+        if args.thput_do_interopability and args.thput_config:
+            args.thput_default_config = False
+            args.thput_config = False
         candela_apis.run_throughput_test(
             upstream_port=args.upstream_port,
             test_duration=args.thput_test_duration,
@@ -5131,7 +5235,7 @@ def main():
     if args.mcast_test:
         candela_apis.run_mc_test1(
             test_duration=args.mcast_test_duration,
-            upstream_port=args.mcast_upstream_port,
+            upstream_port=args.upstream_port,
             endp_type=args.mcast_endp_type,
             side_b_min_bps=args.mcast_side_b_min_bps,
             tos=args.mcast_tos,
@@ -5164,7 +5268,75 @@ def main():
             pac_file=args.mcast_pac_file,
             wait_time=args.mcast_wait_time
         )
-    
+    if args.yt_test:
+        candela_apis.run_yt_test(
+        url=args.yt_url,
+        duration=args.yt_duration,
+        res=args.yt_res,
+        upstream_port=args.upstream_port,
+        resource_list=args.yt_device_list,
+        expected_passfail_value=args.yt_expected_passfail_value,
+        device_csv_name=args.yt_device_csv_name,
+        file_name=args.yt_file_name,
+        group_name=args.yt_group_name,
+        profile_name=args.yt_profile_name,
+        config=args.yt_config,
+        ssid=args.yt_ssid,
+        passwd=args.yt_passwd,
+        encryp=args.yt_security,
+        eap_method=args.yt_eap_method,
+        eap_identity=args.yt_eap_identity,
+        ieee8021x=args.yt_ieee8021x,
+        ieee80211u=args.yt_ieee80211u,
+        ieee80211w=args.yt_ieee80211w,
+        enable_pkc=args.yt_enable_pkc,
+        bss_transition=args.yt_bss_transition,
+        power_save=args.yt_ieee8021x,
+        disable_ofdma=args.yt_disable_ofdma,
+        roam_ft_ds=args.yt_roam_ft_ds,
+        key_management=args.yt_key_management,
+        pairwise=args.yt_pairwise,
+        private_key=args.yt_private_key,
+        ca_cert=args.yt_ca_cert,
+        client_cert=args.yt_client_cert,
+        pk_passwd=args.yt_pk_passwd,
+        pac_file=args.yt_pac_file,
+        # wait_time=args.yt_wait_time
+        )
+    if args.rb_test:
+        candela_apis.run_rb_test(
+        url=args.rb_url,
+        upstream_port=args.upstream_port,
+        device_list=args.rb_device_list,
+        expected_passfail_value=args.rb_expected_passfail_value,
+        device_csv_name=args.rb_device_csv_name,
+        file_name=args.rb_file_name,
+        group_name=args.rb_group_name,
+        profile_name=args.rb_profile_name,
+        config=args.rb_config,
+        ssid=args.rb_ssid,
+        passwd=args.rb_passwd,
+        encryp=args.rb_security,
+        eap_method=args.rb_eap_method,
+        eap_identity=args.rb_eap_identity,
+        ieee80211=args.rb_ieee80211,
+        ieee80211u=args.rb_ieee80211u,
+        ieee80211w=args.rb_ieee80211w,
+        enable_pkc=args.rb_enable_pkc,
+        bss_transition=args.rb_bss_transition,
+        power_save=args.rb_power_save,
+        disable_ofdma=args.rb_disable_ofdma,
+        roam_ft_ds=args.rb_roam_ft_ds,
+        key_management=args.rb_key_management,
+        pairwise=args.rb_pairwise,
+        private_key=args.rb_private_key,
+        ca_cert=args.rb_ca_cert,
+        client_cert=args.rb_client_cert,
+        pk_passwd=args.rb_pk_passwd,
+        pac_file=args.rb_pac_file,
+        wait_time=args.rb_wait_time
+        )
+
 
 
 #WITHOUT CONFIG
@@ -5207,8 +5379,6 @@ def main():
 #     log_level="info",
 #     device_list=["1.12,1.95"]
 # )
-
-
 # candela_apis.run_yt_test(
 #     url="https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1",
 #     duration=1,
@@ -5317,12 +5487,13 @@ def main():
 # candela_apis.start_ftp_test(ssid='Walkin_open', password='[BLANK]', security='open',
 #                                 device_list='1.16,1.95',background=False)
 # candela_apis.run_qos_test(upstream_port="eth1",test_duration="1m",download ="0",upload="1000000",traffic_type ="lf_udp",tos="BK,BE,VI,VO",device_list="1.12,1.16,1.95")
-# candela_apis.run_vs_test(
+# candela_apis = Candela(ip='192.168.242.2',port='8080')
+# candela_apis.run_vs_test1(
 #     url="https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
 #     media_source="hls",
 #     media_quality="1080P",
 #     duration="1m",
-#     device_list="1.12,1.95",
+#     device_list="1.13,1.10,1.15",
 #     debug=True,
 #     test_name="video_streaming_test"
 # )
