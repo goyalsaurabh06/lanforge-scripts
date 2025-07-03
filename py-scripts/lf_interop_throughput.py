@@ -2398,7 +2398,7 @@ class Throughput(Realm):
         report.write_pdf(_orientation="Landscape")
 
     # Creates a separate DataFrame for each group of devices.
-    def generate_dataframe(self, groupdevlist, typeofdevice, devusername, devssid, devmac, devchannel, devmode, devdirection, devofdownload, devobsdownload,
+    def generate_dataframe(self, groupdevlist, typeofdevice, devusername, devssid, devmac, devchannel, devmode, devdirection, devofdownload, devrtt, devobsdownload,
                            devoffupload, devobsupload, devrssi, devExpected, devlinkspeed, devpacketsize, devstatus, upload_drop, download_drop):
         """
         Creates a separate DataFrame for each group of devices.
@@ -2426,6 +2426,7 @@ class Throughput(Realm):
         statuslist = []
         avg_updrop = []
         avg_dndrop = []
+        avgrtt = []
         interop_tab_data = self.json_get('/adb/')["devices"]
         for i in range(len(typeofdevice)):
             for j in groupdevlist:
@@ -2443,6 +2444,7 @@ class Throughput(Realm):
                     obsupload.append(devobsupload[i])
                     rssi.append(devrssi[i])
                     linkspeed.append(devlinkspeed[i])
+                    avgrtt.append(devrtt[i])
                     if len(upload_drop) != 0:
                         avg_updrop.append(upload_drop[i])
                     if len(download_drop) != 0:
@@ -2469,7 +2471,7 @@ class Throughput(Realm):
                                 offupload.append(devoffupload[i])
                                 obsupload.append(devobsupload[i])
                                 rssi.append(devrssi[i])
-
+                                avgrtt.append(devrtt[i])
                                 linkspeed.append(devlinkspeed[i])
                                 if len(upload_drop) != 0:
                                     avg_updrop.append(upload_drop[i])
@@ -2497,6 +2499,7 @@ class Throughput(Realm):
                     " RSSI ": rssi,
                     " Link Speed ": linkspeed,
                     " Packet Size(Bytes) ": packetsize,
+                    " RTT ": avgrtt
                 }
 
                 if self.direction == "Bi-direction":
@@ -2532,6 +2535,8 @@ class Throughput(Realm):
                     " Observed upload rate ": obsupload,
                     " RSSI ": rssi,
                     " Link Speed ": linkspeed,
+                    " RTT ": avgrtt
+                    
                 }
                 if self.direction == "Bi-direction":
                     dataframe[" Average Rx Drop B% "] = avg_updrop
