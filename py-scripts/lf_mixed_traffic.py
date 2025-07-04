@@ -97,6 +97,7 @@ INCLUDE_IN_README: False
 import argparse
 import asyncio
 import importlib
+import traceback
 import json
 import logging
 import platform
@@ -951,7 +952,8 @@ class Mixed_Traffic(Realm):
                 self.qos_test_obj.real_client_list1 = self.user_query[1]
                 self.qos_test_obj.mac_id_list = self.user_query[2]
                 self.qos_test_obj.build()
-                time.sleep(20)
+                if self.real:
+                    self.qos_test_obj.monitor_cx()
                 self.qos_test_obj.start()
                 self.qos_test_obj.connections_download_avg = []
                 self.qos_test_obj.connections_upload_avg = []
@@ -961,6 +963,7 @@ class Mixed_Traffic(Realm):
                 try:
                     connections_download, connections_upload, drop_a_per, drop_b_per, self.qos_test_obj.connections_download_avg, self.qos_test_obj.connections_upload_avg, self.qos_test_obj.avg_drop_a, self.qos_test_obj.avg_drop_b = self.qos_test_obj.monitor()
                 except Exception as e:
+                    traceback.print_exc()
                     print(f"Failed at Monitoring the CX... {e}")
                 self.qos_test_obj.stop()
                 time.sleep(5)
@@ -1132,7 +1135,7 @@ class Mixed_Traffic(Realm):
                     conn.send([self.throughput_qos_obj, self.data_set, self.load, self.res, True])
             self.qos_test_status = True
         except Exception as e:
-            # traceback.print_exc()
+            traceback.print_exc()
             logging.exception(e)
             if (conn):
                 conn.send(['', '', '', '', False])
@@ -1207,6 +1210,8 @@ class Mixed_Traffic(Realm):
                     time1 = datetime.datetime.now()
                     time.sleep(20)
                     logger.info("FTP Traffic started running at {}".format(time1))
+                    if self.real:
+                        self.ftp_test_obj.monitor_cx()
                     self.ftp_test_obj.start(False, False)
                     if self.dowebgui or self.real:
                         self.ftp_test_obj.monitor_for_runtime_csv()
@@ -1358,6 +1363,8 @@ class Mixed_Traffic(Realm):
             test_time = datetime.datetime.now().strftime("%b %d %H:%M:%S")
             time.sleep(20)
             logger.info("HTTP Test started at {}".format(test_time))
+            if self.real:
+                self.http_obj.monitor_cx()
             self.http_obj.start()
             if self.dowebgui or self.real:
                 self.http_obj.monitor_for_runtime_csv(self.http_test_duration)
