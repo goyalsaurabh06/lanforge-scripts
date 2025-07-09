@@ -5810,7 +5810,6 @@ def run_test_safe(test_func, test_name, args, candela_apis):
                 logger.info(f"{test_name} PASSED")
         except SystemExit as e:
             logger.error(f"{test_name} exited with code {e.code}")
-            traceback.print_exc()
         except Exception as e:
             logger.exception(f"{test_name} crashed unexpectedly")
             traceback.print_exc()
