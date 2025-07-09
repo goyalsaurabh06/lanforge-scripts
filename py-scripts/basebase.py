@@ -4394,6 +4394,9 @@ def main():
     #Common
     parser.add_argument('--device_list', help="Enter the devices on which the test should be run", default=[])
     parser.add_argument('--duration', help='Please enter the duration in s,m,h (seconds or minutes or hours).Eg: 30s,5m,48h')
+    parser.add_argument('--paralell',
+                          action="store_true",
+                          help='to run in paralell')
     #NOt common
     #ping
     #without config
@@ -5590,12 +5593,15 @@ def main():
 
     if args.zoom_test:
         threads.append(threading.Thread(target=run_test_safe(run_zoom_test, "ZOOM TEST", args, candela_apis)))
-
-
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
+    if args.paralell:
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    else:
+        for t in threads:
+            t.start()
+            t.join()
 
 #WITHOUT CONFIG
 # candela_apis.run_ping_test(real=True,target="192.168.204.59",ping_interval='5',ping_duration=1,ssid="NETGEAR_2G_wpa2",passwd="Password@123",security="wpa2",use_default_config=True,dev_list="1.12,1.400")
