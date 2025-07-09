@@ -1588,7 +1588,8 @@ class L3VariableTime(Realm):
         for endp in endps:
             # pprint(endp)
             if not self.dowebgui:
-                logging.info(pformat(endp))
+                pass
+                # logging.info(pformat(endp))
             eid_endp = endp["eid"].split(".")
             logger.debug(
                 "Comparing eid:{eid} to endp-id {eid_endp}".format(eid=eid, eid_endp=eid_endp))
@@ -3062,12 +3063,12 @@ class L3VariableTime(Realm):
         self.side_a_min_bps = self.cx_profile.side_a_min_bps
 
         for endp_data in self.endp_data['endpoint']:
-            logger.info("endp_data type {endp_type} endp_data {endp_data}".format(
-                endp_type=type(endp_data), endp_data=endp_data))
+            # logger.info("endp_data type {endp_type} endp_data {endp_data}".format(
+                # endp_type=type(endp_data), endp_data=endp_data))
             # The dictionary only has one key
             endp_data_key = list(endp_data.keys())[0]
-            logger.info("endpoint_data key: {key}  name: {name} a/b {ab} rx rate {rx_rate}".format(
-                key=endp_data_key, name=endp_data[endp_data_key]['name'], ab=endp_data[endp_data_key]['a/b'], rx_rate=endp_data[endp_data_key]['rx rate']))
+            # logger.info("endpoint_data key: {key}  name: {name} a/b {ab} rx rate {rx_rate}".format(
+            #     key=endp_data_key, name=endp_data[endp_data_key]['name'], ab=endp_data[endp_data_key]['a/b'], rx_rate=endp_data[endp_data_key]['rx rate']))
 
             # Gather data for upload , download for the four data types BK, BE, VI, VO, place the
             # the data_set will be the upload and download rates for each client
@@ -5960,9 +5961,62 @@ class L3VariableTime(Realm):
 
         # graph BK A
         # try to do as a loop
+        logger.info(f"BEFORE REAL A {self.client_dict_A}")
         tos_list = ['BK', 'BE', 'VI', 'VO']
+        if self.real:
+            tos_types = ['BE', 'BK', 'VI', 'VO']
+            print("BOOLLLLL",self.client_dict_B is self.client_dict_A)
+            for tos_key in tos_types:
+                if tos_key in self.client_dict_A:
+                    tos_data = self.client_dict_A[tos_key]
 
+                    # Filter A side
+                    traffic_proto_A = tos_data.get("traffic_protocol_A", [])
+                    indices_to_keep_A = [i for i, proto in enumerate(traffic_proto_A) if proto == "Mcast"]
+
+                    # Filter B side
+                    traffic_proto_B = tos_data.get("traffic_protocol_B", [])
+                    indices_to_keep_B = [i for i, proto in enumerate(traffic_proto_B) if proto == "Mcast"]
+
+                    for key in list(tos_data.keys()):
+                        if key in ["colors", "labels"]:
+                            continue  # Keep as-is
+
+                        if key.endswith('_A'):
+                            filtered_list = [tos_data[key][i] for i in indices_to_keep_A if i < len(tos_data[key])]
+                            tos_data[key] = filtered_list
+
+                        elif key.endswith('_B'):
+                            filtered_list = [tos_data[key][i] for i in indices_to_keep_B if i < len(tos_data[key])]
+                            tos_data[key] = filtered_list
+            for tos_key in tos_types:
+                if tos_key in self.client_dict_B:
+                    tos_data = self.client_dict_B[tos_key]
+
+                    # Filter A side
+                    traffic_proto_A = tos_data.get("traffic_protocol_A", [])
+                    indices_to_keep_A = [i for i, proto in enumerate(traffic_proto_A) if proto == "Mcast"]
+
+                    # Filter B side
+                    traffic_proto_B = tos_data.get("traffic_protocol_B", [])
+                    indices_to_keep_B = [i for i, proto in enumerate(traffic_proto_B) if proto == "Mcast"]
+
+                    for key in list(tos_data.keys()):
+                        if key in ["colors", "labels"]:
+                            continue  # Keep as-is
+
+                        if key.endswith('_A'):
+                            filtered_list = [tos_data[key][i] for i in indices_to_keep_A if i < len(tos_data[key])]
+                            tos_data[key] = filtered_list
+
+                        elif key.endswith('_B'):
+                            filtered_list = [tos_data[key][i] for i in indices_to_keep_B if i < len(tos_data[key])]
+                            tos_data[key] = filtered_list
+        logger.info(f"AFTER REAL A {self.client_dict_A}")
         for tos in tos_list:
+            print(self.tos)
+            if tos not in self.tos:
+                continue
             if (self.client_dict_A[tos]["ul_A"] and self.client_dict_A[tos]["dl_A"]):
                 min_bps_a = self.client_dict_A["min_bps_a"]
                 min_bps_b = self.client_dict_A["min_bps_b"]
@@ -6060,7 +6114,7 @@ class L3VariableTime(Realm):
                     for i in self.client_dict_A[tos]['dl_A']:
                         down.append(int(i) / 1000000)
                     for i in self.client_dict_A[tos]['offered_upload_rate_A']:
-                        off_up.append(int(i) / 1000000)
+                        off_up.append(int(i) / 1_000_000)
                     for i in self.client_dict_A[tos]['offered_download_rate_A']:
                         off_down.append(int(i) / 1000000)
                     # if either 'expected_passfail_value' or 'device_csv_name' is provided for pass/fail evaluation
@@ -6608,8 +6662,8 @@ def query_real_clients(args):
         'pac_file': args.pac_file,
         'server_ip': upstream_port_ip,
     }
-    if not args.expected_passfail_value and args.device_csv_name is None:
-        config_obj.device_csv_file(csv_name="device.csv")
+    # if not args.expected_passfail_value and args.device_csv_name is None:
+    #     config_obj.device_csv_file(csv_name="device.csv")
     # Configuration of devices with groups and profiles
     if args.group_name and args.file_name and args.profile_name:
         selected_groups = args.group_name.split(',')
