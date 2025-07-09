@@ -6150,7 +6150,8 @@ def run_rb_test(args, candela_apis):
         client_cert=args.rb_client_cert,
         pk_passwd=args.rb_pk_passwd,
         pac_file=args.rb_pac_file,
-        wait_time=args.rb_wait_time
+        wait_time=args.rb_wait_time,
+        duration=args.rb_duration
     )
 
 def run_zoom_test(args, candela_apis):
