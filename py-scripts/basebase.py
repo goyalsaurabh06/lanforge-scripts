@@ -4936,7 +4936,7 @@ def main():
     # exit(0)
     validate_args(args_dict)
     candela_apis = Candela(ip=args.mgr, port=args.mgr_port)
-
+    candela_apis.misc_clean_up(layer3=True,layer4=True)
     print(args)
     # if args.ping_test:
     #     candela_apis.run_ping_test(
@@ -5598,6 +5598,7 @@ def main():
             t.start()
         for t in threads:
             t.join()
+        candela_apis.misc_clean_up(layer3=True,layer4=True)
     else:
         for t in threads:
             t.start()
