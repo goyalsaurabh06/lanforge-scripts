@@ -3397,7 +3397,7 @@ class Candela:
 
     def run_mc_test1(
         self,
-        local_lf_report_dir="",
+        local_lf_report_dir="py-scripts/",
         results_dir_name="test_l3",
         test_rig="",
         test_tag="",
