@@ -4394,9 +4394,9 @@ def main():
     #Common
     parser.add_argument('--device_list', help="Enter the devices on which the test should be run", default=[])
     parser.add_argument('--duration', help='Please enter the duration in s,m,h (seconds or minutes or hours).Eg: 30s,5m,48h')
-    parser.add_argument('--paralell',
+    parser.add_argument('--parallel',
                           action="store_true",
-                          help='to run in paralell')
+                          help='to run in parallel')
     #NOt common
     #ping
     #without config
@@ -5593,7 +5593,7 @@ def main():
 
     if args.zoom_test:
         threads.append(threading.Thread(target=run_test_safe(run_zoom_test, "ZOOM TEST", args, candela_apis)))
-    if args.paralell:
+    if args.parallel:
         for t in threads:
             t.start()
         for t in threads:
