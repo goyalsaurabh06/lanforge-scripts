@@ -24,6 +24,8 @@ import argparse
 import json
 import traceback
 from types import SimpleNamespace
+import matplotlib
+matplotlib.use('Agg')  # Before importing pyplot
 base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 print('base path',base_path)
 sys.path.insert(0, os.path.join(base_path, 'py-json'))     # for interop_connectivity, LANforge
