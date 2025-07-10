@@ -1798,6 +1798,7 @@ class RealBrowserTest(Realm):
                     "Link Speed": tx_rate_data,
 
                 }
+            logger.info(f"dataframe realbrowser {final_test_results}")
             test_results_df = pd.DataFrame(final_test_results)
             report.set_table_dataframe(test_results_df)
             report.build_table()

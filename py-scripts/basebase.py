@@ -3768,8 +3768,8 @@ class Candela:
                             youtube.updating_webui_runningjson(obj)
 
                 # Perform pre-test cleanup if not skipped
-                if not no_pre_cleanup:
-                    youtube.cleanup()
+                # if not no_pre_cleanup:
+                #     youtube.cleanup()
 
                 # Check if the required tab exists, and exit if not
                 if not youtube.check_tab_exists():
@@ -3824,8 +3824,8 @@ class Candela:
                     youtube.create_report(youtube.stats_api_response, '')
 
                 # Perform post-test cleanup if not skipped
-                if not no_post_cleanup:
-                    youtube.generic_endps_profile.cleanup()
+                # if not no_post_cleanup:
+                #     youtube.generic_endps_profile.cleanup()
         except Exception as e:
             logging.error(f"Error occured {e}")
             # traceback.print_exc()
@@ -4111,7 +4111,7 @@ class Candela:
                 zoom_automation.stop_signal = True
                 logging.info("Waiting for Browser Cleanup in Laptops")
                 time.sleep(10)
-                zoom_automation.generic_endps_profile.cleanup()
+                # zoom_automation.generic_endps_profile.cleanup()
         return True
 
 
@@ -4233,8 +4233,8 @@ class Candela:
                     obj.webui_stop()
                 obj.stop()
 
-                if not args.no_postcleanup:
-                    obj.postcleanup()
+                # if not args.no_postcleanup:
+                #     obj.postcleanup()
         return True
 
 
