@@ -2690,6 +2690,8 @@ class Candela:
 
         test_name = ""
         ip = ""
+        # print('newww',args.local_lf_report_dir)
+        # exit(0)
         if args.dowebgui:
             logger.info("In webGUI execution")
             if args.dowebgui:
@@ -3399,7 +3401,7 @@ class Candela:
 
     def run_mc_test1(
         self,
-        local_lf_report_dir="py-scripts/",
+        local_lf_report_dir="",
         results_dir_name="test_l3",
         test_rig="",
         test_tag="",
@@ -3497,6 +3499,7 @@ class Candela:
         args = SimpleNamespace(**locals())
         args.lfmgr_port = self.port
         args.lfmgr = self.lanforge_ip
+        args.local_lf_report_dir = os.getcwd()
         return self.run_mc_test(args)
 
 
