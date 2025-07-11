@@ -25,6 +25,8 @@ import json
 import traceback
 from types import SimpleNamespace
 import matplotlib
+realm = importlib.import_module("py-json.realm")
+Realm = realm.Realm
 matplotlib.use('Agg')  # Before importing pyplot
 base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 print('base path',base_path)
@@ -69,7 +71,7 @@ if 'py-scripts' not in sys.path:
 from station_profile import StationProfile
 import interop_connectivity
 from LANforge import LFUtils
-class Candela:
+class Candela(Realm):
     """
     Candela Class file to invoke different scripts from py-scripts.
     """
@@ -87,7 +89,7 @@ class Candela:
         self.cleanup = lf_cleanup.lf_clean(host=self.lanforge_ip, port=self.port, resource='all')
         self.ftp_test = None
         self.http_test = None
-
+        self.generic_endps_profile = self.new_generic_endp_profile()
         self.iterations_before_test_stopped_by_user=None
         self.incremental_capacity_list=None
         self.all_dataframes=None
@@ -142,7 +144,7 @@ class Candela:
         response = requests.post(url=self.api_url + endp, json=payload)
         return response
 
-    def misc_clean_up(self,layer3=False,layer4=False):
+    def misc_clean_up(self,layer3=False,layer4=False,generic=False):
         """
         Use for the cleanup of cross connections
         arguments:
@@ -154,6 +156,15 @@ class Candela:
             self.cleanup.layer3_endp_clean()
         if layer4:
             self.cleanup.layer4_endp_clean()
+        if generic:
+            resp = self.json_get('/generic?fields=name')
+            if 'endpoints' in resp:
+                for i in resp['endpoints']:
+                    if list(i.values())[0]['name']:
+                        self.generic_endps_profile.created_cx.append('CX_' + list(i.values())[0]['name'])
+                        self.generic_endps_profile.created_endp.append(list(i.values())[0]['name'])
+            self.generic_endps_profile.cleanup()
+
 
     def get_device_info(self):
         """
