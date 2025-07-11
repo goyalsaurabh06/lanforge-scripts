@@ -83,6 +83,8 @@ class Candela(Realm):
             ip (str, optional): LANforge IP. Defaults to 'localhost'.
             port (int, optional): LANforge port. Defaults to 8080.
         """
+        super().__init__(lfclient_host=ip,
+                         lfclient_port=port)
         self.lanforge_ip = ip
         self.port = port
         self.api_url = 'http://{}:{}'.format(self.lanforge_ip, self.port)
