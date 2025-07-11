@@ -1813,6 +1813,7 @@ class RealBrowserTest(Realm):
             report.write_pdf()
         except Exception as e:
             logging.error(f"Error in create_report function {e}", exc_info=True)
+            logger.info("HIIIIIIIIIIIIIIII")
             logger.info(f"REALBBBB {final_test_results}")
         finally:
             if not self.dowebgui:
