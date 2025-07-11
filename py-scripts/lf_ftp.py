@@ -1040,7 +1040,6 @@ class FtpTest(LFCliBase):
                 self.data["remaining_time"] = [[str(int(total_hours)) + " hr and " + str(
                     int(remaining_minutes)) + " min" if int(total_hours) != 0 or int(
                     remaining_minutes) != 0 else '<1 min'][0]] * len(self.cx_list)
-                logger.info(f"data less ftp {self.data}")
                 df1 = pd.DataFrame(self.data)
                 if self.dowebgui:
                     df1.to_csv('{}/ftp_datavalues.csv'.format(self.result_dir), index=False)

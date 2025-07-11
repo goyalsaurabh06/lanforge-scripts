@@ -691,7 +691,6 @@ class HttpDownload(Realm):
             individual_rx_data.extend([current_time])
             for i, port in enumerate(self.port_list):
                 row_data = [current_time, bytes_rd[i], url_times[i], rx_rate[i], rx_rate_list[i], tx_rate_list[i], rssi_list[i]]
-                logger.info(f"data less http {row_data}")
                 individual_device_data[port].loc[len(individual_device_data[port])] = row_data
 
             if len(max_bytes_rd) == 0:
