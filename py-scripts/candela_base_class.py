@@ -24,6 +24,10 @@ import argparse
 import json
 import traceback
 from types import SimpleNamespace
+import matplotlib
+realm = importlib.import_module("py-json.realm")
+Realm = realm.Realm
+matplotlib.use('Agg')  # Before importing pyplot
 base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 print('base path',base_path)
 sys.path.insert(0, os.path.join(base_path, 'py-json'))     # for interop_connectivity, LANforge
@@ -67,7 +71,7 @@ if 'py-scripts' not in sys.path:
 from station_profile import StationProfile
 import interop_connectivity
 from LANforge import LFUtils
-class Candela:
+class Candela(Realm):
     """
     Candela Class file to invoke different scripts from py-scripts.
     """
@@ -79,13 +83,15 @@ class Candela:
             ip (str, optional): LANforge IP. Defaults to 'localhost'.
             port (int, optional): LANforge port. Defaults to 8080.
         """
+        super().__init__(lfclient_host=ip,
+                         lfclient_port=port)
         self.lanforge_ip = ip
         self.port = port
         self.api_url = 'http://{}:{}'.format(self.lanforge_ip, self.port)
         self.cleanup = lf_cleanup.lf_clean(host=self.lanforge_ip, port=self.port, resource='all')
         self.ftp_test = None
         self.http_test = None
-
+        self.generic_endps_profile = self.new_generic_endp_profile()
         self.iterations_before_test_stopped_by_user=None
         self.incremental_capacity_list=None
         self.all_dataframes=None
@@ -140,7 +146,7 @@ class Candela:
         response = requests.post(url=self.api_url + endp, json=payload)
         return response
 
-    def misc_clean_up(self,layer3=False,layer4=False):
+    def misc_clean_up(self,layer3=False,layer4=False,generic=False):
         """
         Use for the cleanup of cross connections
         arguments:
@@ -152,6 +158,15 @@ class Candela:
             self.cleanup.layer3_endp_clean()
         if layer4:
             self.cleanup.layer4_endp_clean()
+        if generic:
+            resp = self.json_get('/generic?fields=name')
+            if 'endpoints' in resp:
+                for i in resp['endpoints']:
+                    if list(i.values())[0]['name']:
+                        self.generic_endps_profile.created_cx.append('CX_' + list(i.values())[0]['name'])
+                        self.generic_endps_profile.created_endp.append(list(i.values())[0]['name'])
+            self.generic_endps_profile.cleanup()
+
 
     def get_device_info(self):
         """
@@ -453,7 +468,7 @@ class Candela:
                 ping.select_real_devices(real_devices=Devices, device_list=dev_list)
 
         # station precleanup
-        ping.cleanup()
+        ping.cleanup() #11 change
 
         # building station if virtual
         if (virtual):
@@ -646,7 +661,7 @@ class Candela:
         logging.info(ping.result_json)
 
         # station post cleanup
-        ping.cleanup()
+        ping.cleanup() #12 change
 
         if local_lf_report_dir == "":
             # Report generation when groups are specified but no custom report path is provided
@@ -1932,8 +1947,8 @@ class Candela:
         args.upstream_port = obj.change_port_to_ip(args.upstream_port)
         obj.validate_args()
         config_obj = DeviceConfig.DeviceConfig(lanforge_ip=args.host, file_name=args.file_name)
-        if not args.expected_passfail_value and args.device_csv_name is None:
-            config_obj.device_csv_file(csv_name="device.csv")
+        # if not args.expected_passfail_value and args.device_csv_name is None:
+        #     config_obj.device_csv_file(csv_name="device.csv")
 
         resource_ids_sm = []
         resource_set = set()
@@ -2688,6 +2703,8 @@ class Candela:
 
         test_name = ""
         ip = ""
+        # print('newww',args.local_lf_report_dir)
+        # exit(0)
         if args.dowebgui:
             logger.info("In webGUI execution")
             if args.dowebgui:
@@ -3431,7 +3448,7 @@ class Candela:
         wait=0,
         sta_start_offset="0",
         no_pre_cleanup=False,
-        no_cleanup=False,
+        no_cleanup=True,
         cleanup_cx=False,
         csv_data_to_report=False,
         no_stop_traffic=False,
@@ -3495,6 +3512,7 @@ class Candela:
         args = SimpleNamespace(**locals())
         args.lfmgr_port = self.port
         args.lfmgr = self.lanforge_ip
+        args.local_lf_report_dir = os.getcwd()
         return self.run_mc_test(args)
 
 
@@ -3644,8 +3662,8 @@ class Candela:
                 else:
                     new_filename = file_name
                 config_obj = DeviceConfig.DeviceConfig(lanforge_ip=self.lanforge_ip, file_name=new_filename)
-                if not expected_passfail_value and device_csv_name is None:
-                    config_obj.device_csv_file(csv_name="device.csv")
+                # if not expected_passfail_value and device_csv_name is None:
+                #     config_obj.device_csv_file(csv_name="device.csv")
                 if group_name is not None and file_name is not None and profile_name is not None:
                     selected_groups = group_name.split(',')
                     selected_profiles = profile_name.split(',')
@@ -3763,8 +3781,8 @@ class Candela:
                             youtube.updating_webui_runningjson(obj)
 
                 # Perform pre-test cleanup if not skipped
-                if not no_pre_cleanup:
-                    youtube.cleanup()
+                # if not no_pre_cleanup:
+                #     youtube.cleanup()
 
                 # Check if the required tab exists, and exit if not
                 if not youtube.check_tab_exists():
@@ -3819,8 +3837,8 @@ class Candela:
                     youtube.create_report(youtube.stats_api_response, '')
 
                 # Perform post-test cleanup if not skipped
-                if not no_post_cleanup:
-                    youtube.generic_endps_profile.cleanup()
+                # if not no_post_cleanup:
+                #     youtube.generic_endps_profile.cleanup()
         except Exception as e:
             logging.error(f"Error occured {e}")
             # traceback.print_exc()
@@ -3921,8 +3939,8 @@ class Candela:
                     new_filename = file_name
                 config_obj = DeviceConfig.DeviceConfig(lanforge_ip=lanforge_ip, file_name=new_filename)
 
-                if not expected_passfail_value and device_csv_name is None:
-                    config_obj.device_csv_file(csv_name="device.csv")
+                # if not expected_passfail_value and device_csv_name is None:
+                #     config_obj.device_csv_file(csv_name="device.csv")
                 if group_name is not None and file_name is not None and profile_name is not None:
                     selected_groups = group_name.split(',')
                     selected_profiles = profile_name.split(',')
@@ -4106,7 +4124,7 @@ class Candela:
                 zoom_automation.stop_signal = True
                 logging.info("Waiting for Browser Cleanup in Laptops")
                 time.sleep(10)
-                zoom_automation.generic_endps_profile.cleanup()
+                # zoom_automation.generic_endps_profile.cleanup()
         return True
 
 
@@ -4172,8 +4190,8 @@ class Candela:
             obj.change_port_to_ip()
             obj.validate_and_process_args()
             obj.config_obj = DeviceConfig.DeviceConfig(lanforge_ip=obj.host, file_name=obj.file_name, wait_time=obj.wait_time)
-            if not obj.expected_passfail_value and obj.device_csv_name is None:
-                obj.config_obj.device_csv_file(csv_name="device.csv")
+            # if not obj.expected_passfail_value and obj.device_csv_name is None:
+            #     obj.config_obj.device_csv_file(csv_name="device.csv")
             obj.run_flask_server()
             if obj.group_name and obj.profile_name and obj.file_name:
                 available_resources = obj.process_group_profiles()
@@ -4228,8 +4246,8 @@ class Candela:
                     obj.webui_stop()
                 obj.stop()
 
-                if not args.no_postcleanup:
-                    obj.postcleanup()
+                # if not args.no_postcleanup:
+                #     obj.postcleanup()
         return True
 
 
@@ -4394,6 +4412,11 @@ def main():
     #Common
     parser.add_argument('--device_list', help="Enter the devices on which the test should be run", default=[])
     parser.add_argument('--duration', help='Please enter the duration in s,m,h (seconds or minutes or hours).Eg: 30s,5m,48h')
+    parser.add_argument('--parallel',
+                          action="store_true",
+                          help='to run in parallel')
+    parser.add_argument("--tests",type=str,help="Comma-separated ordered list of tests to run (e.g., ping_test,http_test,ping_test)")
+
     #NOt common
     #ping
     #without config
@@ -4933,633 +4956,94 @@ def main():
     # exit(0)
     validate_args(args_dict)
     candela_apis = Candela(ip=args.mgr, port=args.mgr_port)
-
+    candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
     print(args)
+    test_map = {
+    "ping_test":   (run_ping_test, "PING TEST"),
+    "http_test":   (run_http_test, "HTTP TEST"),
+    "ftp_test":    (run_ftp_test, "FTP TEST"),
+    "qos_test":    (run_qos_test, "QoS TEST"),
+    "vs_test":     (run_vs_test, "VIDEO STREAMING TEST"),
+    "thput_test":  (run_thput_test, "THROUGHPUT TEST"),
+    "mcast_test":  (run_mcast_test, "MULTICAST TEST"),
+    "yt_test":     (run_yt_test, "YOUTUBE TEST"),
+    "rb_test":     (run_rb_test, "REAL BROWSER TEST"),
+    "zoom_test":   (run_zoom_test, "ZOOM TEST"),
+    }
+
+    # threads = []
+
     # if args.ping_test:
-    #     candela_apis.run_ping_test(
-    #         real=True,
-    #         target=args.ping_target,
-    #         ping_interval=args.ping_interval,
-    #         ping_duration=args.ping_duration,
-    #         # ssid=args.ping_ssid,
-    #         # passwd=args.ping_passwd,
-    #         # security=args.ping_security,
-    #         use_default_config=True,
-    #         dev_list=args.ping_device_list
-    #     )
+    #     threads.append(threading.Thread(target=run_test_safe(run_ping_test, "PING TEST", args, candela_apis)))
 
     # if args.http_test:
-    #     candela_apis.run_http_test(
-    #         upstream_port=args.upstream_port,
-    #         bands=args.http_bands,
-    #         duration=args.http_duration,
-    #         file_size=args.http_file_size,
-    #         device_list=args.http_device_list
-    #     )
+    #     threads.append(threading.Thread(target=run_test_safe(run_http_test, "HTTP TEST", args, candela_apis)))
 
     # if args.ftp_test:
-    #     candela_apis.start_ftp_test(
-    #         # ssid=args.ftp_ssid,
-    #         # password=args.ftp_passwd,
-    #         # security=args.ftp_security,
-    #         device_list=args.ftp_device_list,
-    #         background=False,
-    #         file_size=args.ftp_file_size
-    #     )
+    #     threads.append(threading.Thread(target=run_test_safe(run_ftp_test, "FTP TEST", args, candela_apis)))
 
     # if args.qos_test:
-    #     candela_apis.run_qos_test(
-    #         upstream_port=args.upstream_port,
-    #         test_duration=args.qos_duration,
-    #         download=args.qos_download,
-    #         upload=args.qos_upload,
-    #         traffic_type=args.qos_traffic_type,
-    #         tos=args.qos_tos,
-    #         device_list=args.qos_device_list
-    #     )
+    #     threads.append(threading.Thread(target=run_test_safe(run_qos_test, "QoS TEST", args, candela_apis)))
 
     # if args.vs_test:
-    #     candela_apis.run_vs_test(
-    #         url=args.vs_url,
-    #         media_source=args.vs_media_source,
-    #         media_quality=args.vs_media_quality,
-    #         duration=args.vs_duration,
-    #         device_list=args.vs_device_list,
-    #         # debug=args.vs_debug,
-    #         # test_name=args.vs_test_name
-    #     )
+    #     threads.append(threading.Thread(target=run_test_safe(run_vs_test, "VIDEO STREAMING TEST", args, candela_apis)))
 
     # if args.thput_test:
-    #     candela_apis.run_throughput_test(
-    #         upstream_port=args.upstream_port,
-    #         test_duration=args.thput_test_duration,
-    #         download=args.thput_download,
-    #         traffic_type=args.thput_traffic_type,
-    #         device_list=args.thput_device_list,
-    #         do_interopability=args.thput_do_interopability,
-    #         default_config=args.thput_default_config
-    #     )
+    #     threads.append(threading.Thread(target=run_test_safe(run_thput_test, "THROUGHPUT TEST", args, candela_apis)))
 
     # if args.mcast_test:
-    #     candela_apis.run_mc_test1(
-    #         test_duration=args.mcast_test_duration,
-    #         # polling_interval=args.mcast_polling_interval,
-    #         upstream_port=args.upstream_port,
-    #         endp_type=args.mcast_endp_type,
-    #         # rates_are_totals=args.mcast_rates_are_totals,
-    #         side_b_min_bps=args.mcast_side_b_min_bps,
-    #         tos=args.mcast_tos,
-    #         # real=args.mcast_real,
-    #         # ssid=args.mcast_ssid,
-    #         # passwd=args.mcast_passwd,
-    #         # security=args.mcast_security,
-    #         # log_level=args.mcast_log_level,
-    #         device_list=args.mcast_device_list
-    #     )
+    #     threads.append(threading.Thread(target=run_test_safe(run_mcast_test, "MULTICAST TEST", args, candela_apis)))
 
     # if args.yt_test:
-    #     candela_apis.run_yt_test(
-    #         url=args.url,
-    #         duration=args.duration,
-    #         res=args.res,
-    #         upstream_port=args.upstream_port,
-    #         resource_list=args.resource_list
-    #     )
-
-    # if args.zoom_test:
-    #     candela_apis.run_zoom_test(
-    #         duration=args.duration,
-    #         signin_email=args.signin_email,
-    #         signin_passwd=args.signin_passwd,
-    #         participants=args.participants,
-    #         audio=args.audio,
-    #         video=args.video,
-    #         upstream_port=args.upstream_port,
-    #         resource_list=args.resource_list,
-    #         zoom_host=args.zoom_host
-    #     )
+    #     threads.append(threading.Thread(target=run_test_safe(run_yt_test, "YOUTUBE TEST", args, candela_apis)))
 
     # if args.rb_test:
-    #     candela_apis.run_rb_test(
-    #         url=args.url,
-    #         duration=args.duration,
-    #         device_list=args.device_list,
-    #         debug=args.debug,
-    #         upstream_port=args.upstream_port
-    #     )
+    #     threads.append(threading.Thread(target=run_test_safe(run_rb_test, "REAL BROWSER TEST", args, candela_apis)))
 
-    #plan 2
+    # if args.zoom_test:
+    #     threads.append(threading.Thread(target=run_test_safe(run_zoom_test, "ZOOM TEST", args, candela_apis)))
+    
+    tests_to_run = args.tests.split(',')
+    flag=1
+    for test in tests_to_run:
+        if test not in test_map:
+            logger.error(f"{test} is not availble in test suite")
+            flag = 0
 
-    # args = parser.parse_args()
-    # candela_apis = Candela(ip=args.mgr, port=args.mgr_port)
-    # print(args)
-
-    # Ping Test
-    if args.ping_test:
-        try:
-            ping_chk = candela_apis.run_ping_test(
-                real=True,
-                target=args.ping_target,
-                ping_interval=args.ping_interval,
-                ping_duration=args.ping_duration,
-                use_default_config=False if args.ping_config else True,
-                dev_list=args.ping_device_list,
-                expected_passfail_value=args.ping_expected_passfail_value,
-                device_csv_name=args.ping_device_csv_name,
-                file_name=args.ping_file_name,
-                group_name=args.ping_group_name,
-                profile_name=args.ping_profile_name,
-                ssid=args.ping_ssid,
-                passwd=args.ping_passwd,
-                security=args.ping_security,
-                eap_method=args.ping_eap_method,
-                eap_identity=args.ping_eap_identity,
-                ieee8021x=args.ping_ieee8021x,
-                ieee80211u=args.ping_ieee80211u,
-                ieee80211w=args.ping_ieee80211w,
-                enable_pkc=args.ping_enable_pkc,
-                bss_transition=args.ping_bss_transition,
-                power_save=args.ping_power_save,
-                disable_ofdma=args.ping_disable_ofdma,
-                roam_ft_ds=args.ping_roam_ft_ds,
-                key_management=args.ping_key_management,
-                pairwise=args.ping_pairwise,
-                private_key=args.ping_private_key,
-                ca_cert=args.ping_ca_cert,
-                client_cert=args.ping_client_cert,
-                pk_passwd=args.ping_pk_passwd,
-                pac_file=args.ping_pac_file,
-                wait_time=args.ping_wait_time
-            )
-        except SystemExit as e:
-            logger.error(f"exited with code")
-            ping_chk = True
-            if e.code != 0:
-                ping_chk = False
-        except:
-            ping_chk = False
-        if not ping_chk:
-            logger.error("PING TEST FAILED")
-        else:
-            logger.info("PING TEST COMPLETED")
+    if not flag:
+        logger.info(f"availble tests are {test_map.keys()}")
+        exit(0)
+    if args.parallel and len(tests_to_run) != len(set(tests_to_run)):
+        logger.error("in -parallel dont specify duplicate tests")
+        exit(0)
 
 
-    # HTTP Test
-    if args.http_test:
-        try:
-            http_chk = candela_apis.run_http_test(
-                upstream_port=args.upstream_port,
-                bands=args.http_bands,
-                duration=args.http_duration,
-                file_size=args.http_file_size,
-                device_list=args.http_device_list,
-                expected_passfail_value=args.http_expected_passfail_value,
-                device_csv_name=args.http_device_csv_name,
-                file_name=args.http_file_name,
-                group_name=args.http_group_name,
-                profile_name=args.http_profile_name,
-                config=args.http_config,
-                ssid=args.http_ssid,
-                passwd=args.http_passwd,
-                security=args.http_security,
-                eap_method=args.http_eap_method,
-                eap_identity=args.http_eap_identity,
-                ieee8021x=args.http_ieee8021x,
-                ieee80211u=args.http_ieee80211u,
-                ieee80211w=args.http_ieee80211w,
-                enable_pkc=args.http_enable_pkc,
-                bss_transition=args.http_bss_transition,
-                power_save=args.http_power_save,
-                disable_ofdma=args.http_disable_ofdma,
-                roam_ft_ds=args.http_roam_ft_ds,
-                key_management=args.http_key_management,
-                pairwise=args.http_pairwise,
-                private_key=args.http_private_key,
-                ca_cert=args.http_ca_cert,
-                client_cert=args.http_client_cert,
-                pk_passwd=args.http_pk_passwd,
-                pac_file=args.http_pac_file,
-                wait_time=args.http_wait_time
-            )
-        except SystemExit as e:
-            logger.error(f"exited with code")
-            http_chk = True
-            if e.code != 0:
-                http_chk = False
-        except:
-            http_chk = False
-        if not http_chk:
-            logger.error("HTTP TEST FAILED")
-        else:
-            logger.info("HTTP TEST COMPLETED")
+    threads = []
 
-    # FTP Test
-    if args.ftp_test:
-        try:
-            ftp_chk = candela_apis.start_ftp_test(
-                device_list=args.ftp_device_list,
-                background=False,
-                file_size=args.ftp_file_size,
-                traffic_duration=args.ftp_duration,
-                band=args.ftp_bands,
-                expected_passfail_val=args.ftp_expected_passfail_value,
-                device_csv_name=args.ftp_device_csv_name,
-                file_name=args.ftp_file_name,
-                group_name=args.ftp_group_name,
-                profile_name=args.ftp_profile_name,
-                config=args.ftp_config,
-                ssid=args.ftp_ssid,
-                password=args.ftp_passwd,
-                security=args.ftp_security,
-                eap_method=args.ftp_eap_method,
-                eap_identity=args.ftp_eap_identity,
-                ieee8021x=args.ftp_ieee8021x,
-                ieee80211u=args.ftp_ieee80211u,
-                ieee80211w=args.ftp_ieee80211w,
-                enable_pkc=args.ftp_enable_pkc,
-                bss_transition=args.ftp_bss_transition,
-                power_save=args.ftp_power_save,
-                disable_ofdma=args.ftp_disable_ofdma,
-                roam_ft_ds=args.ftp_roam_ft_ds,
-                key_management=args.ftp_key_management,
-                pairwise=args.ftp_pairwise,
-                private_key=args.ftp_private_key,
-                ca_cert=args.ftp_ca_cert,
-                client_cert=args.ftp_client_cert,
-                pk_passwd=args.ftp_pk_passwd,
-                pac_file=args.ftp_pac_file,
-                wait_time=args.ftp_wait_time
-            )
-        except SystemExit as e:
-            logger.error(f"exited with code")
-            ftp_chk = True
-            if e.code != 0:
-                ftp_chk = False
-        except:
-            ftp_chk = False
-        if not ftp_chk:
-            logger.error("FTP TEST FAILED")
+    if args.tests:
+        ordered_tests = args.tests.split(',')
 
-    # QoS Test
-    if args.qos_test:
-        try:
-            qos_chk = candela_apis.run_qos_test(
-                upstream_port=args.upstream_port,
-                test_duration=args.qos_duration,
-                download=args.qos_download,
-                upload=args.qos_upload,
-                traffic_type=args.qos_traffic_type,
-                tos=args.qos_tos,
-                device_list=args.qos_device_list,
-                expected_passfail_value=args.qos_expected_passfail_value,
-                device_csv_name=args.qos_device_csv_name,
-                file_name=args.qos_file_name,
-                group_name=args.qos_group_name,
-                profile_name=args.qos_profile_name,
-                config=args.qos_config,
-                ssid=args.qos_ssid,
-                passwd=args.qos_passwd,
-                security=args.qos_security,
-                eap_method=args.qos_eap_method,
-                eap_identity=args.qos_eap_identity,
-                ieee8021x=args.qos_ieee8021x,
-                ieee80211u=args.qos_ieee80211u,
-                ieee80211w=args.qos_ieee80211w,
-                enable_pkc=args.qos_enable_pkc,
-                bss_transition=args.qos_bss_transition,
-                power_save=args.qos_power_save,
-                disable_ofdma=args.qos_disable_ofdma,
-                roam_ft_ds=args.qos_roam_ft_ds,
-                key_management=args.qos_key_management,
-                pairwise=args.qos_pairwise,
-                private_key=args.qos_private_key,
-                ca_cert=args.qos_ca_cert,
-                client_cert=args.qos_client_cert,
-                pk_passwd=args.qos_pk_passwd,
-                pac_file=args.qos_pac_file,
-                wait_time=args.qos_wait_time
-            )
-        except SystemExit as e:
-            logger.error(f"exited with code")
-            qos_chk = True
-            if e.code != 0:
-                qos_chk = False
-        except:
-            qos_chk = False
-            traceback.print_exc()
-        if not qos_chk:
-            logger.error("QOS TEST FAILED")
-        else:
-            logger.info("QOS TEST EXECUTED")
+        for idx, test_name in enumerate(ordered_tests):
+            test_name = test_name.strip().lower()
 
-    # Video Streaming (VS) Test
-    if args.vs_test:
-        try:
-            vs_chk = candela_apis.run_vs_test1(
-                url=args.vs_url,
-                media_source=args.vs_media_source,
-                media_quality=args.vs_media_quality,
-                duration=args.vs_duration,
-                device_list=args.vs_device_list,
-                expected_passfail_value=args.vs_expected_passfail_value,
-                device_csv_name=args.vs_device_csv_name,
-                file_name=args.vs_file_name,
-                group_name=args.vs_group_name,
-                profile_name=args.vs_profile_name,
-                config=args.vs_config,
-                ssid=args.vs_ssid,
-                passwd=args.vs_passwd,
-                encryp=args.vs_security,
-                eap_method=args.vs_eap_method,
-                eap_identity=args.vs_eap_identity,
-                ieee8021x=args.vs_ieee8021x,
-                ieee80211u=args.vs_ieee80211u,
-                ieee80211w=args.vs_ieee80211w,
-                enable_pkc=args.vs_enable_pkc,
-                bss_transition=args.vs_bss_transition,
-                power_save=args.vs_power_save,
-                disable_ofdma=args.vs_disable_ofdma,
-                roam_ft_ds=args.vs_roam_ft_ds,
-                key_management=args.vs_key_management,
-                pairwise=args.vs_pairwise,
-                private_key=args.vs_private_key,
-                ca_cert=args.vs_ca_cert,
-                client_cert=args.vs_client_cert,
-                pk_passwd=args.vs_pk_passwd,
-                pac_file=args.vs_pac_file,
-                wait_time=args.vs_wait_time,
-                upstream_port=args.upstream_port
-            )
-        except SystemExit as e:
-            logger.error(f"exited with code")
-            vs_chk = True
-            if e.code != 0:
-                vs_chk = False
-        except:
-            vs_chk = False
-        if not vs_chk:
-            logger.error("Video Streaming TEST FAILED")
-        else:
-            logger.info("Video Streaming test executed")
+            if test_name in test_map:
+                func, label = test_map[test_name]
+                threads.append(threading.Thread(
+                    target=run_test_safe(func, f"{label} [{idx+1}]", args, candela_apis)
+                ))
+            else:
+                print(f"Warning: Unknown test '{test_name}' in --test_order")
 
-    # Throughput (thput) Test
-    if args.thput_test:
-        try:
-            if args.thput_do_interopability and args.thput_config:
-                args.thput_default_config = False
-                args.thput_config = False
-            thput_chk = candela_apis.run_throughput_test(
-                upstream_port=args.upstream_port,
-                test_duration=args.thput_test_duration,
-                download=args.thput_download,
-                upload=args.thput_upload,
-                traffic_type=args.thput_traffic_type,
-                device_list=args.thput_device_list,
-                do_interopability=args.thput_do_interopability,
-                default_config=args.thput_default_config,
-                expected_passfail_value=args.thput_expected_passfail_value,
-                device_csv_name=args.thput_device_csv_name,
-                file_name=args.thput_file_name,
-                group_name=args.thput_group_name,
-                profile_name=args.thput_profile_name,
-                config=args.thput_config,
-                ssid=args.thput_ssid,
-                passwd=args.thput_passwd,
-                security=args.thput_security,
-                eap_method=args.thput_eap_method,
-                eap_identity=args.thput_eap_identity,
-                ieee8021x=args.thput_ieee8021x,
-                ieee80211u=args.thput_ieee80211u,
-                ieee80211w=args.thput_ieee80211w,
-                enable_pkc=args.thput_enable_pkc,
-                bss_transition=args.thput_bss_transition,
-                power_save=args.thput_power_save,
-                disable_ofdma=args.thput_disable_ofdma,
-                roam_ft_ds=args.thput_roam_ft_ds,
-                key_management=args.thput_key_management,
-                pairwise=args.thput_pairwise,
-                private_key=args.thput_private_key,
-                ca_cert=args.thput_ca_cert,
-                client_cert=args.thput_client_cert,
-                pk_passwd=args.thput_pk_passwd,
-                pac_file=args.thput_pac_file,
-                wait_time=args.thput_wait_time
-            )
-        except SystemExit as e:
-            logger.error(f"exited with code")
-            thput_chk = True
-            if e.code != 0:
-                thput_chk = False
-        except:
-            thput_chk = False
-        if not thput_chk:
-            logger.error("THROUGHPUT TEST NOT EXECUTED")
-        else:
-            logger.info("THROUGHPUT EXECUTED")
-
-    # Multicast (mcast) Test
-    if args.mcast_test:
-        try:
-            mcast_chk = candela_apis.run_mc_test1(
-                test_duration=args.mcast_test_duration,
-                upstream_port=args.upstream_port,
-                endp_type=args.mcast_endp_type,
-                side_b_min_bps=args.mcast_side_b_min_bps,
-                tos=args.mcast_tos,
-                device_list=args.mcast_device_list,
-                expected_passfail_value=args.mcast_expected_passfail_value,
-                device_csv_name=args.mcast_device_csv_name,
-                file_name=args.mcast_file_name,
-                group_name=args.mcast_group_name,
-                profile_name=args.mcast_profile_name,
-                config=args.mcast_config,
-                ssid=args.mcast_ssid,
-                passwd=args.mcast_passwd,
-                security=args.mcast_security,
-                eap_method=args.mcast_eap_method,
-                eap_identity=args.mcast_eap_identity,
-                ieee8021x=args.mcast_ieee8021x,
-                ieee80211u=args.mcast_ieee80211u,
-                ieee80211w=args.mcast_ieee80211w,
-                enable_pkc=args.mcast_enable_pkc,
-                bss_transition=args.mcast_bss_transition,
-                power_save=args.mcast_ieee8021x,
-                disable_ofdma=args.mcast_disable_ofdma,
-                roam_ft_ds=args.mcast_roam_ft_ds,
-                key_management=args.mcast_key_management,
-                pairwise=args.mcast_pairwise,
-                private_key=args.mcast_private_key,
-                ca_cert=args.mcast_ca_cert,
-                client_cert=args.mcast_client_cert,
-                pk_passwd=args.mcast_pk_passwd,
-                pac_file=args.mcast_pac_file,
-                wait_time=args.mcast_wait_time
-            )
-        except SystemExit as e:
-            logger.error(f"exited with code")
-            mcast_chk = True
-            if e.code != 0:
-                mcast_chk = False
-        except:
-            mcast_chk = False
-
-        if not mcast_chk:
-            logger.error("MULTICAST TEST FAILED")
-        else:
-            logger.info("MULTICAST TEST EXECUTED")
-    if args.yt_test:
-        try:
-            yt_chk = candela_apis.run_yt_test(
-            url=args.yt_url,
-            duration=args.yt_duration,
-            res=args.yt_res,
-            upstream_port=args.upstream_port,
-            resource_list=args.yt_device_list,
-            expected_passfail_value=args.yt_expected_passfail_value,
-            device_csv_name=args.yt_device_csv_name,
-            file_name=args.yt_file_name,
-            group_name=args.yt_group_name,
-            profile_name=args.yt_profile_name,
-            config=args.yt_config,
-            ssid=args.yt_ssid,
-            passwd=args.yt_passwd,
-            encryp=args.yt_security,
-            eap_method=args.yt_eap_method,
-            eap_identity=args.yt_eap_identity,
-            ieee8021x=args.yt_ieee8021x,
-            ieee80211u=args.yt_ieee80211u,
-            ieee80211w=args.yt_ieee80211w,
-            enable_pkc=args.yt_enable_pkc,
-            bss_transition=args.yt_bss_transition,
-            power_save=args.yt_ieee8021x,
-            disable_ofdma=args.yt_disable_ofdma,
-            roam_ft_ds=args.yt_roam_ft_ds,
-            key_management=args.yt_key_management,
-            pairwise=args.yt_pairwise,
-            private_key=args.yt_private_key,
-            ca_cert=args.yt_ca_cert,
-            client_cert=args.yt_client_cert,
-            pk_passwd=args.yt_pk_passwd,
-            pac_file=args.yt_pac_file,
-            # wait_time=args.yt_wait_time
-            )
-        except SystemExit as e:
-            logger.error(f"exited with code")
-            yt_chk = True
-            if e.code != 0:
-                yt_chk = False
-        except:
-            yt_chk = False
-        if not yt_chk:
-            logger.error("YOUTUBE TEST FAILED")
-        else:
-            logger.info("YOUTBE TEST EXECUTED")
-    if args.rb_test:
-        try:
-            rb_chk = candela_apis.run_rb_test(
-            url=args.rb_url,
-            upstream_port=args.upstream_port,
-            device_list=args.rb_device_list,
-            expected_passfail_value=args.rb_expected_passfail_value,
-            device_csv_name=args.rb_device_csv_name,
-            file_name=args.rb_file_name,
-            group_name=args.rb_group_name,
-            profile_name=args.rb_profile_name,
-            config=args.rb_config,
-            ssid=args.rb_ssid,
-            passwd=args.rb_passwd,
-            encryp=args.rb_security,
-            eap_method=args.rb_eap_method,
-            eap_identity=args.rb_eap_identity,
-            ieee80211=args.rb_ieee80211,
-            ieee80211u=args.rb_ieee80211u,
-            ieee80211w=args.rb_ieee80211w,
-            enable_pkc=args.rb_enable_pkc,
-            bss_transition=args.rb_bss_transition,
-            power_save=args.rb_power_save,
-            disable_ofdma=args.rb_disable_ofdma,
-            roam_ft_ds=args.rb_roam_ft_ds,
-            key_management=args.rb_key_management,
-            pairwise=args.rb_pairwise,
-            private_key=args.rb_private_key,
-            ca_cert=args.rb_ca_cert,
-            client_cert=args.rb_client_cert,
-            pk_passwd=args.rb_pk_passwd,
-            pac_file=args.rb_pac_file,
-            wait_time=args.rb_wait_time
-            )
-        except SystemExit as e:
-            logger.error(f"exited with code")
-            rb_chk = True
-            if e.code != 0:
-                rb_chk = False
-        except:
-            rb_chk = False
-        if not rb_chk:
-            logger.error("REAL BROWSER TEST FAILED")
-        else:
-            logger.info("REAL BROWSER TEST EXECUTED")
-    if args.zoom_test:
-        try:
-            zoom_chk = candela_apis.run_zoom_test(
-            duration=args.zoom_duration,
-            signin_email=args.zoom_signin_email,
-            signin_passwd=args.zoom_signin_passwd,
-            participants=args.zoom_participants,
-            audio=args.zoom_audio,
-            video=args.zoom_video,
-            upstream_port=args.upstream_port,
-            resource_list=args.zoom_device_list,
-            zoom_host=args.zoom_host,
-            expected_passfail_value=args.zoom_expected_passfail_value,
-            device_csv_name=args.zoom_device_csv_name,
-            file_name=args.zoom_file_name,
-            group_name=args.zoom_group_name,
-            profile_name=args.zoom_profile_name,
-            config=args.zoom_config,
-            ssid=args.zoom_ssid,
-            passwd=args.zoom_passwd,
-            encryp=args.zoom_security,
-            eap_method=args.zoom_eap_method,
-            eap_identity=args.zoom_eap_identity,
-            ieee8021x=args.zoom_ieee8021x,
-            ieee80211u=args.zoom_ieee80211u,
-            ieee80211w=args.zoom_ieee80211w,
-            enable_pkc=args.zoom_enable_pkc,
-            bss_transition=args.zoom_bss_transition,
-            power_save=args.zoom_power_save,
-            disable_ofdma=args.zoom_disable_ofdma,
-            roam_ft_ds=args.zoom_roam_ft_ds,
-            key_management=args.zoom_key_management,
-            pairwise=args.zoom_pairwise,
-            private_key=args.zoom_private_key,
-            ca_cert=args.zoom_ca_cert,
-            client_cert=args.zoom_client_cert,
-            pk_passwd=args.zoom_pk_passwd,
-            pac_file=args.zoom_pac_file,
-            wait_time=args.zoom_wait_time
-        )
-        except SystemExit as e:
-            logger.error(f"exited with code")
-            zoom_chk = True
-            if e.code != 0:
-                zoom_chk = False
-        except:
-            zoom_chk = False
-        if not zoom_chk:
-            logger.error("ZOOM TEST FAILED")
-        else:
-            logger.info("ZOOM TEST EXECUTED")
-
-    # if args.yt_test:
-    #     candela_apis.run_yt_test(
-    #     url=args.yt_url,
-    #     duration=args.yt_duration,
-    #     res=args.yt_res,
-    #     upstream_port=args.upstream_port,
-    #     resource_list=args.yt_device_list
-    #     )
-
+    if args.parallel:
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    else:
+        for t in threads:
+            t.start()
+            t.join()
+    candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
 
 
 #WITHOUT CONFIG
@@ -5764,4 +5248,392 @@ def main():
 #     resource_list="1.400,1.360",
 #     zoom_host="1.95"
 # )
+
+def run_test_safe(test_func, test_name, args, candela_apis):
+    def wrapper():
+        try:
+            result = test_func(args, candela_apis)
+            if not result:
+                logger.error(f"{test_name} FAILED")
+            else:
+                logger.info(f"{test_name} PASSED")
+        except SystemExit as e:
+            logger.error(f"{test_name} exited with code {e.code}")
+        except Exception as e:
+            logger.exception(f"{test_name} crashed unexpectedly")
+            traceback.print_exc()
+    return wrapper
+
+
+def run_ping_test(args, candela_apis):
+    return candela_apis.run_ping_test(
+        real=True,
+        target=args.ping_target,
+        ping_interval=args.ping_interval,
+        ping_duration=args.ping_duration,
+        use_default_config=False if args.ping_config else True,
+        dev_list=args.ping_device_list,
+        expected_passfail_value=args.ping_expected_passfail_value,
+        device_csv_name=args.ping_device_csv_name,
+        file_name=args.ping_file_name,
+        group_name=args.ping_group_name,
+        profile_name=args.ping_profile_name,
+        ssid=args.ping_ssid,
+        passwd=args.ping_passwd,
+        security=args.ping_security,
+        eap_method=args.ping_eap_method,
+        eap_identity=args.ping_eap_identity,
+        ieee8021x=args.ping_ieee8021x,
+        ieee80211u=args.ping_ieee80211u,
+        ieee80211w=args.ping_ieee80211w,
+        enable_pkc=args.ping_enable_pkc,
+        bss_transition=args.ping_bss_transition,
+        power_save=args.ping_power_save,
+        disable_ofdma=args.ping_disable_ofdma,
+        roam_ft_ds=args.ping_roam_ft_ds,
+        key_management=args.ping_key_management,
+        pairwise=args.ping_pairwise,
+        private_key=args.ping_private_key,
+        ca_cert=args.ping_ca_cert,
+        client_cert=args.ping_client_cert,
+        pk_passwd=args.ping_pk_passwd,
+        pac_file=args.ping_pac_file,
+        wait_time=args.ping_wait_time
+    )
+
+def run_http_test(args, candela_apis):
+    return candela_apis.run_http_test(
+        upstream_port=args.upstream_port,
+        bands=args.http_bands,
+        duration=args.http_duration,
+        file_size=args.http_file_size,
+        device_list=args.http_device_list,
+        expected_passfail_value=args.http_expected_passfail_value,
+        device_csv_name=args.http_device_csv_name,
+        file_name=args.http_file_name,
+        group_name=args.http_group_name,
+        profile_name=args.http_profile_name,
+        config=args.http_config,
+        ssid=args.http_ssid,
+        passwd=args.http_passwd,
+        security=args.http_security,
+        eap_method=args.http_eap_method,
+        eap_identity=args.http_eap_identity,
+        ieee8021x=args.http_ieee8021x,
+        ieee80211u=args.http_ieee80211u,
+        ieee80211w=args.http_ieee80211w,
+        enable_pkc=args.http_enable_pkc,
+        bss_transition=args.http_bss_transition,
+        power_save=args.http_power_save,
+        disable_ofdma=args.http_disable_ofdma,
+        roam_ft_ds=args.http_roam_ft_ds,
+        key_management=args.http_key_management,
+        pairwise=args.http_pairwise,
+        private_key=args.http_private_key,
+        ca_cert=args.http_ca_cert,
+        client_cert=args.http_client_cert,
+        pk_passwd=args.http_pk_passwd,
+        pac_file=args.http_pac_file,
+        wait_time=args.http_wait_time
+    )
+
+def run_ftp_test(args, candela_apis):
+    return candela_apis.start_ftp_test(
+        device_list=args.ftp_device_list,
+        background=False,
+        file_size=args.ftp_file_size,
+        traffic_duration=args.ftp_duration,
+        band=args.ftp_bands,
+        expected_passfail_val=args.ftp_expected_passfail_value,
+        device_csv_name=args.ftp_device_csv_name,
+        file_name=args.ftp_file_name,
+        group_name=args.ftp_group_name,
+        profile_name=args.ftp_profile_name,
+        config=args.ftp_config,
+        ssid=args.ftp_ssid,
+        password=args.ftp_passwd,
+        security=args.ftp_security,
+        eap_method=args.ftp_eap_method,
+        eap_identity=args.ftp_eap_identity,
+        ieee8021x=args.ftp_ieee8021x,
+        ieee80211u=args.ftp_ieee80211u,
+        ieee80211w=args.ftp_ieee80211w,
+        enable_pkc=args.ftp_enable_pkc,
+        bss_transition=args.ftp_bss_transition,
+        power_save=args.ftp_power_save,
+        disable_ofdma=args.ftp_disable_ofdma,
+        roam_ft_ds=args.ftp_roam_ft_ds,
+        key_management=args.ftp_key_management,
+        pairwise=args.ftp_pairwise,
+        private_key=args.ftp_private_key,
+        ca_cert=args.ftp_ca_cert,
+        client_cert=args.ftp_client_cert,
+        pk_passwd=args.ftp_pk_passwd,
+        pac_file=args.ftp_pac_file,
+        wait_time=args.ftp_wait_time
+    )
+
+def run_qos_test(args, candela_apis):
+    return candela_apis.run_qos_test(
+        upstream_port=args.upstream_port,
+        test_duration=args.qos_duration,
+        download=args.qos_download,
+        upload=args.qos_upload,
+        traffic_type=args.qos_traffic_type,
+        tos=args.qos_tos,
+        device_list=args.qos_device_list,
+        expected_passfail_value=args.qos_expected_passfail_value,
+        device_csv_name=args.qos_device_csv_name,
+        file_name=args.qos_file_name,
+        group_name=args.qos_group_name,
+        profile_name=args.qos_profile_name,
+        config=args.qos_config,
+        ssid=args.qos_ssid,
+        passwd=args.qos_passwd,
+        security=args.qos_security,
+        eap_method=args.qos_eap_method,
+        eap_identity=args.qos_eap_identity,
+        ieee8021x=args.qos_ieee8021x,
+        ieee80211u=args.qos_ieee80211u,
+        ieee80211w=args.qos_ieee80211w,
+        enable_pkc=args.qos_enable_pkc,
+        bss_transition=args.qos_bss_transition,
+        power_save=args.qos_power_save,
+        disable_ofdma=args.qos_disable_ofdma,
+        roam_ft_ds=args.qos_roam_ft_ds,
+        key_management=args.qos_key_management,
+        pairwise=args.qos_pairwise,
+        private_key=args.qos_private_key,
+        ca_cert=args.qos_ca_cert,
+        client_cert=args.qos_client_cert,
+        pk_passwd=args.qos_pk_passwd,
+        pac_file=args.qos_pac_file,
+        wait_time=args.qos_wait_time
+    )
+
+def run_vs_test(args, candela_apis):
+    return candela_apis.run_vs_test1(
+        url=args.vs_url,
+        media_source=args.vs_media_source,
+        media_quality=args.vs_media_quality,
+        duration=args.vs_duration,
+        device_list=args.vs_device_list,
+        expected_passfail_value=args.vs_expected_passfail_value,
+        device_csv_name=args.vs_device_csv_name,
+        file_name=args.vs_file_name,
+        group_name=args.vs_group_name,
+        profile_name=args.vs_profile_name,
+        config=args.vs_config,
+        ssid=args.vs_ssid,
+        passwd=args.vs_passwd,
+        encryp=args.vs_security,
+        eap_method=args.vs_eap_method,
+        eap_identity=args.vs_eap_identity,
+        ieee8021x=args.vs_ieee8021x,
+        ieee80211u=args.vs_ieee80211u,
+        ieee80211w=args.vs_ieee80211w,
+        enable_pkc=args.vs_enable_pkc,
+        bss_transition=args.vs_bss_transition,
+        power_save=args.vs_power_save,
+        disable_ofdma=args.vs_disable_ofdma,
+        roam_ft_ds=args.vs_roam_ft_ds,
+        key_management=args.vs_key_management,
+        pairwise=args.vs_pairwise,
+        private_key=args.vs_private_key,
+        ca_cert=args.vs_ca_cert,
+        client_cert=args.vs_client_cert,
+        pk_passwd=args.vs_pk_passwd,
+        pac_file=args.vs_pac_file,
+        wait_time=args.vs_wait_time,
+        upstream_port=args.upstream_port
+    )
+
+def run_thput_test(args, candela_apis):
+    if args.thput_do_interopability and args.thput_config:
+        args.thput_default_config = False
+        args.thput_config = False
+    return candela_apis.run_throughput_test(
+        upstream_port=args.upstream_port,
+        test_duration=args.thput_test_duration,
+        download=args.thput_download,
+        upload=args.thput_upload,
+        traffic_type=args.thput_traffic_type,
+        device_list=args.thput_device_list,
+        do_interopability=args.thput_do_interopability,
+        default_config=args.thput_default_config,
+        expected_passfail_value=args.thput_expected_passfail_value,
+        device_csv_name=args.thput_device_csv_name,
+        file_name=args.thput_file_name,
+        group_name=args.thput_group_name,
+        profile_name=args.thput_profile_name,
+        config=args.thput_config,
+        ssid=args.thput_ssid,
+        passwd=args.thput_passwd,
+        security=args.thput_security,
+        eap_method=args.thput_eap_method,
+        eap_identity=args.thput_eap_identity,
+        ieee8021x=args.thput_ieee8021x,
+        ieee80211u=args.thput_ieee80211u,
+        ieee80211w=args.thput_ieee80211w,
+        enable_pkc=args.thput_enable_pkc,
+        bss_transition=args.thput_bss_transition,
+        power_save=args.thput_power_save,
+        disable_ofdma=args.thput_disable_ofdma,
+        roam_ft_ds=args.thput_roam_ft_ds,
+        key_management=args.thput_key_management,
+        pairwise=args.thput_pairwise,
+        private_key=args.thput_private_key,
+        ca_cert=args.thput_ca_cert,
+        client_cert=args.thput_client_cert,
+        pk_passwd=args.thput_pk_passwd,
+        pac_file=args.thput_pac_file,
+        wait_time=args.thput_wait_time
+    )
+
+def run_mcast_test(args, candela_apis):
+    return candela_apis.run_mc_test1(
+        test_duration=args.mcast_test_duration,
+        upstream_port=args.upstream_port,
+        endp_type=args.mcast_endp_type,
+        side_b_min_bps=args.mcast_side_b_min_bps,
+        tos=args.mcast_tos,
+        device_list=args.mcast_device_list,
+        expected_passfail_value=args.mcast_expected_passfail_value,
+        device_csv_name=args.mcast_device_csv_name,
+        file_name=args.mcast_file_name,
+        group_name=args.mcast_group_name,
+        profile_name=args.mcast_profile_name,
+        config=args.mcast_config,
+        ssid=args.mcast_ssid,
+        passwd=args.mcast_passwd,
+        security=args.mcast_security,
+        eap_method=args.mcast_eap_method,
+        eap_identity=args.mcast_eap_identity,
+        ieee8021x=args.mcast_ieee8021x,
+        ieee80211u=args.mcast_ieee80211u,
+        ieee80211w=args.mcast_ieee80211w,
+        enable_pkc=args.mcast_enable_pkc,
+        bss_transition=args.mcast_bss_transition,
+        power_save=args.mcast_ieee8021x,
+        disable_ofdma=args.mcast_disable_ofdma,
+        roam_ft_ds=args.mcast_roam_ft_ds,
+        key_management=args.mcast_key_management,
+        pairwise=args.mcast_pairwise,
+        private_key=args.mcast_private_key,
+        ca_cert=args.mcast_ca_cert,
+        client_cert=args.mcast_client_cert,
+        pk_passwd=args.mcast_pk_passwd,
+        pac_file=args.mcast_pac_file,
+        wait_time=args.mcast_wait_time
+    )
+
+def run_yt_test(args, candela_apis):
+    return candela_apis.run_yt_test(
+        url=args.yt_url,
+        duration=args.yt_duration,
+        res=args.yt_res,
+        upstream_port=args.upstream_port,
+        resource_list=args.yt_device_list,
+        expected_passfail_value=args.yt_expected_passfail_value,
+        device_csv_name=args.yt_device_csv_name,
+        file_name=args.yt_file_name,
+        group_name=args.yt_group_name,
+        profile_name=args.yt_profile_name,
+        config=args.yt_config,
+        ssid=args.yt_ssid,
+        passwd=args.yt_passwd,
+        encryp=args.yt_security,
+        eap_method=args.yt_eap_method,
+        eap_identity=args.yt_eap_identity,
+        ieee8021x=args.yt_ieee8021x,
+        ieee80211u=args.yt_ieee80211u,
+        ieee80211w=args.yt_ieee80211w,
+        enable_pkc=args.yt_enable_pkc,
+        bss_transition=args.yt_bss_transition,
+        power_save=args.yt_ieee8021x,
+        disable_ofdma=args.yt_disable_ofdma,
+        roam_ft_ds=args.yt_roam_ft_ds,
+        key_management=args.yt_key_management,
+        pairwise=args.yt_pairwise,
+        private_key=args.yt_private_key,
+        ca_cert=args.yt_ca_cert,
+        client_cert=args.yt_client_cert,
+        pk_passwd=args.yt_pk_passwd,
+        pac_file=args.yt_pac_file
+    )
+
+def run_rb_test(args, candela_apis):
+    return candela_apis.run_rb_test(
+        url=args.rb_url,
+        upstream_port=args.upstream_port,
+        device_list=args.rb_device_list,
+        expected_passfail_value=args.rb_expected_passfail_value,
+        device_csv_name=args.rb_device_csv_name,
+        file_name=args.rb_file_name,
+        group_name=args.rb_group_name,
+        profile_name=args.rb_profile_name,
+        config=args.rb_config,
+        ssid=args.rb_ssid,
+        passwd=args.rb_passwd,
+        encryp=args.rb_security,
+        eap_method=args.rb_eap_method,
+        eap_identity=args.rb_eap_identity,
+        ieee80211=args.rb_ieee80211,
+        ieee80211u=args.rb_ieee80211u,
+        ieee80211w=args.rb_ieee80211w,
+        enable_pkc=args.rb_enable_pkc,
+        bss_transition=args.rb_bss_transition,
+        power_save=args.rb_power_save,
+        disable_ofdma=args.rb_disable_ofdma,
+        roam_ft_ds=args.rb_roam_ft_ds,
+        key_management=args.rb_key_management,
+        pairwise=args.rb_pairwise,
+        private_key=args.rb_private_key,
+        ca_cert=args.rb_ca_cert,
+        client_cert=args.rb_client_cert,
+        pk_passwd=args.rb_pk_passwd,
+        pac_file=args.rb_pac_file,
+        wait_time=args.rb_wait_time,
+        duration=args.rb_duration
+    )
+
+def run_zoom_test(args, candela_apis):
+    return candela_apis.run_zoom_test(
+        duration=args.zoom_duration,
+        signin_email=args.zoom_signin_email,
+        signin_passwd=args.zoom_signin_passwd,
+        participants=args.zoom_participants,
+        audio=args.zoom_audio,
+        video=args.zoom_video,
+        upstream_port=args.upstream_port,
+        resource_list=args.zoom_device_list,
+        zoom_host=args.zoom_host,
+        expected_passfail_value=args.zoom_expected_passfail_value,
+        device_csv_name=args.zoom_device_csv_name,
+        file_name=args.zoom_file_name,
+        group_name=args.zoom_group_name,
+        profile_name=args.zoom_profile_name,
+        config=args.zoom_config,
+        ssid=args.zoom_ssid,
+        passwd=args.zoom_passwd,
+        encryp=args.zoom_security,
+        eap_method=args.zoom_eap_method,
+        eap_identity=args.zoom_eap_identity,
+        ieee8021x=args.zoom_ieee8021x,
+        ieee80211u=args.zoom_ieee80211u,
+        ieee80211w=args.zoom_ieee80211w,
+        enable_pkc=args.zoom_enable_pkc,
+        bss_transition=args.zoom_bss_transition,
+        power_save=args.zoom_power_save,
+        disable_ofdma=args.zoom_disable_ofdma,
+        roam_ft_ds=args.zoom_roam_ft_ds,
+        key_management=args.zoom_key_management,
+        pairwise=args.zoom_pairwise,
+        private_key=args.zoom_private_key,
+        ca_cert=args.zoom_ca_cert,
+        client_cert=args.zoom_client_cert,
+        pk_passwd=args.zoom_pk_passwd,
+        pac_file=args.zoom_pac_file,
+        wait_time=args.zoom_wait_time
+    )
 main()
