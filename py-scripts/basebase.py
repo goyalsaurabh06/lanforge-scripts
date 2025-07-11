@@ -4956,7 +4956,7 @@ def main():
     # exit(0)
     validate_args(args_dict)
     candela_apis = Candela(ip=args.mgr, port=args.mgr_port)
-    candela_apis.misc_clean_up(layer3=True,layer4=True)
+    candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
     print(args)
     test_map = {
     "ping_test":   (run_ping_test, "PING TEST"),
@@ -5043,7 +5043,7 @@ def main():
         for t in threads:
             t.start()
             t.join()
-    candela_apis.misc_clean_up(layer3=True,layer4=True)
+    candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
 
 
 #WITHOUT CONFIG
