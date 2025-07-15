@@ -28,7 +28,7 @@ import matplotlib
 from pathlib import Path
 realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
-LOG_BUFFER = {}
+LOG_BUFFER = []
 result_df = {}
 matplotlib.use('Agg')  # Before importing pyplot
 base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
