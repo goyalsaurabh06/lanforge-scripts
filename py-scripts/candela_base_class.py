@@ -25,8 +25,11 @@ import json
 import traceback
 from types import SimpleNamespace
 import matplotlib
+from pathlib import Path
 realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
+error_logs = "" 
+test_results_df = pd.DataFrame(columns=['test_name', 'status'])
 matplotlib.use('Agg')  # Before importing pyplot
 base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 print('base path',base_path)
@@ -1887,6 +1890,7 @@ class Candela(Realm):
                 connections_download_avg=connections_download_avg,
                 avg_drop_a=avg_drop_a,
                 avg_drop_b=avg_drop_b)
+        return True
 
     def run_vs_test(self,args):
 
@@ -4416,6 +4420,10 @@ def main():
                           action="store_true",
                           help='to run in parallel')
     parser.add_argument("--tests",type=str,help="Comma-separated ordered list of tests to run (e.g., ping_test,http_test,ping_test)")
+    parser.add_argument('--series_tests', help='Comma-separated list of tests to run in series')
+    parser.add_argument('--parallel_tests', help='Comma-separated list of tests to run in parallel')
+    parser.add_argument('--order_priority', choices=['series', 'parallel'], default='series',
+                    help='Which tests to run first: series or parallel')
 
     #NOt common
     #ping
@@ -4903,7 +4911,6 @@ def main():
     # parser.add_argument('--zoom_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
     # parser.add_argument('--zoom_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
     parser.add_argument("--zoom_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
-
     # #yt
     # parser.add_argument('--yt_test',
     #                       action="store_true",
@@ -5002,268 +5009,234 @@ def main():
 
     # if args.zoom_test:
     #     threads.append(threading.Thread(target=run_test_safe(run_zoom_test, "ZOOM TEST", args, candela_apis)))
-    
-    tests_to_run = args.tests.split(',')
+    if not args.series_tests and not args.parallel_tests:
+        logger.error("Please provide tests cases --parallel_tests or --series_tests")
+        logger.info(f"availbe tests are {test_map.keys()}")
+        exit(0)
+
     flag=1
-    for test in tests_to_run:
-        if test not in test_map:
-            logger.error(f"{test} is not availble in test suite")
-            flag = 0
+    if args.series_tests:
+        tests_to_run_series = args.series_tests.split(',')
+        for test in tests_to_run_series:
+            if test not in test_map:
+                logger.error(f"{test} is not availble in test suite")
+                flag = 0
+    if args.parallel_tests:
+        tests_to_run_parallel = args.parallel_tests.split(',')
+        for test in tests_to_run_parallel:
+            if test not in test_map:
+                logger.error(f"{test} is not availble in test suite")
+                flag = 0
+
 
     if not flag:
         logger.info(f"availble tests are {test_map.keys()}")
         exit(0)
-    if args.parallel and len(tests_to_run) != len(set(tests_to_run)):
+    if len(tests_to_run_parallel) != len(set(tests_to_run_parallel)):
         logger.error("in -parallel dont specify duplicate tests")
         exit(0)
 
+    if args.series_tests or args.parallel_tests:
+        series_threads = []
+        parallel_threads = []
+        
+        # Process series tests
+        if args.series_tests:
+            ordered_series_tests = args.series_tests.split(',')
+            for idx, test_name in enumerate(ordered_series_tests):
+                test_name = test_name.strip().lower()
+                if test_name in test_map:
+                    func, label = test_map[test_name]
+                    series_threads.append(threading.Thread(
+                        target=run_test_safe(func, f"{label} [Series {idx+1}]", args, candela_apis)
+                    ))
+                else:
+                    print(f"Warning: Unknown test '{test_name}' in --series_tests")
+        
+        # Process parallel tests
+        if args.parallel_tests:
+            ordered_parallel_tests = args.parallel_tests.split(',')
+            for idx, test_name in enumerate(ordered_parallel_tests):
+                test_name = test_name.strip().lower()
+                if test_name in test_map:
+                    func, label = test_map[test_name]
+                    parallel_threads.append(threading.Thread(
+                        target=run_test_safe(func, f"{label} [Parallel {idx+1}]", args, candela_apis)
+                    ))
+                else:
+                    print(f"Warning: Unknown test '{test_name}' in --parallel_tests")
+        
+        # Execute based on order priority
+        if args.order_priority == 'series':
+            # candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
+            # Run series tests first (one at a time)
+            for t in series_threads:
+                t.start()
+                t.join()
+            
+            # Then run parallel tests
+            if len(parallel_threads) != 0:
+                candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
+                print('starting parallel tests.......')
+                time.sleep(20)
 
-    threads = []
-
-    if args.tests:
-        ordered_tests = args.tests.split(',')
-
-        for idx, test_name in enumerate(ordered_tests):
-            test_name = test_name.strip().lower()
-
-            if test_name in test_map:
-                func, label = test_map[test_name]
-                threads.append(threading.Thread(
-                    target=run_test_safe(func, f"{label} [{idx+1}]", args, candela_apis)
-                ))
-            else:
-                print(f"Warning: Unknown test '{test_name}' in --test_order")
-
-    if args.parallel:
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+            for t in parallel_threads:
+                t.start()
+            for t in parallel_threads:
+                t.join()
+        else:
+            # candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
+            # Run parallel tests first
+            for t in parallel_threads:
+                t.start()
+            for t in parallel_threads:
+                t.join()
+            # candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
+            # Then run series tests (one at a time)
+            if len(series_threads) != 0:
+                candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
+                print('starting Series tests.......')
+                time.sleep(20)
+            for t in series_threads:
+                t.start()
+                t.join()
+                # candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
     else:
-        for t in threads:
-            t.start()
-            t.join()
+        logger.error("provide either --paralell_tests or --series_tests")
+        exit(1)
     candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
+    log_file = save_logs()
+    print(f"Logs saved to: {log_file}")
+    
+    # You can also access the test results dataframe:
+    print("\nTest Results Summary:")
+    print(test_results_df)
 
 
-#WITHOUT CONFIG
-# candela_apis.run_ping_test(real=True,target="192.168.204.59",ping_interval='5',ping_duration=1,ssid="NETGEAR_2G_wpa2",passwd="Password@123",security="wpa2",use_default_config=True,dev_list="1.12,1.400")
-# candela_apis.run_http_test(upstream_port='eth1',bands=["5G"],duration='1m',file_size="2MB",device_list="1.95,1.12")
-# candela_apis.start_ftp_test(ssid='Walkin_open', password='[BLANK]', security='open',
-#                                 device_list='1.16,1.95',background=False)
-# candela_apis.run_qos_test(upstream_port="eth1",test_duration="1m",download ="0",upload="1000000",traffic_type ="lf_udp",tos="BK,BE,VI,VO",device_list="1.12,1.16,1.95")
-# candela_apis = Candela(ip="192.168.242.2",port="8080")
-# candela_apis.run_vs_test(
-#     url="https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-#     media_source="hls",
-#     media_quality="1080P",
-#     duration="1m",
-#     device_list="1.10,1.11",
-#     debug=True,
-#     test_name="video_streaming_test"
-# )
-# candela_apis.run_throughput_test(
-#     upstream_port="eth1",
-#     test_duration="1m",
-#     download="1000000",
-#     traffic_type="lf_udp",
-#     device_list="1.12,1.95",
-#     do_interopability=True,
-#     default_config=True
-# )
-# candela_apis.run_mc_test1(
-#     test_duration="1m",
-#     polling_interval="5s",
-#     upstream_port="1.1.eth1",
-#     endp_type="mc_udp",
-#     rates_are_totals=True,
-#     side_b_min_bps="30000000",
-#     tos="VI",
-#     real=True,
-#     ssid="NETGEAR_5G_wpa2",
-#     passwd="Password@123",
-#     security="wpa2",
-#     log_level="info",
-#     device_list=["1.12,1.95"]
-# )
-# candela_apis.run_yt_test(
-#     url="https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1",
-#     duration=1,
-#     res="1080p",
-#     upstream_port="1.1.eth1",
-#     resource_list="1.12,1.95"
-# )
+    # threads = []
 
-# candela_apis.run_zoom_test(
-#     duration=1,
-#     signin_email="lnawscloud@gmail.com",
-#     signin_passwd="Demo@10203000",
-#     participants=3,
-#     audio=True,
-#     video=True,
-#     upstream_port="192.168.200.193",
-#     resource_list="1.400,1.360",
-#     zoom_host="1.95"
-# )
-# candela_apis.run_rb_test(
-#     url="www.google.com",
-#     duration="1m",
-#     device_list="1.95,1.400,1.360",
-#     debug=True,
-#     upstream_port="192.168.200.193"
-# )
+    # if args.tests:
+    #     ordered_tests = args.tests.split(',')
+
+    #     for idx, test_name in enumerate(ordered_tests):
+    #         test_name = test_name.strip().lower()
+
+    #         if test_name in test_map:
+    #             func, label = test_map[test_name]
+    #             threads.append(threading.Thread(
+    #                 target=run_test_safe(func, f"{label} [{idx+1}]", args, candela_apis)
+    #             ))
+    #         else:
+    #             print(f"Warning: Unknown test '{test_name}' in --test_order")
+
+    # if args.parallel:
+    #     for t in threads:
+    #         t.start()
+    #     for t in threads:
+    #         t.join()
+    # else:
+    #     for t in threads:
+    #         t.start()
+    #         t.join()
 
 
+# def log(line):
+#     logger.info(line)
+#     LOG_BUFFER.append(line)
+
+# def save_log_to_file(test_name):
+#     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+#     base_dir = Path(__file__).parent / "base_class_logs"
+#     base_dir.mkdir(parents=True, exist_ok=True)
+#     file_path = base_dir / f"{test_name}_{timestamp}.txt"
+
+#     with open(file_path, "w", encoding="utf-8") as f:
+#         f.write("\n".join(LOG_BUFFER))
+
+#     print(f"Log saved to {file_path}")
 
 
-#WITH CONFIG
-# candela_apis.run_ping_test(real=True,target="192.168.204.59",ping_interval='5',ping_duration=1,passwd="Openwifi",use_default_config=True)
-# candela_apis.run_http_test(upstream_port='eth1',bands=["5G"],duration='1m',file_size="2MB",device_list="1.95,1.12",config=True,ssid="NETGEAR_2G_wpa2",passwd="Password@123",security="wpa2")
-# candela_apis.start_ftp_test(device_list='1.16,1.95',background=False,config=True,ssid="NETGEAR_2G_wpa2",passwd="Password@123",security="wpa2")
-# candela_apis.run_qos_test(upstream_port="eth1",test_duration="1m",download ="0",upload="1000000",traffic_type ="lf_udp",tos="BK,BE,VI,VO",device_list="1.12,1.360",config=True,ssid="NETGEAR_2G_wpa2",passwd="Password@123",security="wpa2")
-# candela_apis.run_vs_test(
-#     url="https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-#     media_source="hls",
-#     media_quality="1080P",
-#     duration="1m",
-#     device_list="1.15,1.360",
-#     debug=True,
-#     test_name="video_streaming_test",
-#     config=True,
-#     ssid="NETGEAR_2G_wpa2",
-#     passwd="Password@123",
-#     encryp="wpa2",
-#     upstream_port="1.1.eth1"
-# )
-# candela_apis.run_throughput_test(
-#     upstream_port="eth1",
-#     test_duration="1m",
-#     download="1000000",
-#     traffic_type="lf_udp",
-#     device_list="1.12,1.95",
-#     do_interopability=True,
-#     # default_config=True
-#     config=True,
-#     ssid="NETGEAR_2G_wpa2",
-#     passwd="Password@123",
-#     security="wpa2",
-# )
-# candela_apis.run_mc_test1(
-#     test_duration="1m",
-#     polling_interval="5s",
-#     upstream_port="1.1.eth1",
-#     endp_type="mc_udp",
-#     rates_are_totals=True,
-#     side_b_min_bps="30000000",
-#     tos="VI",
-#     real=True,
-#     ssid="NETGEAR_2G_wpa2",
-#     passwd="Password@123",
-#     security="wpa2",
-#     log_level="info",
-#     device_list=["1.12,1.360"],
-#     config=True
-# )
-
-
-# candela_apis.run_yt_test(
-#     url="https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1",
-#     duration=1,
-#     res="1080p",
-#     upstream_port="1.1.eth1",
-#     resource_list="1.360,1.400"
-# )
-
-# candela_apis.run_zoom_test(
-#     duration=1,
-#     signin_email="lnawscloud@gmail.com",
-#     signin_passwd="Demo@10203000",
-#     participants=3,
-#     audio=True,
-#     video=True,
-#     upstream_port="192.168.200.193",
-#     resource_list="1.400,1.360",
-#     zoom_host="1.95"
-# )
-
-
-
-#WITHOUT CONFIG
-# candela_apis.run_ping_test(real=True,target="192.168.204.59",ping_interval='5',ping_duration=1,passwd="Openwifi",use_default_config=True)
-# candela_apis.run_http_test(upstream_port='eth1',bands=["5G"],duration='1m',file_size="2MB",device_list="1.95,1.12")
-# candela_apis.start_ftp_test(ssid='Walkin_open', password='[BLANK]', security='open',
-#                                 device_list='1.16,1.95',background=False)
-# candela_apis.run_qos_test(upstream_port="eth1",test_duration="1m",download ="0",upload="1000000",traffic_type ="lf_udp",tos="BK,BE,VI,VO",device_list="1.12,1.16,1.95")
-# candela_apis = Candela(ip='192.168.242.2',port='8080')
-# candela_apis.run_vs_test1(
-#     url="https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-#     media_source="hls",
-#     media_quality="1080P",
-#     duration="1m",
-#     device_list="1.13,1.10,1.15",
-#     debug=True,
-#     test_name="video_streaming_test"
-# )
-# candela_apis.run_throughput_test(
-#     upstream_port="eth1",
-#     test_duration="1m",
-#     download="1000000",
-#     traffic_type="lf_udp",
-#     device_list="1.12,1.95",
-#     do_interopability=True,
-#     default_config=True
-# )
-# candela_apis.run_mc_test1(
-#     test_duration="1m",
-#     polling_interval="5s",
-#     upstream_port="1.1.eth1",
-#     endp_type="mc_udp",
-#     rates_are_totals=True,
-#     side_b_min_bps="30000000",
-#     tos="VI",
-#     real=True,
-#     ssid="NETGEAR_5G_wpa2",
-#     passwd="Password@123",
-#     security="wpa2",
-#     log_level="info",
-#     device_list=["1.12,1.95"]
-# )
-
-
-# candela_apis.run_yt_test(
-#     url="https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1",
-#     duration=1,
-#     res="1080p",
-#     upstream_port="1.1.eth1",
-#     resource_list="1.12,1.95"
-# )
-# candela_apis.run_zoom_test(
-#     duration=1,
-#     signin_email="lnawscloud@gmail.com",
-#     signin_passwd="Demo@10203000",
-#     participants=3,
-#     audio=True,
-#     video=True,
-#     upstream_port="192.168.200.193",
-#     resource_list="1.400,1.360",
-#     zoom_host="1.95"
-# )
+# def run_test_safe(test_func, test_name, args, candela_apis):
+#     def wrapper():
+#         try:
+#             result = test_func(args, candela_apis)
+#             if not result:
+#                 log(f"{test_name} FAILED")
+#             else:
+#                 log(f"{test_name} PASSED")
+#         except SystemExit as e:
+#             log(f"{test_name} exited with code {e.code}")
+#             save_log_to_file(test_name)
+#         except Exception:
+#             log(f"{test_name} crashed unexpectedly:")
+#             log("Traceback (most recent call last):")
+#             tb_lines = traceback.format_exc().splitlines()
+#             for line in tb_lines:
+#                 log(line)
+#             save_log_to_file(test_name)
+#     return wrapper
 
 def run_test_safe(test_func, test_name, args, candela_apis):
+    global error_logs
+    global test_results_df
+    
     def wrapper():
+        global error_logs
+        global test_results_df
+        
         try:
             result = test_func(args, candela_apis)
             if not result:
+                status = "FAILED"
                 logger.error(f"{test_name} FAILED")
             else:
+                status = "PASSED"
                 logger.info(f"{test_name} PASSED")
+                
+            # Update the dataframe with test result
+            test_results_df.loc[len(test_results_df)] = [test_name, status]
+            
         except SystemExit as e:
-            logger.error(f"{test_name} exited with code {e.code}")
+            if e.code != 0:
+                status = "FAILED"
+            else:
+                status = "PASSED"
+            error_msg = f"{test_name} exited with code {e.code}\n"
+            logger.error(error_msg)
+            error_logs += error_msg
+            test_results_df.loc[len(test_results_df)] = [test_name, status]
+            
         except Exception as e:
-            logger.exception(f"{test_name} crashed unexpectedly")
+            status = "FAILED"
+            error_msg = f"{test_name} crashed unexpectedly\n"
+            logger.exception(error_msg)
+            tb_str = traceback.format_exc()
             traceback.print_exc()
+            full_error = error_msg + tb_str + "\n"
+            error_logs += full_error
+            test_results_df.loc[len(test_results_df)] = [test_name, status]
+            
     return wrapper
 
+def save_logs():
+    """Save accumulated error logs to a timestamped file in base_class_logs directory"""
+    global error_logs
+    
+        
+    # Create directory if it doesn't exist
+    log_dir = "base_class_logs"
+    os.makedirs(log_dir, exist_ok=True)
+    
+    # Generate timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_filename = f"{log_dir}/test_logs_{timestamp}.txt"
+    
+    # Write logs to file
+    with open(log_filename, 'w') as f:
+        f.write(error_logs)
+        
+    logger.info(f"Test logs saved to {log_filename}")
+    return log_filename
 
 def run_ping_test(args, candela_apis):
     return candela_apis.run_ping_test(
