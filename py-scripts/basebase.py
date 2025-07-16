@@ -5068,34 +5068,43 @@ def main():
         
         # Execute based on order priority
         if args.order_priority == 'series':
-            candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
+            # candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
             # Run series tests first (one at a time)
             for t in series_threads:
                 t.start()
                 t.join()
-                candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
             
             # Then run parallel tests
+            if len(parallel_threads) != 0:
+                candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
+                print('starting parallel tests.......')
+                time.sleep(20)
+
             for t in parallel_threads:
                 t.start()
             for t in parallel_threads:
                 t.join()
         else:
-            candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
+            # candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
             # Run parallel tests first
             for t in parallel_threads:
                 t.start()
             for t in parallel_threads:
                 t.join()
-            candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
+            # candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
             # Then run series tests (one at a time)
+            if len(series_threads) != 0:
+                candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
+                print('starting Series tests.......')
+                time.sleep(20)
             for t in series_threads:
                 t.start()
                 t.join()
-                candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
+                # candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
     else:
         logger.error("provide either --paralell_tests or --series_tests")
         exit(1)
+    candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
     log_file = save_logs()
     print(f"Logs saved to: {log_file}")
     
