@@ -28,8 +28,8 @@ import matplotlib
 from pathlib import Path
 realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
-LOG_BUFFER = []
-result_df = {}
+error_logs = "" 
+test_results_df = pd.DataFrame(columns=['test_name', 'status'])
 matplotlib.use('Agg')  # Before importing pyplot
 base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 print('base path',base_path)
@@ -1890,6 +1890,7 @@ class Candela(Realm):
                 connections_download_avg=connections_download_avg,
                 avg_drop_a=avg_drop_a,
                 avg_drop_b=avg_drop_b)
+        return True
 
     def run_vs_test(self,args):
 
@@ -5008,18 +5009,25 @@ def main():
 
     # if args.zoom_test:
     #     threads.append(threading.Thread(target=run_test_safe(run_zoom_test, "ZOOM TEST", args, candela_apis)))
+    if not args.series_tests and not args.parallel_tests:
+        logger.error("Please provide tests cases --parallel_tests or --series_tests")
+        logger.info(f"availbe tests are {test_map.keys()}")
+        exit(0)
 
-    tests_to_run_series = args.series_tests.split(',')
-    tests_to_run_parallel = args.parallel_tests.split(',')
     flag=1
-    for test in tests_to_run_series:
-        if test not in test_map:
-            logger.error(f"{test} is not availble in test suite")
-            flag = 0
-    for test in tests_to_run_parallel:
-        if test not in test_map:
-            logger.error(f"{test} is not availble in test suite")
-            flag = 0
+    if args.series_tests:
+        tests_to_run_series = args.series_tests.split(',')
+        for test in tests_to_run_series:
+            if test not in test_map:
+                logger.error(f"{test} is not availble in test suite")
+                flag = 0
+    if args.parallel_tests:
+        tests_to_run_parallel = args.parallel_tests.split(',')
+        for test in tests_to_run_parallel:
+            if test not in test_map:
+                logger.error(f"{test} is not availble in test suite")
+                flag = 0
+
 
     if not flag:
         logger.info(f"availble tests are {test_map.keys()}")
@@ -5088,6 +5096,12 @@ def main():
     else:
         logger.error("provide either --paralell_tests or --series_tests")
         exit(1)
+    log_file = save_logs()
+    print(f"Logs saved to: {log_file}")
+    
+    # You can also access the test results dataframe:
+    print("\nTest Results Summary:")
+    print(test_results_df)
 
 
     # threads = []
@@ -5117,42 +5131,103 @@ def main():
     #         t.join()
 
 
-def log(line):
-    logger.info(line)
-    LOG_BUFFER.append(line)
+# def log(line):
+#     logger.info(line)
+#     LOG_BUFFER.append(line)
 
-def save_log_to_file(test_name):
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    base_dir = Path(__file__).parent / "base_class_logs"
-    base_dir.mkdir(parents=True, exist_ok=True)
-    file_path = base_dir / f"{test_name}_{timestamp}.txt"
+# def save_log_to_file(test_name):
+#     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+#     base_dir = Path(__file__).parent / "base_class_logs"
+#     base_dir.mkdir(parents=True, exist_ok=True)
+#     file_path = base_dir / f"{test_name}_{timestamp}.txt"
 
-    with open(file_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(LOG_BUFFER))
+#     with open(file_path, "w", encoding="utf-8") as f:
+#         f.write("\n".join(LOG_BUFFER))
 
-    print(f"Log saved to {file_path}")
+#     print(f"Log saved to {file_path}")
 
+
+# def run_test_safe(test_func, test_name, args, candela_apis):
+#     def wrapper():
+#         try:
+#             result = test_func(args, candela_apis)
+#             if not result:
+#                 log(f"{test_name} FAILED")
+#             else:
+#                 log(f"{test_name} PASSED")
+#         except SystemExit as e:
+#             log(f"{test_name} exited with code {e.code}")
+#             save_log_to_file(test_name)
+#         except Exception:
+#             log(f"{test_name} crashed unexpectedly:")
+#             log("Traceback (most recent call last):")
+#             tb_lines = traceback.format_exc().splitlines()
+#             for line in tb_lines:
+#                 log(line)
+#             save_log_to_file(test_name)
+#     return wrapper
 
 def run_test_safe(test_func, test_name, args, candela_apis):
+    global error_logs
+    global test_results_df
+    
     def wrapper():
+        global error_logs
+        global test_results_df
+        
         try:
             result = test_func(args, candela_apis)
             if not result:
-                log(f"{test_name} FAILED")
+                status = "FAILED"
+                logger.error(f"{test_name} FAILED")
             else:
-                log(f"{test_name} PASSED")
+                status = "PASSED"
+                logger.info(f"{test_name} PASSED")
+                
+            # Update the dataframe with test result
+            test_results_df.loc[len(test_results_df)] = [test_name, status]
+            
         except SystemExit as e:
-            log(f"{test_name} exited with code {e.code}")
-            save_log_to_file(test_name)
-        except Exception:
-            log(f"{test_name} crashed unexpectedly:")
-            log("Traceback (most recent call last):")
-            tb_lines = traceback.format_exc().splitlines()
-            for line in tb_lines:
-                log(line)
-            save_log_to_file(test_name)
+            if e.code != 0:
+                status = "FAILED"
+            else:
+                status = "PASSED"
+            error_msg = f"{test_name} exited with code {e.code}\n"
+            logger.error(error_msg)
+            error_logs += error_msg
+            test_results_df.loc[len(test_results_df)] = [test_name, status]
+            
+        except Exception as e:
+            status = "FAILED"
+            error_msg = f"{test_name} crashed unexpectedly\n"
+            logger.exception(error_msg)
+            tb_str = traceback.format_exc()
+            traceback.print_exc()
+            full_error = error_msg + tb_str + "\n"
+            error_logs += full_error
+            test_results_df.loc[len(test_results_df)] = [test_name, status]
+            
     return wrapper
 
+def save_logs():
+    """Save accumulated error logs to a timestamped file in base_class_logs directory"""
+    global error_logs
+    
+        
+    # Create directory if it doesn't exist
+    log_dir = "base_class_logs"
+    os.makedirs(log_dir, exist_ok=True)
+    
+    # Generate timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_filename = f"{log_dir}/test_logs_{timestamp}.txt"
+    
+    # Write logs to file
+    with open(log_filename, 'w') as f:
+        f.write(error_logs)
+        
+    logger.info(f"Test logs saved to {log_filename}")
+    return log_filename
 
 def run_ping_test(args, candela_apis):
     return candela_apis.run_ping_test(
