@@ -1020,6 +1020,23 @@ class DeviceConfig(Realm):
         file_name = csv_name
         columns = ['DeviceList', 'PingPacketLoss %', 'L3_TCP_UL Mbps', 'L3_TCP_DL Mbps', 'L3_TCP_BiDi Mbps', 'L3_UDP_UL Mbps', 'L3_UDP_DL Mbps', 'L3_UDP_BiDi Mbps',
                    'Videostreaming URLcount', 'RealBrowser URLcount', 'HTTP URLcount', 'FTP URLcount', 'PortReset No_of_connections', 'Roaming No_of_Successful Roams']
+        
+        # Default values for headers
+        default_values = {
+            "PingPacketLoss %": 10,
+            "L3_TCP_UL Mbps": 0.3,
+            "L3_TCP_DL Mbps": 0.3,
+            "L3_TCP_BiDi Mbps": 0.3,
+            "L3_UDP_UL Mbps": 0.3,
+            "L3_UDP_DL Mbps": 0.3,
+            "L3_UDP_BiDi Mbps": 0.3,
+            "Videostreaming URLcount": 0.3,
+            "RealBrowser URLcount": 0.3,
+            "HTTP URLcount": 5,
+            "FTP URLcount": 5,
+            "PortReset No_of_connections": 5,
+            "Roaming No_of_Successful Roams": 5,
+        }
 
         if not os.path.exists(file_name):
             with open(file_name, mode='w', newline='') as file:
@@ -1052,8 +1069,12 @@ class DeviceConfig(Realm):
         existing_devices = {row[0] for row in existing_data}
         for device in device_csv_list:
             if device not in existing_devices:
-                new_row = [device] + [''] * (len(header) - 1)
-                existing_data.append(new_row)
+                # new_row = [device] + [''] * (len(header) - 1)
+                # existing_data.append(new_row)
+                default_row = [device]
+                for col in header[1:]:
+                    default_row.append(default_values.get(col, ''))  # fallback to '' if not found
+                existing_data.append(default_row)
 
         with open(file_name, mode='w', newline='') as file:
             writer = csv.writer(file)
