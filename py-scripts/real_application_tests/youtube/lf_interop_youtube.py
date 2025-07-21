@@ -129,7 +129,8 @@ class Youtube(Realm):
                  upstream_port=None,
                  config=None,
                  selected_groups=None,
-                 selected_profiles=None
+                 selected_profiles=None,
+                 config_obj=None
 
 
                  ):
@@ -197,6 +198,7 @@ class Youtube(Realm):
         self.config = config
         self.selected_groups = selected_groups
         self.selected_profiles = selected_profiles
+        self.configobj = config_obj
 
     def stop(self):
         self.stop_signal = True
@@ -745,6 +747,28 @@ class Youtube(Realm):
         with open(file_path, 'w') as file:
             json.dump(data, file, indent=4)
 
+    def get_test_results_data(self, test_results, group):
+        groups_devices_map = self.configobj.get_groups_devices(data=self.selected_groups, groupdevmap=True)
+        group_hostnames = groups_devices_map.get(group, [])
+        # print("Group Hostnames:", group_hostnames)
+        # print("Test Results Hostnames:", test_results["Hostname"])
+
+        group_test_results = {}
+
+        for key in test_results:
+            group_test_results[key] = []
+
+        for idx, hostname in enumerate(test_results["Hostname"]):
+            if hostname in group_hostnames:
+                for key in test_results:
+                    group_test_results[key].append(test_results[key][idx])
+        # print("checking group test results", group_test_results)
+
+        return group_test_results
+
+
+        
+
     def create_report(self, data, ui_report_dir):
 
         result_data = data
@@ -923,9 +947,21 @@ class Youtube(Realm):
 
         }
 
-        test_results_df = pd.DataFrame(test_results)
-        self.report.set_table_dataframe(test_results_df)
-        self.report.build_table()
+        if self.selected_groups and self.selected_profiles:
+            for group in self.selected_groups:
+                group_specific_test_results = self.get_test_results_data(test_results, group)
+                if not group_specific_test_results['Hostname']:
+                    continue
+                self.report.set_table_title(f"{group}")
+                self.report.build_table_title()
+                test_results_df = pd.DataFrame(group_specific_test_results)
+                self.report.set_table_dataframe(test_results_df)
+                self.report.build_table()
+
+        else:
+            test_results_df = pd.DataFrame(test_results)
+            self.report.set_table_dataframe(test_results_df)
+            self.report.build_table()
 
         for file_path in self.devices_list:
             self.move_files(file_path, self.report_path_date_time)
@@ -1364,6 +1400,7 @@ NOTES:
             else:
                 new_filename = args.file_name
             config_obj = DeviceConfig.DeviceConfig(lanforge_ip=args.mgr, file_name=new_filename)
+            youtube.configobj = config_obj
             if not args.expected_passfail_value and args.device_csv_name is None:
                 config_obj.device_csv_file(csv_name="device.csv")
             if args.group_name is not None and args.file_name is not None and args.profile_name is not None:
