@@ -1674,7 +1674,7 @@ class Candela(Realm):
 
     def run_qos_test(
         self,
-        device_list=[],
+        device_list=None,
         test_name=None,
         result_dir='',
         upstream_port='eth1',
@@ -5078,7 +5078,7 @@ def main():
             if len(parallel_threads) != 0:
                 candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
                 print('starting parallel tests.......')
-                time.sleep(20)
+                time.sleep(120)
 
             for t in parallel_threads:
                 t.start()
@@ -5347,6 +5347,7 @@ def run_ftp_test(args, candela_apis):
     )
 
 def run_qos_test(args, candela_apis):
+    print("QOS_LIST",args.qos_device_list)
     return candela_apis.run_qos_test(
         upstream_port=args.upstream_port,
         test_duration=args.qos_duration,
