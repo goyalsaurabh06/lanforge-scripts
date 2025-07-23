@@ -90,7 +90,7 @@ import requests
 import shutil
 import json
 from lf_graph import lf_bar_graph_horizontal
-
+import traceback
 import asyncio
 from typing import List, Optional
 import csv
@@ -743,7 +743,11 @@ class HttpDownload(Realm):
             self.data["remaining_time"] = [[str(int(total_hours)) + " hr and " + str(
                 int(remaining_minutes)) + " min" if int(total_hours) != 0 or int(remaining_minutes) != 0 else '<1 min'][
                 0]] * len(self.devices_list)
-            df1 = pd.DataFrame(self.data)
+            try:
+                df1 = pd.DataFrame(self.data)
+            except:
+                logger.info(f'error error http data {self.data}')
+                traceback.print_exc()
             if self.dowebgui:
                 df1.to_csv('{}/http_datavalues.csv'.format(self.result_dir), index=False)
             elif self.client_type == 'Real':

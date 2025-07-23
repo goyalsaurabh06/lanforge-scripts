@@ -117,6 +117,7 @@ from lf_graph import lf_bar_graph_horizontal
 from typing import List, Optional
 import asyncio
 import csv
+import traceback
 
 if sys.version_info[0] != 3:
     print("This script requires Python 3")
@@ -1043,7 +1044,11 @@ class FtpTest(LFCliBase):
                 self.data["remaining_time"] = [[str(int(total_hours)) + " hr and " + str(
                     int(remaining_minutes)) + " min" if int(total_hours) != 0 or int(
                     remaining_minutes) != 0 else '<1 min'][0]] * len(self.cx_list)
-                df1 = pd.DataFrame(self.data)
+                try:
+                    df1 = pd.DataFrame(self.data)
+                except:
+                    logger.info(f'error error data {self.data}')
+                    traceback.print_exc()
                 if self.dowebgui:
                     df1.to_csv('{}/ftp_datavalues.csv'.format(self.result_dir), index=False)
                 if self.clients_type == 'Real':
