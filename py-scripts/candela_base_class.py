@@ -5032,7 +5032,7 @@ def main():
     if not flag:
         logger.info(f"availble tests are {test_map.keys()}")
         exit(0)
-    if len(tests_to_run_parallel) != len(set(tests_to_run_parallel)):
+    if args.parallel_tests and len(tests_to_run_parallel) != len(set(tests_to_run_parallel)):
         logger.error("in -parallel dont specify duplicate tests")
         exit(0)
 
