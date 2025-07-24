@@ -233,6 +233,8 @@ class FtpTest(LFCliBase):
         self.mac_id_list = []
         self.real_client_list1 = []
         self.uc_avg = []
+        self.failed_cx = []
+        self.tracking_map = {}
         self.uc_min = []
         self.uc_max = []
         self.url_data = []
@@ -1103,6 +1105,7 @@ class FtpTest(LFCliBase):
             'total_err':[]
         }
         cx_list = self.cx_list
+        idx = 0
         if type(l4_data) != list:
             l4_data = [{l4_data['name']:l4_data}]
         for cx in cx_list:
@@ -1119,14 +1122,17 @@ class FtpTest(LFCliBase):
                         l4_dict['total_err'].append(value['total-err'])
                         cx_found = True
             if not cx_found:
-                print(f'apending default for ftp {cx}')
-                l4_dict['uc_avg_data'].append(0)
-                l4_dict['uc_max_data'].append(0)
-                l4_dict['uc_min_data'].append(0)
-                l4_dict['url_times'].append(0)
-                l4_dict['rx_rate'].append(0)
-                l4_dict['bytes_rd'].append(0)
-                l4_dict['total_err'].append(0)
+                print(f'apending default for http {cx}')
+                self.failed_cx.append(cx)
+                l4_dict['uc_avg_data'].append(0 if not self.tracking_map else self.tracking_map['uc_avg_data'][idx])
+                l4_dict['uc_max_data'].append(0 if not self.tracking_map else self.tracking_map['uc_max_data'][idx])
+                l4_dict['uc_min_data'].append(0 if not self.tracking_map else self.tracking_map['uc_min_data'][idx])
+                l4_dict['url_times'].append(0 if not self.tracking_map else self.tracking_map['url_times'][idx])
+                l4_dict['rx_rate'].append(0 if not self.tracking_map else self.tracking_map['rx_rate'][idx])
+                l4_dict['bytes_rd'].append(0 if not self.tracking_map else self.tracking_map['bytes_rd'][idx])
+                l4_dict['total_err'].append(0 if not self.tracking_map else self.tracking_map['total_err'][idx])
+            idx += 1
+        self.tracking_map = l4_dict.copy()
         
         return l4_dict
 
@@ -1875,6 +1881,7 @@ class FtpTest(LFCliBase):
                     "Security": self.security,
                     "Device List": ", ".join(all_devices_names),
                     "No of Devices": "Total" + f"({no_of_stations})" + total_devices,
+                    "Failed CXs": self.failed_cx if self.failed_cx else "NONE",
                     "File size": self.file_size,
                     "File location": "/home/lanforge",
                     "Traffic Direction": self.direction,

@@ -169,6 +169,8 @@ class HttpDownload(Realm):
         self.created_cx = {}
         self.station_list = []
         self.radio = []
+        self.failed_cx = []
+        self.tracking_map = {}
         self.get_url_from_file = get_url_from_file
         self.file_path = file_path
         self.file_name = file_name
@@ -653,6 +655,7 @@ class HttpDownload(Realm):
         cx_list = list(self.http_profile.created_cx.keys())
         if type(l4_data) != list:
             l4_data = [{l4_data['name']:l4_data}]
+        idx = 0
         for cx in cx_list:
             cx_found = False
             for i in l4_data:
@@ -668,13 +671,16 @@ class HttpDownload(Realm):
                         cx_found = True
             if not cx_found:
                 print(f'apending default for http {cx}')
-                l4_dict['uc_avg_data'].append(0)
-                l4_dict['uc_max_data'].append(0)
-                l4_dict['uc_min_data'].append(0)
-                l4_dict['url_times'].append(0)
-                l4_dict['rx_rate'].append(0)
-                l4_dict['bytes_rd'].append(0)
-                l4_dict['total_err'].append(0)
+                self.failed_cx.append(cx)
+                l4_dict['uc_avg_data'].append(0 if not self.tracking_map else self.tracking_map['uc_avg_data'][idx])
+                l4_dict['uc_max_data'].append(0 if not self.tracking_map else self.tracking_map['uc_max_data'][idx])
+                l4_dict['uc_min_data'].append(0 if not self.tracking_map else self.tracking_map['uc_min_data'][idx])
+                l4_dict['url_times'].append(0 if not self.tracking_map else self.tracking_map['url_times'][idx])
+                l4_dict['rx_rate'].append(0 if not self.tracking_map else self.tracking_map['rx_rate'][idx])
+                l4_dict['bytes_rd'].append(0 if not self.tracking_map else self.tracking_map['bytes_rd'][idx])
+                l4_dict['total_err'].append(0 if not self.tracking_map else self.tracking_map['total_err'][idx])
+            idx += 1
+        self.tracking_map = l4_dict.copy()
         
         return l4_dict
 
@@ -2459,6 +2465,8 @@ times the file is downloaded.
         test_input_infor["File size"] = args.file_size
     else:
         test_setup_info["File location (URLs from the File)"] = args.file_path
+    if args.client_type == "Real":
+        test_setup_info["failed_cx's"] = http.failed_cx if http.failed_cx else "NONE"
     # dataset = http.download_time_in_sec(result_data=result_data)
     rx_rate = []
     for i in result_data:
