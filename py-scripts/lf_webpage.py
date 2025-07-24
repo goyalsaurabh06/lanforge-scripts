@@ -667,6 +667,7 @@ class HttpDownload(Realm):
                         l4_dict['total_err'].append(value['total-err'])
                         cx_found = True
             if not cx_found:
+                print(f'apending default for http {cx}')
                 l4_dict['uc_avg_data'].append(0)
                 l4_dict['uc_max_data'].append(0)
                 l4_dict['uc_min_data'].append(0)

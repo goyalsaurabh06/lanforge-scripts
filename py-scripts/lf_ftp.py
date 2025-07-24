@@ -1119,6 +1119,7 @@ class FtpTest(LFCliBase):
                         l4_dict['total_err'].append(value['total-err'])
                         cx_found = True
             if not cx_found:
+                print(f'apending default for ftp {cx}')
                 l4_dict['uc_avg_data'].append(0)
                 l4_dict['uc_max_data'].append(0)
                 l4_dict['uc_min_data'].append(0)
@@ -1141,10 +1142,10 @@ class FtpTest(LFCliBase):
         self.uc_avg = l4_data["uc_avg_data"]
         self.uc_max = l4_data["uc_max_data"]
         self.uc_min = l4_data["uc_min_data"]
-        self.rx_rate = l4_data["url_times"]
-        self.total_err = l4_data["rx_rate"]
-        self.url_data = l4_data["bytes_rd"]
-        dataset = l4_data["total_err"]
+        self.rx_rate = l4_data["rx_rate"]
+        self.total_err = l4_data["total_err"]
+        self.url_data = l4_data["url_times"]
+        dataset = l4_data["bytes_rd"]
         self.bytes_rd = [float(f"{(i / 1000000): .4f}") for i in dataset]
         urls_downloaded = []
         for i in range(len(self.total_err)):
