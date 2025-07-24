@@ -636,6 +636,47 @@ class HttpDownload(Realm):
             df1 = pd.DataFrame(self.data)
             df1.to_csv("http_datavalues.csv", index=False)
 
+    def get_layer4_data(self):
+        try:
+            l4_data = self.local_realm.json_get(f'layer4/{','.join(list(self.http_profile.created_cx.keys()))}/list?fields=uc-avg,uc-max,uc-min,total-urls,rx rate (1m),bytes-rd,total-err')['endpoint']
+        except:
+            logger.error("l4 DATA not found")
+        l4_dict = {
+            'uc_avg_data': [],
+            'uc_max_data':[],
+            'uc_min_data':[],
+            'url_times':[],
+            'rx_rate':[],
+            'bytes_rd':[],
+            'total_err':[]
+        }
+        cx_list = list(self.http_profile.created_cx.keys())
+        if type(l4_data) != list:
+            l4_data = [{l4_data['name']:l4_data}]
+        for cx in cx_list:
+            cx_found = False
+            for i in l4_data:
+                for cx_name,value in i.items():
+                    if cx == cx_name:
+                        l4_dict['uc_avg_data'].append(value['uc-avg'])
+                        l4_dict['uc_max_data'].append(value['uc-max'])
+                        l4_dict['uc_min_data'].append(value['uc-min'])
+                        l4_dict['url_times'].append(value['total-urls'])
+                        l4_dict['rx_rate'].append(value['rx rate (1m)'])
+                        l4_dict['bytes_rd'].append(value['bytes-rd'])
+                        l4_dict['total_err'].append(value['total-err'])
+                        cx_found = True
+            if not cx_found:
+                l4_dict['uc_avg_data'].append(0)
+                l4_dict['uc_max_data'].append(0)
+                l4_dict['uc_min_data'].append(0)
+                l4_dict['url_times'].append(0)
+                l4_dict['rx_rate'].append(0)
+                l4_dict['bytes_rd'].append(0)
+                l4_dict['total_err'].append(0)
+        
+        return l4_dict
+
     def monitor_for_runtime_csv(self, duration):
 
         time_now = datetime.now()
@@ -667,13 +708,21 @@ class HttpDownload(Realm):
             # uc_min_data = self.json_get("layer4/list?fields=uc-min")
             # total_url_data = self.json_get("layer4/list?fields=total-urls")
             # bytes_rd = self.json_get("layer4/list?fields=bytes-rd")
-            uc_avg_data = self.my_monitor('uc-avg')
-            uc_max_data = self.my_monitor('uc-max')
-            uc_min_data = self.my_monitor('uc-min')
-            url_times = self.my_monitor('total-urls')
-            rx_rate = self.my_monitor('rx rate (1m)')
-            bytes_rd = self.my_monitor('bytes-rd')
-            total_err = self.my_monitor('total-err')
+            # uc_avg_data = self.my_monitor('uc-avg')
+            # uc_max_data = self.my_monitor('uc-max')
+            # uc_min_data = self.my_monitor('uc-min')
+            # url_times = self.my_monitor('total-urls')
+            # rx_rate = self.my_monitor('rx rate (1m)')
+            # bytes_rd = self.my_monitor('bytes-rd')
+            # total_err = self.my_monitor('total-err')
+            l4_dict = self.get_layer4_data()
+            uc_avg_data = l4_dict['uc_avg_data']
+            uc_max_data = l4_dict['uc_max_data']
+            uc_min_data = l4_dict['uc_min_data']
+            url_times = l4_dict['url_times']
+            rx_rate = l4_dict['rx_rate']
+            bytes_rd = l4_dict['bytes_rd']
+            total_err = l4_dict['total_err']
             urls_downloaded = []
             for i in range(len(total_err)):
 <<<<<<< HEAD

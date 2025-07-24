@@ -1087,6 +1087,47 @@ class FtpTest(LFCliBase):
             logger.error("All l4 data not found")
 
     # Created a function to get uc-avg,uc,min,uc-max,ssid and all other details of the devices
+    def get_layer4_data(self):
+        try:
+            l4_data = self.local_realm.json_get(f'layer4/{','.join(list(self.cx_list))}/list?fields=uc-avg,uc-max,uc-min,total-urls,rx rate (1m),bytes-rd,total-err')['endpoint']
+        except:
+            logger.error("NO  L4 endpoint found")
+            exit(1)
+        l4_dict = {
+            'uc_avg_data': [],
+            'uc_max_data':[],
+            'uc_min_data':[],
+            'url_times':[],
+            'rx_rate':[],
+            'bytes_rd':[],
+            'total_err':[]
+        }
+        cx_list = self.cx_list
+        if type(l4_data) != list:
+            l4_data = [{l4_data['name']:l4_data}]
+        for cx in cx_list:
+            cx_found = False
+            for i in l4_data:
+                for cx_name,value in i.items():
+                    if cx == cx_name:
+                        l4_dict['uc_avg_data'].append(value['uc-avg'])
+                        l4_dict['uc_max_data'].append(value['uc-max'])
+                        l4_dict['uc_min_data'].append(value['uc-min'])
+                        l4_dict['url_times'].append(value['total-urls'])
+                        l4_dict['rx_rate'].append(value['rx rate (1m)'])
+                        l4_dict['bytes_rd'].append(value['bytes-rd'])
+                        l4_dict['total_err'].append(value['total-err'])
+                        cx_found = True
+            if not cx_found:
+                l4_dict['uc_avg_data'].append(0)
+                l4_dict['uc_max_data'].append(0)
+                l4_dict['uc_min_data'].append(0)
+                l4_dict['url_times'].append(0)
+                l4_dict['rx_rate'].append(0)
+                l4_dict['bytes_rd'].append(0)
+                l4_dict['total_err'].append(0)
+        
+        return l4_dict
 
     def get_device_details(self):
         dataset = []
@@ -1096,103 +1137,19 @@ class FtpTest(LFCliBase):
             self.get_port_data()
         # data in json format
         # data = self.json_get("layer4/list?fields=bytes-rd")
-        uc_avg_data = self.json_get("layer4/list?fields=uc-avg")
-        uc_max_data = self.json_get("layer4/list?fields=uc-max")
-        uc_min_data = self.json_get("layer4/list?fields=uc-min")
-        total_url_data = self.json_get("layer4/list?fields=total-urls")
-        bytes_rd = self.json_get("layer4/list?fields=bytes-rd")
-        rx_rate = self.json_get("layer4/list?fields=rx rate (1m)")
-        total_err = self.json_get("layer4/list?fields=total-err")
-        if 'endpoint' in uc_avg_data.keys():
-            # list of layer 4 connections name
-            if type(uc_avg_data['endpoint']) is dict:
-                self.uc_avg.append(uc_avg_data['endpoint']['uc-avg'])
-                self.uc_max.append(uc_max_data['endpoint']['uc-max'])
-                self.uc_min.append(uc_min_data['endpoint']['uc-min'])
-                self.rx_rate.append(rx_rate['endpoint']['rx rate (1m)'])
-                self.total_err.append(total_err['endpoint']['total-err'])
-                # reading uc-avg data in json format
-                self.url_data.append(total_url_data['endpoint']['total-urls'])
-                dataset.append(bytes_rd['endpoint']['bytes-rd'])
-                self.bytes_rd = [float(f"{(int(i) / 1000000): .4f}") for i in dataset]
-            else:
-                for created_cx in self.cx_list:
-                    for cx in uc_avg_data['endpoint']:
-                        if created_cx in cx:
-                            self.uc_avg.append(cx[created_cx]['uc-avg'])
-                            break
-
-                    for cx in uc_max_data['endpoint']:
-                        if created_cx in cx:
-                            self.uc_max.append(cx[created_cx]['uc-max'])
-                            break
-
-                    for cx in uc_min_data['endpoint']:
-                        if created_cx in cx:
-                            self.uc_min.append(cx[created_cx]['uc-min'])
-                            break
-
-                    for cx in total_url_data['endpoint']:
-                        if created_cx in cx:
-                            self.url_data.append(cx[created_cx]['total-urls'])
-                            break
-
-                    for cx in bytes_rd['endpoint']:
-                        if created_cx in cx:
-                            dataset.append(cx[created_cx]['bytes-rd'])
-                            break
-
-                    for cx in rx_rate['endpoint']:
-                        if created_cx in cx:
-                            self.rx_rate.append(cx[created_cx]['rx rate (1m)'])
-                            break
-                    for cx in total_err['endpoint']:
-                        if created_cx in cx:
-                            self.total_err.append(cx[created_cx]['total-err'])
-                            break
-                self.bytes_rd = [float(f"{(i / 1000000): .4f}") for i in dataset]
-
-            # calculating the number of successfully downloaded url's by subtracting the number of failed url's
-            urls_downloaded = []
-            for i in range(len(self.total_err)):
-                urls_downloaded.append(self.url_data[i] - self.total_err[i])
-            self.url_data = list(urls_downloaded)
-
-            # for cx in uc_avg_data['endpoint']:
-            #     for CX in cx:
-            #         for created_cx in self.cx_list:
-            #             if CX == created_cx:
-            #                 self.uc_avg.append(cx[CX]['uc-avg'])
-            # for cx in uc_max_data['endpoint']:
-            #     for CX in cx:
-            #         for created_cx in self.cx_list:
-            #             if CX == created_cx:
-            #                 self.uc_max.append(cx[CX]['uc-max'])
-            # for cx in uc_min_data['endpoint']:
-            #     for CX in cx:
-            #         for created_cx in self.cx_list:
-            #             if CX == created_cx:
-            #                 self.uc_min.append(cx[CX]['uc-min'])
-            # for cx in total_url_data['endpoint']:
-            #     for CX in cx:
-            #         for created_cx in self.cx_list:
-            #             if CX == created_cx:
-            #                 self.url_data.append(cx[CX]['total-urls'])
-            # for cx in bytes_rd['endpoint']:
-            #     for CX in cx:
-            #         for created_cx in self.cx_list:
-            #             if CX == created_cx:
-            #                 dataset.append(cx[CX]['bytes-rd'])
-            #                 self.bytes_rd=[float(f"{(i / 1000000): .4f}") for i in dataset]
-            # for cx in rx_rate['endpoint']:
-            #     for CX in cx:
-            #         for created_cx in self.cx_list:
-            #             if CX == created_cx:
-            #                 self.rx_rate.append(cx[CX]['rx rate'])
-        else:
-            total_data = self.json_get("layer4/all")
-            logger.info("No endpoint found")
-            logger.info(total_data)
+        l4_data = self.get_layer4_data()
+        self.uc_avg = l4_data["uc_avg_data"]
+        self.uc_max = l4_data["uc_max_data"]
+        self.uc_min = l4_data["uc_min_data"]
+        self.rx_rate = l4_data["url_times"]
+        self.total_err = l4_data["rx_rate"]
+        self.url_data = l4_data["bytes_rd"]
+        dataset = l4_data["total_err"]
+        self.bytes_rd = [float(f"{(i / 1000000): .4f}") for i in dataset]
+        urls_downloaded = []
+        for i in range(len(self.total_err)):
+            urls_downloaded.append(self.url_data[i]-self.total_err[i])
+        self.url_data = list(urls_downloaded)
 
     def get_port_data(self):
         """
