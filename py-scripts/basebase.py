@@ -1146,6 +1146,8 @@ class Candela(Realm):
                 test_input_infor["File size"] = file_size
             else:
                 test_setup_info["File location (URLs from the File)"] = file_path
+            if client_type == "Real":
+                test_setup_info["failed_cx's"] = http.failed_cx if http.failed_cx else "NONE"
             # dataset = http.download_time_in_sec(result_data=result_data)
             rx_rate = []
             for i in result_data:
@@ -1489,192 +1491,451 @@ class Candela(Realm):
     #     if dowebgui:
     #         obj.copy_reports_to_home_dir()
 
-    def start_ftp_test(self,
-                       ssid=None,
-                       password=None,
-                       security=None,
-                       ap_name='',
-                       band='5g',
-                       direction='Download',
-                       file_size='12MB',
-                       traffic_duration=60,
-                       upstream='eth1',
-                       lf_username='lanforge',
-                       lf_password='lanforge',
-                       ssh_port=22,
-                       clients_type='Real',
-                       device_list=[],
-                       background=False,
-                       file_name=None,
-                 profile_name=None,group_name=None,eap_method=None,
-                 eap_identity=None,
-                 ieee8021x=None,
-                 ieee80211u=None,
-                 ieee80211w=None,
-                 enable_pkc=None,
-                 bss_transition=None,
-                 power_save=None,
-                 disable_ofdma=None,
-                 roam_ft_ds=None,
-                 key_management=None,
-                 pairwise=None,
-                 private_key=None,
-                 ca_cert=None,
-                 client_cert=None,
-                 pk_passwd=None,
-                 pac_file=None,expected_passfail_val=None,device_csv_name=None,wait_time=60,config=False):
-        """
-        Method to start FTP test on the given device list
+    # def start_ftp_test(self,
+    #                    ssid=None,
+    #                    password=None,
+    #                    security=None,
+    #                    ap_name='',
+    #                    band='5g',
+    #                    direction='Download',
+    #                    file_size='12MB',
+    #                    traffic_duration=60,
+    #                    upstream='eth1',
+    #                    lf_username='lanforge',
+    #                    lf_password='lanforge',
+    #                    ssh_port=22,
+    #                    clients_type='Real',
+    #                    device_list=[],
+    #                    background=False,
+    #                    file_name=None,
+    #              profile_name=None,group_name=None,eap_method=None,
+    #              eap_identity=None,
+    #              ieee8021x=None,
+    #              ieee80211u=None,
+    #              ieee80211w=None,
+    #              enable_pkc=None,
+    #              bss_transition=None,
+    #              power_save=None,
+    #              disable_ofdma=None,
+    #              roam_ft_ds=None,
+    #              key_management=None,
+    #              pairwise=None,
+    #              private_key=None,
+    #              ca_cert=None,
+    #              client_cert=None,
+    #              pk_passwd=None,
+    #              pac_file=None,expected_passfail_val=None,device_csv_name=None,wait_time=60,config=False):
+    #     """
+    #     Method to start FTP test on the given device list
 
-        Args:
-            ssid (str): SSID of the DUT
-            password (str): Password for the SSID. [BLANK] if encryption is open.
-            security (str): Encryption for the SSID.
-            ap_name (str, optional): Name of the AP. Defaults to ''.
-            band (str, optional): 2g, 5g or 6g. Defaults to '5g'.
-            direction (str, optional): Download or Upload. Defaults to 'Download'.
-            file_size (str, optional): File Size. Defaults to '12MB'.
-            traffic_duration (int, optional): Duration of the test in seconds. Defaults to 60.
-            upstream (str, optional): Upstream port. Defaults to 'eth1'.
-            lf_username (str, optional): Username of LANforge. Defaults to 'lanforge'.
-            lf_password (str, optional): Password of LANforge. Defaults to 'lanforge'.
-            ssh_port (int, optional): SSH port. Defaults to 22.
-            clients_type (str, optional): Clients type. Defaults to 'Real'.
-            device_list (list, optional): List of port numbers of the devices in shelf.resource format. Defaults to [].
-            background_run(bool): If true, it runs the test without considering test duration.
+    #     Args:
+    #         ssid (str): SSID of the DUT
+    #         password (str): Password for the SSID. [BLANK] if encryption is open.
+    #         security (str): Encryption for the SSID.
+    #         ap_name (str, optional): Name of the AP. Defaults to ''.
+    #         band (str, optional): 2g, 5g or 6g. Defaults to '5g'.
+    #         direction (str, optional): Download or Upload. Defaults to 'Download'.
+    #         file_size (str, optional): File Size. Defaults to '12MB'.
+    #         traffic_duration (int, optional): Duration of the test in seconds. Defaults to 60.
+    #         upstream (str, optional): Upstream port. Defaults to 'eth1'.
+    #         lf_username (str, optional): Username of LANforge. Defaults to 'lanforge'.
+    #         lf_password (str, optional): Password of LANforge. Defaults to 'lanforge'.
+    #         ssh_port (int, optional): SSH port. Defaults to 22.
+    #         clients_type (str, optional): Clients type. Defaults to 'Real'.
+    #         device_list (list, optional): List of port numbers of the devices in shelf.resource format. Defaults to [].
+    #         background_run(bool): If true, it runs the test without considering test duration.
 
-        Returns:
-            data (dict): Test results.
-        """
-        # for band in bands:
-        #     for direction in directions:
-        #         for file_size in file_sizes:
-        # Start Test
-        print(traffic_duration)
-        if type(traffic_duration) == str:
-            if traffic_duration[-1].lower()=='s':
-                traffic_duration = int(traffic_duration[:-1])
-            elif traffic_duration[-1].lower()=='m':
-                traffic_duration = int(traffic_duration[:-1])*60
-            elif traffic_duration[-1].lower()=='h':
-                traffic_duration = int(traffic_duration[:-1])*60*60
-        device_list = self.filter_iOS_devices(device_list)
-        if group_name:
-            selected_groups = group_name.split(',')
-        else:
-            selected_groups = []  # Default to empty list if group name is not provided
-        if profile_name:
-            selected_profiles = profile_name.split(',')
-        else:
-            selected_profiles = []  # Default to empty list if profile name is not provided
-        self.ftp_test = FtpTest(lfclient_host=self.lanforge_ip,
-                        lfclient_port=self.port,
-                        upstream=upstream,
-                        dut_ssid=ssid,
-                        dut_passwd=password,
-                        dut_security=security,
-                        band=band,
-                        ap_name=ap_name,
-                        file_size=file_size,
-                        direction=direction,
-                        lf_username=lf_username,
-                        lf_password=lf_password,
-                        # duration=pass_fail_duration(band, file_size),
-                        traffic_duration=traffic_duration,
-                        ssh_port=ssh_port,
-                        clients_type=clients_type,
-                        device_list=device_list,
-                        group_name=group_name,
-                        profile_name=profile_name,
-                        file_name=file_name,eap_method=eap_method,
-                        eap_identity=eap_identity,
-                        ieee80211=ieee8021x,
-                        ieee80211u=ieee80211u,
-                        ieee80211w=ieee80211w,
-                        enable_pkc=enable_pkc,
-                        bss_transition=bss_transition,
-                        power_save=power_save,
-                        disable_ofdma=disable_ofdma,
-                        roam_ft_ds=roam_ft_ds,
-                        key_management=key_management,
-                        pairwise=pairwise,
-                        private_key=private_key,
-                        ca_cert=ca_cert,
-                        client_cert=client_cert,
-                        pk_passwd=pk_passwd,
-                        pac_file=pac_file,
-                        csv_name=device_csv_name,expected_passfail_val=expected_passfail_val,wait_time=wait_time,config=config)
+    #     Returns:
+    #         data (dict): Test results.
+    #     """
+    #     # for band in bands:
+    #     #     for direction in directions:
+    #     #         for file_size in file_sizes:
+    #     # Start Test
+    #     print(traffic_duration)
+    #     if type(traffic_duration) == str:
+    #         if traffic_duration[-1].lower()=='s':
+    #             traffic_duration = int(traffic_duration[:-1])
+    #         elif traffic_duration[-1].lower()=='m':
+    #             traffic_duration = int(traffic_duration[:-1])*60
+    #         elif traffic_duration[-1].lower()=='h':
+    #             traffic_duration = int(traffic_duration[:-1])*60*60
+    #     device_list = self.filter_iOS_devices(device_list)
+    #     if group_name:
+    #         selected_groups = group_name.split(',')
+    #     else:
+    #         selected_groups = []  # Default to empty list if group name is not provided
+    #     if profile_name:
+    #         selected_profiles = profile_name.split(',')
+    #     else:
+    #         selected_profiles = []  # Default to empty list if profile name is not provided
+    #     self.ftp_test = FtpTest(lfclient_host=self.lanforge_ip,
+    #                     lfclient_port=self.port,
+    #                     upstream=upstream,
+    #                     dut_ssid=ssid,
+    #                     dut_passwd=password,
+    #                     dut_security=security,
+    #                     band=band,
+    #                     ap_name=ap_name,
+    #                     file_size=file_size,
+    #                     direction=direction,
+    #                     lf_username=lf_username,
+    #                     lf_password=lf_password,
+    #                     # duration=pass_fail_duration(band, file_size),
+    #                     traffic_duration=traffic_duration,
+    #                     ssh_port=ssh_port,
+    #                     clients_type=clients_type,
+    #                     device_list=device_list,
+    #                     group_name=group_name,
+    #                     profile_name=profile_name,
+    #                     file_name=file_name,eap_method=eap_method,
+    #                     eap_identity=eap_identity,
+    #                     ieee80211=ieee8021x,
+    #                     ieee80211u=ieee80211u,
+    #                     ieee80211w=ieee80211w,
+    #                     enable_pkc=enable_pkc,
+    #                     bss_transition=bss_transition,
+    #                     power_save=power_save,
+    #                     disable_ofdma=disable_ofdma,
+    #                     roam_ft_ds=roam_ft_ds,
+    #                     key_management=key_management,
+    #                     pairwise=pairwise,
+    #                     private_key=private_key,
+    #                     ca_cert=ca_cert,
+    #                     client_cert=client_cert,
+    #                     pk_passwd=pk_passwd,
+    #                     pac_file=pac_file,
+    #                     csv_name=device_csv_name,expected_passfail_val=expected_passfail_val,wait_time=wait_time,config=config)
 
-        self.ftp_test.data = {}
-        self.ftp_test.file_create()
-        if clients_type == "Real":
-            _, configuration = self.ftp_test.query_realclients()
-        self.ftp_test.configuration = configuration
-        self.ftp_test.set_values()
-        self.ftp_test.count = 0
-        self.ftp_test.radio = ['1.1.wiphy0']
-        # obj.precleanup()
-        self.ftp_test.build()
-        if not self.ftp_test.passes():
-            logger.info(self.ftp_test.get_fail_message())
-            return False
+    #     self.ftp_test.data = {}
+    #     self.ftp_test.file_create()
+    #     if clients_type == "Real":
+    #         _, configuration = self.ftp_test.query_realclients()
+    #     self.ftp_test.configuration = configuration
+    #     self.ftp_test.set_values()
+    #     self.ftp_test.count = 0
+    #     self.ftp_test.radio = ['1.1.wiphy0']
+    #     # obj.precleanup()
+    #     self.ftp_test.build()
+    #     if not self.ftp_test.passes():
+    #         logger.info(self.ftp_test.get_fail_message())
+    #         return False
 
-        # First time stamp
-        test_start_time = datetime.now()
-        logger.info("Traffic started running at {}".format(test_start_time))
-        self.ftp_test.start_time = test_start_time
-        self.ftp_test.monitor_cx()
-        self.ftp_test.start(False, False)
-        self.ftp_test.monitor_for_runtime_csv()
-        if not background:
-            # time.sleep(int(self.ftp_test.traffic_duration))
-            self.stop_ftp_test()
-            self.generate_report_ftp_test()
-        return True
+    #     # First time stamp
+    #     test_start_time = datetime.now()
+    #     logger.info("Traffic started running at {}".format(test_start_time))
+    #     self.ftp_test.start_time = test_start_time
+    #     self.ftp_test.monitor_cx()
+    #     self.ftp_test.start(False, False)
+    #     self.ftp_test.monitor_for_runtime_csv()
+    #     if not background:
+    #         # time.sleep(int(self.ftp_test.traffic_duration))
+    #         self.stop_ftp_test()
+    #         self.generate_report_ftp_test()
+    #     return True
 
-    def stop_ftp_test(self):
-        """
-        Method to stop FTP test.
-        """
-        self.ftp_test.stop()
-        logger.info("Traffic stopped running")
-        # self.ftp_test.my_monitor()
-        self.ftp_test.postcleanup()
-        test_end_time = datetime.now()
-        logger.info("Test ended at {}".format(test_end_time))
-        self.ftp_test.end_time = test_end_time
+    # def stop_ftp_test(self):
+    #     """
+    #     Method to stop FTP test.
+    #     """
+    #     self.ftp_test.stop()
+    #     logger.info("Traffic stopped running")
+    #     # self.ftp_test.my_monitor()
+    #     self.ftp_test.postcleanup()
+    #     test_end_time = datetime.now()
+    #     logger.info("Test ended at {}".format(test_end_time))
+    #     self.ftp_test.end_time = test_end_time
 
-    def generate_report_ftp_test(self):
-        """
-        Method to generate report for FTP test.
-        """
+    # def generate_report_ftp_test(self):
+    #     """
+    #     Method to generate report for FTP test.
+    #     """
+
+    #     date = str(datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
+    #     input_setup_info = {
+    #         "AP": self.ftp_test.ap_name,
+    #         "File Size": self.ftp_test.file_size,
+    #         "Bands": self.ftp_test.band,
+    #         "Direction": self.ftp_test.direction,
+    #         "Stations": len(self.ftp_test.device_list),
+    #         "Upstream": self.ftp_test.upstream,
+    #         "SSID": self.ftp_test.ssid,
+    #         "Security": self.ftp_test.security,
+    #         "Contact": "support@candelatech.com"
+    #     }
+    #     if not self.ftp_test.traffic_duration:
+    #         self.ftp_test.traffic_duration = (self.ftp_test.end_time - self.ftp_test.start_time).seconds
+    #     self.ftp_test.generate_report(self.ftp_test.data, date, input_setup_info, bands=self.ftp_test.band,
+    #                     test_rig="", test_tag="", dut_hw_version="",
+    #                     dut_sw_version="", dut_model_num="",
+    #                     dut_serial_num="", test_id="FTP Data",
+    #                     csv_outfile="",
+    #                     local_lf_report_dir="",config_devices=self.ftp_test.configuration)
+    #     return self.ftp_test.data
+
+    def run_ftp_test(
+        self,
+        mgr='localhost',
+        mgr_port=8080,
+        upstream_port='eth1',
+        ssid=None,
+        passwd=None,
+        security=None,
+        group_name=None,
+        profile_name=None,
+        file_name=None,
+        ap_name=None,
+        traffic_duration=None,
+        clients_type="Real",
+        dowebgui=False,
+        directions=["Download", "Upload"],
+        file_sizes=["2MB", "500MB", "1000MB"],
+        local_lf_report_dir="",
+        ap_ip=None,
+        twog_radio='wiphy1',
+        fiveg_radio='wiphy0',
+        sixg_radio='wiphy2',
+        lf_username='lanforge',
+        lf_password='lanforge',
+        ssh_port=22,
+        bands=["5G", "2.4G", "6G", "Both"],
+        num_stations=0,
+        result_dir='',
+        device_list=[],
+        test_name=None,
+        expected_passfail_value=None,
+        device_csv_name=None,
+        wait_time=60,
+        config=False,
+        test_rig="",
+        test_tag="",
+        dut_hw_version="",
+        dut_sw_version="",
+        dut_model_num="",
+        dut_serial_num="",
+        test_priority="",
+        test_id="FTP Data",
+        csv_outfile="",
+        eap_method="DEFAULT",
+        eap_identity='',
+        ieee8021x=False,
+        ieee80211u=False,
+        ieee80211w=1,
+        enable_pkc=False,
+        bss_transition=False,
+        power_save=False,
+        disable_ofdma=False,
+        roam_ft_ds=False,
+        key_management="DEFAULT",
+        pairwise='NA',
+        private_key='NA',
+        ca_cert='NA',
+        client_cert='NA',
+        pk_passwd='NA',
+        pac_file='NA',
+        get_live_view=False,
+        total_floors="0",
+        lf_logger_config_json=None,
+        help_summary=False
+    ):
+        args = SimpleNamespace(**locals())
+        args.mgr = self.lanforge_ip
+        args.mgr_port = self.port
+        self.run_ftp_test1(args)
+
+    def run_ftp_test1(args):
+        # 1st time stamp for test duration
+        time_stamp1 = datetime.now()
+
+        # use for creating ftp_test dictionary
+        interation_num = 0
+
+        # empty dictionary for whole test data
+        ftp_data = {}
+
+        # validate_args(args)
+        if args.traffic_duration.endswith('s') or args.traffic_duration.endswith('S'):
+            args.traffic_duration = int(args.traffic_duration[0:-1])
+        elif args.traffic_duration.endswith('m') or args.traffic_duration.endswith('M'):
+            args.traffic_duration = int(args.traffic_duration[0:-1]) * 60
+        elif args.traffic_duration.endswith('h') or args.traffic_duration.endswith('H'):
+            args.traffic_duration = int(args.traffic_duration[0:-1]) * 60 * 60
+        elif args.traffic_duration.endswith(''):
+            args.traffic_duration = int(args.traffic_duration)
+
+        # For all combinations ftp_data of directions, file size and client counts, run the test
+        for band in args.bands:
+            for direction in args.directions:
+                for file_size in args.file_sizes:
+                    # Start Test
+                    obj = FtpTest(lfclient_host=args.mgr,
+                                lfclient_port=args.mgr_port,
+                                result_dir=args.result_dir,
+                                upstream=args.upstream_port,
+                                dut_ssid=args.ssid,
+                                group_name=args.group_name,
+                                profile_name=args.profile_name,
+                                file_name=args.file_name,
+                                dut_passwd=args.passwd,
+                                dut_security=args.security,
+                                num_sta=args.num_stations,
+                                band=band,
+                                ap_name=args.ap_name,
+                                file_size=file_size,
+                                direction=direction,
+                                twog_radio=args.twog_radio,
+                                fiveg_radio=args.fiveg_radio,
+                                sixg_radio=args.sixg_radio,
+                                lf_username=args.lf_username,
+                                lf_password=args.lf_password,
+                                # duration=pass_fail_duration(band, file_size),
+                                traffic_duration=args.traffic_duration,
+                                ssh_port=args.ssh_port,
+                                clients_type=args.clients_type,
+                                dowebgui=args.dowebgui,
+                                device_list=args.device_list,
+                                test_name=args.test_name,
+                                eap_method=args.eap_method,
+                                eap_identity=args.eap_identity,
+                                ieee80211=args.ieee8021x,
+                                ieee80211u=args.ieee80211u,
+                                ieee80211w=args.ieee80211w,
+                                enable_pkc=args.enable_pkc,
+                                bss_transition=args.bss_transition,
+                                power_save=args.power_save,
+                                disable_ofdma=args.disable_ofdma,
+                                roam_ft_ds=args.roam_ft_ds,
+                                key_management=args.key_management,
+                                pairwise=args.pairwise,
+                                private_key=args.private_key,
+                                ca_cert=args.ca_cert,
+                                client_cert=args.client_cert,
+                                pk_passwd=args.pk_passwd,
+                                pac_file=args.pac_file,
+                                expected_passfail_val=args.expected_passfail_value,
+                                csv_name=args.device_csv_name,
+                                wait_time=args.wait_time,
+                                config=args.config,
+                                get_live_view= args.get_live_view,
+                                total_floors = args.total_floors
+                                )
+
+                    interation_num = interation_num + 1
+                    obj.file_create()
+                    if args.clients_type == "Real":
+                        if not isinstance(args.device_list, list):
+                            obj.device_list = obj.filter_iOS_devices(args.device_list)
+                            if len(obj.device_list) == 0:
+                                logger.info("There are no devices available")
+                                exit(1)
+                        configured_device, configuration = obj.query_realclients()
+
+                    if args.dowebgui and args.group_name:
+                        # If no devices are configured,update the Web UI with "Stopped" status
+                        if len(configured_device) == 0:
+                            logger.warning("No device is available to run the test")
+                            obj1 = {
+                                "status": "Stopped",
+                                "configuration_status": "configured"
+                            }
+                            obj.updating_webui_runningjson(obj1)
+                            return
+                        # If devices are configured, update the Web UI with the list of configured devices
+                        else:
+                            obj1 = {
+                                "configured_devices": configured_device,
+                                "configuration_status": "configured"
+                            }
+                            obj.updating_webui_runningjson(obj1)
+                    obj.set_values()
+                    obj.precleanup()
+                    obj.build()
+                    if not obj.passes():
+                        logger.info(obj.get_fail_message())
+                        exit(1)
+
+                    if obj.clients_type == 'Real':
+                        obj.monitor_cx()
+                        logger.info(f'Test started on the devices : {obj.input_devices_list}')
+                    # First time stamp
+                    time1 = datetime.now()
+                    logger.info("Traffic started running at %s", time1)
+                    obj.start(False, False)
+                    # to fetch runtime values during the execution and fill the csv.
+                    if args.dowebgui or args.clients_type == "Real":
+                        obj.monitor_for_runtime_csv()
+                        obj.my_monitor_for_real_devices()
+                    else:
+                        time.sleep(args.traffic_duration)
+                        obj.my_monitor()
+
+                    # # return list of download/upload completed time stamp
+                    # time_list = obj.my_monitor(time1)
+                    # # print("pass_fail_duration - time_list:{time_list}".format(time_list=time_list))
+                    # # check pass or fail
+                    # pass_fail = obj.pass_fail_check(time_list)
+
+                    # # dictionary of whole data
+                    # ftp_data[interation_num] = obj.ftp_test_data(time_list, pass_fail, args.bands, args.file_sizes,
+                    #                                              args.directions, args.num_stations)
+                    # # print("pass_fail_duration - ftp_data:{ftp_data}".format(ftp_data=ftp_data))
+                    obj.stop()
+                    print("Traffic stopped running")
+
+                    obj.postcleanup()
+                    time2 = datetime.now()
+                    logger.info("Test ended at %s", time2)
+
+        # 2nd time stamp for test duration
+        time_stamp2 = datetime.now()
+
+        # total time for test duration
+        # test_duration = str(time_stamp2 - time_stamp1)[:-7]
 
         date = str(datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
+
+        # print(ftp_data)
+
         input_setup_info = {
-            "AP": self.ftp_test.ap_name,
-            "File Size": self.ftp_test.file_size,
-            "Bands": self.ftp_test.band,
-            "Direction": self.ftp_test.direction,
-            "Stations": len(self.ftp_test.device_list),
-            "Upstream": self.ftp_test.upstream,
-            "SSID": self.ftp_test.ssid,
-            "Security": self.ftp_test.security,
+            "AP IP": args.ap_ip,
+            "File Size": args.file_sizes,
+            "Bands": args.bands,
+            "Direction": args.directions,
+            "Stations": args.num_stations,
+            "Upstream": args.upstream_port,
+            "SSID": args.ssid,
+            "Security": args.security,
             "Contact": "support@candelatech.com"
         }
-        if not self.ftp_test.traffic_duration:
-            self.ftp_test.traffic_duration = (self.ftp_test.end_time - self.ftp_test.start_time).seconds
-        self.ftp_test.generate_report(self.ftp_test.data, date, input_setup_info, bands=self.ftp_test.band,
-                        test_rig="", test_tag="", dut_hw_version="",
-                        dut_sw_version="", dut_model_num="",
-                        dut_serial_num="", test_id="FTP Data",
-                        csv_outfile="",
-                        local_lf_report_dir="",config_devices=self.ftp_test.configuration)
-        return self.ftp_test.data
+        if args.dowebgui:
+            obj.data_for_webui["status"] = ["STOPPED"] * len(obj.url_data)
 
+            df1 = pd.DataFrame(obj.data_for_webui)
+            df1.to_csv('{}/ftp_datavalues.csv'.format(obj.result_dir), index=False)
+            # copying to home directory i.e home/user_name
+            # obj.copy_reports_to_home_dir()
+        # Report generation when groups are specified
+        if args.group_name:
+            obj.generate_report(ftp_data, date, input_setup_info, test_rig=args.test_rig,
+                                test_tag=args.test_tag, dut_hw_version=args.dut_hw_version,
+                                dut_sw_version=args.dut_sw_version, dut_model_num=args.dut_model_num,
+                                dut_serial_num=args.dut_serial_num, test_id=args.test_id,
+                                bands=args.bands, csv_outfile=args.csv_outfile, local_lf_report_dir=args.local_lf_report_dir, config_devices=configuration)
+        # Generating report without group-specific device configuration
+        else:
+            obj.generate_report(ftp_data, date, input_setup_info, test_rig=args.test_rig,
+                                test_tag=args.test_tag, dut_hw_version=args.dut_hw_version,
+                                dut_sw_version=args.dut_sw_version, dut_model_num=args.dut_model_num,
+                                dut_serial_num=args.dut_serial_num, test_id=args.test_id,
+                                bands=args.bands, csv_outfile=args.csv_outfile, local_lf_report_dir=args.local_lf_report_dir)
 
+        if args.dowebgui:
+            obj.copy_reports_to_home_dir()
+
+        
     def run_qos_test(
         self,
-        device_list=[],
+        device_list=None,
         test_name=None,
         result_dir='',
         upstream_port='eth1',
@@ -1720,7 +1981,6 @@ class Candela(Realm):
         test_results = {'test_results': []}
         loads = {}
         data = {}
-
         if download and upload:
             loads = {'upload': str(upload).split(","), 'download': str(download).split(",")}
             loads_data = loads["download"]
@@ -5032,7 +5292,7 @@ def main():
     if not flag:
         logger.info(f"availble tests are {test_map.keys()}")
         exit(0)
-    if len(tests_to_run_parallel) != len(set(tests_to_run_parallel)):
+    if args.parallel_tests and (len(tests_to_run_parallel) != len(set(tests_to_run_parallel))):
         logger.error("in -parallel dont specify duplicate tests")
         exit(0)
 
@@ -5187,27 +5447,27 @@ def run_test_safe(test_func, test_name, args, candela_apis):
         try:
             result = test_func(args, candela_apis)
             if not result:
-                status = "FAILED"
-                logger.error(f"{test_name} FAILED")
+                status = "NOT EXECUTED"
+                logger.error(f"{test_name} NOT EXECUTED")
             else:
-                status = "PASSED"
-                logger.info(f"{test_name} PASSED")
+                status = "EXECUTED"
+                logger.info(f"{test_name} EXECUTED")
                 
             # Update the dataframe with test result
             test_results_df.loc[len(test_results_df)] = [test_name, status]
             
         except SystemExit as e:
             if e.code != 0:
-                status = "FAILED"
+                status = "NOT EXECUTED"
             else:
-                status = "PASSED"
+                status = "EXECUTED"
             error_msg = f"{test_name} exited with code {e.code}\n"
             logger.error(error_msg)
             error_logs += error_msg
             test_results_df.loc[len(test_results_df)] = [test_name, status]
             
         except Exception as e:
-            status = "FAILED"
+            status = "NOT EXECUTED"
             error_msg = f"{test_name} crashed unexpectedly\n"
             logger.exception(error_msg)
             tb_str = traceback.format_exc()
@@ -5311,7 +5571,7 @@ def run_http_test(args, candela_apis):
     )
 
 def run_ftp_test(args, candela_apis):
-    return candela_apis.start_ftp_test(
+    return candela_apis.run_ftp_test(
         device_list=args.ftp_device_list,
         background=False,
         file_size=args.ftp_file_size,
@@ -5347,6 +5607,7 @@ def run_ftp_test(args, candela_apis):
     )
 
 def run_qos_test(args, candela_apis):
+    print("QOS_LIST",args.qos_device_list)
     return candela_apis.run_qos_test(
         upstream_port=args.upstream_port,
         test_duration=args.qos_duration,
