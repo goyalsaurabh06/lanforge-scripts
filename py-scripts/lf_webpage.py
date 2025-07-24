@@ -691,12 +691,15 @@ class HttpDownload(Realm):
             individual_rx_data.extend([current_time])
             for i, port in enumerate(self.port_list):
                 # logger.info(f"row data HTTP",row_data)
-                logger.info(f'FTP0 iii {i}')
-                logger.info(f"row data FTP0: {current_time}, {bytes_rd}, {url_times}, {rx_rate}, {rx_rate_list}, {tx_rate_list}, {rssi_list}")
-
-                row_data = [current_time, bytes_rd[i], url_times[i], rx_rate[i], rx_rate_list[i], tx_rate_list[i], rssi_list[i]]
-                individual_device_data[port].loc[len(individual_device_data[port])] = row_data
-
+                
+                try:
+                    row_data = [current_time, bytes_rd[i], url_times[i], rx_rate[i], rx_rate_list[i], tx_rate_list[i], rssi_list[i]]
+                    individual_device_data[port].loc[len(individual_device_data[port])] = row_data
+                except:
+                    logger.info(f'http0 iii {i}')
+                    logger.info(f"row data FTP0: {current_time}, {bytes_rd}, {url_times}, {rx_rate}, {rx_rate_list}, {tx_rate_list}, {rssi_list}")
+                    traceback.print_exc()
+                    exit(1)
             if len(max_bytes_rd) == 0:
                 max_bytes_rd = list(bytes_rd)
             for i in range(len(max_bytes_rd)):
@@ -748,6 +751,7 @@ class HttpDownload(Realm):
             except:
                 logger.info(f'error error http data {self.data}')
                 traceback.print_exc()
+                exit(1)
             if self.dowebgui:
                 df1.to_csv('{}/http_datavalues.csv'.format(self.result_dir), index=False)
             elif self.client_type == 'Real':

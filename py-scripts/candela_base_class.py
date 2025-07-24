@@ -1720,7 +1720,6 @@ class Candela(Realm):
         test_results = {'test_results': []}
         loads = {}
         data = {}
-
         if download and upload:
             loads = {'upload': str(upload).split(","), 'download': str(download).split(",")}
             loads_data = loads["download"]
@@ -5078,7 +5077,7 @@ def main():
             if len(parallel_threads) != 0:
                 candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
                 print('starting parallel tests.......')
-                time.sleep(120)
+                time.sleep(20)
 
             for t in parallel_threads:
                 t.start()
@@ -5187,27 +5186,27 @@ def run_test_safe(test_func, test_name, args, candela_apis):
         try:
             result = test_func(args, candela_apis)
             if not result:
-                status = "FAILED"
-                logger.error(f"{test_name} FAILED")
+                status = "NOT EXECUTED"
+                logger.error(f"{test_name} NOT EXECUTED")
             else:
-                status = "PASSED"
-                logger.info(f"{test_name} PASSED")
+                status = "EXECUTED"
+                logger.info(f"{test_name} EXECUTED")
                 
             # Update the dataframe with test result
             test_results_df.loc[len(test_results_df)] = [test_name, status]
             
         except SystemExit as e:
             if e.code != 0:
-                status = "FAILED"
+                status = "NOT EXECUTED"
             else:
-                status = "PASSED"
+                status = "EXECUTED"
             error_msg = f"{test_name} exited with code {e.code}\n"
             logger.error(error_msg)
             error_logs += error_msg
             test_results_df.loc[len(test_results_df)] = [test_name, status]
             
         except Exception as e:
-            status = "FAILED"
+            status = "NOT EXECUTED"
             error_msg = f"{test_name} crashed unexpectedly\n"
             logger.exception(error_msg)
             tb_str = traceback.format_exc()
