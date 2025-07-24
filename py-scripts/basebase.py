@@ -1688,7 +1688,7 @@ class Candela(Realm):
         traffic_duration=None,
         clients_type="Real",
         dowebgui=False,
-        directions=["Download", "Upload"],
+        directions=["Download"],
         file_sizes=["2MB", "500MB", "1000MB"],
         local_lf_report_dir="",
         ap_ip=None,
@@ -1740,8 +1740,9 @@ class Candela(Realm):
     ):
         args = SimpleNamespace(**locals())
         args.mgr = self.lanforge_ip
-        args.mgr_port = self.port
-        self.run_ftp_test1(args)
+        args.mgr_port = int(self.port)
+        print('args',args)
+        return self.run_ftp_test1(args)
 
     def run_ftp_test1(self,args):
         # 1st time stamp for test duration
@@ -1827,7 +1828,7 @@ class Candela(Realm):
                             obj.device_list = obj.filter_iOS_devices(args.device_list)
                             if len(obj.device_list) == 0:
                                 logger.info("There are no devices available")
-                                exit(1)
+                                return False
                         configured_device, configuration = obj.query_realclients()
 
                     if args.dowebgui and args.group_name:
@@ -1852,7 +1853,7 @@ class Candela(Realm):
                     obj.build()
                     if not obj.passes():
                         logger.info(obj.get_fail_message())
-                        exit(1)
+                        return False
 
                     if obj.clients_type == 'Real':
                         obj.monitor_cx()
@@ -1931,6 +1932,8 @@ class Candela(Realm):
 
         if args.dowebgui:
             obj.copy_reports_to_home_dir()
+        
+        return True
 
         
     def run_qos_test(
@@ -5573,7 +5576,7 @@ def run_http_test(args, candela_apis):
 def run_ftp_test(args, candela_apis):
     return candela_apis.run_ftp_test(
         device_list=args.ftp_device_list,
-        file_sizes=args.ftp_file_size,
+        file_sizes=[args.ftp_file_size],
         traffic_duration=args.ftp_duration,
         bands=args.ftp_bands,
         expected_passfail_value=args.ftp_expected_passfail_value,
