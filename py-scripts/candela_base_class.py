@@ -1146,6 +1146,8 @@ class Candela(Realm):
                 test_input_infor["File size"] = file_size
             else:
                 test_setup_info["File location (URLs from the File)"] = file_path
+            if client_type == "Real":
+                test_setup_info["failed_cx's"] = http.failed_cx if http.failed_cx else "NONE"
             # dataset = http.download_time_in_sec(result_data=result_data)
             rx_rate = []
             for i in result_data:
