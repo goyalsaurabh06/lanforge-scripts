@@ -5575,7 +5575,7 @@ def run_ftp_test(args, candela_apis):
         device_list=args.ftp_device_list,
         file_sizes=args.ftp_file_size,
         traffic_duration=args.ftp_duration,
-        band=args.ftp_bands,
+        bands=args.ftp_bands,
         expected_passfail_value=args.ftp_expected_passfail_value,
         device_csv_name=args.ftp_device_csv_name,
         file_name=args.ftp_file_name,
