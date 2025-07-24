@@ -1743,7 +1743,7 @@ class Candela(Realm):
         args.mgr_port = self.port
         self.run_ftp_test1(args)
 
-    def run_ftp_test1(args):
+    def run_ftp_test1(self,args):
         # 1st time stamp for test duration
         time_stamp1 = datetime.now()
 
