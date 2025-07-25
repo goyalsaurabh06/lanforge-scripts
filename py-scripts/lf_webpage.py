@@ -640,7 +640,7 @@ class HttpDownload(Realm):
 
     def get_layer4_data(self):
         try:
-            l4_data = self.local_realm.json_get(f'layer4/{','.join(list(self.http_profile.created_cx.keys()))}/list?fields=uc-avg,uc-max,uc-min,total-urls,rx rate (1m),bytes-rd,total-err')['endpoint']
+            l4_data = self.local_realm.json_get('layer4/{}/list?fields=uc-avg,uc-max,uc-min,total-urls,rx rate (1m),bytes-rd,total-err'.format(','.join(self.cx_list)))['endpoint']
         except:
             logger.error("l4 DATA not found")
         l4_dict = {

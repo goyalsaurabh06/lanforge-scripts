@@ -1091,7 +1091,7 @@ class FtpTest(LFCliBase):
     # Created a function to get uc-avg,uc,min,uc-max,ssid and all other details of the devices
     def get_layer4_data(self):
         try:
-            l4_data = self.local_realm.json_get(f'layer4/{','.join(list(self.cx_list))}/list?fields=uc-avg,uc-max,uc-min,total-urls,rx rate (1m),bytes-rd,total-err')['endpoint']
+            l4_data = self.local_realm.json_get('layer4/{}/list?fields=uc-avg,uc-max,uc-min,total-urls,rx rate (1m),bytes-rd,total-err'.format(','.join(self.cx_list)))['endpoint']
         except:
             logger.error("NO  L4 endpoint found")
             exit(1)
