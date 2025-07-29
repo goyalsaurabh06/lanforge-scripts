@@ -1609,17 +1609,11 @@ class RealBrowserTest(Realm):
         if not self.expected_passfail_value:
             res_list = []
             interop_tab_data = self.json_get('/adb/')["devices"]
+            user_to_serial_map = {}
+            for dev in interop_tab_data:
+                for item in dev.values():
+                    user_to_serial_map[item['user-name']] = item['name'].split('.')[2]
 
-            for i in range(len(device_type_data)):
-                if device_type_data[i] != 'Android':
-                    res_list.append(device_names[i])
-                else:
-                    for dev in interop_tab_data:
-                        for item in dev.values():
-                            if item['user-name'] in device_names:
-                                name_to_append = item['name'].split('.')[2]
-                                if name_to_append not in res_list:
-                                    res_list.append(name_to_append)
 
             if self.dowebgui:
                 os.chdir(self.original_dir)
@@ -1632,16 +1626,21 @@ class RealBrowserTest(Realm):
                 reader = csv.DictReader(file)
                 rows = list(reader)
 
-            for device in res_list:
+            for i, device in enumerate(device_names):
+                name_to_lookup = device
+                if device_type_data[i] == 'Android' and device in user_to_serial_map:
+                    name_to_lookup = user_to_serial_map[device]
+
                 found = False
                 for row in rows:
-                    if row['DeviceList'] == device and row['RealBrowser URLcount'].strip() != '':
+                    if row['DeviceList'] == name_to_lookup and row['RealBrowser URLcount'].strip() != '':
                         test_input_list.append(row['RealBrowser URLcount'])
                         found = True
                         break
                 if not found:
-                    logging.info(f"Pass Fail Value for Device {device} not found in CSV. Using default value 5")
-                    test_input_list.append(5)  # Default value
+                    logging.info(f"Pass Fail Value for Device {name_to_lookup} not found in CSV. Using default value 5")
+                    test_input_list.append(5)
+
 
             if self.dowebgui:
                 os.chdir(self.result_dir)
@@ -1850,22 +1849,44 @@ class RealBrowserTest(Realm):
                 
 
             else:
-                final_test_results = {
+                if self.expected_passfail_value or self.device_csv_name:
+                    pass_fail_list, test_input_list = self.generate_pass_fail_list(device_type_data, device_names, total_urls)
+                    final_test_results = {
 
-                    "Device Type": device_type_data,
-                    "Hostname": device_names,
-                    "SSID": ssid_data,
-                    "MAC": mac_data,
-                    "Channel": channel_data,
-                    "UC-MIN (ms)": uc_min_data,
-                    "UC-MAX (ms)": uc_max_data,
-                    "UC-AVG (ms)": uc_avg_data,
-                    "Total Successful URLs": total_urls,
-                    "Total Erros": total_err_data,
-                    "RSSI": signal_data,
-                    "Link Speed": tx_rate_data,
+                        "Device Type": device_type_data,
+                        "Hostname": device_names,
+                        "SSID": ssid_data,
+                        "MAC": mac_data,
+                        "Channel": channel_data,
+                        "UC-MIN (ms)": uc_min_data,
+                        "UC-MAX (ms)": uc_max_data,
+                        "UC-AVG (ms)": uc_avg_data,
+                        "Total Successful URLs": total_urls,
+                        "Expected URLS": test_input_list,
+                        "Total Erros": total_err_data,
+                        "RSSI": signal_data,
+                        "Link Speed": tx_rate_data,
+                        "Status ": pass_fail_list
 
-                }
+                    }
+                else:
+
+                    final_test_results = {
+
+                        "Device Type": device_type_data,
+                        "Hostname": device_names,
+                        "SSID": ssid_data,
+                        "MAC": mac_data,
+                        "Channel": channel_data,
+                        "UC-MIN (ms)": uc_min_data,
+                        "UC-MAX (ms)": uc_max_data,
+                        "UC-AVG (ms)": uc_avg_data,
+                        "Total Successful URLs": total_urls,
+                        "Total Erros": total_err_data,
+                        "RSSI": signal_data,
+                        "Link Speed": tx_rate_data,
+
+                    }
                 test_results_df = pd.DataFrame(final_test_results)
                 report.set_table_dataframe(test_results_df)
                 report.build_table()
