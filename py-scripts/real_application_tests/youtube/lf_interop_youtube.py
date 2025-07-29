@@ -1284,6 +1284,7 @@ NOTES:
         parser.add_argument("--expected_passfail_value", help="Specify the expected urlcount value for pass/fail")
         parser.add_argument("--device_csv_name", type=str, help="Specify the device csv name for pass/fail", default=None)
         parser.add_argument('--config', action='store_true', help='specify this flag whether to config devices or not')
+        parser.add_argument("--wait_time", type=int, help="Specify the time for configuration", default=60)
 
         args = parser.parse_args()
 
@@ -1399,7 +1400,7 @@ NOTES:
                 new_filename = args.file_name.removesuffix(".csv")
             else:
                 new_filename = args.file_name
-            config_obj = DeviceConfig.DeviceConfig(lanforge_ip=args.mgr, file_name=new_filename)
+            config_obj = DeviceConfig.DeviceConfig(lanforge_ip=args.mgr, file_name=new_filename, wait_time=args.wait_time)
             youtube.configobj = config_obj
             if not args.expected_passfail_value and args.device_csv_name is None:
                 config_obj.device_csv_file(csv_name="device.csv")
@@ -1463,6 +1464,7 @@ NOTES:
                     all_devices = config_obj.get_all_devices()
                     if args.group_name is None and args.file_name is None and args.profile_name is None:
                         dev_list = args.resources.split(',')
+                        dev_list = ['.'.join(device.split('.')[:2]) for device in dev_list]
                         if args.config:
                             asyncio.run(config_obj.connectivity(device_list=dev_list, wifi_config=config_dict))
                 else:
