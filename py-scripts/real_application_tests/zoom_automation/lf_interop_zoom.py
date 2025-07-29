@@ -1255,9 +1255,6 @@ class ZoomAutomation(Realm):
     def get_test_results_data(self, test_results, group):
         groups_devices_map = self.config_obj.get_groups_devices(data=self.selected_groups, groupdevmap=True)
         group_hostnames = groups_devices_map.get(group, [])
-        # print("Group Hostnames:", group_hostnames)
-        # print("Test Results Hostnames:", test_results["Hostname"])
-
         group_test_results = {}
 
         for key in test_results:
@@ -1267,7 +1264,6 @@ class ZoomAutomation(Realm):
             if hostname in group_hostnames:
                 for key in test_results:
                     group_test_results[key].append(test_results[key][idx])
-        # print("checking group test results", group_test_results)
 
         return group_test_results
 
@@ -1529,7 +1525,7 @@ def main():
                 new_filename = args.file_name.removesuffix(".csv")
             else:
                 new_filename = args.file_name
-            config_obj = DeviceConfig.DeviceConfig(lanforge_ip=args.lanforge_ip, file_name=new_filename)
+            config_obj = DeviceConfig.DeviceConfig(lanforge_ip=args.lanforge_ip, file_name=new_filename, wait_time=args.wait_time)
             zoom_automation.config_obj = config_obj
 
             if not args.expected_passfail_value and args.device_csv_name is None:
@@ -1606,7 +1602,8 @@ def main():
                                 dev_list.remove(args.zoom_host)
                             dev_list.insert(0, args.zoom_host)
                         if args.config:
-                            asyncio.run(config_obj.connectivity(device_list=dev_list, wifi_config=config_dict))
+                            conn_dev_list = ['.'.join(device.split('.')[:2]) for device in dev_list]
+                            asyncio.run(config_obj.connectivity(device_list=conn_dev_list, wifi_config=config_dict))
                         args.resources = ",".join(id for id in dev_list)
                 else:
                     # If no resources provided, prompt user to select devices manually
