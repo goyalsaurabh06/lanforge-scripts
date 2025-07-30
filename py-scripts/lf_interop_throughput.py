@@ -1156,6 +1156,17 @@ class Throughput(Realm):
         else:
             individual_df.to_csv('{}_throughput_data.csv'.format(current_coordinate), index=False)
 
+        if self.dowebgui:
+            with open(runtime_dir + "/../../Running_instances/{}_{}_running.json".format(self.ip, self.test_name),
+                          'r') as file:
+                    data = json.load(file)
+                    coordinate_list=data['current_coordinate']
+                    if current_coordinate not in coordinate_list:
+                        coordinate_list.append(current_coordinate)
+                    data['current_coordinate']=coordinate_list
+            with open(runtime_dir + "/../../Running_instances/{}_{}_running.json".format(self.ip, self.test_name), 'w') as file:
+                json.dump(data, file, indent=4)
+
         keys = list(connections_upload.keys())
         keys = list(connections_download.keys())
 
@@ -1533,6 +1544,7 @@ class Throughput(Realm):
                     "Test name": self.test_name,
                     "Device List": ", ".join(all_devices_names),
                     "No of Devices": "Total" + f"({str(self.num_stations)})" + total_devices,
+                    "Selected Coordinates":','.join(coordinate_list),
                     "Increment": incremental_capacity_data,
                     "Traffic Duration in minutes": round(int(self.test_duration) * len(incremental_capacity_list) / 60, 2),
                     "Traffic Type": (self.traffic_type.strip("lf_")).upper(),
@@ -1543,7 +1555,41 @@ class Throughput(Realm):
                     "Packet Size": packet_size_text
                 }
             report.test_setup_table(test_setup_data=test_setup_info, value="Test Configuration")
+            if self.dowebgui:
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                throughput_image_path = os.path.join(script_dir, "heatmap_images", f"{self.test_name}_throughput.png")
+                rssi_image_path = os.path.join(script_dir, "heatmap_images", f"{self.test_name}_rssi.png")
+                timeout = 60  # seconds
+                start_time = time.time()
 
+                while not (os.path.exists(throughput_image_path) and os.path.exists(rssi_image_path)):
+                    if time.time() - start_time > timeout:
+                        print("Timeout: Images not found within 60 seconds.")
+                        break
+                    time.sleep(1)
+                while not os.path.exists(throughput_image_path) and not os.path.exists(rssi_image_path):
+                    if os.path.exists(throughput_image_path) and os.path.exists(rssi_image_path):
+                        break
+                    # time.sleep(10) 
+                if os.path.exists(throughput_image_path):
+                    print("Thhroughput")
+                    report.set_custom_html('<div style="page-break-before: always;"></div>')
+                    report.build_custom()
+                    report.set_custom_html("<h2>Average Throughput Heatmap: </h2>")
+                    # report.build_custom()
+                    report.set_custom_html(f'<img src="file://{throughput_image_path}"></img>')
+                    report.build_custom()
+                    # os.remove(throughput_image_path)
+
+                if os.path.exists(rssi_image_path):
+                    print("Rssssssiii")
+                    report.set_custom_html('<div style="page-break-before: always;"></div>')
+                    report.build_custom()
+                    report.set_custom_html("<h2>Average RSSI Heatmap: </h2>")
+                    # report.build_custom()
+                    report.set_custom_html(f'<img src="file://{rssi_image_path}"></img>')
+                    report.build_custom()
+                    # os.remove(rssi_image_path)
             # Loop through each coordinate 
             for coordinate in coordinate_list:
                 report.set_obj_html(
@@ -3018,7 +3064,7 @@ Copyright 2023 Candela Technologies Inc.
             if not found:
                 url = 'http://'+ robo_ip +':'+robo_port+ '/inputs'
                 response = requests.post(url, json={'base_speed':80,'Kp':40,'Ki':0.5,'Kd':15,'halt':'skip'})
-                logger.info("Robot was escaped from the halt", response.json())
+                logger.info("Robot was escaped from the halt")
         else:
             while points:   
                 robot_status='Started'
@@ -3103,7 +3149,7 @@ Copyright 2023 Candela Technologies Inc.
                             throughput.stop()
                 url = 'http://'+ robo_ip +':'+robo_port+ '/inputs'
                 response = requests.post(url, json={'base_speed':80,'Kp':40,'Ki':0.5,'Kd':15,'halt':'skip'})
-                logger.info("Robot was escaped from the halt", response.json())
+                logger.info("Robot was escaped from the halt")
               
     if args.postcleanup:
         throughput.cleanup()
