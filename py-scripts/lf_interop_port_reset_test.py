@@ -520,6 +520,10 @@ class InteropPortReset(Realm):
             if len(self.adb_device_list) == 0 and len(self.base_interop_profile.windows_list) == 0 and len(self.base_interop_profile.linux_list) == 0 and len(self.base_interop_profile.mac_list) == 0:
                 logging.info("There is no active devices please check system.")
                 logging.info('Aborting the test.')
+                if self.dowebgui:
+                    self.result_df["Status"] = "Stopped"
+                    self.result_df.to_csv(f"{self.result_dir}/overall_reset.csv", index=False)
+                    pass
                 exit(1)
             else:
                 for i in range(len(self.adb_device_list)):
@@ -639,8 +643,8 @@ class InteropPortReset(Realm):
                     for i in self.all_selected_devices:
                         get_dicct = self.get_time_from_wifi_msgs(local_dict=local_dict, phn_name=i, timee=timee,
                                                                  file_name=f"reset_{r}_log.json",r=r)
-                        self.create_dict_csv(reset_dict)
                         reset_dict[r] = get_dicct
+                        self.create_dict_csv(reset_dict)
                         if self.dowebgui:
                             with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host,
                                                                                                             self.test_name),
@@ -1177,7 +1181,7 @@ class InteropPortReset(Realm):
         df_summary.to_csv(f"{self.report_path}/overall_reset.csv", index=False)
         if self.dowebgui:
             df_summary.to_csv(f"{self.result_dir}/overall_reset.csv", index=False)
-            time.sleep(5)
+            # time.sleep(5)
         print(df_summary)
 
 
