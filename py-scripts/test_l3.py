@@ -1612,6 +1612,7 @@ class L3VariableTime(Realm):
                         'Expected integer response for jitter, received non-numeric string instead. Replacing with 0')
                     jit += 0
                 else:
+                    logging.info(f"jitter check{endp["jitter"]}")
                     jit += int(endp["jitter"])
                 # lat += int(endp["delay"])
                 # jit += int(endp["jitter"])
