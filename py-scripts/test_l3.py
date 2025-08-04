@@ -1613,7 +1613,11 @@ class L3VariableTime(Realm):
                     jit += 0
                 else:
                     logging.info(f"jitter check{endp["jitter"]}")
-                    jit += int(endp["jitter"])
+                    try:
+                        jit += int(endp["jitter"])
+                    except:
+                        jit += 0
+                        logging.info(f"jit was appended eith zero")
                 # lat += int(endp["delay"])
                 # jit += int(endp["jitter"])
                 name = endp["name"]

@@ -1231,6 +1231,7 @@ class HttpDownload(Realm):
                         result_data, test_rig, rx_rate,
                         test_tag, dut_hw_version, dut_sw_version, dut_model_num, dut_serial_num, test_id,
                         test_input_infor, csv_outfile, _results_dir_name='webpage_test', report_path=''):
+        print("Current working directory:", os.getcwd())
         if self.dowebgui == "True" and report_path == '':
             print("SCOP1")
             report = lf_report.lf_report(_results_dir_name="webpage_test", _output_html="Webpage.html",
