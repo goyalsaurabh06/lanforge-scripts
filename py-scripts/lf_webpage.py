@@ -830,7 +830,7 @@ class HttpDownload(Realm):
         for port, df in individual_device_data.items():
             df.to_csv(f"{endtime}-http-{port}.csv", index=False)
             individual_device_csv_names.append(f'{endtime}-http-{port}')
-        self.individual_device_csv_names = individual_device_csv_names
+        self.individual_device_csv_names = individual_device_csv_names.copy()
         try:
             all_l4_data = self.get_all_l4_data()
             df = pd.DataFrame(all_l4_data)
@@ -1232,9 +1232,11 @@ class HttpDownload(Realm):
                         test_tag, dut_hw_version, dut_sw_version, dut_model_num, dut_serial_num, test_id,
                         test_input_infor, csv_outfile, _results_dir_name='webpage_test', report_path=''):
         if self.dowebgui == "True" and report_path == '':
+            print("SCOP1")
             report = lf_report.lf_report(_results_dir_name="webpage_test", _output_html="Webpage.html",
                                          _output_pdf="Webpage.pdf", _path=self.result_dir)
         else:
+            print('scope2')
             report = lf_report.lf_report(_results_dir_name="webpage_test", _output_html="Webpage.html",
                                          _output_pdf="Webpage.pdf", _path=report_path)
 
