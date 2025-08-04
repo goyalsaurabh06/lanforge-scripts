@@ -639,8 +639,9 @@ class HttpDownload(Realm):
             df1.to_csv("http_datavalues.csv", index=False)
 
     def get_layer4_data(self):
+        cx_list = list(self.http_profile.created_cx.keys())
         try:
-            l4_data = self.local_realm.json_get('layer4/{}/list?fields=uc-avg,uc-max,uc-min,total-urls,rx rate (1m),bytes-rd,total-err'.format(','.join(self.cx_list)))['endpoint']
+            l4_data = self.local_realm.json_get('layer4/{}/list?fields=uc-avg,uc-max,uc-min,total-urls,rx rate (1m),bytes-rd,total-err'.format(','.join(cx_list)))['endpoint']
         except:
             logger.error("l4 DATA not found")
             exit(1)
@@ -653,7 +654,6 @@ class HttpDownload(Realm):
             'bytes_rd':[],
             'total_err':[]
         }
-        cx_list = list(self.http_profile.created_cx.keys())
         if type(l4_data) != list:
             l4_data = [{l4_data['name']:l4_data}]
         idx = 0
