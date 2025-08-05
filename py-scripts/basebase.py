@@ -31,7 +31,7 @@ Realm = realm.Realm
 error_logs = "" 
 test_results_df = pd.DataFrame(columns=['test_name', 'status'])
 matplotlib.use('Agg')  # Before importing pyplot
-base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+base_path = os.getcwd()
 print('base path',base_path)
 sys.path.insert(0, os.path.join(base_path, 'py-json'))     # for interop_connectivity, LANforge
 sys.path.insert(0, os.path.join(base_path, 'py-json', 'LANforge'))  # for LFUtils
@@ -111,6 +111,7 @@ class Candela(Realm):
         self.uc_min_value = None
         self.cx_order_list = None
         self.gave_incremental=None
+        self.result_path = os.getcwd()
 
     def api_get(self, endp: str):
         """
@@ -1197,7 +1198,7 @@ class Candela(Realm):
                                 test_rig=test_rig, test_tag=test_tag, dut_hw_version=dut_hw_version,
                                 dut_sw_version=dut_sw_version, dut_model_num=dut_model_num,
                                 dut_serial_num=dut_serial_num, test_id=test_id,
-                                test_input_infor=test_input_infor, csv_outfile=csv_outfile)
+                                test_input_infor=test_input_infor, csv_outfile=csv_outfile,report_path=self.result_path)
             http.postcleanup()
             # FOR WEBGUI, filling csv at the end to get the last terminal logs
             if dowebgui:
@@ -1741,7 +1742,6 @@ class Candela(Realm):
         args = SimpleNamespace(**locals())
         args.mgr = self.lanforge_ip
         args.mgr_port = int(self.port)
-        print('args',args)
         return self.run_ftp_test1(args)
 
     def run_ftp_test1(self,args):
@@ -1921,14 +1921,14 @@ class Candela(Realm):
                                 test_tag=args.test_tag, dut_hw_version=args.dut_hw_version,
                                 dut_sw_version=args.dut_sw_version, dut_model_num=args.dut_model_num,
                                 dut_serial_num=args.dut_serial_num, test_id=args.test_id,
-                                bands=args.bands, csv_outfile=args.csv_outfile, local_lf_report_dir=args.local_lf_report_dir, config_devices=configuration)
+                                bands=args.bands, csv_outfile=args.csv_outfile, local_lf_report_dir=args.local_lf_report_dir, config_devices=configuration,report_path=self.result_path)
         # Generating report without group-specific device configuration
         else:
             obj.generate_report(ftp_data, date, input_setup_info, test_rig=args.test_rig,
                                 test_tag=args.test_tag, dut_hw_version=args.dut_hw_version,
                                 dut_sw_version=args.dut_sw_version, dut_model_num=args.dut_model_num,
                                 dut_serial_num=args.dut_serial_num, test_id=args.test_id,
-                                bands=args.bands, csv_outfile=args.csv_outfile, local_lf_report_dir=args.local_lf_report_dir)
+                                bands=args.bands, csv_outfile=args.csv_outfile, local_lf_report_dir=args.local_lf_report_dir,report_path=self.result_path)
 
         if args.dowebgui:
             obj.copy_reports_to_home_dir()
@@ -2143,7 +2143,7 @@ class Candela(Realm):
                 connections_upload_avg=connections_upload_avg,
                 connections_download_avg=connections_download_avg,
                 avg_drop_a=avg_drop_a,
-                avg_drop_b=avg_drop_b, config_devices=configuration)
+                avg_drop_b=avg_drop_b, config_devices=configuration,report_path=self.result_path)
         else:
             throughput_qos.generate_report(
                 data=data,
@@ -2152,7 +2152,7 @@ class Candela(Realm):
                 connections_upload_avg=connections_upload_avg,
                 connections_download_avg=connections_download_avg,
                 avg_drop_a=avg_drop_a,
-                avg_drop_b=avg_drop_b)
+                avg_drop_b=avg_drop_b,report_path=self.result_path)
         return True
 
     def run_vs_test(self,args):
@@ -2591,9 +2591,9 @@ class Candela(Realm):
 
         # prev_inc_value = 0
         if obj.resource_ids and obj.incremental:
-            obj.generate_report(date, list(set(iterations_before_test_stopped_by_user)), test_setup_info=test_setup_info, realtime_dataset=individual_df, cx_order_list=cx_order_list)
+            obj.generate_report(date, list(set(iterations_before_test_stopped_by_user)), test_setup_info=test_setup_info, realtime_dataset=individual_df, cx_order_list=cx_order_list,report_path=self.result_path)
         elif obj.resource_ids:
-            obj.generate_report(date, list(set(iterations_before_test_stopped_by_user)), test_setup_info=test_setup_info, realtime_dataset=individual_df)
+            obj.generate_report(date, list(set(iterations_before_test_stopped_by_user)), test_setup_info=test_setup_info, realtime_dataset=individual_df,report_path=self.result_path)
 
         # Perform post-cleanup operations
         if args.postcleanup:
@@ -2948,7 +2948,7 @@ class Candela(Realm):
         throughput.stop()
         if postcleanup:
             throughput.cleanup()
-        throughput.generate_report(list(set(iterations_before_test_stopped_by_user)), incremental_capacity_list, data=all_dataframes, data1=to_run_cxs_len, report_path=throughput.result_dir)
+        throughput.generate_report(list(set(iterations_before_test_stopped_by_user)), incremental_capacity_list, data=all_dataframes, data1=to_run_cxs_len, report_path=self.result_path if not throughput.dowebgui else throughput.result_dir)
         if throughput.dowebgui:
             # copying to home directory i.e home/user_name
             throughput.copy_reports_to_home_dir()
@@ -5534,7 +5534,8 @@ def run_ping_test(args, candela_apis):
         client_cert=args.ping_client_cert,
         pk_passwd=args.ping_pk_passwd,
         pac_file=args.ping_pac_file,
-        wait_time=args.ping_wait_time
+        wait_time=args.ping_wait_time,
+        local_lf_report_dir = candela_apis.result_path
     )
 
 def run_http_test(args, candela_apis):
