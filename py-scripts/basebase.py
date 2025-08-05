@@ -2139,20 +2139,20 @@ class Candela(Realm):
             throughput_qos.generate_report(
                 data=data,
                 input_setup_info=input_setup_info,
-                report_path=throughput_qos.result_dir,
+                report_path=throughput_qos.result_dir if throughput_qos.dowebgui else self.result_path,
                 connections_upload_avg=connections_upload_avg,
                 connections_download_avg=connections_download_avg,
                 avg_drop_a=avg_drop_a,
-                avg_drop_b=avg_drop_b, config_devices=configuration,report_path=self.result_path)
+                avg_drop_b=avg_drop_b, config_devices=configuration)
         else:
             throughput_qos.generate_report(
                 data=data,
                 input_setup_info=input_setup_info,
-                report_path=throughput_qos.result_dir,
+                report_path=throughput_qos.result_dir if throughput_qos.dowebgui else self.result_path,
                 connections_upload_avg=connections_upload_avg,
                 connections_download_avg=connections_download_avg,
                 avg_drop_a=avg_drop_a,
-                avg_drop_b=avg_drop_b,report_path=self.result_path)
+                avg_drop_b=avg_drop_b)
         return True
 
     def run_vs_test(self,args):
