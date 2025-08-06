@@ -50,20 +50,22 @@ lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 
 class TeamsAutomation(Realm):
     def __init__(self,
-                 host=None,
+                 lanforge_ip=None,
                  duration=None,
                  upstream_port=None,
                  no_pre_cleanup=None,
                  no_post_cleanup=None,
                  participants_req=None,
                  audio=None,
-                 video=None
-
+                 video=None,
+                 do_webui = None,
+                 test_name = None,
+                 report_dir = None
 
                  ):
-        super().__init__(lfclient_host=host)
+        super().__init__(lfclient_host=lanforge_ip)
         self.app = Flask(__name__)
-        self.host=host
+        self.lanforge_ip=lanforge_ip
         self.duration = duration
         self.upstream_port = upstream_port
         self.no_pre_cleanup = no_pre_cleanup
@@ -109,9 +111,49 @@ class TeamsAutomation(Realm):
         self.path = os.path.join(os.getcwd(), "teams_test_results")
         if not os.path.exists(self.path):
             os.makedirs(self.path)
+        self.do_webui = do_webui
+        self.test_name = test_name
+        self.report_dir = report_dir
+        self.execute_finally = False
+
+    
+
+    def updating_webui_runningjson(self, obj):
+        data = {}
+        file_path = self.path + "/../../Running_instances/{}_{}_running.json".format(self.lanforge_ip, self.test_name)
+
+        # Wait until the file exists
+        while not os.path.exists(file_path):
+            logging.info("Waiting for the running json file to be created")
+            time.sleep(1)
+        logging.info("Running Json file found")
+        with open(file_path, 'r') as file:
+            data = json.load(file)
+
+        for key in obj:
+            data[key] = obj[key]
+
+        with open(file_path, 'w') as file:
+            json.dump(data, file, indent=4)
         
 
-
+    def update_webui_data(self):
+        if len(self.real_sta_hostname) == 0:
+                logging.info("No device is available to run the test")
+                obj = {
+                    "status": "Stopped",
+                    "configuration_status": "configured"
+                }
+                self.updating_webui_runningjson(obj)
+                return
+        else:
+            obj = {
+                "configured_devices": self.real_sta_hostname,
+                "configuration_status": "configured",
+                "no_of_devices": f' Total({len(self.real_sta_os_types)}) : W({self.windows}),L({self.linux}),M({self.mac})',
+                "device_list": self.hostname_os_combination,
+            }
+            self.updating_webui_runningjson(obj)
 
     def wait_for_flask(self, url="http://127.0.0.1:5005/test_server", timeout=10):
         """Wait until the Flask server is up, but exit if it takes longer than `timeout` seconds."""
@@ -160,9 +202,9 @@ class TeamsAutomation(Realm):
                 generic_endpoint = self.json_get(f'/generic/{self.generic_endps_profile.created_endp[0]}')
                 endp_status = generic_endpoint["endpoint"]["status"]
                 if endp_status == "Stopped":
-                    logging.info("Failed to Start the Host Device")
+                    logging.error("Failed to Start the Host Device")
                     self.generic_endps_profile.cleanup()
-                    sys.exit(1)
+                    os._exit(1)
                 time.sleep(5)
             except Exception as e:
                 logging.info(f"Error while checking login_completed status: {e}")
@@ -239,7 +281,7 @@ class TeamsAutomation(Realm):
         report.build_table()
 
         # Read per-device average metrics
-        df = pd.read_csv(os.path.join(os.getcwd(), "teams_call_avg_data.csv"))
+        df = pd.read_csv(os.path.join(self.path, "teams_call_avg_data.csv"))
         df.columns = df.columns.str.strip()
 
         report.set_table_title("Test Devices:")
@@ -489,25 +531,28 @@ class TeamsAutomation(Realm):
         if real_sta_list is None:
             self.real_sta_list, _, _ = self.realdevice.query_user()
         else:
-            interface_data = self.json_get("/port/all")
-            interfaces = interface_data["interfaces"]
-            real_sta_list = [sta.strip() for sta in real_sta_list.split(',') if sta.strip()]
-            for device in real_sta_list:
-                for interface_dict in interfaces:
-                    for key, value in interface_dict.items():
-                        key_parts = key.split(".")
-                        extracted_key = ".".join(key_parts[:2])
-                        if (
-                            extracted_key == device
-                            and not value["phantom"]
-                            and not value["down"]
-                            and value["parent dev"] != ""
-                            and value["ip"] != "0.0.0.0"
-                        ):
-                            final_device_list.append(key)
-                            break
+            if not self.do_webui:
+                interface_data = self.json_get("/port/all")
+                interfaces = interface_data["interfaces"]
+                real_sta_list = [sta.strip() for sta in real_sta_list.split(',') if sta.strip()]
+                for device in real_sta_list:
+                    for interface_dict in interfaces:
+                        for key, value in interface_dict.items():
+                            key_parts = key.split(".")
+                            extracted_key = ".".join(key_parts[:2])
+                            if (
+                                extracted_key == device
+                                and not value["phantom"]
+                                and not value["down"]
+                                and value["parent dev"] != ""
+                                and value["ip"] != "0.0.0.0"
+                            ):
+                                final_device_list.append(key)
+                                break
 
-            self.real_sta_list = final_device_list
+                self.real_sta_list = final_device_list
+            else:
+                self.real_sta_list = real_sta_list.split(',')
 
         # Abort if no stations
         if len(self.real_sta_list) == 0:
@@ -561,20 +606,25 @@ class TeamsAutomation(Realm):
             self.credentials = list(reader)
     
     def move_csv_files(self):
-        # Get current working directory
-        current_dir = os.getcwd()
-        
         # Move all CSV files to the new folder
-        for file in os.listdir(current_dir):
+        for file in os.listdir(self.path):
             if file.endswith(".csv"):
-                if file == 'teams_cred.csv':
-                    continue
-                src = os.path.join(current_dir, file)
+                src = os.path.join(self.path, file)
                 dest = os.path.join(self.report_path_date_time, file)
                 shutil.move(src, dest)
-                #logger.info(f"Moved: {file} -> {folder_name}")
 
         print(f"All CSV Files have been moved to: {self.report_path_date_time}")
+    
+    def shutdown(self):
+        """
+        Gracefully shut down the application.
+        """
+        logging.info("Initiating graceful shutdown...")
+
+        self.stop_signal = True
+        time.sleep(10)
+        logging.info("Exiting the application.")
+        os._exit(0)
     
     def start_flask_server(self):
 
@@ -657,6 +707,21 @@ class TeamsAutomation(Realm):
                 'audio_stats': self.audio,
                 "video_stats": self.video
             })
+        
+        @self.app.route('/stop_teams', methods=['GET'])
+        def stop_teams():
+            """
+            Endpoint to stop the Zoom test and trigger a graceful application shutdown.
+            """
+            logging.info("Stopping the test through web UI")
+            self.stop_signal = True  # Signal to stop the application
+            # Respond to the client
+            response = jsonify({"message": "Stopping Teams Test"})
+            response.status_code = 200
+            # Trigger shutdown in a separate thread to avoid blocking
+            shutdown_thread = threading.Thread(target=self.shutdown)
+            shutdown_thread.start()
+            return response
 
         @self.app.route('/upload_stats', methods=['POST'])
         def upload_stats():
@@ -665,7 +730,7 @@ class TeamsAutomation(Realm):
             for hostname, stats in data.items():
                 self.data_store[hostname] = stats
 
-                csv_file = f'{hostname}.csv'
+                csv_file = os.path.join(self.path, f'{hostname}.csv')
                 with open(csv_file, mode='a', newline='') as file:
                     writer = csv.writer(file)
 
@@ -739,13 +804,10 @@ class TeamsAutomation(Realm):
     
 
     def create_avg_data(self):
-        # Get the current directory (where the script is running)
-        csv_directory = os.getcwd()
-        output_file = "teams_call_avg_data.csv"
-
+        output_file = os.path.join(self.path, "teams_call_avg_data.csv")
         summary_rows = []
 
-        for csv_path in glob.glob(os.path.join(csv_directory, "*.csv")):
+        for csv_path in glob.glob(os.path.join(self.path, "*.csv")):
             if csv_path.endswith("teams_cred.csv"):
                 continue
             df = pd.read_csv(csv_path)
@@ -768,6 +830,29 @@ class TeamsAutomation(Realm):
 
         summary_df.to_csv(output_file, index=False)
         logger.info(f"Avg data saved to {output_file}")
+
+    def stop_test_in_webui(self):
+        try:
+            url = f"http://{self.lanforge_ip}:5454/update_status_yt"
+            headers = {
+                'Content-Type': 'application/json',
+            }
+
+            data = {
+                'status': 'Completed',
+                'name': self.test_name
+            }
+
+            response = requests.post(url, json=data, headers=headers)
+
+            if response.status_code == 200:
+                logging.info("Successfully updated STOP status to 'Completed'")
+                pass
+            else:
+                logging.error(f"Failed to update STOP status: {response.status_code} - {response.text}")
+
+        except Exception as e:
+            logging.error(f"An error occurred while updating status: {e}")
 
 
 
@@ -803,6 +888,10 @@ def main():
         optional.add_argument('--lf_logger_config_json', help='lf_logger config json')
         optional.add_argument('--audio', action='store_true')
         optional.add_argument('--video', action='store_true')
+        optional.add_argument('--do_webUI', action='store_true', help='useful to specify whether we are running through webui or cli')
+        optional.add_argument('--testname', help="report directory while running test through web ui")
+        optional.add_argument('--report_dir', help="report directory while running test through web ui")
+
 
         args = parser.parse_args()
 
@@ -817,14 +906,18 @@ def main():
             logger_config.load_lf_logger_config()
 
         teams = TeamsAutomation(
-            host=args.mgr,
+            lanforge_ip=args.mgr,
             duration= args.duration,
             upstream_port=args.upstream_port,
             no_pre_cleanup= args.no_pre_cleanup,
             no_post_cleanup= args.no_post_cleanup,
             participants_req=args.participants,
             audio=args.audio,
-            video=args.video
+            video=args.video,
+            do_webui = args.do_webUI,
+            test_name = args.testname,
+            report_dir = args.report_dir
+
         )
 
         teams.realdevice = RealDevice(manager_ip=args.mgr,
@@ -841,10 +934,14 @@ def main():
                                 selected_bands=['5G'])
         
         teams.select_real_devices(real_sta_list=args.resources)
+        if args.do_webUI:
+            teams.path = args.report_dir
+            teams.update_webui_data()
         teams.load_credentials()
         teams.run()
         time.sleep(10)
         teams.create_avg_data()
+        teams.execute_finally = True
 
     
     except Exception as e:
@@ -852,14 +949,17 @@ def main():
         traceback.print_exc()
     
     finally:
-        teams.stop_signal = True
-        teams.generate_report()
-        teams.move_csv_files()
-        logger.info("Waiting for Browser Cleanup at Client Side")
-        time.sleep(10)
-        logger.info("Browser Cleanup Completed")
-        teams.generic_endps_profile.cleanup()
-        logger.info("Test Completed")
+        if teams.execute_finally:
+            teams.stop_signal = True
+            teams.generate_report()
+            teams.move_csv_files()
+            if args.do_webUI:
+                teams.stop_test_in_webui()
+            logger.info("Waiting for Browser Cleanup at Client Side")
+            time.sleep(10)
+            logger.info("Browser Cleanup Completed")
+            teams.generic_endps_profile.cleanup()
+            logger.info("Test Completed")
 
         
 
