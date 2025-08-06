@@ -640,7 +640,7 @@ class Throughput(Realm):
 
         """
 
-        signal_list, channel_list, mode_list, link_speed_list, rx_rate_list = [], [], [], [], []
+        signal_list, channel_list, mode_list, link_speed_list, rx_rate_list,Bssid_list = [], [], [], [], [],[]
         interfaces_dict = dict()
         try:
             port_data = self.json_get('/ports/all/')['interfaces']
@@ -678,7 +678,14 @@ class Throughput(Realm):
                 rx_rate_list.append(interfaces_dict[sta]['rx-rate'])
             else:
                 rx_rate_list.append('-')
-        return signal_list, channel_list, mode_list, link_speed_list, rx_rate_list
+
+        for sta in station_names:
+            if sta in interfaces_dict:
+                Bssid_list.append(interfaces_dict[sta]['ap'])
+            else:
+                Bssid_list.append('-')
+
+        return signal_list, channel_list, mode_list, link_speed_list, rx_rate_list,Bssid_list
 
     def get_ssid_list(self, station_names):
         """
@@ -901,7 +908,7 @@ class Throughput(Realm):
         while datetime.now() < end_time:
             index += 1
             current_time = datetime.now()
-            signal_list, channel_list, mode_list, link_speed_list, rx_rate_list = self.get_signal_and_channel_data(self.input_devices_list)
+            signal_list, channel_list, mode_list, link_speed_list, rx_rate_list,bssid_list= self.get_signal_and_channel_data(self.input_devices_list)
             signal_list = [int(i) if i != "" else 0 for i in signal_list]
             throughput[index] = self.get_layer3_endp_data()
             if self.dowebgui:
@@ -948,7 +955,7 @@ class Throughput(Realm):
                     remaining_minutes_instrf = str(overall_time_difference).split(".")[0]
                 # Storing individual device throughput data(download, upload, Rx % drop A, Rx % drop B) to dataframe
                 for i in range(len(download_throughput)):
-                    individual_df_data.extend([download_throughput[i], upload_throughput[i], drop_a_per[i], drop_b_per[i], int(signal_list[i]), link_speed_list[i], rx_rate_list[i]])
+                    individual_df_data.extend([download_throughput[i], upload_throughput[i], drop_a_per[i], drop_b_per[i], int(signal_list[i]), link_speed_list[i], rx_rate_list[i],bssid_list[i]])
 
                 # Storing Overall throughput data for all devices and also start time, end time, remaining time and status of test running
                 individual_df_data.extend([round(sum(download_throughput),
@@ -1060,7 +1067,7 @@ class Throughput(Realm):
                     remaining_minutes_instrf = str(overall_time_difference).split(".")[0]
                 # Storing individual device throughput data(download, upload, Rx % drop A, Rx % drop B) to dataframe
                 for i in range(len(download_throughput)):
-                    individual_df_data.extend([download_throughput[i], upload_throughput[i], drop_a_per[i], drop_b_per[i], int(signal_list[i]), link_speed_list[i], rx_rate_list[i]])
+                    individual_df_data.extend([download_throughput[i], upload_throughput[i], drop_a_per[i], drop_b_per[i], int(signal_list[i]), link_speed_list[i], rx_rate_list[i],bssid_list[i]])
 
                 # Storing Overall throughput data for all devices and also start time, end time, remaining time and status of test running
                 individual_df_data.extend([round(sum(download_throughput),
@@ -1106,12 +1113,12 @@ class Throughput(Realm):
         download_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in download]
         drop_a_per = [float(round(sum(i) / len(i), 2)) for i in drop_a]
         drop_b_per = [float(round(sum(i) / len(i), 2)) for i in drop_b]
-        signal_list, channel_list, mode_list, link_speed_list, rx_rate_list = self.get_signal_and_channel_data(self.input_devices_list)
+        signal_list, channel_list, mode_list, link_speed_list, rx_rate_list,bssid_list = self.get_signal_and_channel_data(self.input_devices_list)
         signal_list = [int(i) if i != "" else 0 for i in signal_list]
 
         # Storing individual device throughput data(download, upload, Rx % drop A, Rx % drop B) to dataframe after test stopped
         for i in range(len(download_throughput)):
-            individual_df_data.extend([download_throughput[i], upload_throughput[i], drop_a_per[i], drop_b_per[i], int(signal_list[i]), link_speed_list[i], rx_rate_list[i]])
+            individual_df_data.extend([download_throughput[i], upload_throughput[i], drop_a_per[i], drop_b_per[i], int(signal_list[i]), link_speed_list[i], rx_rate_list[i],bssid_list[i]])
         timestamp = datetime.now().strftime("%d/%m %I:%M:%S %p")
 
         # If it's the last iteration, append final metrics and 'Stopped' status
@@ -1421,7 +1428,7 @@ class Throughput(Realm):
             result_dir_name = "Interopability_Test_report"
 
         self.ssid_list = self.get_ssid_list(self.input_devices_list)
-        self.signal_list, self.channel_list, self.mode_list, self.link_speed_list, rx_rate_list = self.get_signal_and_channel_data(self.input_devices_list)
+        self.signal_list, self.channel_list, self.mode_list, self.link_speed_list, rx_rate_list,BSSID_list = self.get_signal_and_channel_data(self.input_devices_list)
 
         if selected_real_clients_names is not None:
             self.num_stations = selected_real_clients_names
@@ -1576,7 +1583,7 @@ class Throughput(Realm):
                     report.set_custom_html('<div style="page-break-before: always;"></div>')
                     report.build_custom()
                     report.set_custom_html("<h2>Average Throughput Heatmap: </h2>")
-                    # report.build_custom()
+                    report.build_custom()
                     report.set_custom_html(f'<img src="file://{throughput_image_path}"></img>')
                     report.build_custom()
                     # os.remove(throughput_image_path)
@@ -1586,7 +1593,7 @@ class Throughput(Realm):
                     report.set_custom_html('<div style="page-break-before: always;"></div>')
                     report.build_custom()
                     report.set_custom_html("<h2>Average RSSI Heatmap: </h2>")
-                    # report.build_custom()
+                    report.build_custom()
                     report.set_custom_html(f'<img src="file://{rssi_image_path}"></img>')
                     report.build_custom()
                     # os.remove(rssi_image_path)
@@ -1634,6 +1641,7 @@ class Throughput(Realm):
                         upload_drop_col = filtered_df[[col for col in filtered_df.columns if "Rx % Drop B" in col][0]].values.tolist()
                         download_drop_col = filtered_df[[col for col in filtered_df.columns if "Rx % Drop A" in col][0]].values.tolist()
                         rssi_col = filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()
+                        bssi_col =filtered_df[[col for col in filtered_df.columns if "Bssid" in col][0]].values.tolist()[-1]
                         if self.load_type == "wc_intended_load":
                             if self.direction == "Bi-direction":
 
@@ -1926,6 +1934,7 @@ class Throughput(Realm):
                         " MAC ": self.mac_id_list[0:int(incremental_capacity_list[i])],
                         " Channel ": self.channel_list[0:int(incremental_capacity_list[i])],
                         " Mode": self.mode_list[0:int(incremental_capacity_list[i])],
+                        "BSSID":bssi_col,
                         # " Direction":direction_in_table[0:int(incremental_capacity_list[i])],
                         " Offered download rate ": download_list[0:int(incremental_capacity_list[i])],
                         " Observed Average download rate ": [str(n) + " Mbps" for n in download_data[0:int(incremental_capacity_list[i])]],
