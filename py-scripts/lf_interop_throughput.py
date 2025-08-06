@@ -1594,7 +1594,7 @@ class Throughput(Realm):
                     _obj_title=f"<h3 style='text-decoration: underline;'>Throughput Test Details – Robot Position: Point {coordinate}</h3>",
                     _obj=" ")
                 report.build_objective()
-                coordinate_csv=f"{coordinate}_throughput_data.csv"
+                coordinate_csv=f"{self.result_dir}/{coordinate}_throughput_data.csv"
                 data=pd.read_csv(coordinate_csv)
             # Loop through iterations and build graphs, tables for each iteration
                 for i in range(len(iterations_before_test_stopped_by_user)):
@@ -1627,11 +1627,11 @@ class Throughput(Realm):
                         # Checking individual device download and upload rate by searching device name in dataframe
                         columns_with_substring = [col for col in data_iter.columns if k in col]
                         filtered_df = data_iter[columns_with_substring]
-                        download_col = filtered_df[[col for col in filtered_df.columns if "Download" in col][0]].values.tolist()
-                        upload_col = filtered_df[[col for col in filtered_df.columns if "Upload" in col][0]].values.tolist()
-                        upload_drop_col = filtered_df[[col for col in filtered_df.columns if "Rx % Drop B" in col][0]].values.tolist()
-                        download_drop_col = filtered_df[[col for col in filtered_df.columns if "Rx % Drop A" in col][0]].values.tolist()
-                        rssi_col = filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()
+                        download_col = filtered_df[[col for col in filtered_df.columns if "Download" in col][0]].values.tolist()[:-1]
+                        upload_col = filtered_df[[col for col in filtered_df.columns if "Upload" in col][0]].values.tolist()[:-1]
+                        upload_drop_col = filtered_df[[col for col in filtered_df.columns if "Rx % Drop B" in col][0]].values.tolist()[:-1]
+                        download_drop_col = filtered_df[[col for col in filtered_df.columns if "Rx % Drop A" in col][0]].values.tolist()[:-1]
+                        rssi_col = filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()[:-1]
                         if self.load_type == "wc_intended_load":
                             if self.direction == "Bi-direction":
 
