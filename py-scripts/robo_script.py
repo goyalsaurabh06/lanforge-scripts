@@ -1574,9 +1574,9 @@ class Throughput(Realm):
                         print("Timeout: Images not found within 60 seconds.")
                         break
                     time.sleep(1)
-                while not os.path.exists(throughput_image_path) and not os.path.exists(rssi_image_path):
-                    if os.path.exists(throughput_image_path) and os.path.exists(rssi_image_path):
-                        break
+                # while not os.path.exists(throughput_image_path) and not os.path.exists(rssi_image_path):
+                #     if os.path.exists(throughput_image_path) and os.path.exists(rssi_image_path):
+                #         break
                     # time.sleep(10) 
                 if os.path.exists(throughput_image_path):
                     print("Thhroughput")
@@ -2965,6 +2965,7 @@ Copyright 2023 Candela Technologies Inc.
 
         #coordinate list to track coordinates where the test needs to be triggered
         coord_list = []
+        updated_coordinate_list=[]
         if args.coordinate:
             coordinate_dict=json.loads(args.coordinate)
             points=list(coordinate_dict.keys())
@@ -2975,10 +2976,11 @@ Copyright 2023 Candela Technologies Inc.
         # response = requests.post(url, json={'base_speed':80,'Kp':40,'Ki':0.5,'Kd':15,'halt':'start'})
         base_dir = os.path.dirname(os.path.dirname(args.result_dir))
         nav_data = os.path.join(base_dir, 'nav_data.json') # To generate nav_data.json in webgui folder
-
+        with open(nav_data, "w") as file:
+            json.dump({}, file)
         # Implementing two conditions - 1. Give coordinates as input only possible with cli
         #                             - 2. Sending the Coordinate json which has the specific  x and y for a point (Ex :{1 : x:350 , y: 250})
-
+        abort=False
         found=True
         if args.manual:
             while True:
@@ -3022,7 +3024,7 @@ Copyright 2023 Candela Technologies Inc.
 
                                 # Extend individual_dataframe_column with dynamically generated column names
                                 individual_dataframe_column.extend([f'Download{clients_to_run[i]}', f'Upload{clients_to_run[i]}', f'Rx % Drop A {clients_to_run[i]}',
-                                                                f'Rx % Drop B{clients_to_run[i]}', f'RSSI {clients_to_run[i]} ', f'Tx-Rate {clients_to_run[i]} ', f'Rx-Rate {clients_to_run[i]} '])
+                                                                f'Rx % Drop B{clients_to_run[i]}', f'RSSI {clients_to_run[i]} ', f'Tx-Rate {clients_to_run[i]} ', f'Rx-Rate {clients_to_run[i]} ',f'Bssid {clients_to_run[i]} '])
 
                             individual_dataframe_column.extend(['Overall Download', 'Overall Upload', 'Overall Rx % Drop A', 'Overall Rx % Drop B', 'Iteration',
                                                             'TIMESTAMP', 'Start_time', 'End_time', 'Remaining_Time', 'Incremental_list', 'status'])
@@ -3076,31 +3078,51 @@ Copyright 2023 Candela Technologies Inc.
                 logger.info("Robot was escaped from the halt")
         else:
             statusurl = 'http://'+ robo_ip +':'+robo_port+ '/robot/status'
-            response= requests.get(statusurl)
-            start_pos=response.json()['start_point']
-            stop_pos=response.json()['stop_point']
-            current_pos =response.json()['current_position']
+            try:
+                response = requests.get(statusurl, timeout=5)
+                response.raise_for_status()  # raise exception for bad HTTP status
+                data = response.json()      # will raise ValueError if response is not JSON
+            except (requests.RequestException, ValueError) as e:
+                print(f"[ERROR] Failed to get robot status: {e}")
+                return
+            start_pos=data['start_point']
+            stop_pos=data['stop_point']
+            current_pos = data['current_position']
             if(current_pos != start_pos):
                 start_pos=current_pos
             for coord in coord_list:
-                print("coord")             
+                logger.info("Robot is moving to {}".format(coord))                          
                 pathurl = 'http://'+ robo_ip +':'+robo_port+ '/robot/path'
                 stop_pos=coord
                 response = requests.post(pathurl, json={"message": "Path set successfully.","start_point": start_pos,"stop_point": stop_pos})
                 statusurl = 'http://'+ robo_ip +':'+robo_port+ '/robot/status'
 
                 while True:
-                    response= requests.get(statusurl)
-                    logger.info("Robot did not reach the coordinate ")
-                    stop_pos_reached = response.json()['stop_reached']
+                    try:
+                        response = requests.get(statusurl, timeout=5)
+                        response.raise_for_status()  # raise exception for bad HTTP status
+                        data = response.json()      # will raise ValueError if response is not JSON
+                    except (requests.RequestException, ValueError) as e:
+                        abort=True
+                        print(f"[ERROR] Failed to get robot status: {e}")
+                        break
+            
+                    stop_pos_reached = data['stop_reached']
                     if stop_pos_reached:
+                        updated_coordinate_list.append(coord)
                         logger.info("Robot is at {}".format(stop_pos))
                         break
+
                 if not os.path.exists(nav_data):
                     with open(nav_data, "w") as file:
                         json.dump({}, file)
                 with open(nav_data, 'r') as x:
                     navdata = json.load(x)
+                if abort:
+                    navdata['status']="Stopped"
+                    break
+                else:
+                    navdata['status']="Running"
                 navdata['Canbee_location']=coord
                 with open(nav_data, 'w') as x:
                     json.dump(navdata, x, indent=4)
@@ -3109,7 +3131,7 @@ Copyright 2023 Candela Technologies Inc.
 
                     # Extend individual_dataframe_column with dynamically generated column names
                     individual_dataframe_column.extend([f'Download{clients_to_run[i]}', f'Upload{clients_to_run[i]}', f'Rx % Drop A {clients_to_run[i]}',
-                                                    f'Rx % Drop B{clients_to_run[i]}', f'RSSI {clients_to_run[i]} ', f'Tx-Rate {clients_to_run[i]} ', f'Rx-Rate {clients_to_run[i]} '])
+                                                    f'Rx % Drop B{clients_to_run[i]}', f'RSSI {clients_to_run[i]} ', f'Tx-Rate {clients_to_run[i]} ', f'Rx-Rate {clients_to_run[i]} ',f'Bssid {clients_to_run[i]} '])
 
                 individual_dataframe_column.extend(['Overall Download', 'Overall Upload', 'Overall Rx % Drop A', 'Overall Rx % Drop B', 'Iteration',
                                                 'TIMESTAMP', 'Start_time', 'End_time', 'Remaining_Time', 'Incremental_list', 'status'])
@@ -3165,7 +3187,10 @@ Copyright 2023 Candela Technologies Inc.
             
     if args.postcleanup:
         throughput.cleanup()
-    throughput.generate_report(list(set(iterations_before_test_stopped_by_user)), incremental_capacity_list, data=all_dataframes, data1=to_run_cxs_len, report_path=throughput.result_dir,coordinate_list=coord_list)
+    throughput.generate_report(list(set(iterations_before_test_stopped_by_user)), incremental_capacity_list, data=all_dataframes, data1=to_run_cxs_len, report_path=throughput.result_dir,coordinate_list=updated_coordinate_list)
+    with open(nav_data, 'r') as x:
+        navdata = json.load(x)
+        navdata['Canbee_location']=''
     if throughput.dowebgui:
         # copying to home directory i.e home/user_name
         throughput.copy_reports_to_home_dir()
