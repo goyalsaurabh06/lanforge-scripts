@@ -1126,12 +1126,15 @@ class RealBrowserTest(Realm):
                     _ = asyncio.run(self.config_obj.connectivity(device_list=device_list, wifi_config=config_dict))
 
                 self.devices = self.devices.get_devices()
+                logger.info(f"self.devices{self.devices}")
                 resource_ids = sorted(set(int(item.split('.')[1]) for item in device_list if '.' in item))
+                logger.info(f'resource IDs {resource_ids}')
                 # obj.resource_ids = ','.join(map(str, resource_ids))
 
                 available_resources = [res_id for res_id in resource_ids if any(
                     int(device.split('.')[1]) == res_id for device in self.devices if '.' in device
                 )]
+                logger.info(f"availbe res {available_resources}")
 
         return available_resources
 
