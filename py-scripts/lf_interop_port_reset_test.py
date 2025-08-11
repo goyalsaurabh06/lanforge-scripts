@@ -64,7 +64,7 @@ realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
 lf_report_pdf = importlib.import_module("py-scripts.lf_report")
 lf_graph = importlib.import_module("py-scripts.lf_graph")
-
+LFUtils = importlib.import_module("py-json.LANforge.LFUtils")
 logger = logging.getLogger(__name__)
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 
@@ -80,7 +80,12 @@ class InteropPortReset(Realm):
                  mgr_ip=None,
                  time_int=None,
                  wait_time=None,
-                 suporrted_release=None
+                 device_list=None,
+                 suporrted_release=None,
+                 forget_network=True,
+                 dowebgui=False,
+                 result_dir=None,
+                 test_name=None
                  ):
         super().__init__(lfclient_host=host,
                          lfclient_port=8080)
@@ -111,10 +116,16 @@ class InteropPortReset(Realm):
         self.mgr_ip = mgr_ip
         self.reset = reset
         self.time_int = time_int
+        self.device_list = device_list
+        self.forget_network = forget_network
+        self.result_dir = result_dir
+        self.dowebgui = dowebgui
+        self.test_name=test_name
+        self.result_df = {}
         # self.wait_time = wait_time
         self.supported_release = suporrted_release
         self.device_name = []
-        self.lf_report = lf_report_pdf.lf_report(_path="", _results_dir_name="Interop_port_reset_test",
+        self.lf_report = lf_report_pdf.lf_report(_path="" if not self.dowebgui else self.result_dir, _results_dir_name="Interop_port_reset_test",
                                                  _output_html="port_reset_test.html",
                                                  _output_pdf="port_reset_test.pdf")
         self.report_path = self.lf_report.get_report_path()
