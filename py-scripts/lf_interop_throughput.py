@@ -701,12 +701,12 @@ class Throughput(Realm):
                 self.updating_webui_runningjson(obj)
 
         # Check if incremental_capacity is provided and ensure selected devices are sufficient
-        if (len(self.incremental_capacity) > 0 and int(self.incremental_capacity.split(',')[-1]) > len(self.mac_id_list)):
-            logger.error("Devices selected is less than given incremental capacity")
-            return False, self.real_client_list
+        # if (len(self.incremental_capacity) > 0 and int(self.incremental_capacity.split(',')[-1]) > len(self.mac_id_list)):
+        #     logger.error("Devices selected is less than given incremental capacity")
+        #     return False, self.real_client_list
 
-        else:
-            return True, self.real_client_list
+        # else:
+        return True, self.real_client_list
 
     # Updates the status in the running.json file while running a test from the Web UI
     def updating_webui_runningjson(self, obj):
