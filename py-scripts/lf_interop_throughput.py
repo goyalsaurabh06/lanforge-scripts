@@ -1576,7 +1576,7 @@ class Throughput(Realm):
                     report.build_custom()
                     report.set_custom_html("<h2>Average Throughput Heatmap: </h2>")
                     report.build_custom()
-                    report.set_custom_html(f'<img src="file://{throughput_image_path}"></img>')
+                    report.set_custom_html(f'<img src="file://{throughput_image_path}" style="width:1200px; height:900px;"></img>')
                     report.build_custom()
                     # os.remove(throughput_image_path)
 
@@ -1585,7 +1585,7 @@ class Throughput(Realm):
                     report.build_custom()
                     report.set_custom_html("<h2>Average RSSI Heatmap: </h2>")
                     report.build_custom()
-                    report.set_custom_html(f'<img src="file://{rssi_image_path}"></img>')
+                    report.set_custom_html(f'<img src="file://{rssi_image_path}" style="width:1200px; height:900px;"></img>')
                     report.build_custom()
                     # os.remove(rssi_image_path)
             # Loop through each coordinate 
