@@ -334,12 +334,18 @@ class VideoStreamingTest(Realm):
 
     
     def handle_ssid_based_device_config(self, config_dict):
+        print("==================================================")
+        print("inside handle_ssid_based_device_config")
+        print("Configuring devices with ssid based configuration")
+        print("checking self.device_list", self.device_list)
         # When group/profile are not provided
         if self.device_list:
+            print("Device list is provided, configuring devices with ssid based configuration")
             all_devices = self.config_obj.get_all_devices()
-            if self.selected_groups is None and self.file_name is None and self.selected_groups is None:
-                dev_list = self.device_list.split(',')
-                self.device_list = asyncio.run(self.config_obj.connectivity(device_list=dev_list, wifi_config=config_dict))
+            dev_list = self.device_list.split(',')
+            print("======================================")
+            print("checking control goes to this line")
+            self.device_list = asyncio.run(self.config_obj.connectivity(device_list=dev_list, wifi_config=config_dict, upstream=self.upstream_port))
         else:
             if self.config:
                 all_devices = self.config_obj.get_all_devices()
@@ -354,7 +360,7 @@ class VideoStreamingTest(Realm):
                     print(device)
                 self.device_list = input("Enter the desired resources to run the test:")
                 dev1_list = self.device_list.split(',')
-                self.device_list = asyncio.run(self.config_obj.connectivity(device_list=dev1_list, wifi_config=config_dict))
+                self.device_list = asyncio.run(self.config_obj.connectivity(device_list=dev1_list, wifi_config=config_dict, upstream=self.upstream_port))
         return self.device_list
 
     def handle_groups_profiles_config(self):
@@ -2003,6 +2009,7 @@ def main():
     # process devices with ssid based configuration
     elif args.config:
         # When group/profile are not provided
+        print("Configuring devices with ssid based configuration")
         config_dict = {
             'ssid': args.ssid,
             'passwd': args.passwd,
@@ -2031,18 +2038,28 @@ def main():
             
     # process devices when test is run through webui
     if args.dowebgui:
-        resource_ids_sm = args.device_list.split(',')
-        resource_set = set(resource_ids_sm)
+        # args.device_list is already a list, so just work with it directly
+        resource_set = set(args.device_list)
         resource_list = sorted(resource_set)
-        resource_ids_generated = ','.join(resource_list)
+        resource_ids_generated = ",".join(resource_list)
         resource_list_sorted = resource_list
-        selected_devices, report_labels, selected_macs = obj.devices.query_user(dowebgui=args.dowebgui, device_list=resource_ids_generated)
-        obj.resource_ids = ",".join(id.split(".")[1] for id in args.device_list.split(","))
-        available_resources = [int(num) for num in obj.resource_ids.split(',')]
+
+        # pass the already-joined string for query_user
+        selected_devices, report_labels, selected_macs = obj.devices.query_user(
+            dowebgui=args.dowebgui,
+            device_list=resource_ids_generated
+        )
+
+        # keep only the resource part (after the dot)
+        obj.resource_ids = ",".join(id.split(".")[1] for id in args.device_list)
+
+        # make them integers
+        available_resources = [int(num) for num in obj.resource_ids.split(",")]
+
     else:
         obj.android_devices = obj.devices.get_devices(only_androids=True)
         if args.device_list:
-            device_list = args.device_list.split(',')
+            device_list = args.device_list
             # Extract resource IDs (after the dot), remove duplicates, and sort them
             resource_ids = sorted(set(int(item.split('.')[1]) for item in device_list if '.' in item))
             resource_list_sorted = resource_ids
