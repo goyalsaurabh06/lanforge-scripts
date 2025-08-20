@@ -4,6 +4,9 @@ import datetime
 from datetime import datetime, timedelta
 import time
 import requests
+# echo Performing POST cleanup of browser processes... & taskkill /F /IM chrome.exe /T >nul 2>&1 & taskkill /F /IM chromedriver.exe /T >nul 2>&1 & echo Browser processes terminated.
+# cmd /c "echo Performing POST cleanup of browser processes... && taskkill /F /IM chrome.exe /T >nul 2>&1 && taskkill /F /IM chromedriver.exe /T >nul 2>&1 && echo Browser processes terminated."
+
 import threading
 import logging
 import pandas as pd
@@ -4411,7 +4414,7 @@ class Candela(Realm):
                 args.url = "https://" + args.url.removeprefix("http://")
 
             # Initialize an instance of RealBrowserTest with various parameters
-            obj = RealBrowserTest(host=args.host,
+            self.rb_test_obj = RealBrowserTest(host=args.host,
                                 ssid=args.ssid,
                                 passwd=args.passwd,
                                 encryp=args.encryp,
@@ -4452,16 +4455,18 @@ class Candela(Realm):
                                 wait_time=args.wait_time,
                                 config=args.config,
                                 selected_groups=args.group_name,
-                                selected_profiles=args.profile_name
+                                selected_profiles=args.profile_name,
+                                browser_precleanup=False,
+                                browser_postcleanup=False,
                                 )
-            obj.change_port_to_ip()
-            obj.validate_and_process_args()
-            obj.config_obj = DeviceConfig.DeviceConfig(lanforge_ip=obj.host, file_name=obj.file_name, wait_time=obj.wait_time)
-            # if not obj.expected_passfail_value and obj.device_csv_name is None:
-            #     obj.config_obj.device_csv_file(csv_name="device.csv")
-            obj.run_flask_server()
-            if obj.group_name and obj.profile_name and obj.file_name:
-                available_resources = obj.process_group_profiles()
+            self.rb_test_obj.change_port_to_ip()
+            self.rb_test_obj.validate_and_process_args()
+            self.rb_test_obj.config_self.rb_test_obj = DeviceConfig.DeviceConfig(lanforge_ip=self.rb_test_obj.host, file_name=self.rb_test_obj.file_name, wait_time=self.rb_test_obj.wait_time)
+            # if not self.rb_test_obj.expected_passfail_value and self.rb_test_obj.device_csv_name is None:
+            #     self.rb_test_obj.config_self.rb_test_obj.device_csv_file(csv_name="device.csv")
+            self.rb_test_obj.run_flask_server()
+            if self.rb_test_obj.group_name and self.rb_test_obj.profile_name and self.rb_test_obj.file_name:
+                available_resources = self.rb_test_obj.process_group_profiles()
             else:
                 # --- Build configuration dictionary for WiFi parameters ---
                 config_dict = {
@@ -4485,33 +4490,33 @@ class Candela(Realm):
                     'client_cert': args.client_cert,
                     'pk_passwd': args.pk_passwd,
                     'pac_file': args.pac_file,
-                    'server_ip': obj.upstream_port,
+                    'server_ip': self.rb_test_obj.upstream_port,
                 }
-                available_resources = obj.process_resources(config_dict)
+                available_resources = self.rb_test_obj.process_resources(config_dict)
             if len(available_resources) != 0:
-                available_resources = obj.filter_ios_devices(available_resources)
+                available_resources = self.rb_test_obj.filter_ios_devices(available_resources)
             if len(available_resources) == 0:
                 logging.error("No devices available to run the test. Exiting...")
                 return False
 
             # --- Print available resources ---
             logging.info("Devices available: {}".format(available_resources))
-            if obj.expected_passfail_value or obj.device_csv_name:
-                obj.update_passfail_value(available_resources)
+            if self.rb_test_obj.expected_passfail_value or self.rb_test_obj.device_csv_name:
+                self.rb_test_obj.update_passfail_value(available_resources)
             # --- Handle incremental values ---
-            obj.handle_incremental(args, obj, available_resources, available_resources)
-            obj.handle_duration()
-            obj.run_test(available_resources)
+            self.rb_test_obj.handle_incremental(args, self.rb_test_obj, available_resources, available_resources)
+            self.rb_test_obj.handle_duration()
+            self.rb_test_obj.run_test(available_resources)
 
         except Exception as e:
             logging.error("Error occured", e)
             # traceback.print_exc()
         finally:
             if '--help' not in sys.argv and '-h' not in sys.argv:
-                obj.create_report()
-                if obj.dowebgui:
-                    obj.webui_stop()
-                obj.stop()
+                self.rb_test_obj.create_report()
+                if self.rb_test_obj.dowebgui:
+                    self.rb_test_obj.webui_stop()
+                self.rb_test_obj.stop()
 
                 # if not args.no_postcleanup:
                 #     obj.postcleanup()
@@ -4569,6 +4574,65 @@ class Candela(Realm):
         args = SimpleNamespace(**locals())
         args.host = self.lanforge_ip
         return self.run_rb_test1(args)
+    
+    def browser_cleanup(self,rb_test=False):            
+        # count = 0
+        # series_tests = args.series_tests.split(',') if args.series_tests else None
+        # parallel_tests = args.parallel_tests.split(',') if args.parallel_tests else None
+        # zoom_test = False
+        # yt_test = False
+        # rb_test = False
+        # if 'zoom_test' in parallel_tests:
+        #     count += 1
+        # if 'yt_test' in parallel_tests:
+        #     count += 1
+        # if 'rb_test' in parallel_tests:
+        #     count += 1
+        # if count <=1:
+        #     self.browser_kill = True
+        # if args.series_test and not parallel_tests:
+        #     self.browser_kill = True
+        #     return True
+        # if rb_test:
+        #     cnt = 0
+        #     flag = False 
+        #     while not self.rb_build_done:
+        #         time.sleep(1)
+        #         cnt+=1
+        #         if cnt >= 30:
+        #             flag = True 
+        #             break
+        #     if flag:
+        #         return False
+
+        if rb_test:
+            for i in range(0, len(self.rb_test_obj.laptop_os_types)):
+                if self.rb_test_obj.laptop_os_types[i] == 'windows':
+                    cmd = (
+                            'echo Performing POST cleanup of browser processes... & '
+                            'taskkill /F /IM chrome.exe /T >nul 2>&1 & '
+                            'taskkill /F /IM chromedriver.exe /T >nul 2>&1 & '
+                            'echo Browser processes terminated.'
+                        )
+                    self.rb_test_obj.generic_endps_profile.set_cmd(self.rb_test_obj.generic_endps_profile.created_endp[i], cmd)
+                elif self.rb_test_obj.laptop_os_types[i] == 'linux':
+                    cmd = "su -l lanforge  ctrb.bash %s %s %s %s" % (self.rb_test_obj.new_port_list[i], self.rb_test_obj.url, self.rb_test_obj.upstream_port, self.rb_test_obj.duration)
+                    self.rb_test_obj.generic_endps_profile.set_cmd(self.rb_test_obj.generic_endps_profile.created_endp[i], cmd)
+                    if self.rb_test_obj.browser_precleanup:
+                        cmd+=" precleanup"
+                    if self.rb_test_obj.browser_postcleanup:
+                        cmd+=" postcleanup"
+                elif self.rb_test_obj.laptop_os_types[i] == 'macos':
+                    cmd = "sudo bash ctrb.bash --url %s --server %s  --duration %s" % (self.rb_test_obj.url, self.rb_test_obj.upstream_port, self.rb_test_obj.duration)
+                    self.rb_test_obj.generic_endps_profile.set_cmd(self.rb_test_obj.generic_endps_profile.created_endp[i], cmd)
+                    if self.rb_test_obj.browser_precleanup:
+                        cmd+=" precleanup"
+                    if self.rb_test_obj.browser_postcleanup:
+                        cmd+=" postcleanup"
+
+
+
+
 
 def validate_individual_args(args,test_name):
     if test_name == 'ping_test':
@@ -5328,7 +5392,7 @@ def main():
                     ))
                 else:
                     print(f"Warning: Unknown test '{test_name}' in --parallel_tests")
-        
+
         # Execute based on order priority
         if args.order_priority == 'series':
             # candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
@@ -5357,6 +5421,8 @@ def main():
             # candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
             # Then run series tests (one at a time)
             if len(series_threads) != 0:
+                if 'rb_test' in tests_to_run_parallel:
+                    candela_apis.browser_cleanup(rb_test = True)
                 candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
                 print('starting Series tests.......')
                 time.sleep(20)
@@ -5873,4 +5939,6 @@ def run_zoom_test(args, candela_apis):
         pac_file=args.zoom_pac_file,
         wait_time=args.zoom_wait_time
     )
+# def browser_cleanup(args,candela_apis):
+#     return candela_apis.browser_cleanup(args)
 main()
