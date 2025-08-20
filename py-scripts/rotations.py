@@ -1468,7 +1468,7 @@ class Throughput(Realm):
         Returns:
         The name of the saved image file.
         """
-        figsize = (10, 5)
+        figsize = (15, 5)
         plt.figure(figsize=(figsize[0] + 5, figsize[1] + 2))
 
         color = ['forestgreen', 'c', 'r', 'g', 'b', 'p']
@@ -1486,8 +1486,8 @@ class Throughput(Realm):
                 marker=marker[i % len(marker)]
             )
 
-        plt.xlabel(xaxis_name, fontweight='bold', fontsize=15)
-        plt.ylabel(yaxis_name, fontweight='bold', fontsize=15)
+        plt.xlabel(xaxis_name, fontweight='bold', fontsize=30)
+        plt.ylabel(yaxis_name, fontweight='bold', fontsize=30)
 
         # Handle x-axis ticks dynamically based on data size
         print("xcategoriesss",xaxis_categories)
@@ -1504,7 +1504,8 @@ class Throughput(Realm):
 
         
         if self.rotation_enabled and angle:
-            plt.xticks(ticks=xaxis_categories)
+            plt.xticks(ticks=xaxis_categories, fontsize=30)
+            plt.yticks(fontsize=30)
             if len(xaxis_categories) > 0:
                 plt.xlim(min(xaxis_categories) - 0.5, max(xaxis_categories) + 0.5)
         else:
