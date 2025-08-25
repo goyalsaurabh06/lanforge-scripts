@@ -250,6 +250,7 @@ class RealBrowserTest(Realm):
         self.upstream_port = upstream_port
         self.expected_passfail_value = expected_passfail_value
         self.device_csv_name = device_csv_name
+        self.cx_order_list = []
         self.wait_time = wait_time
         self.config = config
         self.selected_groups = selected_groups
@@ -973,7 +974,7 @@ class RealBrowserTest(Realm):
             sys.exit(1)
 
         cx_order_list = self.calculate_cx_order_list()
-
+        self.cx_order_list = cx_order_list.copy()
         for i, cx_batch in enumerate(cx_order_list):
             self.start_specific(cx_batch)
             logging.info(f"Test started on Devices with resource Ids : {cx_batch}")

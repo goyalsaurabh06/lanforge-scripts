@@ -4461,7 +4461,7 @@ class Candela(Realm):
                                 )
             self.rb_test_obj.change_port_to_ip()
             self.rb_test_obj.validate_and_process_args()
-            self.rb_test_obj.config_self.rb_test_obj = DeviceConfig.DeviceConfig(lanforge_ip=self.rb_test_obj.host, file_name=self.rb_test_obj.file_name, wait_time=self.rb_test_obj.wait_time)
+            self.rb_test_obj.config_obj = DeviceConfig.DeviceConfig(lanforge_ip=self.rb_test_obj.host, file_name=self.rb_test_obj.file_name, wait_time=self.rb_test_obj.wait_time)
             # if not self.rb_test_obj.expected_passfail_value and self.rb_test_obj.device_csv_name is None:
             #     self.rb_test_obj.config_self.rb_test_obj.device_csv_file(csv_name="device.csv")
             self.rb_test_obj.run_flask_server()
@@ -4604,16 +4604,17 @@ class Candela(Realm):
         #             break
         #     if flag:
         #         return False
-
+        print('calledddddd')
+        # time.sleep(20)
         if rb_test:
+            print('inn000')
+            print('laptop_os_types',self.rb_test_obj.laptop_os_types)
+            print('endpsss',self.rb_test_obj.generic_endps_profile.created_endp)
             for i in range(0, len(self.rb_test_obj.laptop_os_types)):
+                print('inn1111')
                 if self.rb_test_obj.laptop_os_types[i] == 'windows':
-                    cmd = (
-                            'echo Performing POST cleanup of browser processes... & '
-                            'taskkill /F /IM chrome.exe /T >nul 2>&1 & '
-                            'taskkill /F /IM chromedriver.exe /T >nul 2>&1 & '
-                            'echo Browser processes terminated.'
-                        )
+                    cmd = "echo Performing POST cleanup of browser processes... & taskkill /F /IM chrome.exe /T >nul 2>&1 & taskkill /F /IM chromedriver.exe /T >nul 2>&1 & echo Browser processes terminated."
+
                     self.rb_test_obj.generic_endps_profile.set_cmd(self.rb_test_obj.generic_endps_profile.created_endp[i], cmd)
                 elif self.rb_test_obj.laptop_os_types[i] == 'linux':
                     cmd = "su -l lanforge  ctrb.bash %s %s %s %s" % (self.rb_test_obj.new_port_list[i], self.rb_test_obj.url, self.rb_test_obj.upstream_port, self.rb_test_obj.duration)
@@ -4630,7 +4631,12 @@ class Candela(Realm):
                     if self.rb_test_obj.browser_postcleanup:
                         cmd+=" postcleanup"
 
+            for i, cx_batch in enumerate(self.rb_test_obj.cx_order_list):
+                self.rb_test_obj.start_specific(cx_batch)
+                logging.info(f"browser cleanup on {cx_batch}")
+        
 
+        time.sleep(20)
 
 
 
@@ -5366,7 +5372,9 @@ def main():
     if args.series_tests or args.parallel_tests:
         series_threads = []
         parallel_threads = []
-        
+        rb_test = 'rb_test' in tests_to_run_parallel
+        yt_test = 'yt_test' in tests_to_run_parallel
+        zoom_test = 'zoom_test' in tests_to_run_parallel
         # Process series tests
         if args.series_tests:
             ordered_series_tests = args.series_tests.split(',')
@@ -5433,6 +5441,8 @@ def main():
     else:
         logger.error("provide either --paralell_tests or --series_tests")
         exit(1)
+    if 'rb_test' in tests_to_run_parallel:
+                    candela_apis.browser_cleanup(rb_test = True)
     candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
     log_file = save_logs()
     print(f"Logs saved to: {log_file}")
