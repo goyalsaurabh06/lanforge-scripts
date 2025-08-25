@@ -934,7 +934,7 @@ class Throughput(Realm):
                         print(f"[ERROR] Failed to get robot status of pose: {e}")
                         time.sleep(5)
                         retries_for_theta+=1
-                        if(retries_for_theta == 3):
+                        if(retries_for_theta == 5):
                             exit_from_monitor=True
                             break
                         continue   
@@ -1504,8 +1504,8 @@ class Throughput(Realm):
 
         
         if self.rotation_enabled and angle:
-            plt.xticks(ticks=xaxis_categories, fontsize=30)
-            plt.yticks(fontsize=30)
+            plt.xticks(ticks=xaxis_categories, fontsize=24)
+            plt.yticks(fontsize=24)
             if len(xaxis_categories) > 0:
                 plt.xlim(min(xaxis_categories) - 0.5, max(xaxis_categories) + 0.5)
         else:
@@ -3372,8 +3372,9 @@ Copyright 2023 Candela Technologies Inc.
                         nav_status = response.json()
                     except (requests.RequestException, ValueError) as e:
                         print(f"[ERROR] Failed to get robot status: {e}")
+                        time.sleep(5)
                         retries+=1
-                        if(retries == 3):
+                        if(retries == 10):
                             abort = True
                             break
                         
