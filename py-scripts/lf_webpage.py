@@ -1871,7 +1871,7 @@ times the file is downloaded.
                     logger.info("There are no devices available")
                     exit(1)
             port_list, device_list, macid_list, configuration = http.get_real_client_list()
-            if args.dowebgui and args.group_name:
+            if args.dowebgui and (args.group_name or args.config):
                 if len(device_list) == 0:
                     logger.info("No device is available to run the test")
                     obj = {
