@@ -4461,7 +4461,7 @@ class Candela(Realm):
                                 )
             self.rb_test_obj.change_port_to_ip()
             self.rb_test_obj.validate_and_process_args()
-            self.rb_test_obj.config_self.rb_test_obj = DeviceConfig.DeviceConfig(lanforge_ip=self.rb_test_obj.host, file_name=self.rb_test_obj.file_name, wait_time=self.rb_test_obj.wait_time)
+            self.rb_test_obj.config_obj = DeviceConfig.DeviceConfig(lanforge_ip=self.rb_test_obj.host, file_name=self.rb_test_obj.file_name, wait_time=self.rb_test_obj.wait_time)
             # if not self.rb_test_obj.expected_passfail_value and self.rb_test_obj.device_csv_name is None:
             #     self.rb_test_obj.config_self.rb_test_obj.device_csv_file(csv_name="device.csv")
             self.rb_test_obj.run_flask_server()
