@@ -4456,8 +4456,8 @@ class Candela(Realm):
                                 config=args.config,
                                 selected_groups=args.group_name,
                                 selected_profiles=args.profile_name,
-                                browser_precleanup=False,
-                                browser_postcleanup=False,
+                                no_browser_precleanup=True,
+                                no_browser_postcleanup=True,
                                 )
             self.rb_test_obj.change_port_to_ip()
             self.rb_test_obj.validate_and_process_args()

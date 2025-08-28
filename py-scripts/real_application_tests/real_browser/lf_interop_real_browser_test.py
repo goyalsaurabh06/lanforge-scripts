@@ -163,8 +163,8 @@ class RealBrowserTest(Realm):
                  config=None,
                  selected_groups=None,
                  selected_profiles=None,
-                 browser_precleanup = True,
-                 browser_postcleanup=True):
+                 no_browser_precleanup = True,
+                 no_browser_postcleanup=True):
         super().__init__(lfclient_host=host, lfclient_port=8080)
         # Initialize attributes with provided parameters
         self.host = host
@@ -186,8 +186,8 @@ class RealBrowserTest(Realm):
         self.no_precleanup = no_precleanup
         self.direction = "dl"
         self.dest = "/dev/null"
-        self.browser_precleanup = browser_precleanup
-        self.browser_postcleanup = browser_postcleanup
+        self.no_browser_precleanup = no_browser_precleanup
+        self.no_browser_postcleanup = no_browser_postcleanup
         self.app = Flask(__name__)
         self.app.logger.setLevel(logging.WARNING)
         self.laptop_stats = {}
@@ -334,25 +334,25 @@ class RealBrowserTest(Realm):
         for i in range(0, len(self.laptop_os_types)):
             if self.laptop_os_types[i] == 'windows':
                 cmd = "real_browser.bat --url %s --server %s --duration %s" % (self.url, self.upstream_port, self.duration)
-                if self.browser_precleanup:
-                    cmd+=" --precleanup"
-                if self.browser_postcleanup:
-                    cmd+=" --postcleanup"
+                if self.no_browser_precleanup:
+                    cmd+=" --no_precleanup"
+                if self.no_browser_postcleanup:
+                    cmd+=" --no_postcleanup"
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
             elif self.laptop_os_types[i] == 'linux':
                 cmd = "su -l lanforge  ctrb.bash %s %s %s %s" % (self.new_port_list[i], self.url, self.upstream_port, self.duration)
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
-                if self.browser_precleanup:
-                    cmd+=" precleanup"
-                if self.browser_postcleanup:
-                    cmd+=" postcleanup"
+                if self.no_browser_precleanup:
+                    cmd+=" no_precleanup"
+                if self.no_browser_postcleanup:
+                    cmd+=" no_postcleanup"
             elif self.laptop_os_types[i] == 'macos':
                 cmd = "sudo bash ctrb.bash --url %s --server %s  --duration %s" % (self.url, self.upstream_port, self.duration)
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
-                if self.browser_precleanup:
-                    cmd+=" precleanup"
-                if self.browser_postcleanup:
-                    cmd+=" postcleanup"
+                if self.no_browser_precleanup:
+                    cmd+=" no_precleanup"
+                if self.no_browser_postcleanup:
+                    cmd+=" no_postcleanup"
 
         if len(self.phone_data) != 0:
             logging.info("Creating Layer-4 endpoints from the user inputs as test parameters")
