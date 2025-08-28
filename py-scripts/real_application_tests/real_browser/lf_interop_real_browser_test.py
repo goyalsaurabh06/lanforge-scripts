@@ -203,6 +203,7 @@ class RealBrowserTest(Realm):
         self.android = 0
         self.iteration_value = 0
 
+        self.cx_order_list = []
         self.webui_hostnames = []
         self.webui_ostypes = []
         self.webui_devices = None
@@ -973,7 +974,7 @@ class RealBrowserTest(Realm):
             sys.exit(1)
 
         cx_order_list = self.calculate_cx_order_list()
-
+        self.cx_order_list = cx_order_list.copy()
         for i, cx_batch in enumerate(cx_order_list):
             self.start_specific(cx_batch)
             logging.info(f"Test started on Devices with resource Ids : {cx_batch}")
