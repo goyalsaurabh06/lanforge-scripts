@@ -5375,7 +5375,9 @@ def main():
     if args.series_tests or args.parallel_tests:
         series_threads = []
         parallel_threads = []
-        
+        rb_test = 'rb_test' in tests_to_run_parallel
+        yt_test = 'yt_test' in tests_to_run_parallel
+        zoom_test = 'zoom_test' in tests_to_run_parallel
         # Process series tests
         if args.series_tests:
             ordered_series_tests = args.series_tests.split(',')
@@ -5442,6 +5444,8 @@ def main():
     else:
         logger.error("provide either --paralell_tests or --series_tests")
         exit(1)
+    if 'rb_test' in tests_to_run_parallel:
+                    candela_apis.browser_cleanup(rb_test = True)
     candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
     log_file = save_logs()
     print(f"Logs saved to: {log_file}")
