@@ -13,15 +13,17 @@ kill_chrome() {
     fi
 }
 
-# Parse pre/post cleanup args
-precleanup=false
-postcleanup=false
+# Parse cleanup args
+skip_precleanup=false
+skip_postcleanup=false
 for arg in "$@"; do
-    [[ "$arg" == "--precleanup" ]] && precleanup=true
-    [[ "$arg" == "--postcleanup" ]] && postcleanup=true
+    [[ "$arg" == "--no_precleanup" ]] && skip_precleanup=true
+    [[ "$arg" == "--no_postcleanup" ]] && skip_postcleanup=true
 done
 
-$precleanup && kill_chrome && sleep 5
+if ! $skip_precleanup; then
+    kill_chrome && sleep 5
+fi
 
 if [[ "$(uname)" == "Linux" ]]; then
     IFACE=$1
@@ -61,8 +63,12 @@ elif [[ "$(uname)" == "Darwin" ]]; then
                     shift 2
                     ;;
                 --help)
-                    echo "Usage: $0 --url <url> --server <server> --duration <duration>"
+                    echo "Usage: $0 --url <url> --server <server> --duration <duration> [--no_precleanup] [--no_postcleanup]"
                     exit 0
+                    ;;
+                --no_precleanup|--no_postcleanup)
+                    # already parsed above
+                    shift 1
                     ;;
                 *)
                     echo "Unknown argument: $1"
@@ -112,4 +118,6 @@ else
     exit 1
 fi
 
-$postcleanup && kill_chrome
+if ! $skip_postcleanup; then
+    kill_chrome
+fi
