@@ -4604,33 +4604,42 @@ class Candela(Realm):
         #             break
         #     if flag:
         #         return False
-
+        print('calledddddd')
+        # time.sleep(20)
         if rb_test:
+            print('inn000')
+            print('laptop_os_types',self.rb_test_obj.laptop_os_types)
+            print('endpsss',self.rb_test_obj.generic_endps_profile.created_endp)
             for i in range(0, len(self.rb_test_obj.laptop_os_types)):
+                print('inn1111')
                 if self.rb_test_obj.laptop_os_types[i] == 'windows':
-                    cmd = (
-                            'echo Performing POST cleanup of browser processes... & '
-                            'taskkill /F /IM chrome.exe /T >nul 2>&1 & '
-                            'taskkill /F /IM chromedriver.exe /T >nul 2>&1 & '
-                            'echo Browser processes terminated.'
-                        )
+                    cmd = "echo Performing POST cleanup of browser processes... & taskkill /F /IM chrome.exe /T >nul 2>&1 & taskkill /F /IM chromedriver.exe /T >nul 2>&1 & echo Browser processes terminated."
                     self.rb_test_obj.generic_endps_profile.set_cmd(self.rb_test_obj.generic_endps_profile.created_endp[i], cmd)
                 elif self.rb_test_obj.laptop_os_types[i] == 'linux':
-                    cmd = "su -l lanforge  ctrb.bash %s %s %s %s" % (self.rb_test_obj.new_port_list[i], self.rb_test_obj.url, self.rb_test_obj.upstream_port, self.rb_test_obj.duration)
+                    # cmd = "su -l lanforge  ctrb.bash %s %s %s %s" % (self.rb_test_obj.new_port_list[i], self.rb_test_obj.url, self.rb_test_obj.upstream_port, self.rb_test_obj.duration)
+                    cmd = "pkill -f chrome; pkill -f chromedriver"
                     self.rb_test_obj.generic_endps_profile.set_cmd(self.rb_test_obj.generic_endps_profile.created_endp[i], cmd)
-                    if self.rb_test_obj.browser_precleanup:
-                        cmd+=" precleanup"
-                    if self.rb_test_obj.browser_postcleanup:
-                        cmd+=" postcleanup"
                 elif self.rb_test_obj.laptop_os_types[i] == 'macos':
-                    cmd = "sudo bash ctrb.bash --url %s --server %s  --duration %s" % (self.rb_test_obj.url, self.rb_test_obj.upstream_port, self.rb_test_obj.duration)
+                    cmd = "pkill -f Google Chrome; pkill -f chromedriver;"
                     self.rb_test_obj.generic_endps_profile.set_cmd(self.rb_test_obj.generic_endps_profile.created_endp[i], cmd)
-                    if self.rb_test_obj.browser_precleanup:
-                        cmd+=" precleanup"
-                    if self.rb_test_obj.browser_postcleanup:
-                        cmd+=" postcleanup"
 
+            for i, cx_batch in enumerate(self.rb_test_obj.cx_order_list):
+                self.rb_test_obj.start_specific(cx_batch)
+                logging.info(f"browser cleanup on {cx_batch}")
+        if yt_test:
+            for i in range(0, len(self.real_sta_os_types)):
+                if self.real_sta_os_types[i] == 'windows':
+                    cmd = "echo Performing POST cleanup of browser processes... & taskkill /F /IM chrome.exe /T >nul 2>&1 & taskkill /F /IM chromedriver.exe /T >nul 2>&1 & echo Browser processes terminated."
+                    self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
+                elif self.real_sta_os_types[i] == 'linux':
+                    cmd = "pkill -f chrome; pkill -f chromedriver"
+                    self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
 
+                elif self.real_sta_os_types[i] == 'macos':
+                    cmd = "pkill -f Google Chrome; pkill -f chromedriver;"
+                    self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
+
+        time.sleep(20)  
 
 
 
