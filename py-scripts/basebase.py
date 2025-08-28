@@ -4626,18 +4626,18 @@ class Candela(Realm):
             for i, cx_batch in enumerate(self.rb_test_obj.cx_order_list):
                 self.rb_test_obj.start_specific(cx_batch)
                 logging.info(f"browser cleanup on {cx_batch}")
-        if yt_test:
-            for i in range(0, len(self.real_sta_os_types)):
-                if self.real_sta_os_types[i] == 'windows':
-                    cmd = "echo Performing POST cleanup of browser processes... & taskkill /F /IM chrome.exe /T >nul 2>&1 & taskkill /F /IM chromedriver.exe /T >nul 2>&1 & echo Browser processes terminated."
-                    self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
-                elif self.real_sta_os_types[i] == 'linux':
-                    cmd = "pkill -f chrome; pkill -f chromedriver"
-                    self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
+        # if yt_test:
+        #     for i in range(0, len(self.real_sta_os_types)):
+        #         if self.real_sta_os_types[i] == 'windows':
+        #             cmd = "echo Performing POST cleanup of browser processes... & taskkill /F /IM chrome.exe /T >nul 2>&1 & taskkill /F /IM chromedriver.exe /T >nul 2>&1 & echo Browser processes terminated."
+        #             self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
+        #         elif self.real_sta_os_types[i] == 'linux':
+        #             cmd = "pkill -f chrome; pkill -f chromedriver"
+        #             self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
 
-                elif self.real_sta_os_types[i] == 'macos':
-                    cmd = "pkill -f Google Chrome; pkill -f chromedriver;"
-                    self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
+        #         elif self.real_sta_os_types[i] == 'macos':
+        #             cmd = "pkill -f Google Chrome; pkill -f chromedriver;"
+        #             self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
 
         time.sleep(20)  
 
