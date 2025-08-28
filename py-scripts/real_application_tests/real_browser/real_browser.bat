@@ -5,8 +5,8 @@ set "url="
 set "server="
 set "duration="
 set "args="
-set "precleanup=false"
-set "postcleanup=false"
+set "skip_precleanup=false"
+set "skip_postcleanup=false"
 
 :: Parse command line arguments
 :parseArgs
@@ -31,13 +31,13 @@ if "%~1"=="--duration" (
     shift
     goto parseArgs
 )
-if "%~1"=="--precleanup" (
-    set "precleanup=true"
+if "%~1"=="--no_precleanup" (
+    set "skip_precleanup=true"
     shift
     goto parseArgs
 )
-if "%~1"=="--postcleanup" (
-    set "postcleanup=true"
+if "%~1"=="--no_postcleanup" (
+    set "skip_postcleanup=true"
     shift
     goto parseArgs
 )
@@ -46,8 +46,8 @@ shift
 goto parseArgs
 
 :argsParsed
-:: Perform pre-cleanup if requested
-if "%precleanup%"=="true" (
+:: Perform pre-cleanup unless skipped
+if "%skip_precleanup%"=="false" (
     echo Performing PRE cleanup of browser processes...
     taskkill /F /IM chrome.exe /T >nul 2>&1
     taskkill /F /IM chromedriver.exe /T >nul 2>&1
@@ -65,8 +65,8 @@ if defined duration set "args=%args% --duration %duration%"
 echo Running with arguments: %args%
 py real_browser.py %args%
 
-:: Perform post-cleanup if requested
-if "%postcleanup%"=="true" (
+:: Perform post-cleanup unless skipped
+if "%skip_postcleanup%"=="false" (
     echo Performing POST cleanup of browser processes...
     taskkill /F /IM chrome.exe /T >nul 2>&1
     taskkill /F /IM chromedriver.exe /T >nul 2>&1
