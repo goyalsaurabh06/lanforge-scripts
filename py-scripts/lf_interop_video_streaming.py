@@ -2006,6 +2006,8 @@ def main():
     # process devices with groups profiles based configuration
     if args.group_name and args.file_name and args.profile_name:
         args.device_list = obj.handle_groups_profiles_config()
+        args.device_list = args.device_list.split(',')
+        print("checking args.device_list in groups and profiles", args.device_list)
     # process devices with ssid based configuration
     elif args.config:
         # When group/profile are not provided
@@ -2038,7 +2040,6 @@ def main():
             
     # process devices when test is run through webui
     if args.dowebgui:
-        # args.device_list is already a list, so just work with it directly
         resource_set = set(args.device_list)
         resource_list = sorted(resource_set)
         resource_ids_generated = ",".join(resource_list)
@@ -2049,9 +2050,11 @@ def main():
             dowebgui=args.dowebgui,
             device_list=resource_ids_generated
         )
+        print("checking args.device_list in webui", args.device_list)
 
         # keep only the resource part (after the dot)
         obj.resource_ids = ",".join(id.split(".")[1] for id in args.device_list)
+        print("checking obj.resource_ids in webui", obj.resource_ids)
 
         # make them integers
         available_resources = [int(num) for num in obj.resource_ids.split(",")]
