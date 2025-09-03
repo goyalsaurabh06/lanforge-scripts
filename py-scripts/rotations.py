@@ -1677,12 +1677,12 @@ class Throughput(Realm):
                     throughput_image_path = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_throughput.png")
                     rssi_image_path = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_rssi.png")
                     # rssi_image_path = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_rssi_{floor + 1}.png")
-                    timeout = 60  # seconds
+                    timeout = 300  # seconds
                     start_time = time.time()
 
                     while not (os.path.exists(throughput_image_path) and os.path.exists(rssi_image_path)):
                         if time.time() - start_time > timeout:
-                            print("Timeout: Images not found within 60 seconds.")
+                            print("Timeout: Images not found within 300 seconds.")
                             break
                         time.sleep(1)
                     # while not os.path.exists(throughput_image_path) and not os.path.exists(rssi_image_path):
@@ -1690,7 +1690,7 @@ class Throughput(Realm):
                     #         break
                         # time.sleep(10) 
                     if os.path.exists(throughput_image_path):
-                        print("Thhroughput")
+                        print("Throughput")
                         report.set_custom_html('<div style="page-break-before: always;"></div>')
                         report.build_custom()
                         report.set_custom_html("<h2>Average Throughput Heatmap: </h2>")
@@ -3374,7 +3374,7 @@ Copyright 2023 Candela Technologies Inc.
                         print(f"[ERROR] Failed to get robot status: {e}")
                         time.sleep(5)
                         retries+=1
-                        if(retries == 10):
+                        if(retries == 15):
                             abort = True
                             break
                         
