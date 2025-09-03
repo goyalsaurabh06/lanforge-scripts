@@ -53,12 +53,12 @@ class YouTube(object):
     def check_stop_signal(self):
         """Check the stop signal from the Flask server."""
         try:
-            endpoint_url = f'http://{self.host}:5002/check_stop'
+            endpoint_url = f"http://{self.host}:5002/check_stop"
 
             response = requests.get(endpoint_url)  # Replace with your Flask server URL
             if response.status_code == 200:
 
-                stop_signal_from_server = response.json().get('stop', False)
+                stop_signal_from_server = response.json().get("stop", False)
 
                 # Only update if the server's stop signal is True
                 if stop_signal_from_server:
@@ -73,17 +73,19 @@ class YouTube(object):
 
     def select_resolution(self):
         # Don't bother selecting resolution for Auto
-        if self.resolution == 'Auto':
+        if self.resolution == "Auto":
             print("Playing in Auto resolution.")
             return True
 
         print("Selecting resolution...")
         time.sleep(0.2)
-        sb = self.driver.find_element(By.CSS_SELECTOR, '.ytp-button.ytp-settings-button')
+        sb = self.driver.find_element(
+            By.CSS_SELECTOR, ".ytp-button.ytp-settings-button"
+        )
         sb.click()
         time.sleep(0.3)
         try:
-            res = self.driver.find_elements(By.CSS_SELECTOR, '.ytp-menuitem-label')
+            res = self.driver.find_elements(By.CSS_SELECTOR, ".ytp-menuitem-label")
             for item in res:
                 if item.text == "Quality":
                     item.click()
@@ -92,7 +94,7 @@ class YouTube(object):
             print("no quality element found")
         time.sleep(0.3)
         try:
-            res = self.driver.find_elements(By.CSS_SELECTOR, '.ytp-menuitem-label')
+            res = self.driver.find_elements(By.CSS_SELECTOR, ".ytp-menuitem-label")
             print(res)
             for item in res:
                 print(item.text)
@@ -113,10 +115,10 @@ class YouTube(object):
 
         # movie_player = self.driver.find_element(By.CSS_SELECTOR,'.html5-video-container')
         movie_player = WebDriverWait(self.driver, 60).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, '.html5-video-container'))
+            EC.presence_of_element_located((By.CSS_SELECTOR, ".html5-video-container"))
         )
         movie_player = WebDriverWait(self.driver, 60).until(
-            EC.element_to_be_clickable((By.CSS_SELECTOR, '.html5-video-container'))
+            EC.element_to_be_clickable((By.CSS_SELECTOR, ".html5-video-container"))
         )
         self.hover = ActionChains(self.driver).move_to_element(movie_player)
         self.hover.perform()
@@ -124,30 +126,38 @@ class YouTube(object):
         #     EC.presence_of_element_located((By.CSS_SELECTOR, '.html5-video-container'))
         # )
         movie_player = WebDriverWait(self.driver, 60).until(
-            EC.element_to_be_clickable((By.CSS_SELECTOR, '.html5-video-container'))
+            EC.element_to_be_clickable((By.CSS_SELECTOR, ".html5-video-container"))
         )
         ActionChains(self.driver).context_click(movie_player).perform()
-        options = self.driver.find_elements(By.CSS_SELECTOR, '.ytp-menuitem')
+        options = self.driver.find_elements(By.CSS_SELECTOR, ".ytp-menuitem")
         for option in options:
-            option_child = option.find_element(By.CSS_SELECTOR, '.ytp-menuitem-label')
-            if option_child.text == 'Stats for nerds':
+            option_child = option.find_element(By.CSS_SELECTOR, ".ytp-menuitem-label")
+            if option_child.text == "Stats for nerds":
                 option_child.click()
                 print("Enabled stats collection.")
                 return True
         try:
-            self.driver.execute_script('document.getElementsByClassName("ytp-menuitem")[6].click();')
+            self.driver.execute_script(
+                'document.getElementsByClassName("ytp-menuitem")[6].click();'
+            )
             return True
         except Exception:
             return False
 
     def get_stats(self):
-        elem = self.driver.find_element(By.CSS_SELECTOR, ".html5-video-info-panel-content.ytp-sfn-content")
+        elem = self.driver.find_element(
+            By.CSS_SELECTOR, ".html5-video-info-panel-content.ytp-sfn-content"
+        )
         stats_data = elem.text
         stats_data = stats_data.replace(" ", "")
         # print("checking element",elem)
         # print(stats_data)
-        viewport_match = re.search(r"Viewport/Frames([\d+x]+)(?:\*[\d.]+)?/([\d]+)droppedof([\d]+)", stats_data)
-        current_optimal_res_match = re.search(r"Current/OptimalRes([\d@x]+)/([\d@x]+)", stats_data)
+        viewport_match = re.search(
+            r"Viewport/Frames([\d+x]+)(?:\*[\d.]+)?/([\d]+)droppedof([\d]+)", stats_data
+        )
+        current_optimal_res_match = re.search(
+            r"Current/OptimalRes([\d@x]+)/([\d@x]+)", stats_data
+        )
         # Initialize an empty dictionary to store extracted values
         data = {}
         # Check and assign the extracted values if matches were found
@@ -157,15 +167,19 @@ class YouTube(object):
             data["TotalFrames"] = viewport_match.group(3)  # e.g., '3930'
 
         if current_optimal_res_match:
-            data["CurrentRes"] = current_optimal_res_match.group(1)  # e.g., '1920x1080@60'
-            data["OptimalRes"] = current_optimal_res_match.group(2)  # e.g., '1920x1080@60'
+            data["CurrentRes"] = current_optimal_res_match.group(
+                1
+            )  # e.g., '1920x1080@60'
+            data["OptimalRes"] = current_optimal_res_match.group(
+                2
+            )  # e.g., '1920x1080@60'
 
         buffer_health_match = re.search(r"BufferHealth([\d.]+)s", stats_data)
         if buffer_health_match:
             data["BufferHealth"] = buffer_health_match.group(1)
 
         current_time = datetime.now().strftime("%H:%M:%S")
-        data['Timestamp'] = current_time
+        data["Timestamp"] = current_time
 
         return data
 
@@ -178,26 +192,32 @@ class YouTube(object):
         return elem.text
 
     def enable_loop(self):
-        movie_player = self.driver.find_element(By.CSS_SELECTOR, '.html5-video-container')
+        movie_player = self.driver.find_element(
+            By.CSS_SELECTOR, ".html5-video-container"
+        )
         self.hover = ActionChains(self.driver).move_to_element(movie_player)
         self.hover.perform()
         ActionChains(self.driver).context_click(movie_player).perform()
-        options = self.driver.find_elements(By.CSS_SELECTOR, '.ytp-menuitem')
+        options = self.driver.find_elements(By.CSS_SELECTOR, ".ytp-menuitem")
         for option in options:
-            option_child = option.find_element(By.CSS_SELECTOR, '.ytp-menuitem-label')
-            if option_child.text == 'Loop':
+            option_child = option.find_element(By.CSS_SELECTOR, ".ytp-menuitem-label")
+            if option_child.text == "Loop":
                 option_child.click()
                 print("Enabled loop playback.")
                 return True
         try:
-            self.driver.execute_script('document.getElementsByClassName("ytp-menuitem")[0].click();')
+            self.driver.execute_script(
+                'document.getElementsByClassName("ytp-menuitem")[0].click();'
+            )
             return True
         except Exception:
             return False
 
     def full_screen(self):
         try:
-            elem = self.driver.find_element(By.CSS_SELECTOR, ".ytp-fullscreen-button.ytp-button")
+            elem = self.driver.find_element(
+                By.CSS_SELECTOR, ".ytp-fullscreen-button.ytp-button"
+            )
             elem.click()
         except Exception:
             print("Unable to do full screen")
@@ -232,12 +252,12 @@ class YouTube(object):
         # print("self.duration")
         # print(self.duration)
         if self.duration:
-            end_time = datetime.now()+timedelta(minutes=self.duration)
+            end_time = datetime.now() + timedelta(minutes=self.duration)
             # print("endtimeee",end_time,self.duration)
-            while (datetime.now() <= end_time):
+            while datetime.now() <= end_time:
                 # self.dataset.append(self.get_stats())
                 # time.sleep(1)
-                if (self.check_stop_signal()):
+                if self.check_stop_signal():
                     break
                 stats = self.get_stats()
                 self.dataset.append(stats)
@@ -249,12 +269,14 @@ class YouTube(object):
         else:
             time_array = self.video_duration.split(":")
             time_array = list(map(int, time_array))
-            if (len(time_array) == 3):
-                delta = timedelta(hours=time_array[0], minutes=time_array[1], seconds=time_array[2])
+            if len(time_array) == 3:
+                delta = timedelta(
+                    hours=time_array[0], minutes=time_array[1], seconds=time_array[2]
+                )
             else:
                 delta = timedelta(minutes=time_array[0], seconds=time_array[1])
             end_time = datetime.now() + timedelta(seconds=delta.total_seconds())
-            while (datetime.now() < end_time):
+            while datetime.now() < end_time:
                 # self.dataset.append(self.get_stats())
                 # time.sleep(1)
                 stats = self.get_stats()
@@ -271,9 +293,10 @@ class YouTube(object):
 
     def start(self):
         self.driver.execute_script(
-            'if(document.getElementsByClassName("ytp-play-button ytp-button")[0].dataset.titlenotooltip=="Play")document.getElementsByClassName("ytp-play-button ytp-button")[0].click();')
+            'if(document.getElementsByClassName("ytp-play-button ytp-button")[0].dataset.titlenotooltip=="Play")document.getElementsByClassName("ytp-play-button ytp-button")[0].click();'
+        )
         elem = self.driver.find_element(By.CSS_SELECTOR, ".ytp-play-button.ytp-button")
-        if elem.get_attribute('data-title-no-tooltip') != "Pause":
+        if elem.get_attribute("data-title-no-tooltip") != "Pause":
             elem.click()
 
     def stop(self):
@@ -287,7 +310,7 @@ class YouTube(object):
             # url=f"http://10.253.8.108:8000/youtube_stats"
 
             headers = {
-                'Content-Type': 'application/json',
+                "Content-Type": "application/json",
             }
             # data = {
             #     'name' : device_name,
@@ -296,14 +319,16 @@ class YouTube(object):
             # }
             data = {
                 device_name: stats,  # Device name as the key and stats as the value
-                'stop': stop,        # Stop remains as a separate key
+                "stop": stop,  # Stop remains as a separate key
             }
 
             response = requests.post(url, json=data, headers=headers)
             if response.status_code == 200:
                 print("Successfully sent stats to API.")
             else:
-                print(f"Failed to send stats to API. Status code: {response.status_code}")
+                print(
+                    f"Failed to send stats to API. Status code: {response.status_code}"
+                )
         except Exception as e:
             print(f"An error occurred while sending stats to API: {e}")
 
@@ -317,7 +342,9 @@ class YouTube(object):
                 print("Successfully fetched data from API:", data)
                 return data
             else:
-                print(f"Failed to fetch data from API. Status code: {response.status_code}")
+                print(
+                    f"Failed to fetch data from API. Status code: {response.status_code}"
+                )
                 return None
         except Exception as e:
             print(f"An error occurred while fetching data from API: {e}")
@@ -327,12 +354,12 @@ class YouTube(object):
 def main():
 
     parser = argparse.ArgumentParser(
-        prog='youtube.py',
+        prog="youtube.py",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='''\
+        epilog="""\
         Youtube streaming automation
-         ''',
-        description='''\
+         """,
+        description="""\
 NAME: youtube.py
 PURPOSE: This script will open youtube over browser and play it for mentioned duration or single loop and get the reporting stats
 
@@ -366,17 +393,19 @@ Example:
     --env <enviornment variable>=<enviornment value>
         If required to assign multiple envirnment variable just use --env key=value again for other values
         example python3 youtube.py --env python=python3 --env DISPLAY=:0
-          '''
+          """,
     )
 
-    parser.add_argument('--url', type=str, default="https://www.youtube.com/watch?v=4GnVDPD01as")
-    parser.add_argument('--res', type=str, default="Auto")
-    parser.add_argument('--duration', default=0, type=int)
-    parser.add_argument('--env', action='extend', nargs='+', default=[])
+    parser.add_argument(
+        "--url", type=str, default="https://www.youtube.com/watch?v=4GnVDPD01as"
+    )
+    parser.add_argument("--res", type=str, default="Auto")
+    parser.add_argument("--duration", default=0, type=int)
+    parser.add_argument("--env", action="extend", nargs="+", default=[])
 
-    parser.add_argument('--host', type=str, required=True)
-    parser.add_argument('--port', type=str, default=8000)
-    parser.add_argument('--device_name', type=str, required=True)
+    parser.add_argument("--host", type=str, required=True)
+    parser.add_argument("--port", type=str, default=8000)
+    parser.add_argument("--device_name", type=str, required=True)
 
     args = parser.parse_args()
 
@@ -386,7 +415,9 @@ Example:
     print(os.environ)
     service = Service()
     options = webdriver.ChromeOptions()
-    options.set_capability("goog:loggingPrefs", {"performance": "ALL", "browser": "ALL"})
+    options.set_capability(
+        "goog:loggingPrefs", {"performance": "ALL", "browser": "ALL"}
+    )
     # # Performance-related options
     # options.add_argument("--process-per-site")
     # options.add_argument("--renderer-process-limit=4")
@@ -396,14 +427,24 @@ Example:
     # options.add_argument("--force-gpu-mem-available-mb=4096")
     # options.add_argument("--memory-pressure-thresholds-mb=2048")
     # options.add_experimental_option("detach", True)
-    options.add_argument('--no-sandbox')
+    options.add_argument("--no-sandbox")
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
 
-    driver = webdriver.Chrome(service=service, options=options)  # Or choose the appropriate webdriver for your browser
+    driver = webdriver.Chrome(
+        service=service, options=options
+    )  # Or choose the appropriate webdriver for your browser
 
-    yt = YouTube(args.url, args.res, args.host, args.port, args.duration, args.device_name, driver)
+    yt = YouTube(
+        args.url,
+        args.res,
+        args.host,
+        args.port,
+        args.duration,
+        args.device_name,
+        driver,
+    )
     if args.duration != 0:
         yt.duration = args.duration
     yt.play()
@@ -411,5 +452,5 @@ Example:
     pass
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
