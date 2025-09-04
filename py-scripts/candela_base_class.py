@@ -4,12 +4,16 @@ import datetime
 from datetime import datetime, timedelta
 import time
 import requests
+# echo Performing POST cleanup of browser processes... & taskkill /F /IM chrome.exe /T >nul 2>&1 & taskkill /F /IM chromedriver.exe /T >nul 2>&1 & echo Browser processes terminated.
+# cmd /c "echo Performing POST cleanup of browser processes... && taskkill /F /IM chrome.exe /T >nul 2>&1 && taskkill /F /IM chromedriver.exe /T >nul 2>&1 && echo Browser processes terminated."
+import paramiko
 import threading
 import logging
 import pandas as pd
 from lf_base_interop_profile import RealDevice
 from lf_ftp import FtpTest
 import lf_webpage as http_test
+import multiprocessing
 import lf_interop_qos as qos_test
 import lf_interop_ping as ping_test
 from lf_interop_throughput import Throughput
@@ -53,7 +57,9 @@ from lf_interop_ping import Ping
 # from LANforge.LFUtils import LFUtils
 import sys
 import os
-
+from multiprocessing import Manager
+manager = Manager()
+test_results_list = manager.list()
 # BASE PATH: /home/sidartha/project/lanforge-scripts
 # base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
@@ -150,7 +156,80 @@ class Candela(Realm):
         response = requests.post(url=self.api_url + endp, json=payload)
         return response
 
-    def misc_clean_up(self,layer3=False,layer4=False,generic=False):
+    def port_clean_up(self,port_no):
+        print('port cleanup......')
+        time.sleep(5)
+        hostname = self.lanforge_ip
+        username = "root"
+        password = "lanforge"
+        ports = []
+        ports.append(port_no)
+        # ssh = paramiko.SSHClient()
+        # ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        # ssh.connect(hostname, username=username, password=password)
+
+        # for cmd in commands:
+        #     print(f"--- Running: {cmd} ---")
+        #     stdin, stdout, stderr = ssh.exec_command(cmd)
+        #     print("Output:\n", stdout.read().decode())
+        #     print("Errors:\n", stderr.read().decode())
+        # ssh.close()
+
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.connect(hostname, username=username, password=password)
+
+        # for port in ports:
+        #     print(f"\n--- Checking port {port} ---")
+
+        #     try:
+        #         check_cmd = f"lsof -i :{port}"
+        #         stdin, stdout, stderr = ssh.exec_command(check_cmd, timeout=10)  # ⬅ timeout added
+        #         output = stdout.read().decode().strip()
+        #         error = stderr.read().decode().strip()
+
+        #         if output:
+        #             print(f"Processes using port {port}:\n{output}")
+
+        #             # kill_cmd = f"fuser -kv {port}/tcp"
+        #             # kill_cmd = f"fuser -k {port}/tcp"
+        #             kill_cmd = f"fuser -k {port}/tcp || true"
+        #             stdin, stdout, stderr = ssh.exec_command(kill_cmd, timeout=10)
+        #             print("Kill Output:\n", stdout.read().decode())
+        #             print("Kill Errors:\n", stderr.read().decode())
+        #         else:
+        #             print(f"No process found on port {port}")
+
+        #     except Exception as e:
+        #         print(f"Error checking port {port}: {e}")
+
+        for port in ports:
+            print(f"\n--- Checking port {port} ---")
+
+            try:
+                # Get only the PIDs of processes using this port
+                check_cmd = f"lsof -t -i:{port}"
+                stdin, stdout, stderr = ssh.exec_command(check_cmd, timeout=10)
+                pids = stdout.read().decode().strip().splitlines()
+
+                if pids:
+                    print(f"Processes using port {port}: {', '.join(pids)}")
+
+                    # Kill each PID safely
+                    for pid in pids:
+                        kill_cmd = f"kill -9 {pid}"
+                        ssh.exec_command(kill_cmd, timeout=10)
+                        print(f"Killed PID {pid} on port {port}")
+                else:
+                    print(f"No process found on port {port}")
+
+            except Exception as e:
+                print(f"Error checking port {port}: {e}")
+
+        ssh.close()
+
+
+    def misc_clean_up(self,layer3=False,layer4=False,generic=False,port_5000=False,port_5002=False,port_5003=False):
         """
         Use for the cleanup of cross connections
         arguments:
@@ -170,7 +249,82 @@ class Candela(Realm):
                         self.generic_endps_profile.created_cx.append('CX_' + list(i.values())[0]['name'])
                         self.generic_endps_profile.created_endp.append(list(i.values())[0]['name'])
             self.generic_endps_profile.cleanup()
+        # if port_5000 or port_5002 or port_5003:
+        #     print('port cleanup......')
+        #     time.sleep(5)
+        #     hostname = self.lanforge_ip
+        #     username = "root"
+        #     password = "lanforge"
+        #     ports = []
+        #     if port_5003:
+        #         ports.append(5003)
+        #     if port_5000:
+        #         ports.append(5000)
+        #     if port_5002:
+        #         ports.append(5002)
+        #     # ssh = paramiko.SSHClient()
+        #     # ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        #     # ssh.connect(hostname, username=username, password=password)
 
+        #     # for cmd in commands:
+        #     #     print(f"--- Running: {cmd} ---")
+        #     #     stdin, stdout, stderr = ssh.exec_command(cmd)
+        #     #     print("Output:\n", stdout.read().decode())
+        #     #     print("Errors:\n", stderr.read().decode())
+        #     # ssh.close()
+
+        #     ssh = paramiko.SSHClient()
+        #     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        #     ssh.connect(hostname, username=username, password=password)
+
+        #     # for port in ports:
+        #     #     print(f"\n--- Checking port {port} ---")
+
+        #     #     try:
+        #     #         check_cmd = f"lsof -i :{port}"
+        #     #         stdin, stdout, stderr = ssh.exec_command(check_cmd, timeout=10)  # ⬅ timeout added
+        #     #         output = stdout.read().decode().strip()
+        #     #         error = stderr.read().decode().strip()
+
+        #     #         if output:
+        #     #             print(f"Processes using port {port}:\n{output}")
+
+        #     #             # kill_cmd = f"fuser -kv {port}/tcp"
+        #     #             # kill_cmd = f"fuser -k {port}/tcp"
+        #     #             kill_cmd = f"fuser -k {port}/tcp || true"
+        #     #             stdin, stdout, stderr = ssh.exec_command(kill_cmd, timeout=10)
+        #     #             print("Kill Output:\n", stdout.read().decode())
+        #     #             print("Kill Errors:\n", stderr.read().decode())
+        #     #         else:
+        #     #             print(f"No process found on port {port}")
+
+        #     #     except Exception as e:
+        #     #         print(f"Error checking port {port}: {e}")
+
+        #     for port in ports:
+        #         print(f"\n--- Checking port {port} ---")
+
+        #         try:
+        #             # Get only the PIDs of processes using this port
+        #             check_cmd = f"lsof -t -i:{port}"
+        #             stdin, stdout, stderr = ssh.exec_command(check_cmd, timeout=10)
+        #             pids = stdout.read().decode().strip().splitlines()
+
+        #             if pids:
+        #                 print(f"Processes using port {port}: {', '.join(pids)}")
+
+        #                 # Kill each PID safely
+        #                 for pid in pids:
+        #                     kill_cmd = f"kill -9 {pid}"
+        #                     ssh.exec_command(kill_cmd, timeout=10)
+        #                     print(f"Killed PID {pid} on port {port}")
+        #             else:
+        #                 print(f"No process found on port {port}")
+
+        #         except Exception as e:
+        #             print(f"Error checking port {port}: {e}")
+
+        #     ssh.close()
 
     def get_device_info(self):
         """
@@ -3827,7 +3981,8 @@ class Candela(Realm):
             help_summary=None,
             expected_passfail_value=None,
             device_csv_name=None,
-            config=False
+            config=False,
+            exec_type=None
     ):
         try:
             print('duration',duration)
@@ -3899,7 +4054,7 @@ class Candela(Realm):
 
                 # Create a YouTube object with the specified parameters
 
-                youtube = Youtube(
+                self.yt_test_obj = Youtube(
                     host=mgr_ip,
                     port=mgr_port,
                     url=url,
@@ -3918,12 +4073,17 @@ class Candela(Realm):
                     upstream_port=upstream_port,
                     config=config,
                     selected_groups=selected_groups,
-                    selected_profiles=selected_profiles)
-                youtube.start_flask_server()
-                upstream_port = youtube.change_port_to_ip(upstream_port)
+                    selected_profiles=selected_profiles,
+                    no_browser_precleanup=True,
+                    no_browser_postcleanup=True)
+
+                print('CHECKING PORT AVAILBILITY for YT TEST')
+                self.port_clean_up(5002)
+                self.yt_test_obj.start_flask_server()
+                upstream_port = self.yt_test_obj.change_port_to_ip(upstream_port)
 
                 resources = []
-                youtube.Devices = Devices
+                self.yt_test_obj.Devices = Devices
                 if file_name:
                     new_filename = file_name.removesuffix(".csv")
                 else:
@@ -4016,106 +4176,107 @@ class Candela(Realm):
                         resources = [r.strip() for r in resource_list.split(',')]
                         resources = [r for r in resources if len(r.split('.')) > 1]
 
-                        youtube.select_real_devices(real_devices=Devices, real_sta_list=resources, base_interop_obj=Devices)
+                        self.yt_test_obj.select_real_devices(real_devices=Devices, real_sta_list=resources, base_interop_obj=Devices)
 
                     else:
-                        youtube.select_real_devices(real_devices=Devices)
+                        self.yt_test_obj.select_real_devices(real_devices=Devices)
                 else:
                     resources = [r.strip() for r in resource_list.split(',')]
 
                     extracted_parts = [res.split('.')[:2] for res in resources]
                     formatted_parts = ['.'.join(parts) for parts in extracted_parts]
-                    youtube.select_real_devices(real_devices=Devices, real_sta_list=formatted_parts, base_interop_obj=Devices)
+                    self.yt_test_obj.select_real_devices(real_devices=Devices, real_sta_list=formatted_parts, base_interop_obj=Devices)
 
                     if do_webUI:
 
-                        if len(youtube.real_sta_hostname) == 0:
+                        if len(self.yt_test_obj.real_sta_hostname) == 0:
                             logging.error("No device is available to run the test")
                             obj = {
                                 "status": "Stopped",
                                 "configuration_status": "configured"
                             }
-                            youtube.updating_webui_runningjson(obj)
+                            self.yt_test_obj.updating_webui_runningjson(obj)
                             return
                         else:
                             obj = {
-                                "configured_devices": youtube.real_sta_hostname,
+                                "configured_devices": self.yt_test_obj.real_sta_hostname,
                                 "configuration_status": "configured",
-                                "no_of_devices": f' Total({len(youtube.real_sta_os_types)}) : W({youtube.windows}),L({youtube.linux}),M({youtube.mac})',
-                                "device_list": youtube.hostname_os_combination
+                                "no_of_devices": f' Total({len(self.yt_test_obj.real_sta_os_types)}) : W({self.yt_test_obj.windows}),L({self.yt_test_obj.linux}),M({self.yt_test_obj.mac})',
+                                "device_list": self.yt_test_obj.hostname_os_combination
 
                             }
-                            youtube.updating_webui_runningjson(obj)
+                            self.yt_test_obj.updating_webui_runningjson(obj)
 
                 # Perform pre-test cleanup if not skipped
-                # if not no_pre_cleanup:
-                #     youtube.cleanup()
+                if not no_pre_cleanup:
+                    self.yt_test_obj.cleanup()
 
                 # Check if the required tab exists, and exit if not
-                if not youtube.check_tab_exists():
+                if not self.yt_test_obj.check_tab_exists():
                     logging.error('Generic Tab is not available.\nAborting the test.')
                     return False
 
-                if len(youtube.real_sta_list) > 0:
-                    logging.info(f"checking real sta list while creating endpionts {youtube.real_sta_list}")
-                    youtube.create_generic_endp(youtube.real_sta_list)
+                if len(self.yt_test_obj.real_sta_list) > 0:
+                    logging.info(f"checking real sta list while creating endpionts {self.yt_test_obj.real_sta_list}")
+                    print('HII',self.yt_test_obj.real_sta_list)
+                    self.yt_test_obj.create_generic_endp(self.yt_test_obj.real_sta_list)
                 else:
-                    logging.info(f"checking real sta list while creating endpionts {youtube.real_sta_list}")
+                    logging.info(f"checking real sta list while creating endpionts {self.yt_test_obj.real_sta_list}")
                     logging.error("No Real Devies Available")
                     return False
 
                 logging.info("TEST STARTED")
-                logging.info('Running the Youtube Streaming test for {} minutes'.format(duration))
+                logging.info('Running the youtube Streaming test for {} minutes'.format(duration))
 
                 time.sleep(10)
 
-                youtube.start_time = datetime.now()
-                youtube.start_generic()
+                self.yt_test_obj.start_time = datetime.now()
+                self.yt_test_obj.start_generic()
 
                 duration = duration
                 end_time = datetime.now() + timedelta(minutes=duration)
-                initial_data = youtube.get_data_from_api()
+                initial_data = self.yt_test_obj.get_data_from_api()
 
                 while len(initial_data) == 0:
-                    initial_data = youtube.get_data_from_api()
+                    initial_data = self.yt_test_obj.get_data_from_api()
                     time.sleep(1)
                 if initial_data:
                     end_time_webgui = []
-                    for i in range(len(youtube.device_names)):
-                        end_time_webgui.append(initial_data['result'].get(youtube.device_names[i], {}).get('stop', False))
+                    for i in range(len(self.yt_test_obj.device_names)):
+                        end_time_webgui.append(initial_data['result'].get(self.yt_test_obj.device_names[i], {}).get('stop', False))
                 else:
-                    for i in range(len(youtube.device_names)):
+                    for i in range(len(self.yt_test_obj.device_names)):
                         end_time_webgui.append("")
 
                 end_time = datetime.now() + timedelta(minutes=duration)
 
-                while datetime.now() < end_time or not youtube.check_gen_cx():
-                    youtube.get_data_from_api()
+                while datetime.now() < end_time or not self.yt_test_obj.check_gen_cx():
+                    self.yt_test_obj.get_data_from_api()
                     time.sleep(1)
 
-                youtube.generic_endps_profile.stop_cx()
+                self.yt_test_obj.generic_endps_profile.stop_cx()
                 logging.info("Duration ended")
 
                 logging.info('Stopping the test')
                 if do_webUI:
-                    youtube.create_report(youtube.stats_api_response, youtube.ui_report_dir)
+                    self.yt_test_obj.create_report(self.yt_test_obj.stats_api_response, self.yt_test_obj.ui_report_dir)
                 else:
 
-                    youtube.create_report(youtube.stats_api_response, '')
+                    self.yt_test_obj.create_report(self.yt_test_obj.stats_api_response, '')
 
                 # Perform post-test cleanup if not skipped
                 # if not no_post_cleanup:
-                #     youtube.generic_endps_profile.cleanup()
+                #     self.yt_test_obj.generic_endps_profile.cleanup()
         except Exception as e:
             logging.error(f"Error occured {e}")
-            # traceback.print_exc()
+            traceback.print_exc()
         finally:
             if not ('--help' in sys.argv or '-h' in sys.argv):
                 traceback.print_exc()
-                youtube.stop()
+                self.yt_test_obj.stop()
                 # Stopping the Youtube test
                 if do_webUI:
-                    youtube.stop_test_yt()
+                    self.yt_test_obj.stop_test_yt()
                 logging.info("Waiting for Cleanup of Browsers in Devices")
                 time.sleep(10)
         return True
@@ -4163,7 +4324,8 @@ class Candela(Realm):
         help_summary: str = None,
         expected_passfail_value: str = None,
         device_csv_name: str = None,
-        config: bool = False
+        config: bool = False,
+        exec_type: str = None
     ):
         try:
             lanforge_ip = self.lanforge_ip
@@ -4183,9 +4345,9 @@ class Candela(Realm):
                     selected_profiles = []
 
 
-                zoom_automation = ZoomAutomation(audio=audio, video=video, lanforge_ip=lanforge_ip, wait_time=wait_time, testname=testname,
-                                                upstream_port=upstream_port, config=config, selected_groups=selected_groups, selected_profiles=selected_profiles)
-                upstream_port = zoom_automation.change_port_to_ip(upstream_port)
+                self.zoom_test_obj = ZoomAutomation(audio=audio, video=video, lanforge_ip=lanforge_ip, wait_time=wait_time, testname=testname,
+                                                upstream_port=upstream_port, config=config, selected_groups=selected_groups, selected_profiles=selected_profiles,no_browser_precleanup = True,no_browser_postcleanup = True)
+                upstream_port = self.zoom_test_obj.change_port_to_ip(upstream_port)
                 realdevice = RealDevice(manager_ip=lanforge_ip,
                                         server_ip="192.168.1.61",
                                         ssid_2g='Test Configured',
@@ -4199,6 +4361,8 @@ class Candela(Realm):
                                         encryption_6g='',
                                         selected_bands=['5G'])
                 laptops = realdevice.get_devices()
+                print('CHECKING PORT AVAILBILITY for ZOOM TEST')
+                self.port_clean_up(5000)
 
                 if file_name:
                     new_filename = file_name.removesuffix(".csv")
@@ -4308,7 +4472,7 @@ class Candela(Realm):
                         resources = resource_list.split(',')
                         resources = [r for r in resources if len(r.split('.')) > 1]
                         # resources = sorted(resources, key=lambda x: int(x.split('.')[1]))
-                        get_data = zoom_automation.select_real_devices(real_device_obj=realdevice, real_sta_list=resources)
+                        get_data = self.zoom_test_obj.select_real_devices(real_device_obj=realdevice, real_sta_list=resources)
                         for item in get_data:
                             item = item.strip()
                             # Find and append the matching lap to result_list
@@ -4320,43 +4484,43 @@ class Candela(Realm):
                         if len(result_list) != len(get_data):
                             logging.info("Few Resources donot exist")
                     else:
-                        resources = zoom_automation.select_real_devices(real_device_obj=realdevice)
+                        resources = self.zoom_test_obj.select_real_devices(real_device_obj=realdevice)
                 else:
                     if do_webUI:
-                        zoom_automation.path = report_dir
+                        self.zoom_test_obj.path = report_dir
                     resources = resource_list.split(',')
                     extracted_parts = [res.split('.')[:2] for res in resources]
                     formatted_parts = ['.'.join(parts) for parts in extracted_parts]
 
-                    zoom_automation.select_real_devices(real_device_obj=realdevice, real_sta_list=formatted_parts)
+                    self.zoom_test_obj.select_real_devices(real_device_obj=realdevice, real_sta_list=formatted_parts)
                     if do_webUI:
 
-                        if len(zoom_automation.real_sta_hostname) == 0:
+                        if len(self.zoom_test_obj.real_sta_hostname) == 0:
                             logging.info("No device is available to run the test")
                             obj = {
                                 "status": "Stopped",
                                 "configuration_status": "configured"
                             }
-                            zoom_automation.updating_webui_runningjson(obj)
+                            self.zoom_test_obj.updating_webui_runningjson(obj)
                             return False
                         else:
                             obj = {
-                                "configured_devices": zoom_automation.real_sta_hostname,
+                                "configured_devices": self.zoom_test_obj.real_sta_hostname,
                                 "configuration_status": "configured",
-                                "no_of_devices": f' Total({len(zoom_automation.real_sta_os_type)}) : W({zoom_automation.windows}),L({zoom_automation.linux}),M({zoom_automation.mac})',
-                                "device_list": zoom_automation.hostname_os_combination,
-                                # "zoom_host":zoom_automation.zoom_host
+                                "no_of_devices": f' Total({len(self.zoom_test_obj.real_sta_os_type)}) : W({self.zoom_test_obj.windows}),L({self.zoom_test_obj.linux}),M({self.zoom_test_obj.mac})',
+                                "device_list": self.zoom_test_obj.hostname_os_combination,
+                                # "zoom_host":self.zoom_test_obj.zoom_host
 
                             }
-                            zoom_automation.updating_webui_runningjson(obj)
+                            self.zoom_test_obj.updating_webui_runningjson(obj)
 
-                if not zoom_automation.check_tab_exists():
+                if not self.zoom_test_obj.check_tab_exists():
                     logging.error('Generic Tab is not available.\nAborting the test.')
                     return False
 
-                zoom_automation.run(duration, upstream_port, signin_email, signin_passwd, participants)
-                zoom_automation.data_store.clear()
-                zoom_automation.generate_report()
+                self.zoom_test_obj.run(duration, upstream_port, signin_email, signin_passwd, participants)
+                self.zoom_test_obj.data_store.clear()
+                self.zoom_test_obj.generate_report()
                 logging.info("Test Completed Sucessfully")
         except Exception as e:
             logging.error(f"AN ERROR OCCURED WHILE RUNNING TEST {e}")
@@ -4387,11 +4551,13 @@ class Candela(Realm):
                         # Print an error message if an exception occurs during the request
                         logging.error(f"An error occurred while updating status: {e}")
 
-                zoom_automation.redis_client.set('login_completed', 0)
-                zoom_automation.stop_signal = True
+                self.zoom_test_obj.redis_client.set('login_completed', 0)
+                self.zoom_test_obj.stop_signal = True
                 logging.info("Waiting for Browser Cleanup in Laptops")
+                self.zoom_test_obj.generic_endps_profile.cleanup()
+                # self.zoom_test_obj.generic_endps_profile.cleanup()
                 time.sleep(10)
-                # zoom_automation.generic_endps_profile.cleanup()
+
         return True
 
 
@@ -4411,7 +4577,7 @@ class Candela(Realm):
                 args.url = "https://" + args.url.removeprefix("http://")
 
             # Initialize an instance of RealBrowserTest with various parameters
-            obj = RealBrowserTest(host=args.host,
+            self.rb_test_obj = RealBrowserTest(host=args.host,
                                 ssid=args.ssid,
                                 passwd=args.passwd,
                                 encryp=args.encryp,
@@ -4452,16 +4618,20 @@ class Candela(Realm):
                                 wait_time=args.wait_time,
                                 config=args.config,
                                 selected_groups=args.group_name,
-                                selected_profiles=args.profile_name
+                                selected_profiles=args.profile_name,
+                                no_browser_precleanup=True,
+                                no_browser_postcleanup=True
                                 )
-            obj.change_port_to_ip()
-            obj.validate_and_process_args()
-            obj.config_obj = DeviceConfig.DeviceConfig(lanforge_ip=obj.host, file_name=obj.file_name, wait_time=obj.wait_time)
-            # if not obj.expected_passfail_value and obj.device_csv_name is None:
-            #     obj.config_obj.device_csv_file(csv_name="device.csv")
-            obj.run_flask_server()
-            if obj.group_name and obj.profile_name and obj.file_name:
-                available_resources = obj.process_group_profiles()
+            print('CHECKING PORT AVAILBILITY for RB TEST')
+            self.port_clean_up(5003)
+            self.rb_test_obj.change_port_to_ip()
+            self.rb_test_obj.validate_and_process_args()
+            self.rb_test_obj.config_obj = DeviceConfig.DeviceConfig(lanforge_ip=self.rb_test_obj.host, file_name=self.rb_test_obj.file_name, wait_time=self.rb_test_obj.wait_time)
+            # if not self.rb_test_obj.expected_passfail_value and self.rb_test_obj.device_csv_name is None:
+            #     self.rb_test_obj.config_self.rb_test_obj.device_csv_file(csv_name="device.csv")
+            self.rb_test_obj.run_flask_server()
+            if self.rb_test_obj.group_name and self.rb_test_obj.profile_name and self.rb_test_obj.file_name:
+                available_resources = self.rb_test_obj.process_group_profiles()
             else:
                 # --- Build configuration dictionary for WiFi parameters ---
                 config_dict = {
@@ -4485,36 +4655,36 @@ class Candela(Realm):
                     'client_cert': args.client_cert,
                     'pk_passwd': args.pk_passwd,
                     'pac_file': args.pac_file,
-                    'server_ip': obj.upstream_port,
+                    'server_ip': self.rb_test_obj.upstream_port,
                 }
-                available_resources = obj.process_resources(config_dict)
+                available_resources = self.rb_test_obj.process_resources(config_dict)
             if len(available_resources) != 0:
-                available_resources = obj.filter_ios_devices(available_resources)
+                available_resources = self.rb_test_obj.filter_ios_devices(available_resources)
             if len(available_resources) == 0:
                 logging.error("No devices available to run the test. Exiting...")
                 return False
 
             # --- Print available resources ---
             logging.info("Devices available: {}".format(available_resources))
-            if obj.expected_passfail_value or obj.device_csv_name:
-                obj.update_passfail_value(available_resources)
+            if self.rb_test_obj.expected_passfail_value or self.rb_test_obj.device_csv_name:
+                self.rb_test_obj.update_passfail_value(available_resources)
             # --- Handle incremental values ---
-            obj.handle_incremental(args, obj, available_resources, available_resources)
-            obj.handle_duration()
-            obj.run_test(available_resources)
+            self.rb_test_obj.handle_incremental(args, self.rb_test_obj, available_resources, available_resources)
+            self.rb_test_obj.handle_duration()
+            self.rb_test_obj.run_test(available_resources)
 
         except Exception as e:
             logging.error("Error occured", e)
             # traceback.print_exc()
         finally:
             if '--help' not in sys.argv and '-h' not in sys.argv:
-                obj.create_report()
-                if obj.dowebgui:
-                    obj.webui_stop()
-                obj.stop()
+                self.rb_test_obj.create_report()
+                if self.rb_test_obj.dowebgui:
+                    self.rb_test_obj.webui_stop()
+                self.rb_test_obj.stop()
 
                 # if not args.no_postcleanup:
-                #     obj.postcleanup()
+                #     self.rb_test_obj.postcleanup()
         return True
 
 
@@ -4564,11 +4734,104 @@ class Candela(Realm):
         expected_passfail_value: str = None,
         device_csv_name: str = None,
         wait_time: int = 60,
-        config: bool = False
+        config: bool = False,
+        exec_type: str = None
     ):
         args = SimpleNamespace(**locals())
         args.host = self.lanforge_ip
         return self.run_rb_test1(args)
+    
+    def browser_cleanup(self,rb_test=False,yt_test=False):
+        # count = 0
+        # series_tests = args.series_tests.split(',') if args.series_tests else None
+        # parallel_tests = args.parallel_tests.split(',') if args.parallel_tests else None
+        # zoom_test = False
+        # yt_test = False
+        # rb_test = False
+        # if 'zoom_test' in parallel_tests:
+        #     count += 1
+        # if 'yt_test' in parallel_tests:
+        #     count += 1
+        # if 'rb_test' in parallel_tests:
+        #     count += 1
+        # if count <=1:
+        #     self.browser_kill = True
+        # if args.series_test and not parallel_tests:
+        #     self.browser_kill = True
+        #     return True
+        # if rb_test:
+        #     cnt = 0
+        #     flag = False 
+        #     while not self.rb_build_done:
+        #         time.sleep(1)
+        #         cnt+=1
+        #         if cnt >= 30:
+        #             flag = True 
+        #             break
+        #     if flag:
+        #         return False
+        print('calledddddd')
+        # time.sleep(20)
+        if rb_test:
+            print('inn000')
+            print('laptop_os_types',self.rb_test_obj.laptop_os_types)
+            print('endpsss',self.rb_test_obj.generic_endps_profile.created_endp)
+            for i in range(0, len(self.rb_test_obj.laptop_os_types)):
+                print('inn1111')
+                if self.rb_test_obj.laptop_os_types[i] == 'windows':
+                    cmd = "echo Performing POST cleanup of browser processes... & taskkill /F /IM chrome.exe /T >nul 2>&1 & taskkill /F /IM chromedriver.exe /T >nul 2>&1 & echo Browser processes terminated."
+                    self.rb_test_obj.generic_endps_profile.set_cmd(self.rb_test_obj.generic_endps_profile.created_endp[i], cmd)
+                elif self.rb_test_obj.laptop_os_types[i] == 'linux':
+                    # cmd = "su -l lanforge  ctrb.bash %s %s %s %s" % (self.rb_test_obj.new_port_list[i], self.rb_test_obj.url, self.rb_test_obj.upstream_port, self.rb_test_obj.duration)
+                    cmd = "pkill -f chrome; pkill -f chromedriver"
+                    self.rb_test_obj.generic_endps_profile.set_cmd(self.rb_test_obj.generic_endps_profile.created_endp[i], cmd)
+                elif self.rb_test_obj.laptop_os_types[i] == 'macos':
+                    cmd = "pkill -f Google Chrome; pkill -f chromedriver;"
+                    self.rb_test_obj.generic_endps_profile.set_cmd(self.rb_test_obj.generic_endps_profile.created_endp[i], cmd)
+                    if self.rb_test_obj.browser_precleanup:
+                        cmd+=" precleanup"
+                    if self.rb_test_obj.browser_postcleanup:
+                        cmd+=" postcleanup"
+
+            for i, cx_batch in enumerate(self.rb_test_obj.cx_order_list):
+                self.rb_test_obj.start_specific(cx_batch)
+                logging.info(f"browser cleanup on {cx_batch}")
+            print('realbrowser test laptop cleaing.....')
+            time.sleep(20)  
+            
+        
+        if yt_test:
+            for i in range(0, len(self.yt_test_obj.real_sta_os_types)):
+                if self.yt_test_obj.real_sta_os_types[i] == 'windows':
+                    cmd = "echo Performing POST cleanup of browser processes... & taskkill /F /IM chrome.exe /T >nul 2>&1 & taskkill /F /IM chromedriver.exe /T >nul 2>&1 & echo Browser processes terminated."
+                    self.yt_test_obj.generic_endps_profile.set_cmd(self.yt_test_obj.generic_endps_profile.created_endp[i], cmd)
+                elif self.yt_test_obj.real_sta_os_types[i] == 'linux':
+                    cmd = "pkill -f chrome; pkill -f chromedriver"
+                    self.yt_test_obj.generic_endps_profile.set_cmd(self.yt_test_obj.generic_endps_profile.created_endp[i], cmd)
+
+                elif self.yt_test_obj.real_sta_os_types[i] == 'macos':
+                    cmd = "pkill -f Google Chrome; pkill -f chromedriver;"
+                    self.yt_test_obj.generic_endps_profile.set_cmd(self.yt_test_obj.generic_endps_profile.created_endp[i], cmd)
+
+            self.yt_test_obj.generic_endps_profile.start_cx()
+            print('youtube test laptop cleaing.....')
+            time.sleep(20)  
+
+        # if zoom_test:
+        #     for i in range(len(self.zoom_test_obj.real_sta_os_type)):
+        #         if self.zoom_test_obj.real_sta_os_type[i] == "windows":
+        #             cmd = f"py zoom_client.py --ip {self.zoom_test_obj.upstream_port}"
+        #             self.zoom_test_obj.generic_endps_profile.set_cmd(self.zoom_test_obj.generic_endps_profile.created_endp[i], cmd)
+        #         elif self.zoom_test_obj.real_sta_os_type[i] == 'linux':
+        #             cmd = "su -l lanforge ctzoom.bash %s %s %s" % (self.zoom_test_obj.new_port_list[i], self.zoom_test_obj.upstream_port, "client")
+        #             self.zoom_test_obj.generic_endps_profile.set_cmd(self.zoom_test_obj.generic_endps_profile.created_endp[i], cmd)
+        #         elif self.zoom_test_obj.real_sta_os_type[i] == 'macos':
+        #             cmd = "sudo bash ctzoom.bash %s %s" % (self.zoom_test_obj.upstream_port, "client")
+        #             self.zoom_test_obj.generic_endps_profile.set_cmd(self.zoom_test_obj.generic_endps_profile.created_endp[i], cmd)
+
+        #     self.zoom_test_obj.generic_endps_profile.start_cx()
+
+
 
 def validate_individual_args(args,test_name):
     if test_name == 'ping_test':
@@ -4607,9 +4870,13 @@ def validate_individual_args(args,test_name):
 def validate_args(args):
     # pass/fail , config , groups-profiles arg validation
     tests = ["http_test","ping_test","ftp_test","thput_test","qos_test","vs_test","mcast_test","yt_test","rb_test","zoom_test"]
+    if args[series_tests]:
+        series_tests = args[series_tests].split(',')
+    if args[parallel_tests]:
+        parallel_tests = args[parallel_tests].split(',')
     for test in tests:
         flag_test = True
-        if args[test]:
+        if test in series_tests or test in parallel_tests:
             logger.info(f"validating args for {test}...")
             flag_test = validate_individual_args(args,test)
             test = test.split('_')[0]
@@ -5224,9 +5491,8 @@ def main():
     args_dict = vars(args)
     print('argsss',args_dict)
     # exit(0)
-    validate_args(args_dict)
+    # validate_args(args_dict)
     candela_apis = Candela(ip=args.mgr, port=args.mgr_port)
-    candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
     print(args)
     test_map = {
     "ping_test":   (run_ping_test, "PING TEST"),
@@ -5278,6 +5544,8 @@ def main():
         exit(0)
 
     flag=1
+    tests_to_run_series = []
+    tests_to_run_parallel = []
     if args.series_tests:
         tests_to_run_series = args.series_tests.split(',')
         for test in tests_to_run_series:
@@ -5298,11 +5566,20 @@ def main():
     if args.parallel_tests and (len(tests_to_run_parallel) != len(set(tests_to_run_parallel))):
         logger.error("in -parallel dont specify duplicate tests")
         exit(0)
+    # args.current = "series"
+    iszoom = 'zoom_test' in tests_to_run_parallel or 'zoom_test' in tests_to_run_series
+    isrb = 'rb_test' in tests_to_run_parallel or 'rb_test' in tests_to_run_series
+    isyt = 'yt_test' in tests_to_run_parallel or 'yt_test' in tests_to_run_series
 
+    candela_apis.misc_clean_up(layer3=False,layer4=False,generic=True,port_5000=iszoom,port_5002=isyt,port_5003=isrb)
     if args.series_tests or args.parallel_tests:
         series_threads = []
         parallel_threads = []
-        
+        parallel_processes = []
+        series_processes = []
+        rb_test = 'rb_test' in tests_to_run_parallel
+        yt_test = 'yt_test' in tests_to_run_parallel
+        zoom_test = 'zoom_test' in tests_to_run_parallel
         # Process series tests
         if args.series_tests:
             ordered_series_tests = args.series_tests.split(',')
@@ -5310,9 +5587,13 @@ def main():
                 test_name = test_name.strip().lower()
                 if test_name in test_map:
                     func, label = test_map[test_name]
-                    series_threads.append(threading.Thread(
-                        target=run_test_safe(func, f"{label} [Series {idx+1}]", args, candela_apis)
-                    ))
+                    args.current = "series"
+                    if test_name in ['rb_test','zoom_test','yt_test']:
+                        series_threads.append(multiprocessing.Process(target=run_test_safe(func, f"{label} [Series {idx+1}]", args, candela_apis)))
+                    else:                 
+                        series_threads.append(threading.Thread(
+                            target=run_test_safe(func, f"{label} [Series {idx+1}]", args, candela_apis)
+                        ))
                 else:
                     print(f"Warning: Unknown test '{test_name}' in --series_tests")
         
@@ -5323,12 +5604,19 @@ def main():
                 test_name = test_name.strip().lower()
                 if test_name in test_map:
                     func, label = test_map[test_name]
-                    parallel_threads.append(threading.Thread(
-                        target=run_test_safe(func, f"{label} [Parallel {idx+1}]", args, candela_apis)
-                    ))
+                    args.current = "parallel"
+                    if test_name in ['rb_test','zoom_test','yt_test']:
+                        parallel_threads.append(multiprocessing.Process(target=run_test_safe(func, f"{label} [Parallel {idx+1}]", args, candela_apis)))
+                    else:                 
+                        parallel_threads.append(threading.Thread(
+                            target=run_test_safe(func, f"{label} [Parallel {idx+1}]", args, candela_apis)
+                        ))
                 else:
                     print(f"Warning: Unknown test '{test_name}' in --parallel_tests")
-        
+        logging.info(f"Series Threads: {series_threads}")
+        logging.info(f"Parallel Threads: {parallel_threads}")
+        logging.info(f"Parallel Processes: {parallel_processes}")
+        logging.info(f"Series Processes: {series_processes}")
         # Execute based on order priority
         if args.order_priority == 'series':
             # candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
@@ -5336,41 +5624,69 @@ def main():
             for t in series_threads:
                 t.start()
                 t.join()
+            # for p in series_processes:
+            #     p.start()
+            #     p.join()
             
             # Then run parallel tests
             if len(parallel_threads) != 0:
-                candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
+                # candela_apis.misc_clean_up(layer3=False,layer4=False,generic=True)
+                candela_apis.misc_clean_up(layer3=False,layer4=False,generic=True,port_5000=iszoom,port_5002=isyt,port_5003=isrb)
                 print('starting parallel tests.......')
-                time.sleep(20)
+                time.sleep(10)
 
             for t in parallel_threads:
                 t.start()
+            # for p in parallel_processes:
+            #     p.start()
+    
             for t in parallel_threads:
                 t.join()
+            # for p in parallel_processes:
+            #     p.join()
         else:
             # candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
             # Run parallel tests first
             for t in parallel_threads:
                 t.start()
+            # for p in parallel_processes:
+            #     p.start()
+    
             for t in parallel_threads:
                 t.join()
+            # for p in parallel_processes:
+            #     p.join()
             # candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
             # Then run series tests (one at a time)
             if len(series_threads) != 0:
-                candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
+                rb_test = 'rb_test' in tests_to_run_parallel
+                yt_test = 'yt_test' in tests_to_run_parallel
+                # candela_apis.browser_cleanup(rb_test=rb_test,yt_test=yt_test)
+                # candela_apis.misc_clean_up(layer3=False,layer4=False,generic=True)
+                candela_apis.misc_clean_up(layer3=False,layer4=False,generic=True,port_5000=iszoom,port_5002=isyt,port_5003=isrb)
                 print('starting Series tests.......')
-                time.sleep(20)
+                time.sleep(10)
+            # for t in series_threads:
+            #     t.start()
+            #     t.join()
             for t in series_threads:
                 t.start()
                 t.join()
+            # for p in series_processes:
+            #     p.start()
+            #     p.join()
                 # candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
     else:
         logger.error("provide either --paralell_tests or --series_tests")
         exit(1)
-    candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
+    rb_test = 'rb_test' in tests_to_run_parallel
+    yt_test = 'yt_test' in tests_to_run_parallel
+    # candela_apis.browser_cleanup(rb_test=rb_test,yt_test=yt_test)
+    # candela_apis.misc_clean_up(layer3=False,layer4=False,generic=True)
+    candela_apis.misc_clean_up(layer3=False,layer4=False,generic=True,port_5000=iszoom,port_5002=isyt,port_5003=isrb)
     log_file = save_logs()
     print(f"Logs saved to: {log_file}")
-    
+    test_results_df = pd.DataFrame(list(test_results_list))
     # You can also access the test results dataframe:
     print("\nTest Results Summary:")
     print(test_results_df)
@@ -5441,11 +5757,11 @@ def main():
 
 def run_test_safe(test_func, test_name, args, candela_apis):
     global error_logs
-    global test_results_df
+    # global test_results_df
     
     def wrapper():
         global error_logs
-        global test_results_df
+        # global test_results_df
         
         try:
             result = test_func(args, candela_apis)
@@ -5457,7 +5773,8 @@ def run_test_safe(test_func, test_name, args, candela_apis):
                 logger.info(f"{test_name} EXECUTED")
                 
             # Update the dataframe with test result
-            test_results_df.loc[len(test_results_df)] = [test_name, status]
+            # test_results_df.loc[len(test_results_df)] = [test_name, status]
+            test_results_list.append({"test_name": test_name, "status": status})
             
         except SystemExit as e:
             if e.code != 0:
@@ -5467,7 +5784,8 @@ def run_test_safe(test_func, test_name, args, candela_apis):
             error_msg = f"{test_name} exited with code {e.code}\n"
             logger.error(error_msg)
             error_logs += error_msg
-            test_results_df.loc[len(test_results_df)] = [test_name, status]
+            # test_results_df.loc[len(test_results_df)] = [test_name, status]
+            test_results_list.append({"test_name": test_name, "status": status})
             
         except Exception as e:
             status = "NOT EXECUTED"
@@ -5477,7 +5795,8 @@ def run_test_safe(test_func, test_name, args, candela_apis):
             traceback.print_exc()
             full_error = error_msg + tb_str + "\n"
             error_logs += full_error
-            test_results_df.loc[len(test_results_df)] = [test_name, status]
+            # test_results_df.loc[len(test_results_df)] = [test_name, status]
+            test_results_list.append({"test_name": test_name, "status": status})
             
     return wrapper
 
@@ -5796,7 +6115,8 @@ def run_yt_test(args, candela_apis):
         ca_cert=args.yt_ca_cert,
         client_cert=args.yt_client_cert,
         pk_passwd=args.yt_pk_passwd,
-        pac_file=args.yt_pac_file
+        pac_file=args.yt_pac_file,
+        exec_type=args.current
     )
 
 def run_rb_test(args, candela_apis):
@@ -5831,7 +6151,8 @@ def run_rb_test(args, candela_apis):
         pk_passwd=args.rb_pk_passwd,
         pac_file=args.rb_pac_file,
         wait_time=args.rb_wait_time,
-        duration=args.rb_duration
+        duration=args.rb_duration,
+        exec_type=args.current
     )
 
 def run_zoom_test(args, candela_apis):
@@ -5871,6 +6192,9 @@ def run_zoom_test(args, candela_apis):
         client_cert=args.zoom_client_cert,
         pk_passwd=args.zoom_pk_passwd,
         pac_file=args.zoom_pac_file,
-        wait_time=args.zoom_wait_time
+        wait_time=args.zoom_wait_time,
+        exec_type=args.current
     )
+# def browser_cleanup(args,candela_apis):
+#     return candela_apis.browser_cleanup(args)
 main()
