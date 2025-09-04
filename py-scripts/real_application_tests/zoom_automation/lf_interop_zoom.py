@@ -91,7 +91,7 @@ lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 
 class ZoomAutomation(Realm):
     def __init__(self, ssid="SSID", band="5G", security="wpa2", apname="AP Name", audio=True, video=True, lanforge_ip=None,
-                 upstream_port='0.0.0.0', wait_time=30, devices=None, testname=None, config=None, selected_groups=None, selected_profiles=None):
+                 upstream_port='0.0.0.0', wait_time=30, devices=None, testname=None, config=None, selected_groups=None, selected_profiles=None,no_browser_precleanup=False,no_browser_postcleanup=False):
 
         super().__init__(lfclient_host=lanforge_ip)
         self.upstream_port = upstream_port
@@ -130,7 +130,8 @@ class ZoomAutomation(Realm):
         self.zoom_host = None
         self.testname = testname
         self.stop_signal = False
-
+        self.no_browser_precleanup = no_browser_precleanup
+        self.no_browser_postcleanup = no_browser_postcleanup
         # self.path = "/home/lanforge/lanforge-scripts/py-scripts/zoom_automation/test_results"
         self.path = os.path.join(os.getcwd(), "zoom_test_results")
         if not os.path.exists(self.path):
@@ -469,11 +470,11 @@ class ZoomAutomation(Realm):
             self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[0], cmd)
         elif self.real_sta_os_type[0] == 'linux':
 
-            cmd = "su -l lanforge ctzoom.bash %s %s %s" % (self.new_port_list[0], self.upstream_port, "host")
+            cmd = "su -l lanforge ctzoom.bash %s %s %s %s %s" % (self.new_port_list[0], self.upstream_port, "host",str(self.no_browser_precleanup).lower(),str(self.no_browser_postcleanup).lower())
 
             self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[0], cmd)
         elif self.real_sta_os_type[0] == 'macos':
-            cmd = "sudo bash ctzoom.bash %s %s" % (self.upstream_port, "host")
+            cmd = "sudo bash ctzoom.bash %s %s --no_precleanup=%s --no_postcleanup=%s" % (self.upstream_port, "host",str(self.no_browser_precleanup).lower(),str(self.no_browser_postcleanup).lower())
             self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[0], cmd)
         self.generic_endps_profile.start_cx()
         time.sleep(5)
@@ -504,10 +505,10 @@ class ZoomAutomation(Realm):
                 cmd = f"py zoom_client.py --ip {self.upstream_port}"
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
             elif self.real_sta_os_type[i] == 'linux':
-                cmd = "su -l lanforge ctzoom.bash %s %s %s" % (self.new_port_list[i], self.upstream_port, "client")
+                cmd = "su -l lanforge ctzoom.bash %s %s %s %s %s" % (self.new_port_list[i], self.upstream_port, "client",str(self.no_browser_precleanup).lower(),str(self.no_browser_postcleanup).lower())
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
             elif self.real_sta_os_type[i] == 'macos':
-                cmd = "sudo bash ctzoom.bash %s %s" % (self.upstream_port, "client")
+                cmd = "sudo bash ctzoom.bash %s %s %s %s" % (self.upstream_port, "client",str(self.no_browser_precleanup).lower(),str(self.no_browser_postcleanup).lower())
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
 
         self.generic_endps_profile.start_cx()

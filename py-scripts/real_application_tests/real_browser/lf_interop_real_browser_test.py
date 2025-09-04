@@ -163,8 +163,8 @@ class RealBrowserTest(Realm):
                  config=None,
                  selected_groups=None,
                  selected_profiles=None,
-                 browser_precleanup = True,
-                 browser_postcleanup=True):
+                 no_browser_precleanup = True,
+                 no_browser_postcleanup=True):
         super().__init__(lfclient_host=host, lfclient_port=8080)
         # Initialize attributes with provided parameters
         self.host = host
@@ -186,8 +186,8 @@ class RealBrowserTest(Realm):
         self.no_precleanup = no_precleanup
         self.direction = "dl"
         self.dest = "/dev/null"
-        self.browser_precleanup = browser_precleanup
-        self.browser_postcleanup = browser_postcleanup
+        self.no_browser_precleanup = no_browser_precleanup
+        self.no_browser_postcleanup = no_browser_postcleanup
         self.app = Flask(__name__)
         self.app.logger.setLevel(logging.WARNING)
         self.laptop_stats = {}
@@ -252,6 +252,7 @@ class RealBrowserTest(Realm):
         self.device_csv_name = device_csv_name
         self.wait_time = wait_time
         self.config = config
+        self.cx_order_list = []
         self.selected_groups = selected_groups
         self.selected_profiles = selected_profiles
         self.config_obj = None
@@ -334,25 +335,17 @@ class RealBrowserTest(Realm):
         for i in range(0, len(self.laptop_os_types)):
             if self.laptop_os_types[i] == 'windows':
                 cmd = "real_browser.bat --url %s --server %s --duration %s" % (self.url, self.upstream_port, self.duration)
-                if self.browser_precleanup:
-                    cmd+=" --precleanup"
-                if self.browser_postcleanup:
-                    cmd+=" --postcleanup"
+                if self.no_browser_precleanup:
+                    cmd+=" --no_precleanup"
+                if self.no_browser_postcleanup:
+                    cmd+=" --no_postcleanup"
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
             elif self.laptop_os_types[i] == 'linux':
-                cmd = "su -l lanforge  ctrb.bash %s %s %s %s" % (self.new_port_list[i], self.url, self.upstream_port, self.duration)
+                cmd = "su -l lanforge  ctrb.bash %s %s %s %s %s %s" % (self.new_port_list[i], self.url, self.upstream_port, self.duration,str(self.no_browser_precleanup).lower(),str(self.no_browser_postcleanup).lower())
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
-                if self.browser_precleanup:
-                    cmd+=" precleanup"
-                if self.browser_postcleanup:
-                    cmd+=" postcleanup"
             elif self.laptop_os_types[i] == 'macos':
-                cmd = "sudo bash ctrb.bash --url %s --server %s  --duration %s" % (self.url, self.upstream_port, self.duration)
+                cmd = "sudo bash ctrb.bash --url %s --server %s  --duration %s --no_precleanup=%s --no_postcleanup=%s" % (self.url, self.upstream_port, self.duration,str(self.no_browser_precleanup).lower(),str(self.no_browser_postcleanup).lower())
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
-                if self.browser_precleanup:
-                    cmd+=" precleanup"
-                if self.browser_postcleanup:
-                    cmd+=" postcleanup"
 
         if len(self.phone_data) != 0:
             logging.info("Creating Layer-4 endpoints from the user inputs as test parameters")
@@ -973,7 +966,7 @@ class RealBrowserTest(Realm):
             sys.exit(1)
 
         cx_order_list = self.calculate_cx_order_list()
-
+        self.cx_order_list = cx_order_list.copy()
         for i, cx_batch in enumerate(cx_order_list):
             self.start_specific(cx_batch)
             logging.info(f"Test started on Devices with resource Ids : {cx_batch}")
@@ -1705,6 +1698,7 @@ class RealBrowserTest(Realm):
 
                 x_fig_size = 18
                 y_fig_size = len(device_type_data) * 1 + 4
+                print('DEVICE NAMES',device_names)
                 bar_graph_horizontal = lf_bar_graph_horizontal(
                     _data_set=[total_urls],
                     _xaxis_name="URL",
@@ -1720,6 +1714,7 @@ class RealBrowserTest(Realm):
                     _graph_image_name=f"{self.csv_file_names[i]}_urls_per_device",
                     _label=["URLs"]
                 )
+                # print('yaxssss)
                 graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
                 report.set_graph_image(graph_image)
                 report.move_graph_image()
@@ -1851,6 +1846,8 @@ class RealBrowserTest(Realm):
         # Load the CSV file
         data = pd.read_csv(file_path)
 
+
+        print("Absolute path:", os.path.abspath(file_path))
         # Initialize lists to store data
         final_eid_data = []
         mac_data = []

@@ -129,8 +129,9 @@ class Youtube(Realm):
                  upstream_port=None,
                  config=None,
                  selected_groups=None,
-                 selected_profiles=None
-
+                 selected_profiles=None,
+                 no_browser_precleanup = False,
+                 no_browser_postcleanup = False
 
                  ):
         """
@@ -197,7 +198,8 @@ class Youtube(Realm):
         self.config = config
         self.selected_groups = selected_groups
         self.selected_profiles = selected_profiles
-
+        self.no_browser_precleanup = no_browser_precleanup
+        self.no_browser_postcleanup = no_browser_postcleanup
     def stop(self):
         self.stop_signal = True
 
@@ -412,13 +414,17 @@ class Youtube(Realm):
         for i in range(0, len(self.real_sta_os_types)):
             if self.real_sta_os_types[i] == 'windows':
                 cmd = "youtube_stream.bat --url %s --host %s --device_name %s --duration %s --res %s" % (self.url, self.upstream_port, self.real_sta_hostname[i], self.duration, self.resolution)
+                if self.no_browser_precleanup:
+                    cmd += " --no_precleanup"
+                if self.no_browser_precleanup:
+                    cmd += " --no_postcleanup"
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
             elif self.real_sta_os_types[i] == 'linux':
-                cmd = "su -l lanforge  ctyt.bash %s %s %s %s %s %s" % (self.new_port_list[i], self.url, self.upstream_port, self.real_sta_hostname[i], self.duration, self.resolution)
+                cmd = "su -l lanforge  ctyt.bash %s %s %s %s %s %s %s %s" % (self.new_port_list[i], self.url, self.upstream_port, self.real_sta_hostname[i], self.duration, self.resolution,str(self.no_browser_precleanup).lower(),str(self.no_browser_postcleanup).lower())
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
 
             elif self.real_sta_os_types[i] == 'macos':
-                cmd = "sudo bash ctyt.bash --url %s --host %s --device_name %s --duration %s --res %s" % (self.url, self.upstream_port, self.real_sta_hostname[i], self.duration, self.resolution)
+                cmd = "sudo bash ctyt.bash --url %s --host %s --device_name %s --duration %s --res %s --no_precleanup=%s --no_postcleanup=%s" % (self.url, self.upstream_port, self.real_sta_hostname[i], self.duration, self.resolution,str(self.no_browser_precleanup).lower(), str(self.no_browser_postcleanup).lower())
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
 
     def select_real_devices(self, real_devices, real_sta_list=None, base_interop_obj=None):
