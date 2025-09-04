@@ -4218,6 +4218,7 @@ class Candela(Realm):
 
                 if len(self.yt_test_obj.real_sta_list) > 0:
                     logging.info(f"checking real sta list while creating endpionts {self.yt_test_obj.real_sta_list}")
+                    print('HII',self.yt_test_obj.real_sta_list)
                     self.yt_test_obj.create_generic_endp(self.yt_test_obj.real_sta_list)
                 else:
                     logging.info(f"checking real sta list while creating endpionts {self.yt_test_obj.real_sta_list}")
@@ -4268,7 +4269,7 @@ class Candela(Realm):
                 #     self.yt_test_obj.generic_endps_profile.cleanup()
         except Exception as e:
             logging.error(f"Error occured {e}")
-            # traceback.print_exc()
+            traceback.print_exc()
         finally:
             if not ('--help' in sys.argv or '-h' in sys.argv):
                 traceback.print_exc()
@@ -5588,7 +5589,7 @@ def main():
                     func, label = test_map[test_name]
                     args.current = "series"
                     if test_name in ['rb_test','zoom_test','yt_test']:
-                        series_processes.append(multiprocessing.Process(target=run_test_safe(func, f"{label} [Series {idx+1}]", args, candela_apis)))
+                        series_threads.append(multiprocessing.Process(target=run_test_safe(func, f"{label} [Series {idx+1}]", args, candela_apis)))
                     else:                 
                         series_threads.append(threading.Thread(
                             target=run_test_safe(func, f"{label} [Series {idx+1}]", args, candela_apis)
@@ -5605,7 +5606,7 @@ def main():
                     func, label = test_map[test_name]
                     args.current = "parallel"
                     if test_name in ['rb_test','zoom_test','yt_test']:
-                        parallel_processes.append(multiprocessing.Process(target=run_test_safe(func, f"{label} [Parallel {idx+1}]", args, candela_apis)))
+                        parallel_threads.append(multiprocessing.Process(target=run_test_safe(func, f"{label} [Parallel {idx+1}]", args, candela_apis)))
                     else:                 
                         parallel_threads.append(threading.Thread(
                             target=run_test_safe(func, f"{label} [Parallel {idx+1}]", args, candela_apis)
@@ -5623,9 +5624,9 @@ def main():
             for t in series_threads:
                 t.start()
                 t.join()
-            for p in series_processes:
-                p.start()
-                p.join()
+            # for p in series_processes:
+            #     p.start()
+            #     p.join()
             
             # Then run parallel tests
             if len(parallel_threads) != 0:
@@ -5636,25 +5637,25 @@ def main():
 
             for t in parallel_threads:
                 t.start()
-            for p in parallel_processes:
-                p.start()
+            # for p in parallel_processes:
+            #     p.start()
     
             for t in parallel_threads:
                 t.join()
-            for p in parallel_processes:
-                p.join()
+            # for p in parallel_processes:
+            #     p.join()
         else:
             # candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
             # Run parallel tests first
             for t in parallel_threads:
                 t.start()
-            for p in parallel_processes:
-                p.start()
+            # for p in parallel_processes:
+            #     p.start()
     
             for t in parallel_threads:
                 t.join()
-            for p in parallel_processes:
-                p.join()
+            # for p in parallel_processes:
+            #     p.join()
             # candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
             # Then run series tests (one at a time)
             if len(series_threads) != 0:
@@ -5671,9 +5672,9 @@ def main():
             for t in series_threads:
                 t.start()
                 t.join()
-            for p in series_processes:
-                p.start()
-                p.join()
+            # for p in series_processes:
+            #     p.start()
+            #     p.join()
                 # candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
     else:
         logger.error("provide either --paralell_tests or --series_tests")
