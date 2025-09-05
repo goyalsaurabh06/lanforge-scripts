@@ -24,6 +24,7 @@ from lf_kpi_csv import lf_kpi_csv
 import lf_cleanup
 import os
 import sys
+lf_kpi_csv = importlib.import_module("py-scripts.lf_kpi_csv")
 import argparse
 import json
 import traceback
@@ -76,7 +77,7 @@ if 'py-json' not in sys.path:
 
 if 'py-scripts' not in sys.path:
     sys.path.append('/home/lanforge/lanforge-scripts/py-scripts')
-
+lf_report = importlib.import_module("py-scripts.lf_report")
 from station_profile import StationProfile
 import interop_connectivity
 from LANforge import LFUtils
@@ -118,6 +119,7 @@ class Candela(Realm):
         self.cx_order_list = None
         self.gave_incremental=None
         self.result_path = os.getcwd()
+        self.test_count_dict = {}
 
     def api_get(self, endp: str):
         """
@@ -422,6 +424,12 @@ class Candela(Realm):
         if type(device_list) is str:
             filtered_list = ','.join(filtered_list)
         return filtered_list
+
+    def render_overall_report(self,test_name=""):
+        if test_name == "http_test":
+            if test_name not in self.test_count_dict:
+                self.test_count_dict[test_name] = 1
+
 
 
     def run_ping_test(
@@ -1353,6 +1361,235 @@ class Candela(Realm):
                                 dut_sw_version=dut_sw_version, dut_model_num=dut_model_num,
                                 dut_serial_num=dut_serial_num, test_id=test_id,
                                 test_input_infor=test_input_infor, csv_outfile=csv_outfile,report_path=self.result_path)
+            report_path = self.result_path
+            print("Current working directory:", os.getcwd())
+
+            if bands == "Both":
+                num_stations = num_stations * 2
+
+            # report.set_title("HTTP DOWNLOAD TEST")
+            # report.set_date(date)
+            if 'http_test' not in self.test_count_dict:
+                self.test_count_dict['http_test']=0
+            self.test_count_dict['http_test']+=1
+            self.overall_report.set_obj_html(_obj_title=f'HTTP Test ({self.test_count_dict["http_test"]})', _obj="")
+            self.overall_report.set_table_title("Test Setup Information")
+            self.overall_report.build_table_title()
+            self.overall_report.test_setup_table(value="Test Setup Information", test_setup_data=test_setup_info)
+
+            # self.overall_report.set_obj_html(
+            #     "Objective",
+            #     "The HTTP Download Test is designed to verify that N clients connected on specified band can "
+            #     "download some amount of file from HTTP server and measures the "
+            #     "time taken by the client to Download the file."
+            # )
+            # self.overall_report.build_objective()
+
+            # self.overall_report.set_obj_html(
+            #     "No of times file Downloads",
+            #     "The below graph represents number of times a file downloads for each client"
+            #     ". X- axis shows “No of times file downloads and Y-axis shows "
+            #     "Client names."
+            # )
+            # self.overall_report.build_objective()
+
+            graph2 = http.graph_2(dataset2, lis=lis, bands=bands)
+            print("graph name {}".format(graph2))
+            self.overall_report.set_graph_image(graph2)
+            self.overall_report.set_csv_filename(graph2)
+            self.overall_report.move_csv_file()
+            self.overall_report.move_graph_image()
+            self.overall_report.build_graph()
+
+            self.overall_report.set_obj_html(
+                "Average time taken to download file ",
+                "The below graph represents average time taken to download for each client  "
+                ".  X- axis shows “Average time taken to download a file ” and Y-axis shows "
+                "Client names."
+            )
+            self.overall_report.build_objective()
+
+            graph = http.generate_graph(dataset=dataset, lis=lis, bands=bands)
+            self.overall_report.set_graph_image(graph)
+            self.overall_report.set_csv_filename(graph)
+            self.overall_report.move_csv_file()
+            self.overall_report.move_graph_image()
+            self.overall_report.build_graph()
+
+            # if http.dowebgui and http.get_live_view:
+            #     print('total floors', http.total_floors)
+            #     for floor in range(0, int(http.total_floors)):
+            #         script_dir = os.path.dirname(os.path.abspath(__file__))
+            #         throughput_image_path = os.path.join(
+            #             script_dir, "heatmap_images", f"http_{http.test_name}_{floor+1}.png"
+            #         )
+            #         print('image_path', f"{http.test_name}_{floor+1}.png")
+
+            #         timeout = 60  # seconds
+            #         start_time = time.time()
+            #         while not (os.path.exists(throughput_image_path)):
+            #             if time.time() - start_time > timeout:
+            #                 print("Timeout: Images not found within 60 seconds.")
+            #                 break
+            #             time.sleep(1)
+            #         if os.path.exists(throughput_image_path):
+            #             report.set_custom_html('<div style="page-break-before: always;"></div>')
+            #             report.build_custom()
+            #             report.set_custom_html(f'<img src="file://{throughput_image_path}"></img>')
+            #             report.build_custom()
+
+            self.overall_report.set_obj_html(
+                "Download Time Table Description",
+                "This Table will provide you information of the "
+                "minimum, maximum and the average time taken by clients to download a webpage in seconds"
+            )
+            self.overall_report.build_objective()
+
+            http.response_port = http.local_realm.json_get("/port/all")
+            http.channel_list, http.mode_list, http.ssid_list = [], [], []
+
+            if http.client_type == "Real":
+                http.devices = http.devices_list
+                for interface in http.response_port['interfaces']:
+                    for port, port_data in interface.items():
+                        if port in http.port_list:
+                            http.channel_list.append(str(port_data['channel']))
+                            http.mode_list.append(str(port_data['mode']))
+                            http.ssid_list.append(str(port_data['ssid']))
+            elif http.client_type == "Virtual":
+                http.devices = http.station_list[0]
+                for interface in http.response_port['interfaces']:
+                    for port, port_data in interface.items():
+                        if port in http.station_list[0]:
+                            http.channel_list.append(str(port_data['channel']))
+                            http.mode_list.append(str(port_data['mode']))
+                            http.macid_list.append(str(port_data['mac']))
+                            http.ssid_list.append(str(port_data['ssid']))
+
+            # Processing result_data
+            z, z1, z2 = [], [], []
+            for fcc in list(result_data.keys()):
+                z.extend([str(round(i / 1000, 1)) for i in result_data[fcc]["min"]])
+                z1.extend([str(round(i / 1000, 1)) for i in result_data[fcc]["max"]])
+                z2.extend([str(round(i / 1000, 1)) for i in result_data[fcc]["avg"]])
+
+            download_table_value_dup = {"Minimum": z, "Maximum": z1, "Average": z2}
+            download_table_value = {"Band": bands, "Minimum": z, "Maximum": z1, "Average": z2}
+
+            # KPI reporting
+            kpi_path = self.overall_report.get_report_path()
+            print("kpi_path :{kpi_path}".format(kpi_path=kpi_path))
+
+            kpi_csv = lf_kpi_csv.lf_kpi_csv(
+                _kpi_path=kpi_path,
+                _kpi_test_rig=test_rig,
+                _kpi_test_tag=test_tag,
+                _kpi_dut_hw_version=dut_hw_version,
+                _kpi_dut_sw_version=dut_sw_version,
+                _kpi_dut_model_num=dut_model_num,
+                _kpi_dut_serial_num=dut_serial_num,
+                _kpi_test_id=test_id
+            )
+            kpi_csv.kpi_dict['Units'] = "Mbps"
+            for band in range(len(download_table_value["Band"])):
+                kpi_csv.kpi_csv_get_dict_update_time()
+                kpi_csv.kpi_dict['Graph-Group'] = "Webpage Download {band}".format(
+                    band=download_table_value['Band'][band])
+                kpi_csv.kpi_dict['short-description'] = "Webpage download {band} Minimum".format(
+                    band=download_table_value['Band'][band])
+                kpi_csv.kpi_dict['numeric-score'] = "{min}".format(min=download_table_value['Minimum'][band])
+                kpi_csv.kpi_csv_write_dict(kpi_csv.kpi_dict)
+
+                kpi_csv.kpi_dict['short-description'] = "Webpage download {band} Maximum".format(
+                    band=download_table_value['Band'][band])
+                kpi_csv.kpi_dict['numeric-score'] = "{max}".format(max=download_table_value['Maximum'][band])
+                kpi_csv.kpi_csv_write_dict(kpi_csv.kpi_dict)
+
+                kpi_csv.kpi_dict['short-description'] = "Webpage download {band} Average".format(
+                    band=download_table_value['Band'][band])
+                kpi_csv.kpi_dict['numeric-score'] = "{avg}".format(avg=download_table_value['Average'][band])
+                kpi_csv.kpi_csv_write_dict(kpi_csv.kpi_dict)
+
+            if csv_outfile is not None:
+                current_time = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
+                csv_outfile = "{}_{}-test_l3_longevity.csv".format(csv_outfile, current_time)
+                csv_outfile = self.overall_report.file_add_path(csv_outfile)
+                print("csv output file : {}".format(csv_outfile))
+
+            test_setup = pd.DataFrame(download_table_value_dup)
+            self.overall_report.set_table_dataframe(test_setup)
+            self.overall_report.build_table()
+
+            if http.group_name:
+                self.overall_report.set_table_title("Overall Results for Groups")
+            else:
+                self.overall_report.set_table_title("Overall Results")
+            self.overall_report.build_table_title()
+
+            if http.client_type == "Real":
+                if http.expected_passfail_value or http.device_csv_name:
+                    test_input_list, pass_fail_list = http.get_pass_fail_list(dataset2)
+
+                if http.group_name:
+                    for key, val in http.group_device_map.items():
+                        if http.expected_passfail_value or http.device_csv_name:
+                            dataframe = http.generate_dataframe(
+                                val, http.devices, http.macid_list, http.channel_list,
+                                http.ssid_list, http.mode_list, dataset2, test_input_list,
+                                dataset, dataset1, rx_rate, pass_fail_list
+                            )
+                        else:
+                            dataframe = http.generate_dataframe(
+                                val, http.devices, http.macid_list, http.channel_list,
+                                http.ssid_list, http.mode_list, dataset2, [], dataset,
+                                dataset1, rx_rate, []
+                            )
+                        if dataframe:
+                            self.overall_report.set_obj_html("", "Group: {}".format(key))
+                            self.overall_report.build_objective()
+                            dataframe1 = pd.DataFrame(dataframe)
+                            self.overall_report.set_table_dataframe(dataframe1)
+                            self.overall_report.build_table()
+                else:
+                    dataframe = {
+                        " Clients": http.devices,
+                        " MAC ": http.macid_list,
+                        " Channel": http.channel_list,
+                        " SSID ": http.ssid_list,
+                        " Mode": http.mode_list,
+                        " No of times File downloaded ": dataset2,
+                        " Average time taken to Download file (ms)": dataset,
+                        " Bytes-rd (Mega Bytes) ": dataset1,
+                        "Rx Rate (Mbps)": rx_rate,
+                        "Failed url's": http.data["total_err"]
+                    }
+                    if http.expected_passfail_value or http.device_csv_name:
+                        dataframe[" Expected value of no of times file downloaded"] = test_input_list
+                        dataframe["Status"] = pass_fail_list
+                    dataframe1 = pd.DataFrame(dataframe)
+                    self.overall_report.set_table_dataframe(dataframe1)
+                    self.overall_report.build_table()
+            else:
+                dataframe = {
+                    " Clients": http.devices,
+                    " MAC ": http.macid_list,
+                    " Channel": http.channel_list,
+                    " SSID ": http.ssid_list,
+                    " Mode": http.mode_list,
+                    " No of times File downloaded ": dataset2,
+                    " Average time taken to Download file (ms)": dataset,
+                    " Bytes-rd (Mega Bytes) ": dataset1
+                }
+                dataframe1 = pd.DataFrame(dataframe)
+                self.overall_report.set_table_dataframe(dataframe1)
+                self.overall_report.build_table()
+
+            # self.overall_report.build_footer()
+            # html_file = self.overall_report.write_html()
+            # print("returned file {}".format(html_file))
+            # print(html_file)
+            # self.overall_report.write_pdf()
+
             http.postcleanup()
             # FOR WEBGUI, filling csv at the end to get the last terminal logs
             if dowebgui:
@@ -2084,6 +2321,7 @@ class Candela(Realm):
                                 dut_serial_num=args.dut_serial_num, test_id=args.test_id,
                                 bands=args.bands, csv_outfile=args.csv_outfile, local_lf_report_dir=args.local_lf_report_dir,report_path=self.result_path)
 
+        
         if args.dowebgui:
             obj.copy_reports_to_home_dir()
         
@@ -4830,6 +5068,17 @@ class Candela(Realm):
         #             self.zoom_test_obj.generic_endps_profile.set_cmd(self.zoom_test_obj.generic_endps_profile.created_endp[i], cmd)
 
         #     self.zoom_test_obj.generic_endps_profile.start_cx()
+    
+
+    def set_for_report(self):
+        self.overall_report = lf_report.lf_report(_results_dir_name="Base_Class_Test_Overall_report", _output_html="base_class_overall.html",
+                                         _output_pdf="base_class_overall.pdf", _path=self.result_path)
+        self.report_path_date_time = self.overall_report.get_path_date_time()
+        self.overall_report.set_title("Candela Base Class")
+        self.overall_report.set_date(datetime.now())
+        self.overall_report.build_banner()
+        self.overall_report.set_custom_html("<div id='for_table'></div>")
+        self.overall_report.build_custom()
 
 
 
@@ -5618,6 +5867,7 @@ def main():
         logging.info(f"Parallel Processes: {parallel_processes}")
         logging.info(f"Series Processes: {series_processes}")
         # Execute based on order priority
+        candela_apis.set_for_report()
         if args.order_priority == 'series':
             # candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
             # Run series tests first (one at a time)
@@ -5690,7 +5940,13 @@ def main():
     # You can also access the test results dataframe:
     print("\nTest Results Summary:")
     print(test_results_df)
-
+    candela_apis.overall_report.insert_table_at_marker(test_results_df,"for_table")
+    candela_apis.overall_report.build_footer()
+    html_file = candela_apis.overall_report.write_html()
+    print("returned file {}".format(html_file))
+    print(html_file)
+    candela_apis.overall_report.write_pdf()
+    # generate_overall_report(test_results_df)
 
     # threads = []
 

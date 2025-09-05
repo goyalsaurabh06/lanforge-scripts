@@ -998,6 +998,15 @@ function copyTextToClipboard(ele) {
             date=self.date,
         )
         self.html += self.banner_html
+    
+    def insert_table_at_marker(self, df, marker_id="for_table"):
+        html_extra = df.to_html(index=False, justify='center')
+        marker = f"<div id='{marker_id}'></div>"
+        if marker not in self.html:
+            raise ValueError(f"Marker div with id '{marker_id}' not found in HTML")
+
+        # Replace marker with table HTML
+        self.html = self.html.replace(marker, html_extra)
 
 
 # Unit Test
