@@ -1174,7 +1174,7 @@ class Ping(Realm):
             report.build_table()
 
         # closing
-        report.build_custom()
+        # report.build_custom()
         report.build_footer()
         report.write_html()
         report.write_pdf()
