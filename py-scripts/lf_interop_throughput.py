@@ -1513,12 +1513,6 @@ class Throughput(Realm):
         logger.debug("{}.csv".format(graph_image_name))
 
         return f"{graph_image_name}.png"
-    
-    def convert_to_table(self,configured_devices_check):
-        return {
-            "Username": list(configured_devices_check.keys()),
-            "Configuration Status": ["Pass" if status else "Fail" for status in configured_devices_check.values()]
-        }
 
     def convert_to_table(self, configured_devices_check):
         """
@@ -2157,9 +2151,6 @@ class Throughput(Realm):
                 devices_on_running.append(self.real_client_list[data1[i][-1] - 1].split(" ")[-1])
                 # If the device fails to configure, skip its data in the report
                 if self.interopability_config and devices_on_running[0] in self.configured_devices_check and not self.configured_devices_check[devices_on_running[0]]:
-                    continue
-
-                if not self.default_config and devices_on_running[0] in self.configured_devices_check and not self.configured_devices_check[devices_on_running[0]]:
                     continue
 
                 for k in devices_on_running:
