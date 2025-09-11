@@ -197,6 +197,11 @@ class Youtube(Realm):
         self.config = config
         self.selected_groups = selected_groups
         self.selected_profiles = selected_profiles
+        self.serial_list = []
+        self.user_list = []
+        self.lanforge_port_list = set()
+        self.lanforge_os_type = set()
+        self.android = 0
 
     def stop(self):
         self.stop_signal = True
@@ -226,71 +231,6 @@ class Youtube(Realm):
         self.generic_endps_profile.created_endp = []
         # Log cleanup completion
 
-    def execute_youtube_test(self, duration, do_webUI):
-        """
-        Execute the YouTube test for monitoring
-
-        Args:
-            duration (int): Duration of the test in minutes.
-            do_webUI (bool): Flag to determine if the test is triggered from the web UI.
-        """
-        # Wait for 10 seconds before starting the test
-        self.clear_previous_data()
-
-        self.start_generic()
-        time.sleep(5)
-
-        # Initialize variables
-        self.start_time = datetime.now()
-        self.est_end_time = self.start_time + timedelta(minutes=duration, seconds=60)
-        self.end_time_webgui = [False] * len(self.device_names)
-        self.keys = self.generic_endps_profile.created_cx
-        self.all_stop = False
-
-        # Ensure initial data is fetched
-        initial_data = self.get_data_from_api()
-        while not initial_data:
-            initial_data = self.get_data_from_api()
-            time.sleep(1)
-
-        # Monitoring loop
-        while not self.all_stop:
-            if do_webUI:
-                stop_value = self.set_webUI_stop()
-                if stop_value == "Completed":
-                    break
-
-            self._monitor_test(do_webUI)
-
-            time.sleep(1)  # Adjust sleep time as needed
-
-        logging.info("Duration ended. Stopping the test.")
-
-    def _monitor_test(self, do_webUI):
-        """
-        Monitor the YouTube test execution and handle stop conditions.
-
-        Args:
-            do_webUI (bool): Flag to determine if the test is triggered from the web UI.
-        """
-        initial_data = self.get_data_from_api()
-        if initial_data:
-            for i in range(len(self.device_names)):
-                stop_state = initial_data['result'].get(self.device_names[i], {}).get('stop', False)
-                if stop_state:
-                    self.end_time_webgui[i] = True
-                if all(self.end_time_webgui) or datetime.now() >= self.est_end_time:
-                    self.all_stop = True
-                    return
-
-            for i in range(len(self.device_names)):
-                if not self.end_time_webgui[i]:
-                    new_key = self.keys[i]
-                    if new_key.startswith("CX_"):
-                        new_key = self.keys[i][3:]
-                    response = self.json_get(f'/generic/{new_key}')
-                    if response['endpoint']['status'] in ['WAITING', 'Stopped']:
-                        self.end_time_webgui[i] = True
 
     def check_tab_exists(self):
         """
@@ -307,19 +247,53 @@ class Youtube(Realm):
             return False
         else:
             return True
+    
+    def get_android_device_data(self):
+        interop_data = self.json_get('/adb')
+        # print("checking interop data")
+        # print(interop_data)
+        interop_mobile_data = interop_data.get('devices', {})
+        # print("checking interop mobile data")
+        # print(interop_mobile_data)
 
-    def create_generic_endp(self, query_resources):
-        """
-        Creates generic endpoints for the specified resources.
-        Args:
-        - query_resources (list): List of resources to create endpoints for.
-        Steps:
-        1. Retrieves information about all resources using a JSON GET request.
-        2. Matches user-specified resources with available resources and retrieves necessary details (eid, ctrl-ip, hostname).
-        3. Retrieves port information using a JSON GET request.
-        4. Matches ports associated with retrieved resources and constructs a list of matching ports.
-        5. Creates generic endpoints using the retrieved ports and other parameters.
-        """
+        if isinstance(interop_mobile_data, dict):
+            for user in self.user_list:
+                if user != '':
+                    if interop_mobile_data.get('user-name') == user:
+
+                        serial = interop_mobile_data.get('name', '')
+                        resource = serial.split('.')[1]
+                        serial_no = serial.split('.')[2]
+                        self.serial_list.append(serial_no)
+                        lanforge_port = f"1.{resource}.eth0"
+                        self.lanforge_port_list.add(lanforge_port)
+                        self.lanforge_os_type.add("Linux")
+        
+        else:
+            for user in self.user_list:
+                if user != '':
+                    # self.serial_list.append('')
+                    # self.lanforge_port_list.add('')
+
+                    for mobile_device in interop_mobile_data:
+                        # print("checking mobile device data")
+                        # print(type(mobile_device))
+                        # print("laxmi narayana", mobile_device)
+                        for serial, device_data in mobile_device.items():
+                            if device_data.get('user-name') == user:
+                                resource = serial.split('.')[1]
+                                serial_no = serial.split('.')[2]
+                                self.serial_list.append(serial_no)
+                                lanforge_port = f"1.{resource}.eth0"
+                                self.lanforge_port_list.add(lanforge_port)
+                                self.lanforge_os_type.add("Linux")
+                                break
+        
+        self.lanforge_port_list = list(self.lanforge_port_list)
+        self.lanforge_os_type = list(self.lanforge_os_type)
+        self.serial_list_str = ','.join(self.serial_list)
+    
+    def get_device_data(self):
         ports_list = []
         eid = ""
         resource_ip = ""
@@ -346,6 +320,7 @@ class Youtube(Realm):
                                     resource_ip = resource_values['ctrl-ip']
                                     self.device_names.append(resource_values['hostname'])
                                     ports_list.append({'eid': eid, 'ctrl-ip': resource_ip})
+                                    self.user_list.append(resource_values['user'])
                                     break
                             else:
                                 # Continue outer loop only if no break occurred
@@ -402,6 +377,65 @@ class Youtube(Realm):
                 break
 
         self.new_port_list = [item.split('.')[2] for item in self.real_sta_list]
+    
+    def process_device_data(self):
+        self.real_sta_os_types = []
+        self.real_sta_hostname = []
+
+        serial_idx = 0  # separate counter just for Android devices
+
+        for real_sta_name, sta_info in self.real_sta_data_dict.items():
+            os_type = sta_info.get('ostype', '')
+            self.real_sta_os_types.append(os_type)
+
+            if os_type.lower() == "android":
+                if serial_idx < len(self.serial_list):
+                    self.real_sta_hostname.append(self.serial_list[serial_idx])
+                    serial_idx += 1  # advance only for Androids
+                else:
+                    self.real_sta_hostname.append("NA")
+            else:
+                self.real_sta_hostname.append(sta_info.get('hostname', 'NA'))
+        
+        self.hostname_os_combination = [
+            f"{hostname} ({os_type})"
+            for hostname, os_type in zip(self.real_sta_hostname, self.real_sta_os_types)
+        ]
+
+        print("checking real sta hostname")
+        print(self.real_sta_hostname)
+        print("checking real sta os types")
+        print(self.real_sta_os_types)
+
+
+        for i in range(0, len(self.real_sta_os_types)):
+
+            if self.real_sta_os_types[i] == 'windows':
+                self.windows = self.windows + 1
+            elif self.real_sta_os_types[i] == 'linux':
+                self.linux = self.linux + 1
+            elif self.real_sta_os_types[i] == 'macos':
+                self.mac = self.mac + 1
+            elif self.real_sta_os_types[i] == 'android':
+                self.android = self.android + 1
+
+    def create_generic_endp(self, query_resources):
+        """
+        Creates generic endpoints for the specified resources.
+        Args:
+        - query_resources (list): List of resources to create endpoints for.
+        Steps:
+        1. Retrieves information about all resources using a JSON GET request.
+        2. Matches user-specified resources with available resources and retrieves necessary details (eid, ctrl-ip, hostname).
+        3. Retrieves port information using a JSON GET request.
+        4. Matches ports associated with retrieved resources and constructs a list of matching ports.
+        5. Creates generic endpoints using the retrieved ports and other parameters.
+        """
+        self.get_device_data()
+        self.get_android_device_data()
+        self.process_device_data()
+        
+        
 
         if self.generic_endps_profile.create(ports=self.real_sta_list, sleep_time=.5, real_client_os_types=self.real_sta_os_types,):
             logging.info('Real client generic endpoint creation completed.')
@@ -420,6 +454,27 @@ class Youtube(Realm):
             elif self.real_sta_os_types[i] == 'macos':
                 cmd = "sudo bash ctyt.bash --url %s --host %s --device_name %s --duration %s --res %s" % (self.url, self.upstream_port, self.real_sta_hostname[i], self.duration, self.resolution)
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
+        
+        if self.generic_endps_profile.create(ports=self.lanforge_port_list, sleep_time=.5, real_client_os_types=self.lanforge_os_type,):
+            logging.info('Real client generic endpoint creation completed.')
+        else:
+            logging.error('Real client generic endpoint creation failed.')
+            exit(0)
+        
+        print("checking created endpoints")
+        print(self.generic_endps_profile.created_endp)
+
+        for i in range(0, len(self.lanforge_os_type)):
+            cmd = (
+                "python3 youtube_android_test.py --url %s --duration %s --devices %s --upstream_port %s "
+                "| tee youtube_test.log"
+            ) % (self.url, self.duration, self.serial_list_str, self.upstream_port)
+
+            print("checking command")
+            print(cmd)
+            self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[-(i + 1)], cmd)
+
+
 
     def select_real_devices(self, real_devices, real_sta_list=None, base_interop_obj=None):
         final_device_list = []
@@ -494,24 +549,12 @@ class Youtube(Realm):
                 continue
 
             self.real_sta_data_dict[sta_name] = real_devices.devices_data[sta_name]
+        # print("checking real sta data dict")
+        # print(self.real_sta_data_dict)
+        print("checking real sta list")
+        print(self.real_sta_list)
 
-        # Retrieve OS types and hostnames
-        self.real_sta_os_types = [self.real_sta_data_dict[real_sta_name]['ostype'] for real_sta_name in self.real_sta_data_dict]
-        self.real_sta_hostname = [self.real_sta_data_dict[real_sta_name]['hostname'] for real_sta_name in self.real_sta_data_dict]
-
-        self.hostname_os_combination = [
-            f"{hostname} ({os_type})"
-            for hostname, os_type in zip(self.real_sta_hostname, self.real_sta_os_types)
-        ]
-
-        for i in range(0, len(self.real_sta_os_types)):
-
-            if self.real_sta_os_types[i] == 'windows':
-                self.windows = self.windows + 1
-            elif self.real_sta_os_types[i] == 'linux':
-                self.linux = self.linux + 1
-            elif self.real_sta_os_types[i] == 'macos':
-                self.mac = self.mac + 1
+        
 
         return self.real_sta_list
 
@@ -625,7 +668,7 @@ class Youtube(Realm):
                 data = request.json
 
                 # Clear data if requested
-                if data.get("clear_data"):
+                if data.get("clear_data", False):
                     self.stats_api_response = {}
                     return jsonify({"message": "Data cleared"}), 200
 
@@ -642,6 +685,8 @@ class Youtube(Realm):
                         **stats,
                         "stop": stop
                     }
+                # print("checking stats api response")
+                # print(self.stats_api_response)
 
                 return jsonify({"message": "Stats updated"}), 200
 
@@ -790,7 +835,7 @@ class Youtube(Realm):
                 'Duration (in Minutes)': self.duration,
                 'Resolution': self.resolution,
                 'Configured Devices': self.hostname_os_combination,
-                'No of Devices :': f' Total({len(self.real_sta_os_types)}) : W({self.windows}),L({self.linux}),M({self.mac})',
+                'No of Devices :': f' Total({len(self.real_sta_os_types)}) : W({self.windows}),L({self.linux}),M({self.mac}),A({self.android})',
                 "Video URL": self.url,
                 "SSID": self.ssid,
                 "Security": self.security,
@@ -808,7 +853,7 @@ class Youtube(Realm):
                 'Resolution': self.resolution,
                 "Configuration": gp_map,
                 'Configured Devices': self.hostname_os_combination,
-                'No of Devices :': f' Total({len(self.real_sta_os_types)}) : W({self.windows}),L({self.linux}),M({self.mac})',
+                'No of Devices :': f' Total({len(self.real_sta_os_types)}) : W({self.windows}),L({self.linux}),M({self.mac}),A({self.android})',
                 "Video URL": self.url,
 
             }
@@ -819,7 +864,7 @@ class Youtube(Realm):
                 'Duration (in Minutes)': self.duration,
                 'Resolution': self.resolution,
                 'Configured Devices': self.hostname_os_combination,
-                'No of Devices :': f' Total({len(self.real_sta_os_types)}) : W({self.windows}),L({self.linux}),M({self.mac})',
+                'No of Devices :': f' Total({len(self.real_sta_os_types)}) : W({self.windows}),L({self.linux}),M({self.mac}),A({self.android})',
                 "Video URL": self.url,
 
             }
@@ -931,12 +976,8 @@ class Youtube(Realm):
 
         original_dir = os.getcwd()
 
-        if self.do_webUI:
-            csv_files = [f for f in os.listdir(self.report_path_date_time) if f.endswith('.csv')]
-            os.chdir(self.report_path_date_time)
-        else:
-            csv_files = [f for f in os.listdir(self.report_path_date_time) if f.endswith('.csv')]
-            os.chdir(self.report_path_date_time)
+        csv_files = [f for f in os.listdir(self.report_path_date_time) if f.endswith('.csv')]
+        os.chdir(self.report_path_date_time)
 
         for file_name in csv_files:
             data = pd.read_csv(file_name)
@@ -1005,7 +1046,7 @@ class Youtube(Realm):
 
                 endp_status = generic_endpoint["endpoint"].get("status", "")
 
-                if endp_status not in ["Stopped", "WAITING", "NO-CX"]:
+                if endp_status == "Run":
                     return False
 
             return True
@@ -1124,6 +1165,25 @@ class Youtube(Realm):
 
         self.device_list = filtered_list
         return filtered_list
+    
+    def update_webui(self):
+        if len(self.real_sta_hostname) == 0:
+            logging.error("No device is available to run the test")
+            obj = {
+                "status": "Stopped",
+                "configuration_status": "configured"
+            }
+            self.updating_webui_runningjson(obj)
+            return
+        else:
+            obj = {
+                "configured_devices": self.real_sta_hostname,
+                "configuration_status": "configured",
+                "no_of_devices": f' Total({len(self.real_sta_os_types)}) : W({self.windows}),L({self.linux}),M({self.mac}),A({self.android})',
+                "device_list": self.hostname_os_combination
+
+            }
+            self.updating_webui_runningjson(obj)
 
 
 def main():
@@ -1461,26 +1521,6 @@ NOTES:
                 formatted_parts = ['.'.join(parts) for parts in extracted_parts]
                 youtube.select_real_devices(real_devices=Devices, real_sta_list=formatted_parts, base_interop_obj=Devices)
 
-                if args.do_webUI:
-
-                    if len(youtube.real_sta_hostname) == 0:
-                        logging.error("No device is available to run the test")
-                        obj = {
-                            "status": "Stopped",
-                            "configuration_status": "configured"
-                        }
-                        youtube.updating_webui_runningjson(obj)
-                        return
-                    else:
-                        obj = {
-                            "configured_devices": youtube.real_sta_hostname,
-                            "configuration_status": "configured",
-                            "no_of_devices": f' Total({len(youtube.real_sta_os_types)}) : W({youtube.windows}),L({youtube.linux}),M({youtube.mac})',
-                            "device_list": youtube.hostname_os_combination
-
-                        }
-                        youtube.updating_webui_runningjson(obj)
-
             # Perform pre-test cleanup if not skipped
             if not args.no_pre_cleanup:
                 youtube.cleanup()
@@ -1497,6 +1537,9 @@ NOTES:
                 logging.info(f"checking real sta list while creating endpionts {youtube.real_sta_list}")
                 logging.error("No Real Devies Available")
                 exit(0)
+            
+            if args.do_webUI:
+                youtube.update_webui()
 
             logging.info("TEST STARTED")
             logging.info('Running the Youtube Streaming test for {} minutes'.format(duration))
@@ -1547,8 +1590,8 @@ NOTES:
         if not ('--help' in sys.argv or '-h' in sys.argv):
             youtube.stop()
             # Stopping the Youtube test
-            if do_webUI:
-                youtube.stop_test_yt()
+            # if do_webUI:
+            #     youtube.stop_test_yt()
             logging.info("Waiting for Cleanup of Browsers in Devices")
             time.sleep(10)
 
