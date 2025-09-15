@@ -125,6 +125,7 @@ scripts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../lo
 sys.path.insert(0, scripts_path)
 from test_automation import Automation
 
+import traceback
 
 if sys.version_info[0] != 3:
     print("This script requires Python 3")
