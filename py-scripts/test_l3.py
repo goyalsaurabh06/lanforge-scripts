@@ -8888,6 +8888,8 @@ and generate a report.
             with open(p) as f:
                 iot_summary = json.load(f)
 
+    if args.dowebgui:
+        ip_var_test.webgui_finalize()
     # Generate and write out test report
     logger.info("Generating test report")
     if args.real:
