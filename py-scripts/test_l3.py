@@ -6133,7 +6133,6 @@ class L3VariableTime(Realm):
             #  As of now for real devices added filter_mlt_data() filters the data considering MLT in cx and avoiding other cx's in l3 endps tab(QOS,THROUGHPUT) and get updated in self.client_dict_A.
             # so the same will be copied to self.client_dict_B for report purposes
             self.client_dict_B = copy.deepcopy(self.client_dict_A)
-
         # graph BK A
         # try to do as a loop
         tos_list = ['BK', 'BE', 'VI', 'VO']
