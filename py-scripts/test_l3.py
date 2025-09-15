@@ -6627,7 +6627,6 @@ class L3VariableTime(Realm):
         df1 = pd.DataFrame(self.overall)
         df1.to_csv('{}/overall_multicast_throughput.csv'.format(self.result_dir), index=False)
 
-        self.copy_reports_to_home_dir()
 
     def get_pass_fail_list(self, tos, up, down):
         res_list = []
@@ -8852,6 +8851,8 @@ and generate a report.
             with open(p) as f:
                 iot_summary = json.load(f)
 
+    if args.dowebgui:
+        ip_var_test.webgui_finalize()
     # Generate and write out test report
     logger.info("Generating test report")
     if args.real:
@@ -8884,7 +8885,7 @@ and generate a report.
 
     # Run WebGUI-specific post test logic
     if args.dowebgui:
-        ip_var_test.webgui_finalize()
+        ip_var_test.copy_reports_to_home_dir()
 
     if test_passed:
         ip_var_test.exit_success()
