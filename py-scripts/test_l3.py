@@ -5988,9 +5988,9 @@ class L3VariableTime(Realm):
         It waits up to **60 seconds** for each image. If an image is found,
         it's added to the `report` on a new page; otherwise, it's skipped.
         """
-        for floor in range(0,int(self.total_floors)):
-            throughput_image_path = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_throughput_{floor+1}.png")
-            rssi_image_path = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_rssi_{floor+1}.png")
+        for floor in range(0, int(self.total_floors)):
+            throughput_image_path = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_throughput_{floor + 1}.png")
+            rssi_image_path = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_rssi_{floor + 1}.png")
             timeout = 60  # seconds
             start_time = time.time()
 
