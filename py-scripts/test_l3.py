@@ -5988,11 +5988,31 @@ class L3VariableTime(Realm):
         It waits up to **60 seconds** for each image. If an image is found,
         it's added to the `report` on a new page; otherwise, it's skipped.
         """
-        for floor in range(0, int(self.total_floors)):
-            throughput_image_path = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_throughput_{floor + 1}.png")
-            rssi_image_path = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_rssi_{floor + 1}.png")
+        for floor in range(0,int(self.total_floors)):
+            throughput_image_path = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_throughput_{floor+1}.png")
+            rssi_image_path = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_rssi_{floor+1}.png")
             timeout = 60  # seconds
             start_time = time.time()
+
+            while not (os.path.exists(throughput_image_path) and os.path.exists(rssi_image_path)):
+                if time.time() - start_time > timeout:
+                    print("Timeout: Images not found within 60 seconds.")
+                    break
+                time.sleep(1)
+            while not os.path.exists(throughput_image_path) and not os.path.exists(rssi_image_path):
+                if os.path.exists(throughput_image_path) and os.path.exists(rssi_image_path):
+                    break
+            if os.path.exists(throughput_image_path):
+                self.report.set_custom_html('<div style="page-break-before: always;"></div>')
+                self.report.build_custom()
+                self.report.set_custom_html(f'<img src="file://{throughput_image_path}"></img>')
+                self.report.build_custom()
+
+            if os.path.exists(rssi_image_path):
+                self.report.set_custom_html('<div style="page-break-before: always;"></div>')
+                self.report.build_custom()
+                self.report.set_custom_html(f'<img src="file://{rssi_image_path}"></img>')
+                self.report.build_custom()
 
             while not (os.path.exists(throughput_image_path) and os.path.exists(rssi_image_path)):
                 if time.time() - start_time > timeout:
