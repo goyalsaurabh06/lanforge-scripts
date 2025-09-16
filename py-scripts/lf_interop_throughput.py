@@ -111,18 +111,17 @@
         Command Line Interface to run the test with individual configuration
         python3 lf_interop_throughput.py --mgr 192.168.204.74 --mgr_port 8080 --upstream_port eth0 --test_duration 30s --traffic_type lf_udp --ssid NETGEAR_2G_wpa2
         --passwd Password@123 --security wpa2 --do_interopability --device_list 1.15,1.400 --download 10000000 --interopability_config
-    
+
     TO PERFORM TEST WITH IOT:
-        
         EXAMPLE-1:
         Command Line Interface to run the Test along with IOT without device list
-        python3 -u lf_interop_throughput.py --mgr 192.168.204.75 --upstream_port eth1 --ssid "" --passwd "" --traffic_type lf_tcp --download 10000000 --upload 0 
-        --test_duration 60  --packet_size 1500 --load_type wc_per_client_load --precleanup --postcleanup --iot_test --iot_iterations 1 --iot_delay 5 --iot_testname "testname"
+        python3 -u lf_interop_throughput.py --mgr 192.168.204.75 --upstream_port eth1 --ssid "" --passwd "" --traffic_type lf_tcp --download 10000000 --upload 0 --test_duration 60
+        --packet_size 1500 --load_type wc_per_client_load --precleanup --postcleanup --iot_test --iot_iterations 1 --iot_delay 5 --iot_testname "testname"
 
         EXAMPLE-2:
         Command Line Interface to run the Test along with IOT with device list
-        python3 -u lf_interop_throughput.py --mgr 192.168.204.75 --upstream_port eth1 --ssid "" --passwd "" --traffic_type lf_tcp --download 10000000 --upload 0 
-        --test_duration 60 --device_list 1.400 --test_name testname --packet_size 1500 --load_type wc_per_client_load --precleanup --postcleanup --iot_test --iot_iterations 1 
+        python3 -u lf_interop_throughput.py --mgr 192.168.204.75 --upstream_port eth1 --ssid "" --passwd "" --traffic_type lf_tcp --download 10000000 --upload 0
+        --test_duration 60 --device_list 1.400 --test_name testname --packet_size 1500 --load_type wc_per_client_load --precleanup --postcleanup --iot_test --iot_iterations 1
         --iot_delay 5 --iot_device_list "switch.smart_plug_1_socket_1,switch.smart_plug_2_socket_1" --iot_testname "testname" --iot_increment "1,5"
 
     SCRIPT_CLASSIFICATION :  Test
@@ -167,8 +166,8 @@ import csv
 import matplotlib.pyplot as plt
 import re
 import threading
-logger = logging.getLogger(__name__)
 from collections import OrderedDict
+logger = logging.getLogger(__name__)
 
 if sys.version_info[0] != 3:
     print("This script requires Python 3")
@@ -192,8 +191,10 @@ DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 
 iot_scripts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../local/interop-webGUI/IoT/scripts/"))
-sys.path.insert(0, iot_scripts_path)
-from test_automation import Automation
+if os.path.exists(iot_scripts_path):
+    sys.path.insert(0, iot_scripts_path)
+    from test_automation import Automation  # noqa: E402
+
 
 class Throughput(Realm):
     def __init__(self,
@@ -1541,7 +1542,7 @@ class Throughput(Realm):
         }
 
     def generate_report(self, iterations_before_test_stopped_by_user, incremental_capacity_list, data=None, data1=None, report_path='', result_dir_name='Throughput_Test_report',
-                        selected_real_clients_names=None,test_name="",iot_summary=None):
+                        selected_real_clients_names=None, test_name="", iot_summary=None):
         if self.do_interopability:
             result_dir_name = "Interopability_Test_report"
 
@@ -2423,7 +2424,7 @@ class Throughput(Realm):
                     shutil.copy2(abs_src, dst)
                 return new_name
 
-            #section header 
+            # section header
             report.set_custom_html('<div style="page-break-before: always;"></div>')
             report.build_custom()
             report.set_custom_html('<h2><u>IoT Results</u></h2>')
@@ -2860,6 +2861,8 @@ def validate_args(args):
             if args.passwd == '[BLANK]' and args.security.lower() != 'open' or args.passwd != '[BLANK]' and args.security.lower() == 'open':
                 logger.error('Please provide valid passwd and security configuration')
                 exit(1)
+
+
 def with_iot_params_in_table(base: dict, iot_summary) -> dict:
     """
     Append IoT params into the existing Throughput Input Parameters table.
@@ -2873,33 +2876,37 @@ def with_iot_params_in_table(base: dict, iot_summary) -> dict:
             try:
                 iot_summary = json.loads(iot_summary)
             except Exception:
-                s = iot_summary.find("{"); e = iot_summary.rfind("}")
+                s = iot_summary.find("{")
+                e = iot_summary.rfind("}")
                 if s == -1 or e == -1 or e <= s:
                     return base
                 try:
-                    iot_summary = json.loads(iot_summary[s:e+1])
+                    iot_summary = json.loads(iot_summary[s:e + 1])
                 except Exception:
                     return base
 
         ti = (iot_summary.get("test_input_table") or {})
         out = OrderedDict(base)
-        out["IoT Test name"]   = ti.get("Testname", "")
-        out["IoT Iterations"]  = ti.get("Iterations", "")
-        out["IoT Delay (s)"]   = ti.get("Delay (seconds)", "")
-        out["IoT Increment"]   = ti.get("Increment Pattern", "")
+        out["IoT Test name"] = ti.get("Testname", "")
+        out["IoT Iterations"] = ti.get("Iterations", "")
+        out["IoT Delay (s)"] = ti.get("Delay (seconds)", "")
+        out["IoT Increment"] = ti.get("Increment Pattern", "")
         return out
     except Exception:
         return base
+
+
 def trigger_iot(ip, port, iterations, delay, device_list, testname, increment):
     asyncio.run(run_iot(ip, port, iterations, delay, device_list, testname, increment))
 
+
 async def run_iot(ip: str = '127.0.0.1',
-             port: str = '8000',
-             iterations: int = 1,
-             delay: int = 5,
-             device_list: str = '',
-             testname: str = '',
-             increment: str = ''):
+                  port: str = '8000',
+                  iterations: int = 1,
+                  delay: int = 5,
+                  device_list: str = '',
+                  testname: str = '',
+                  increment: str = ''):
     try:
 
         if delay < 5:
@@ -2911,7 +2918,7 @@ async def run_iot(ip: str = '127.0.0.1',
         else:
             device_list = None
         if increment:
-            print("the increment is : ",increment)
+            print("the increment is : ", increment)
             try:
                 increment = list(map(int, increment.split(',')))
                 if any(i < 1 for i in increment):
@@ -2926,17 +2933,17 @@ async def run_iot(ip: str = '127.0.0.1',
             logger.error('Test with same name already existing. Please give a different testname.')
             exit(1)
         automation = Automation(ip=ip,
-                                    port=port,
-                                    iterations=iterations,
-                                    delay=delay,
-                                    device_list=device_list,
-                                    testname=testname,
-                                    increment=increment)
+                                port=port,
+                                iterations=iterations,
+                                delay=delay,
+                                device_list=device_list,
+                                testname=testname,
+                                increment=increment)
 
         automation.devices = await automation.fetch_iot_devices()
 
         automation.select_iot_devices()
-        
+
         automation.run_test()
 
         automation.generate_report()
@@ -2947,8 +2954,8 @@ async def run_iot(ip: str = '127.0.0.1',
 
     await automation.session.close()
 
-
     logger.info('Iot Test Completed.')
+
 
 def main():
     help_summary = '''\
@@ -3129,40 +3136,40 @@ Copyright 2023 Candela Technologies Inc.
     optional.add_argument("--interopability_config", action="store_true", help="To do individual configuration for each device in interoperability")
     optional.add_argument("--tput_mbps", action="store_true", help="Interpret rated download and upload values as Mbps instead of bytes")
     parser.add_argument('--help_summary', help='Show summary of what this script does', action="store_true")
-    #IOT ARGS
+    # IOT ARGS
     parser.add_argument('--iot_test', help="If true will execute script for iot", action='store_true')
     optional.add_argument('--iot_ip',
-                            default='127.0.0.1',
-                            help='IP of FastAPI server')
+                          default='127.0.0.1',
+                          help='IP of FastAPI server')
 
     optional.add_argument('--iot_port',
-                        default='8000',
-                        help='Port of FastAPI server')
+                          default='8000',
+                          help='Port of FastAPI server')
 
     optional.add_argument('--iot_iterations',
-                        type=int,
-                        default=1,
-                        help='Iterations to run the test')
+                          type=int,
+                          default=1,
+                          help='Iterations to run the test')
 
     optional.add_argument('--iot_delay',
-                        type=int,
-                        default=5,
-                        help='Delay in seconds between iterations (min. 5 seconds)')
+                          type=int,
+                          default=5,
+                          help='Delay in seconds between iterations (min. 5 seconds)')
 
     optional.add_argument('--iot_device_list',
-                        type=str,
-                        default='',
-                        help='Entity IDs of the devices to include in testing (comma separated)')
+                          type=str,
+                          default='',
+                          help='Entity IDs of the devices to include in testing (comma separated)')
 
     optional.add_argument('--iot_testname',
-                        type=str,
-                        default='',
-                        help='Testname for reporting')
-                        
+                          type=str,
+                          default='',
+                          help='Testname for reporting')
+
     optional.add_argument('--iot_increment',
-                        type=str,
-                        default='',
-                        help='Comma-separated list of device counts to incrementally test (e.g., "1,3,5")')
+                          type=str,
+                          default='',
+                          help='Comma-separated list of device counts to incrementally test (e.g., "1,3,5")')
 
     args = parser.parse_args()
 
@@ -3323,12 +3330,12 @@ Copyright 2023 Candela Technologies Inc.
 
         check_condition, clients_to_run = throughput.phantom_check()
         if args.iot_test:
-            if args.iot_iterations>1:
-                thread = threading.Thread(target=trigger_iot,args=(iot_ip,iot_port,iot_iterations,iot_delay,iot_device_list,iot_testname,iot_increment))
+            if args.iot_iterations > 1:
+                thread = threading.Thread(target=trigger_iot, args=(iot_ip, iot_port, iot_iterations, iot_delay, iot_device_list, iot_testname, iot_increment))
                 thread.start()
             else:
                 total_secs = int(args.test_duration)
-                iot_iterations=max(1,total_secs//args.iot_delay)
+                iot_iterations = max(1, total_secs // args.iot_delay)
                 iot_thread = threading.Thread(
                     target=trigger_iot,
                     args=(
@@ -3435,14 +3442,22 @@ Copyright 2023 Candela Technologies Inc.
         throughput.cleanup()
     iot_summary = None
     if args.iot_test and args.iot_testname:
-        import os, json
+        import os
+        import json
         base = os.path.join("results", args.iot_testname)
         p = os.path.join(base, "iot_summary.json")
         if os.path.exists(p):
             with open(p) as f:
                 iot_summary = json.load(f)
 
-    throughput.generate_report(list(set(iterations_before_test_stopped_by_user)), incremental_capacity_list, data=all_dataframes, data1=to_run_cxs_len, report_path=throughput.result_dir,iot_summary= iot_summary)
+    throughput.generate_report(
+        list(
+            set(iterations_before_test_stopped_by_user)),
+        incremental_capacity_list,
+        data=all_dataframes,
+        data1=to_run_cxs_len,
+        report_path=throughput.result_dir,
+        iot_summary=iot_summary)
     if throughput.dowebgui:
         # copying to home directory i.e home/user_name
         throughput.copy_reports_to_home_dir()
