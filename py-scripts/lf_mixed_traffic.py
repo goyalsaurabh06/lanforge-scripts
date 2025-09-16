@@ -3562,6 +3562,8 @@ INCLUDE_IN_README: False
                     except Exception as e:
                         logging.info("Error while wrinting status file for webui", e)
 
+                mixed_obj.generate_all_report()
+                if mixed_obj.dowebgui:
                     # copying to home directory i.e home/user_name
                     mixed_obj.copy_reports_to_home_dir()
             else:
