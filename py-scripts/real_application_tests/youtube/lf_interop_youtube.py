@@ -200,7 +200,7 @@ class Youtube(Realm):
         self.serial_list = []
         self.user_list = []
         self.lanforge_port_list = set()
-        self.lanforge_os_type = set()
+        self.lanforge_os_type = list()
         self.android = 0
 
     def stop(self):
@@ -247,7 +247,7 @@ class Youtube(Realm):
             return False
         else:
             return True
-    
+
     def get_android_device_data(self):
         interop_data = self.json_get('/adb')
         # print("checking interop data")
@@ -267,8 +267,8 @@ class Youtube(Realm):
                         self.serial_list.append(serial_no)
                         lanforge_port = f"1.{resource}.eth0"
                         self.lanforge_port_list.add(lanforge_port)
-                        self.lanforge_os_type.add("Linux")
-        
+                        # self.lanforge_os_type.add("Linux")
+
         else:
             for user in self.user_list:
                 if user != '':
@@ -286,13 +286,13 @@ class Youtube(Realm):
                                 self.serial_list.append(serial_no)
                                 lanforge_port = f"1.{resource}.eth0"
                                 self.lanforge_port_list.add(lanforge_port)
-                                self.lanforge_os_type.add("Linux")
+                                # self.lanforge_os_type.add("Linux")
                                 break
-        
+
         self.lanforge_port_list = list(self.lanforge_port_list)
-        self.lanforge_os_type = list(self.lanforge_os_type)
+        self.lanforge_os_type = ["Linux"] * len(self.lanforge_port_list)
         self.serial_list_str = ','.join(self.serial_list)
-    
+
     def get_device_data(self):
         ports_list = []
         eid = ""
@@ -377,7 +377,7 @@ class Youtube(Realm):
                 break
 
         self.new_port_list = [item.split('.')[2] for item in self.real_sta_list]
-    
+
     def process_device_data(self):
         self.real_sta_os_types = []
         self.real_sta_hostname = []
@@ -396,7 +396,7 @@ class Youtube(Realm):
                     self.real_sta_hostname.append("NA")
             else:
                 self.real_sta_hostname.append(sta_info.get('hostname', 'NA'))
-        
+
         self.hostname_os_combination = [
             f"{hostname} ({os_type})"
             for hostname, os_type in zip(self.real_sta_hostname, self.real_sta_os_types)
@@ -434,8 +434,8 @@ class Youtube(Realm):
         self.get_device_data()
         self.get_android_device_data()
         self.process_device_data()
-        
-        
+
+
 
         if self.generic_endps_profile.create(ports=self.real_sta_list, sleep_time=.5, real_client_os_types=self.real_sta_os_types,):
             logging.info('Real client generic endpoint creation completed.')
@@ -454,13 +454,13 @@ class Youtube(Realm):
             elif self.real_sta_os_types[i] == 'macos':
                 cmd = "sudo bash ctyt.bash --url %s --host %s --device_name %s --duration %s --res %s" % (self.url, self.upstream_port, self.real_sta_hostname[i], self.duration, self.resolution)
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
-        
+
         if self.generic_endps_profile.create(ports=self.lanforge_port_list, sleep_time=.5, real_client_os_types=self.lanforge_os_type,):
             logging.info('Real client generic endpoint creation completed.')
         else:
             logging.error('Real client generic endpoint creation failed.')
             exit(0)
-        
+
         print("checking created endpoints")
         print(self.generic_endps_profile.created_endp)
 
@@ -468,7 +468,7 @@ class Youtube(Realm):
             cmd = (
                 "python3 youtube_android_test.py --url %s --duration %s --devices %s --upstream_port %s "
                 "| tee youtube_test.log"
-            ) % (self.url, self.duration, self.serial_list_str, self.upstream_port)
+            ) % (self.url, self.duration, self.serial_list_str, self.host)
 
             print("checking command")
             print(cmd)
@@ -554,7 +554,7 @@ class Youtube(Realm):
         print("checking real sta list")
         print(self.real_sta_list)
 
-        
+
 
         return self.real_sta_list
 
@@ -1165,7 +1165,7 @@ class Youtube(Realm):
 
         self.device_list = filtered_list
         return filtered_list
-    
+
     def update_webui(self):
         if len(self.real_sta_hostname) == 0:
             logging.error("No device is available to run the test")
@@ -1537,7 +1537,7 @@ NOTES:
                 logging.info(f"checking real sta list while creating endpionts {youtube.real_sta_list}")
                 logging.error("No Real Devies Available")
                 exit(0)
-            
+
             if args.do_webUI:
                 youtube.update_webui()
 
