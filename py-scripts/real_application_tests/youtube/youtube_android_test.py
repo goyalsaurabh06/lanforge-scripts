@@ -1,0 +1,333 @@
+from ppadb.client import Client as AdbClient
+import uiautomator2 as u2
+import xml.etree.ElementTree as ET
+import re
+import time
+from datetime import datetime
+import argparse
+from concurrent.futures import ThreadPoolExecutor
+import requests
+import json
+
+
+class Adb:
+    def __init__(self, host="127.0.0.1", port=5037, upstream_port=None):
+        self.host = host
+        self.port = port
+        self.client = AdbClient(host=self.host, port=self.port)
+        self.devices = {}
+        self.adb_serials = {}
+        self.u2_sessions = {}
+        self.stats = {}
+        self.upstream_port = upstream_port
+        self.test_serials = []
+        self.stop_signal = False
+
+    def get_devices(self):
+        """Return list of connected ADB serials without side-effects."""
+        devices = self.client.devices()
+        return [d.serial for d in devices]
+
+    def connect_devices(self):
+        """Connect to devices and create uiautomator2 sessions."""
+        for serial in self.test_serials:
+            try:
+                device = self.client.device(serial)
+                self.devices[serial] = device
+                self.adb_serials[serial] = serial
+                self.u2_sessions[serial] = u2.connect(serial)
+                print(f"Connected to device: {serial}")
+            except Exception as e:
+                print(f"Failed to connect to device {serial}: {e}")
+
+    def execute_cmd(self, device_serial, cmd):
+        return self.devices[device_serial].shell(cmd)
+
+    def execute_tap(self, device_serial, x, y):
+        self.devices[device_serial].input_tap(x, y)
+
+    def execute_keyevent(self, device_serial, key_code):
+        self.devices[device_serial].input_keyevent(key_code)
+
+    def enable_stats_for_nerds(self, device_serial):
+        """
+        Enable 'Stats for nerds' while a video is playing.
+        """
+
+        d = self.u2_sessions[device_serial]
+
+        if not d(
+            resourceId="com.google.android.youtube:id/player_overflow_button"
+        ).exists:
+            # Tap the video player area (brings up controls)
+            if d(resourceId="com.google.android.youtube:id/player_view").exists:
+                d(resourceId="com.google.android.youtube:id/player_view").click()
+            else:
+                d.click(
+                    d.info["displayWidth"] // 2, d.info["displayHeight"] // 2
+                )  # fallback: center
+
+        # Step 1: Open the overflow menu (⋮)
+        if d(resourceId="com.google.android.youtube:id/player_overflow_button").exists:
+            d(resourceId="com.google.android.youtube:id/player_overflow_button").click()
+            print("☰ Overflow menu opened.")
+        elif d(description="More options").exists:
+            d(description="More options").click()
+            print("☰ Overflow menu opened (via description).")
+        else:
+            print("⚠️ Overflow menu button not found.")
+            return False
+        time.sleep(1)
+
+        # Step 2: Click "More options" inside overflow
+        if d(description="More ").exists:
+            d(description="More ").click()
+            print("➡️ Entered More submenu.")
+        else:
+            print("⚠️ 'More' item not found in overflow menu.")
+            return False
+        time.sleep(1)
+
+        # Step 3: Enable "Stats for nerds"
+        for _ in range(3):  # try a few swipes max
+            if d(description="Stats for nerds ").exists:
+                d(description="Stats for nerds ").click()
+                print("✅ Stats for nerds enabled.")
+                return True
+            else:
+                # swipe inside the overflow menu area
+                d.swipe_ext("up", scale=0.6)
+                time.sleep(0.7)
+
+    def skip_ads(self, serial):
+        """Continuously check and skip YouTube ads if possible."""
+        try:
+            d = self.u2_sessions[serial]
+            while True:
+                # Look for the "Skip Ads" button
+                if d(textContains="Skip").exists:
+                    d(textContains="Skip").click()
+                    print(f"[{serial}] Skipped ad")
+                    break
+                # Some ads say "Ad" in the title, so wait for them to finish
+                if (
+                    d(descriptionContains="Ad").exists
+                    or d(text="Ad").exists
+                    or d(text="sponsored").exists
+                    or d(text="Sponsored").exists
+                ):
+                    print(f"[{serial}] Ad playing, waiting...")
+                else:
+                    # No ad detected → break
+                    break
+                time.sleep(0.5)
+        except Exception as e:
+            print(f"[{serial}] Ad skip check failed: {e}")
+
+    def send_stats_to_server(self):
+        url = f"http://{self.upstream_port}:5002/youtube_stats"
+        headers = {"Content-Type": "application/json"}
+        try:
+            response = requests.post(url, headers=headers, data=json.dumps(self.stats))
+            if response.status_code == 200:
+                print("Stats sent successfully.")
+            else:
+                print(f"Failed to send stats. Status code: {response.status_code}")
+        except Exception as e:
+            print(f"Error sending stats: {e}")
+
+    def fetch_stats_for_nerds(self, device_serial):
+        # Get the UI dump directly via uiautomator2
+        d = self.u2_sessions[device_serial]
+        xml_content = d.dump_hierarchy(compressed=True)
+
+        # Parse XML
+        root = ET.fromstring(xml_content)
+
+        raw_stats = ""
+        for node in root.iter("node"):
+            text = node.attrib.get("text", "")
+            if text:
+                raw_stats += text + " "
+
+        stats = {}
+        patterns = {
+            "Device Serial": r"Device:\s*(.*?)\s*CPN:",
+            # "cpn": r"CPN:\s*(.*?)\s*Video ID:",
+            # "video_id": r"Video ID:\s*(.*?)\s*Video format:",
+            "video_format": r"Video format:\s*(.*?)\s*Audio format:",
+            "audio_format": r"Audio format:\s*(.*?)\s*Volume/Normalized:",
+            # "volume_normalized": r"Volume/Normalized:\s*(.*?)\s*Bandwidth:",
+            "bandwidth (kbps)": r"Bandwidth:\s*([0-9.]+)\s*(kbps|mbps)",
+            "readahead (s)": r"Readahead:\s*([0-9.]+)\s*s",
+            "viewport": r"Viewport:\s*(.*?)\s*Dropped frames:",
+            "dropped_frames": r"Dropped frames:\s*([0-9]+)\s*/\s*([0-9]+)",
+            # "mystery_text": r"Mystery Text:\s*(.*)"
+        }
+
+        stats = {}
+        for key, pattern in patterns.items():
+            match = re.search(pattern, raw_stats, re.IGNORECASE | re.DOTALL)
+            if match:
+                if key == "dropped_frames":
+                    stats["DroppedFrames"] = int(match.group(1))
+                    stats["TotalFrames"] = int(match.group(2))
+
+                elif key == "bandwidth (kbps)":
+                    value = float(match.group(1))
+                    unit = match.group(2).lower()
+                    if unit == "mbps":
+                        value *= 1000  # normalize to kbps
+                    stats[key] = round(value, 2)
+
+                elif key == "readahead (s)":
+                    stats["BufferHealth"] = float(match.group(1))
+
+                elif key == "viewport":
+                    value = match.group(1).strip()
+                    stats["Viewport"] = value
+
+                else:
+                    value = match.group(1).strip()
+                    # Clean extras
+                    if key == "video_format":
+                        value = re.sub(r"\[.*?\]", "", value).strip()
+                        stats["CurrentRes"] = value
+                    if key == "volume_normalized":
+                        value = re.sub(r"\[Copy debug info\]", "", value).strip()
+                        stats[key] = value
+
+        # stats = json.dumps(stats, indent=4)
+        stats["Timestamp"] = datetime.now().strftime("%H:%M:%S")
+        self.stats[device_serial] = stats
+        print(self.stats)
+        self.send_stats_to_server()
+
+    def check_stop_signal(self):
+        """Check the stop signal from the Flask server."""
+        try:
+            endpoint_url = f"http://{self.upstream_port}:5002/check_stop"
+
+            response = requests.get(endpoint_url)  # Replace with your Flask server URL
+            if response.status_code == 200:
+
+                stop_signal_from_server = response.json().get("stop", False)
+
+                # Only update if the server's stop signal is True
+                if stop_signal_from_server:
+                    self.stop_signal = True
+                    print("Stop signal received from the server. Exiting the loop.")
+                else:
+
+                    print("No stop signal received from the server. Continuing.")
+            return self.stop_signal
+        except Exception as e:
+            print(f"Error checking stop signal: {e}")
+
+    def run_on_device(self, serial, video_url, delay, duration):
+        # Launch YouTube video
+        self.execute_cmd(
+            serial,
+            f"am start -a android.intent.action.VIEW -d {video_url} com.google.android.youtube",
+        )
+        time.sleep(delay)
+
+        # Disable auto-rotate
+        self.execute_cmd(
+            serial,
+            "content insert --uri content://settings/system --bind name:s:accelerometer_rotation --bind value:i:0",
+        )
+
+        # Rotate screen to landscape
+        self.execute_cmd(
+            serial,
+            "content insert --uri content://settings/system --bind name:s:user_rotation --bind value:i:1",
+        )
+
+        # Try skipping ads if present
+        self.skip_ads(serial)
+
+        # Enable stats
+        self.enable_stats_for_nerds(serial)
+
+        start_time = time.time()
+        end_time = start_time + duration  # duration is in seconds
+
+        while time.time() < end_time:
+            self.fetch_stats_for_nerds(serial)
+            time.sleep(1)  # control polling frequency
+            if self.check_stop_signal():
+                break
+        self.execute_cmd(serial, "am force-stop com.google.android.youtube")
+        print(f"[{serial}] Test completed or stopped.")
+
+        # # Save CSV for this device
+        # if serial in adb_client.stats:
+        #     df = pd.DataFrame(adb_client.stats[serial]).set_index("Timestamp")
+        #     print(f"[{serial}] Writing stats to CSV...")
+        #     df.to_csv(f"{serial}.csv")
+
+    def run_on_multiple_devices(
+        self, device_serials, video_url, delay, duration, max_workers=5
+    ):
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(self.run_on_device, serial, video_url, delay, duration)
+                for serial in device_serials
+            ]
+            # Wait for all to complete
+            for future in futures:
+                future.result()
+
+
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser(
+        description="Play YouTube video automation with ad skipping"
+    )
+    parser.add_argument(
+        "--url", type=str, required=True, help="YouTube video URL to play"
+    )
+    parser.add_argument(
+        "--duration", type=int, default=30, help="Video play duration in Minutes"
+    )
+    parser.add_argument(
+        "--delay",
+        type=int,
+        default=0,
+        help="Delay before starting video playback (in seconds)",
+    )
+    parser.add_argument(
+        "--devices",
+        type=str,
+        required=True,
+        help="Comma-separated list of device serials to run the test on",
+    )
+    parser.add_argument(
+        "--upstream_port",
+        type=str,
+        required=True,
+        help="Upstream port for LANforge",
+    )
+    args = parser.parse_args()
+
+    video_url = args.url  # https://youtu.be/ID2zk0M5U7s?si=hECC-d8tSb5JdiTd
+    duration = int(args.duration) * 60  # minutes to seconds
+    delay = args.delay
+    adb_client = Adb(upstream_port=args.upstream_port)
+    device_serials = adb_client.get_devices()
+    requested = args.devices.split(",")
+    test_serials = [s for s in requested if s in device_serials]
+    print("Running test on devices:", test_serials)
+    print("All connected devices:", device_serials)
+    adb_client.test_serials = test_serials
+    adb_client.connect_devices()
+    # adb_client.map_serials_to_usernames()
+    if test_serials:
+        adb_client.run_on_multiple_devices(
+            test_serials,
+            video_url,
+            delay,
+            duration,
+            max_workers=len(test_serials),
+        )
