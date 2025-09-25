@@ -60,44 +60,59 @@ class Adb:
             resourceId="com.google.android.youtube:id/player_overflow_button"
         ).exists:
             # Tap the video player area (brings up controls)
-            if d(resourceId="com.google.android.youtube:id/player_view").exists:
-                d(resourceId="com.google.android.youtube:id/player_view").click()
+            while "com.google.android.youtube:id/player_view" not in d.dump_hierarchy():
+                time.sleep(1)
+                print("Waiting for video player to load...")
+            btn = d(resourceId="com.google.android.youtube:id/player_view")
+
+            if btn.wait(timeout=10):  # waits up to 10 seconds for the element to appear
+                btn.click()
             else:
-                d.click(
-                    d.info["displayWidth"] // 2, d.info["displayHeight"] // 2
-                )  # fallback: center
+                print("player_view element not found within timeout")
 
         # Step 1: Open the overflow menu (⋮)
-        if d(resourceId="com.google.android.youtube:id/player_overflow_button").exists:
-            d(resourceId="com.google.android.youtube:id/player_overflow_button").click()
+        while (
+            "com.google.android.youtube:id/player_overflow_button"
+            not in d.dump_hierarchy()
+        ):
+            time.sleep(1)
+            print("Waiting for overflow button to appear...")
+        btn = d(resourceId="com.google.android.youtube:id/player_overflow_button")
+        if btn.wait(timeout=10):  # waits up to 10 seconds for the element to appear
+            btn.click()
             print("☰ Overflow menu opened.")
-        elif d(description="More options").exists:
-            d(description="More options").click()
-            print("☰ Overflow menu opened (via description).")
-        else:
-            print("⚠️ Overflow menu button not found.")
-            return False
         time.sleep(1)
 
         # Step 2: Click "More options" inside overflow
-        if d(description="More ").exists:
-            d(description="More ").click()
+        more_button = d(description="More ")
+        if more_button.wait(timeout=10):
+            more_button.click()
             print("➡️ Entered More submenu.")
-        else:
-            print("⚠️ 'More' item not found in overflow menu.")
-            return False
-        time.sleep(1)
 
-        # Step 3: Enable "Stats for nerds"
-        for _ in range(3):  # try a few swipes max
-            if d(description="Stats for nerds ").exists:
-                d(description="Stats for nerds ").click()
-                print("✅ Stats for nerds enabled.")
-                return True
+        time.sleep(2)
+
+        d.swipe_ext("up", scale=0.6)
+        time.sleep(3)
+
+        while "Stats for nerds " not in d.dump_hierarchy():
+            time.sleep(1)
+            print("Waiting for 'Stats for nerds' option to appear...")
+        stats_button = d(description="Stats for nerds ")
+        if stats_button.wait(timeout=10):
+            stats_button.click()
+            print("✅ Stats for nerds enabled.")
+
+            # Tap the video player area (brings up controls)
+            while "com.google.android.youtube:id/player_view" not in d.dump_hierarchy():
+                time.sleep(1)
+                print("Waiting for video player to load...")
+            btn = d(resourceId="com.google.android.youtube:id/player_view")
+
+            if btn.wait(timeout=10):  # waits up to 10 seconds for the element to appear
+                btn.click()
             else:
-                # swipe inside the overflow menu area
-                d.swipe_ext("up", scale=0.6)
-                time.sleep(0.7)
+                print("player_view element not found within timeout")
+            return True
 
     def skip_ads(self, serial):
         """Continuously check and skip YouTube ads if possible."""
