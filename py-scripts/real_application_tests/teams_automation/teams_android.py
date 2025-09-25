@@ -154,26 +154,22 @@ class TeamsAndroid:
         d.dump_hierarchy()
         time.sleep(10)
 
-        btn = d(text="Allow while visiting the site")
-        while True:
-            if btn.exists:
-                info = btn.info
-                if info.get("enabled") and info.get("clickable"):
-                    try:
-                        btn.click()
-                        print(
-                            "Clicked Allow while visting the site button successfully"
-                        )
-                        break
-                    except Exception as e:
-                        print(f"Click failed due to {e}, retrying...")
-                        time.sleep(1)
-                else:
-                    print("Element found but not clickable yet, waiting...")
-                    time.sleep(1)
-            else:
-                print("Waiting for element to appear...")
-                time.sleep(1)
+        while "Allow while visiting the site" not in d.dump_hierarchy():
+            print("Waiting for Allow while visiting the site button to appear...")
+            time.sleep(2)
+
+        allow_btn = d(text="Allow while visiting the site")
+        if allow_btn.wait(timeout=10):
+            print("Allow while visiting the site button is present")
+            info = allow_btn.info
+            if info.get("enabled") and info.get("clickable"):
+                allow_btn.click()
+
+        else:
+            print(
+                f"Allow while visiting the site button not found for device {d.serial}"
+            )
+            return
 
         d.dump_hierarchy()
         time.sleep(5)
@@ -219,32 +215,6 @@ class TeamsAndroid:
         else:
             print("Call health button not found")
             return
-        # if self.audio:
-        #     xml = d.dump_hierarchy()
-        #     while "View more audio data" not in xml:
-        #         time.sleep(1)
-        #         xml = d.dump_hierarchy()
-        #         print(f"Waiting for View more audio data button to appear for {d.serial}...")
-        #     # open panel once
-        #     btn = d(text="View more audio data")
-        #     if btn.wait(timeout=10):
-        #         btn.click()
-        #     else:
-        #         print(f"Audio panel not found for device {d.serial}, skipping...")
-        #         return
-        # if self.video:
-        #     xml = d.dump_hierarchy()
-        #     while "View more video data" not in xml:
-        #         time.sleep(1)
-        #         xml = d.dump_hierarchy()
-        #         print(f"Waiting for View more video data button to appear for {d.serial}...")
-        #     # open panel once
-        #     btn = d(text="View more video data")
-        #     if btn.wait(timeout=10):
-        #         btn.click()
-        #     else:
-        #         print(f"Video panel not found for device {d.serial}, skipping...")
-        #         return
 
         # Run for 1 minute using datetime
         end_time = datetime.now() + timedelta(minutes=2)
@@ -255,6 +225,11 @@ class TeamsAndroid:
             if self.video:
                 video_stats = self.collect_video_stats(d)
             self.send_stats_to_server(d.serial, audio_stats, video_stats)
+
+        self.close_meeting(d)
+
+    def close_meeting(self, d):
+        d.app_stop("com.android.chrome")
 
     def collect_audio_stats(self, d):
         # Wait until "View more audio data" button appears
