@@ -1427,10 +1427,12 @@ class HttpDownload(Realm):
                             dataset,
                             dataset1,
                             rx_rate,
-                            pass_fail_list)
+                            pass_fail_list,
+                            self.data["total_err"])
                     # Generating Dataframe for groups when pass_fail case is not specified
                     else:
-                        dataframe = self.generate_dataframe(val, self.devices, self.macid_list, self.channel_list, self.ssid_list, self.mode_list, dataset2, [], dataset, dataset1, rx_rate, [])
+                        dataframe = self.generate_dataframe(val, self.devices, self.macid_list, self.channel_list, self.ssid_list,
+                                                            self.mode_list, dataset2, [], dataset, dataset1, rx_rate, [], self.data["total_err"])
 
                     if dataframe:
                         report.set_obj_html("", "Group: {}".format(key))
@@ -1601,7 +1603,7 @@ class HttpDownload(Realm):
         shutil.copytree(curr_path, test_name_dir, dirs_exist_ok=True)
 
     def generate_dataframe(self, groupdevlist: List[str], clients_list: List[str], mac: List[str], channel: List[str], ssid: List[str], mode: List[str], file_download: List[int],
-                           test_input: List[int], averagetime: List[float], bytes_read: List[float], rx_rate: List[float], status: List[str]) -> Optional[pd.DataFrame]:
+                           test_input: List[int], averagetime: List[float], bytes_read: List[float], rx_rate: List[float], status: List[str], failedurls: List[int]) -> Optional[pd.DataFrame]:
         """
         Creates a separate DataFrame for each group of devices.
 
@@ -1620,6 +1622,7 @@ class HttpDownload(Realm):
         readbytes = []
         statuslist = []
         rxratelist = []
+        urls_failed = []
         interop_tab_data = self.local_realm.json_get('/adb/')["devices"]
         for i in range(len(clients_list)):
             for j in groupdevlist:
@@ -1633,6 +1636,7 @@ class HttpDownload(Realm):
                     avgtimes.append(averagetime[i])
                     readbytes.append(bytes_read[i])
                     rxratelist.append(rx_rate[i])
+                    urls_failed.append(failedurls[i])
                     if self.expected_passfail_value or self.device_csv_name:
                         input_list.append(test_input[i])
                         statuslist.append(status[i])
@@ -1649,6 +1653,7 @@ class HttpDownload(Realm):
                                 avgtimes.append(averagetime[i])
                                 readbytes.append(bytes_read[i])
                                 rxratelist.append(rx_rate[i])
+                                urls_failed.append(failedurls[i])
                                 if self.expected_passfail_value or self.device_csv_name:
                                     input_list.append(test_input[i])
                                     statuslist.append(status[i])
@@ -1663,7 +1668,8 @@ class HttpDownload(Realm):
                 " No of times File downloaded ": downloadtimes,
                 " Average time taken to Download file (ms)": avgtimes,
                 " Bytes-rd (Mega Bytes) ": readbytes,
-                "Rx Rate (Mbps)": rxratelist
+                "Rx Rate (Mbps)": rxratelist,
+                "Failed url's": urls_failed
             }
             if self.expected_passfail_value or self.device_csv_name:
                 dataframe[" Expected value of no of times file downloaded"] = input_list
