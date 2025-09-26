@@ -42,6 +42,23 @@ This project aims to automate Zoom call tests, YouTube video streaming tests, an
 | Linux      | `/home/lanforge`                                                | `install_dependencies.py`, `zoom_host.py`, `zoom_client.py`, `ctzoom.bash` |
 | MacOS      | `/Users/lanforge`                                               | `install_dependencies.py`, `zoom_host.py`, `zoom_client.py`, `ctzoom.bash` |
 
+## Script Files and Their Placment for Teams Call test
+
+| Device      | Path                                                          | Files |
+|------------|----------------------------------------------------------------|-------|
+| Windows    | `C:\Program Files (x86)\LANforge-Server`                        | `teams_host.py`, `teams_client.py` |
+| Linux      | `/home/lanforge`                                                | `teams_host.py`, `teams_client.py`, `ctteams.bash` |
+| MacOS      | `/Users/lanforge`                                               | `teams_host.py`, `teams_client.py`, `ctteams.bash` |
+
+
+## Script Files and Their Placment for VLC Streaming Test
+
+| Device      | Path                                                          | Files |
+|------------|----------------------------------------------------------------|-------|
+| Windows    | `C:\Program Files (x86)\LANforge-Server`                        | `ctvlc.py`, |
+| Linux      | `/home/lanforge`                                                | `ctvlc.py`, `ctvlc.bash` |
+| MacOS      | `/Users/lanforge`                                               | `ctvlc.py`, `ctvlc.bash` |
+
 
 
 ## Prerequisites
