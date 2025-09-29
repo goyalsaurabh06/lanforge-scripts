@@ -50,7 +50,10 @@ class ZoomHost:
         prefs = {
             "profile.managed_default_content_settings.notifications": 1,
             "profile.managed_default_content_settings.geolocation": 1,
-            "profile.managed_default_content_settings.media_stream": 1
+            "profile.managed_default_content_settings.media_stream": 1,
+            "download.default_directory": os.getcwd(),  # Change default directory
+            "download.prompt_for_download": False,  # Disable download prompt
+            "download.directory_upgrade": True
         }
 
         # Performance-related options
@@ -160,7 +163,7 @@ class ZoomHost:
             self.driver.refresh()
         try:
             element = self.dynamic_wait(5).until(
-                EC.visibility_of_element_located((By.CSS_SELECTOR, "button.btn-index-signin"))
+                EC.presence_of_element_located((By.CSS_SELECTOR, "button.btn-index-signin"))
             )
             element.click()
             print("clicked sign in button")
@@ -172,34 +175,36 @@ class ZoomHost:
             print(self.login_passwd)
 
             # if sys.platform.lower()=="linux":
-            #     email_field=self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "input#email")))
+            #     email_field=self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input#email")))
             #     for char in self.login_email:
             #         email_field.send_keys(char)
-            #     pass_field=self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "input#password")))
+            #     pass_field=self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input#password")))
             #     for char in self.login_passwd:
             #         pass_field.send_keys(char)
 
             # pyautogui.write(self.login_email)
             # time.sleep(2)
-            # # password_field = self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "input#password")))
+            # # password_field = self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input#password")))
             # self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input#password"))).click()
 
             # #self.driver.execute_script("arguments[0].click();", password_field)
             # pyautogui.write(self.login_passwd)
 
             # else:
-            self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "input#email"))).send_keys(self.login_email)
-            self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "input#password"))).send_keys(self.login_passwd)
+            self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input#email"))).send_keys(self.login_email)
+            time.sleep(1)
+            self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "#signin_btn_next > span"))).click()
+            self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input#password"))).send_keys(self.login_passwd)
             time.sleep(5)
-            self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "button#js_btn_login"))).click()
-            self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "button.main__action-btn")))
+            self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "button#js_btn_login"))).click()
+            self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "button.main__action-btn")))
             time.sleep(5)
             self.saveCookies()
 
         else:
             print("previous session loaded")
 
-        self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "button.main__action-btn"))).click()
+        self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "button.main__action-btn"))).click()
 
         try:
 
@@ -208,7 +213,7 @@ class ZoomHost:
 
             try:
                 element = self.dynamic_wait(5).until(
-                    EC.visibility_of_element_located((By.ID, 'btn_end_meeting'))
+                    EC.presence_of_element_located((By.ID, 'btn_end_meeting'))
 
                 )
                 element.click()
@@ -225,7 +230,7 @@ class ZoomHost:
         # time.sleep(20000)
         time.sleep(2)
         print("after 2 sec sleep")
-        vel = self.wait.until(EC.visibility_of_element_located((By.XPATH, '//*[@id="webclient"]')))
+        vel = self.wait.until(EC.presence_of_element_located((By.XPATH, '//*[@id="webclient"]')))
         self.driver.switch_to.frame(vel)
         print("after 2 switching to iframe")
         time.sleep(2)
@@ -233,19 +238,19 @@ class ZoomHost:
         action = webdriver.ActionChains(self.driver)
 
         action.move_by_offset(10, 20).perform()
-        # self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "#participant button")))
+        # self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#participant button")))
         # self.driver.execute_script("document.querySelector('#participant button').click()")
         # try:
         #     print("trying opening participants section")
-        #     self.dynamic_wait(20).until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".participants-section-container__participants-footer-bottom")))
+        #     self.dynamic_wait(20).until(EC.presence_of_element_located((By.CSS_SELECTOR, ".participants-section-container__participants-footer-bottom")))
         #     participent_column = self.driver.find_elements(By.CSS_SELECTOR,".participants-section-container__participants-footer-bottom button")
         #     print("after clicking participants columns")
         # except:
         #     print("except in opening participants section")
         #     action.move_by_offset(10, 20).perform()
-        #     self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "#participant button")))
+        #     self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#participant button")))
         #     self.driver.execute_script("document.querySelector('#participant button').click()")
-        #     self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".participants-section-container__participants-footer-bottom")))
+        #     self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".participants-section-container__participants-footer-bottom")))
         #     participent_column = self.driver.find_elements(By.CSS_SELECTOR,".participants-section-container__participants-footer-bottom button")
         #     print("after clicking participants columns")
         # for btn in participent_column:
@@ -253,7 +258,7 @@ class ZoomHost:
         #     if btn.text == "Invite":
         #         btn.click()
         #         break
-        # self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".invite-footer__button-group")))
+        # self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".invite-footer__button-group")))
         # invite_column = self.driver.find_elements(By.CSS_SELECTOR,".invite-footer__button-group button")
         # for btn in invite_column:
         #     print(btn.text)
@@ -266,16 +271,18 @@ class ZoomHost:
         #     if btn.text == "Cancel":
         #         btn.click()
         #         break
-        # self.meeting_link = pyperclip.paste()
+
         self.meeting_link = self.driver.current_url
+        # self.android_meet_link = pyperclip.paste()
         print("+++++++++++++++++++++++++++++++++++++++++")
         print("========================================")
         print("checking meeting link")
-        print(self.meeting_link)
+        # print(self.android_meet_link)
+        # self.send_meet_link()
         action.move_by_offset(10, 20).perform()
         time.sleep(1)
-        audio_join_btn = self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR,
-                                                                           ".footer-button-base__button.join-audio-container__btn")))
+        audio_join_btn = self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR,
+                                                                         ".footer-button-base__button.join-audio-container__btn")))
 
         self.driver.execute_script("document.querySelector('button.footer-button-base__button.join-audio-container__btn').click()")
         time.sleep(1)
@@ -289,8 +296,8 @@ class ZoomHost:
 
         elif audio_join_btn.text.lower() == "mute":
             print("already unmuted")
-        self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                          "//*[@id='audioOptionMenu']")))
+        self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                        "//*[@id='audioOptionMenu']")))
         self.driver.execute_script("document.querySelector('#audioOptionMenu button').click()")
         time.sleep(2)
 
@@ -302,12 +309,12 @@ class ZoomHost:
                 el.click()
                 break
         time.sleep(1)
-        self.wait.until(EC.visibility_of_element_located(
+        self.wait.until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, "#video")))
         self.driver.execute_script("document.querySelector('#video').click()")
         time.sleep(1)
-        video_join_btn = self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR,
-                                                                           ".footer-button-base__button.send-video-container__btn")))
+        video_join_btn = self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR,
+                                                                         ".footer-button-base__button.send-video-container__btn")))
 
         self.driver.execute_script("document.querySelector('button.footer-button-base__button.send-video-container__btn').click()")
         if video_join_btn.text.lower() == "join video" or video_join_btn.text.lower() == "start video":
@@ -317,11 +324,25 @@ class ZoomHost:
         elif video_join_btn.text.lower() == "stop video":
             print("already video on")
 
-        self.wait.until(EC.visibility_of_element_located(
+        self.wait.until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, "#stats")))
         self.driver.execute_script("document.querySelector('#stats').click()")
         time.sleep(1)
         self.send_meetin_link_and_password()
+
+    def send_meet_link(self):
+        # Call Flask endpoint to send meeting link
+        endpoint_url = f"{self.base_url}/meeting_link"
+        data = {"meet_link": self.android_meet_link}
+
+        try:
+            response = requests.post(endpoint_url, json=data)
+            if response.status_code == 200:
+                print("Meeting link sent successfully.")
+            else:
+                print(f"Failed to send meeting link. Status code: {response.status_code}")
+        except requests.RequestException as e:
+            print(f"Request error: {e}")
 
     def wait_for_exit(self):
         print("waiting for clients to disconnect")
@@ -338,17 +359,142 @@ class ZoomHost:
                 break
         print(self.monitor_client_count(), self.monitor_client_count() > 1)
 
+    # To download the csv
+    def download_csv(self):
+        # redirecting to dashboard
+        print("meeting link is", self.new_login_url)
+        self.driver.get("https://www.zoom.us/account/metrics/dashboard/home/#/pastMeetings")
+
+        # get meeting id formated
+        cleaned_id = self.new_login_url[:3] + " " + self.new_login_url[3:7] + " " + self.new_login_url[7:]
+        print(self.new_login_url, "cleaned id idcscdsc", cleaned_id)
+        # XPath to find the <a> link associated with the meeting ID
+
+        xpath = f"//p[contains(@class, 'ellipsis') and contains(text(), '{cleaned_id}')]"
+
+        # element containing id and link to meeting dashboard
+        current_elem = self.wait.until(EC.presence_of_element_located((By.XPATH, xpath)))
+        print("current outer", current_elem.get_attribute("outerHTML"))
+        print("current text", current_elem.text)
+        parent = current_elem.find_element(By.XPATH, "..")
+        try:
+            anchor = parent.find_element(By.TAG_NAME, "a")
+        except BaseException:
+            print("coudlnt find anchro tag refreshing in 15 seconds..")
+            time.sleep(15)
+            try:
+                self.driver.refresh()
+                current_elem = self.wait.until(EC.presence_of_element_located((By.XPATH, xpath)))
+                parent = current_elem.find_element(By.XPATH, "..")
+                anchor = parent.find_element(By.TAG_NAME, "a")
+            except BaseException:
+                print("still link soes not appear...on last refresh")
+                time.sleep(60)
+                self.driver.refresh()
+                current_elem = self.wait.until(EC.presence_of_element_located((By.XPATH, xpath)))
+                parent = current_elem.find_element(By.XPATH, "..")
+        print("parent outer", parent.get_attribute("outerHTML"))
+        anchor = parent.find_element(By.TAG_NAME, "a")
+        print(anchor.get_attribute("href"))
+
+        # redirecting to meeting dashboard
+        self.driver.get(anchor.get_attribute("href"))
+
+        # path for export button
+        export_xpath = "//div[contains(@class, 'detail-operation') and contains(@class, 'detial-operation')]//button[.//span[contains(translate(., 'EXPORT', 'export'), 'export')]]"
+        export_btn = self.wait.until(EC.element_to_be_clickable((By.XPATH, export_xpath)))
+        export_btn.click()
+        print("Clicked Export button.")
+        try:
+            # Wait for modal and click "Go to Downloads Page"
+            modal_btn = self.dynamic_wait(25).until(EC.element_to_be_clickable((
+                By.XPATH, "//button[.//span[contains(text(), 'Go to Downloads Page')]]"
+            )))
+            modal_btn.click()
+            print("Clicked 'Go to Downloads Page'.")
+        except BaseException:
+            # did not get the download popup refresh here"
+            self.driver.refresh()
+            export_xpath = "//div[contains(@class, 'detail-operation') and contains(@class, 'detial-operation')]//button[.//span[contains(translate(., 'EXPORT', 'export'), 'export')]]"
+            export_btn = self.wait.until(EC.element_to_be_clickable((By.XPATH, export_xpath)))
+            export_btn.click()
+            print("Clicked Export button.")
+            modal_btn = self.wait.until(EC.element_to_be_clickable((
+                By.XPATH, "//button[.//span[contains(text(), 'Go to Downloads Page')]]"
+            )))
+            modal_btn.click()
+            print("Clicked 'Go to Downloads Page'.")
+
+        # Wait for download to start
+        print("Waiting for download to complete...")
+        time.sleep(15)
+        all_handles = self.driver.window_handles
+        self.driver.switch_to.window(all_handles[-1])
+        # refreshing to get the updated tables
+        self.driver.refresh()
+        filename = self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "table#download_queue_list tbody tr:nth-of-type(1) td.col1"))).text
+        print(f"download file is {filename}")
+        button__dd = self.wait.until(EC.presence_of_element_located(
+            (By.CSS_SELECTOR, "table#download_queue_list tbody tr:nth-of-type(1) button")
+        ))
+        self.driver.execute_script("arguments[0].click();", button__dd)
+        print("Clicked 'Download' button")
+        self.wait_for_download(filename, download_dir=os.getcwd(), timeout=45)
+
+    def wait_for_download(self, dlname, download_dir, timeout=60):
+        seconds = 0
+        dl_wait = True
+        final_file_path = None
+        print(dlname, download_dir, timeout, "<====directories")
+        while dl_wait and seconds < timeout:
+            time.sleep(1)
+            dl_wait = False
+            for fname in os.listdir(download_dir):
+                if fname.startswith(dlname):
+                    if fname.endswith('.crdownload'):
+                        dl_wait = True  # still downloading
+                    else:
+                        final_file_path = os.path.join(download_dir, fname)
+            seconds += 1
+
+        if final_file_path and os.path.isfile(final_file_path):
+            print(f"File downloaded: {final_file_path}")
+            try:
+                with open(final_file_path, newline='') as csvfile:
+                    reader = csv.reader(csvfile)
+                    rows = list(reader)
+                    endpoint_url = f"{self.base_url}/upload_csv"
+                    print(endpoint_url)
+
+                    dd = {
+                        "filename": os.path.basename(final_file_path),
+                        "rows": rows
+                    }
+                    print(dd)
+                    requests.post(endpoint_url, json={
+                        "filename": os.path.basename(final_file_path),
+                        "rows": rows
+                    })
+            except Exception as e:
+                print("Error reading file:", e)
+        else:
+            print("File was not downloaded in time or not found.")
+
     def stop_zoom(self):
-        self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".footer__leave-btn-container button")))
+        self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".footer__leave-btn-container button")))
         self.driver.execute_script("document.querySelector('.footer__leave-btn-container button').click()")
         time.sleep(1)
-        self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".leave-meeting-options__btn.leave-meeting-options__btn--default")))
+        self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".leave-meeting-options__btn.leave-meeting-options__btn--default")))
         self.driver.execute_script("document.querySelector('.leave-meeting-options__btn.leave-meeting-options__btn--default').click()")
-        time.sleep(1)
+        print("waiting for some time to let the dashboard have past meeting")
+        download_csv = self.get_download_csv_flag()
+        if download_csv:
+            time.sleep(100)
+            self.download_csv()
         self.driver.quit()
 
     def monitor_client_count(self):
-        no_of_participants = self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".footer-button__number-counter"))).text
+        no_of_participants = self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".footer-button__number-counter"))).text
         return int(no_of_participants)
 
     def set_start_test(self, flag=False):
@@ -364,6 +510,21 @@ class ZoomHost:
 
         except Exception as e:
             print("error in seting start test", e)
+
+    def get_download_csv_flag(self):
+        try:
+            endpoint_url = f'{self.base_url}/download_csv'
+
+            response = requests.get(endpoint_url)
+            if response.status_code == 200:
+
+                download_csv_flag = response.json().get('download_csv', False)
+                return download_csv_flag
+
+            return False
+        except Exception as e:
+            print(f"Error checking stop signal: {e}")
+            return False
 
     def check_stop_signal(self):
         """Check the stop signal from the Flask server."""
@@ -404,33 +565,33 @@ class ZoomHost:
             print("pasword and email updated succesfuly for login")
 
     def capture_audio_stats(self):
-        self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                          "//*[@id='Audio']"))).click()
+        self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                        "//*[@id='Audio']"))).click()
         time.sleep(2)
-        freq = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                 "//*[@id='Audio-tab']/div/table/tbody/tr[1]/td[2]"))).text
+        freq = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                               "//*[@id='Audio-tab']/div/table/tbody/tr[1]/td[2]"))).text
         freq = freq.replace(" khz", "")
-        freq_rec = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                     "//*[@id='Audio-tab']/div/table/tbody/tr[1]/td[3]"))).text
+        freq_rec = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                   "//*[@id='Audio-tab']/div/table/tbody/tr[1]/td[3]"))).text
         freq_rec = freq_rec.replace(" khz", "")
-        lat = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                "//*[@id='Audio-tab']/div/table/tbody/tr[2]/td[2]"))).text
+        lat = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                              "//*[@id='Audio-tab']/div/table/tbody/tr[2]/td[2]"))).text
         lat = lat.replace(" ms", "")
-        lat_rec = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                    "//*[@id='Audio-tab']/div/table/tbody/tr[2]/td[3]"))).text
+        lat_rec = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                  "//*[@id='Audio-tab']/div/table/tbody/tr[2]/td[3]"))).text
         lat_rec = lat_rec.replace(" ms", "")
-        jitt = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                 "//*[@id='Audio-tab']/div/table/tbody/tr[3]/td[2]"))).text
+        jitt = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                               "//*[@id='Audio-tab']/div/table/tbody/tr[3]/td[2]"))).text
         jitt = jitt.replace(" ms", "")
-        jitt_rec = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                     "//*[@id='Audio-tab']/div/table/tbody/tr[3]/td[3]"))).text
+        jitt_rec = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                   "//*[@id='Audio-tab']/div/table/tbody/tr[3]/td[3]"))).text
         jitt_rec = jitt_rec.replace(" ms", "")
-        pack = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                 "//*[@id='Audio-tab']/div/table/tbody/tr[4]/td[2]"))).text
+        pack = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                               "//*[@id='Audio-tab']/div/table/tbody/tr[4]/td[2]"))).text
         packet_loss = re.sub(r'\s*\(.*?\)', '', pack)
         packet_loss_ = packet_loss.replace('%', '')
-        pack_rec = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                     "//*[@id='Audio-tab']/div/table/tbody/tr[4]/td[2]"))).text
+        pack_rec = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                   "//*[@id='Audio-tab']/div/table/tbody/tr[4]/td[2]"))).text
         packet_rec = re.sub(r'\s*\(.*?\)', '', pack_rec)
         packet_rec_ = packet_rec.replace('%', '')
         return [freq if freq != "-" else "0", lat if lat != "-" else "0", jitt if jitt != "-" else "0", packet_loss_ if packet_loss_ != "-" else "0",
@@ -438,37 +599,37 @@ class ZoomHost:
                 jitt_rec if jitt_rec != "-" else "0", packet_rec_ if packet_rec_ != "-" else "0"]
 
     def capture_video_stats(self):
-        self.wait.until(EC.visibility_of_element_located((By.XPATH, "//*[@id='Video']"))).click()
+        self.wait.until(EC.presence_of_element_located((By.XPATH, "//*[@id='Video']"))).click()
         time.sleep(2)
-        latency = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                    "//*[@id='Video-tab']/div/table/tbody/tr[1]/td[2]"))).text
+        latency = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                  "//*[@id='Video-tab']/div/table/tbody/tr[1]/td[2]"))).text
         latency = latency.replace(" ms", "")
-        latency_rec = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                        "//*[@id='Video-tab']/div/table/tbody/tr[1]/td[3]"))).text
+        latency_rec = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                      "//*[@id='Video-tab']/div/table/tbody/tr[1]/td[3]"))).text
         latency_rec = latency_rec.replace(" ms", "")
-        jitter = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                   "//*[@id='Video-tab']/div/table/tbody/tr[2]/td[2]"))).text
+        jitter = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                 "//*[@id='Video-tab']/div/table/tbody/tr[2]/td[2]"))).text
         jitter = jitter.replace(" ms", "")
-        jitter_rec = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                       "//*[@id='Video-tab']/div/table/tbody/tr[2]/td[3]"))).text
+        jitter_rec = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                     "//*[@id='Video-tab']/div/table/tbody/tr[2]/td[3]"))).text
         jitter_rec = jitter_rec.replace(" ms", "")
-        packet_loss = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                        "//*[@id='Video-tab']/div/table/tbody/tr[3]/td[2]"))).text
+        packet_loss = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                      "//*[@id='Video-tab']/div/table/tbody/tr[3]/td[2]"))).text
         packet_loss_vi = re.sub(r'\s*\(.*?\)', '', packet_loss)
         packet_loss_vi = packet_loss_vi.replace('%', '')
-        packet_loss_rec = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                            "//*[@id='Video-tab']/div/table/tbody/tr[3]/td[3]"))).text
+        packet_loss_rec = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                          "//*[@id='Video-tab']/div/table/tbody/tr[3]/td[3]"))).text
         packet_loss_vi_rec = re.sub(r'\s*\(.*?\)', '', packet_loss_rec)
         packet_loss_vi_rec = packet_loss_vi_rec.replace('%', '')
-        resolution = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                       "//*[@id='Video-tab']/div/table/tbody/tr[4]/td[2]"))).text
-        resolution_rec = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                           "//*[@id='Video-tab']/div/table/tbody/tr[4]/td[3]"))).text
-        frames_per_second = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                              "//*[@id='Video-tab']/div/table/tbody/tr[5]/td[2]"))).text
+        resolution = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                     "//*[@id='Video-tab']/div/table/tbody/tr[4]/td[2]"))).text
+        resolution_rec = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                         "//*[@id='Video-tab']/div/table/tbody/tr[4]/td[3]"))).text
+        frames_per_second = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                            "//*[@id='Video-tab']/div/table/tbody/tr[5]/td[2]"))).text
         frames_per_second = frames_per_second.replace(" fps", "")
-        frames_per_second_rec = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                                  "//*[@id='Video-tab']/div/table/tbody/tr[5]/td[3]"))).text
+        frames_per_second_rec = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                                "//*[@id='Video-tab']/div/table/tbody/tr[5]/td[3]"))).text
         frames_per_second_rec = frames_per_second_rec.replace(" fps", "")
         return [latency if latency != "-" else "0", jitter if jitter != "-" else "0", packet_loss_vi if packet_loss_vi != "-" else "0",
                 resolution if resolution != "-" else "0", frames_per_second if frames_per_second != "-" else "0", latency_rec if latency_rec != "-" else "0",
@@ -645,7 +806,7 @@ class ZoomHost:
             self.video_stats = self.capture_video_stats()
         else:
             self.video_stats = ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0"]
-        return [self.get_formated_time(datetime.now(self.tz).isoformat())]+self.audio_stats+self.video_stats
+        return [self.get_formated_time(datetime.now(self.tz).isoformat())] + self.audio_stats + self.video_stats
 
     def get_formated_time(self, timestamp_str):
         timestamp = datetime.fromisoformat(timestamp_str)
@@ -754,5 +915,5 @@ if __name__ == "__main__":
             # time.sleep(5)
     print("test has been completed")
     zoom_host.wait_for_exit()
-    zoom_host.send_client_disconnection()
     zoom_host.stop_zoom()
+    zoom_host.send_client_disconnection()
