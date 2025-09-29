@@ -4,8 +4,7 @@ from ppadb.client import Client as AdbClient
 from concurrent.futures import ThreadPoolExecutor
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
-import traceback
-from concurrent.futures import as_completed
+
 
 class TeamsAndroid:
     def __init__(self, host="127.0.0.1", port=5037, upstream_port=None):
@@ -22,6 +21,22 @@ class TeamsAndroid:
         self.total_serials = []
         self.audio = True
         self.video = True
+        self.email_ids = [
+            "test1@ctipltest.onmicrosoft.com",
+            "test2@ctipltest.onmicrosoft.com",
+            "test3@ctipltest.onmicrosoft.com",
+            "test4@ctipltest.onmicrosoft.com",
+            "candelatech@ctipltest.onmicrosoft.com"
+
+        ]
+        self.passwords = [
+            "DmQRXN8+H^gsxVis",
+            "R@006900206161aj",
+            "P@824120657357ov",
+            "J^522833765642al",
+            "Candela@530045"
+        ]
+        self.counter = 0
 
     def get_devices(self):
         """Return list of connected ADB serials"""
@@ -51,39 +66,15 @@ class TeamsAndroid:
         self.test_serials = connected
         print(f"Active test_serials: {self.test_serials}")
 
-    # def run_on_multiple_devices(self, device_serials, duration, max_workers=5):
-    #     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-    #         futures = [
-    #             executor.submit(self.open_chrome_incognito, serial, duration)
-    #             for serial in device_serials
-    #         ]
-    #         # Wait for all to complete
-    #         for future in futures:
-    #             future.result()
-
-
     def run_on_multiple_devices(self, device_serials, duration, max_workers=5):
-        def wrapper(serial):
-            try:
-                print(f"[{serial}] 🚀 Starting open_chrome_incognito")
-                self.open_chrome_incognito(serial, duration)
-                print(f"[{serial}] ✅ Completed successfully")
-            except Exception as e:
-                print(f"[{serial}] ❌ Failed with error: {e}")
-                traceback.print_exc()
-            return serial
-
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # submit tasks for each device
-            futures = {executor.submit(wrapper, serial): serial for serial in device_serials}
-
-            # log progress as each finishes
-            for future in as_completed(futures, timeout=None):
-                serial = futures[future]
-                try:
-                    future.result(timeout=120)  # per-device timeout
-                except Exception as e:
-                    print(f"[{serial}] ⚠️ Exception or timeout: {e}")
+            futures = [
+                executor.submit(self.open_chrome_incognito, serial, duration)
+                for serial in device_serials
+            ]
+            # Wait for all to complete
+            for future in futures:
+                future.result()
 
     def open_chrome_incognito(self, serial, duration):
         d = self.u2_sessions[serial]
@@ -148,18 +139,21 @@ class TeamsAndroid:
 
         email_input = d.xpath('//*[@resource-id="i0116"]')
         if email_input.wait(timeout=30):
-            d.send_keys("test2@ctipltest.onmicrosoft.com", clear=True)
+            d.send_keys(self.email_ids[self.counter], clear=True)
             d.press("enter")
         else:
             print(f"Email input not found for device {d.serial}")
             return
 
         time.sleep(10)
-        d.send_keys("R@006900206161aj", clear=True)
+        d.send_keys(self.passwords[self.counter], clear=True)
 
         d.press("enter")
+        self.counter += 1
         time.sleep(5)
         d.press("enter")
+        if self.counter >= len(self.email_ids):
+            self.counter = 0
         time.sleep(20)
         self.enter_meeting(d)
 
@@ -179,22 +173,27 @@ class TeamsAndroid:
         d.dump_hierarchy()
         time.sleep(10)
 
+        # Wait for the "Allow while visiting the site" button to appear
         while "Allow while visiting the site" not in d.dump_hierarchy():
-            print("Waiting for Allow while visiting the site button to appear...")
+            print("⏳ Waiting for 'Allow while visiting the site' button to appear...")
             time.sleep(2)
 
         allow_btn = d(text="Allow while visiting the site")
+
         if allow_btn.wait(timeout=10):
-            print("Allow while visiting the site button is present")
+            print("✅ 'Allow while visiting the site' button is present")
             info = allow_btn.info
+
             if info.get("enabled") and info.get("clickable"):
                 allow_btn.click()
+                print("👉 Clicked 'Allow while visiting the site' button successfully")
+            else:
+                print("⚠️ Button found but not clickable yet")
 
         else:
-            print(
-                f"Allow while visiting the site button not found for device {d.serial}"
-            )
+            print(f"❌ 'Allow while visiting the site' button not found for device {d.serial}")
             return
+
 
         d.dump_hierarchy()
         time.sleep(5)
@@ -250,11 +249,12 @@ class TeamsAndroid:
             if self.video:
                 video_stats = self.collect_video_stats(d)
             self.send_stats_to_server(d.serial, audio_stats, video_stats)
-
+        
         self.close_meeting(d)
-
+    
     def close_meeting(self, d):
         d.app_stop("com.android.chrome")
+        print(f"Closed Chrome on device {d.serial}")
 
     def collect_audio_stats(self, d):
         # Wait until "View more audio data" button appears
