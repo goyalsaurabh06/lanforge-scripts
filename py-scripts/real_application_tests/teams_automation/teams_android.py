@@ -4,7 +4,8 @@ from ppadb.client import Client as AdbClient
 from concurrent.futures import ThreadPoolExecutor
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
-
+import traceback
+from concurrent.futures import as_completed
 
 class TeamsAndroid:
     def __init__(self, host="127.0.0.1", port=5037, upstream_port=None):
@@ -50,15 +51,39 @@ class TeamsAndroid:
         self.test_serials = connected
         print(f"Active test_serials: {self.test_serials}")
 
+    # def run_on_multiple_devices(self, device_serials, duration, max_workers=5):
+    #     with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    #         futures = [
+    #             executor.submit(self.open_chrome_incognito, serial, duration)
+    #             for serial in device_serials
+    #         ]
+    #         # Wait for all to complete
+    #         for future in futures:
+    #             future.result()
+
+
     def run_on_multiple_devices(self, device_serials, duration, max_workers=5):
+        def wrapper(serial):
+            try:
+                print(f"[{serial}] 🚀 Starting open_chrome_incognito")
+                self.open_chrome_incognito(serial, duration)
+                print(f"[{serial}] ✅ Completed successfully")
+            except Exception as e:
+                print(f"[{serial}] ❌ Failed with error: {e}")
+                traceback.print_exc()
+            return serial
+
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [
-                executor.submit(self.open_chrome_incognito, serial, duration)
-                for serial in device_serials
-            ]
-            # Wait for all to complete
-            for future in futures:
-                future.result()
+            # submit tasks for each device
+            futures = {executor.submit(wrapper, serial): serial for serial in device_serials}
+
+            # log progress as each finishes
+            for future in as_completed(futures, timeout=None):
+                serial = futures[future]
+                try:
+                    future.result(timeout=120)  # per-device timeout
+                except Exception as e:
+                    print(f"[{serial}] ⚠️ Exception or timeout: {e}")
 
     def open_chrome_incognito(self, serial, duration):
         d = self.u2_sessions[serial]
@@ -458,5 +483,5 @@ if __name__ == "__main__":
     print(f"Found devices: {teams_android.total_serials}")
     teams_android.connect_devices()
     teams_android.run_on_multiple_devices(
-        teams_android.test_serials, duration=60, max_workers=3
+        teams_android.test_serials, duration=60, max_workers=len(teams_android.test_serials)
     )
