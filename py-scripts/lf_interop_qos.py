@@ -1433,7 +1433,7 @@ class ThroughputQOS(Realm):
         for floor in range(int(self.total_floors)):
             for tos in self.tos:
                 timeout = 60  # seconds
-
+                print("enteredddddddddddd")
                 throughput_image_path = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_throughput_{tos}_{floor + 1}.png")
 
                 if not multicast_exists:
@@ -1462,7 +1462,7 @@ class ThroughputQOS(Realm):
 
         return image_paths_by_tos, rssi_image_paths_by_floor
 
-    def generate_individual_graph(self, res, report, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, totalfloors=None, multicast_exists=False):
+    def generate_individual_graph(self, res, report, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, totalfloors=None, multicast_exists=False,mix_live_view=False):
         # Required when generate_individual_graph() called explicitly from mixed traffic
         if totalfloors is not None:
             self.total_floors = totalfloors
@@ -1473,7 +1473,7 @@ class ThroughputQOS(Realm):
         list1 = [[], [], [], []]
         data_set = {}
         try:
-            if (self.dowebgui and self.get_live_view) or multicast_exists:
+            if (self.dowebgui and self.get_live_view) or mix_live_view:
                 tos_images, rssi_images = self.get_live_view_images()
         except Exception:
             logger.error("Live View images not found")
@@ -1642,7 +1642,7 @@ class ThroughputQOS(Realm):
                     report.set_csv_filename(graph_png)
                     report.move_csv_file()
                     report.build_graph()
-                    if (self.dowebgui and self.get_live_view) or multicast_exists:
+                    if (self.dowebgui and self.get_live_view) or mix_live_view:
                         for image_path in tos_images['BK']:
                             report.set_custom_html('<div style="page-break-before: always;"></div>')
                             report.build_custom()
@@ -1771,7 +1771,7 @@ class ThroughputQOS(Realm):
                     report.set_csv_filename(graph_png)
                     report.move_csv_file()
                     report.build_graph()
-                    if (self.dowebgui and self.get_live_view) or multicast_exists:
+                    if (self.dowebgui and self.get_live_view) or mix_live_view:
                         for image_path in tos_images['BE']:
                             report.set_custom_html('<div style="page-break-before: always;"></div>')
                             report.build_custom()
@@ -1898,7 +1898,7 @@ class ThroughputQOS(Realm):
                     report.set_csv_filename(graph_png)
                     report.move_csv_file()
                     report.build_graph()
-                    if (self.dowebgui and self.get_live_view) or multicast_exists:
+                    if (self.dowebgui and self.get_live_view) or mix_live_view:
                         for image_path in tos_images['VI']:
                             report.set_custom_html('<div style="page-break-before: always;"></div>')
                             report.build_custom()
@@ -2025,7 +2025,7 @@ class ThroughputQOS(Realm):
                     report.set_csv_filename(graph_png)
                     report.move_csv_file()
                     report.build_graph()
-                    if (self.dowebgui and self.get_live_view) or multicast_exists:
+                    if (self.dowebgui and self.get_live_view) or mix_live_view:
                         for image_path in tos_images['VO']:
                             report.set_custom_html('<div style="page-break-before: always;"></div>')
                             report.build_custom()
@@ -2101,7 +2101,7 @@ class ThroughputQOS(Realm):
                         report.set_table_dataframe(dataframe4)
                         report.build_table()
                 logger.info("Graph and table for VO tos are built")
-            if self.dowebgui and self.get_live_view and not multicast_exists:
+            if (self.dowebgui and self.get_live_view) or (mix_live_view and not multicast_exists):
                 for _floor, rssi_image_path in rssi_images.items():
                     if os.path.exists(rssi_image_path):
                         report.set_custom_html('<div style="page-break-before: always;"></div>')
