@@ -130,10 +130,10 @@ class ZoomClient:
         self.stop_zoom()
 
     def stop_zoom(self):
-        self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".footer__leave-btn-container button")))
+        self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".footer__leave-btn-container button")))
         self.driver.execute_script("document.querySelector('.footer__leave-btn-container button').click()")
         time.sleep(1)
-        self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".leave-meeting-options__btn.leave-meeting-options__btn--default")))
+        self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".leave-meeting-options__btn.leave-meeting-options__btn--default")))
         self.driver.execute_script("document.querySelector('.leave-meeting-options__btn.leave-meeting-options__btn--default').click()")
         time.sleep(1)
         self.driver.quit()
@@ -147,7 +147,7 @@ class ZoomClient:
         # self.driver.get(str(self.meeting_link))
         # time.sleep(200)
 
-        # self.wait.until(EC.visibility_of_element_located(
+        # self.wait.until(EC.presence_of_element_located(
         #     (By.CSS_SELECTOR, "#joinMeeting input.join-meetingId"))).send_keys(Keys.CONTROL + 'v')
         # time.sleep(200)
         # Assuming testInputValue is your meeting ID or the value you want to input
@@ -162,20 +162,20 @@ class ZoomClient:
         # """
         formatted_login_url = self.new_login_url[:3] + ' ' + self.new_login_url[3:7] + ' ' + self.new_login_url[7:]
 
-        meeting_id = self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "#joinMeeting input.join-meetingId")))
+        meeting_id = self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#joinMeeting input.join-meetingId")))
         meeting_id.click()
         if sys.platform.lower() == "linux":
             pyautogui.write(formatted_login_url)
         else:
             meeting_id.send_keys(formatted_login_url)
 
-        self.wait.until(EC.element_to_be_clickable(
+        self.wait.until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, "#joinMeeting ~ footer button.btn-join"))).click()
         # self.driver.execute_script("document.getElementById('joinMeeting ~ footer button.btn-join').click()")
         time.sleep(1)
-        vel = self.wait.until(EC.visibility_of_element_located((By.XPATH, '//*[@id="webclient"]')))
+        vel = self.wait.until(EC.presence_of_element_located((By.XPATH, '//*[@id="webclient"]')))
         self.driver.switch_to.frame(vel)
-        pass_element = self.wait.until(EC.visibility_of_element_located(
+        pass_element = self.wait.until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, "#input-for-pwd")))
         pass_element.click()
         if sys.platform.lower() == "linux":
@@ -184,12 +184,12 @@ class ZoomClient:
             pass_element.send_keys(self.new_login_passwd)
 
         time.sleep(1)
-        host_element = self.wait.until(EC.visibility_of_element_located(
+        host_element = self.wait.until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, "#input-for-name")))
         host_element.click()
         host_element.send_keys(self.hostname)
         time.sleep(1)
-        self.wait.until(EC.element_to_be_clickable(
+        self.wait.until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, ".preview-meeting-info button.preview-join-button"))).click()
         time.sleep(1)
         # self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR,
@@ -199,8 +199,8 @@ class ZoomClient:
         action = webdriver.ActionChains(self.driver)
         action.move_by_offset(10, 20).perform()
         time.sleep(1)
-        audio_join_btn = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR,
-                                                                     ".footer-button-base__button.join-audio-container__btn")))
+        audio_join_btn = self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR,
+                                                                         ".footer-button-base__button.join-audio-container__btn")))
         self.driver.execute_script("document.querySelector('button.footer-button-base__button.join-audio-container__btn').click()")
         time.sleep(1)
         if audio_join_btn.text.lower() == "join audio":
@@ -218,8 +218,8 @@ class ZoomClient:
 
         elif audio_join_btn.text.lower() == "mute":
             print("already unmuted")
-        self.wait.until(EC.element_to_be_clickable((By.XPATH,
-                                                    "//*[@id='audioOptionMenu']")))
+        self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                        "//*[@id='audioOptionMenu']")))
         self.driver.execute_script("document.querySelector('#audioOptionMenu button').click()")
         time.sleep(2)
 
@@ -229,12 +229,12 @@ class ZoomClient:
                 el.click()
                 break
         time.sleep(1)
-        self.wait.until(EC.element_to_be_clickable(
+        self.wait.until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, "#video")))
         self.driver.execute_script("document.querySelector('#video').click()")
         time.sleep(1)
-        video_join_btn = self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR,
-                                                                           ".footer-button-base__button.send-video-container__btn")))
+        video_join_btn = self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR,
+                                                                         ".footer-button-base__button.send-video-container__btn")))
 
         self.driver.execute_script("document.querySelector('button.footer-button-base__button.send-video-container__btn').click()")
         if video_join_btn.text.lower() == "join video" or video_join_btn.text.lower() == "start video":
@@ -243,7 +243,7 @@ class ZoomClient:
 
         elif video_join_btn.text.lower() == "stop video":
             print("already video on")
-        self.wait.until(EC.visibility_of_element_located(
+        self.wait.until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, "#stats")))
         self.driver.execute_script("document.querySelector('#stats').click()")
         time.sleep(1)
@@ -257,70 +257,70 @@ class ZoomClient:
             print("error in gettig password and meeting id", e)
 
     def capture_audio_stats(self):
-        self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                          "//*[@id='Audio']"))).click()
+        self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                        "//*[@id='Audio']"))).click()
         time.sleep(2)
-        freq = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                 "//*[@id='Audio-tab']/div/table/tbody/tr[1]/td[2]"))).text
+        freq = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                               "//*[@id='Audio-tab']/div/table/tbody/tr[1]/td[2]"))).text
         freq = freq.replace(" khz", "")
-        freq_rec = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                     "//*[@id='Audio-tab']/div/table/tbody/tr[1]/td[3]"))).text
+        freq_rec = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                   "//*[@id='Audio-tab']/div/table/tbody/tr[1]/td[3]"))).text
         freq_rec = freq_rec.replace(" khz", "")
-        lat = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                "//*[@id='Audio-tab']/div/table/tbody/tr[2]/td[2]"))).text
+        lat = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                              "//*[@id='Audio-tab']/div/table/tbody/tr[2]/td[2]"))).text
         lat = lat.replace(" ms", "")
-        lat_rec = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                    "//*[@id='Audio-tab']/div/table/tbody/tr[2]/td[3]"))).text
+        lat_rec = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                  "//*[@id='Audio-tab']/div/table/tbody/tr[2]/td[3]"))).text
         lat_rec = lat_rec.replace(" ms", "")
-        jitt = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                 "//*[@id='Audio-tab']/div/table/tbody/tr[3]/td[2]"))).text
+        jitt = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                               "//*[@id='Audio-tab']/div/table/tbody/tr[3]/td[2]"))).text
         jitt = jitt.replace(" ms", "")
-        jitt_rec = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                     "//*[@id='Audio-tab']/div/table/tbody/tr[3]/td[3]"))).text
+        jitt_rec = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                   "//*[@id='Audio-tab']/div/table/tbody/tr[3]/td[3]"))).text
         jitt_rec = jitt_rec.replace(" ms", "")
-        pack = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                 "//*[@id='Audio-tab']/div/table/tbody/tr[4]/td[2]"))).text
+        pack = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                               "//*[@id='Audio-tab']/div/table/tbody/tr[4]/td[2]"))).text
         packet_loss = re.sub(r'\s*\(.*?\)', '', pack)
         packet_loss_ = packet_loss.replace('%', '')
-        pack_rec = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                     "//*[@id='Audio-tab']/div/table/tbody/tr[4]/td[2]"))).text
+        pack_rec = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                   "//*[@id='Audio-tab']/div/table/tbody/tr[4]/td[2]"))).text
         packet_rec = re.sub(r'\s*\(.*?\)', '', pack_rec)
         packet_rec_ = packet_rec.replace('%', '')
         return [freq if freq != "-" else "0", lat if lat != "-" else "0", jitt if jitt != "-" else "0", packet_loss_ if packet_loss_ != "-" else "0", freq_rec if freq_rec != "-" else "0",
                 lat_rec if lat_rec != "-" else "0", jitt_rec if jitt_rec != "-" else "0", packet_rec_ if packet_rec_ != "-" else "0"]
 
     def capture_video_stats(self):
-        self.wait.until(EC.visibility_of_element_located((By.XPATH, "//*[@id='Video']"))).click()
+        self.wait.until(EC.presence_of_element_located((By.XPATH, "//*[@id='Video']"))).click()
         time.sleep(2)
-        latency = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                    "//*[@id='Video-tab']/div/table/tbody/tr[1]/td[2]"))).text
+        latency = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                  "//*[@id='Video-tab']/div/table/tbody/tr[1]/td[2]"))).text
         latency = latency.replace(" ms", "")
-        latency_rec = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                        "//*[@id='Video-tab']/div/table/tbody/tr[1]/td[3]"))).text
+        latency_rec = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                      "//*[@id='Video-tab']/div/table/tbody/tr[1]/td[3]"))).text
         latency_rec = latency_rec.replace(" ms", "")
-        jitter = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                   "//*[@id='Video-tab']/div/table/tbody/tr[2]/td[2]"))).text
+        jitter = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                 "//*[@id='Video-tab']/div/table/tbody/tr[2]/td[2]"))).text
         jitter = jitter.replace(" ms", "")
-        jitter_rec = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                       "//*[@id='Video-tab']/div/table/tbody/tr[2]/td[3]"))).text
+        jitter_rec = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                     "//*[@id='Video-tab']/div/table/tbody/tr[2]/td[3]"))).text
         jitter_rec = jitter_rec.replace(" ms", "")
-        packet_loss = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                        "//*[@id='Video-tab']/div/table/tbody/tr[3]/td[2]"))).text
+        packet_loss = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                      "//*[@id='Video-tab']/div/table/tbody/tr[3]/td[2]"))).text
         packet_loss_vi = re.sub(r'\s*\(.*?\)', '', packet_loss)
         packet_loss_vi = packet_loss_vi.replace('%', '')
-        packet_loss_rec = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                            "//*[@id='Video-tab']/div/table/tbody/tr[3]/td[3]"))).text
+        packet_loss_rec = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                          "//*[@id='Video-tab']/div/table/tbody/tr[3]/td[3]"))).text
         packet_loss_vi_rec = re.sub(r'\s*\(.*?\)', '', packet_loss_rec)
         packet_loss_vi_rec = packet_loss_vi_rec.replace('%', '')
-        resolution = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                       "//*[@id='Video-tab']/div/table/tbody/tr[4]/td[2]"))).text
-        resolution_rec = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                           "//*[@id='Video-tab']/div/table/tbody/tr[4]/td[3]"))).text
-        frames_per_second = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                              "//*[@id='Video-tab']/div/table/tbody/tr[5]/td[2]"))).text
+        resolution = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                     "//*[@id='Video-tab']/div/table/tbody/tr[4]/td[2]"))).text
+        resolution_rec = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                         "//*[@id='Video-tab']/div/table/tbody/tr[4]/td[3]"))).text
+        frames_per_second = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                            "//*[@id='Video-tab']/div/table/tbody/tr[5]/td[2]"))).text
         frames_per_second = frames_per_second.replace(" fps", "")
-        frames_per_second_rec = self.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                                  "//*[@id='Video-tab']/div/table/tbody/tr[5]/td[3]"))).text
+        frames_per_second_rec = self.wait.until(EC.presence_of_element_located((By.XPATH,
+                                                                                "//*[@id='Video-tab']/div/table/tbody/tr[5]/td[3]"))).text
         frames_per_second_rec = frames_per_second_rec.replace(" fps", "")
         return [latency if latency != "-" else "0", jitter if jitter != "-" else "0", packet_loss_vi if packet_loss_vi != "-" else "0", resolution if resolution != "-" else "0",
                 frames_per_second if frames_per_second != "-" else "0", latency_rec if latency_rec != "-" else "0", jitter_rec if jitter_rec != "-" else "0",
@@ -350,7 +350,7 @@ class ZoomClient:
         else:
             self.video_stats = ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0"]
         self.time = self.get_formated_time(datetime.now(self.tz).isoformat())
-        return [self.time]+self.audio_stats+self.video_stats
+        return [self.time] + self.audio_stats + self.video_stats
 
     def send_stats_to_api(self, audio_stats, video_stats):
         endpoint_url = f"{self.base_url}/upload_stats"
@@ -424,6 +424,7 @@ class ZoomClient:
                 print("Remote login password fetched successfully.")
                 data = response.json()
                 self.new_login_passwd = data.get('login_passwd')
+                print("checking self.new_login_passwd", self.new_login_passwd)
             else:
                 print(f"Failed to fetch remote login password. Status code: {response.status_code}")
         except requests.RequestException as e:
