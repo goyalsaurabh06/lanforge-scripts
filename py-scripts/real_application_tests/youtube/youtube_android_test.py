@@ -60,9 +60,14 @@ class Adb:
             resourceId="com.google.android.youtube:id/player_overflow_button"
         ).exists:
             # Tap the video player area (brings up controls)
+            count = 0
             while "com.google.android.youtube:id/player_view" not in d.dump_hierarchy():
                 time.sleep(1)
-                print("Waiting for video player to load...")
+                print("Waiting for video player to load... for serial:", device_serial)
+                count += 1
+                if count > 15:
+                    print("Timeout waiting for video player to load. for serial:", device_serial)
+                    return False
             btn = d(resourceId="com.google.android.youtube:id/player_view")
 
             if btn.wait(timeout=10):  # waits up to 10 seconds for the element to appear
@@ -71,12 +76,17 @@ class Adb:
                 print("player_view element not found within timeout")
 
         # Step 1: Open the overflow menu (⋮)
+        count = 0
         while (
             "com.google.android.youtube:id/player_overflow_button"
             not in d.dump_hierarchy()
         ):
             time.sleep(1)
-            print("Waiting for overflow button to appear...")
+            print("Waiting for overflow button to appear... for serial:", device_serial)
+            count += 1
+            if count > 15:
+                print("Timeout waiting for overflow button. for serial:", device_serial)
+                return False
         btn = d(resourceId="com.google.android.youtube:id/player_overflow_button")
         if btn.wait(timeout=10):  # waits up to 10 seconds for the element to appear
             btn.click()
@@ -93,25 +103,34 @@ class Adb:
 
         d.swipe_ext("up", scale=0.6)
         time.sleep(3)
-
+        count = 0
         while "Stats for nerds " not in d.dump_hierarchy():
             time.sleep(1)
-            print("Waiting for 'Stats for nerds' option to appear...")
+            print("Waiting for 'Stats for nerds' option to appear... for serial:", device_serial)
+            count += 1
+            if count > 15:
+                print("Timeout waiting for 'Stats for nerds' option. for serial:", device_serial)
+                return False
         stats_button = d(description="Stats for nerds ")
         if stats_button.wait(timeout=10):
             stats_button.click()
             print("✅ Stats for nerds enabled.")
 
             # Tap the video player area (brings up controls)
-            while "com.google.android.youtube:id/player_view" not in d.dump_hierarchy():
-                time.sleep(1)
-                print("Waiting for video player to load...")
-            btn = d(resourceId="com.google.android.youtube:id/player_view")
+            # count = 0
+            # while "com.google.android.youtube:id/player_view" not in d.dump_hierarchy():
+            #     time.sleep(1)
+            #     print("Waiting for video player to load... for serial:", device_serial)
+            #     count += 1
+            #     if count > 15:
+            #         print("Timeout waiting for video player to load. for serial:", device_serial)
+            #         return False
+            # btn = d(resourceId="com.google.android.youtube:id/player_view")
 
-            if btn.wait(timeout=10):  # waits up to 10 seconds for the element to appear
-                btn.click()
-            else:
-                print("player_view element not found within timeout")
+            # if btn.wait(timeout=10):  # waits up to 10 seconds for the element to appear
+            #     btn.click()
+            # else:
+            #     print("player_view element not found within timeout")
             return True
 
     def skip_ads(self, serial):
@@ -240,6 +259,10 @@ class Adb:
             print(f"Error checking stop signal: {e}")
 
     def run_on_device(self, serial, video_url, delay, duration):
+        # Force-stop YouTube app if running
+        self.execute_cmd(serial, "am force-stop com.google.android.youtube")
+        time.sleep(10)
+
         # Launch YouTube video
         self.execute_cmd(
             serial,
