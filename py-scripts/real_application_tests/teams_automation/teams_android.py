@@ -1,9 +1,10 @@
 import uiautomator2 as u2
 import time
 from ppadb.client import Client as AdbClient
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
+import argparse
 
 
 class TeamsAndroid:
@@ -43,28 +44,41 @@ class TeamsAndroid:
         devices = self.client.devices()
         return [d.serial for d in devices]
 
-    def connect_devices(self):
-        """Connect to devices and create uiautomator2 sessions."""
-        connected = []
-        for serial in self.total_serials:
-            try:
-                device = self.client.device(serial)
-                if not device:
-                    print(f"ADB did not return device object for {serial}")
-                    continue
 
-                self.devices[serial] = device
-                self.adb_serials[serial] = serial
-                self.u2_sessions[serial] = u2.connect(serial)
-
-                connected.append(serial)
-
-            except Exception as e:
-                print(f"Failed to connect to device {serial}: {e}")
-
-        # Update test_serials with only successful connections
-        self.test_serials = connected
+    def connect_one_device(self, serial, timeout=20):
+        ex = ThreadPoolExecutor(max_workers=1)
+        fut = ex.submit(u2.connect, serial)
+        try:
+            d = fut.result(timeout=timeout)
+            print(f"[{serial}] ✅ Connected")
+            return serial, d
+        except TimeoutError:
+            print(f"[{serial}] ⏳ Connection timeout")
+            fut.cancel()  # best-effort; won't stop a running thread
+            # IMPORTANT: don't wait for the stuck worker
+            ex.shutdown(wait=False, cancel_futures=True)
+            return None, None
+        except Exception as e:
+            print(f"[{serial}] ❌ Failed to connect: {e}")
+            ex.shutdown(wait=False, cancel_futures=True)
+            return None, None
+        else:
+            ex.shutdown(wait=True)
+    
+    def connect_multiple_devices(self):
+        sessions = {}
+        with ThreadPoolExecutor(max_workers=len(self.total_serials)) as ex:
+            futures = {ex.submit(self.connect_one_device, serial): serial for serial in self.total_serials}
+            for future in as_completed(futures):
+                serial, d = future.result()
+                if serial and d:
+                    sessions[serial] = d
+        self.u2_sessions = sessions
+        self.test_serials = list(sessions.keys())
+        print(f"✅ Active sessions: {list(sessions.keys())}")
         print(f"Active test_serials: {self.test_serials}")
+
+
 
     def run_on_multiple_devices(self, device_serials, duration, max_workers=5):
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -78,6 +92,10 @@ class TeamsAndroid:
 
     def open_chrome_incognito(self, serial, duration):
         d = self.u2_sessions[serial]
+        self.close_meeting(d)
+        time.sleep(10)
+        
+
         # Launch Chrome directly in incognito with Teams URL
         d.app_start("com.android.chrome")
 
@@ -95,7 +113,7 @@ class TeamsAndroid:
         url_bar = d(resourceId="com.android.chrome:id/url_bar")
         if url_bar.wait(timeout=10):
             url_bar.click()
-            d.send_keys("https://www.google.com", clear=True)
+            url_bar.set_text("https://www.google.com")
             d.press("enter")
         else:
             print("Laxmi Narayana")
@@ -131,22 +149,26 @@ class TeamsAndroid:
         url_bar = d(resourceId="com.android.chrome:id/url_bar")
         if url_bar.wait(timeout=10):
             url_bar.click()
-            d.send_keys("https://teams.microsoft.com/v2", clear=True)
+            url_bar.set_text("https://teams.microsoft.com/v2")
             d.press("enter")
         else:
             print(f"URL bar not found for device {d.serial}")
             return
+        
+        while "resource-id=\"i0116\"" not in d.dump_hierarchy():
+            print(f"⏳ Waiting for email input field to appear... for device {d.serial}")
+            time.sleep(2)
 
         email_input = d.xpath('//*[@resource-id="i0116"]')
         if email_input.wait(timeout=30):
-            d.send_keys(self.email_ids[self.counter], clear=True)
+            email_input.set_text("test1@ctipltest.onmicrosoft.com")
             d.press("enter")
         else:
             print(f"Email input not found for device {d.serial}")
             return
 
         time.sleep(10)
-        d.send_keys(self.passwords[self.counter], clear=True)
+        d.send_keys('DmQRXN8+H^gsxVis')
 
         d.press("enter")
         self.counter += 1
@@ -161,9 +183,8 @@ class TeamsAndroid:
         url_bar = d(resourceId="com.android.chrome:id/url_bar")
         if url_bar.wait(timeout=10):
             url_bar.click()
-            d.send_keys(
+            url_bar.set_text(
                 "https://teams.microsoft.com/meet/4950863846706?p=hR18cFksPeV0cbgMbz",
-                clear=True,
             )
             d.press("enter")
         else:
@@ -175,20 +196,20 @@ class TeamsAndroid:
 
         # Wait for the "Allow while visiting the site" button to appear
         while "Allow while visiting the site" not in d.dump_hierarchy():
-            print("⏳ Waiting for 'Allow while visiting the site' button to appear...")
+            print(f"⏳ Waiting for 'Allow while visiting the site' button to appear... for device {d.serial}")
             time.sleep(2)
 
         allow_btn = d(text="Allow while visiting the site")
 
         if allow_btn.wait(timeout=10):
-            print("✅ 'Allow while visiting the site' button is present")
+            print(f"✅ 'Allow while visiting the site' button is present for device {d.serial}")
             info = allow_btn.info
 
             if info.get("enabled") and info.get("clickable"):
                 allow_btn.click()
-                print("👉 Clicked 'Allow while visiting the site' button successfully")
+                print(f"👉 Clicked 'Allow while visiting the site' button successfully for device {d.serial}")
             else:
-                print("⚠️ Button found but not clickable yet")
+                print(f"⚠️ Button found but not clickable yet for device {d.serial}")
 
         else:
             print(f"❌ 'Allow while visiting the site' button not found for device {d.serial}")
@@ -292,11 +313,11 @@ class TeamsAndroid:
 
             missing = set(expected_ids) - present_ids
             if not missing:
-                print(f"✅ All resource-ids found for {d.serial}")
+                print(f"✅ All Audio resource-ids found for {d.serial}")
                 break
 
             if time.time() - start > timeout:
-                print(f"⚠️ Timeout waiting for resource-ids {missing} on {d.serial}")
+                print(f"⚠️ Timeout waiting for Audio resource-ids {missing} on {d.serial}")
                 break
 
             time.sleep(1)
@@ -478,10 +499,32 @@ class TeamsAndroid:
 
 
 if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser(description="Teams Android Automation")
+    parser.add_argument("--devices", type=str, default="",
+                        help="Comma-separated list of device serials to use. If empty, all connected devices are used.")
+    args = parser.parse_args()
+    if args.devices:
+        specified_serials = args.devices.split(",")
+        print(f"Using specified devices: {specified_serials}")
+    else:
+        specified_serials = None
+        print("No specific devices provided, using all connected devices.")  
+
     teams_android = TeamsAndroid()
     teams_android.total_serials = teams_android.get_devices()
     print(f"Found devices: {teams_android.total_serials}")
-    teams_android.connect_devices()
+    if "all" in specified_serials:
+        specified_serials = None
+    if specified_serials:
+        teams_android.total_serials = [s for s in teams_android.total_serials if s in specified_serials]
+        print(f"Filtered devices to use: {teams_android.total_serials}")
+    teams_android.connect_multiple_devices()
+    print(f"Connected devices: {teams_android.test_serials}")
+
+    if not teams_android.test_serials:
+        print("No devices connected, exiting.")
+        exit(1)
     teams_android.run_on_multiple_devices(
         teams_android.test_serials, duration=60, max_workers=len(teams_android.test_serials)
     )
