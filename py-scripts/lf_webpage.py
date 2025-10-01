@@ -95,6 +95,9 @@ import threading
 from collections import OrderedDict
 
 import traceback
+import threading
+from collections import OrderedDict
+
 import asyncio
 from typing import List, Optional
 import csv
@@ -1513,12 +1516,14 @@ class HttpDownload(Realm):
                 report.set_custom_html(f'<img src="{stats_png}" style="width:100%; height:auto;">')
                 report.build_custom()
                 
+                # report.build_chart(stats_png)
             #Request vs latency 
             rvl_png=copy_into_report(iot_summary.get("req_vs_latency_img"),"iot_request_vs_latency.png")
             if rvl_png:
                 report.build_chart_title("Request vs Average Latency")
                 report.set_custom_html(f'<img src="{rvl_png}" style="width:100%;">')
                 report.build_custom()
+                # report.build_chart(rvl_png)
 
             # Overall results table
             ort = iot_summary.get("overall_result_table") or {}
@@ -1559,12 +1564,14 @@ class HttpDownload(Realm):
                         report.build_chart_title("Average Latency")
                         report.set_custom_html(f'<img src="{lat_png}" style="width:100%; height:auto;">')
                         report.build_custom()
+                        # report.build_chart(lat_png)
 
                     res_png = copy_into_report(rep.get("result_graph"), f"iot_{step_name}_results.png")
                     if res_png:
                         report.build_chart_title("Success Count")
                         report.set_custom_html(f'<img src="{res_png}" style="width:100%; height:auto;">')
                         report.build_custom()
+                        # report.build_chart(res_png)
 
                     data_rows = rep.get("data") or []
                     if data_rows:
@@ -1920,6 +1927,7 @@ def with_iot_params_in_table(base: dict, iot_summary) -> dict:
 
         ti = (iot_summary.get("test_input_table") or {})
         out = OrderedDict(base)
+        out["IoT Test name"] = ti.get("Testname", "")
         out["Iot Device List"]=ti.get("Device List", "")
         out["IoT Iterations"] = ti.get("Iterations", "")
         out["IoT Delay (s)"] = ti.get("Delay (seconds)", "")
