@@ -6014,8 +6014,7 @@ class L3VariableTime(Realm):
                 self.report.set_custom_html(f'<img src="file://{rssi_image_path}"></img>')
                 self.report.build_custom()
 
-
-    def generate_report(self, config_devices=None, group_device_map=None,iot_summary=None):
+    def generate_report(self, config_devices=None, group_device_map=None, iot_summary=None):
         self.report.set_obj_html("Objective", "The Layer 3 Traffic Generation Test is designed to test the performance of the "
                                  "Access Point by running layer 3 Cross-Connect Traffic.  Layer-3 Cross-Connects represent a stream "
                                  "of data flowing through the system under test. A Cross-Connect (CX) is composed of two Endpoints, "
@@ -6454,6 +6453,7 @@ class L3VariableTime(Realm):
                 self.report.build_chart_title("Test Statistics")
                 self.report.set_custom_html(f'<img src="{stats_png}" style="width:100%; height:auto;">')
                 self.report.build_custom()
+                # self.report.build_chart(stats_png)
 
             # Overall results table
             ort = iot_summary.get("overall_result_table") or {}
@@ -6494,12 +6494,14 @@ class L3VariableTime(Realm):
                         self.report.build_chart_title("Average Latency")
                         self.report.set_custom_html(f'<img src="{lat_png}" style="width:100%; height:auto;">')
                         self.report.build_custom()
+                        # self.report.build_chart(lat_png)
 
                     res_png = copy_into_report(rep.get("result_graph"), f"iot_{step_name}_results.png")
                     if res_png:
                         self.report.build_chart_title("Success Count")
                         self.report.set_custom_html(f'<img src="{res_png}" style="width:100%; height:auto;">')
                         self.report.build_custom()
+                        # self.report.build_chart(res_png)
 
                     data_rows = rep.get("data") or []
                     if data_rows:
@@ -8096,6 +8098,7 @@ def with_iot_params_in_table(base: dict, iot_summary) -> dict:
 
         ti = (iot_summary.get("test_input_table") or {})
         out = OrderedDict(base)
+        out["IoT Test name"] = ti.get("Testname", "")
         out["Iot Device List"]=ti.get("Device List", "")
         out["IoT Iterations"] = ti.get("Iterations", "")
         out["IoT Delay (s)"] = ti.get("Delay (seconds)", "")
@@ -8890,6 +8893,17 @@ and generate a report.
 
     if args.dowebgui:
         ip_var_test.webgui_finalize()
+
+    iot_summary = None
+    if args.iot_test and args.iot_testname:
+        import os
+        import json
+        base = os.path.join("results", args.iot_testname)
+        p = os.path.join(base, "iot_summary.json")
+        if os.path.exists(p):
+            with open(p) as f:
+                iot_summary = json.load(f)
+
     # Generate and write out test report
     logger.info("Generating test report")
     if args.real:
