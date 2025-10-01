@@ -90,10 +90,16 @@ import requests
 import shutil
 import json
 from lf_graph import lf_bar_graph_horizontal
+import threading
+from collections import OrderedDict
 
 import asyncio
 from typing import List, Optional
 import csv
+
+scripts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../local/interop-webGUI/IoT/scripts/"))
+sys.path.insert(0, scripts_path)
+from test_automation import Automation
 
 sys.path.append(os.path.join(os.path.abspath(__file__ + "../../../")))
 
@@ -1122,7 +1128,7 @@ class HttpDownload(Realm):
                         threshold_5g, threshold_both, dataset2, dataset1,  # summary_table_value,
                         result_data, test_rig, rx_rate,
                         test_tag, dut_hw_version, dut_sw_version, dut_model_num, dut_serial_num, test_id,
-                        test_input_infor, csv_outfile, _results_dir_name='webpage_test', report_path=''):
+                        test_input_infor, csv_outfile, _results_dir_name='webpage_test', report_path='',iot_summary=None):
         if self.dowebgui == "True" and report_path == '':
             report = lf_report.lf_report(_results_dir_name="webpage_test", _output_html="Webpage.html",
                                          _output_pdf="Webpage.pdf", _path=self.result_dir)
@@ -1149,6 +1155,8 @@ class HttpDownload(Realm):
         report.build_banner()
         report.set_table_title("Test Setup Information")
         report.build_table_title()
+        if iot_summary:
+            test_setup_info=with_iot_params_in_table(test_setup_info,iot_summary)
 
         report.test_setup_table(value="Test Setup Information", test_setup_data=test_setup_info)
 
@@ -1396,6 +1404,108 @@ class HttpDownload(Realm):
             dataframe1 = pd.DataFrame(dataframe)
             report.set_table_dataframe(dataframe1)
             report.build_table()
+        if iot_summary:
+            outdir = report.path_date_time
+            os.makedirs(outdir, exist_ok=True)
+
+            def copy_into_report(raw_path, new_name):
+                """Resolve and copy image into report dir."""
+                if not raw_path:
+                    return None
+
+                abs_src = os.path.abspath(raw_path)
+                if not os.path.exists(abs_src):
+                    for root, _, files in os.walk(os.path.join(os.getcwd(), "results")):
+                        if os.path.basename(raw_path) in files:
+                            abs_src = os.path.join(root, os.path.basename(raw_path))
+                            break
+                    else:
+                        return None  # not found
+
+                dst = os.path.join(outdir, new_name)
+                if os.path.abspath(abs_src) != os.path.abspath(dst):
+                    shutil.copy2(abs_src, dst)
+                return new_name
+
+            # section header
+            report.set_custom_html('<div style="page-break-before: always;"></div>')
+            report.build_custom()
+            report.set_custom_html('<h2><u>IoT Results</u></h2>')
+            report.build_custom()
+
+            # Statistics
+            stats_png = copy_into_report(iot_summary.get("statistics_img"), "iot_statistics.png")
+            if stats_png:
+                report.build_chart_title("Test Statistics")
+                report.build_chart(stats_png)
+            #Request vs latency 
+            rvl_png=copy_into_report(iot_summary.get("req_vs_latency_img"),"iot_request_vs_latency.png")
+            if rvl_png:
+                report.build_chart_title("Request vs Average Latency")
+                report.build_chart(rvl_png)
+
+            # Overall results table
+            ort = iot_summary.get("overall_result_table") or {}
+            if ort:
+                rows = [{
+                    "Device": dev,
+                    "Min Latency (ms)": s.get("min_latency"),
+                    "Avg Latency (ms)": s.get("avg_latency"),
+                    "Max Latency (ms)": s.get("max_latency"),
+                    "Total Iterations": s.get("total_iterations"),
+                    "Success Iters": s.get("success_iterations"),
+                    "Failed Iters": s.get("failed_iterations"),
+                    "No-Response Iters": s.get("no_response_iterations"),
+                } for dev, s in ort.items()]
+
+                df_overall = pd.DataFrame(rows).round(2)
+                report.set_custom_html('<div style="page-break-inside: avoid;">')
+                report.build_custom()
+                report.set_obj_html(_obj_title="Overall Report Table", _obj=" ")
+                report.build_objective()
+                report.set_table_dataframe(df_overall)
+                report.build_table()
+                report.set_custom_html('</div>')
+                report.build_custom()
+
+            # Increment reports
+            inc = iot_summary.get("increment_reports") or {}
+            if inc:
+                report.set_custom_html('<h3>Reports by Increment Steps</h3>')
+                report.build_custom()
+
+                for step_name, rep in inc.items():
+                    report.set_custom_html(f'<h4><u>{step_name.replace("_", " ")}</u></h4>')
+                    report.build_custom()
+
+                    lat_png = copy_into_report(rep.get("latency_graph"), f"iot_{step_name}_latency.png")
+                    if lat_png:
+                        report.build_chart_title("Average Latency")
+                        report.build_chart(lat_png)
+
+                    res_png = copy_into_report(rep.get("result_graph"), f"iot_{step_name}_results.png")
+                    if res_png:
+                        report.build_chart_title("Success Count")
+                        report.build_chart(res_png)
+
+                    data_rows = rep.get("data") or []
+                    if data_rows:
+                        df = pd.DataFrame(data_rows).rename(
+                            columns={"latency__ms": "Latency_ms", "latency_ms": "Latency_ms"}
+                        )
+                        if "Latency_ms" in df.columns:
+                            df["Latency_ms"] = pd.to_numeric(df["Latency_ms"], errors="coerce").round(3)
+                        if "Result" in df.columns:
+                            df["Result"] = df["Result"].map(lambda x: "Success" if bool(x) else "Failure")
+                        desired_cols = ["Iteration", "Device", "Current State", "latency (ms)", "Result"]
+                        df = df[[c for c in desired_cols if c in df.columns]]
+                        report.set_table_dataframe(df)
+                        report.build_table()
+                        report.set_custom_html('<div style="page-break-inside: avoid;">')
+                        report.build_custom()
+
+                    report.set_custom_html('<hr style="border:none; border-top:1px solid #ccc; margin:10px 0;" />')
+                    report.build_custom()
         report.build_footer()
         html_file = report.write_html()
         print("returned file {}".format(html_file))
@@ -1703,7 +1813,109 @@ def validate_args(args):
             elif args.security.lower() == 'open' and args.passwd != '[BLANK]':
                 logger.error("For a open type security there will be no password or the password should be left blank (i.e., set to '' or [BLANK]).")
                 exit(1)
+def with_iot_params_in_table(base: dict, iot_summary) -> dict:
+    """
+    Append IoT params into the existing Throughput Input Parameters table.
+    Adds: IoT Test name, IoT Iterations, IoT Delay (s), IoT Increment.
+    Accepts dict or JSON string.
+    """
+    print("function called with iot params-----")
+    try:
+        if not iot_summary:
+            return base
+        if isinstance(iot_summary, str):
+            try:
+                iot_summary = json.loads(iot_summary)
+            except Exception:
+                s = iot_summary.find("{")
+                e = iot_summary.rfind("}")
+                if s == -1 or e == -1 or e <= s:
+                    return base
+                try:
+                    iot_summary = json.loads(iot_summary[s:e + 1])
+                except Exception:
+                    return base
 
+        ti = (iot_summary.get("test_input_table") or {})
+        out = OrderedDict(base)
+        out["IoT Test name"] = ti.get("Testname", "")
+        out["Iot Device List"]=ti.get("Device List", "")
+        out["IoT Iterations"] = ti.get("Iterations", "")
+        out["IoT Delay (s)"] = ti.get("Delay (seconds)", "")
+        out["IoT Increment"] = ti.get("Increment Pattern", "")
+        return out
+    except Exception:
+        return base
+
+
+def trigger_iot(ip, port, iterations, delay, device_list, testname, increment):
+    asyncio.run(run_iot(ip, port, iterations, delay, device_list, testname, increment))
+
+async def run_iot(ip: str = '127.0.0.1',
+             port: str = '8000',
+             iterations: int = 1,
+             delay: int = 5,
+             device_list: str = '',
+             testname: str = '',
+             increment: str = ''):
+    try:
+
+        if delay < 5:
+            logger.error('The minimum delay should be 5 seconds.')
+            exit(1)
+
+        if device_list != '':
+            device_list = device_list.split(',')
+        else:
+            device_list = None
+        if increment:
+            print("the increment is : ",increment)
+            try:
+                increment = list(map(int, increment.split(',')))
+                # increment=[1,1]
+                if any(i < 1 for i in increment):
+                    logger.error('Increment values must be positive integers')
+                    exit(1)
+            except ValueError:
+                logger.error('Invalid increment format. Please provide comma-separated integers (e.g., "1,3,5")')
+                exit(1)
+
+        testname = testname
+        if testname in os.listdir('../../local/interop-webGUI/IoT/scripts/results/'):
+            logger.error('Test with same name already existing. Please give a different testname.')
+            exit(1)
+        # else:
+        #     try:
+        #         logger.info(f'Creating a report directory: results/{testname}')
+        #         os.makedirs(f'../../local/interop-webGUI/IoT/scripts/results/{testname}', exist_ok=True)
+        #     except Exception as e:
+        #         logger.exception(f'Failed creating report directory: {e}')
+        #         exit(1)
+
+        automation = Automation(ip=ip,
+                                    port=port,
+                                    iterations=iterations,
+                                    delay=delay,
+                                    device_list=device_list,
+                                    testname=testname,
+                                    increment=increment)
+
+        automation.devices = await automation.fetch_iot_devices()
+
+        automation.select_iot_devices()
+        
+        automation.run_test()
+
+        automation.generate_report()
+
+    except Exception as e:
+        logger.error(f"Test failed: {str(e)}")
+        raise
+
+    await automation.session.close()
+
+
+    logger.info('Test Completed.')
 
 def main():
     # TODO: set up logger
@@ -1874,6 +2086,41 @@ def main():
 
     optional.add_argument('--get_live_view', help="If true will heatmap will be generated from testhouse automation WebGui ", action='store_true')
     optional.add_argument('--total_floors', help="Total floors from testhouse automation WebGui ", default="0")
+    #IOT ARGS
+    parser.add_argument('--iot_test', help="If true will execute script for iot", action='store_true')
+    optional.add_argument('--iot_ip',
+                            default='127.0.0.1',
+                            help='IP of FastAPI server')
+
+    optional.add_argument('--iot_port',
+                        default='8000',
+                        help='Port of FastAPI server')
+
+    optional.add_argument('--iot_iterations',
+                        type=int,
+                        default=1,
+                        help='Iterations to run the test')
+
+    optional.add_argument('--iot_delay',
+                        type=int,
+                        default=5,
+                        help='Delay in seconds between iterations (min. 5 seconds)')
+
+    optional.add_argument('--iot_device_list',
+                        type=str,
+                        default='',
+                        help='Entity IDs of the devices to include in testing (comma separated)')
+
+    optional.add_argument('--iot_testname',
+                        type=str,
+                        default='',
+                        help='Testname for reporting')
+                        
+    optional.add_argument('--iot_increment',
+                        type=str,
+                        default='',
+                        help='Comma-separated list of device counts to incrementally test (e.g., "1,3,5")')
+
     help_summary = '''\
 lf_webpage.py will verify that N clients are connected on a specified band and can download
 some amount of file data from the HTTP server while measuring the time taken by clients to download the file and number of
@@ -1901,6 +2148,14 @@ times the file is downloaded.
     # Check for Both being used independently
     if len(args.bands) > 1 and "Both" in args.bands:
         raise ValueError("'Both' test type must be used independently!")
+    if args.iot_test:
+        iot_ip = args.iot_ip
+        iot_port = args.iot_port
+        iot_iterations = args.iot_iterations
+        iot_delay = args.iot_delay
+        iot_device_list = args.iot_device_list
+        iot_testname = args.iot_testname
+        iot_increment = args.iot_increment
 
     validate_args(args)
     if args.duration.endswith('s') or args.duration.endswith('S'):
@@ -2036,6 +2291,27 @@ times the file is downloaded.
                 exit(0)
         http.set_values()
         http.precleanup()
+        if args.iot_test:
+            if args.iot_iterations>1:
+                thread = threading.Thread(target=trigger_iot,args=(iot_ip,iot_port,iot_iterations,iot_delay,iot_device_list,iot_testname,iot_increment))
+                thread.start()
+            else:
+                total_secs = int(args.duration)
+                iot_iterations=max(1,total_secs//args.iot_delay)
+                iot_thread = threading.Thread(
+                    target=trigger_iot,
+                    args=(
+                        args.iot_ip,
+                        args.iot_port,
+                        iot_iterations,
+                        args.iot_delay,
+                        args.iot_device_list,
+                        args.iot_testname,
+                        args.iot_increment
+                    ),
+                    daemon=True
+                )
+                iot_thread.start()
         http.build()
         if args.client_type == 'Real':
             http.monitor_cx()
@@ -2302,6 +2578,15 @@ times the file is downloaded.
         # "": args.bands,
         # "PASS/FAIL": data
     # }
+    iot_summary = None
+    if args.iot_test and args.iot_testname:
+        import os
+        import json
+        base = os.path.join("results", args.iot_testname)
+        p = os.path.join(base, "iot_summary.json")
+        if os.path.exists(p):
+            with open(p) as f:
+                iot_summary = json.load(f)
     if args.dowebgui:
         http.data_for_webui["status"] = ["STOPPED"] * len(http.devices_list)
         http.data_for_webui['rx rate (1m)'] = http.data['rx rate (1m)']
@@ -2321,7 +2606,7 @@ times the file is downloaded.
                          test_rig=args.test_rig, test_tag=args.test_tag, dut_hw_version=args.dut_hw_version,
                          dut_sw_version=args.dut_sw_version, dut_model_num=args.dut_model_num,
                          dut_serial_num=args.dut_serial_num, test_id=args.test_id,
-                         test_input_infor=test_input_infor, csv_outfile=args.csv_outfile)
+                         test_input_infor=test_input_infor, csv_outfile=args.csv_outfile,iot_summary=iot_summary)
     http.postcleanup()
     # FOR WEBGUI, filling csv at the end to get the last terminal logs
     if args.dowebgui:
