@@ -2389,12 +2389,14 @@ class Mixed_Traffic(Realm):
                     self.lf_report_mt.build_chart_title("Test Statistics")
                     self.lf_report_mt.set_custom_html(f'<img src="{stats_png}" style="width:100%; height:auto;">')
                     self.lf_report_mt.build_custom()
+                    # self.lf_report_mt.build_chart(stats_png)
                 #Request vs latency 
                 rvl_png=copy_into_report(iot_summary.get("req_vs_latency_img"),"iot_request_vs_latency.png")
                 if rvl_png:
                     self.lf_report_mt.build_chart_title("Request vs Average Latency")
                     self.lf_report_mt.set_custom_html(f'<img src="{rvl_png}" style="width:100%;">')
                     self.lf_report_mt.build_custom()
+                    # self.lf_report_mt.build_chart(rvl_png)
 
                 # Overall results table
                 ort = iot_summary.get("overall_result_table") or {}
@@ -2435,12 +2437,14 @@ class Mixed_Traffic(Realm):
                             self.lf_report_mt.build_chart_title("Average Latency")
                             self.lf_report_mt.set_custom_html(f'<img src="{lat_png}" style="width:100%; height:auto;">')
                             self.lf_report_mt.build_custom()
+                            # self.lf_report_mt.build_chart(lat_png)
 
                         res_png = copy_into_report(rep.get("result_graph"), f"iot_{step_name}_results.png")
                         if res_png:
                             self.lf_report_mt.build_chart_title("Success Count")
                             self.lf_report_mt.set_custom_html(f'<img src="{res_png}" style="width:100%; height:auto;">')
                             self.lf_report_mt.build_custom()
+                            # self.lf_report_mt.build_chart(res_png)
 
                         data_rows = rep.get("data") or []
                         if data_rows:
@@ -2507,6 +2511,7 @@ def with_iot_params_in_table(base: dict, iot_summary) -> dict:
 
         ti = (iot_summary.get("test_input_table") or {})
         out = OrderedDict(base)
+        out["IoT Test name"] = ti.get("Testname", "")
         out["Iot Device List"]=ti.get("Device List", "")
         out["IoT Iterations"] = ti.get("Iterations", "")
         out["IoT Delay (s)"] = ti.get("Delay (seconds)", "")
@@ -2880,6 +2885,41 @@ INCLUDE_IN_README: False
 
     optional.add_argument('--get_live_view', help="If true will heatmap will be generated from testhouse automation WebGui ", action='store_true')
     optional.add_argument('--total_floors', help="Total floors from testhouse automation WebGui ", default="0")
+    #IOT ARGS
+    parser.add_argument('--iot_test', help="If true will execute script for iot", action='store_true')
+    optional.add_argument('--iot_ip',
+                            default='127.0.0.1',
+                            help='IP of FastAPI server')
+
+    optional.add_argument('--iot_port',
+                        default='8000',
+                        help='Port of FastAPI server')
+
+    optional.add_argument('--iot_iterations',
+                        type=int,
+                        default=1,
+                        help='Iterations to run the test')
+
+    optional.add_argument('--iot_delay',
+                        type=int,
+                        default=5,
+                        help='Delay in seconds between iterations (min. 5 seconds)')
+
+    optional.add_argument('--iot_device_list',
+                        type=str,
+                        default='',
+                        help='Entity IDs of the devices to include in testing (comma separated)')
+
+    optional.add_argument('--iot_testname',
+                        type=str,
+                        default='',
+                        help='Testname for reporting')
+                        
+    optional.add_argument('--iot_increment',
+                        type=str,
+                        default='',
+                        help='Comma-separated list of device counts to incrementally test (e.g., "1,3,5")')
+
 
     args = parser.parse_args()
 
