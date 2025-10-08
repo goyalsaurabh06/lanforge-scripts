@@ -141,6 +141,13 @@ class TeamsAutomation(Realm):
             'video processing'
         ]
 
+        self.serial_list = []
+        self.user_list = []
+        self.lanforge_port_list = set()
+        self.lanforge_os_type = list()
+        self.android = 0
+        self.device_names = []
+
         if self.audio:
             self.header = ['timestamp'] + self.audio_stats_header
         if self.video:
@@ -157,6 +164,51 @@ class TeamsAutomation(Realm):
         self.test_name = test_name
         self.report_dir = report_dir
         self.execute_finally = False
+
+    def get_android_device_data(self):
+        interop_data = self.json_get('/adb')
+        # print("checking interop data")
+        # print(interop_data)
+        interop_mobile_data = interop_data.get('devices', {})
+        # print("checking interop mobile data")
+        # print(interop_mobile_data)
+
+        if isinstance(interop_mobile_data, dict):
+            for user in self.user_list:
+                if user != '':
+                    if interop_mobile_data.get('user-name') == user:
+
+                        serial = interop_mobile_data.get('name', '')
+                        resource = serial.split('.')[1]
+                        serial_no = serial.split('.')[2]
+                        self.serial_list.append(serial_no)
+                        lanforge_port = f"1.{resource}.eth0"
+                        self.lanforge_port_list.add(lanforge_port)
+                        # self.lanforge_os_type.add("Linux")
+
+        else:
+            for user in self.user_list:
+                if user != '':
+                    # self.serial_list.append('')
+                    # self.lanforge_port_list.add('')
+
+                    for mobile_device in interop_mobile_data:
+                        # print("checking mobile device data")
+                        # print(type(mobile_device))
+                        # print("laxmi narayana", mobile_device)
+                        for serial, device_data in mobile_device.items():
+                            if device_data.get('user-name') == user:
+                                resource = serial.split('.')[1]
+                                serial_no = serial.split('.')[2]
+                                self.serial_list.append(serial_no)
+                                lanforge_port = f"1.{resource}.eth0"
+                                self.lanforge_port_list.add(lanforge_port)
+                                # self.lanforge_os_type.add("Linux")
+                                break
+
+        self.lanforge_port_list = list(self.lanforge_port_list)
+        self.lanforge_os_type = ["Linux"] * len(self.lanforge_port_list)
+        self.serial_list_str = ','.join(self.serial_list)
 
     def updating_webui_runningjson(self, obj):
         data = {}
@@ -264,6 +316,22 @@ class TeamsAutomation(Realm):
             elif self.real_sta_os_types[i] == 'macos':
                 cmd = "sudo bash ctteams.bash %s %s" % (self.upstream_port, "client")
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
+
+        if self.generic_endps_profile.create(ports=self.lanforge_port_list, sleep_time=.5, real_client_os_types=self.lanforge_os_type,):
+            logging.info('Real client generic endpoint creation completed.')
+        else:
+            logging.error('Real client generic endpoint creation failed.')
+            exit(0)
+
+        for i in range(0, len(self.lanforge_os_type)):
+            cmd = (
+                "python3 teams_android.py --meet_link %s --duration %s --devices %s --upstream_port %s "
+                "| tee teams_test.log"
+            ) % (self.meet_link, self.duration, self.serial_list_str, self.lanforge_ip)
+
+            print("checking command")
+            print(cmd)
+            self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[-(i + 1)], cmd)
 
         self.generic_endps_profile.start_cx()
 
@@ -621,6 +689,91 @@ class TeamsAutomation(Realm):
 
         return self.real_sta_list
 
+    def get_device_data(self):
+        ports_list = []
+        eid = ""
+        resource_ip = ""
+        user_resources = ['.'.join(item.split('.')[:2]) for item in self.real_sta_list]
+
+        # Step 1: Retrieve information about all resources
+        response = self.json_get("/resource/all")
+
+        # Step 2: Match user-specified resources with available resources sequentially
+        if user_resources:
+            # Iterate through user_resources sequentially, processing each value only once
+            for user_resource in user_resources:
+                # Break loop if no more user_resources left to process
+                if not user_resources:
+                    break
+
+                for key, value in response.items():
+                    if key == "resources":
+                        for element in value:
+                            for resource_key, resource_values in element.items():
+                                # Match the current user_resource
+                                if resource_key == user_resource:
+                                    eid = resource_values["eid"]
+                                    resource_ip = resource_values['ctrl-ip']
+                                    self.device_names.append(resource_values['hostname'])
+                                    ports_list.append({'eid': eid, 'ctrl-ip': resource_ip})
+                                    self.user_list.append(resource_values['user'])
+                                    break
+                            else:
+                                # Continue outer loop only if no break occurred
+                                continue
+                            # Break if a match was found and processed
+                            break
+        gen_ports_list = []
+        self.mac_list = []
+        self.rssi_list = []
+        self.link_rate_list = []
+        self.ssid_list = []
+        # Step 3: Retrieve port information
+        response_port = self.json_get("/port/all")
+
+        # Step 4: Match ports associated with retrieved resources in the order of ports_list
+        for port_entry in ports_list:
+            # Extract the eid and ctrl-ip from the current ports_list entry
+            expected_eid = port_entry['eid']
+
+            # Iterate over the port interfaces to find a matching port
+            for interface in response_port['interfaces']:
+                for port, port_data in interface.items():
+                    # Extract the first two segments of the port identifier to match with expected_eid
+                    result = '.'.join(port.split('.')[:2])
+
+                    # Check if the result matches the current expected eid from ports_list
+                    if result == expected_eid:
+                        gen_ports_list.append(port.split('.')[-1])
+                        break
+                else:
+                    continue
+                break
+
+        for port_entry in ports_list:
+            # Extract the eid and ctrl-ip from the current ports_list entry
+            expected_eid = port_entry['eid']
+
+            # Iterate over the port interfaces to find a matching port
+            for interface in response_port['interfaces']:
+                for port, port_data in interface.items():
+                    # Extract the first two segments of the port identifier to match with expected_eid
+                    result = '.'.join(port.split('.')[:2])
+
+                    # Check if the result matches the current expected eid from ports_list
+                    if result == expected_eid and port_data["parent dev"] == 'wiphy0':
+                        self.mac_list.append(port_data["mac"])
+                        self.rssi_list.append(port_data["signal"])
+                        self.link_rate_list.append(port_data["rx-rate"])
+                        self.ssid_list.append(port_data["ssid"])
+
+                        break
+                else:
+                    continue
+                break
+
+        self.new_port_list = [item.split('.')[2] for item in self.real_sta_list]
+
     # Load the credentials on server startup
     def load_credentials(self):
         with open('teams_cred.csv', newline='') as csvfile:
@@ -957,6 +1110,8 @@ def main():
                                       selected_bands=['5G'])
 
         teams.select_real_devices(real_sta_list=args.resources)
+        teams.get_device_data()
+        teams.get_android_device_data()
         if args.do_webUI:
             teams.path = args.report_dir
             teams.update_webui_data()
