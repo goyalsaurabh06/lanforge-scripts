@@ -3,12 +3,15 @@ import time
 from ppadb.client import Client as AdbClient
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import datetime
 import argparse
+import pytz
+import requests
+import logging
 
 
 class TeamsAndroid:
-    def __init__(self, host="127.0.0.1", port=5037, upstream_port=None):
+    def __init__(self, host="127.0.0.1", port=5037, upstream_port=None, meet_link=None):
         self.host = host
         self.port = port
         self.client = AdbClient(host=self.host, port=self.port)
@@ -22,28 +25,18 @@ class TeamsAndroid:
         self.total_serials = []
         self.audio = True
         self.video = True
-        self.email_ids = [
-            "test1@ctipltest.onmicrosoft.com",
-            "test2@ctipltest.onmicrosoft.com",
-            "test3@ctipltest.onmicrosoft.com",
-            "test4@ctipltest.onmicrosoft.com",
-            "candelatech@ctipltest.onmicrosoft.com"
-
-        ]
-        self.passwords = [
-            "DmQRXN8+H^gsxVis",
-            "R@006900206161aj",
-            "P@824120657357ov",
-            "J^522833765642al",
-            "Candela@530045"
-        ]
-        self.counter = 0
+        self.meet_link = meet_link
+        self.email = None
+        self.passwd = None
+        self.start_time = None
+        self.end_time = None
+        self.tz = pytz.timezone("Asia/Kolkata")
+        self.base_url = f"http://{self.upstream_port}:5005"
 
     def get_devices(self):
         """Return list of connected ADB serials"""
         devices = self.client.devices()
         return [d.serial for d in devices]
-
 
     def connect_one_device(self, serial, timeout=20):
         ex = ThreadPoolExecutor(max_workers=1)
@@ -64,11 +57,14 @@ class TeamsAndroid:
             return None, None
         else:
             ex.shutdown(wait=True)
-    
+
     def connect_multiple_devices(self):
         sessions = {}
         with ThreadPoolExecutor(max_workers=len(self.total_serials)) as ex:
-            futures = {ex.submit(self.connect_one_device, serial): serial for serial in self.total_serials}
+            futures = {
+                ex.submit(self.connect_one_device, serial): serial
+                for serial in self.total_serials
+            }
             for future in as_completed(futures):
                 serial, d = future.result()
                 if serial and d:
@@ -77,8 +73,6 @@ class TeamsAndroid:
         self.test_serials = list(sessions.keys())
         print(f"✅ Active sessions: {list(sessions.keys())}")
         print(f"Active test_serials: {self.test_serials}")
-
-
 
     def run_on_multiple_devices(self, device_serials, duration, max_workers=5):
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -94,7 +88,6 @@ class TeamsAndroid:
         d = self.u2_sessions[serial]
         self.close_meeting(d)
         time.sleep(10)
-        
 
         # Launch Chrome directly in incognito with Teams URL
         d.app_start("com.android.chrome")
@@ -142,9 +135,33 @@ class TeamsAndroid:
                 time.sleep(2)
                 print("Desktop site is ENABLED Now Previously it was DISABLED")
 
-        self.login_teams(d)
+        email, passwd = self.get_credentials()
 
-    def login_teams(self, d):
+        self.login_teams(d, email, passwd)
+
+    def get_credentials(self):
+        try:
+            response = requests.get(
+                f"http://{self.upstream_port}:5005/get_credentials", timeout=5
+            )
+            if response.status_code == 200:
+                data = response.json()
+                email = data["email"].strip()
+                passwd = data["password"].strip()
+            else:
+                logging.error(
+                    f"❌ Failed to get credentials: {response.json().get('log')}"
+                )
+                email = None
+                passwd = None
+        except requests.exceptions.RequestException as e:
+            logging.error(f"❌ Error during credential request: {e}")
+            email = None
+            passwd = None
+
+        return email, passwd
+
+    def login_teams(self, d, email, passwd):
         # Wait for the URL bar and type the Teams URL
         url_bar = d(resourceId="com.android.chrome:id/url_bar")
         if url_bar.wait(timeout=10):
@@ -154,28 +171,31 @@ class TeamsAndroid:
         else:
             print(f"URL bar not found for device {d.serial}")
             return
-        
-        while "resource-id=\"i0116\"" not in d.dump_hierarchy():
-            print(f"⏳ Waiting for email input field to appear... for device {d.serial}")
+
+        if not email or not passwd:
+            print(f"❌ Missing credentials for device {d.serial}")
+            return
+
+        while 'resource-id="i0116"' not in d.dump_hierarchy():
+            print(
+                f"⏳ Waiting for email input field to appear... for device {d.serial}"
+            )
             time.sleep(2)
 
         email_input = d.xpath('//*[@resource-id="i0116"]')
         if email_input.wait(timeout=30):
-            email_input.set_text("test1@ctipltest.onmicrosoft.com")
+            email_input.set_text(email)
             d.press("enter")
         else:
             print(f"Email input not found for device {d.serial}")
             return
 
         time.sleep(10)
-        d.send_keys('DmQRXN8+H^gsxVis')
+        d.send_keys(passwd)
 
         d.press("enter")
-        self.counter += 1
         time.sleep(5)
         d.press("enter")
-        if self.counter >= len(self.email_ids):
-            self.counter = 0
         time.sleep(20)
         self.enter_meeting(d)
 
@@ -184,7 +204,7 @@ class TeamsAndroid:
         if url_bar.wait(timeout=10):
             url_bar.click()
             url_bar.set_text(
-                "https://teams.microsoft.com/meet/4950863846706?p=hR18cFksPeV0cbgMbz",
+                self.meet_link,
             )
             d.press("enter")
         else:
@@ -196,25 +216,32 @@ class TeamsAndroid:
 
         # Wait for the "Allow while visiting the site" button to appear
         while "Allow while visiting the site" not in d.dump_hierarchy():
-            print(f"⏳ Waiting for 'Allow while visiting the site' button to appear... for device {d.serial}")
+            print(
+                f"⏳ Waiting for 'Allow while visiting the site' button to appear... for device {d.serial}"
+            )
             time.sleep(2)
 
         allow_btn = d(text="Allow while visiting the site")
 
         if allow_btn.wait(timeout=10):
-            print(f"✅ 'Allow while visiting the site' button is present for device {d.serial}")
+            print(
+                f"✅ 'Allow while visiting the site' button is present for device {d.serial}"
+            )
             info = allow_btn.info
 
             if info.get("enabled") and info.get("clickable"):
                 allow_btn.click()
-                print(f"👉 Clicked 'Allow while visiting the site' button successfully for device {d.serial}")
+                print(
+                    f"👉 Clicked 'Allow while visiting the site' button successfully for device {d.serial}"
+                )
             else:
                 print(f"⚠️ Button found but not clickable yet for device {d.serial}")
 
         else:
-            print(f"❌ 'Allow while visiting the site' button not found for device {d.serial}")
+            print(
+                f"❌ 'Allow while visiting the site' button not found for device {d.serial}"
+            )
             return
-
 
         d.dump_hierarchy()
         time.sleep(5)
@@ -261,18 +288,39 @@ class TeamsAndroid:
             print("Call health button not found")
             return
 
-        # Run for 1 minute using datetime
-        end_time = datetime.now() + timedelta(minutes=2)
+        while self.start_time is None or self.end_time is None:
+            self.get_start_and_end_time()
+            time.sleep(2)
 
-        while datetime.now() < end_time:
+        while self.start_time > datetime.now(self.tz).isoformat():
+            time.sleep(2)
+            print("waiting for the start time")
+
+        while self.end_time > datetime.now(self.tz).isoformat():
             if self.audio:
                 audio_stats = self.collect_audio_stats(d)
             if self.video:
                 video_stats = self.collect_video_stats(d)
             self.send_stats_to_server(d.serial, audio_stats, video_stats)
-        
+
         self.close_meeting(d)
-    
+
+    def get_start_and_end_time(self):
+        endpoint_url = f"{self.base_url}/get_start_end_time"
+        try:
+            response = requests.get(endpoint_url)
+            if response.status_code == 200:
+                data = response.json()
+                self.start_time = data.get("start_time")
+                self.end_time = data.get("end_time")
+            else:
+                print(
+                    f"Failed to fetch new login URL. Status code: {response.status_code}"
+                )
+        except requests.RequestException as e:
+            print(f"Request error: {e}")
+        return None
+
     def close_meeting(self, d):
         d.app_stop("com.android.chrome")
         print(f"Closed Chrome on device {d.serial}")
@@ -317,7 +365,9 @@ class TeamsAndroid:
                 break
 
             if time.time() - start > timeout:
-                print(f"⚠️ Timeout waiting for Audio resource-ids {missing} on {d.serial}")
+                print(
+                    f"⚠️ Timeout waiting for Audio resource-ids {missing} on {d.serial}"
+                )
                 break
 
             time.sleep(1)
@@ -483,14 +533,16 @@ class TeamsAndroid:
             }
         print(payload)
 
-        # try:
-        #     response = requests.post(f"{self.base_url}/upload_stats", json=payload)
-        #     if response.status_code == 200:
-        #         print(f"Stats uploaded for {hostname}")
-        #     else:
-        #         print(f"Failed to upload stats: {response.status_code} - {response.text}")
-        # except Exception as e:
-        #     print(f"Exception during upload: {e}")
+        try:
+            response = requests.post(f"{self.base_url}/upload_stats", json=payload)
+            if response.status_code == 200:
+                print(f"Stats uploaded for {serial}")
+            else:
+                print(
+                    f"Failed to upload stats: {response.status_code} - {response.text}"
+                )
+        except Exception as e:
+            print(f"Exception during upload: {e}")
 
     def dump_xml(self, d):
         xml = d.dump_hierarchy()
@@ -501,23 +553,55 @@ class TeamsAndroid:
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Teams Android Automation")
-    parser.add_argument("--devices", type=str, default="",
-                        help="Comma-separated list of device serials to use. If empty, all connected devices are used.")
+    parser.add_argument(
+        "--devices",
+        type=str,
+        default="",
+        help="Comma-separated list of device serials to use. If empty, all connected devices are used.",
+    )
+    parser.add_argument(
+        "--meet_link",
+        type=str,
+        default="https://teams.microsoft.com/meet/4950863846706?p=hR18cFksPeV0cbgMbz",
+        help="Teams meeting link to join.",
+    )
+    parser.add_argument(
+        "--upstream_port",
+        type=str,
+        default=None,
+        help="Upstream port for LANforge connection.",
+    )
+    parser.add_argument(
+        "--audio", action="store_true", help="Enable audio stats collection."
+    )
+    parser.add_argument(
+        "--video", action="store_true", help="Enable video stats collection."
+    )
+    parser.add_argument(
+        "--duration",
+        type=int,
+        default=2,
+        help="Duration in minutes to run the test on each device.",
+    )
     args = parser.parse_args()
     if args.devices:
         specified_serials = args.devices.split(",")
         print(f"Using specified devices: {specified_serials}")
     else:
         specified_serials = None
-        print("No specific devices provided, using all connected devices.")  
+        print("No specific devices provided, using all connected devices.")
 
-    teams_android = TeamsAndroid()
+    teams_android = TeamsAndroid(
+        upstream_port=args.upstream_port, meet_link=args.meet_link
+    )
     teams_android.total_serials = teams_android.get_devices()
     print(f"Found devices: {teams_android.total_serials}")
     if "all" in specified_serials:
         specified_serials = None
     if specified_serials:
-        teams_android.total_serials = [s for s in teams_android.total_serials if s in specified_serials]
+        teams_android.total_serials = [
+            s for s in teams_android.total_serials if s in specified_serials
+        ]
         print(f"Filtered devices to use: {teams_android.total_serials}")
     teams_android.connect_multiple_devices()
     print(f"Connected devices: {teams_android.test_serials}")
@@ -526,5 +610,7 @@ if __name__ == "__main__":
         print("No devices connected, exiting.")
         exit(1)
     teams_android.run_on_multiple_devices(
-        teams_android.test_serials, duration=60, max_workers=len(teams_android.test_serials)
+        teams_android.test_serials,
+        duration=60,
+        max_workers=len(teams_android.test_serials),
     )
