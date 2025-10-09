@@ -1462,7 +1462,7 @@ class ThroughputQOS(Realm):
 
         return image_paths_by_tos, rssi_image_paths_by_floor
 
-    def generate_individual_graph(self, res, report, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, totalfloors=None, multicast_exists=False):
+    def generate_individual_graph(self, res, report, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, totalfloors=None, multicast_exists=False,graph_no=''):
         # Required when generate_individual_graph() called explicitly from mixed traffic
         if totalfloors is not None:
             self.total_floors = totalfloors
@@ -1632,7 +1632,7 @@ class ThroughputQOS(Realm):
                                                     _color_name=colors,
                                                     _show_bar_value=True,
                                                     _enable_csv=True,
-                                                    _graph_image_name="bk_{}".format(self.direction), _color_edge=['black'],
+                                                    _graph_image_name="bk_{}{}".format(self.direction,graph_no), _color_edge=['black'],
                                                     _color=colors)
                     graph_png = graph.build_bar_graph_horizontal()
                     print("graph name {}".format(graph_png))
@@ -1761,7 +1761,7 @@ class ThroughputQOS(Realm):
                                                     _color_name=colors,
                                                     _show_bar_value=True,
                                                     _enable_csv=True,
-                                                    _graph_image_name="be_{}".format(self.direction), _color_edge=['black'],
+                                                    _graph_image_name="be_{}{}".format(self.direction,graph_no), _color_edge=['black'],
                                                     _color=colors)
                     graph_png = graph.build_bar_graph_horizontal()
                     print("graph name {}".format(graph_png))
@@ -1887,7 +1887,7 @@ class ThroughputQOS(Realm):
                                                     _show_bar_value=True,
                                                     _color_name=colors,
                                                     _enable_csv=True,
-                                                    _graph_image_name="video_{}".format(self.direction),
+                                                    _graph_image_name="video_{}{}".format(self.direction,graph_no),
                                                     _color_edge=['black'],
                                                     _color=colors)
                     graph_png = graph.build_bar_graph_horizontal()
@@ -2014,7 +2014,7 @@ class ThroughputQOS(Realm):
                                                     _show_bar_value=True,
                                                     _color_name=colors,
                                                     _enable_csv=True,
-                                                    _graph_image_name="voice_{}".format(self.direction),
+                                                    _graph_image_name="voice_{}{}".format(self.direction,graph_no),
                                                     _color_edge=['black'],
                                                     _color=colors)
                     graph_png = graph.build_bar_graph_horizontal()
