@@ -6451,7 +6451,8 @@ class L3VariableTime(Realm):
             stats_png = copy_into_report(iot_summary.get("statistics_img"), "iot_statistics.png")
             if stats_png:
                 self.report.build_chart_title("Test Statistics")
-                self.report.build_chart(stats_png)
+                self.report.set_custom_html(f'<img src="{stats_png}" style="width:100%; height:auto;">')
+                self.report.build_custom()
 
             # Overall results table
             ort = iot_summary.get("overall_result_table") or {}
@@ -6490,12 +6491,14 @@ class L3VariableTime(Realm):
                     lat_png = copy_into_report(rep.get("latency_graph"), f"iot_{step_name}_latency.png")
                     if lat_png:
                         self.report.build_chart_title("Average Latency")
-                        self.report.build_chart(lat_png)
+                        self.report.set_custom_html(f'<img src="{lat_png}" style="width:100%; height:auto;">')
+                        self.report.build_custom()
 
                     res_png = copy_into_report(rep.get("result_graph"), f"iot_{step_name}_results.png")
                     if res_png:
                         self.report.build_chart_title("Success Count")
-                        self.report.build_chart(res_png)
+                        self.report.set_custom_html(f'<img src="{res_png}" style="width:100%; height:auto;">')
+                        self.report.build_custom()
 
                     data_rows = rep.get("data") or []
                     if data_rows:
@@ -8092,7 +8095,6 @@ def with_iot_params_in_table(base: dict, iot_summary) -> dict:
 
         ti = (iot_summary.get("test_input_table") or {})
         out = OrderedDict(base)
-        out["IoT Test name"] = ti.get("Testname", "")
         out["Iot Device List"]=ti.get("Device List", "")
         out["IoT Iterations"] = ti.get("Iterations", "")
         out["IoT Delay (s)"] = ti.get("Delay (seconds)", "")
