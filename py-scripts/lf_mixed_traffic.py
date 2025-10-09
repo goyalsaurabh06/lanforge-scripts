@@ -2285,12 +2285,14 @@ class Mixed_Traffic(Realm):
                 stats_png = copy_into_report(iot_summary.get("statistics_img"), "iot_statistics.png")
                 if stats_png:
                     self.lf_report_mt.build_chart_title("Test Statistics")
-                    self.lf_report_mt.build_chart(stats_png)
+                    self.lf_report_mt.set_custom_html(f'<img src="{stats_png}" style="width:100%; height:auto;">')
+                    self.lf_report_mt.build_custom()
                 #Request vs latency 
                 rvl_png=copy_into_report(iot_summary.get("req_vs_latency_img"),"iot_request_vs_latency.png")
                 if rvl_png:
                     self.lf_report_mt.build_chart_title("Request vs Average Latency")
-                    self.lf_report_mt.build_chart(rvl_png)
+                    self.lf_report_mt.set_custom_html(f'<img src="{rvl_png}" style="width:100%;">')
+                    self.lf_report_mt.build_custom()
 
                 # Overall results table
                 ort = iot_summary.get("overall_result_table") or {}
@@ -2329,12 +2331,14 @@ class Mixed_Traffic(Realm):
                         lat_png = copy_into_report(rep.get("latency_graph"), f"iot_{step_name}_latency.png")
                         if lat_png:
                             self.lf_report_mt.build_chart_title("Average Latency")
-                            self.lf_report_mt.build_chart(lat_png)
+                            self.lf_report_mt.set_custom_html(f'<img src="{lat_png}" style="width:100%; height:auto;">')
+                            self.lf_report_mt.build_custom()
 
                         res_png = copy_into_report(rep.get("result_graph"), f"iot_{step_name}_results.png")
                         if res_png:
                             self.lf_report_mt.build_chart_title("Success Count")
-                            self.lf_report_mt.build_chart(res_png)
+                            self.lf_report_mt.set_custom_html(f'<img src="{res_png}" style="width:100%; height:auto;">')
+                            self.lf_report_mt.build_custom()
 
                         data_rows = rep.get("data") or []
                         if data_rows:
@@ -2400,7 +2404,6 @@ def with_iot_params_in_table(base: dict, iot_summary) -> dict:
 
         ti = (iot_summary.get("test_input_table") or {})
         out = OrderedDict(base)
-        out["IoT Test name"] = ti.get("Testname", "")
         out["Iot Device List"]=ti.get("Device List", "")
         out["IoT Iterations"] = ti.get("Iterations", "")
         out["IoT Delay (s)"] = ti.get("Delay (seconds)", "")
