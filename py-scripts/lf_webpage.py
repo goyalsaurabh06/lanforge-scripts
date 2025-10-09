@@ -1081,7 +1081,7 @@ class HttpDownload(Realm):
     def check_station_ip(self):
         pass
 
-    def generate_graph(self, dataset, lis, bands):
+    def generate_graph(self, dataset, lis, bands,graph_no=''):
         bands = ['Download']
         if self.client_type == "Real":
             lis = self.devices_list
@@ -1115,14 +1115,14 @@ class HttpDownload(Realm):
                                         _color_name=['steelblue'],
                                         _show_bar_value=True,
                                         _enable_csv=True,
-                                        _graph_image_name="ucg-avg_http", _color_edge=['black'],
+                                        _graph_image_name=f"ucg-avg_http{graph_no}", _color_edge=['black'],
                                         _color=['steelblue'],
                                         _label=bands)
         graph_png = graph.build_bar_graph_horizontal()
         print("graph name {}".format(graph_png))
         return graph_png
 
-    def graph_2(self, dataset2, lis, bands):
+    def graph_2(self, dataset2, lis, bands,graph_no=''):
         bands = ['Download']
         if self.client_type == "Real":
             lis = self.devices_list
@@ -1147,7 +1147,7 @@ class HttpDownload(Realm):
                                           _color_name=['orange'],
                                           _show_bar_value=True,
                                           _enable_csv=True,
-                                          _graph_image_name="Total-url_http", _color_edge=['black'],
+                                          _graph_image_name=f"Total-url_http{graph_no}", _color_edge=['black'],
                                           _color=['orange'],
                                           _label=bands)
         graph_png = graph_2.build_bar_graph_horizontal()
