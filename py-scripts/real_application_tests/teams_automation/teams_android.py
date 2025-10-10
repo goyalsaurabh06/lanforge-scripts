@@ -77,14 +77,14 @@ class TeamsAndroid:
     def run_on_multiple_devices(self, device_serials, duration, max_workers=5):
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [
-                executor.submit(self.open_chrome_incognito, serial, duration)
+                executor.submit(self.open_chrome_incognito, serial)
                 for serial in device_serials
             ]
             # Wait for all to complete
             for future in futures:
                 future.result()
 
-    def open_chrome_incognito(self, serial, duration):
+    def open_chrome_incognito(self, serial):
         d = self.u2_sessions[serial]
         self.close_meeting(d)
         time.sleep(10)
@@ -97,11 +97,24 @@ class TeamsAndroid:
 
         if btn.wait(timeout=10):  # <-- actively waits up to 5s
             btn.click()
+        else:
+            raise Exception(f"Menu button not found for device {d.serial}")
 
         # Click "New Incognito tab"
         incog_row = d(resourceId="com.android.chrome:id/new_incognito_tab_menu_id")
         if incog_row.wait(timeout=10):
             incog_row.click()
+        else:
+            raise Exception(f"Incognito row not found for device {d.serial}")
+        
+        count = 0
+        while "com.android.chrome:id/url_bar" not in d.dump_hierarchy():
+            time.sleep(1)
+            print(f"Waiting for URL bar to appear for device {d.serial}...")
+            count += 1
+            if count > 60:
+                raise Exception(f"❌ URL bar not found in time for device {d.serial} in open_chrome_incognito method")
+
 
         url_bar = d(resourceId="com.android.chrome:id/url_bar")
         if url_bar.wait(timeout=10):
@@ -109,9 +122,7 @@ class TeamsAndroid:
             url_bar.set_text("https://www.google.com")
             d.press("enter")
         else:
-            print("Laxmi Narayana")
-            print(f"URL bar not found for device {d.serial}")
-            return
+            raise Exception(f"URL bar not found for device {d.serial} in open_chrome_incognito method")
 
         time.sleep(10)
 
@@ -119,21 +130,27 @@ class TeamsAndroid:
 
         if btn.wait(timeout=10):  # <-- actively waits up to 5s
             btn.click()
+        else:
+            raise Exception(f"Menu button not found for device {d.serial}")
 
         node = d(resourceId="com.android.chrome:id/menu_item_text", text="Desktop site")
         if node.wait(timeout=10):
-            desc = node.info.get("contentDescription")
-            if "Turn off" in desc:
-                print("Desktop site is ENABLED")
-                incog_row = d(
-                    resourceId="com.android.chrome:id/new_incognito_tab_menu_id"
-                )
-                if incog_row.wait(timeout=10):
-                    incog_row.click()
-            elif "Turn on" in desc:
+            info = node.info
+            checked = info.get("checked")
+
+            print(f"DEBUG: checked={checked}")
+
+            if checked is True:
+                print(f"✅ Desktop site is already ENABLED for device {d.serial}")
+            elif checked is False:
+                print(f"🟡 Desktop site is DISABLED — enabling now... for device {d.serial}")
                 node.click()
                 time.sleep(2)
-                print("Desktop site is ENABLED Now Previously it was DISABLED")
+                print(f"✅ Desktop site ENABLED successfully for device {d.serial}")
+            else:
+                print(f"⚠️ Could not determine checked state for Desktop site for device {d.serial}")
+        else:
+            raise Exception(f"❌ Desktop site menu item not found for device {d.serial}")
 
         email, passwd = self.get_credentials()
 
@@ -162,105 +179,135 @@ class TeamsAndroid:
         return email, passwd
 
     def login_teams(self, d, email, passwd):
-        # Wait for the URL bar and type the Teams URL
-        url_bar = d(resourceId="com.android.chrome:id/url_bar")
-        if url_bar.wait(timeout=10):
-            url_bar.click()
-            url_bar.set_text("https://teams.microsoft.com/v2")
+        try:
+            # Wait for the URL bar and type the Teams URL
+            count = 0
+            while "com.android.chrome:id/url_bar" not in d.dump_hierarchy():
+                time.sleep(1)
+                print(f"Waiting for URL bar to appear for device {d.serial}...")
+                count += 1
+                if count > 60:
+                    raise Exception(f"❌ URL bar not found in time for device {d.serial} in login teams method")
+            url_bar = d(resourceId="com.android.chrome:id/url_bar")
+            if url_bar.wait(timeout=10):
+                url_bar.click()
+                url_bar.set_text("https://teams.microsoft.com/v2")
+                d.press("enter")
+            else:
+               raise Exception(f"URL bar not found for device {d.serial}")
+
+            if not email or not passwd:
+                raise Exception(f"Email or password is None for device {d.serial}")
+            count = 0
+            while 'resource-id="i0116"' not in d.dump_hierarchy():
+                print(
+                    f"⏳ Waiting for email input field to appear... for device {d.serial}"
+                )
+                time.sleep(2)
+                count += 1
+                if count > 60:
+                    raise Exception(f"❌ Email input field not found in time for device {d.serial}")
+
+            email_input = d.xpath('//*[@resource-id="i0116"]')
+            if email_input.wait(timeout=30):
+                email_input.set_text(email)
+                d.press("enter")
+            else:
+                print(f"Email input not found for device {d.serial}")
+                raise Exception()
+
+            time.sleep(10)
+            d.send_keys(passwd)
+
             d.press("enter")
-        else:
-            print(f"URL bar not found for device {d.serial}")
-            return
-
-        if not email or not passwd:
-            print(f"❌ Missing credentials for device {d.serial}")
-            return
-
-        while 'resource-id="i0116"' not in d.dump_hierarchy():
-            print(
-                f"⏳ Waiting for email input field to appear... for device {d.serial}"
-            )
-            time.sleep(2)
-
-        email_input = d.xpath('//*[@resource-id="i0116"]')
-        if email_input.wait(timeout=30):
-            email_input.set_text(email)
+            time.sleep(5)
             d.press("enter")
-        else:
-            print(f"Email input not found for device {d.serial}")
-            return
-
-        time.sleep(10)
-        d.send_keys(passwd)
-
-        d.press("enter")
-        time.sleep(5)
-        d.press("enter")
-        time.sleep(20)
-        self.enter_meeting(d)
+            time.sleep(20)
+            self.enter_meeting(d)
+        except Exception as e:
+            print(f"❌ Exception during login for device {d.serial}: {e}")
+            d.app_stop("com.android.chrome")
 
     def enter_meeting(self, d):
-        url_bar = d(resourceId="com.android.chrome:id/url_bar")
-        if url_bar.wait(timeout=10):
-            url_bar.click()
-            url_bar.set_text(
-                self.meet_link,
-            )
-            d.press("enter")
-        else:
-            print(f"URL bar not found for device {d.serial}")
-            return
+        try:
+            count = 0
+            while "com.android.chrome:id/url_bar" not in d.dump_hierarchy():
+                time.sleep(1)
+                print(f"Waiting for URL bar to appear for device {d.serial}...")
+                count += 1
+                if count > 60:
+                    raise Exception(f"❌ URL bar not found in time for device {d.serial} in enter_meeting method")
 
-        d.dump_hierarchy()
-        time.sleep(10)
-
-        # Wait for the "Allow while visiting the site" button to appear
-        while "Allow while visiting the site" not in d.dump_hierarchy():
-            print(
-                f"⏳ Waiting for 'Allow while visiting the site' button to appear... for device {d.serial}"
-            )
-            time.sleep(2)
-
-        allow_btn = d(text="Allow while visiting the site")
-
-        if allow_btn.wait(timeout=10):
-            print(
-                f"✅ 'Allow while visiting the site' button is present for device {d.serial}"
-            )
-            info = allow_btn.info
-
-            if info.get("enabled") and info.get("clickable"):
-                allow_btn.click()
-                print(
-                    f"👉 Clicked 'Allow while visiting the site' button successfully for device {d.serial}"
+            url_bar = d(resourceId="com.android.chrome:id/url_bar")
+            if url_bar.wait(timeout=10):
+                url_bar.click()
+                url_bar.set_text(
+                    self.meet_link,
                 )
+                d.press("enter")
             else:
-                print(f"⚠️ Button found but not clickable yet for device {d.serial}")
+                raise Exception(f"URL bar not found for device {d.serial} in enter_meeting method")
 
-        else:
-            print(
-                f"❌ 'Allow while visiting the site' button not found for device {d.serial}"
-            )
-            return
+            d.dump_hierarchy()
+            time.sleep(10)
 
-        d.dump_hierarchy()
-        time.sleep(5)
+            # Wait for the "Allow while visiting the site" button to appear
+            count = 0
+            while "Allow while visiting the site" not in d.dump_hierarchy():
+                print(
+                    f"⏳ Waiting for 'Allow while visiting the site' button to appear... for device {d.serial}"
+                )
+                time.sleep(2)
+                count += 1
+                if count > 120:
+                    raise Exception(f"❌ 'Allow while visiting the site' button not found in time for device {d.serial}")
 
-        camera_toggle_btn = d(text="Turn camera on (Ctrl+Shift+O)")
-        if camera_toggle_btn.wait(timeout=60):
-            camera_toggle_btn.click()
-        else:
-            print("Camera toggle button not found")
-            return
+            allow_btn = d(text="Allow while visiting the site")
 
-        join_btn = d(resourceId="prejoin-join-button")
-        if join_btn.wait(timeout=60):
-            join_btn.click()
-        else:
-            print("Join button not found")
-            return
-        time.sleep(10)
-        self.enable_stats(d)
+            if allow_btn.wait(timeout=10):
+                print(
+                    f"✅ 'Allow while visiting the site' button is present for device {d.serial}"
+                )
+                info = allow_btn.info
+
+                if info.get("enabled") and info.get("clickable"):
+                    allow_btn.click()
+                    print(
+                        f"👉 Clicked 'Allow while visiting the site' button successfully for device {d.serial}"
+                    )
+                else:
+                    print(f"⚠️ Button found but not clickable yet for device {d.serial}")
+
+            else:
+                raise Exception(f"❌ 'Allow while visiting the site' button not found for device {d.serial}")
+
+            d.dump_hierarchy()
+            time.sleep(5)
+
+
+            count = 0
+            while "Turn camera on (Ctrl+Shift+O)" not in d.dump_hierarchy():
+                print(f"⏳ Waiting for camera toggle button to appear... for device {d.serial}")
+                time.sleep(2)
+                count += 1
+                if count > 60:
+                    raise Exception(f"Camera toggle button not found in time for device {d.serial}")
+                camera_toggle_btn = d(text="Turn camera on (Ctrl+Shift+O)")
+                if camera_toggle_btn.wait(timeout=60):
+                    camera_toggle_btn.click()
+                else:
+                    raise Exception(f"Camera toggle button not found for device {d.serial}")
+
+            join_btn = d(resourceId="prejoin-join-button")
+            if join_btn.wait(timeout=60):
+                join_btn.click()
+            else:
+                raise Exception(f"Join button not found for device {d.serial}")
+            time.sleep(10)
+            self.enable_stats(d)
+        except Exception as e:
+            print(f"❌ Exception during meeting entry for device {d.serial}: {e}")
+            d.app_stop("com.android.chrome")
 
     def enable_stats(self, d):
         time.sleep(10)
@@ -324,6 +371,22 @@ class TeamsAndroid:
     def close_meeting(self, d):
         d.app_stop("com.android.chrome")
         print(f"Closed Chrome on device {d.serial}")
+    
+    def open_interop_app(self, d):
+        d.app_start("com.candela.wecan")
+        count = 0
+        while "com.candela.wecan:id/enter_button" not in d.dump_hierarchy():
+            time.sleep(1)
+            print(f"Waiting for Interop app to load on device {d.serial}...")
+            count += 1
+            if count > 60:
+                raise Exception(f"❌ Interop app did not load in time for device {d.serial}")
+        enter_test_room = d(resourceId="com.candela.wecan:id/enter_button")
+        if enter_test_room.wait(timeout=10):
+            enter_test_room.click()
+        else:
+            raise Exception(f"Enter button not found in Interop app for device {d.serial}")
+        print(f"Opened Interop app on device {d.serial}")
 
     def collect_audio_stats(self, d):
         # Wait until "View more audio data" button appears
@@ -552,65 +615,88 @@ class TeamsAndroid:
 
 if __name__ == "__main__":
 
-    parser = argparse.ArgumentParser(description="Teams Android Automation")
-    parser.add_argument(
-        "--devices",
-        type=str,
-        default="",
-        help="Comma-separated list of device serials to use. If empty, all connected devices are used.",
-    )
-    parser.add_argument(
-        "--meet_link",
-        type=str,
-        default="https://teams.microsoft.com/meet/4950863846706?p=hR18cFksPeV0cbgMbz",
-        help="Teams meeting link to join.",
-    )
-    parser.add_argument(
-        "--upstream_port",
-        type=str,
-        default=None,
-        help="Upstream port for LANforge connection.",
-    )
-    parser.add_argument(
-        "--audio", action="store_true", help="Enable audio stats collection."
-    )
-    parser.add_argument(
-        "--video", action="store_true", help="Enable video stats collection."
-    )
-    parser.add_argument(
-        "--duration",
-        type=int,
-        default=2,
-        help="Duration in minutes to run the test on each device.",
-    )
-    args = parser.parse_args()
-    if args.devices:
-        specified_serials = args.devices.split(",")
-        print(f"Using specified devices: {specified_serials}")
-    else:
-        specified_serials = None
-        print("No specific devices provided, using all connected devices.")
+    try:
 
-    teams_android = TeamsAndroid(
-        upstream_port=args.upstream_port, meet_link=args.meet_link
-    )
-    teams_android.total_serials = teams_android.get_devices()
-    print(f"Found devices: {teams_android.total_serials}")
-    if "all" in specified_serials:
-        specified_serials = None
-    if specified_serials:
-        teams_android.total_serials = [
-            s for s in teams_android.total_serials if s in specified_serials
-        ]
-        print(f"Filtered devices to use: {teams_android.total_serials}")
-    teams_android.connect_multiple_devices()
-    print(f"Connected devices: {teams_android.test_serials}")
 
-    if not teams_android.test_serials:
-        print("No devices connected, exiting.")
-        exit(1)
-    teams_android.run_on_multiple_devices(
-        teams_android.test_serials,
-        duration=60,
-        max_workers=len(teams_android.test_serials),
-    )
+        parser = argparse.ArgumentParser(description="Teams Android Automation")
+        parser.add_argument(
+            "--devices",
+            type=str,
+            default="",
+            help="Comma-separated list of device serials to use. If empty, all connected devices are used.",
+        )
+        parser.add_argument(
+            "--meet_link",
+            type=str,
+            default="https://teams.microsoft.com/meet/4950863846706?p=hR18cFksPeV0cbgMbz",
+            help="Teams meeting link to join.",
+        )
+        parser.add_argument(
+            "--upstream_port",
+            type=str,
+            default=None,
+            help="Upstream port for LANforge connection.",
+        )
+        parser.add_argument(
+            "--audio", action="store_true", help="Enable audio stats collection."
+        )
+        parser.add_argument(
+            "--video", action="store_true", help="Enable video stats collection."
+        )
+        parser.add_argument(
+            "--duration",
+            type=int,
+            default=2,
+            help="Duration in minutes to run the test on each device.",
+        )
+        args = parser.parse_args()
+        if args.devices:
+            specified_serials = args.devices.split(",")
+            print(f"Using specified devices: {specified_serials}")
+        else:
+            specified_serials = None
+            print("No specific devices provided, using all connected devices.")
+
+        teams_android = TeamsAndroid(
+            upstream_port=args.upstream_port, meet_link=args.meet_link
+        )
+        teams_android.total_serials = teams_android.get_devices()
+        print(f"Found devices: {teams_android.total_serials}")
+        if "all" in specified_serials:
+            specified_serials = None
+        if specified_serials:
+            teams_android.total_serials = [
+                s for s in teams_android.total_serials if s in specified_serials
+            ]
+            print(f"Filtered devices to use: {teams_android.total_serials}")
+        teams_android.connect_multiple_devices()
+        print(f"Connected devices: {teams_android.test_serials}")
+
+        if not teams_android.test_serials:
+            print("No devices connected, exiting.")
+            exit(1)
+        teams_android.run_on_multiple_devices(
+            teams_android.test_serials,
+            duration=60,
+            max_workers=len(teams_android.test_serials),
+        )
+    except Exception as e:
+        print(f"Exception in main: {e}")
+        for serial, d in teams_android.u2_sessions.items():
+            teams_android.close_meeting(d)
+        print("All meetings closed, exiting.")
+    
+    finally:
+        with ThreadPoolExecutor(max_workers=len(teams_android.u2_sessions)) as executor:
+            futures = {
+                executor.submit(teams_android.open_interop_app, d): serial
+                for serial, d in teams_android.u2_sessions.items()
+            }
+
+            for future in as_completed(futures):
+                serial = futures[future]
+                try:
+                    future.result()  # wait for this thread to finish
+                    print(f"✅ open_interop_app completed for {serial}")
+                except Exception as e:
+                    print(f"❌ Error running open_interop_app for {serial}: {e}")
