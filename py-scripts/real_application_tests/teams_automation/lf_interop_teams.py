@@ -978,8 +978,8 @@ class TeamsAutomation(Realm):
             device_name = os.path.splitext(os.path.basename(csv_path))[0]
             df = df.drop(columns=["timestamp"], errors="ignore")
 
-            numeric_cols = df.select_dtypes(include="number").columns
-            averages = df[numeric_cols].mean().round(2)
+            df_numeric = df.apply(pd.to_numeric, errors="coerce")
+            averages = df_numeric.mean(skipna=True).round(2)
 
             row = averages.to_dict()
             row["Device Name"] = device_name
