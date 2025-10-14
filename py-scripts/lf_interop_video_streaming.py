@@ -2002,6 +2002,7 @@ def main():
     resource_set = set()
     resource_list = []
     resource_ids_generated = ""
+    args.device_list = args.device_list.split(',') if args.device_list else []
 
     # process devices with groups profiles based configuration
     if args.group_name and args.file_name and args.profile_name:
