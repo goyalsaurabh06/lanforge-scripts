@@ -274,7 +274,7 @@ class RealBrowserTest(Realm):
         self.serial_list = []
 
     def get_test_results_data(self, test_results, group):
-        groups_devices_map = self.configobj.get_groups_devices(data=self.selected_groups, groupdevmap=True)
+        groups_devices_map = self.config_obj.get_groups_devices(data=self.selected_groups, groupdevmap=True)
         group_hostnames = groups_devices_map.get(group, [])
         # print("Group Hostnames:", group_hostnames)
         # print("Test Results Hostnames:", test_results["Hostname"])
@@ -1095,6 +1095,7 @@ class RealBrowserTest(Realm):
             for i in range(len(self.selected_groups)):
                 config_devices[self.selected_groups[i]] = self.selected_profiles[i]
             self.config_obj.initiate_group()
+            print("checking config devices", config_devices)
             config_list = asyncio.run(self.config_obj.connectivity(config_devices, upstream=self.upstream_port))
             resource_ids = sorted(set(int(item.split('.')[1]) for item in config_list if '.' in item))
             return resource_ids
@@ -1410,28 +1411,6 @@ class RealBrowserTest(Realm):
             data[key] = obj[key]
         with open(file_path, 'w') as file:
             json.dump(data, file, indent=4)
-
-    def webui_stop(self):
-        "Sends a POST request to the web UI to update the test status to 'Completed'."
-        try:
-            url = f"http://{self.host}:5454/update_status_yt"
-            # url = "http://localhost:5454/update_status_yt"
-            headers = {
-                'Content-Type': 'application/json',
-            }
-            data = {
-                'status': 'Completed',
-                'name': self.test_name
-            }
-            response = requests.post(url, json=data, headers=headers)
-            if response.status_code == 200:
-                logging.info("Successfully updated STOP status to 'Completed'")
-                pass
-            else:
-                logging.error(f"Failed to update STOP status: {response.status_code} - {response.text}")
-
-        except Exception as e:
-            logging.error(f"An error occurred while updating status: {e}")
 
     def change_port_to_ip(self):
         """
@@ -2222,8 +2201,6 @@ def main():
     finally:
         if '--help' not in sys.argv and '-h' not in sys.argv:
             obj.create_report()
-            if obj.dowebgui:
-                obj.webui_stop()
             obj.stop()
 
             if not args.no_postcleanup:
