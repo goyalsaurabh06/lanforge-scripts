@@ -107,7 +107,7 @@ import datetime
 import pandas as pd
 from multiprocessing import Process, Pipe
 import shutil
-
+import lf_logger
 # import traceback
 
 if sys.version_info[0] != 3:
@@ -2604,7 +2604,7 @@ INCLUDE_IN_README: False
 
     parser.add_argument('--all_bands', help='to run the tests with respective bands', default=None,
                         action="store_true")
-
+    parser.add_argument('--savelogs', help='to run the tests with webgui', default=None,action="store_true")
     # For webgui execution
     parser.add_argument('--dowebgui', help='to run the tests with webgui', default=None,
                         action="store_true")
@@ -2627,7 +2627,11 @@ INCLUDE_IN_README: False
     if args.help_summary:
         print(help_summary)
         exit(0)
-
+    try:
+        if args.savelogs:
+            lf_logger.start()
+    except Exception as e:
+        print("Error starting logger. Exception: {}".format(e))
     # set up logger
     logger_config = lf_logger_config.lf_logger_config()
     if args.lf_logger_config_json:
@@ -3345,6 +3349,10 @@ INCLUDE_IN_README: False
                 print("No Test Selected. Please select the Tests.")
                 exit(0)
 
-
+    try:
+        if args.savelogs:
+            lf_logger.stop()
+    except Exception as e:
+        print("Error stopping logger. Exception: {}".format(e))
 if __name__ == "__main__":
     main()
