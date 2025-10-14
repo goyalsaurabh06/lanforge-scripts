@@ -1686,30 +1686,6 @@ def main():
         traceback.print_exc()
     finally:
         if not ('--help' in sys.argv or '-h' in sys.argv):
-            if args.do_webUI:
-                try:
-                    url = f"http://{args.lanforge_ip}:5454/update_status_yt"
-                    headers = {
-                        'Content-Type': 'application/json',
-                    }
-
-                    data = {
-                        'status': 'Completed',
-                        'name': args.testname
-                    }
-
-                    response = requests.post(url, json=data, headers=headers)
-
-                    if response.status_code == 200:
-                        logging.info("Successfully updated STOP status to 'Completed'")
-                        pass
-                    else:
-                        logging.error(f"Failed to update STOP status: {response.status_code} - {response.text}")
-
-                except Exception as e:
-                    # Print an error message if an exception occurs during the request
-                    logging.error(f"An error occurred while updating status: {e}")
-
             zoom_automation.redis_client.set('login_completed', 0)
             zoom_automation.stop_signal = True
             logging.info("Waiting for Browser Cleanup in Laptops")
