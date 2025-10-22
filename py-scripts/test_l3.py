@@ -5985,7 +5985,6 @@ class L3VariableTime(Realm):
                 self.client_dict_A[tos]["resource_kernel_B"] = resource_kernels_B
                 self.client_dict_A[tos]["offered_download_rate_B"] = offered_dl_rates_B
                 self.client_dict_A[tos]["offered_upload_rate_B"] = offered_ul_rates_B
-        self.client_dict_B = copy.deepcopy(self.client_dict_A)
 
 
 
@@ -5996,7 +5995,7 @@ class L3VariableTime(Realm):
                                  "each of which is associated with a particular Port (physical or virtual interface).")
 
         self.report.build_objective()
-        self.update_a()
+        # self.update_a()
         # self.update_b()
         test_setup_info = {
             "DUT Name": self.dut_model_num,
@@ -6101,64 +6100,16 @@ class L3VariableTime(Realm):
         # Once the data is stopped can collect the data for the cx's both multi cast and uni cast
         # if the traffic is still running will gather the running traffic
         self.evaluate_qos()
-
+        if self.dowebgui or self.real:
+            self.update_a()
+            self.client_dict_B = copy.deepcopy(self.client_dict_A)
         # graph BK A
         # try to do as a loop
         logger.info(f"BEFORE REAL A {self.client_dict_A}")
         tos_list = ['BK', 'BE', 'VI', 'VO']
-        if self.real:
-            tos_types = ['BE', 'BK', 'VI', 'VO']
-            print("BOOLLLLL",self.client_dict_B is self.client_dict_A)
-            for tos_key in tos_types:
-                if tos_key in self.client_dict_A:
-                    tos_data = self.client_dict_A[tos_key]
-
-                    # Filter A side
-                    traffic_proto_A = tos_data.get("traffic_protocol_A", [])
-                    indices_to_keep_A = [i for i, proto in enumerate(traffic_proto_A) if proto == "Mcast"]
-
-                    # Filter B side
-                    traffic_proto_B = tos_data.get("traffic_protocol_B", [])
-                    indices_to_keep_B = [i for i, proto in enumerate(traffic_proto_B) if proto == "Mcast"]
-
-                    for key in list(tos_data.keys()):
-                        if key in ["colors", "labels"]:
-                            continue  # Keep as-is
-
-                        if key.endswith('_A'):
-                            filtered_list = [tos_data[key][i] for i in indices_to_keep_A if i < len(tos_data[key])]
-                            tos_data[key] = filtered_list
-
-                        elif key.endswith('_B'):
-                            filtered_list = [tos_data[key][i] for i in indices_to_keep_B if i < len(tos_data[key])]
-                            tos_data[key] = filtered_list
-            for tos_key in tos_types:
-                if tos_key in self.client_dict_B:
-                    tos_data = self.client_dict_B[tos_key]
-
-                    # Filter A side
-                    traffic_proto_A = tos_data.get("traffic_protocol_A", [])
-                    indices_to_keep_A = [i for i, proto in enumerate(traffic_proto_A) if proto == "Mcast"]
-
-                    # Filter B side
-                    traffic_proto_B = tos_data.get("traffic_protocol_B", [])
-                    indices_to_keep_B = [i for i, proto in enumerate(traffic_proto_B) if proto == "Mcast"]
-
-                    for key in list(tos_data.keys()):
-                        if key in ["colors", "labels"]:
-                            continue  # Keep as-is
-
-                        if key.endswith('_A'):
-                            filtered_list = [tos_data[key][i] for i in indices_to_keep_A if i < len(tos_data[key])]
-                            tos_data[key] = filtered_list
-
-                        elif key.endswith('_B'):
-                            filtered_list = [tos_data[key][i] for i in indices_to_keep_B if i < len(tos_data[key])]
-                            tos_data[key] = filtered_list
-        logger.info(f"AFTER REAL A {self.client_dict_A}")
         for tos in tos_list:
             print(self.tos)
-            if tos not in self.tos:
+            if (self.real or self.dowebgui) and tos not in self.tos:
                 continue
             if (self.client_dict_A[tos]["ul_A"] and self.client_dict_A[tos]["dl_A"]):
                 min_bps_a = self.client_dict_A["min_bps_a"]
