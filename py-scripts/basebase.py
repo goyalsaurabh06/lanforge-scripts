@@ -4213,7 +4213,7 @@ class Candela(Realm):
                 Devices.get_devices()
 
                 # Create a YouTube object with the specified parameters
-                upstream_port = "10.253.8.126"
+                # upstream_port = "10.253.8.126"
                 self.yt_test_obj = Youtube(
                     host=mgr_ip,
                     port=mgr_port,
@@ -4524,7 +4524,7 @@ class Candela(Realm):
                 else:
                     selected_profiles = []
 
-                upstream_port = "10.253.8.126"
+                # upstream_port = "10.253.8.126"
                 self.zoom_test_obj = ZoomAutomation(audio=audio, video=video, lanforge_ip=lanforge_ip, wait_time=wait_time, testname=testname,
                                                 upstream_port=upstream_port, config=config, selected_groups=selected_groups, selected_profiles=selected_profiles,no_browser_precleanup = True,no_browser_postcleanup = True)
                 upstream_port = self.zoom_test_obj.change_port_to_ip(upstream_port)
@@ -4803,7 +4803,7 @@ class Candela(Realm):
                                 client_cert=args.client_cert,
                                 pk_passwd=args.pk_passwd,
                                 pac_file=args.pac_file,
-                                upstream_port="10.253.8.126",
+                                upstream_port=args.upstream_port,
                                 expected_passfail_value=args.expected_passfail_value,
                                 device_csv_name=args.device_csv_name,
                                 wait_time=args.wait_time,
@@ -9394,7 +9394,7 @@ def main():
             # ordered_parallel_tests = args.parallel_tests.split(',')
             # phase 1
             if args.dowebgui:
-                gen_order = ["ping_test","qos_test","ftp_test","http_test","mcast_test","vs_test","thput_test","rb_test","yt_test","zoom_test"]
+                gen_order = ["ping_test","qos_test","ftp_test","http_test","mcast_test","vs_test","thput_test","yt_test","rb_test","zoom_test"]
                 temp_ord_list = []
                 for test_name in gen_order:
                     if test_name in ordered_series_tests:
@@ -9439,7 +9439,7 @@ def main():
             ordered_parallel_tests = args.parallel_tests.split(',')
             #phase 1
             if args.dowebgui:
-                gen_order = ["ping_test","qos_test","ftp_test","http_test","mcast_test","vs_test","thput_test","rb_test","yt_test","zoom_test"]
+                gen_order = ["ping_test","qos_test","ftp_test","http_test","mcast_test","vs_test","thput_test","yt_test","rb_test","zoom_test"]
                 temp_ord_list = []
                 for test_name in gen_order:
                     if test_name in ordered_parallel_tests:
