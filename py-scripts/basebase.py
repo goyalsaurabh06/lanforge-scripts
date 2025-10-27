@@ -91,7 +91,7 @@ class Candela(Realm):
     Candela Class file to invoke different scripts from py-scripts.
     """
 
-    def __init__(self, ip='localhost', port=8080,order_priority="series",result_dir="",dowebgui=False,test_name=''):
+    def __init__(self, ip='localhost', port=8080,order_priority="series",result_dir="",dowebgui=False,test_name='',no_cleanup=False):
         """
         Constructor to initialize the LANforge IP and port
         Args:
@@ -134,6 +134,7 @@ class Candela(Realm):
         self.overall_status = {}
         self.obj_dict = {}
         self.test_stopped = False
+        self.no_cleanup = no_cleanup
         self.duration_dict = {}
         self.http_obj_dict = {"parallel":{},"series":{}}
         self.ftp_obj_dict = {"parallel":{},"series":{}}
@@ -311,6 +312,8 @@ class Candela(Realm):
         layer3: (Boolean : optional) Default : False To Delete all layer3 connections
         layer4: (Boolean : optional) Default : False To Delete all layer4 connections
         """
+        if self.no_cleanup:
+            return
         if layer3:
             self.cleanup.cxs_clean()
             self.cleanup.layer3_endp_clean()
@@ -8800,7 +8803,7 @@ def main():
     parser.add_argument('--test_name', help='Name of the Test')
     parser.add_argument('--dowebgui', help="If true will execute script for webgui", default=False, type=bool)
     parser.add_argument('--result_dir', help="Specify the result dir to store the runtime logs <Do not use in CLI, --used by webui>", default='')
-
+    parser.add_argument('--no_cleanup', help='Do not cleanup before exit',action='store_true')
     #NOt common
     #ping
     #without config
@@ -9301,7 +9304,7 @@ def main():
     print('argsss',args_dict)
     # exit(0)
     # validate_args(args_dict)
-    candela_apis = Candela(ip=args.mgr, port=args.mgr_port,order_priority=args.order_priority,test_name=args.test_name,result_dir=args.result_dir,dowebgui=args.dowebgui)
+    candela_apis = Candela(ip=args.mgr, port=args.mgr_port,order_priority=args.order_priority,test_name=args.test_name,result_dir=args.result_dir,dowebgui=args.dowebgui,no_cleanup=args.no_cleanup)
     print(args)
     test_map = {
     "ping_test":   (run_ping_test, "PING TEST"),
