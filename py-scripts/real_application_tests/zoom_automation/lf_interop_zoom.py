@@ -1558,7 +1558,9 @@ def main():
                     # resources = sorted(resources, key=lambda x: int(x.split('.')[1]))
                     get_data = zoom_automation.select_real_devices(real_device_obj=realdevice, real_sta_list=resources)
                     for item in get_data:
+                        logger.info("hii")
                         item = item.strip()
+                        logger.info("hii after")
                         # Find and append the matching lap to result_list
                         matching_laps = [lap for lap in laptops if lap.startswith(item)]
                         result_list.extend(matching_laps)
