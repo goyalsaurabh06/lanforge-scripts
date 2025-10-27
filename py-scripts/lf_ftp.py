@@ -289,6 +289,8 @@ class FtpTest(LFCliBase):
         self.rotation_enabled = False
         self.coordinate_list = coordinate.split(',')
         self.rotation_list = rotation.split(',')
+        self.current_coordinate = ""
+        self.current_angle = 0
         logger.info("Test is Initialized")
 
     def query_realclients(self):
@@ -814,6 +816,7 @@ class FtpTest(LFCliBase):
             self.data["remaining_time"] = ["0"] * len(self.mac_id_list)
             df1 = pd.DataFrame(self.data)
             df1.to_csv("ftp_datavalues.csv", index=False)
+            df1.to_csv(f"{self.current_coordinate}_ftp_datavalues.csv", index=False)
 
     def postcleanup(self):
         self.cx_profile.cleanup()
@@ -1061,6 +1064,8 @@ class FtpTest(LFCliBase):
             self.data["remaining_time"] = [[str(int(total_hours)) + " hr and " + str(
                 int(remaining_minutes)) + " min" if int(total_hours) != 0 or int(
                 remaining_minutes) != 0 else '<1 min'][0]] * len(self.cx_list)
+            if self.robot_test and self.rotation_enabled:
+                self.data["current_angle"] = self.current_angle
             try:
                 df1 = pd.DataFrame(self.data)
             except Exception:
@@ -1074,6 +1079,9 @@ class FtpTest(LFCliBase):
                 df1.to_csv('{}/ftp_datavalues.csv'.format(self.result_dir), index=False)
             if self.clients_type == 'Real':
                 df1.to_csv("ftp_datavalues.csv", index=False)
+                # IF ROBOT TEST PERFORMED
+                if(self.robot_test):
+                    df1.to_csv(f"{self.current_coordinate}_ftp_datavalues.csv", index=False)
             time.sleep(5)
             if self.dowebgui == "True":
                 with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host,
@@ -2498,6 +2506,7 @@ class FtpTest(LFCliBase):
         for coordinate in range(len(self.coordinate_list)):
             robo_moved = robot_obj.move_to_coordinate(self.coordinate_list[coordinate])
             if robo_moved:
+                self.current_coordinate = self.coordinate_list[coordinate]
                 # if no rotation mode
                 if not self.rotation_enabled:
                     self.start(False, False)
@@ -2509,6 +2518,7 @@ class FtpTest(LFCliBase):
                     for angle in range(len(self.rotation_list)):
                         robo_rotated = robot_obj.rotate_angle(1,2,self.rotation_list[angle])
                         if robo_rotated:
+                            self.current_angle = self.rotation_list[angle]
                             self.start(False, False)
                             self.monitor_for_runtime_csv()
                             self.stop()
