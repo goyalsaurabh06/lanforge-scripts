@@ -2375,21 +2375,21 @@ class ThroughputQOS(Realm):
                     report.set_obj_html(_obj_title=f"Coordinate: {self.coordinate_list[coordinate]} | Rotation Angle: {self.rotation_list[angle]}°",
                                         _obj="")
                     report.build_objective()
-                    data = self.qos_data[coordinate][angle]["data"]
-                    connections_download_avg = self.qos_data[coordinate][angle]["connections_download_avg"]
-                    connections_upload_avg = self.qos_data[coordinate][angle]["connections_upload_avg"]
-                    avg_drop_a = self.qos_data[coordinate][angle]["avg_drop_a"]
-                    avg_drop_b = self.qos_data[coordinate][angle]["avg_drop_b"]
+                    data = self.qos_data[self.coordinate_list[coordinate]][self.rotation_list[angle]]["data"]
+                    connections_download_avg = self.qos_data[self.coordinate_list[coordinate]][self.rotation_list[angle]]["connections_download_avg"]
+                    connections_upload_avg = self.qos_data[self.coordinate_list[coordinate]][self.rotation_list[angle]]["connections_upload_avg"]
+                    avg_drop_a = self.qos_data[self.coordinate_list[coordinate]][self.rotation_list[angle]]["avg_drop_a"]
+                    avg_drop_b = self.qos_data[self.coordinate_list[coordinate]][self.rotation_list[angle]]["avg_drop_b"]
                     self.generate_individual_coordinate(report, data, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b,coordinate,angle)
             else:
                 report.set_obj_html(_obj_title=f"Coordinate: {self.coordinate_list[coordinate]}",
                                     _obj="")
                 report.build_objective()
-                data = self.qos_data[coordinate]["data"]
-                connections_download_avg = self.qos_data[coordinate]["connections_download_avg"]
-                connections_upload_avg = self.qos_data[coordinate]["connections_upload_avg"]
-                avg_drop_a = self.qos_data[coordinate]["avg_drop_a"]
-                avg_drop_b = self.qos_data[coordinate]["avg_drop_b"]
+                data = self.qos_data[self.coordinate_list[coordinate]]["data"]
+                connections_download_avg = self.qos_data[self.coordinate_list[coordinate]]["connections_download_avg"]
+                connections_upload_avg = self.qos_data[self.coordinate_list[coordinate]]["connections_upload_avg"]
+                avg_drop_a = self.qos_data[self.coordinate_list[coordinate]]["avg_drop_a"]
+                avg_drop_b = self.qos_data[self.coordinate_list[coordinate]]["avg_drop_b"]
                 self.generate_individual_coordinate(report, data, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b,coordinate,None)
         input_setup_info = {
             "contact": "support@candelatech.com"
@@ -2497,7 +2497,7 @@ class ThroughputQOS(Realm):
                         "avg_drop_a": avg_drop_a,
                         "avg_drop_b": avg_drop_b
                     })
-                    self.qos_data[coordinate] = params
+                    self.qos_data[self.coordinate_list[coordinate]] = params
                     
                 # if rotation mode
                 else:
@@ -2543,9 +2543,9 @@ class ThroughputQOS(Realm):
                             "avg_drop_a": avg_drop_a,
                             "avg_drop_b": avg_drop_b
                         })
-                        if coordinate not in self.qos_data:
-                            self.qos_data[coordinate] = {}
-                        self.qos_data[coordinate][angle] = params
+                        if self.coordinate_list[coordinate] not in self.qos_data:
+                            self.qos_data[self.coordinate_list[coordinate]] = {}
+                        self.qos_data[self.coordinate_list[coordinate]][self.rotation_list[angle]] = params
 
         self.generate_report_for_robo()
 
