@@ -115,7 +115,7 @@ logger = logging.getLogger(__name__)
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 # Importing DeviceConfig to apply device configurations for ADB devices and laptops
 DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
-
+from lf_robo_base_class import RobotClass
 
 class ThroughputQOS(Realm):
     def __init__(self,
@@ -188,7 +188,12 @@ class ThroughputQOS(Realm):
                  csv_name=None,
                  wait_time=60,
                  get_live_view=False,
-                 total_floors=0):
+                 total_floors=0,
+                 robot_test = False,
+                 robot_ip=None,
+                 robot_port=None,
+                 coordinate=None,
+                 rotation=None):
         super().__init__(lfclient_host=host,
                          lfclient_port=port)
         self.ssid_list = []
@@ -275,6 +280,16 @@ class ThroughputQOS(Realm):
         self.config = config
         self.get_live_view = get_live_view
         self.total_floors = total_floors
+        self.qos_data = {}
+        if robot_test:
+            self.robot_test = robot_test
+            self.robot_ip = robot_ip
+            self.robot_port = robot_port
+            self.coordinate = coordinate
+            self.rotation = rotation
+            self.rotation_enabled = False
+            self.coordinate_list = coordinate.split(',')
+            self.rotation_list = rotation.split(',')
 
     def os_type(self):
         response = self.json_get("/resource/all")
@@ -648,7 +663,7 @@ class ThroughputQOS(Realm):
             self.mac_id_list = list(self.mac_id_list)
             self.num_stations = len(self.real_client_list)
 
-    def monitor(self):
+    def monitor(self,curr_coordinate=None, curr_rotation=None):
         # TODO: Fix this. This is poor style
         throughput, upload, download, upload_throughput, download_throughput, connections_upload, connections_download, avg_upload, avg_download, avg_upload_throughput, avg_download_throughput, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, dropa_connections, dropb_connections = {  # noqa: E501
         }, [], [], [], [], {}, {}, [], [], [], [], {}, {}, [], [], {}, {}
@@ -889,8 +904,13 @@ class ThroughputQOS(Realm):
                 for port, df in individual_device_data.items():
                     df.to_csv(f"{runtime_dir}/{port}.csv", index=False)
                 df1 = pd.DataFrame(self.df_for_webui)
-                df1.to_csv('{}/overall_throughput.csv'.format(runtime_dir), index=False)
-
+                if not self.robot_test:
+                    df1.to_csv('{}/overall_throughput.csv'.format(runtime_dir), index=False)
+                else:
+                    if self.rotation_enabled:
+                        df1.to_csv('{}/overall_throughput_{}_{}.csv'.format(runtime_dir, curr_coordinate, curr_rotation), index=False)
+                    else:
+                        df1.to_csv('{}/overall_throughput_{}.csv'.format(runtime_dir, curr_coordinate), index=False)
                 with open(runtime_dir + "/../../Running_instances/{}_{}_running.json".format(self.ip, self.test_name), 'r') as file:
                     data = json.load(file)
                     if data["status"] != "Running":
@@ -1462,7 +1482,7 @@ class ThroughputQOS(Realm):
 
         return image_paths_by_tos, rssi_image_paths_by_floor
 
-    def generate_individual_graph(self, res, report, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, totalfloors=None, multicast_exists=False):
+    def generate_individual_graph(self, res, report, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, totalfloors=None, multicast_exists=False,graph_no=''):
         # Required when generate_individual_graph() called explicitly from mixed traffic
         if totalfloors is not None:
             self.total_floors = totalfloors
@@ -1632,7 +1652,7 @@ class ThroughputQOS(Realm):
                                                     _color_name=colors,
                                                     _show_bar_value=True,
                                                     _enable_csv=True,
-                                                    _graph_image_name="bk_{}".format(self.direction), _color_edge=['black'],
+                                                    _graph_image_name="bk_{}{}".format(self.direction,graph_no), _color_edge=['black'],
                                                     _color=colors)
                     graph_png = graph.build_bar_graph_horizontal()
                     print("graph name {}".format(graph_png))
@@ -1761,7 +1781,7 @@ class ThroughputQOS(Realm):
                                                     _color_name=colors,
                                                     _show_bar_value=True,
                                                     _enable_csv=True,
-                                                    _graph_image_name="be_{}".format(self.direction), _color_edge=['black'],
+                                                    _graph_image_name="be_{}{}".format(self.direction,graph_no), _color_edge=['black'],
                                                     _color=colors)
                     graph_png = graph.build_bar_graph_horizontal()
                     print("graph name {}".format(graph_png))
@@ -1887,7 +1907,7 @@ class ThroughputQOS(Realm):
                                                     _show_bar_value=True,
                                                     _color_name=colors,
                                                     _enable_csv=True,
-                                                    _graph_image_name="video_{}".format(self.direction),
+                                                    _graph_image_name="video_{}{}".format(self.direction,graph_no),
                                                     _color_edge=['black'],
                                                     _color=colors)
                     graph_png = graph.build_bar_graph_horizontal()
@@ -2014,7 +2034,7 @@ class ThroughputQOS(Realm):
                                                     _show_bar_value=True,
                                                     _color_name=colors,
                                                     _enable_csv=True,
-                                                    _graph_image_name="voice_{}".format(self.direction),
+                                                    _graph_image_name="voice_{}{}".format(self.direction,graph_no),
                                                     _color_edge=['black'],
                                                     _color=colors)
                     graph_png = graph.build_bar_graph_horizontal()
@@ -2113,14 +2133,14 @@ class ThroughputQOS(Realm):
         # storing overall throughput CSV in the report directory
         logger.info('Storing real time values in a CSV')
         df1 = pd.DataFrame(self.overall)
-        df1.to_csv('{}/overall_throughput.csv'.format(report.path_date_time))
+        df1.to_csv('{}/overall_throughput{}.csv'.format(report.path_date_time,graph_no))
         # storing real time data for CXs in seperate CSVs
         for cx in self.real_time_data:
             for tos in self.real_time_data[cx]:
                 if tos in self.tos and len(self.real_time_data[cx][tos]['time']) != 0:
                     try:
                         cx_df = pd.DataFrame(self.real_time_data[cx][tos])
-                        cx_df.to_csv('{}/{}_{}_realtime_data.csv'.format(report.path_date_time, cx, tos), index=False)
+                        cx_df.to_csv('{}/{}_{}_realtime_data{}.csv'.format(report.path_date_time, cx, tos,graph_no), index=False)
                     except Exception:
                         logger.info(f'failed cx {cx} tos {tos}')
                         logger.info(f"overall Data {self.real_time_data}")
@@ -2188,6 +2208,346 @@ class ThroughputQOS(Realm):
             os.makedirs(test_name_dir)
         shutil.copytree(curr_path, test_name_dir, dirs_exist_ok=True)
 
+    def generate_individual_coordinate(self,report,data,connections_download_avg,connections_upload_avg,avg_drop_a,avg_drop_b,coordinate,angle):
+        print("coordinate {} angle {}".format(self.coordinate_list[coordinate],self.rotation_list[angle] if self.rotation_enabled else "NA"))
+        res = self.set_report_data(data)
+        data_set, load, res = self.generate_graph_data_set(data)
+        print(res["throughput_table_df"])
+        report.set_table_title(
+            f"Overall {self.direction} Throughput for all TOS i.e BK | BE | Video (VI) | Voice (VO)")
+        report.build_table_title()
+        df_throughput = pd.DataFrame(res["throughput_table_df"])
+        report.set_table_dataframe(df_throughput)
+        report.build_table()
+        for _key in res["graph_df"]:
+            report.set_obj_html(
+                _obj_title=f"Overall {self.direction} throughput for {len(self.input_devices_list)} clients with different TOS.",
+                _obj=f"The below graph represents overall {self.direction} throughput for all "
+                "connected stations running BK, BE, VO, VI traffic with different "
+                f"intended loads{load} per tos")
+        report.build_objective()
+        if self.rotation_enabled:
+            graph_image_name=f"tos_{_key}_coord{self.coordinate_list[coordinate]}_angle{self.rotation_list[angle]}Hz"
+            graph_title=f"Overall {self.direction} throughput – BK,BE,VO,VI traffic streams at Coordinate: {self.coordinate_list[coordinate]} | Rotation Angle: {self.rotation_list[angle]}°"
+            graph_no = "_{}_{}".format(self.coordinate_list[coordinate],self.rotation_list[angle])
+        else:
+            graph_image_name=f"tos_{_key}_coord{self.coordinate_list[coordinate]}Hz"
+            graph_title=f"Overall {self.direction} throughput – BK,BE,VO,VI traffic streams at Coordinate: {self.coordinate_list[coordinate]}"
+            graph_no = "_{}".format(self.coordinate_list[coordinate])
+        graph = lf_bar_graph(_data_set=data_set,
+                             _xaxis_name="Load per Type of Service",
+                             _yaxis_name="Throughput (Mbps)",
+                             _xaxis_categories=["BK,BE,VI,VO"],
+                             _xaxis_label=['1 Mbps', '2 Mbps', '3 Mbps', '4 Mbps', '5 Mbps'],
+                             _graph_image_name=graph_image_name,
+                             _label=["BK", "BE", "VI", "VO"],
+                             _xaxis_step=1,
+                             _graph_title=graph_title,
+                             _title_size=16,
+                             _color=['orange', 'lightcoral', 'steelblue', 'lightgrey'],
+                             _color_edge='black',
+                             _bar_width=0.15,
+                             _figsize=(18, 6),
+                             _legend_loc="best",
+                             _legend_box=(1.0, 1.0),
+                             _dpi=96,
+                             _show_bar_value=True,
+                             _enable_csv=True,
+                             _color_name=['orange', 'lightcoral', 'steelblue', 'lightgrey'])
+        graph_png = graph.build_bar_graph()
+        print("graph name {}".format(graph_png))
+        report.set_graph_image(graph_png)
+        # need to move the graph image to the results directory
+        report.move_graph_image()
+        report.set_csv_filename(graph_png)
+        report.move_csv_file()
+        report.build_graph()
+        self.generate_individual_graph(res, report, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b,graph_no=graph_no)
+        
+
+    def generate_report_for_robo(self):
+        self.ssid_list = self.get_ssid_list(self.input_devices_list)
+        built = False
+        load = ''
+        rate_down = str(str(int(self.cx_profile.side_b_min_bps) / 1000000) + ' ' + 'Mbps')
+        rate_up = str(str(int(self.cx_profile.side_a_min_bps) / 1000000) + ' ' + 'Mbps')
+        if self.direction == 'Upload':
+            load = rate_up
+        else:
+            if self.direction == "Download":
+                load = rate_down
+        # res = self.set_report_data(data)
+        if self.direction == "Bi-direction":
+            load = 'Upload' + ':' + rate_up + ',' + 'Download' + ':' + rate_down
+        # if selected_real_clients_names is not None:
+        #     self.num_stations = selected_real_clients_names
+        # data_set, load, res = self.generate_graph_data_set(data)
+        report = lf_report(_output_pdf="interop_qos.pdf", _output_html="interop_qos.html", _path=self.result_dir,
+                           _results_dir_name="Qos_Test_report")
+        report_path = report.get_path()
+        report_path_date_time = report.get_path_date_time()
+        print("path: {}".format(report_path))
+        print("path_date_time: {}".format(report_path_date_time))
+        report.set_title("Interop QOS")
+        report.build_banner()
+        # objective title and description
+        report.set_obj_html(_obj_title="Objective",
+                            _obj="The objective of the QoS (Quality of Service) traffic throughput test is to measure the maximum"
+                            " achievable throughput of a network under specific QoS settings and conditions.By conducting"
+                            " this test, we aim to assess the capacity of network to handle high volumes of traffic while"
+                            " maintaining acceptable performance levels,ensuring that the network meets the required QoS"
+                            " standards and can adequately support the expected user demands.")
+        report.build_objective()
+        # Initialize counts and lists for device types
+        android_devices, windows_devices, linux_devices, ios_devices, ios_mob_devices = 0, 0, 0, 0, 0
+        all_devices_names = []
+        device_type = []
+        total_devices = ""
+        for i in self.real_client_list:
+            split_device_name = i.split(" ")
+            if 'android' in split_device_name:
+                all_devices_names.append(split_device_name[2] + ("(Android)"))
+                device_type.append("Android")
+                android_devices += 1
+            elif 'Win' in split_device_name:
+                all_devices_names.append(split_device_name[2] + ("(Windows)"))
+                device_type.append("Windows")
+                windows_devices += 1
+            elif 'Lin' in split_device_name:
+                all_devices_names.append(split_device_name[2] + ("(Linux)"))
+                device_type.append("Linux")
+                linux_devices += 1
+            elif 'Mac' in split_device_name:
+                all_devices_names.append(split_device_name[2] + ("(Mac)"))
+                device_type.append("Mac")
+                ios_devices += 1
+            elif 'iOS' in split_device_name:
+                all_devices_names.append(split_device_name[2] + ("(iOS)"))
+                device_type.append("iOS")
+                ios_mob_devices += 1
+
+        # Build total_devices string based on counts
+        if android_devices > 0:
+            total_devices += f" Android({android_devices})"
+        if windows_devices > 0:
+            total_devices += f" Windows({windows_devices})"
+        if linux_devices > 0:
+            total_devices += f" Linux({linux_devices})"
+        if ios_devices > 0:
+            total_devices += f" Mac({ios_devices})"
+        if ios_mob_devices > 0:
+            total_devices += f" iOS({ios_mob_devices})"
+
+        # Test setup information table for devices in device list
+        if self.qos_data["configuration"] == "":
+            test_setup_info = {
+                "Device List": ", ".join(all_devices_names),
+                "Number of Stations": "Total" + f"({self.num_stations})" + total_devices,
+                "AP Model": self.ap_name,
+                "SSID": self.ssid,
+                "Traffic Duration in hours": round(int(self.test_duration) / 3600, 2),
+                "Security": self.security,
+                "Protocol": (self.traffic_type.strip("lf_")).upper(),
+                "Traffic Direction": self.direction,
+                "TOS": self.tos,
+                "Per TOS Load in Mbps": load
+            }
+        # Test setup information table for devices in groups
+        else:
+            group_names = ', '.join(self.qos_data["configuration"].keys())
+            profile_names = ', '.join(self.qos_data["configuration"].values())
+            configmap = "Groups:" + group_names + " -> Profiles:" + profile_names
+            test_setup_info = {
+                "AP Model": self.ap_name,
+                'Configuration': configmap,
+                "Traffic Duration in hours": round(int(self.test_duration) / 3600, 2),
+                "Security": self.security,
+                "Protocol": (self.traffic_type.strip("lf_")).upper(),
+                "Traffic Direction": self.direction,
+                "TOS": self.tos,
+                "Per TOS Load in Mbps": load
+            }
+        report.test_setup_table(test_setup_data=test_setup_info, value="Test Configuration")
+        
+        for coordinate in range(len(self.coordinate_list)):
+            if self.rotation_enabled:
+                for angle in range(len(self.rotation_list)):
+                    report.set_obj_html(_obj_title=f"Coordinate: {self.coordinate_list[coordinate]} | Rotation Angle: {self.rotation_list[angle]}°",
+                                        _obj="")
+                    report.build_objective()
+                    data = self.qos_data[coordinate][angle]["data"]
+                    connections_download_avg = self.qos_data[coordinate][angle]["connections_download_avg"]
+                    connections_upload_avg = self.qos_data[coordinate][angle]["connections_upload_avg"]
+                    avg_drop_a = self.qos_data[coordinate][angle]["avg_drop_a"]
+                    avg_drop_b = self.qos_data[coordinate][angle]["avg_drop_b"]
+                    self.generate_individual_coordinate(report, data, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b,coordinate,angle)
+            else:
+                report.set_obj_html(_obj_title=f"Coordinate: {self.coordinate_list[coordinate]}",
+                                    _obj="")
+                report.build_objective()
+                data = self.qos_data[coordinate]["data"]
+                connections_download_avg = self.qos_data[coordinate]["connections_download_avg"]
+                connections_upload_avg = self.qos_data[coordinate]["connections_upload_avg"]
+                avg_drop_a = self.qos_data[coordinate]["avg_drop_a"]
+                avg_drop_b = self.qos_data[coordinate]["avg_drop_b"]
+                self.generate_individual_coordinate(report, data, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b,coordinate,None)
+        input_setup_info = {
+            "contact": "support@candelatech.com"
+        }
+        report.test_setup_table(test_setup_data=input_setup_info, value="Information")
+        report.build_footer()
+        report.write_html()
+        report.write_pdf()
+        # res = self.set_report_data(data)
+        # data_set, load, res = self.generate_graph_data_set(data)
+        # print(res["throughput_table_df"])
+        # report.set_table_title(
+        #     f"Overall {self.direction} Throughput for all TOS i.e BK | BE | Video (VI) | Voice (VO)")
+        # report.build_table_title()
+        # df_throughput = pd.DataFrame(res["throughput_table_df"])
+        # report.set_table_dataframe(df_throughput)
+        # report.build_table()
+        # for _key in res["graph_df"]:
+        #     report.set_obj_html(
+        #         _obj_title=f"Overall {self.direction} throughput for {len(self.input_devices_list)} clients with different TOS.",
+        #         _obj=f"The below graph represents overall {self.direction} throughput for all "
+        #         "connected stations running BK, BE, VO, VI traffic with different "
+        #         f"intended loads{load} per tos")
+        # report.build_objective()
+        # graph = lf_bar_graph(_data_set=data_set,
+        #                      _xaxis_name="Load per Type of Service",
+        #                      _yaxis_name="Throughput (Mbps)",
+        #                      _xaxis_categories=["BK,BE,VI,VO"],
+        #                      _xaxis_label=['1 Mbps', '2 Mbps', '3 Mbps', '4 Mbps', '5 Mbps'],
+        #                      _graph_image_name=f"tos_download_{_key}Hz",
+        #                      _label=["BK", "BE", "VI", "VO"],
+        #                      _xaxis_step=1,
+        #                      _graph_title=f"Overall {self.direction} throughput – BK,BE,VO,VI traffic streams",
+        #                      _title_size=16,
+        #                      _color=['orange', 'lightcoral', 'steelblue', 'lightgrey'],
+        #                      _color_edge='black',
+        #                      _bar_width=0.15,
+        #                      _figsize=(18, 6),
+        #                      _legend_loc="best",
+        #                      _legend_box=(1.0, 1.0),
+        #                      _dpi=96,
+        #                      _show_bar_value=True,
+        #                      _enable_csv=True,
+        #                      _color_name=['orange', 'lightcoral', 'steelblue', 'lightgrey'])
+        # graph_png = graph.build_bar_graph()
+        # print("graph name {}".format(graph_png))
+        # report.set_graph_image(graph_png)
+        # # need to move the graph image to the results directory
+        # report.move_graph_image()
+        # report.set_csv_filename(graph_png)
+        # report.move_csv_file()
+        # report.build_graph()
+        # self.generate_individual_graph(res, report, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b)
+
+
+    def perform_robo(self):
+
+        if(self.rotation_list[0]!=""):
+            self.rotation_enabled=True
+
+        robot_obj = RobotClass()
+        robot_obj.robo_ip = "127.0.0.1:5000"  
+
+        for coordinate in range(len(self.coordinate_list)):
+            robo_moved = robot_obj.move_to_coordinate(self.coordinate_list[coordinate])
+            if robo_moved:
+                # if no rotation mode
+                if not self.rotation_enabled:
+                    test_results = {'test_results': []}
+                    data = {}
+                    input_setup_info = {
+                        "contact": "support@candelatech.com"
+                    }
+                    self.start(False, False)
+                    time.sleep(10)
+                    connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b = self.monitor()
+                    logger.info("connections download {}".format(connections_download))
+                    logger.info("connections upload {}".format(connections_upload))
+                    self.stop()
+                    time.sleep(5)
+                    test_results['test_results'].append(self.evaluate_qos(connections_download, connections_upload, drop_a_per, drop_b_per))
+                    data.update(test_results)
+                    params = {
+                        "data": None,
+                        "input_setup_info": None,
+                        "connections_download_avg": None,
+                        "connections_upload_avg": None,
+                        "avg_drop_a": None,
+                        "avg_drop_b": None,
+                        "report_path": "",
+                        "result_dir_name": "Qos_Test_report",
+                        "selected_real_clients_names": None,
+                        "config_devices": ""
+                    }
+
+                    params.update({
+                        "data": data,
+                        "input_setup_info": input_setup_info,
+                        "report_path": (
+                            self.result_dir
+                            if self.dowebgui else ""
+                        ),
+                        "connections_upload_avg": connections_upload_avg,
+                        "connections_download_avg": connections_download_avg,
+                        "avg_drop_a": avg_drop_a,
+                        "avg_drop_b": avg_drop_b
+                    })
+                    self.qos_data[coordinate] = params
+                    
+                # if rotation mode
+                else:
+                    for angle in range(len(self.rotation_list)):
+                        test_results = {'test_results': []}
+                        data = {}
+                        input_setup_info = {
+                            "contact": "support@candelatech.com"
+                        }
+                        robo_rotated = robot_obj.rotate_angle(1,2,self.rotation_list[angle])
+                        if robo_rotated:
+                            self.start(False, False)
+                            time.sleep(10)
+                            connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b = self.monitor()
+                            logger.info("connections download {}".format(connections_download))
+                            logger.info("connections upload {}".format(connections_upload))
+                            self.stop()
+                            time.sleep(5)
+                            test_results['test_results'].append(self.evaluate_qos(connections_download, connections_upload, drop_a_per, drop_b_per))
+                            data.update(test_results)
+                            params = {
+                            "data": None,
+                            "input_setup_info": None,
+                            "connections_download_avg": None,
+                            "connections_upload_avg": None,
+                            "avg_drop_a": None,
+                            "avg_drop_b": None,
+                            "report_path": "",
+                            "result_dir_name": "Qos_Test_report",
+                            "selected_real_clients_names": None,
+                            "config_devices": ""
+                        }
+
+                        params.update({
+                            "data": data,
+                            "input_setup_info": input_setup_info,
+                            "report_path": (
+                                self.result_dir
+                                if self.dowebgui else ""
+                            ),
+                            "connections_upload_avg": connections_upload_avg,
+                            "connections_download_avg": connections_download_avg,
+                            "avg_drop_a": avg_drop_a,
+                            "avg_drop_b": avg_drop_b
+                        })
+                        if coordinate not in self.qos_data:
+                            self.qos_data[coordinate] = {}
+                        self.qos_data[coordinate][angle] = params
+
+        self.generate_report_for_robo()
 
 def validate_args(args):
     if args.group_name:
@@ -2237,6 +2597,114 @@ def validate_args(args):
         logger.error("Please provide ssid password and security for configuring devices")
         exit(1)
 
+# def perform_robo_test(args,loads_data,loads,direction):
+#     test_results = {'test_results': []}
+#     data = {}
+#     for index in range(len(loads_data)):
+#         throughput_qos = ThroughputQOS(host=args.mgr,
+#                                        ip=args.mgr,
+#                                        port=args.mgr_port,
+#                                        number_template="0000",
+#                                        ap_name=args.ap_name,
+#                                        name_prefix="TOS-",
+#                                        upstream=args.upstream_port,
+#                                        ssid=args.ssid,
+#                                        password=args.passwd,
+#                                        security=args.security,
+#                                        test_duration=args.test_duration,
+#                                        use_ht160=False,
+#                                        side_a_min_rate=int(loads['upload'][index]),
+#                                        side_b_min_rate=int(loads['download'][index]),
+#                                        traffic_type=args.traffic_type,
+#                                        tos=args.tos,
+#                                        csv_direction=direction,
+#                                        dowebgui=args.dowebgui,
+#                                        test_name=args.test_name,
+#                                        result_dir=args.result_dir,
+#                                        device_list=args.device_list,
+#                                        _debug_on=args.debug,
+#                                        group_name=args.group_name,
+#                                        profile_name=args.profile_name,
+#                                        file_name=args.file_name,
+#                                        eap_method=args.eap_method,
+#                                        eap_identity=args.eap_identity,
+#                                        ieee80211=args.ieee8021x,
+#                                        ieee80211u=args.ieee80211u,
+#                                        ieee80211w=args.ieee80211w,
+#                                        enable_pkc=args.enable_pkc,
+#                                        bss_transition=args.bss_transition,
+#                                        power_save=args.power_save,
+#                                        disable_ofdma=args.disable_ofdma,
+#                                        roam_ft_ds=args.roam_ft_ds,
+#                                        key_management=args.key_management,
+#                                        pairwise=args.pairwise,
+#                                        private_key=args.private_key,
+#                                        ca_cert=args.ca_cert,
+#                                        client_cert=args.client_cert,
+#                                        pk_passwd=args.pk_passwd,
+#                                        pac_file=args.pac_file,
+#                                        expected_passfail_val=args.expected_passfail_value,
+#                                        csv_name=args.device_csv_name,
+#                                        wait_time=args.wait_time,
+#                                        config=args.config,
+#                                        get_live_view=args.get_live_view,
+#                                        total_floors=args.total_floors,
+#                                        robot_test=args.robot_test,
+#                                        robot_ip=args.robot_ip,
+#                                        robot_port=args.robot_port,
+#                                        coordinate=args.coordinate,
+#                                        rotation=args.rotation
+#                                        )
+#         throughput_qos.os_type()
+#         _, configured_device, _, configuration = throughput_qos.phantom_check()
+#         if args.dowebgui and args.group_name:
+#             if len(configured_device) == 0:
+#                 logger.warning("No device is available to run the test")
+#                 obj1 = {
+#                     "status": "Stopped",
+#                     "configuration_status": "configured"
+#                 }
+#                 throughput_qos.updating_webui_runningjson(obj1)
+#                 return
+#             else:
+#                 obj1 = {
+#                     "configured_devices": configured_device,
+#                     "configuration_status": "configured"
+#                 }
+#                 throughput_qos.updating_webui_runningjson(obj1)
+#         # checking if we have atleast one device available for running test
+#         if throughput_qos.dowebgui == "True":
+#             if throughput_qos.device_found is False:
+#                 logger.warning("No Device is available to run the test hence aborting the test")
+#                 df1 = pd.DataFrame([{
+#                     "BE_dl": 0,
+#                     "BE_ul": 0,
+#                     "BK_dl": 0,
+#                     "BK_ul": 0,
+#                     "VI_dl": 0,
+#                     "VI_ul": 0,
+#                     "VO_dl": 0,
+#                     "VO_ul": 0,
+#                     "timestamp": datetime.now().strftime('%H:%M:%S'),
+#                     'status': 'Stopped'
+#                 }]
+#                 )
+#                 df1.to_csv('{}/overall_throughput.csv'.format(throughput_qos.result_dir), index=False)
+#                 raise ValueError("Aborting the test....")
+#         throughput_qos.build()
+#         throughput_qos.monitor_cx()
+#         if args.robot_test:
+#             throughput_qos.perform_robo()
+#         throughput_qos.start(False, False)
+#         time.sleep(10)
+#         connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b = throughput_qos.monitor()
+#         logger.info("connections download {}".format(connections_download))
+#         logger.info("connections upload {}".format(connections_upload))
+#         throughput_qos.stop()
+#         time.sleep(5)
+#         test_results['test_results'].append(throughput_qos.evaluate_qos(connections_download, connections_upload, drop_a_per, drop_b_per))
+#         data.update(test_results)
+    
 
 def main():
     help_summary = '''\
@@ -2406,6 +2874,11 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
     optional.add_argument("--config", action="store_true", help="Specify for configuring the devices")
     optional.add_argument('--get_live_view', help="If true will heatmap will be generated from testhouse automation WebGui ", action='store_true')
     optional.add_argument('--total_floors', help="Total floors from testhouse automation WebGui ", default="0")
+    optional.add_argument("--robot_test", help='to trigger robot test', action='store_true')
+    optional.add_argument('--robot_ip', type=str, default='localhost', help='hostname for where Robot server is running')
+    optional.add_argument('--robot_port', type=str,default=5000, help='port Robot HTTP service is running on')
+    optional.add_argument('--coordinate', type=str, default='', help="The coordinate contains list of coordinates to be ")
+    optional.add_argument('--rotation', type=str, default='', help="The set of angles to rotate at a particular point")
     args = parser.parse_args()
 
     # help summary
@@ -2502,10 +2975,16 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
                                        wait_time=args.wait_time,
                                        config=args.config,
                                        get_live_view=args.get_live_view,
-                                       total_floors=args.total_floors
+                                       total_floors=args.total_floors,
+                                       robot_test=args.robot_test,
+                                       robot_ip=args.robot_ip,
+                                       robot_port=args.robot_port,
+                                       coordinate=args.coordinate,
+                                       rotation=args.rotation
                                        )
         throughput_qos.os_type()
         _, configured_device, _, configuration = throughput_qos.phantom_check()
+        throughput_qos.qos_data["configuration"] = configuration
         if args.dowebgui and args.group_name:
             if len(configured_device) == 0:
                 logger.warning("No device is available to run the test")
@@ -2542,6 +3021,9 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
                 raise ValueError("Aborting the test....")
         throughput_qos.build()
         throughput_qos.monitor_cx()
+        if args.robot_test:
+            throughput_qos.perform_robo()
+            exit(1)
         throughput_qos.start(False, False)
         time.sleep(10)
         connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b = throughput_qos.monitor()
@@ -2551,6 +3033,7 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
         time.sleep(5)
         test_results['test_results'].append(throughput_qos.evaluate_qos(connections_download, connections_upload, drop_a_per, drop_b_per))
         data.update(test_results)
+    #11
     test_end_time = datetime.now().strftime("%Y %d %H:%M:%S")
     print("Test ended at: ", test_end_time)
 
