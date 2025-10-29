@@ -94,6 +94,7 @@ import traceback
 import asyncio
 from typing import List, Optional
 import csv
+from lf_robo_base_class import RobotClass
 
 sys.path.append(os.path.join(os.path.abspath(__file__ + "../../../")))
 
@@ -119,7 +120,8 @@ class HttpDownload(Realm):
                  test_name=None, _exit_on_fail=False, client_type="", port_list=None, devices_list=None, macid_list=None, lf_username="lanforge", lf_password="lanforge", result_dir="", dowebgui=False,
                  device_list=None, get_url_from_file=None, file_path=None, device_csv_name='', expected_passfail_value=None, file_name=None, group_name=None, profile_name=None, eap_method=None,
                  eap_identity=None, ieee80211=None, ieee80211u=None, ieee80211w=None, enable_pkc=None, bss_transition=None, power_save=None, disable_ofdma=None, roam_ft_ds=None, key_management=None,
-                 pairwise=None, private_key=None, ca_cert=None, client_cert=None, pk_passwd=None, pac_file=None, config=False, wait_time=60, get_live_view=False, total_floors=0,):
+                 pairwise=None, private_key=None, ca_cert=None, client_cert=None, pk_passwd=None, pac_file=None, config=False, wait_time=60, get_live_view=False, total_floors=0,robot_test = False,
+                 robot_ip=None,robot_port=None,coordinate=None,rotation=None,duration=None):
         # super().__init__(lfclient_host=lfclient_host,
         #                  lfclient_port=lfclient_port)
         self.ssid_list = []
@@ -198,7 +200,18 @@ class HttpDownload(Realm):
         self.group_device_map = {}
         self.individual_device_csv_names = []
         self.get_live_view = get_live_view
+        self.duration = duration
         self.total_floors = total_floors
+        self.robot_test = robot_test
+        self.robot_ip = robot_ip
+        self.robot_port = robot_port
+        self.coordinate = coordinate
+        self.rotation = rotation
+        self.rotation_enabled = False
+        self.coordinate_list = coordinate.split(',')
+        self.rotation_list = rotation.split(',')
+        self.current_coordinate = ""
+        self.current_angle = 0
 
 # The 'phantom_check' will be handled within the 'get_real_client_list' function
     def get_real_client_list(self):
@@ -633,6 +646,8 @@ class HttpDownload(Realm):
             self.data["remaining_time"] = ["0"] * len(self.macid_list)
             df1 = pd.DataFrame(self.data)
             df1.to_csv("http_datavalues.csv", index=False)
+            if self.robot_test:
+                df1.to_csv(f"{self.current_coordinate}_http_datavalues.csv", index=False)
 
     def get_layer4_data(self):
         """
@@ -795,9 +810,12 @@ class HttpDownload(Realm):
             self.data["remaining_time"] = [[str(int(total_hours)) + " hr and " + str(
                 int(remaining_minutes)) + " min" if int(total_hours) != 0 or int(remaining_minutes) != 0 else '<1 min'][
                 0]] * len(self.devices_list)
+            if self.robot_test and self.rotation_enabled:
+                self.data["current_angle"] = [self.current_angle] * len(self.devices_list)
             try:
                 df1 = pd.DataFrame(self.data)
             except Exception:
+                print("===",self.data)
                 tb_str = traceback.format_exc()  # capture traceback as string
                 logger.error("An exception occurred:\n%s", tb_str)
                 exit(1)
@@ -805,6 +823,9 @@ class HttpDownload(Realm):
                 df1.to_csv('{}/http_datavalues.csv'.format(self.result_dir), index=False)
             elif self.client_type == 'Real':
                 df1.to_csv("http_datavalues.csv", index=False)
+                # IF ROBOT TEST PERFORMED
+                if(self.robot_test):
+                    df1.to_csv(f"{self.current_coordinate}_http_datavalues.csv", index=False)
             time.sleep(5)
             if self.dowebgui == "True":
                 with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host,
@@ -1158,6 +1179,7 @@ class HttpDownload(Realm):
 
     def get_device_port_details(self):
         self.response_port = self.local_realm.json_get("/port/all")
+        self.channel_list,self.mode_list,self.ssid_list = [],[],[]
         if self.client_type == "Real":
             self.devices = self.devices_list
             for interface in self.response_port['interfaces']:
@@ -1733,6 +1755,33 @@ class HttpDownload(Realm):
             logger.error('No cross connections created, aborting test')
             exit(1)
 
+    def perform_robo(self):
+
+        if(self.rotation_list[0]!=""):
+            self.rotation_enabled=True
+
+        robot_obj = RobotClass()
+        robot_obj.robo_ip = "127.0.0.1:5000"  
+
+        for coordinate in range(len(self.coordinate_list)):
+            robo_moved = robot_obj.move_to_coordinate(self.coordinate_list[coordinate])
+            if robo_moved:
+                self.current_coordinate = self.coordinate_list[coordinate]
+                # if no rotation mode
+                if not self.rotation_enabled:
+                    self.start()
+                    self.monitor_for_runtime_csv(self.duration)
+                    self.stop()
+                    
+                # if rotation mode
+                else:
+                    for angle in range(len(self.rotation_list)):
+                        robo_rotated = robot_obj.rotate_angle(1,2,self.rotation_list[angle])
+                        if robo_rotated:
+                            self.current_angle = self.rotation_list[angle]
+                            self.start()
+                            self.monitor_for_runtime_csv(self.duration)
+                            self.stop()
 
 def validate_args(args):
     if args.expected_passfail_value and args.device_csv_name:
@@ -1949,6 +1998,13 @@ def main():
 
     optional.add_argument('--get_live_view', help="If true will heatmap will be generated from testhouse automation WebGui ", action='store_true')
     optional.add_argument('--total_floors', help="Total floors from testhouse automation WebGui ", default="0")
+
+    optional.add_argument("--robot_test", help='to trigger robot test', action='store_true')
+    optional.add_argument('--robot_ip', type=str, default='localhost', help='hostname for where Robot server is running')
+    optional.add_argument('--robot_port', type=str,default=5000, help='port Robot HTTP service is running on')
+    optional.add_argument('--coordinate', type=str, default='', help="The coordinate contains list of coordinates to be ")
+    optional.add_argument('--rotation', type=str, default='', help="The set of angles to rotate at a particular point")
+
     help_summary = '''\
 lf_webpage.py will verify that N clients are connected on a specified band and can download
 some amount of file data from the HTTP server while measuring the time taken by clients to download the file and number of
@@ -2078,7 +2134,13 @@ times the file is downloaded.
                             wait_time=args.wait_time,
                             config=args.config,
                             get_live_view=args.get_live_view,
-                            total_floors=args.total_floors
+                            total_floors=args.total_floors,
+                            robot_test=args.robot_test,
+                            robot_ip=args.robot_ip,
+                            robot_port=args.robot_port,
+                            coordinate=args.coordinate,
+                            rotation=args.rotation,
+                            duration =args.duration
                             )
         if args.client_type == "Real":
             if not isinstance(args.device_list, list):
@@ -2119,6 +2181,11 @@ times the file is downloaded.
         # Solution For Leap Year conflict changed it to %Y
         test_time = test_time.strftime("%Y %d %H:%M:%S")
         print("Test started at ", test_time)
+
+        if args.robot_test:
+            http.perform_robo()
+            exit(1)
+
         http.start()
         if args.dowebgui:
             # FOR WEBGUI, -This fumction is called to fetch the runtime data from layer-4

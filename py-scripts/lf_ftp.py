@@ -816,7 +816,8 @@ class FtpTest(LFCliBase):
             self.data["remaining_time"] = ["0"] * len(self.mac_id_list)
             df1 = pd.DataFrame(self.data)
             df1.to_csv("ftp_datavalues.csv", index=False)
-            df1.to_csv(f"{self.current_coordinate}_ftp_datavalues.csv", index=False)
+            if self.robot_test:
+                df1.to_csv(f"{self.current_coordinate}_ftp_datavalues.csv", index=False)
 
     def postcleanup(self):
         self.cx_profile.cleanup()
@@ -1065,7 +1066,7 @@ class FtpTest(LFCliBase):
                 int(remaining_minutes)) + " min" if int(total_hours) != 0 or int(
                 remaining_minutes) != 0 else '<1 min'][0]] * len(self.cx_list)
             if self.robot_test and self.rotation_enabled:
-                self.data["current_angle"] = self.current_angle
+                self.data["current_angle"] = [self.current_angle] * len(self.cx_list)
             try:
                 df1 = pd.DataFrame(self.data)
             except Exception:
@@ -1077,6 +1078,9 @@ class FtpTest(LFCliBase):
                 exit(1)
             if self.dowebgui:
                 df1.to_csv('{}/ftp_datavalues.csv'.format(self.result_dir), index=False)
+                # IF ROBOT TEST PERFORMED
+                if(self.robot_test):
+                    df1.to_csv(f"{self.result_dir}/{self.current_coordinate}_ftp_datavalues.csv", index=False)
             if self.clients_type == 'Real':
                 df1.to_csv("ftp_datavalues.csv", index=False)
                 # IF ROBOT TEST PERFORMED
@@ -2504,7 +2508,7 @@ class FtpTest(LFCliBase):
         robot_obj.robo_ip = "127.0.0.1:5000"  
 
         for coordinate in range(len(self.coordinate_list)):
-            robo_moved = robot_obj.move_to_coordinate(self.coordinate_list[coordinate])
+            robo_moved = robot_obj.move_to_coordinate(coordinate=self.coordinate_list[coordinate],result_dir=os.path.dirname(os.path.dirname(self.result_dir)))
             if robo_moved:
                 self.current_coordinate = self.coordinate_list[coordinate]
                 # if no rotation mode
@@ -2982,6 +2986,7 @@ some amount of file data from the FTP server while measuring the time taken by c
                     obj.perform_robo()
                     exit(1)
 
+                obj.start(False, False)
 
 
                 # to fetch runtime values during the execution and fill the csv.

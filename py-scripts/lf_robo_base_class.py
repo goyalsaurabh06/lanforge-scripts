@@ -1,22 +1,38 @@
+import os
 import requests
 import time
+import json
 
 class RobotClass:
     def __init__(self):
         self.robo_ip = ""
+        self.navdata_json = {}
 
-    def move_to_coordinate(self, coordinate=None):
+    def move_to_coordinate(self, coordinate=None, result_dir=None):
         url = f"http://{self.robo_ip}/cmd/nav_name"
         data = {"coordinate": coordinate}
 
         print(f"[MOVE] Sending coordinates: {data}")
+
+        self.navdata_json = {
+            "Canbee_location": coordinate,
+            "status": "Running"
+        }
+        self._save_navdata(result_dir)
+
         response = requests.post(url, json=data)
+
         if response.status_code == 200:
-            print("[MOVE] Success  Robot reached the target.")
-            return True
+            print("[MOVE] Robot reached the target.")
+            time.sleep(1)
+            self.navdata_json["status"] = "Stopped"
         else:
-            print("[MOVE] Failed ", response.text)
-            return False
+            print("[MOVE] Failed:", response.text)
+            self.navdata_json["status"] = "Stopped"
+
+        self._save_navdata(result_dir)
+        print("[SAVE] Updated navdata.json:", self.navdata_json)
+        return self.navdata_json
 
     def rotate_angle(self, x, y, angle):
         url = f"http://{self.robo_ip}/cmd/nav_angle"
@@ -44,6 +60,18 @@ class RobotClass:
         else:
             print(f"[BATTERY] OK ({level}%). Continuing.")
         return "ok"
+    
+    def _save_navdata(self, result_dir=None):
+        print(result_dir)
+        if result_dir:
+            os.makedirs(result_dir, exist_ok=True)
+            file_path = os.path.join(result_dir, "nav_data.json")
+            print("file_path:", file_path)
+        else:
+            file_path = "nav_data.json"
+
+        with open(file_path, "w") as f:
+            json.dump(self.navdata_json, f, indent=4)
 
 def main():
     robo = RobotClass()
