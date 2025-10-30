@@ -393,10 +393,14 @@ class VideoStreamingTest(Realm):
         logging.info("Setting Cx State to Runnning")
         try:
             for i in self.http_profile.created_cx.keys():
+                print("/cx/" + i)
+                print("data",self.local_realm.json_get("/cx/" + i))
                 while self.local_realm.json_get("/cx/" + i).get(i).get('state') != 'Run':
                     continue
         except Exception as e:
             logger.info(f"Exception occured: {e}")
+            import traceback
+            traceback.print_exc()
         logging.info("Test started at : {0} ".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
 
     def map_sta_ips_real(self, sta_list=None):
@@ -2168,7 +2172,7 @@ class VideoStreamingTest(Realm):
         
                     
     
-    def perform_robo(self,args, cx_order_list, individual_dataframe_columns, end_time_webGUI, actual_start_time,iterations_before_test_stopped_by_user,i):
+    def perform_robo(self,args, individual_dataframe_columns, cx_order_list, i,actual_start_time, iterations_before_test_stopped_by_user):
 
         if(self.rotation_list[0]!=""):
             self.rotation_enabled=True
@@ -2227,6 +2231,10 @@ class VideoStreamingTest(Realm):
                     for angle in range(len(self.rotation_list)):
                         individual_df = pd.DataFrame(columns=individual_dataframe_columns)
                         robo_rotated = robot_obj.rotate_angle(1,2,self.rotation_list[angle])
+                        self.data = {}
+                        self.data["start_time_webGUI"] = [datetime.now().strftime('%Y-%m-%d %H:%M:%S')]
+                        end_time_webGUI = (datetime.now() + timedelta(minutes=int(args.duration))).strftime('%Y-%m-%d %H:%M:%S')
+                        self.data['end_time_webGUI'] = [end_time_webGUI]
                         if robo_rotated:
                             self.current_angle = self.rotation_list[angle]
                             self.start_specific(cx_order_list[i])
@@ -2751,7 +2759,7 @@ def main():
             for i in range(len(cx_order_list)):
                 if i == 0:
                     if args.robot_test:
-                        obj.perform_robo(args, cx_order_list, individual_dataframe_columns, end_time_webGUI, actual_start_time,iterations_before_test_stopped_by_user,i)
+                        obj.perform_robo(args,individual_dataframe_columns, cx_order_list ,i,actual_start_time,iterations_before_test_stopped_by_user)
                         print("vs_data:",obj.vs_data)
                         exit(1)
                     obj.data["start_time_webGUI"] = [datetime.now().strftime('%Y-%m-%d %H:%M:%S')]
