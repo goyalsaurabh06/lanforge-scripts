@@ -63,6 +63,7 @@ from flask import Flask, request, jsonify
 from threading import Thread
 import traceback
 import threading
+import glob
 
 logger = logging.getLogger(__name__)
 log = logging.getLogger('werkzeug')
@@ -91,6 +92,7 @@ base = importlib.import_module('py-scripts.lf_base_interop_profile')
 base_RealDevice = base.RealDevice
 
 DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
+robo_base_class = importlib.import_module("py-scripts.lf_robo_base_class")
 
 # Importing modules dynamically
 lf_report = importlib.import_module("py-scripts.lf_report")
@@ -130,8 +132,14 @@ class Youtube(Realm):
                  config=None,
                  selected_groups=None,
                  selected_profiles=None,
-                 config_obj=None
-
+                 config_obj=None,
+                 robo_ip="127.0.0.1",
+                 coordinates_list = None,
+                 angles_list = None,
+                 do_robo = False,
+                 current_cord = "",
+                 current_angle = None,
+                 rotations_enabled = False,
 
                  ):
         """
@@ -199,6 +207,15 @@ class Youtube(Realm):
         self.selected_groups = selected_groups
         self.selected_profiles = selected_profiles
         self.config_obj = config_obj
+        self.robo_ip = robo_ip
+        self.robo_obj = robo_base_class.RobotClass()
+        self.coordinates_list = coordinates_list
+        self.angles_list = angles_list
+        self.current_cord = current_cord
+        self.current_angle = current_angle
+        self.do_robo = do_robo
+        self.rotations_enabled = rotations_enabled
+
 
     def stop(self):
         self.stop_signal = True
@@ -227,72 +244,359 @@ class Youtube(Realm):
         self.generic_endps_profile.created_cx = []
         self.generic_endps_profile.created_endp = []
         # Log cleanup completion
+    
+    def perform_robo_test(self):
+        for coordinate in self.coordinates_list:
+            self.robo_obj.move_to_coordinate(coordinate=coordinate)
+            # self.robo_obj.check_coordinate_reached(target_coordinate=coordinate)
+            self.current_cord = coordinate
+            if self.rotations_enabled:
+                for angle in self.angles_list:
+                    self.robo_obj.rotate_angle(x=0, y=1, angle=angle)
+                    # self.robo_obj.check_angle_reached(target_angle=angle)
+                    self.current_angle = angle
+                    self.start_generic()
 
-    def execute_youtube_test(self, duration, do_webUI):
+                    duration = self.duration
+                    end_time = datetime.now() + timedelta(minutes=duration)
+
+                    logging.info("Starting data collection for coordinate: %s and angle: %s", coordinate, angle)
+
+                    self.get_initial_data()
+
+                    while datetime.now() < end_time or not self.check_gen_cx():
+                        self.get_data_from_api()
+                        time.sleep(1)
+
+                    self.generic_endps_profile.stop_cx()
+            
+            else:
+                self.start_generic()
+                duration = self.duration
+                end_time = datetime.now() + timedelta(minutes=duration)
+                logging.info("Starting data collection for coordinate: %s", coordinate)
+                self.get_initial_data()
+
+                while datetime.now() < end_time or not self.check_gen_cx():
+                    self.get_data_from_api()
+                    time.sleep(1)
+
+                self.generic_endps_profile.stop_cx()
+            
+            self.data = {}
+            self.mydatajson = {}
+            self.stats_api_response = {}
+
+    def create_robo_report(self, ui_report_dir):
+        if self.do_webUI:
+            self.report = lf_report(_output_pdf='youtube_streaming.pdf',
+                                    _output_html='youtube_streaming.html',
+                                    _results_dir_name="youtube_streaming_report",
+                                    _path=ui_report_dir)
+        else:
+            self.report = lf_report(_output_pdf='youtube_streaming.pdf',
+                                    _output_html='youtube_streaming.html',
+                                    _results_dir_name="youtube_streaming_report",
+                                    _path='')
+        self.report_path = self.report.get_path()
+        self.report_path_date_time = self.report.get_path_date_time()
+
+        # setting report title
+        self.report.set_title('Youtube Streaming Report')
+        self.report.build_banner()
+
+        # objective and description
+        self.report.set_obj_html(_obj_title='Objective',
+                                 _obj='''The Objective is to conduct automated Youtube Video Streaming test across multiple laptops to gather statistics. The test
+                            will collect these statistics. Additionally,automated graphs will be generated using the collected data.
+                            ''')
+        self.report.build_objective()
+
+
+        if self.config:
+
+            # Test setup info
+            test_setup_info = {
+                'Test Name': 'YouTube Streaming Test',
+                'Duration (in Minutes)': self.duration,
+                'Resolution': self.resolution,
+                'Configured Devices': self.hostname_os_combination,
+                'No of Devices :': f' Total({len(self.real_sta_os_types)}) : W({self.windows}),L({self.linux}),M({self.mac})',
+                "Video URL": self.url,
+                "SSID": self.ssid,
+                "Security": self.security,
+
+            }
+
+        elif len(self.selected_groups) > 0 and len(self.selected_profiles) > 0:
+            gp_pairs = zip(self.selected_groups, self.selected_profiles)
+            gp_map = ", ".join(f"{group} -> {profile}" for group, profile in gp_pairs)
+
+            # Test setup info
+            test_setup_info = {
+                'Test Name': 'YouTube Streaming Test',
+                'Duration (in Minutes)': self.duration,
+                'Resolution': self.resolution,
+                "Configuration": gp_map,
+                'Configured Devices': self.hostname_os_combination,
+                'No of Devices :': f' Total({len(self.real_sta_os_types)}) : W({self.windows}),L({self.linux}),M({self.mac})',
+                "Video URL": self.url,
+
+            }
+        else:
+            # Test setup info
+            test_setup_info = {
+                'Test Name': 'YouTube Streaming Test',
+                'Duration (in Minutes)': self.duration,
+                'Resolution': self.resolution,
+                'Configured Devices': self.hostname_os_combination,
+                'No of Devices :': f' Total({len(self.real_sta_os_types)}) : W({self.windows}),L({self.linux}),M({self.mac})',
+                "Video URL": self.url,
+
+            }
+
+        self.report.test_setup_table(
+            test_setup_data=test_setup_info, value='Test Parameters')
+        
+        for coordinate in self.coordinates_list:
+            if self.rotations_enabled:
+                for angle in self.angles_list:
+                    current_cord = coordinate
+                    current_angle = angle
+                    self.add_frames_graphs_to_report(current_cord, current_angle)
+            else:
+                current_cord = coordinate
+                current_angle = 0
+                self.add_frames_graphs_to_report(current_cord, current_angle)
+        
+        # Move only CSV files from current directory to report directory
+        for file_name in os.listdir('.'):
+            if file_name.endswith('.csv'):
+                self.move_files(file_name, self.report_path_date_time)
+
+        
+        original_dir = os.getcwd()
+
+        os.chdir(self.report_path_date_time)
+        
+        for hostname in self.real_sta_hostname:
+            self.add_buffer_health_graphs_to_report(hostname)
+
+        os.chdir(original_dir)
+        
+        # Closing
+        self.report.build_custom()
+        self.report.build_footer()
+        self.report.write_html()
+        self.report.write_pdf()
+
+    
+    def add_buffer_health_graphs_to_report(self, hostname):
+        all_csv_files = glob.glob("*.csv")
+        filtered_csv_files = [f for f in all_csv_files if f.endswith(f"{hostname}_youtube_stats_report.csv")]
+
+        if not filtered_csv_files:
+            logging.warning(f"No CSV files found for hostname: {hostname}")
+            return
+
+        combined_data = pd.DataFrame()
+
+        for coord in self.coordinates_list:
+            for file_name in filtered_csv_files:
+                if file_name.startswith(f"{coord}_"):
+                    try:
+                        df = pd.read_csv(file_name)
+                        df["SourceFile"] = file_name  # Track which file it came from
+                        combined_data = pd.concat([combined_data, df], ignore_index=True)
+                    except Exception as e:
+                        logging.error(f"Error reading {file_name}: {e}")
+                        continue
+
+        # Convert timestamps
+        try:
+            combined_data['TimeStamp'] = pd.to_datetime(combined_data['TimeStamp'], format="%H:%M:%S").dt.time
+        except Exception as e:
+            logging.error(f"Error converting timestamps: {e}")
+            return
+
+        combined_data = combined_data.drop_duplicates(subset='TimeStamp', keep='first')
+
+        # Extract plotting data
+        timestamps = combined_data['TimeStamp'].apply(lambda t: t.strftime('%H:%M:%S'))
+        buffer_health = combined_data['BufferHealth']
+
+        # Plot all combined data
+        fig, ax = plt.subplots(figsize=(20, 10))
+        plt.plot(timestamps, buffer_health, color='blue', linewidth=2)
+
+        plt.xlabel('Time', fontweight='bold', fontsize=15)
+        plt.ylabel('Buffer Health', fontweight='bold', fontsize=15)
+        plt.title(f'Buffer Health vs Time Graph for {hostname}', fontsize=18)
+
+        # Manage x-ticks for readability
+        if len(timestamps) > 30:
+            tick_interval = len(timestamps) // 30
+            selected_ticks = timestamps[::tick_interval]
+            ax.set_xticks(selected_ticks)
+        else:
+            ax.set_xticks(timestamps)
+
+        plt.xticks(rotation=45, ha='right')
+        plt.tight_layout()
+
+        output_file = f"{hostname}_combined_buffer_health_vs_time.png"
+        plt.savefig(output_file, dpi=96)
+        plt.close()
+
+        logging.info(f"Combined graph saved for {hostname}: {output_file}")
+
+        # Add to report
+        self.report.set_graph_title(f'Buffer Health vs Time Graph for {hostname}')
+        self.report.build_graph_title()
+        self.report.set_graph_image(output_file)
+        self.report.build_graph()
+
+
+    
+
+    def add_frames_graphs_to_report(self, current_cord, current_angle):
         """
-        Execute the YouTube test for monitoring
-
-        Args:
-            duration (int): Duration of the test in minutes.
-            do_webUI (bool): Flag to determine if the test is triggered from the web UI.
+            Reads all CSV files in the current directory that start with '<current_cord>_',
+            filters rows up to current_angle, and collects stats:
+            - Instance Name
+            - Max Total Frames
+            - Max Dropped Frames
+            - Viewport
+            - Current Resolution
+            - Optimal Resolution
+            - Max Buffer Health
+            - Min Buffer Health
         """
-        # Wait for 10 seconds before starting the test
-        self.clear_previous_data()
 
-        self.start_generic()
-        time.sleep(5)
+        prefix = f"{current_cord}_"
+        all_csv_files = glob.glob("*.csv")
 
-        # Initialize variables
-        self.start_time = datetime.now()
-        self.est_end_time = self.start_time + timedelta(minutes=duration, seconds=60)
-        self.end_time_webgui = [False] * len(self.device_names)
-        self.keys = self.generic_endps_profile.created_cx
-        self.all_stop = False
+        # Filter CSV files starting with the prefix
+        filtered_csv_files = [f for f in all_csv_files if f.startswith(prefix)]
+        if not filtered_csv_files:
+            print(f"No CSV files found starting with '{prefix}'.")
+            return {}
 
-        # Ensure initial data is fetched
-        initial_data = self.get_data_from_api()
-        while not initial_data:
-            initial_data = self.get_data_from_api()
-            time.sleep(1)
+        result_dict = {}
 
-        # Monitoring loop
-        while not self.all_stop:
-            if do_webUI:
-                stop_value = self.set_webUI_stop()
-                if stop_value == "Completed":
-                    break
+        for csv_file in filtered_csv_files:
+            try:
+                df = pd.read_csv(csv_file)
 
-            self._monitor_test(do_webUI)
+                # Ensure necessary columns exist
+                required_cols = {
+                    "Angle", "Instance Name", "TotalFrames", "DroppedFrames",
+                    "Viewport", "CurrentRes", "OptimalRes", "BufferHealth"
+                }
+                missing = required_cols - set(df.columns)
+                if missing:
+                    print(f"Skipping {csv_file}: missing columns {missing}")
+                    continue
 
-            time.sleep(1)  # Adjust sleep time as needed
+                df["Angle"] = pd.to_numeric(df["Angle"], errors="coerce")
+                df_filtered = df[df["Angle"] == float(current_angle)]
 
-        logging.info("Duration ended. Stopping the test.")
+                if df_filtered.empty:
+                    print(f"No data <= {current_angle}° in {csv_file}.")
+                    continue
 
-    def _monitor_test(self, do_webUI):
-        """
-        Monitor the YouTube test execution and handle stop conditions.
+                # Extract values
+                instance_name = df_filtered["Instance Name"].iloc[0]
+                viewport = df_filtered["Viewport"].iloc[-1]                # latest viewport seen
+                current_res = df_filtered["CurrentRes"].iloc[-1]          # latest current resolution
+                optimal_res = df_filtered["OptimalRes"].iloc[-1]          # latest optimal resolution
+                max_total_frames = df_filtered["TotalFrames"].max()
+                max_dropped_frames = df_filtered["DroppedFrames"].max()
+                max_buffer_health = df_filtered["BufferHealth"].max()
+                min_buffer_health = df_filtered["BufferHealth"].min()
 
-        Args:
-            do_webUI (bool): Flag to determine if the test is triggered from the web UI.
-        """
-        initial_data = self.get_data_from_api()
-        if initial_data:
-            for i in range(len(self.device_names)):
-                stop_state = initial_data['result'].get(self.device_names[i], {}).get('stop', False)
-                if stop_state:
-                    self.end_time_webgui[i] = True
-                if all(self.end_time_webgui) or datetime.now() >= self.est_end_time:
-                    self.all_stop = True
-                    return
+                # Store stats in dictionary
+                result_dict[instance_name] = {
+                    "Viewport": viewport,
+                    "Current Resolution": current_res,
+                    "Optimal Resolution": optimal_res,
+                    "Total Frames": int(max_total_frames),
+                    "Dropped Frames": int(max_dropped_frames),
+                    "Max Buffer Health": round(float(max_buffer_health), 2),
+                    "Min Buffer Health": round(float(min_buffer_health), 2),
+                }
+                print(f"Processed {csv_file}: {instance_name}")
 
-            for i in range(len(self.device_names)):
-                if not self.end_time_webgui[i]:
-                    new_key = self.keys[i]
-                    if new_key.startswith("CX_"):
-                        new_key = self.keys[i][3:]
-                    response = self.json_get(f'/generic/{new_key}')
-                    if response['endpoint']['status'] in ['WAITING', 'Stopped']:
-                        self.end_time_webgui[i] = True
+            except Exception as e:
+                print(f"Error reading {csv_file}: {e}")
+
+        # graph of frames dropped
+        if current_angle == 0:
+            self.report.set_graph_title(f"Total Frames vs Dropped Frames at coordinate: {current_cord}")
+        else:
+            self.report.set_graph_title(f"Total Frames vs Dropped Frames at coordinate: {current_cord} and angle: {current_angle}°")
+        self.report.build_graph_title()
+        x_fig_size = 25
+        y_fig_size = len(result_dict) * .5 + 4
+
+        hostnames = list(result_dict.keys())
+        total_frames_list = [result_dict[host]["Total Frames"] for host in hostnames]
+        dropped_frames_list = [result_dict[host]["Dropped Frames"] for host in hostnames]
+        viewport_list = [result_dict[host]["Viewport"] for host in hostnames]
+        current_res_list = [result_dict[host]["Current Resolution"] for host in hostnames]
+        max_buffer_health_list = [result_dict[host]["Max Buffer Health"] for host in hostnames]
+        min_buffer_health_list = [result_dict[host]["Min Buffer Health"] for host in hostnames]
+
+        graph = lf_bar_graph_horizontal(_data_set=[dropped_frames_list, total_frames_list],
+                                        _xaxis_name="No of Frames",
+                                        _yaxis_name="Devices",
+                                        _yaxis_categories=hostnames,
+                                        _graph_image_name=f"Dropped Frames vs Total Frames_{current_cord}_{current_angle}",
+                                        _label=["dropped Frames", "Total Frames"],
+                                        _color=None,
+                                        _color_edge='red',
+                                        _figsize=(x_fig_size, y_fig_size),
+                                        _show_bar_value=True,
+                                        _text_font=6,
+                                        _text_rotation=True,
+                                        _enable_csv=True,
+                                        _legend_loc="upper right",
+                                        _legend_box=(1.1, 1),
+                                        )
+        graph_image = graph.build_bar_graph_horizontal()
+        self.report.set_graph_image(graph_image)
+        self.report.move_graph_image()
+        self.report.build_graph()
+
+        self.report.set_table_title(f'Test Results for coordinate: {current_cord} and angle: {current_angle}°')
+        self.report.build_table_title()
+
+        test_results = {
+            "Hostname": hostnames,
+            # "OS Type": self.real_sta_os_types,
+            # "MAC": self.mac_list,
+            # "RSSI": self.rssi_list,
+            # "Link Rate": self.link_rate_list,
+            # "SSID": self.ssid_list,
+            "ViewPort": viewport_list,
+            "Video Resoultion": current_res_list,
+            "Max Buffer Health (Seconds)": max_buffer_health_list,
+            "Min Buffer health (Seconds)": min_buffer_health_list,
+            "Total Frames": total_frames_list,
+            "Dropped Frames": dropped_frames_list,
+
+        }
+
+        test_results_df = pd.DataFrame(test_results)
+        self.report.set_table_dataframe(test_results_df)
+        self.report.build_table()
+
+
+        print("\n📊 Summary for all devices:")
+        for k, v in result_dict.items():
+            print(f"{k}: {v}")
+
+        
 
     def check_tab_exists(self):
         """
@@ -475,6 +779,21 @@ class Youtube(Realm):
                     group_test_results[key].append(test_results[key][idx])
 
         return group_test_results
+    
+    def get_initial_data(self):
+        initial_data = self.get_data_from_api()
+
+        while len(initial_data) == 0:
+            initial_data = self.get_data_from_api()
+            time.sleep(1)
+        # if initial_data:
+        #     end_time_webgui = []
+        #     for i in range(len(self.device_names)):
+        #         end_time_webgui.append(initial_data['result'].get(self.device_names[i], {}).get('stop', False))
+        # else:
+        #     for _i in range(len(self.device_names)):
+        #         end_time_webgui.append("")
+
 
     def select_real_devices(self, real_devices, real_sta_list=None, base_interop_obj=None):
         final_device_list = []
@@ -620,15 +939,25 @@ class Youtube(Realm):
 
                 # Define CSV file path using the device name as the file name
                 if self.do_webUI:
-                    csv_file_path = os.path.join(self.ui_report_dir, f'{device_name}_youtube_stats_report.csv')
+                    if self.do_robo:
+                        csv_file_path = os.path.join(self.ui_report_dir, f"{self.current_cord}_{device_name}_youtube_stats_report.csv")
+                    else:
+                        csv_file_path = os.path.join(self.ui_report_dir, f'{device_name}_youtube_stats_report.csv')
                 else:
                     current_path = os.path.dirname(os.path.abspath(__file__))
-                    csv_file_path = os.path.join(current_path, f"{device_name}_youtube_stats_report.csv")
+                    if self.do_robo:
+                        csv_file_path = os.path.join(current_path, f"{self.current_cord}_{device_name}_youtube_stats_report.csv")
+                    else:
+                        csv_file_path = os.path.join(current_path, f'{device_name}_youtube_stats_report.csv')
 
                 self.devices_list.append(csv_file_path)
 
                 file_exists = os.path.isfile(csv_file_path)
+            
                 headers = ["Instance Name", "TimeStamp", "Viewport", "DroppedFrames", "TotalFrames", "CurrentRes", "OptimalRes", "BufferHealth"]
+
+                if self.do_robo:
+                    headers.append("Angle")
 
                 with open(csv_file_path, mode='a', newline='') as file:
                     writer = csv.writer(file)
@@ -636,7 +965,11 @@ class Youtube(Realm):
                         writer.writerow(headers)
                     row = [device_name, timestamp]
                     for header in headers[2:]:
+                        if header == "Angle":
+                            continue
                         row.append(stats.get(header, "NA"))
+                    if self.do_robo:
+                        row.append(self.current_angle)
                     writer.writerow(row)
 
             return self.data
@@ -1050,7 +1383,7 @@ class Youtube(Realm):
 
                 endp_status = generic_endpoint["endpoint"].get("status", "")
 
-                if endp_status not in ["Stopped", "WAITING", "NO-CX"]:
+                if endp_status == "Run":
                     return False
 
             return True
@@ -1237,6 +1570,8 @@ NOTES:
         optional = parser.add_argument_group('Optional arguments')
         # Define webUI specific arguments group
         webUI_args = parser.add_argument_group('webUI arguments')
+        # Define robo specific arguments group
+        robo = parser.add_argument_group('robo arguments')
 
         # Add required arguments
         required.add_argument('--mgr', type=str, help="hostname where LANforge GUI is running", required=True)
@@ -1294,6 +1629,21 @@ NOTES:
         parser.add_argument("--device_csv_name", type=str, help="Specify the device csv name for pass/fail", default=None)
         parser.add_argument('--config', action='store_true', help='specify this flag whether to config devices or not')
         parser.add_argument("--wait_time", type=int, help="Specify the time for configuration", default=60)
+        robo.add_argument('--robo_ip', type=str, help='Specify the robo ip')
+        robo.add_argument(
+            '--coordinates',
+            help="Comma-separated list of coordinate point names (e.g. 1,2,3), each mapping to x and y values"
+        )
+
+        robo.add_argument(
+            '--rotations',
+            help="Comma-separated list of rotation angles (in degrees) to apply at respective points"
+        )
+        robo.add_argument(
+            '--do_robo',
+            help="Specify this flag to perform the test with robo", action='store_true'
+        )
+
 
         args = parser.parse_args()
 
@@ -1310,6 +1660,12 @@ NOTES:
         if args.lf_logger_config_json:
             logger_config.lf_logger_config_json = args.lf_logger_config_json
             logger_config.load_lf_logger_config()
+        
+        rotations_enabled = False
+        if args.do_robo:
+            args.coordinates = args.coordinates.split(',') if args.coordinates else []
+            args.rotations = [float(angle) for angle in args.rotations.split(',')] if args.rotations else []
+            rotations_enabled = True
 
         mgr_ip = args.mgr
         mgr_port = args.mgr_port
@@ -1399,7 +1755,12 @@ NOTES:
                 upstream_port=args.upstream_port,
                 config=args.config,
                 selected_groups=selected_groups,
-                selected_profiles=selected_profiles)
+                selected_profiles=selected_profiles,
+                robo_ip=args.robo_ip,
+                coordinates_list=args.coordinates,
+                angles_list=args.rotations,
+                do_robo=args.do_robo,
+                rotations_enabled=rotations_enabled)
             youtube.start_flask_server()
             args.upstream_port = youtube.change_port_to_ip(args.upstream_port)
 
@@ -1553,38 +1914,33 @@ NOTES:
             time.sleep(10)
 
             youtube.start_time = datetime.now()
-            youtube.start_generic()
-
-            duration = args.duration
-            end_time = datetime.now() + timedelta(minutes=duration)
-            initial_data = youtube.get_data_from_api()
-
-            while len(initial_data) == 0:
-                initial_data = youtube.get_data_from_api()
-                time.sleep(1)
-            if initial_data:
-                end_time_webgui = []
-                for i in range(len(youtube.device_names)):
-                    end_time_webgui.append(initial_data['result'].get(youtube.device_names[i], {}).get('stop', False))
+            if args.do_robo:
+                youtube.perform_robo_test()
+                if do_webUI:
+                    youtube.create_robo_report(youtube.ui_report_dir)
+                else:
+                    youtube.create_robo_report('')
             else:
-                for _i in range(len(youtube.device_names)):
-                    end_time_webgui.append("")
+                youtube.start_generic()
 
-            end_time = datetime.now() + timedelta(minutes=duration)
+                duration = args.duration
+                end_time = datetime.now() + timedelta(minutes=duration)
 
-            while datetime.now() < end_time or not youtube.check_gen_cx():
-                youtube.get_data_from_api()
-                time.sleep(1)
+                youtube.get_initial_data()
 
-            youtube.generic_endps_profile.stop_cx()
-            logging.info("Duration ended")
+                while datetime.now() < end_time or not youtube.check_gen_cx():
+                    youtube.get_data_from_api()
+                    time.sleep(1)
 
-            logging.info('Stopping the test')
-            if do_webUI:
-                youtube.create_report(youtube.stats_api_response, youtube.ui_report_dir)
-            else:
+                youtube.generic_endps_profile.stop_cx()
+                logging.info("Duration ended")
 
-                youtube.create_report(youtube.stats_api_response, '')
+                logging.info('Stopping the test')
+                if do_webUI:
+                    youtube.create_report(youtube.stats_api_response, youtube.ui_report_dir)
+                else:
+
+                    youtube.create_report(youtube.stats_api_response, '')
 
             # Perform post-test cleanup if not skipped
             if not args.no_post_cleanup:
