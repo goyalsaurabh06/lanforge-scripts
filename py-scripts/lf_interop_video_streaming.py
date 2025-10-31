@@ -399,8 +399,6 @@ class VideoStreamingTest(Realm):
                     continue
         except Exception as e:
             logger.info(f"Exception occured: {e}")
-            import traceback
-            traceback.print_exc()
         logging.info("Test started at : {0} ".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
 
     def map_sta_ips_real(self, sta_list=None):
@@ -1934,11 +1932,16 @@ class VideoStreamingTest(Realm):
             if self.rotation_enabled:
                 for angle in range(len(self.rotation_list)):
                     self.current_angle = self.rotation_list[angle]
+                    csv_suffix = "_{}_{}".format(self.current_coordinate,self.current_angle)
+                    shutil.move('video_streaming_realtime_data{}.csv'.format(csv_suffix), report_path_date_time)
+
                     coord, ang = self.coordinate_list[coordinate], self.rotation_list[angle]
                     self.data = self.vs_data[coord][ang]["self_data"]
                     self.generate_individual_coordinate(report, device_type, username, ssid, mac, channel, mode, rssi, tx_rate, created_incremental_values, keys)
             else:
                 self.data = self.vs_data[self.coordinate_list[coordinate]]["self_data"]
+                csv_suffix = "_{}".format(self.current_coordinate)
+                shutil.move('video_streaming_realtime_data{}.csv'.format(csv_suffix), report_path_date_time)
                 self.generate_individual_coordinate(report, device_type, username, ssid, mac, channel, mode, rssi, tx_rate, created_incremental_values, keys)
     
     def generate_individual_coordinate(self, report, device_type, username, ssid, mac, channel, mode, rssi, tx_rate, created_incremental_values, keys, report_path=""):
@@ -1946,6 +1949,11 @@ class VideoStreamingTest(Realm):
             data_dict = self.vs_data[self.current_coordinate][self.current_angle].copy()
         else:
             data_dict = self.vs_data[self.current_coordinate].copy()
+        if self.rotation_enabled:
+            graph_suffix = "_{}_{}".format(self.current_coordinate,self.current_angle)
+        else:
+            graph_suffix = "_{}".format(self.current_coordinate)
+
         iterations_before_test_stopped_by_user = data_dict["iterations_before_test_stopped_by_user"]
         date = data_dict["date"]
         realtime_dataset = data_dict["realtime_dataset"]
@@ -2024,9 +2032,13 @@ class VideoStreamingTest(Realm):
             if len(created_incremental_values) > 1:
                 report.set_custom_html(f"<h2><u>Iteration-{iter + 1}</u></h2>")
                 report.build_custom()
+            if self.rotation_enabled:
+                obj_title = f"Realtime Video Rate on Coordinate: {self.current_coordinate} | Rotation Angle: {self.current_angle}°: Number of devices running: {len(device_names_on_running)}"
+            else:
+                obj_title = f"Realtime Video Rate on Coordinate: {self.current_coordinate} : Number of devices running: {len(device_names_on_running)}"
 
             report.set_obj_html(
-                _obj_title=f"Realtime Video Rate: Number of devices running: {len(device_names_on_running)}",
+                _obj_title=obj_title,
                 _obj="")
             report.build_objective()
 
@@ -2037,7 +2049,7 @@ class VideoStreamingTest(Realm):
                                   _xaxis_categories=self.trim_data(len(realtime_dataset['timestamp'][realtime_dataset['iteration'] == iter + 1].values.tolist()),
                                                                    realtime_dataset['timestamp'][realtime_dataset['iteration'] == iter + 1].values.tolist()),
                                   _label=['Rate'],
-                                  _graph_image_name=f"vs_line_graph{iter}"
+                                  _graph_image_name=f"vs_line_graph{iter}{graph_suffix}"
                                   )
             graph_png = graph.build_line_graph()
             logger.info("graph name {}".format(graph_png))
@@ -2058,7 +2070,7 @@ class VideoStreamingTest(Realm):
             graph = lf_bar_graph_horizontal(_data_set=[total_urls[:created_incremental_values[iter]]],
                                             _xaxis_name="Total Urls",
                                             _yaxis_name="Devices",
-                                            _graph_image_name=f"total_urls_image_name{iter}",
+                                            _graph_image_name=f"total_urls_image_name{iter}{graph_suffix}",
                                             _label=["Total Urls"],
                                             _yaxis_categories=device_names_on_running,
                                             _legend_loc="best",
@@ -2083,7 +2095,7 @@ class VideoStreamingTest(Realm):
             graph = lf_bar_graph_horizontal(_data_set=[max_video_rate, min_video_rate],
                                             _xaxis_name="Max/Min Video Rate(Mbps)",
                                             _yaxis_name="Devices",
-                                            _graph_image_name=f"max-min-video-rate_image_name{iter}",
+                                            _graph_image_name=f"max-min-video-rate_image_name{iter}{graph_suffix}",
                                             _label=['Max Video Rate', 'Min Video Rate'],
                                             _yaxis_categories=device_names_on_running,
                                             _legend_loc="best",
@@ -2108,7 +2120,7 @@ class VideoStreamingTest(Realm):
             graph = lf_bar_graph_horizontal(_data_set=devices_data_to_create_wait_time_bar_graph,
                                             _xaxis_name="Wait Time(seconds)",
                                             _yaxis_name="Devices",
-                                            _graph_image_name=f"wait_time_image_name{iter}",
+                                            _graph_image_name=f"wait_time_image_name{iter}{graph_suffix}",
                                             _label=['Wait Time'],
                                             _yaxis_categories=device_names_on_running,
                                             _legend_loc="best",
@@ -2271,7 +2283,7 @@ class VideoStreamingTest(Realm):
                             # test_setup_info = self.create_test_setup_info(media_source=args.media_source, media_quality=args.media_quality)
                             params = self.build_report_params_for_robo(args, cx_order_list, individual_df, iterations_before_test_stopped_by_user)
                             params["self_data"] = self.data.copy()
-                            self.vs_data[self.current_coordinate] = params
+                            # self.vs_data[self.current_coordinate] = params
                             if self.coordinate_list[coordinate] not in self.vs_data:
                                 self.vs_data[self.coordinate_list[coordinate]] = {}
                             self.vs_data[self.coordinate_list[coordinate]][self.rotation_list[angle]] = params
