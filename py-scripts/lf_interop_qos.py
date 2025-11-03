@@ -290,6 +290,8 @@ class ThroughputQOS(Realm):
             self.rotation_enabled = False
             self.coordinate_list = coordinate.split(',')
             self.rotation_list = rotation.split(',')
+            self.current_coordinate = None
+            self.current_angle = None
 
     def os_type(self):
         response = self.json_get("/resource/all")
@@ -667,6 +669,7 @@ class ThroughputQOS(Realm):
         # TODO: Fix this. This is poor style
         throughput, upload, download, upload_throughput, download_throughput, connections_upload, connections_download, avg_upload, avg_download, avg_upload_throughput, avg_download_throughput, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, dropa_connections, dropb_connections = {  # noqa: E501
         }, [], [], [], [], {}, {}, [], [], [], [], {}, {}, [], [], {}, {}
+        curr_coordinate = self.current_coordinate
         # Initialized seperate variables for average values for report changes
         drop_a, drop_a_per, drop_b, drop_b_per, avg_drop_b_per, avg_drop_a_per = [], [], [], [], [], []
         if (self.test_duration is None) or (int(self.test_duration) <= 1):
@@ -679,8 +682,9 @@ class ThroughputQOS(Realm):
         print("Test started at: ", test_start_time)
         print("Monitoring cx and endpoints")
         end_time = start_time + timedelta(seconds=int(self.test_duration))
-        self.overall = []
-        self.df_for_webui = []
+        if not self.robot_test:
+            self.overall = []
+            self.df_for_webui = []
         index = -1
         connections_upload = dict.fromkeys(list(self.cx_profile.created_cx.keys()), float(0))
         connections_download = dict.fromkeys(list(self.cx_profile.created_cx.keys()), float(0))
@@ -836,6 +840,8 @@ class ThroughputQOS(Realm):
                                 total_hours) != 0 or int(remaining_minutes) != 0 else '<1 min'][0],
                         'status': 'Running'
                     })
+                    if self.robot_test and self.rotation_enabled:
+                        self.overall[-1]["angle"] = self.current_angle
                     # Appending latest rx_rate, tx_rate, and signal (RSSI) values to the most recent self.overall entry
                     for col_keys, col_values in rates_data.items():
                         self.overall[-1].update({
@@ -863,6 +869,8 @@ class ThroughputQOS(Realm):
                                 total_hours) != 0 or int(remaining_minutes) != 0 else '<1 min'][0],
                         'status': 'Running'
                     })
+                    if self.robot_test and self.rotation_enabled:
+                        self.overall[-1]["angle"] = self.current_angle
                     # Appending latest rx_rate, tx_rate, and signal (RSSI) values to the most recent self.overall entry
                     for col_keys, col_values in rates_data.items():
                         self.overall[-1].update({
@@ -889,6 +897,8 @@ class ThroughputQOS(Realm):
                                 total_hours) != 0 or int(remaining_minutes) != 0 else '<1 min'][0],
                         'status': 'Running'
                     })
+                    if self.robot_test and self.rotation_enabled:
+                        self.overall[-1]["angle"] = self.current_angle
                     # Appending latest rx_rate, tx_rate, and signal (RSSI) values to the most recent self.overall entry
                     for col_keys, col_values in rates_data.items():
                         self.overall[-1].update({
@@ -907,10 +917,7 @@ class ThroughputQOS(Realm):
                 if not self.robot_test:
                     df1.to_csv('{}/overall_throughput.csv'.format(runtime_dir), index=False)
                 else:
-                    if self.rotation_enabled:
-                        df1.to_csv('{}/overall_throughput_{}_{}.csv'.format(runtime_dir, curr_coordinate, curr_rotation), index=False)
-                    else:
-                        df1.to_csv('{}/overall_throughput_{}.csv'.format(runtime_dir, curr_coordinate), index=False)
+                    df1.to_csv('{}/overall_throughput_{}.csv'.format(runtime_dir, curr_coordinate), index=False)
                 with open(runtime_dir + "/../../Running_instances/{}_{}_running.json".format(self.ip, self.test_name), 'r') as file:
                     data = json.load(file)
                     if data["status"] != "Running":
@@ -2456,6 +2463,8 @@ class ThroughputQOS(Realm):
         for coordinate in range(len(self.coordinate_list)):
             robo_moved = robot_obj.move_to_coordinate(self.coordinate_list[coordinate])
             if robo_moved:
+                self.overall = []
+                self.df_for_webui = []
                 # if no rotation mode
                 if not self.rotation_enabled:
                     test_results = {'test_results': []}
@@ -2463,6 +2472,12 @@ class ThroughputQOS(Realm):
                     input_setup_info = {
                         "contact": "support@candelatech.com"
                     }
+                    self.current_coordinate = self.coordinate_list[coordinate]
+                    # if self.dowebgui:
+                    #     json_path = "../../local/interop-webGUI/nav_data.json"
+                    #     with open(json_path, "r") as file:
+                    #         data = json.load(file)
+                    #     data["curren_coordinate"]
                     self.start(False, False)
                     time.sleep(10)
                     connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b = self.monitor()
@@ -2509,6 +2524,7 @@ class ThroughputQOS(Realm):
                         }
                         robo_rotated = robot_obj.rotate_angle(1,2,self.rotation_list[angle])
                         if robo_rotated:
+                            self.current_angle = self.rotation_list[angle]
                             self.start(False, False)
                             time.sleep(10)
                             connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b = self.monitor()
