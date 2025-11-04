@@ -2459,9 +2459,9 @@ class ThroughputQOS(Realm):
 
         robot_obj = RobotClass()
         robot_obj.robo_ip = "127.0.0.1:5000"  
-
+        base_dir = os.path.dirname(os.path.dirname(self.result_dir))
         for coordinate in range(len(self.coordinate_list)):
-            robo_moved = robot_obj.move_to_coordinate(self.coordinate_list[coordinate])
+            robo_moved = robot_obj.move_to_coordinate(self.coordinate_list[coordinate],base_dir)
             if robo_moved:
                 self.overall = []
                 self.df_for_webui = []
@@ -2524,6 +2524,7 @@ class ThroughputQOS(Realm):
                         }
                         robo_rotated = robot_obj.rotate_angle(1,2,self.rotation_list[angle])
                         if robo_rotated:
+                            self.current_coordinate = self.coordinate_list[coordinate]
                             self.current_angle = self.rotation_list[angle]
                             self.start(False, False)
                             time.sleep(10)
