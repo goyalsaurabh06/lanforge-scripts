@@ -96,6 +96,8 @@ base_RealDevice = base.RealDevice
 lf_report = importlib.import_module("py-scripts.lf_report")
 lf_report = lf_report.lf_report
 
+robo_base_class = importlib.import_module("py-scripts.lf_robo_base_class")
+
 
 lf_graph = importlib.import_module("py-scripts.lf_graph")
 lf_bar_graph = lf_graph.lf_bar_graph
@@ -162,7 +164,17 @@ class RealBrowserTest(Realm):
                  wait_time=60,
                  config=None,
                  selected_groups=None,
-                 selected_profiles=None):
+                 selected_profiles=None,
+                 robo_ip="127.0.0.1",
+                 coordinates_list = None,
+                 angles_list = None,
+                 do_robo = False,
+                 current_cord = "",
+                 current_angle = None,
+                 rotations_enabled = False,
+
+                 
+                 ):
         super().__init__(lfclient_host=host, lfclient_port=8080)
         # Initialize attributes with provided parameters
         self.host = host
@@ -272,6 +284,15 @@ class RealBrowserTest(Realm):
         # Initialize utility
         self.utility = base.UtilityInteropWifi(host_ip=self.host)
         self.serial_list = []
+        self.robo_obj = robo_base_class.RobotClass()
+        self.coordinates_list = coordinates_list
+        self.angles_list = angles_list
+        self.current_cord = current_cord
+        self.current_angle = current_angle
+        self.do_robo = do_robo
+        self.rotations_enabled = rotations_enabled
+        self.robo_obj.robo_ip = robo_ip
+        self.robo_csv_files = []
 
     def get_test_results_data(self, test_results, group):
         groups_devices_map = self.config_obj.get_groups_devices(data=self.selected_groups, groupdevmap=True)
@@ -287,6 +308,7 @@ class RealBrowserTest(Realm):
                     group_test_results[key].append(test_results[key][idx])
 
         return group_test_results
+
 
     def build(self):
         """
@@ -989,14 +1011,248 @@ class RealBrowserTest(Realm):
             sys.exit(1)
 
         cx_order_list = self.calculate_cx_order_list()
+        cx_batch = cx_order_list[0]
 
-        for i, cx_batch in enumerate(cx_order_list):
-            self.start_specific(cx_batch)
-            logging.info(f"Test started on Devices with resource Ids : {cx_batch}")
-            try:
-                self.get_stats(self.duration, "webBrowser.csv", i, available_resources, cx_batch, i, self.count)
-            except Exception as e:
-                logging.error(f"Error while monitoring stats {e}", exc_info=True)
+        if self.do_robo:
+            for coordinate in self.coordinates_list:
+                self.robo_obj.move_to_coordinate(coordinate)
+                if self.rotations_enabled:
+                    for angle in self.angles_list:
+                        self.robo_obj.rotate_angle(x=0, y=1, angle=angle)
+                        self.start_specific(cx_batch)
+                        time.sleep(10)
+                        logging.info(f"Test started on Devices with resource Ids : {cx_batch}")
+                        try:
+                            self.get_robo_stats(self.duration, f"{coordinate}_{angle}_webBrowser.csv", self.count, angle)
+                            self.robo_csv_files.append(f"{coordinate}_{angle}_webBrowser.csv")
+                        except Exception as e:
+                            logging.error(f"Error while monitoring stats {e}", exc_info=True)
+                else:
+                    self.start_specific(cx_batch)
+                    time.sleep(10)
+                    logging.info(f"Test started on Devices with resource Ids : {cx_batch}")
+                    try:
+                        self.get_robo_stats(self.duration, f"{coordinate}_webBrowser.csv", self.count, angle)
+                        self.robo_csv_files.append(f"{coordinate}_webBrowser.csv")
+                    except Exception as e:
+                        logging.error(f"Error while monitoring stats {e}", exc_info=True)
+        else:
+            for i, cx_batch in enumerate(cx_order_list):
+                self.start_specific(cx_batch)
+                logging.info(f"Test started on Devices with resource Ids : {cx_batch}")
+                try:
+                    self.get_stats(self.duration, "webBrowser.csv", i, available_resources, cx_batch, i, self.count)
+                except Exception as e:
+                    logging.error(f"Error while monitoring stats {e}", exc_info=True)
+    
+    def create_robo_report(self):
+        try:
+            if self.dowebgui:
+                self.report = lf_report(_output_pdf='Real_Browser_Report',
+                                   _output_html='Real_Browser_Report.html',
+                                   _results_dir_name="Real_Browser_Report",
+                                   _path=self.result_dir)
+                self.report_path_date_time = self.report.get_path_date_time()
+            else:
+
+                self.report = lf_report(_output_pdf='Real_Browser_Report',
+                                   _output_html='Real_Browser_Report.html',
+                                   _results_dir_name="Real_Browser_Report",
+                                   _path='')
+                self.report_path_date_time = self.report.get_path_date_time()
+
+            self.report.set_title("Web Browser Test")
+            self.report.build_banner()
+
+            self.report.set_table_title("Objective:")
+            self.report.build_table_title()
+            self.report.set_text("The Candela Web browser test is designed to measure the Access Point performance and stability by browsing multiple websites in real clients" +
+                            " like android, Linux, windows" +
+                            "and IOS which are connected to the access point. This test allows the user to choose the options like website link," +
+                            "the number of times the page has to browse, and the Time taken to browse the page." +
+                            "The expected behavior is for the AP to be able to handle several stations(within the limitations of the AP specs) and make sure all clients can browse the page.")
+            self.report.build_text_simple()
+
+            self.report.set_table_title("Test Parameters:")
+            self.report.build_table_title()
+
+            test_setup_info = self.generate_test_setup_info()
+            self.report.test_setup_table(
+                test_setup_data=test_setup_info, value='Test Parameters')
+            
+            for coordinate in self.coordinates_list:
+                if self.rotations_enabled:
+                    for angle in self.angles_list:
+                        csv_file = f"{coordinate}_{angle}_webBrowser.csv"
+                        self.create_robo_graphs_test_results(csv_file, coordinate, angle)
+
+                else:
+                    csv_file = f"{coordinate}_webBrowser.csv"
+                    self.create_robo_graphs_test_results(csv_file, coordinate)
+
+            if self.dowebgui:
+                os.chdir(self.original_dir)
+            self.report.build_custom()
+            self.report.build_footer()
+            self.report.write_html()
+            self.report.write_pdf()
+        except Exception as e:
+            logging.error(f"Error in create_robo_report function {e}", exc_info=True)
+        finally:
+            if not self.dowebgui:
+                source_dir = "."
+                destination_dir = self.report_path_date_time
+                for filename in self.robo_csv_files:
+                    source_path = os.path.join(source_dir, filename)
+                    destination_path = os.path.join(destination_dir, filename)
+                    if os.path.isfile(source_path):
+                        shutil.move(source_path, destination_path)
+                        logging.info(f"Moved {filename} to {destination_dir}")
+                    else:
+                        logging.info(f"{filename} not found in the current directory")
+                    
+
+    def create_robo_graphs_test_results(self, csv_file, coordinate, angle=None):
+        try:
+
+            _, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = self.extract_device_data(csv_file)
+            if self.rotations_enabled:
+                self.report.set_graph_title(f"Successful URL's per Device at coordinate {coordinate} and angle {angle}")
+            else:
+                self.report.set_graph_title(f"Successful URL's per Device at coordinate {coordinate}")
+            self.report.build_graph_title()
+            data = pd.read_csv(csv_file)
+            # Extract device names from CSV
+            if 'total_urls' in data.columns:
+                total_urls = data['total_urls'].tolist()
+            else:
+                raise ValueError("The 'total_urls' column was not found in the CSV file.")
+
+            x_fig_size = 18
+            y_fig_size = len(device_type_data) * 1 + 4
+            bar_graph_horizontal = lf_bar_graph_horizontal(
+                _data_set=[total_urls],
+                _xaxis_name="URL",
+                _yaxis_name="Devices",
+                _yaxis_label=device_names,
+                _yaxis_categories=device_names,
+                _yaxis_step=1,
+                _yticks_font=8,
+                _bar_height=.20,
+                _show_bar_value=True,
+                _figsize=(x_fig_size, y_fig_size),
+                _graph_title="URLs",
+                _graph_image_name=f"{coordinate}_{angle}_urls_per_device",
+                _label=["URLs"]
+            )
+            graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
+            self.report.set_graph_image(graph_image)
+            self.report.move_graph_image()
+            self.report.build_graph()
+            if self.rotations_enabled:
+                self.report.set_graph_title(f"Time Taken Vs Device For Completing {self.count} RealTime URLs at coordinate {coordinate} and angle {angle}")
+            else:
+                self.report.set_graph_title(f"Time Taken Vs Device For Completing {self.count} RealTime URLs at coordinate {coordinate}")
+            self.report.build_graph_title()
+
+            # Extract device names from CSV
+            if 'time_to_target_urls' in data.columns:
+                time_to_target_urls = data['time_to_target_urls'].tolist()
+            else:
+                raise ValueError("The 'time_to_target_urls' column was not found in the CSV file.")
+
+            x_fig_size = 18
+            y_fig_size = len(device_type_data) * 1 + 4
+            bar_graph_horizontal = lf_bar_graph_horizontal(
+                _data_set=[time_to_target_urls],
+                _xaxis_name="Time (in Seconds)",
+                _yaxis_name="Devices",
+                _yaxis_label=device_names,
+                _yaxis_categories=device_names,
+                _yaxis_step=1,
+                _yticks_font=8,
+                _bar_height=.20,
+                _show_bar_value=True,
+                _figsize=(x_fig_size, y_fig_size),
+                _graph_title="Time Taken",
+                _graph_image_name=f"{coordinate}_{angle}_time_taken_for_urls",
+                _label=["Time (in sec)"]
+            )
+            graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
+            self.report.set_graph_image(graph_image)
+            self.report.move_graph_image()
+            self.report.build_graph()
+
+            if 'uc_min' in data.columns:
+                uc_min_data = data['uc_min'].tolist()
+            else:
+                raise ValueError("The 'uc_min' column was not found in the CSV file.")
+
+            if 'uc_max' in data.columns:
+                uc_max_data = data['uc_max'].tolist()
+            else:
+                raise ValueError("The 'uc_max' column was not found in the CSV file.")
+
+            if 'uc_avg' in data.columns:
+                uc_avg_data = data['uc_avg'].tolist()
+            else:
+                raise ValueError("The 'uc_avg' column was not found in the CSV file.")
+
+            if 'total_err' in data.columns:
+                total_err_data = data['total_err'].tolist()
+            else:
+                raise ValueError("The 'total_err' column was not found in the CSV file.")
+            
+            if self.rotations_enabled:
+                self.report.set_table_title(f"Final Test Results at coordinate {coordinate} and angle {angle}:")
+            else:
+                self.report.set_table_title(f"Final Test Results at coordinate {coordinate}:")
+            self.report.build_table_title()
+            if self.expected_passfail_value or self.device_csv_name:
+                pass_fail_list, test_input_list = self.generate_pass_fail_list(device_type_data, device_names, total_urls)
+
+                final_test_results = {
+
+                    "Device Type": device_type_data,
+                    "Hostname": device_names,
+                    "SSID": ssid_data,
+                    "MAC": mac_data,
+                    "Channel": channel_data,
+                    "UC-MIN (ms)": uc_min_data,
+                    "UC-MAX (ms)": uc_max_data,
+                    "UC-AVG (ms)": uc_avg_data,
+                    "Total Successful URLs": total_urls,
+                    "Expected URLS": test_input_list,
+                    "Total Errors": total_err_data,
+                    "RSSI": signal_data,
+                    "Link Speed": tx_rate_data,
+                    "Status ": pass_fail_list
+
+                }
+            else:
+                final_test_results = {
+
+                    "Device Type": device_type_data,
+                    "Hostname": device_names,
+                    "SSID": ssid_data,
+                    "MAC": mac_data,
+                    "Channel": channel_data,
+                    "UC-MIN (ms)": uc_min_data,
+                    "UC-MAX (ms)": uc_max_data,
+                    "UC-AVG (ms)": uc_avg_data,
+                    "Total Successful URLs": total_urls,
+                    "Total Errors": total_err_data,
+                    "RSSI": signal_data,
+                    "Link Speed": tx_rate_data,
+
+                }
+            test_results_df = pd.DataFrame(final_test_results)
+            self.report.set_table_dataframe(test_results_df)
+            self.report.build_table()
+        
+        except Exception as e:
+            logging.error(f"Error in create_graphs_test_results function {e}", exc_info=True)
+
 
     def calculate_cx_order_list(self):
         """
@@ -1386,6 +1642,154 @@ class RealBrowserTest(Realm):
             self.csv_file_names.append(last_file_name)
 
             self.iteration_value = self.iteration_value + 1
+        except Exception as e:
+            logging.error(f"Error in get_stats function {e}", exc_info=True)
+            logging.info(f"layer4 cx data {mobile_data}")
+
+    
+    def get_robo_stats(self, duration, file_path, initial_target_urls, angle=None):
+
+        try:
+            test_time = timedelta(minutes=duration)
+            end_time = datetime.now() + test_time
+            est_end_time = end_time + timedelta(minutes=1)
+            logging.info(f"End time of the Test {end_time}")
+            logging.info(f"Estimated End time of the Test {est_end_time}")
+            headers = ['device_type', 'device_name', 'total_urls', 'uc_min', 'uc_avg', 'uc_max', 'total_err', 'time_to_target_urls', 'cx_name', 'angle']
+            last_data = []
+            mobile_data = {}
+            time_taken = {}
+            self.original_dir = os.getcwd()
+            if self.dowebgui:
+                os.chdir(self.result_dir)
+
+            start_time = datetime.now()
+            self.device_targets = {}
+            self.laptop_stats = {}
+            while datetime.now() <= end_time or not self.check_gen_cx():
+                try:
+
+                    if datetime.now() > est_end_time:
+                        break
+                    if datetime.now() > end_time and self.stop_mobile_cx:
+                        self.http_profile.stop_cx()
+                        self.stop_mobile_cx = False
+                    last_data = []
+                    with open(file_path, mode='w', newline='') as file:
+                        writer = csv.DictWriter(file, fieldnames=headers)
+                        writer.writeheader()
+                        if self.laptop_stats is not None:
+                            for laptop, stats in self.laptop_stats.items():
+                                if laptop not in self.device_targets:
+                                    self.device_targets[laptop] = initial_target_urls
+                                # Check if the device reaches the current target URL count
+                                if stats.get('total_urls', 0) >= self.device_targets[laptop] and laptop not in time_taken:
+                                    time_taken[laptop] = (datetime.now() - datetime.fromisoformat(stats.get("start_time", start_time.isoformat()))).total_seconds()
+                                row = {
+                                    'device_type': 'laptop',
+                                    'device_name': stats.get('name', 'NA'),
+                                    'total_urls': stats.get('total_urls', 0),
+                                    'uc_min': stats.get('uc_min', 0.0),
+                                    'uc_avg': stats.get('uc_avg', 0.0),
+                                    'uc_max': stats.get('uc_max', 0.0),
+                                    'total_err': stats.get('total_err', 0),
+                                    'time_to_target_urls': time_taken.get(laptop, 0.0),
+                                    'cx_name': "NA",
+                                    'angle': angle
+                                }
+                                # Check if the device reaches the current target URL count
+                                if stats.get('total_urls', 0) >= self.device_targets[laptop] and laptop not in time_taken:
+                                    time_taken[laptop] = (datetime.now() - datetime.fromisoformat(stats.get("start_time", start_time.isoformat()))).total_seconds()
+                                    row['time_to_target_urls'] = time_taken[laptop]
+                                writer.writerow(row)
+                                last_data.append(row)
+                        # Collect data for mobile devices
+                        if True:
+                            mobile_data = self.local_realm.json_get("layer4/%s/list?fields=name,status,total-urls,uc-min,uc-avg,uc-max,total-err,bad-url" %
+                                                                    (','.join(self.created_cx.keys())))
+                            total_urls = []
+                            uc_min = []
+                            uc_avg = []
+                            uc_max = []
+                            total_err = []
+                            hostnames = []
+                            cx_names = []
+                            # Check if multiple CX endpoints are created
+                            if len(self.created_cx.keys()) > 1:
+                                data = mobile_data['endpoint']
+                                for endpoint in data:
+                                    for _key, value in endpoint.items():
+                                        if True:
+                                            cx_name = value.get('name', 'NA')
+                                            match = re.search(r'http(\d+)', cx_name)
+                                            res_no = match.group(1) if match else 'NA'
+                                            hostname = self.local_realm.json_get("resource/1/%s/list?fields=user" % (res_no))
+                                            hostname = hostname["resource"]["user"]
+                                            pass_url = value.get('total-urls', 0)
+                                            total_urls.append(pass_url)
+                                            uc_min.append(value.get('uc-min', 0.0))
+                                            uc_avg.append(value.get('uc-avg', 0.0))
+                                            uc_max.append(value.get('uc-max', 0.0))
+                                            total_err.append(value.get('total-err', 0))
+                                            hostnames.append(hostname)
+                                            cx_names.append(cx_name)
+                                            if hostname not in self.device_targets:
+                                                self.device_targets[hostname] = initial_target_urls
+                                            # Check if the mobile device reaches the current target URL count
+                                            if pass_url >= self.device_targets[hostname] and hostname not in time_taken:
+                                                time_taken[hostname] = (datetime.now() - start_time).total_seconds()
+                                # Save each mobile device's data to the CSV
+                                for i in range(len(total_urls)):
+                                    row = {
+                                        'device_type': 'mobile',
+                                        'device_name': hostnames[i],
+                                        'total_urls': total_urls[i],
+                                        'uc_min': float(uc_min[i]) / 1000,
+                                        'uc_avg': float(uc_avg[i]) / 1000,
+                                        'uc_max': float(uc_max[i]) / 1000,
+                                        'total_err': total_err[i],
+                                        'time_to_target_urls': time_taken.get(hostnames[i], 0.0),
+                                        'cx_name': cx_names[i],
+                                        'angle': angle
+                                    }
+                                    writer.writerow(row)
+                                    last_data.append(row)
+                            # Handle the case where only one CX endpoint is created
+                            elif len(self.created_cx.keys()) == 1:
+                                endpoint = mobile_data.get('endpoint', {})
+                                if True:
+                                    cx_name = endpoint.get('name', 'NA')
+                                    match = re.search(r'http(\d+)', cx_name)
+                                    res_no = match.group(1) if match else 'NA'
+                                    hostname = self.local_realm.json_get("resource/1/%s/list?fields=user" % (res_no))
+                                    hostname = hostname["resource"]["user"]
+                                    if hostname not in self.device_targets:
+                                        self.device_targets[hostname] = initial_target_urls
+                                    # Check if the mobile device reaches the current target URL count
+                                    pass_url = endpoint.get('total-urls', 0)
+                                    if pass_url >= self.device_targets[hostname]:
+                                        if hostname not in time_taken:
+                                            time_taken[hostname] = (datetime.now() - start_time).total_seconds()
+                                    row = {
+                                        'device_type': 'mobile',
+                                        'device_name': hostname,
+                                        'total_urls': pass_url,
+                                        'uc_min': float(endpoint.get('uc-min', 0.0)) / 1000,
+                                        'uc_avg': float(endpoint.get('uc-avg', 0.0)) / 1000,
+                                        'uc_max': float(endpoint.get('uc-max', 0.0)) / 1000,
+                                        'total_err': endpoint.get('total-err', 0),
+                                        'time_to_target_urls': time_taken.get(hostname, 0.0),
+                                        'cx_name': cx_name,
+                                        'angle': angle
+                                    }
+                                    writer.writerow(row)
+                                    last_data.append(row)
+                    time.sleep(1)
+                except Exception as e:
+                    logging.exception(f"Error in get_stats function {e}", exc_info=True)
+                    logging.info(f"layer4 cx data {mobile_data}")
+                    time.sleep(1)
+
         except Exception as e:
             logging.error(f"Error in get_stats function {e}", exc_info=True)
             logging.info(f"layer4 cx data {mobile_data}")
@@ -2019,6 +2423,8 @@ def main():
             ''')
 
         optional = parser.add_argument_group('Optional arguments to run lf_interop_real_browser_test.py')
+        # Define robo specific arguments group
+        robo = parser.add_argument_group('robo arguments')
         parser.add_argument("--host", "--mgr", required=True, help='specify the GUI to connect to, assumes port '
                             '8080')
         parser.add_argument("--ssid", default=None, help='specify ssid on which the test will be running')
@@ -2073,6 +2479,21 @@ def main():
         parser.add_argument("--wait_time", type=int, help="Specify the time for configuration", default=60)
         parser.add_argument('--config', action='store_true', help='specify this flag whether to config devices or not')
 
+        robo.add_argument('--robo_ip', type=str, help='Specify the robo ip')
+        robo.add_argument(
+            '--coordinates',
+            help="Comma-separated list of coordinate point names (e.g. 1,2,3), each mapping to x and y values"
+        )
+
+        robo.add_argument(
+            '--rotations',
+            help="Comma-separated list of rotation angles (in degrees) to apply at respective points"
+        )
+        robo.add_argument(
+            '--do_robo',
+            help="Specify this flag to perform the test with robo", action='store_true'
+        )
+
         args = parser.parse_args()
         if args.help_summary:
             print(help_summary)
@@ -2086,6 +2507,12 @@ def main():
         if args.lf_logger_config_json:
             logger_config.lf_logger_config_json = args.lf_logger_config_json
             logger_config.load_lf_logger_config()
+        
+        rotations_enabled = False
+        if args.do_robo:
+            args.coordinates = args.coordinates.split(',') if args.coordinates else []
+            args.rotations = [float(angle) for angle in args.rotations.split(',')] if args.rotations else []
+            rotations_enabled = True
 
         # Initialize an instance of RealBrowserTest with various parameters
         obj = RealBrowserTest(host=args.host,
@@ -2129,7 +2556,12 @@ def main():
                               wait_time=args.wait_time,
                               config=args.config,
                               selected_groups=args.group_name,
-                              selected_profiles=args.profile_name
+                              selected_profiles=args.profile_name,
+                              robo_ip=args.robo_ip,
+                              coordinates_list=args.coordinates,
+                              angles_list=args.rotations,
+                              do_robo=args.do_robo,
+                              rotations_enabled=rotations_enabled
                               )
         obj.change_port_to_ip()
         obj.validate_and_process_args()
@@ -2186,7 +2618,12 @@ def main():
         logger.error("An exception occurred:\n%s", tb_str)
     finally:
         if '--help' not in sys.argv and '-h' not in sys.argv:
-            obj.create_report()
+            if args.do_robo:
+                obj.create_robo_report()
+            else:
+                obj.create_report()
+            if obj.dowebgui:
+                obj.webui_stop()
             obj.stop()
 
             if not args.no_postcleanup:
