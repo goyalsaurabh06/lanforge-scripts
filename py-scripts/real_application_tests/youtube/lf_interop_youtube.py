@@ -215,6 +215,7 @@ class Youtube(Realm):
         self.current_angle = current_angle
         self.do_robo = do_robo
         self.rotations_enabled = rotations_enabled
+        self.robo_obj.robo_ip = self.robo_ip
 
 
     def stop(self):
