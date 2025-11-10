@@ -2885,41 +2885,7 @@ INCLUDE_IN_README: False
 
     optional.add_argument('--get_live_view', help="If true will heatmap will be generated from testhouse automation WebGui ", action='store_true')
     optional.add_argument('--total_floors', help="Total floors from testhouse automation WebGui ", default="0")
-    #IOT ARGS
-    parser.add_argument('--iot_test', help="If true will execute script for iot", action='store_true')
-    optional.add_argument('--iot_ip',
-                            default='127.0.0.1',
-                            help='IP of FastAPI server')
-
-    optional.add_argument('--iot_port',
-                        default='8000',
-                        help='Port of FastAPI server')
-
-    optional.add_argument('--iot_iterations',
-                        type=int,
-                        default=1,
-                        help='Iterations to run the test')
-
-    optional.add_argument('--iot_delay',
-                        type=int,
-                        default=5,
-                        help='Delay in seconds between iterations (min. 5 seconds)')
-
-    optional.add_argument('--iot_device_list',
-                        type=str,
-                        default='',
-                        help='Entity IDs of the devices to include in testing (comma separated)')
-
-    optional.add_argument('--iot_testname',
-                        type=str,
-                        default='',
-                        help='Testname for reporting')
-                        
-    optional.add_argument('--iot_increment',
-                        type=str,
-                        default='',
-                        help='Comma-separated list of device counts to incrementally test (e.g., "1,3,5")')
-
+   
 
     args = parser.parse_args()
 
@@ -3673,8 +3639,6 @@ INCLUDE_IN_README: False
                         df1.to_csv('{}/overall_status.csv'.format(mixed_obj.result_dir), index=False)
                     except Exception as e:
                         logging.info("Error while wrinting status file for webui", e)
-
-                mixed_obj.generate_all_report()
                 if mixed_obj.dowebgui:
                     # copying to home directory i.e home/user_name
                     mixed_obj.copy_reports_to_home_dir()
