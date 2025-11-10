@@ -215,13 +215,8 @@ class Mixed_Traffic(Realm):
                  result_dir=None,
                  test_name=None,
                  device_list=None,
-<<<<<<< HEAD
                  get_live_view: bool = False,
                  total_floors: int = 0,
-=======
-                 get_live_view: bool=False,
-                 total_floors: int=0,
->>>>>>> 59fe8c5e (lf_mixed_traffic.py: Added testhouse live_view specific args and save images for all tests.)
                  debug=False):
         super().__init__(lfclient_host=host,
                          lfclient_port=port)
@@ -703,11 +698,7 @@ class Mixed_Traffic(Realm):
             self.ping_test_obj = ping_test.Ping(host=self.host, port=self.port, ssid=ssid, security=security,
                                                 password=password, lanforge_password="lanforge", target=self.target,
                                                 interval=self.interval, sta_list=[], virtual=self.virtual, real=self.real,
-<<<<<<< HEAD
                                                 duration=ping_test_duration, result_dir=self.result_dir)
-=======
-                                                duration=ping_test_duration,result_dir=self.result_dir)
->>>>>>> 59fe8c5e (lf_mixed_traffic.py: Added testhouse live_view specific args and save images for all tests.)
             if not self.ping_test_obj.check_tab_exists():
                 print('Generic Tab is not available for Ping Test.\nAborting the test.')
                 exit(0)
@@ -1899,15 +1890,9 @@ class Mixed_Traffic(Realm):
 
                     for floor in range(int(self.total_floors)):
                         # Construct expected image paths
-<<<<<<< HEAD
                         packet_sent_image = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_ping_packet_sent_{floor + 1}.png")
                         packet_recv_image = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_ping_packet_recv_{floor + 1}.png")
                         packet_loss_image = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_ping_packet_loss_{floor + 1}.png")
-=======
-                        packet_sent_image = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_ping_packet_sent_{floor+1}.png")
-                        packet_recv_image = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_ping_packet_recv_{floor+1}.png")
-                        packet_loss_image = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_ping_packet_loss_{floor+1}.png")
->>>>>>> 59fe8c5e (lf_mixed_traffic.py: Added testhouse live_view specific args and save images for all tests.)
 
                         # Wait for all required images to be generated (up to timeout)
                         timeout = 120  # seconds
@@ -2123,14 +2108,9 @@ class Mixed_Traffic(Realm):
                 self.lf_report_mt.move_csv_file()
                 self.lf_report_mt.build_graph()
                 if self.dowebgui and self.get_live_view:
-<<<<<<< HEAD
-                    for floor in range(0, int(self.total_floors)):
-                        throughput_image_path = os.path.join(self.result_dir, "live_view_images", f"ftp_{self.test_name}_{floor + 1}.png")
-=======
                     for floor in range(0,int(self.total_floors)):
                         script_dir = os.path.dirname(os.path.abspath(__file__))
                         throughput_image_path = os.path.join(self.result_dir, "live_view_images", f"ftp_{self.test_name}_{floor+1}.png")
->>>>>>> 59fe8c5e (lf_mixed_traffic.py: Added testhouse live_view specific args and save images for all tests.)
                         timeout = 60  # seconds
                         start_time = time.time()
 
@@ -2143,17 +2123,10 @@ class Mixed_Traffic(Realm):
                             if os.path.exists(throughput_image_path):
                                 break
                         if os.path.exists(throughput_image_path):
-<<<<<<< HEAD
                             self.lf_report_mt.set_custom_html('<div style="page-break-before: always;"></div>')
                             self.lf_report_mt.build_custom()
                             self.lf_report_mt.set_custom_html(f'<img src="file://{throughput_image_path}"></img>')
                             self.lf_report_mt.build_custom()
-=======
-                           self.lf_report_mt.set_custom_html('<div style="page-break-before: always;"></div>')
-                           self.lf_report_mt.build_custom()
-                           self.lf_report_mt.set_custom_html(f'<img src="file://{throughput_image_path}"></img>')
-                           self.lf_report_mt.build_custom()
->>>>>>> 59fe8c5e (lf_mixed_traffic.py: Added testhouse live_view specific args and save images for all tests.)
                 self.lf_report_mt.set_table_title("Overall Results")
                 self.lf_report_mt.build_table_title()
                 dataframe = {
@@ -2205,13 +2178,8 @@ class Mixed_Traffic(Realm):
                 self.lf_report_mt.move_graph_image()
                 self.lf_report_mt.build_graph()
                 if self.dowebgui and self.get_live_view:
-<<<<<<< HEAD
                     for floor in range(0, int(self.total_floors)):
                         throughput_image_path = os.path.join(self.result_dir, "live_view_images", f"http_{self.test_name}_{floor + 1}.png")
-=======
-                    for floor in range(0,int(self.total_floors)):
-                        throughput_image_path = os.path.join(self.result_dir, "live_view_images", f"http_{self.test_name}_{floor+1}.png")
->>>>>>> 59fe8c5e (lf_mixed_traffic.py: Added testhouse live_view specific args and save images for all tests.)
                         timeout = 60  # seconds
                         start_time = time.time()
 
@@ -2341,15 +2309,9 @@ class Mixed_Traffic(Realm):
                         self.lf_report_mt.move_graph_image()
                         self.lf_report_mt.build_graph()
                         if self.dowebgui and self.get_live_view:
-<<<<<<< HEAD
                             for floor in range(0, int(self.total_floors)):
                                 throughput_image_path = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_throughput_{floor + 1}.png")
                                 rssi_image_path = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_rssi_{floor + 1}.png")
-=======
-                            for floor in range(0,int(self.total_floors)):
-                                throughput_image_path = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_throughput_{floor+1}.png")
-                                rssi_image_path = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_rssi_{floor+1}.png")
->>>>>>> 59fe8c5e (lf_mixed_traffic.py: Added testhouse live_view specific args and save images for all tests.)
                                 timeout = 60  # seconds
                                 start_time = time.time()
 
@@ -2362,7 +2324,6 @@ class Mixed_Traffic(Realm):
                                     if os.path.exists(throughput_image_path) and os.path.exists(rssi_image_path):
                                         break
                                 if os.path.exists(throughput_image_path):
-<<<<<<< HEAD
                                     self.lf_report_mt.set_custom_html('<div style="page-break-before: always;"></div>')
                                     self.lf_report_mt.build_custom()
                                     self.lf_report_mt.set_custom_html(f'<img src="file://{throughput_image_path}"></img>')
@@ -2373,18 +2334,6 @@ class Mixed_Traffic(Realm):
                                     self.lf_report_mt.build_custom()
                                     self.lf_report_mt.set_custom_html(f'<img src="file://{rssi_image_path}"></img>')
                                     self.lf_report_mt.build_custom()
-=======
-                                     self.lf_report_mt.set_custom_html('<div style="page-break-before: always;"></div>')
-                                     self.lf_report_mt.build_custom()
-                                     self.lf_report_mt.set_custom_html(f'<img src="file://{throughput_image_path}"></img>')
-                                     self.lf_report_mt.build_custom()
-
-                                if os.path.exists(rssi_image_path):
-                                     self.lf_report_mt.set_custom_html('<div style="page-break-before: always;"></div>')
-                                     self.lf_report_mt.build_custom()
-                                     self.lf_report_mt.set_custom_html(f'<img src="file://{rssi_image_path}"></img>')
-                                     self.lf_report_mt.build_custom()
->>>>>>> 59fe8c5e (lf_mixed_traffic.py: Added testhouse live_view specific args and save images for all tests.)
                         tos_dataframe_A = {
                             " Client Name ": client_names,
                             " Endp Name": endp_names,
@@ -2939,41 +2888,7 @@ INCLUDE_IN_README: False
 
     optional.add_argument('--get_live_view', help="If true will heatmap will be generated from testhouse automation WebGui ", action='store_true')
     optional.add_argument('--total_floors', help="Total floors from testhouse automation WebGui ", default="0")
-    #IOT ARGS
-    parser.add_argument('--iot_test', help="If true will execute script for iot", action='store_true')
-    optional.add_argument('--iot_ip',
-                            default='127.0.0.1',
-                            help='IP of FastAPI server')
-
-    optional.add_argument('--iot_port',
-                        default='8000',
-                        help='Port of FastAPI server')
-
-    optional.add_argument('--iot_iterations',
-                        type=int,
-                        default=1,
-                        help='Iterations to run the test')
-
-    optional.add_argument('--iot_delay',
-                        type=int,
-                        default=5,
-                        help='Delay in seconds between iterations (min. 5 seconds)')
-
-    optional.add_argument('--iot_device_list',
-                        type=str,
-                        default='',
-                        help='Entity IDs of the devices to include in testing (comma separated)')
-
-    optional.add_argument('--iot_testname',
-                        type=str,
-                        default='',
-                        help='Testname for reporting')
-                        
-    optional.add_argument('--iot_increment',
-                        type=str,
-                        default='',
-                        help='Comma-separated list of device counts to incrementally test (e.g., "1,3,5")')
-
+   
 
     args = parser.parse_args()
 
@@ -3727,7 +3642,6 @@ INCLUDE_IN_README: False
                         df1.to_csv('{}/overall_status.csv'.format(mixed_obj.result_dir), index=False)
                     except Exception as e:
                         logging.info("Error while wrinting status file for webui", e)
-
                 if mixed_obj.dowebgui:
                     # copying to home directory i.e home/user_name
                     mixed_obj.copy_reports_to_home_dir()
