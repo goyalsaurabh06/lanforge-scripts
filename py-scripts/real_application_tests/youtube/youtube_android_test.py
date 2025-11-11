@@ -49,6 +49,22 @@ class Adb:
     def execute_keyevent(self, device_serial, key_code):
         self.devices[device_serial].input_keyevent(key_code)
 
+    def open_interop_app(self, d):
+        d.app_start("com.candela.wecan")
+        count = 0
+        while "com.candela.wecan:id/enter_button" not in d.dump_hierarchy():
+            time.sleep(1)
+            print(f"Waiting for Interop app to load on device {d.serial}...")
+            count += 1
+            if count > 15:
+                raise Exception(f"❌ Interop app did not load in time for device {d.serial}")
+        enter_test_room = d(resourceId="com.candela.wecan:id/enter_button")
+        if enter_test_room.wait(timeout=10):
+            enter_test_room.click()
+        else:
+            raise Exception(f"Enter button not found in Interop app for device {d.serial}")
+        print(f"Opened Interop app on device {d.serial}")
+
     def enable_stats_for_nerds(self, device_serial):
         """
         Enable 'Stats for nerds' while a video is playing.
@@ -56,24 +72,24 @@ class Adb:
 
         d = self.u2_sessions[device_serial]
 
-        if not d(
-            resourceId="com.google.android.youtube:id/player_overflow_button"
-        ).exists:
-            # Tap the video player area (brings up controls)
-            count = 0
-            while "com.google.android.youtube:id/player_view" not in d.dump_hierarchy():
-                time.sleep(1)
-                print("Waiting for video player to load... for serial:", device_serial)
-                count += 1
-                if count > 15:
-                    print("Timeout waiting for video player to load. for serial:", device_serial)
-                    return False
-            btn = d(resourceId="com.google.android.youtube:id/player_view")
+      #   if not d(
+      #       resourceId="com.google.android.youtube:id/player_overflow_button"
+      #   ).exists:
+      #       # Tap the video player area (brings up controls)
+      #       count = 0
+      #       while "com.google.android.youtube:id/player_view" not in d.dump_hierarchy():
+      #           time.sleep(1)
+      #           print("Waiting for video player to load... for serial:", device_serial)
+      #           count += 1
+      #           if count > 15:
+      #               print("Timeout waiting for video player to load. for serial:", device_serial)
+      #               return False
+      #       btn = d(resourceId="com.google.android.youtube:id/player_view")
 
-            if btn.wait(timeout=10):  # waits up to 10 seconds for the element to appear
-                btn.click()
-            else:
-                print("player_view element not found within timeout")
+      #       if btn.wait(timeout=10):  # waits up to 10 seconds for the element to appear
+      #           btn.click()
+      #       else:
+      #           print("player_view element not found within timeout")
 
         # Step 1: Open the overflow menu (⋮)
         count = 0
@@ -297,13 +313,9 @@ class Adb:
             if self.check_stop_signal():
                 break
         self.execute_cmd(serial, "am force-stop com.google.android.youtube")
+        self.open_interop_app(serial)
         print(f"[{serial}] Test completed or stopped.")
 
-        # # Save CSV for this device
-        # if serial in adb_client.stats:
-        #     df = pd.DataFrame(adb_client.stats[serial]).set_index("Timestamp")
-        #     print(f"[{serial}] Writing stats to CSV...")
-        #     df.to_csv(f"{serial}.csv")
 
     def run_on_multiple_devices(
         self, device_serials, video_url, delay, duration, max_workers=5
