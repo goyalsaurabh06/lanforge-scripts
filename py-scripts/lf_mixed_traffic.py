@@ -2886,8 +2886,6 @@ INCLUDE_IN_README: False
                         default='',
                         help='Comma-separated list of device counts to incrementally test (e.g., "1,3,5")')
 
-    optional.add_argument('--get_live_view', help="If true will heatmap will be generated from testhouse automation WebGui ", action='store_true')
-    optional.add_argument('--total_floors', help="Total floors from testhouse automation WebGui ", default="0")
    
 
     args = parser.parse_args()
