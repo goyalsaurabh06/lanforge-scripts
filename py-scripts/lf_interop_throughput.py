@@ -1553,7 +1553,7 @@ class Throughput(Realm):
         }
 
     def generate_report(self, iterations_before_test_stopped_by_user, incremental_capacity_list, data=None, data1=None, report_path='', result_dir_name='Throughput_Test_report',
-                        selected_real_clients_names=None,iot_summary=None):
+                        selected_real_clients_names=None, iot_summary=None):
 
         if self.do_interopability:
             result_dir_name = "Interopability_Test_report"
@@ -1582,20 +1582,20 @@ class Throughput(Realm):
             report.build_banner()
 
             # objective title and description
-            if iot_summary :
+            if iot_summary:
                 report.set_obj_html(
-                        _obj_title="Objective",
-                        _obj=(
-                            "The Candela Throughput Test Including IoT Devices is designed to evaluate an Access Point’s performance "
-                            "and client handling capability across both Real clients (Android, Windows, Linux, MacBook, iOS) and IoT devices "
-                            "(controlled via Home Assistant). This test measures overall network throughput, per-client throughput, and task "
-                            "execution performance while the number of connected clients is gradually increasing in user-defined steps. "
-                            "For Real clients, the test captures upstream and downstream throughput to ensure fair airtime distribution and validate "
-                            "that the AP scales efficiently without significant performance degradation as more stations are added. "
-                            "For IoT clients, the test concurrently executes device-specific actions (e.g., camera streaming, switch toggling, lock/unlock) "
-                            "and monitors success rate, latency, and failure rate, ensuring the AP can reliably support multiple IoT devices alongside Real clients."
-                        )
+                    _obj_title="Objective",
+                    _obj=(
+                        "The Candela Throughput Test Including IoT Devices is designed to evaluate an Access Point’s performance "
+                        "and client handling capability across both Real clients (Android, Windows, Linux, MacBook, iOS) and IoT devices "
+                        "(controlled via Home Assistant). This test measures overall network throughput, per-client throughput, and task "
+                        "execution performance while the number of connected clients is gradually increasing in user-defined steps. "
+                        "For Real clients, the test captures upstream and downstream throughput to ensure fair airtime distribution and validate "
+                        "that the AP scales efficiently without significant performance degradation as more stations are added. "
+                        "For IoT clients, the test concurrently executes device-specific actions (e.g., camera streaming, switch toggling, lock/unlock) "
+                        "and monitors success rate, latency, and failure rate, ensuring the AP can reliably support multiple IoT devices alongside Real clients."
                     )
+                )
             else:
                 report.set_obj_html(_obj_title="Objective",
                                     _obj="The Candela Client Capacity test is designed to measure an Access Point’s client capacity and performance when handling different amounts of Real clients like android, Linux,"  # noqa: E501
@@ -2463,8 +2463,8 @@ class Throughput(Realm):
                 report.build_chart_title("Test Statistics")
                 report.set_custom_html(f'<img src="{stats_png}" style="width:100%; height:auto;">')
                 report.build_custom()
-              #Request vs latency 
-            rvl_png=copy_into_report(iot_summary.get("req_vs_latency_img"),"iot_request_vs_latency.png")
+            # Request vs latency
+            rvl_png = copy_into_report(iot_summary.get("req_vs_latency_img"), "iot_request_vs_latency.png")
             if rvl_png:
                 report.build_chart_title("Request vs Average Latency")
                 report.set_custom_html(f'<img src="{rvl_png}" style="width:100%;">')
@@ -2902,6 +2902,7 @@ def validate_args(args):
                 logger.error('Please provide valid passwd and security configuration')
                 exit(1)
 
+
 def with_iot_params_in_table(base: dict, iot_summary) -> dict:
     """
     Append IoT params into the existing Throughput Input Parameters table.
@@ -2926,13 +2927,14 @@ def with_iot_params_in_table(base: dict, iot_summary) -> dict:
 
         ti = (iot_summary.get("test_input_table") or {})
         out = OrderedDict(base)
-        out["Iot Device List"]=ti.get("Device List", "")
+        out["Iot Device List"] = ti.get("Device List", "")
         out["IoT Iterations"] = ti.get("Iterations", "")
         out["IoT Delay (s)"] = ti.get("Delay (seconds)", "")
         out["IoT Increment"] = ti.get("Increment Pattern", "")
         return out
     except Exception:
         return base
+
 
 def trigger_iot(ip, port, iterations, delay, device_list, testname, increment):
     asyncio.run(run_iot(ip, port, iterations, delay, device_list, testname, increment))
@@ -3485,7 +3487,8 @@ Copyright 2023 Candela Technologies Inc.
         if os.path.exists(p):
             with open(p) as f:
                 iot_summary = json.load(f)
-    throughput.generate_report(list(set(iterations_before_test_stopped_by_user)), incremental_capacity_list, data=all_dataframes, data1=to_run_cxs_len, report_path=throughput.result_dir, iot_summary=iot_summary)
+    throughput.generate_report(list(set(iterations_before_test_stopped_by_user)), incremental_capacity_list, data=all_dataframes, data1=to_run_cxs_len, report_path=throughput.result_dir,
+                               iot_summary=iot_summary)
     if throughput.dowebgui:
         # copying to home directory i.e home/user_name
         throughput.copy_reports_to_home_dir()
