@@ -664,7 +664,10 @@ DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
 lf_attenuator = importlib.import_module("py-scripts.lf_atten_mod_test")
 lf_modify_radio = importlib.import_module("py-scripts.lf_modify_radio")
 lf_cleanup = importlib.import_module("py-scripts.lf_cleanup")
+lf_robo_base_class = importlib.import_module("py-scripts.lf_robo_base_class")
+
 Realm = realm.Realm
+RobotClass = lf_robo_base_class.RobotClass
 
 logger = logging.getLogger(__name__)
 
@@ -791,7 +794,15 @@ class L3VariableTime(Realm):
                  real=False,
                  expected_passfail_value=None,
                  device_csv_name=None,
-                 group_name=None):
+                 group_name=None,
+
+                 # Robot test parameters
+                 robot_test=False,
+                 robot_ip=None,
+                 robot_port=5000,
+                 coordinate=None,
+                 rotation=None,
+                 robot_test_id=None):
 
         self.eth_endps = []
         self.cx_names = []
@@ -1332,6 +1343,20 @@ class L3VariableTime(Realm):
             self.csv_results_file = open(results, "w")
             self.csv_results_writer = csv.writer(
                 self.csv_results_file, delimiter=",")
+
+        # Add robot test parameters
+        self.robot_test = robot_test
+        self.robot_ip = robot_ip
+        self.robot_port = robot_port
+        self.robot_coordinates = coordinate.split(',') if coordinate else []
+        self.robot_rotations = rotation.split(',') if rotation else []
+        self.robot_test_id = robot_test_id
+        self.robot_current_position = None
+        
+        # Robot test data storage
+        self.robot_test_data = {}
+        self.multicast_robot_results = {}
+        self.robot_obj = None
 
         # if it is a dataplane test the side_a is not None and an ethernet port
         # if side_a is None then side_a is radios
@@ -2042,6 +2067,221 @@ class L3VariableTime(Realm):
                 "PASS: Stations & CX build finished: created/updated: %s stations and %s connections." %
                 (self.station_count, self.cx_count))
 
+    def perform_robo_multicast(self, coordinate, rotation):
+        """Run multicast test at specific coordinate and rotation, storing results with position data."""
+
+        # Store current position information before starting test
+        position_key = f"coord_{coordinate}_rot_{rotation if rotation is not None else ''}"
+
+        logger.info(f"Starting multicast test at coordinate: {coordinate}, rotation: {rotation}")
+        self.start(False, coordinate, rotation)
+
+        logger.info("Test complete, stopping traffic")
+        self.stop()
+
+        self.webgui_finalize(coordinate, rotation)
+
+        # Collect and store test results for this position
+        self._collect_position_results(position_key, coordinate, rotation)
+
+    def _collect_position_results(self, position_key, coordinate, rotation):
+        import datetime
+        import os
+        import json
+
+        if position_key not in self.multicast_robot_results:
+            self.multicast_robot_results[position_key] = {
+                "coordinate": coordinate,
+                "rotation": rotation,
+                "upstream": {},
+                "stations": [],
+                "summary": {},
+            }
+
+        endp_data = self.json_get(
+            "endp/all?fields=name,tx+rate,rx+rate,rx+bytes,a/b,tos,eid,type,rx+drop+%25"
+        )
+        endpoints = {}
+
+        if endp_data and "endpoint" in endp_data:
+            for endp_item in endp_data["endpoint"]:
+                for name, info in endp_item.items():
+                    endpoints[name] = info
+
+        eth_tx_total = 0
+        sta_rx_total = 0
+        stations_data = []
+
+        for name, info in endpoints.items():
+            if "MLT-mrx-" in name:
+                rx_rate = info.get("rx rate", 0)
+                rx_bytes = info.get("rx bytes", 0)
+                drop_percent = info.get("rx drop %", 0.0)
+                sta_rx_total += rx_rate if isinstance(rx_rate, int) else 0
+                stations_data.append({
+                    "station": name,
+                    "rx_rate_bps": rx_rate,
+                    "rx_bytes": rx_bytes,
+                    "drop_percent": drop_percent,
+                    "coordinate": coordinate,
+                    "rotation": rotation,
+                })
+            elif "MLT-mtx-" in name:
+                tx_rate = info.get("tx rate", 0)
+                tx_bytes = info.get("tx bytes", 0)
+                drop_percent = info.get("tx drop %", 0.0)
+                eth_tx_total += tx_rate if isinstance(tx_rate, int) else 0
+                upstream_data = {
+                    "endpoint": name,
+                    "tx_rate_bps": tx_rate,
+                    "tx_bytes": tx_bytes,
+                    "drop_percent": drop_percent,
+                    "coordinate": coordinate,
+                    "rotation": rotation,
+                }
+                self.multicast_robot_results[position_key]["upstream"] = upstream_data
+
+        total_tx_rate = eth_tx_total
+        total_rx_rate = sta_rx_total
+        avg_drop = (
+            sum([s["drop_percent"] for s in stations_data]) / len(stations_data)
+            if stations_data else 0.0
+        )
+
+        summary = {
+            "coordinate": coordinate,
+            "rotation": rotation,
+            "total_tx_rate_bps": total_tx_rate,
+            "total_rx_rate_bps": total_rx_rate,
+            "throughput_mbps": round(total_rx_rate / 1e6, 2),
+            "average_drop_percent": round(avg_drop, 2),
+            "endpoint_count": len(stations_data),
+            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+
+        self.multicast_robot_results[position_key]["stations"] = stations_data
+        self.multicast_robot_results[position_key]["summary"] = summary
+
+        json_filename = os.path.join(self.result_dir, "test_l3_robot_multicast_detailed.json")
+        with open(json_filename, "w") as jsonfile:
+            json.dump(self.multicast_robot_results, jsonfile, indent=2, default=str)
+        logger.info(f"[RobotTest] Updated detailed JSON: {json_filename}")
+
+        coord_csv = os.path.join(
+            self.result_dir, f"overall_multicast_throughput_{coordinate}.csv"
+        )
+
+        write_header = not os.path.exists(coord_csv)
+        with open(coord_csv, "a") as f:
+            if write_header:
+                f.write(
+                    "coordinate,rotation,total_tx_rate_bps,total_rx_rate_bps,throughput_mbps,average_drop_percent,endpoint_count,timestamp\n"
+                )
+            f.write(
+                f"{coordinate},{rotation},{total_tx_rate},{total_rx_rate},{total_rx_rate/1e6:.2f},{avg_drop:.2f},{len(stations_data)},{summary['timestamp']}\n"
+            )
+
+        self._write_robot_station_csv(stations_data, summary["timestamp"])
+
+        logger.info(
+            f"[RobotTest] Coord={coordinate}, Rot={rotation}, Stations={len(stations_data)}, Avg Throughput={total_rx_rate/1e6:.2f} Mbps"
+        )
+
+    def _write_robot_station_csv(self, stations_data, timestamp):
+        """
+        Write per-station multicast RX results (Wi-Fi side) into a separate CSV file.
+        """
+        import os
+
+        if not stations_data:
+            return
+
+        station_csv = os.path.join(self.result_dir, "robot_station_data.csv")
+        write_header = not os.path.exists(station_csv)
+
+        with open(station_csv, "a") as f:
+            if write_header:
+                f.write("coordinate,rotation,station,rx_rate_bps,rx_bytes,drop_percent,timestamp\n")
+            for st in stations_data:
+                f.write(
+                    f"{st['coordinate']},{st['rotation']},{st['station']},"
+                    f"{st['rx_rate_bps']},{st['rx_bytes']},{st['drop_percent']},{timestamp}\n"
+                )
+
+    def perform_robo(self):
+        """Main robot test execution with coordinate and rotation iteration."""
+
+        self.robot_rotation_enabled = (hasattr(self, 'robot_rotations') and len(self.robot_rotations) > 0 and self.robot_rotations[0] != "")
+
+        # Initialize robot connection
+        self.robot_obj = RobotClass()
+        # self.robot_obj.result_directory = os.path.dirname(self.result_dir)
+        print(f"Robot Test: Result Directory set to {self.robot_obj.result_directory}")
+        self.robot_obj.robo_ip = f'{self.robot_ip}:5000' if hasattr(self, 'robot_ip') else "127.0.0.1:5000"
+
+        # Iterate through all coordinates
+        for coord_index, coordinate in enumerate(self.robot_coordinates):
+            logger.info(f"Moving to coordinate {coord_index}: {coordinate}")
+
+            # Move robot to coordinate
+            robo_moved = self.robot_obj.move_to_coordinate(coordinate, os.path.dirname(os.path.dirname(self.result_dir)))
+
+            if robo_moved:
+                logger.info(f"Successfully moved to coordinate {coordinate}")
+                if not self.robot_rotation_enabled:
+                    # No rotation mode - run test once at this coordinate
+                    self.perform_robo_multicast(coordinate=coordinate, rotation=None)
+                else:
+                    # Rotation mode - run test at each rotation angle
+                    for angle_index, rotation_angle in enumerate(self.robot_rotations):
+                        logger.info(f"Rotating to angle {angle_index}: {rotation_angle} degrees")
+
+                        robo_rotated = self.robot_obj.rotate_angle(1, 2, rotation_angle)
+
+                        if robo_rotated:
+                            logger.info(f"Successfully rotated to {rotation_angle} degrees")
+                            self.perform_robo_multicast(coordinate=coordinate, rotation=rotation_angle)
+                        else:
+                            logger.error(f"Failed to rotate to angle {rotation_angle} at coordinate {coordinate}")
+            else:
+                logger.error(f"Failed to move to coordinate {coordinate}")
+
+        # Generate final report after all tests
+        self._generate_robot_test_report()
+
+    def _generate_robot_test_report(self):
+        """Generate comprehensive report of all robot test results."""
+
+        if not self.multicast_robot_results:
+            logger.warning("No robot test results to report")
+            return
+
+        # Create CSV report
+        csv_filename = f"{self.outfile[:-4]}_robot_multicast_results.csv"
+        with open(csv_filename, 'w', newline='') as csvfile:
+            fieldnames = [
+                'position_key', 'coordinate', 'rotation',
+                'total_tx_rate_bps', 'total_rx_rate_bps', 'throughput_mbps',
+                'average_drop_percent', 'endpoint_count'
+            ]
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            
+            for position_key, result_data in self.multicast_robot_results.items():
+                test_data = result_data.get('summary', {})
+                writer.writerow({
+                    'position_key': position_key,
+                    'coordinate': test_data.get('coordinate', ''),
+                    'rotation': test_data.get('rotation', ''),
+                    'total_tx_rate_bps': test_data.get('total_tx_rate_bps', 0),
+                    'total_rx_rate_bps': test_data.get('total_rx_rate_bps', 0),
+                    'throughput_mbps': test_data.get('throughput_mbps', 0),
+                    'average_drop_percent': test_data.get('average_drop_percent', 0),
+                    'endpoint_count': test_data.get('endpoint_count', 0),
+                })
+        
+        logger.info(f"Robot test report generated: {csv_filename}")
+
     def l3_endp_port_data(self, tos):
         """
         Args:
@@ -2172,7 +2412,7 @@ class L3VariableTime(Realm):
 
         return client_dict_A
 
-    def start(self, print_pass=False) -> int:
+    def start(self, print_pass=False, coordinate=None, rotation=None) -> int:
         """Run configured Layer-3 variable time test.
 
         Args:
@@ -2365,7 +2605,16 @@ class L3VariableTime(Realm):
                                  "start_time": start_time.strftime('%Y-%m-%d-%H-%M-%S'),
                                  "end_time": end_time.strftime('%Y-%m-%d-%H-%M-%S'), "remaining_time": remaining_time})
                             df1 = pd.DataFrame(self.overall)
-                            df1.to_csv('{}/overall_multicast_throughput.csv'.format(self.result_dir), index=False)
+                            if coordinate is not None:
+                                df1['coordinate'] = coordinate
+                                if rotation is not None:
+                                    df1['rotation'] = rotation
+                                else:
+                                    rotation = ''
+                                df1.to_csv('{}/overall_multicast_throughput_coord_{}_rot_{}.csv'.format(self.result_dir, coordinate, rotation), index=False)
+
+                            else:
+                                df1.to_csv('{}/overall_multicast_throughput.csv'.format(self.result_dir), index=False)
                             with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.ip,
                                                                                                              self.test_name),
                                       'r') as file:
@@ -2712,6 +2961,39 @@ class L3VariableTime(Realm):
                         total_dl_ll_bps,
                         total_ul_ll_bps)
 
+                    # if self.robot_test:
+                    #     coord = (self.robot_current_position or {}).get('coordinate', 'NA')
+                    #     angle = (self.robot_current_position or {}).get('rotation', 0)
+                    #     position_key = f"coord_{coord}_rot_{angle}"
+
+                    #     # Initialize the container once
+                    #     if not hasattr(self, "robot_test_data") or self.robot_test_data is None:
+                    #         self.robot_test_data = {}
+
+                    #     # Store the final metrics from this placement
+                    #     self.robot_test_data[position_key] = {
+                    #         "coordinate": coord,
+                    #         "rotation": angle,
+                    #         "total_dl_bps": total_dl_bps,
+                    #         "total_ul_bps": total_ul_bps,
+                    #         "total_dl_ll_bps": total_dl_ll_bps,
+                    #         "total_ul_ll_bps": total_ul_ll_bps,
+                    #         "timestamp": self.get_time_stamp_local(),
+                    #     }
+
+                    #     # Save cumulative JSON (overwrites file with growing dict)
+                    #     robot_json = os.path.join(self.result_dir, "robot_test_data.json")
+                    #     with open(robot_json, "w") as f:
+                    #         json.dump(self.robot_test_data, f, indent=2)
+
+                    #     # Also keep a flat CSV for quick viewing
+                    #     robot_csv = os.path.join(self.result_dir, "robot_test_data.csv")
+                    #     write_header = not os.path.exists(robot_csv)
+                    #     with open(robot_csv, "a") as f:
+                    #         if write_header:
+                    #             f.write("coordinate,rotation,total_dl_bps,total_ul_bps,total_dl_ll_bps,total_ul_ll_bps,timestamp\n")
+                    #         f.write(f"{coord},{angle},{total_dl_bps},{total_ul_bps},{total_dl_ll_bps},{total_ul_ll_bps},{self.get_time_stamp_local()}\n")
+
                     # At end of test step, record results information. This is
                     self.record_results_total(
                         len(self.station_names_list),
@@ -2743,7 +3025,119 @@ class L3VariableTime(Realm):
                             "PASS: Requested-Rate: %s <-> %s  PDU: %s <-> %s   All tests passed" %
                             (ul, dl, ul_pdu, dl_pdu), print_pass)
 
-        return 0
+        # if self.robot_test:
+        #     if coordinate is not None or rotation is not None:
+        #         position_key = f"coord_{coordinate}_rot_{rotation if rotation is not None else 0}"
+
+        #         # Create container if not exists
+        #         if not hasattr(self, "robot_test_data") or self.robot_test_data is None:
+        #             self.robot_test_data = {}
+
+        #         if position_key not in self.robot_test_data:
+        #             self.robot_test_data[position_key] = {
+        #                 "coordinate": coordinate,
+        #                 "rotation": rotation,
+        #                 "test_summary": {},
+        #                 "station_results": [],
+        #                 "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        #             }
+
+        #         logger.info(f"[RobotTest] Running test for position {position_key}")
+        #     else:
+        #         self.robot_test = False
+        #         position_key = None
+
+        #     # ========== Begin normal L3 test operations ==========
+        #     port_eids = self.gather_port_eids()
+        #     for port_eid in port_eids:
+        #         self.csv_add_port_column_headers(
+        #             port_eid, self.csv_generate_dl_port_column_headers())
+
+        #     if self.ap_read:
+        #         port_eids = self.gather_port_eids()
+        #         for port_eid in port_eids:
+        #             self.csv_add_ul_port_column_headers(
+        #                 port_eid, self.csv_generate_ul_port_column_headers())
+
+        #     total_dl_bps, total_ul_bps, total_dl_ll_bps, total_ul_ll_bps = 0, 0, 0, 0
+        #     avg_drop = 0.0
+        #     test_start_time = datetime.datetime.now()
+        #     test_duration = self.test_duration
+
+        #     for ul, dl in itertools.zip_longest(self.side_a_min_rate,
+        #                                         self.side_b_min_rate,
+        #                                         fillvalue=256000):
+
+        #         for ul_pdu, dl_pdu in itertools.zip_longest(self.side_a_min_pdu,
+        #                                                     self.side_b_min_pdu,
+        #                                                     fillvalue='AUTO'):
+        #             # Normal L3 execution
+        #             self.cx_profile.side_a_min_bps = ul
+        #             self.cx_profile.side_b_min_bps = dl
+        #             self.cx_profile.side_a_min_pdu = ul_pdu
+        #             self.cx_profile.side_b_min_pdu = dl_pdu
+        #             self.build(rebuild=True)
+
+        #             logger.info("Starting multicast and L3 traffic.")
+        #             self.multicast_profile.start_mc(debug_=self.debug)
+        #             self.cx_profile.start_cx()
+
+        #             cur_time = datetime.datetime.now()
+        #             end_time = self.parse_time(self.test_duration) + cur_time
+
+        #             while cur_time < end_time:
+        #                 cur_time = datetime.datetime.now()
+        #                 self.__get_rx_values()
+        #                 time.sleep(self.polling_interval_seconds)
+
+        #             # Collect throughput stats at end of test iteration
+        #             _, _, _, total_dl_bps, total_ul_bps, total_dl_ll_bps, total_ul_ll_bps = self.__get_rx_values()
+
+        #     # ========== END OF TEST ==========
+        #     test_end_time = datetime.datetime.now()
+        #     elapsed_time = (test_end_time - test_start_time).total_seconds()
+
+        #     # Build result summary
+        #     summary = {
+        #         "coordinate": coordinate,
+        #         "rotation": rotation,
+        #         "total_dl_bps": total_dl_bps,
+        #         "total_ul_bps": total_ul_bps,
+        #         "total_dl_ll_bps": total_dl_ll_bps,
+        #         "total_ul_ll_bps": total_ul_ll_bps,
+        #         "throughput_mbps": round(total_dl_bps / 1e6, 2),
+        #         "average_drop_percent": round(avg_drop, 2),
+        #         "duration_sec": round(elapsed_time, 2),
+        #         "timestamp": self.get_time_stamp_local()
+        #     }
+
+        #     # ========== Store data by coordinate/rotation ==========
+        #     if position_key:
+        #         self.robot_test_data[position_key]["test_summary"] = summary
+
+        #         # Save/update JSON snapshot
+        #         robot_json = os.path.join(self.result_dir, "robot_test_data.json")
+        #         with open(robot_json, "w") as jf:
+        #             json.dump(self.robot_test_data, jf, indent=2)
+        #         logger.info(f"[RobotTest] Stored summary for {position_key} in {robot_json}")
+
+        #         coord_csv = os.path.join(self.result_dir, f"overall_multicast_throughput_{coordinate}.csv")
+        #         file_exists = os.path.exists(coord_csv)
+
+        #         df_summary = pd.DataFrame([summary])
+        #         df_summary.to_csv(
+        #             coord_csv,
+        #             index=False,
+        #             header=not file_exists,
+        #             mode="a"
+        #         )
+
+        #         logger.info(f"[RobotTest] Summary for Coordinate {coordinate} appended to {coord_csv}")
+
+        #     # ========== Normal logging for non-robot test ==========
+        #     if not self.robot_test:
+        #         logger.info(f"Test completed. DL={total_dl_bps/1e6:.2f} Mbps, UL={total_ul_bps/1e6:.2f} Mbps")
+        #     return 0
 
     def write_dl_port_csv(
             self,
@@ -6007,23 +6401,26 @@ class L3VariableTime(Realm):
                 self.report.build_custom()
 
     def generate_report(self, config_devices=None, group_device_map=None):
+        # import os
+        # import pandas as pd
         self.report.set_obj_html("Objective", "The Layer 3 Traffic Generation Test is designed to test the performance of the "
                                  "Access Point by running layer 3 Cross-Connect Traffic.  Layer-3 Cross-Connects represent a stream "
                                  "of data flowing through the system under test. A Cross-Connect (CX) is composed of two Endpoints, "
                                  "each of which is associated with a particular Port (physical or virtual interface).")
 
         self.report.build_objective()
-        test_setup_info = {
-            "DUT Name": self.dut_model_num,
-            "DUT Hardware Version": self.dut_hw_version,
-            "DUT Software Version": self.dut_sw_version,
-            "DUT Serial Number": self.dut_serial_num,
-        }
+        if not self.robot_test:
+            test_setup_info = {
+                "DUT Name": self.dut_model_num,
+                "DUT Hardware Version": self.dut_hw_version,
+                "DUT Software Version": self.dut_sw_version,
+                "DUT Serial Number": self.dut_serial_num,
+            }
 
-        self.report.set_table_title("Device Under Test Information")
-        self.report.build_table_title()
-        self.report.test_setup_table(value="Device Under Test",
-                                     test_setup_data=test_setup_info)
+            self.report.set_table_title("Device Under Test Information")
+            self.report.build_table_title()
+            self.report.test_setup_table(value="Device Under Test",
+                                        test_setup_data=test_setup_info)
         # For real devices when groups specified for configuration
         if self.real and self.group_name:
             group_names = ', '.join(config_devices.keys())
@@ -6035,26 +6432,39 @@ class L3VariableTime(Realm):
                 "Upstream": self.upstream_port,
                 "Test Duration": self.test_duration,
                 "Test Configuration": configmap,
-                "Polling Interval": self.polling_interval,
+                "Polling Interval": self.polling_interval,  
                 "Total No. of Devices": self.station_count,
             }
         else:
-            test_input_info = {
-                "LANforge ip": self.lfmgr,
-                "LANforge port": self.lfmgr_port,
-                "Upstream": self.upstream_port,
-                "Test Duration": self.test_duration,
-                "Polling Interval": self.polling_interval,
-                "Total No. of Devices": self.station_count,
-            }
+            if self.robot_test:
+                test_input_info = {
+                    "LANforge ip": self.lfmgr,
+                    "LANforge port": self.lfmgr_port,
+                    "Upstream": self.upstream_port,
+                    "Test Duration": self.test_duration,
+                    "Polling Interval": self.polling_interval,
+                    "Total No. of Devices": self.station_count,
+                    "Robot Coordinates": ", ".join(self.robot_coordinates),
+                    "Robot Rotations": ", ".join(self.robot_rotations) if self.robot_rotations and self.robot_rotations[0] != "" else "None"
+                }
+            else:
+                test_input_info = {
+                    "LANforge ip": self.lfmgr,
+                    "LANforge port": self.lfmgr_port,
+                    "Upstream": self.upstream_port,
+                    "Test Duration": self.test_duration,
+                    "Polling Interval": self.polling_interval,
+                    "Total No. of Devices": self.station_count,
+                }
 
         self.report.set_table_title("Test Configuration")
         self.report.build_table_title()
         self.report.test_setup_table(value="Test Configuration",
                                      test_setup_data=test_input_info)
 
-        self.report.set_table_title("Radio Configuration")
-        self.report.build_table_title()
+        if not self.robot_test:
+            self.report.set_table_title("Radio Configuration")
+            self.report.build_table_title()
 
         wifi_mode_dict = {
             0: 'AUTO',  # 802.11g
@@ -6128,138 +6538,336 @@ class L3VariableTime(Realm):
         # try to do as a loop
         tos_list = ['BK', 'BE', 'VI', 'VO']
 
-        for tos in tos_list:
-            # processing tos's which are included in test for real_clients ensuring no blocker for virtual
-            if (self.real or self.dowebgui) and tos not in self.tos:
-                continue
-            if (self.client_dict_A[tos]["ul_A"] and self.client_dict_A[tos]["dl_A"]):
-                min_bps_a = self.client_dict_A["min_bps_a"]
-                min_bps_b = self.client_dict_A["min_bps_b"]
+        if self.robot_test:
+            logger.info("Building per-coordinate/rotation graphs and tables for robot test (from memory dict)")
 
-                dataset_list = [self.client_dict_A[tos]["ul_A"], self.client_dict_A[tos]["dl_A"]]
-                # TODO possibly explain the wording for upload and download
-                dataset_length = len(self.client_dict_A[tos]["ul_A"])
-                x_fig_size = 20
-                y_fig_size = len(self.client_dict_A[tos]["clients_A"]) * .4 + 5
-                logger.debug("length of clients_A {clients} resource_alias_A {alias_A}".format(
-                    clients=len(self.client_dict_A[tos]["clients_A"]), alias_A=len(self.client_dict_A[tos]["resource_alias_A"])))
-                logger.debug("clients_A {clients}".format(clients=self.client_dict_A[tos]["clients_A"]))
-                logger.debug("resource_alias_A {alias_A}".format(alias_A=self.client_dict_A[tos]["resource_alias_A"]))
+            if not hasattr(self, "multicast_robot_results") or not self.multicast_robot_results:
+                self.report.set_custom_html("<p><i>No robot test results found.</i></p>")
+                self.report.build_custom()
+            else:
+                for position_key, result in self.multicast_robot_results.items():
+                    coord = result.get("coordinate", "NA")
+                    rot = result.get("rotation", "NA")
+                    stations = result.get("stations", [])
+                    upstream = result.get("upstream", {})
+                    summary = result.get("summary", {})
 
-                if int(min_bps_a) != 0:
-                    self.report.set_obj_html(
-                        _obj_title=f"Individual throughput measured  upload tcp or udp bps: {min_bps_a},  download tcp, udp, or mcast  bps: {min_bps_b} station for traffic {tos} (WiFi).",
-                        _obj=f"The below graph represents individual throughput for {dataset_length} clients running {tos} "
-                        f"(WiFi) traffic.  Y- axis shows “Client names“ and X-axis shows “"
-                        f"Throughput in Mbps”.")
-                else:
-                    self.report.set_obj_html(
-                        _obj_title=f"Individual throughput mcast download bps: {min_bps_b} traffic {tos} (WiFi).",
-                        _obj=f"The below graph represents individual throughput for {dataset_length} clients running {tos} "
-                        f"(WiFi) traffic.  Y- axis shows “Client names“ and X-axis shows “"
-                        f"Throughput in Mbps”.")
+                    # Section header
+                    self.report.set_custom_html(
+                        f"<h2 style='margin-top:25px;color:darkgreen;'>Coordinate: {coord} | Rotation: {rot}°</h2>"
+                    )
+                    self.report.build_custom()
 
-                self.report.build_objective()
+                    if upstream:
+                        tx_rate = upstream.get("tx_rate_bps", 0)
+                        dataset_list = [[tx_rate]]
+                        labels = ["TX (bps)"]
+                        yaxis_categories = [upstream.get("endpoint", "eth-unknown")]
 
-                graph = lf_graph.lf_bar_graph_horizontal(_data_set=dataset_list,
-                                                         _xaxis_name="Throughput in bps",
-                                                         _yaxis_name="Client names",
-                                                         # _yaxis_categories=self.client_dict_A[tos]["clients_A"],
-                                                         _yaxis_categories=self.client_dict_A[tos]["resource_alias_A"],
-                                                         _graph_image_name=f"{tos}_A",
-                                                         _label=self.client_dict_A[tos]['labels'],
-                                                         _color_name=self.client_dict_A[tos]['colors'],
-                                                         _color_edge=['black'],
-                                                         # traditional station side -A
-                                                         _graph_title=f"Individual {tos} client side traffic measurement - side a (downstream)",
-                                                         _title_size=10,
-                                                         _figsize=(x_fig_size, y_fig_size),
-                                                         _show_bar_value=True,
-                                                         _enable_csv=True,
-                                                         _text_font=8,
-                                                         _legend_loc="best",
-                                                         _legend_box=(1.0, 1.0)
-                                                         )
-                graph_png = graph.build_bar_graph_horizontal()
-                self.report.set_graph_image(graph_png)
-                self.report.move_graph_image()
-                self.report.build_graph()
-                self.report.set_csv_filename(graph_png)
-                self.report.move_csv_file()
-                if self.dowebgui and self.get_live_view:
-                    self.add_live_view_images_to_report()
-                # For real devices appending the required data for pass fail criteria
-                if self.real:
-                    up, down, off_up, off_down = [], [], [], []
-                    for i in self.client_dict_A[tos]['ul_A']:
-                        up.append(int(i) / 1000000)
-                    for i in self.client_dict_A[tos]['dl_A']:
-                        down.append(int(i) / 1000000)
-                    for i in self.client_dict_A[tos]['offered_upload_rate_A']:
-                        off_up.append(int(i) / 1000000)
-                    for i in self.client_dict_A[tos]['offered_download_rate_A']:
-                        off_down.append(int(i) / 1000000)
-                    # if either 'expected_passfail_value' or 'device_csv_name' is provided for pass/fail evaluation
-                    if self.expected_passfail_value or self.device_csv_name:
-                        test_input_list, pass_fail_list = self.get_pass_fail_list(tos, up, down)
+                        graph = lf_graph.lf_bar_graph_horizontal(
+                            _data_set=dataset_list,
+                            _xaxis_name="TX Throughput (bps)",
+                            _yaxis_name="Upstream Endpoint",
+                            _yaxis_categories=yaxis_categories,
+                            _graph_image_name=f"robot_coord_{coord}_rot_{rot}_upstream_tx",
+                            _label=labels,
+                            _color_name=["darkorange"],
+                            _color_edge=["black"],
+                            _graph_title=f"Upstream TX Throughput — Coord {coord}, Rot {rot}",
+                            _title_size=10,
+                            _figsize=(8, 2.5),
+                            _show_bar_value=True,
+                            _enable_csv=True,
+                            _text_font=8,
+                            _legend_loc="best",
+                            _legend_box=(1.0, 1.0)
+                        )
+                        graph_png = graph.build_bar_graph_horizontal()
+                        self.report.set_graph_image(graph_png)
+                        self.report.move_graph_image()
+                        self.report.build_graph()
+                        self.report.set_csv_filename(graph_png)
+                        self.report.move_csv_file()
 
-                if self.real:
-                    # When groups and profiles specifed for configuration
-                    if self.group_name:
-                        for key, val in group_device_map.items():
-                            # Generating Dataframe when Groups with their profiles and pass_fail case is specified
+                        df_up = pd.DataFrame([upstream])
+                        self.report.set_table_title("Upstream (Ethernet TX) Data")
+                        self.report.build_table_title()
+                        self.report.set_table_dataframe(df_up)
+                        self.report.build_table()
+
+                    if stations:
+                        df_stations = pd.DataFrame(stations)
+
+                        dataset_list = [df_stations["rx_rate_bps"].tolist()]
+                        labels = ["RX (bps)"]
+                        yaxis_categories = df_stations["station"].tolist()
+
+                        graph = lf_graph.lf_bar_graph_horizontal(
+                            _data_set=dataset_list,
+                            _xaxis_name="RX Throughput (bps)",
+                            _yaxis_name="Stations",
+                            _yaxis_categories=yaxis_categories,
+                            _graph_image_name=f"robot_coord_{coord}_rot_{rot}_station_rx",
+                            _label=labels,
+                            _color_name=["teal"],
+                            _color_edge=["black"],
+                            _graph_title=f"Receiver Station RX Throughput — Coord {coord}, Rot {rot}",
+                            _title_size=10,
+                            _figsize=(10, max(3.5, len(yaxis_categories) * 0.5)),
+                            _show_bar_value=True,
+                            _enable_csv=True,
+                            _text_font=8,
+                            _legend_loc="best",
+                            _legend_box=(1.0, 1.0)
+                        )
+                        graph_png = graph.build_bar_graph_horizontal()
+                        self.report.set_graph_image(graph_png)
+                        self.report.move_graph_image()
+                        self.report.build_graph()
+                        self.report.set_csv_filename(graph_png)
+                        self.report.move_csv_file()
+
+                        avg_rx = df_stations["rx_rate_bps"].mean()
+                        avg_drop = df_stations["drop_percent"].mean()
+                        self.report.set_custom_html(
+                            f"<p style='font-size:12px;'>Average RX Throughput: <b>{avg_rx/1e6:.2f} Mbps</b><br>"
+                            f"Average Drop Rate: <b>{avg_drop:.2f}%</b><br>"
+                            f"Total Stations: <b>{len(df_stations)}</b></p>"
+                        )
+                        self.report.build_custom()
+
+                        self.report.set_table_title("Receiver Station Data")
+                        self.report.build_table_title()
+                        self.report.set_table_dataframe(df_stations)
+                        self.report.build_table()
+
+                    if summary:
+                        df_summary = pd.DataFrame([summary])
+                        self.report.set_table_title("Coordinate Summary")
+                        self.report.build_table_title()
+                        self.report.set_table_dataframe(df_summary)
+                        self.report.build_table()
+
+                    self.report.set_custom_html("<hr style='border:none;border-top:1px solid #ccc;margin:20px 0;'>")
+                    self.report.build_custom()
+
+                all_summary = []
+                for pos_key, res in self.multicast_robot_results.items():
+                    sm = res.get("summary")
+                    if sm:
+                        all_summary.append(sm)
+                if all_summary:
+                    df_all = pd.DataFrame(all_summary)
+                    try:
+                        rot_summary = (
+                            df_all.groupby("rotation")[["total_rx_rate_bps", "total_tx_rate_bps"]]
+                            .mean()
+                            .reset_index()
+                            .sort_values(by="rotation")
+                        )
+                        dataset = [
+                            rot_summary["total_rx_rate_bps"].tolist(),
+                            rot_summary["total_tx_rate_bps"].tolist()
+                        ]
+                        labels = ["Avg RX (bps)", "Avg TX (bps)"]
+                        rotations = rot_summary["rotation"].astype(str).tolist()
+
+                        graph = lf_graph.lf_bar_graph_horizontal(
+                            _data_set=dataset,
+                            _xaxis_name="Average Throughput (bps)",
+                            _yaxis_name="Rotation (°)",
+                            _yaxis_categories=rotations,
+                            _graph_image_name="robot_avg_rotation_summary",
+                            _label=labels,
+                            _color_name=["steelblue", "orange"],
+                            _color_edge=["black"],
+                            _graph_title="Average RX/TX Throughput vs Rotation",
+                            _title_size=10,
+                            _figsize=(10, max(4, len(rotations) * 0.5)),
+                            _show_bar_value=True,
+                            _enable_csv=True,
+                            _text_font=8,
+                            _legend_loc="best",
+                            _legend_box=(1.0, 1.0)
+                        )
+                        graph_png = graph.build_bar_graph_horizontal()
+                        self.report.set_graph_image(graph_png)
+                        self.report.move_graph_image()
+                        self.report.build_graph()
+                        self.report.set_csv_filename(graph_png)
+                        self.report.move_csv_file()
+
+                        self.report.set_custom_html(
+                            "<p style='font-size:12px;'>The above chart shows average RX/TX throughput aggregated "
+                            "by rotation across all coordinates.</p>"
+                        )
+                        self.report.build_custom()
+                    except Exception as e:
+                        logger.warning(f"Could not aggregate rotation summary: {e}")
+        else:
+            for tos in tos_list:
+                # processing tos's which are included in test for real_clients ensuring no blocker for virtual
+                if (self.real or self.dowebgui) and tos not in self.tos:
+                    continue
+                if (self.client_dict_A[tos]["ul_A"] and self.client_dict_A[tos]["dl_A"]):
+                    min_bps_a = self.client_dict_A["min_bps_a"]
+                    min_bps_b = self.client_dict_A["min_bps_b"]
+
+                    dataset_list = [self.client_dict_A[tos]["ul_A"], self.client_dict_A[tos]["dl_A"]]
+                    # TODO possibly explain the wording for upload and download
+                    dataset_length = len(self.client_dict_A[tos]["ul_A"])
+                    x_fig_size = 20
+                    y_fig_size = len(self.client_dict_A[tos]["clients_A"]) * .4 + 5
+                    logger.debug("length of clients_A {clients} resource_alias_A {alias_A}".format(
+                        clients=len(self.client_dict_A[tos]["clients_A"]), alias_A=len(self.client_dict_A[tos]["resource_alias_A"])))
+                    logger.debug("clients_A {clients}".format(clients=self.client_dict_A[tos]["clients_A"]))
+                    logger.debug("resource_alias_A {alias_A}".format(alias_A=self.client_dict_A[tos]["resource_alias_A"]))
+
+                    if int(min_bps_a) != 0:
+                        self.report.set_obj_html(
+                            _obj_title=f"Individual throughput measured  upload tcp or udp bps: {min_bps_a},  download tcp, udp, or mcast  bps: {min_bps_b} station for traffic {tos} (WiFi).",
+                            _obj=f"The below graph represents individual throughput for {dataset_length} clients running {tos} "
+                            f"(WiFi) traffic.  Y- axis shows “Client names“ and X-axis shows “"
+                            f"Throughput in Mbps”.")
+                    else:
+                        self.report.set_obj_html(
+                            _obj_title=f"Individual throughput mcast download bps: {min_bps_b} traffic {tos} (WiFi).",
+                            _obj=f"The below graph represents individual throughput for {dataset_length} clients running {tos} "
+                            f"(WiFi) traffic.  Y- axis shows “Client names“ and X-axis shows “"
+                            f"Throughput in Mbps”.")
+
+                    self.report.build_objective()
+
+                    graph = lf_graph.lf_bar_graph_horizontal(_data_set=dataset_list,
+                                                            _xaxis_name="Throughput in bps",
+                                                            _yaxis_name="Client names",
+                                                            # _yaxis_categories=self.client_dict_A[tos]["clients_A"],
+                                                            _yaxis_categories=self.client_dict_A[tos]["resource_alias_A"],
+                                                            _graph_image_name=f"{tos}_A",
+                                                            _label=self.client_dict_A[tos]['labels'],
+                                                            _color_name=self.client_dict_A[tos]['colors'],
+                                                            _color_edge=['black'],
+                                                            # traditional station side -A
+                                                            _graph_title=f"Individual {tos} client side traffic measurement - side a (downstream)",
+                                                            _title_size=10,
+                                                            _figsize=(x_fig_size, y_fig_size),
+                                                            _show_bar_value=True,
+                                                            _enable_csv=True,
+                                                            _text_font=8,
+                                                            _legend_loc="best",
+                                                            _legend_box=(1.0, 1.0)
+                                                            )
+                    graph_png = graph.build_bar_graph_horizontal()
+                    self.report.set_graph_image(graph_png)
+                    self.report.move_graph_image()
+                    self.report.build_graph()
+                    self.report.set_csv_filename(graph_png)
+                    self.report.move_csv_file()
+                    if self.dowebgui and self.get_live_view:
+                        self.add_live_view_images_to_report()
+                    # For real devices appending the required data for pass fail criteria
+                    if self.real:
+                        up, down, off_up, off_down = [], [], [], []
+                        for i in self.client_dict_A[tos]['ul_A']:
+                            up.append(int(i) / 1000000)
+                        for i in self.client_dict_A[tos]['dl_A']:
+                            down.append(int(i) / 1000000)
+                        for i in self.client_dict_A[tos]['offered_upload_rate_A']:
+                            off_up.append(int(i) / 1000000)
+                        for i in self.client_dict_A[tos]['offered_download_rate_A']:
+                            off_down.append(int(i) / 1000000)
+                        # if either 'expected_passfail_value' or 'device_csv_name' is provided for pass/fail evaluation
+                        if self.expected_passfail_value or self.device_csv_name:
+                            test_input_list, pass_fail_list = self.get_pass_fail_list(tos, up, down)
+
+                    if self.real:
+                        # When groups and profiles specifed for configuration
+                        if self.group_name:
+                            for key, val in group_device_map.items():
+                                # Generating Dataframe when Groups with their profiles and pass_fail case is specified
+                                if self.expected_passfail_value or self.device_csv_name:
+                                    dataframe = self.generate_dataframe(
+                                        val,
+                                        self.client_dict_A[tos]['resource_alias_A'],
+                                        self.client_dict_A[tos]['resource_eid_A'],
+                                        self.client_dict_A[tos]['resource_host_A'],
+                                        self.client_dict_A[tos]['resource_hw_ver_A'],
+                                        self.client_dict_A[tos]["clients_A"],
+                                        self.client_dict_A[tos]['port_A'],
+                                        self.client_dict_A[tos]['mode_A'],
+                                        self.client_dict_A[tos]['mac_A'],
+                                        self.client_dict_A[tos]['ssid_A'],
+                                        self.client_dict_A[tos]['channel_A'],
+                                        self.client_dict_A[tos]['traffic_type_A'],
+                                        self.client_dict_A[tos]['traffic_protocol_A'],
+                                        off_up,
+                                        off_down,
+                                        up,
+                                        down,
+                                        test_input_list,
+                                        self.client_dict_A[tos]['download_rx_drop_percent_A'],
+                                        pass_fail_list)
+                                # Generating Dataframe for groups when pass_fail case is not specified
+                                else:
+                                    dataframe = self.generate_dataframe(
+                                        val,
+                                        self.client_dict_A[tos]['resource_alias_A'],
+                                        self.client_dict_A[tos]['resource_eid_A'],
+                                        self.client_dict_A[tos]['resource_host_A'],
+                                        self.client_dict_A[tos]['resource_hw_ver_A'],
+                                        self.client_dict_A[tos]["clients_A"],
+                                        self.client_dict_A[tos]['port_A'],
+                                        self.client_dict_A[tos]['mode_A'],
+                                        self.client_dict_A[tos]['mac_A'],
+                                        self.client_dict_A[tos]['ssid_A'],
+                                        self.client_dict_A[tos]['channel_A'],
+                                        self.client_dict_A[tos]['traffic_type_A'],
+                                        self.client_dict_A[tos]['traffic_protocol_A'],
+                                        off_up,
+                                        off_down,
+                                        up,
+                                        down,
+                                        [],
+                                        self.client_dict_A[tos]['download_rx_drop_percent_A'],
+                                        [],)
+                                # When the client exists in either group.
+                                if dataframe:
+                                    self.report.set_obj_html("", "Group: {}".format(key))
+                                    self.report.build_objective()
+                                    dataframe1 = pd.DataFrame(dataframe)
+                                    self.report.set_table_dataframe(dataframe1)
+                                    self.report.build_table()
+                        else:
+                            tos_dataframe_A = {
+                                " Client Alias ": self.client_dict_A[tos]['resource_alias_A'],
+                                " Host eid ": self.client_dict_A[tos]['resource_eid_A'],
+                                " Host Name ": self.client_dict_A[tos]['resource_host_A'],
+                                " Device Type / Hw Ver ": self.client_dict_A[tos]['resource_hw_ver_A'],
+                                " Endp Name": self.client_dict_A[tos]["clients_A"],
+                                # TODO : port A being set to many times
+                                " Port Name ": self.client_dict_A[tos]['port_A'],
+                                " Mode ": self.client_dict_A[tos]['mode_A'],
+                                " Mac ": self.client_dict_A[tos]['mac_A'],
+                                " SSID ": self.client_dict_A[tos]['ssid_A'],
+                                " Channel ": self.client_dict_A[tos]['channel_A'],
+                                " Type of traffic ": self.client_dict_A[tos]['traffic_type_A'],
+                                " Traffic Protocol ": self.client_dict_A[tos]['traffic_protocol_A'],
+                                " Offered Upload Rate Per Client": self.client_dict_A[tos]['offered_upload_rate_A'],
+                                " Offered Download Rate Per Client": self.client_dict_A[tos]['offered_download_rate_A'],
+                                " Upload Rate Per Client": self.client_dict_A[tos]['ul_A'],
+                                " Download Rate Per Client": self.client_dict_A[tos]['dl_A'],
+                                " Drop Percentage (%)": self.client_dict_A[tos]['download_rx_drop_percent_A'],
+                            }
+                            # When pass_Fail criteria specified
                             if self.expected_passfail_value or self.device_csv_name:
-                                dataframe = self.generate_dataframe(
-                                    val,
-                                    self.client_dict_A[tos]['resource_alias_A'],
-                                    self.client_dict_A[tos]['resource_eid_A'],
-                                    self.client_dict_A[tos]['resource_host_A'],
-                                    self.client_dict_A[tos]['resource_hw_ver_A'],
-                                    self.client_dict_A[tos]["clients_A"],
-                                    self.client_dict_A[tos]['port_A'],
-                                    self.client_dict_A[tos]['mode_A'],
-                                    self.client_dict_A[tos]['mac_A'],
-                                    self.client_dict_A[tos]['ssid_A'],
-                                    self.client_dict_A[tos]['channel_A'],
-                                    self.client_dict_A[tos]['traffic_type_A'],
-                                    self.client_dict_A[tos]['traffic_protocol_A'],
-                                    off_up,
-                                    off_down,
-                                    up,
-                                    down,
-                                    test_input_list,
-                                    self.client_dict_A[tos]['download_rx_drop_percent_A'],
-                                    pass_fail_list)
-                            # Generating Dataframe for groups when pass_fail case is not specified
-                            else:
-                                dataframe = self.generate_dataframe(
-                                    val,
-                                    self.client_dict_A[tos]['resource_alias_A'],
-                                    self.client_dict_A[tos]['resource_eid_A'],
-                                    self.client_dict_A[tos]['resource_host_A'],
-                                    self.client_dict_A[tos]['resource_hw_ver_A'],
-                                    self.client_dict_A[tos]["clients_A"],
-                                    self.client_dict_A[tos]['port_A'],
-                                    self.client_dict_A[tos]['mode_A'],
-                                    self.client_dict_A[tos]['mac_A'],
-                                    self.client_dict_A[tos]['ssid_A'],
-                                    self.client_dict_A[tos]['channel_A'],
-                                    self.client_dict_A[tos]['traffic_type_A'],
-                                    self.client_dict_A[tos]['traffic_protocol_A'],
-                                    off_up,
-                                    off_down,
-                                    up,
-                                    down,
-                                    [],
-                                    self.client_dict_A[tos]['download_rx_drop_percent_A'],
-                                    [],)
-                            # When the client exists in either group.
-                            if dataframe:
-                                self.report.set_obj_html("", "Group: {}".format(key))
-                                self.report.build_objective()
-                                dataframe1 = pd.DataFrame(dataframe)
-                                self.report.set_table_dataframe(dataframe1)
-                                self.report.build_table()
+                                tos_dataframe_A[" Expected " + 'Download' + " Rate"] = [float(x) * 10**6 for x in test_input_list]
+                                tos_dataframe_A[" Status "] = pass_fail_list
+
+                            dataframe3 = pd.DataFrame(tos_dataframe_A)
+                            self.report.set_table_dataframe(dataframe3)
+                            self.report.build_table()
+
+                    # For virtual clients
                     else:
                         tos_dataframe_A = {
                             " Client Alias ": self.client_dict_A[tos]['resource_alias_A'],
@@ -6267,7 +6875,6 @@ class L3VariableTime(Realm):
                             " Host Name ": self.client_dict_A[tos]['resource_host_A'],
                             " Device Type / Hw Ver ": self.client_dict_A[tos]['resource_hw_ver_A'],
                             " Endp Name": self.client_dict_A[tos]["clients_A"],
-                            # TODO : port A being set to many times
                             " Port Name ": self.client_dict_A[tos]['port_A'],
                             " Mode ": self.client_dict_A[tos]['mode_A'],
                             " Mac ": self.client_dict_A[tos]['mac_A'],
@@ -6281,133 +6888,103 @@ class L3VariableTime(Realm):
                             " Download Rate Per Client": self.client_dict_A[tos]['dl_A'],
                             " Drop Percentage (%)": self.client_dict_A[tos]['download_rx_drop_percent_A'],
                         }
-                        # When pass_Fail criteria specified
-                        if self.expected_passfail_value or self.device_csv_name:
-                            tos_dataframe_A[" Expected " + 'Download' + " Rate"] = [float(x) * 10**6 for x in test_input_list]
-                            tos_dataframe_A[" Status "] = pass_fail_list
-
                         dataframe3 = pd.DataFrame(tos_dataframe_A)
                         self.report.set_table_dataframe(dataframe3)
                         self.report.build_table()
 
-                # For virtual clients
-                else:
-                    tos_dataframe_A = {
-                        " Client Alias ": self.client_dict_A[tos]['resource_alias_A'],
-                        " Host eid ": self.client_dict_A[tos]['resource_eid_A'],
-                        " Host Name ": self.client_dict_A[tos]['resource_host_A'],
-                        " Device Type / Hw Ver ": self.client_dict_A[tos]['resource_hw_ver_A'],
-                        " Endp Name": self.client_dict_A[tos]["clients_A"],
-                        " Port Name ": self.client_dict_A[tos]['port_A'],
-                        " Mode ": self.client_dict_A[tos]['mode_A'],
-                        " Mac ": self.client_dict_A[tos]['mac_A'],
-                        " SSID ": self.client_dict_A[tos]['ssid_A'],
-                        " Channel ": self.client_dict_A[tos]['channel_A'],
-                        " Type of traffic ": self.client_dict_A[tos]['traffic_type_A'],
-                        " Traffic Protocol ": self.client_dict_A[tos]['traffic_protocol_A'],
-                        " Offered Upload Rate Per Client": self.client_dict_A[tos]['offered_upload_rate_A'],
-                        " Offered Download Rate Per Client": self.client_dict_A[tos]['offered_download_rate_A'],
-                        " Upload Rate Per Client": self.client_dict_A[tos]['ul_A'],
-                        " Download Rate Per Client": self.client_dict_A[tos]['dl_A'],
-                        " Drop Percentage (%)": self.client_dict_A[tos]['download_rx_drop_percent_A'],
+            # TODO both client_dict_A and client_dict_B contains the same information
+            for tos in tos_list:
+                if (self.client_dict_B[tos]["ul_B"] and self.client_dict_B[tos]["dl_B"]):
+                    min_bps_a = self.client_dict_B["min_bps_a"]
+                    min_bps_b = self.client_dict_B["min_bps_b"]
+
+                    dataset_list = [self.client_dict_B[tos]["ul_B"], self.client_dict_B[tos]["dl_B"]]
+                    dataset_length = len(self.client_dict_B[tos]["ul_B"])
+
+                    x_fig_size = 20
+                    y_fig_size = len(self.client_dict_B[tos]["clients_B"]) * .4 + 5
+
+                    self.report.set_obj_html(
+                        _obj_title=f"Individual throughput upstream endp,  offered upload bps: {min_bps_a} offered download bps: {min_bps_b} /station for traffic {tos} (WiFi).",
+                        _obj=f"The below graph represents individual throughput for {dataset_length} clients running {tos} "
+                        f"(WiFi) traffic.  Y- axis shows “Client names“ and X-axis shows “"
+                        f"Throughput in Mbps”.")
+                    self.report.build_objective()
+
+                    graph = lf_graph.lf_bar_graph_horizontal(_data_set=dataset_list,
+                                                            _xaxis_name="Throughput in bps",
+                                                            _yaxis_name="Client names",
+                                                            # _yaxis_categories=self.client_dict_B[tos]["clients_B"],
+                                                            _yaxis_categories=self.client_dict_B[tos]["resource_alias_B"],
+                                                            _graph_image_name=f"{tos}_B",
+                                                            _label=self.client_dict_B[tos]['labels'],
+                                                            _color_name=self.client_dict_B[tos]['colors'],
+                                                            _color_edge=['black'],
+                                                            _graph_title=f"Individual {tos} upstream side traffic measurement - side b (WIFI) traffic",
+                                                            _title_size=10,
+                                                            _figsize=(x_fig_size, y_fig_size),
+                                                            _show_bar_value=True,
+                                                            _enable_csv=True,
+                                                            _text_font=8,
+                                                            _legend_loc="best",
+                                                            _legend_box=(1.0, 1.0)
+                                                            )
+                    graph_png = graph.build_bar_graph_horizontal()
+                    self.report.set_graph_image(graph_png)
+                    self.report.move_graph_image()
+                    self.report.build_graph()
+                    self.report.set_csv_filename(graph_png)
+                    self.report.move_csv_file()
+
+                    tos_dataframe_B = {
+                        " Client Alias ": self.client_dict_B[tos]['resource_alias_B'],
+                        " Host eid ": self.client_dict_B[tos]['resource_eid_B'],
+                        " Host Name ": self.client_dict_B[tos]['resource_host_B'],
+                        " Device Type / HW Ver ": self.client_dict_B[tos]['resource_hw_ver_B'],
+                        " Endp Name": self.client_dict_B[tos]["clients_B"],
+                        # TODO get correct size
+                        " Port Name ": self.client_dict_B[tos]['port_B'],
+                        " Mode ": self.client_dict_B[tos]['mode_B'],
+                        " Mac ": self.client_dict_B[tos]['mac_B'],
+                        " SSID ": self.client_dict_B[tos]['ssid_B'],
+                        " Channel ": self.client_dict_B[tos]['channel_B'],
+                        " Type of traffic ": self.client_dict_B[tos]['traffic_type_B'],
+                        " Traffic Protocol ": self.client_dict_B[tos]['traffic_protocol_B'],
+                        " Offered Upload Rate Per Client": self.client_dict_B[tos]['offered_upload_rate_B'],
+                        " Offered Download Rate Per Client": self.client_dict_B[tos]['offered_download_rate_B'],
+                        " Upload Rate Per Client": self.client_dict_B[tos]['ul_B'],
+                        " Download Rate Per Client": self.client_dict_B[tos]['dl_B'],
+                        " Drop Percentage (%)": self.client_dict_B[tos]['download_rx_drop_percent_B']
                     }
-                    dataframe3 = pd.DataFrame(tos_dataframe_A)
+
+                    dataframe3 = pd.DataFrame(tos_dataframe_B)
                     self.report.set_table_dataframe(dataframe3)
                     self.report.build_table()
 
-        # TODO both client_dict_A and client_dict_B contains the same information
-        for tos in tos_list:
-            if (self.client_dict_B[tos]["ul_B"] and self.client_dict_B[tos]["dl_B"]):
-                min_bps_a = self.client_dict_B["min_bps_a"]
-                min_bps_b = self.client_dict_B["min_bps_b"]
+            # L3 total traffic # TODO csv_results_file present yet not readable
+            # self.report.set_table_title("Total Layer 3 Cross-Connect Traffic across all Stations")
+            # self.report.build_table_title()
+            # self.report.set_table_dataframe_from_csv(self.csv_results_file)
+            # self.report.build_table()
 
-                dataset_list = [self.client_dict_B[tos]["ul_B"], self.client_dict_B[tos]["dl_B"]]
-                dataset_length = len(self.client_dict_B[tos]["ul_B"])
+            # empty dictionarys evaluate to false , placing tables in output
+            if bool(self.dl_port_csv_files):
+                for key, value in self.dl_port_csv_files.items():
+                    if self.csv_data_to_report:
+                        # read the csv file
+                        self.report.set_table_title("Layer 3 Cx Traffic  {key}".format(key=key))
+                        self.report.build_table_title()
+                        self.report.set_table_dataframe_from_csv(value.name)
+                        self.report.build_table()
 
-                x_fig_size = 20
-                y_fig_size = len(self.client_dict_B[tos]["clients_B"]) * .4 + 5
-
-                self.report.set_obj_html(
-                    _obj_title=f"Individual throughput upstream endp,  offered upload bps: {min_bps_a} offered download bps: {min_bps_b} /station for traffic {tos} (WiFi).",
-                    _obj=f"The below graph represents individual throughput for {dataset_length} clients running {tos} "
-                    f"(WiFi) traffic.  Y- axis shows “Client names“ and X-axis shows “"
-                    f"Throughput in Mbps”.")
-                self.report.build_objective()
-
-                graph = lf_graph.lf_bar_graph_horizontal(_data_set=dataset_list,
-                                                         _xaxis_name="Throughput in bps",
-                                                         _yaxis_name="Client names",
-                                                         # _yaxis_categories=self.client_dict_B[tos]["clients_B"],
-                                                         _yaxis_categories=self.client_dict_B[tos]["resource_alias_B"],
-                                                         _graph_image_name=f"{tos}_B",
-                                                         _label=self.client_dict_B[tos]['labels'],
-                                                         _color_name=self.client_dict_B[tos]['colors'],
-                                                         _color_edge=['black'],
-                                                         _graph_title=f"Individual {tos} upstream side traffic measurement - side b (WIFI) traffic",
-                                                         _title_size=10,
-                                                         _figsize=(x_fig_size, y_fig_size),
-                                                         _show_bar_value=True,
-                                                         _enable_csv=True,
-                                                         _text_font=8,
-                                                         _legend_loc="best",
-                                                         _legend_box=(1.0, 1.0)
-                                                         )
-                graph_png = graph.build_bar_graph_horizontal()
-                self.report.set_graph_image(graph_png)
-                self.report.move_graph_image()
-                self.report.build_graph()
-                self.report.set_csv_filename(graph_png)
-                self.report.move_csv_file()
-
-                tos_dataframe_B = {
-                    " Client Alias ": self.client_dict_B[tos]['resource_alias_B'],
-                    " Host eid ": self.client_dict_B[tos]['resource_eid_B'],
-                    " Host Name ": self.client_dict_B[tos]['resource_host_B'],
-                    " Device Type / HW Ver ": self.client_dict_B[tos]['resource_hw_ver_B'],
-                    " Endp Name": self.client_dict_B[tos]["clients_B"],
-                    # TODO get correct size
-                    " Port Name ": self.client_dict_B[tos]['port_B'],
-                    " Mode ": self.client_dict_B[tos]['mode_B'],
-                    " Mac ": self.client_dict_B[tos]['mac_B'],
-                    " SSID ": self.client_dict_B[tos]['ssid_B'],
-                    " Channel ": self.client_dict_B[tos]['channel_B'],
-                    " Type of traffic ": self.client_dict_B[tos]['traffic_type_B'],
-                    " Traffic Protocol ": self.client_dict_B[tos]['traffic_protocol_B'],
-                    " Offered Upload Rate Per Client": self.client_dict_B[tos]['offered_upload_rate_B'],
-                    " Offered Download Rate Per Client": self.client_dict_B[tos]['offered_download_rate_B'],
-                    " Upload Rate Per Client": self.client_dict_B[tos]['ul_B'],
-                    " Download Rate Per Client": self.client_dict_B[tos]['dl_B'],
-                    " Drop Percentage (%)": self.client_dict_B[tos]['download_rx_drop_percent_B']
-                }
-
-                dataframe3 = pd.DataFrame(tos_dataframe_B)
-                self.report.set_table_dataframe(dataframe3)
-                self.report.build_table()
-
-        # L3 total traffic # TODO csv_results_file present yet not readable
-        # self.report.set_table_title("Total Layer 3 Cross-Connect Traffic across all Stations")
-        # self.report.build_table_title()
-        # self.report.set_table_dataframe_from_csv(self.csv_results_file)
-        # self.report.build_table()
-
-        # empty dictionarys evaluate to false , placing tables in output
-        if bool(self.dl_port_csv_files):
-            for key, value in self.dl_port_csv_files.items():
-                if self.csv_data_to_report:
-                    # read the csv file
-                    self.report.set_table_title("Layer 3 Cx Traffic  {key}".format(key=key))
+                    # read in column heading and last line
+                    df = pd.read_csv(value.name)
+                    last_row = df.tail(1)
+                    self.report.set_table_title(
+                        "Layer 3 Cx Traffic Last Reporting Interval {key}".format(key=key))
                     self.report.build_table_title()
-                    self.report.set_table_dataframe_from_csv(value.name)
+                    self.report.set_table_dataframe(last_row)
                     self.report.build_table()
-
-                # read in column heading and last line
-                df = pd.read_csv(value.name)
-                last_row = df.tail(1)
-                self.report.set_table_title(
-                    "Layer 3 Cx Traffic Last Reporting Interval {key}".format(key=key))
-                self.report.build_table_title()
-                self.report.set_table_dataframe(last_row)
-                self.report.build_table()
 
     def write_report(self):
         """Write out HTML and PDF report as configured."""
@@ -6541,7 +7118,7 @@ class L3VariableTime(Realm):
             os.makedirs(test_name_dir)
         shutil.copytree(curr_path, test_name_dir, dirs_exist_ok=True)
 
-    def webgui_finalize(self):
+    def webgui_finalize(self, coord=None, rot=None):
         """Test report finalization run when in WebGUI mode."""
         last_entry = self.overall[len(self.overall) - 1]
         last_entry["status"] = "Stopped"
@@ -6550,7 +7127,10 @@ class L3VariableTime(Realm):
         self.overall.append(last_entry)
 
         df1 = pd.DataFrame(self.overall)
-        df1.to_csv('{}/overall_multicast_throughput.csv'.format(self.result_dir), index=False)
+        if coord is not None:
+            df1.to_csv('{}/overall_multicast_throughput_coord_{}_rot_{}.csv'.format(self.result_dir, coord, rot), index=False)
+        else:
+            df1.to_csv('{}/overall_multicast_throughput.csv'.format(self.result_dir), index=False)
 
     def get_pass_fail_list(self, tos, up, down):
         res_list = []
@@ -7912,6 +8492,12 @@ INCLUDE_IN_README: False
     test_l3_parser.add_argument("--real", action="store_true", help='For testing on real devies')
     test_l3_parser.add_argument('--get_live_view', help="If true will heatmap will be generated from testhouse automation WebGui ", action='store_true')
     test_l3_parser.add_argument('--total_floors', help="Total floors from testhouse automation WebGui ", default="0")
+    test_l3_parser.add_argument('--robot_test',help='to trigger robot test', action='store_true')
+    test_l3_parser.add_argument('--robot_ip', type=str,default='localhost', help='hostname for where Robot server is running')
+    test_l3_parser.add_argument('--robot_port', type=str,default=5000, help='port Robot HTTP service is running on')
+    test_l3_parser.add_argument('--coordinate', type=str, default='',  help="The coordinate contains list of coordinates to be")
+    test_l3_parser.add_argument('--rotation', type=str, default='',  help="The rotation contains list of rotations to be")
+
     parser.add_argument('--help_summary',
                         default=None,
                         action="store_true",
@@ -7969,6 +8555,27 @@ and generate a report.
         logger_config.load_lf_logger_config()
 
     validate_args(args)
+
+    # Parse robot coordinates and rotations
+    robot_coordinates = []
+    robot_rotations = []
+    
+    if args.robot_test and args.coordinate:
+        try:
+            coord_groups = args.coordinate.split(',')
+            for coord_group in coord_groups:
+                coords = [str(coord.strip()) for coord in coord_group.split(',')]
+                robot_coordinates.append(coords)
+        except Exception as e:
+            logger.error(f"Error parsing robot coordinates: {e}")
+    
+    if args.robot_test and args.rotation:
+        try:
+            rotations = [str(rot.strip()) for rot in args.rotation.split(',')]
+            robot_rotations = rotations
+        except Exception as e:
+            logger.error(f"Error parsing robot rotations: {e}")
+
     endp_input_list = []
     graph_input_list = []
     if args.real:
@@ -8525,6 +9132,13 @@ and generate a report.
         # for uniformity from webGUI result_dir as variable is used insead of local_lf_report_dir
         result_dir=args.local_lf_report_dir,
 
+        # for Robot execution
+        robot_test=args.robot_test,
+        robot_ip=args.robot_ip,
+        robot_port=args.robot_port,
+        coordinate=args.coordinate,
+        rotation=args.rotation,
+
         # wifi extra configuration
         key_mgmt_list=key_mgmt_list,
         pairwise_list=pairwise_list,
@@ -8583,7 +9197,11 @@ and generate a report.
 
     # Run test
     logger.info("Starting test")
-    ip_var_test.start(False)
+    if (args.robot_test and any(etype in args.endp_type for etype in ["mc_udp", "mc_udp6"])):
+            logger.info("Multicast robot test detected")
+            ip_var_test.perform_robo()
+    else:
+        ip_var_test.start(False)
 
     if args.wait > 0:
         logger.info(f"Pausing {args.wait} seconds for manual inspection before test conclusion and "
