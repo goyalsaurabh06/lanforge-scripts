@@ -266,7 +266,7 @@ class Youtube(Realm):
                     self.get_initial_data()
 
                     while datetime.now() < end_time or not self.check_gen_cx():
-                        self.get_data_from_api()
+                        self.process_data()
                         time.sleep(1)
 
                     self.generic_endps_profile.stop_cx()
@@ -279,7 +279,7 @@ class Youtube(Realm):
                 self.get_initial_data()
 
                 while datetime.now() < end_time or not self.check_gen_cx():
-                    self.get_data_from_api()
+                    self.process_data()
                     time.sleep(1)
 
                 self.generic_endps_profile.stop_cx()
@@ -359,27 +359,29 @@ class Youtube(Realm):
         self.report.test_setup_table(
             test_setup_data=test_setup_info, value='Test Parameters')
         
-        for coordinate in self.coordinates_list:
-            if self.rotations_enabled:
-                for angle in self.angles_list:
-                    current_cord = coordinate
-                    current_angle = angle
-                    self.add_frames_graphs_to_report(current_cord, current_angle)
-            else:
-                current_cord = coordinate
-                current_angle = 0
-                self.add_frames_graphs_to_report(current_cord, current_angle)
-        
         # Move only CSV files from current directory to report directory
-        for file_name in os.listdir('.'):
-            if file_name.endswith('.csv'):
-                self.move_files(file_name, self.report_path_date_time)
+        if self.do_webUI:
+            for file_name in os.listdir(self.ui_report_dir):
+                if file_name.endswith('.csv'):
+                    source_file = os.path.join(self.ui_report_dir, file_name)
+                    self.move_files(source_file, self.report_path_date_time)
+        else:
+            for file_name in os.listdir('.'):
+                if file_name.endswith('.csv'):
+                    self.move_files(file_name, self.report_path_date_time)
 
         
         original_dir = os.getcwd()
-
         os.chdir(self.report_path_date_time)
         
+        for coordinate in self.coordinates_list:
+            if self.rotations_enabled:
+                for angle in self.angles_list:
+                    self.add_frames_graphs_to_report(coordinate, angle)
+            else:
+                self.add_frames_graphs_to_report(coordinate, 0)
+        
+    
         for hostname in self.real_sta_hostname:
             self.add_buffer_health_graphs_to_report(hostname)
 
@@ -782,18 +784,11 @@ class Youtube(Realm):
         return group_test_results
     
     def get_initial_data(self):
-        initial_data = self.get_data_from_api()
+        initial_data = self.process_data()
 
-        while len(initial_data) == 0:
-            initial_data = self.get_data_from_api()
+        while not initial_data:
+            initial_data = self.process_data()
             time.sleep(1)
-        # if initial_data:
-        #     end_time_webgui = []
-        #     for i in range(len(self.device_names)):
-        #         end_time_webgui.append(initial_data['result'].get(self.device_names[i], {}).get('stop', False))
-        # else:
-        #     for _i in range(len(self.device_names)):
-        #         end_time_webgui.append("")
 
 
     def select_real_devices(self, real_devices, real_sta_list=None, base_interop_obj=None):
@@ -909,18 +904,15 @@ class Youtube(Realm):
         self.generic_endps_profile.stop_cx()
         self.stop_time = datetime.now()
 
-    def get_data_from_api(self):
+    def process_data(self):
         """
-        Retrieves YouTube streaming statistics from an API endpoint.
+        Process the data received from the stats API response.
         Returns:
             dict or None: The fetched data if successful, None otherwise.
         """
         self.devices_list = []
-        url = "http://localhost:5002/youtube_stats"
-        response = requests.get(url)
-        if response.status_code == 200:
-            self.data = response.json()
-            result_data = self.data.get("result", {})
+        if self.stats_api_response:
+            result_data = self.stats_api_response
             for device_name, device_data in result_data.items():
                 stats = {key: value for key, value in device_data.items() if key != "stop"}
                 timestamp = stats.get("Timestamp", {})
@@ -973,9 +965,9 @@ class Youtube(Realm):
                         row.append(self.current_angle)
                     writer.writerow(row)
 
-            return self.data
+            return result_data
         else:
-            logging.error(f"Failed to fetch data from API. Status code: {response.status_code}")
+            logging.info(f"No data received Yet, Waiting for data...")
             return None
 
     def start_flask_server(self):
@@ -1030,31 +1022,18 @@ class Youtube(Realm):
                         self.stats_api_response[device_name] = {}
                     self.stats_api_response[device_name] = {
                         **stats,
-                        "stop": stop
+                        "stop": stop,
+                        "current_cord": self.current_cord,
+                        "current_angle": self.current_angle,
+                        "rotations_enabled": self.rotations_enabled,
                     }
 
                 return jsonify({"message": "Stats updated"}), 200
 
             elif request.method == 'GET':
-                return jsonify({"result": self.stats_api_response}), 200
+                return jsonify(self.stats_api_response), 200
 
             return jsonify({"error": "Invalid request"}), 400
-
-        @app.route('/read_youtube_data_from_csv', methods=['GET'])
-        def read_youtube_data_from_csv():
-            """
-            API endpoint to read YouTube data from CSV files and return the last row for each device.
-            """
-            device_data = {}
-            for csv_file_path in self.devices_list:
-                if not os.path.isfile(csv_file_path):
-                    continue
-                df = pd.read_csv(csv_file_path)
-                if not df.empty:
-                    last_row = df.iloc[-1].to_dict()
-                    device_name = os.path.basename(csv_file_path).split('_youtube_stats_report')[0]
-                    device_data[device_name] = last_row
-            return jsonify({"result": device_data}), 200
 
         def run_flask():
             app.run(host="0.0.0.0", port=5002, debug=False, use_reloader=False)
@@ -1067,12 +1046,12 @@ class Youtube(Realm):
     def move_files(self, source_file, dest_dir):
         # Ensure the source file exists
         if not os.path.isfile(source_file):
-            logging.ERROR(f"Source file '{source_file}' does not exist or is not a regular file.")
+            logging.error(f"Source file '{source_file}' does not exist or is not a regular file.")
             return
 
         # Ensure the destination directory exists
         if not os.path.exists(dest_dir):
-            logging.ERROR(f"Destination directory '{dest_dir}' does not exist.")
+            logging.error(f"Destination directory '{dest_dir}' does not exist.")
             return
 
         try:
@@ -1083,7 +1062,7 @@ class Youtube(Realm):
             logging.info(f"Successfully moved '{source_file}' to '{dest_file}'.")
 
         except Exception as e:
-            logging.ERROR(f"Failed to move '{source_file}' to '{dest_dir}': {e}")
+            logging.error(f"Failed to move '{source_file}' to '{dest_dir}': {e}")
 
     def shutdown(self):
         """
@@ -1930,7 +1909,7 @@ NOTES:
                 youtube.get_initial_data()
 
                 while datetime.now() < end_time or not youtube.check_gen_cx():
-                    youtube.get_data_from_api()
+                    youtube.process_data()
                     time.sleep(1)
 
                 youtube.generic_endps_profile.stop_cx()
