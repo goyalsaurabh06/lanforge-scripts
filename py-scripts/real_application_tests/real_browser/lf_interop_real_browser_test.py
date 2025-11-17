@@ -860,12 +860,16 @@ class RealBrowserTest(Realm):
             if user == '':
                 self.serial_list.append('')
             else:
-                for mobile_device in interop_mobile_data:
-                    for serial, device_data in mobile_device.items():
-                        if device_data.get('user-name') == user:
-                            serial_no = serial.split('.')[2]
-                            self.serial_list.append(serial_no)
-                            break
+                if type(interop_mobile_data) is dict:
+                    serial_no = interop_mobile_data.get("name").split('.')[2]
+                    self.serial_list.append(serial_no)
+                else:
+                    for mobile_device in interop_mobile_data:
+                        for serial, device_data in mobile_device.items():
+                            if device_data.get('user-name') == user:
+                                serial_no = serial.split('.')[2]
+                                self.serial_list.append(serial_no)
+                                break
         return station_name, laptops, laptop_os_types, user_name, mac_address,
 
     def start_flask_server(self):
