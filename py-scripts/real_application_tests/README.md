@@ -135,6 +135,32 @@ python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "https://mi.
 
 ---
 
+# Ookla Speed Test
+
+## Overview of Scripts
+
+| Script              | Description |
+|---------------------|-------------|
+| `lf_interop_speedtest.py` | Main script for creating generic cross-connections, monitoring the test, generating reports, and creating a Flask server. |
+| `ookla.py`       | Selenium script that launches browser and initiates ookla speedtest for laptops, for android need ookla speedtest app. |
+
+## Script Files and Their Placement
+
+| Device          | Path                                      | Files |
+|---------------|--------------------------------|-------|
+| Lanforge       | `/home/lanforge/lanforge-scripts/py-scripts/` | `lf_interop_speedtest.py` |
+| Windows        | `C:\Program Files (x86)\LANforge-Server` | `ookla.py` |
+| Linux         | `/home/lanforge` | `ookla.py`|
+| MacOS         | `/Users/lanforge` | `ookla.py`|
+
+## Running the Ookla Speed Test
+Navigate to `/home/lanforge/lanforge-scripts/py-scripts/` and execute the script:
+
+```bash
+python3 lf_interop_speedtest.py --mgr 192.168.214.219 --device_list 1.10,1.23 --iteration 2 --dowebgui --cleanup
+```
+
+---
 
 ## Notes:
 - **Please run the `install_dependencies.py` file on both the client side and the LANforge side before executing any tests.**
