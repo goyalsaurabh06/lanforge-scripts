@@ -92,6 +92,7 @@ base = importlib.import_module('py-scripts.lf_base_interop_profile')
 base_RealDevice = base.RealDevice
 
 DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
+# robo_base_class = importlib.import_module("py-scripts.lf_base_robo")
 robo_base_class = importlib.import_module("py-scripts.lf_robo_base_class")
 
 # Importing modules dynamically
@@ -208,14 +209,14 @@ class Youtube(Realm):
         self.selected_profiles = selected_profiles
         self.config_obj = config_obj
         self.robo_ip = robo_ip
-        self.robo_obj = robo_base_class.RobotClass()
+        self.robo_obj = robo_base_class.RobotClass(robo_ip=self.robo_ip, angle_list=angles_list)
         self.coordinates_list = coordinates_list
         self.angles_list = angles_list
         self.current_cord = current_cord
         self.current_angle = current_angle
         self.do_robo = do_robo
         self.rotations_enabled = rotations_enabled
-        self.robo_obj.robo_ip = self.robo_ip
+        self.radians_list = self.robo_obj.angles_to_radians(self.angles_list)
 
 
     def stop(self):
@@ -248,13 +249,11 @@ class Youtube(Realm):
     
     def perform_robo_test(self):
         for coordinate in self.coordinates_list:
-            self.robo_obj.move_to_coordinate(coordinate=coordinate)
-            # self.robo_obj.check_coordinate_reached(target_coordinate=coordinate)
+            self.robo_obj.move_to_coordinate(coord=coordinate)
             self.current_cord = coordinate
             if self.rotations_enabled:
-                for angle in self.angles_list:
-                    self.robo_obj.rotate_angle(x=0, y=1, angle=angle)
-                    # self.robo_obj.check_angle_reached(target_angle=angle)
+                for angle, rad in zip(self.angles_list, self.radians_list):
+                    self.robo_obj.rotate_angle(angle=rad)
                     self.current_angle = angle
                     self.start_generic()
 
@@ -568,7 +567,7 @@ class Youtube(Realm):
                                         )
         graph_image = graph.build_bar_graph_horizontal()
         self.report.set_graph_image(graph_image)
-        self.report.move_graph_image()
+        # self.report.move_graph_image()
         self.report.build_graph()
 
         self.report.set_table_title(f'Test Results for coordinate: {current_cord} and angle: {current_angle}°')
