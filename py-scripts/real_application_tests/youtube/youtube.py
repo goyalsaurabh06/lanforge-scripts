@@ -112,8 +112,6 @@ class YouTube(object):
             return False
 
     def enable_stats(self):
-
-        # movie_player = self.driver.find_element(By.CSS_SELECTOR,'.html5-video-container')
         movie_player = WebDriverWait(self.driver, 60).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, ".html5-video-container"))
         )
@@ -122,9 +120,6 @@ class YouTube(object):
         )
         self.hover = ActionChains(self.driver).move_to_element(movie_player)
         self.hover.perform()
-        # movie_player = WebDriverWait(self.driver, 20).until(
-        #     EC.presence_of_element_located((By.CSS_SELECTOR, '.html5-video-container'))
-        # )
         movie_player = WebDriverWait(self.driver, 60).until(
             EC.element_to_be_clickable((By.CSS_SELECTOR, ".html5-video-container"))
         )
@@ -150,8 +145,6 @@ class YouTube(object):
         )
         stats_data = elem.text
         stats_data = stats_data.replace(" ", "")
-        # print("checking element",elem)
-        # print(stats_data)
         viewport_match = re.search(
             r"Viewport/Frames([\d+x]+)(?:\*[\d.]+)?/([\d]+)droppedof([\d]+)", stats_data
         )
@@ -223,10 +216,6 @@ class YouTube(object):
             print("Unable to do full screen")
 
     def play(self):
-        # initial_data = self.get_initial_data_from_api()
-        # if initial_data:
-        #    print("Initial data fetched:", initial_data)
-
         if not self.load_video():
             self.stop()
             return
@@ -249,14 +238,9 @@ class YouTube(object):
         print("start playing")
         self.start()
         self.full_screen()
-        # print("self.duration")
-        # print(self.duration)
         if self.duration:
             end_time = datetime.now() + timedelta(minutes=self.duration)
-            # print("endtimeee",end_time,self.duration)
             while datetime.now() <= end_time:
-                # self.dataset.append(self.get_stats())
-                # time.sleep(1)
                 if self.check_stop_signal():
                     break
                 stats = self.get_stats()
@@ -277,8 +261,6 @@ class YouTube(object):
                 delta = timedelta(minutes=time_array[0], seconds=time_array[1])
             end_time = datetime.now() + timedelta(seconds=delta.total_seconds())
             while datetime.now() < end_time:
-                # self.dataset.append(self.get_stats())
-                # time.sleep(1)
                 stats = self.get_stats()
                 self.dataset.append(stats)
                 self.send_stats_to_api(stats, self.device_name)
@@ -307,16 +289,9 @@ class YouTube(object):
     def send_stats_to_api(self, stats, device_name, stop=False):
         try:
             url = f"http://{self.host}:5002/youtube_stats"
-            # url=f"http://10.253.8.108:8000/youtube_stats"
-
             headers = {
                 "Content-Type": "application/json",
             }
-            # data = {
-            #     'name' : device_name,
-            #     'stats': stats,
-            #     'stop': stop,
-            # }
             data = {
                 device_name: stats,  # Device name as the key and stats as the value
                 "stop": stop,  # Stop remains as a separate key
@@ -331,24 +306,6 @@ class YouTube(object):
                 )
         except Exception as e:
             print(f"An error occurred while sending stats to API: {e}")
-
-    def get_initial_data_from_api(self):
-        try:
-            url = f"http://{self.host}:5002/youtube_stats"
-            # url=f"http://10.253.8.108:8000/youtube_stats"
-            response = requests.get(url)
-            if response.status_code == 200:
-                data = response.json()
-                print("Successfully fetched data from API:", data)
-                return data
-            else:
-                print(
-                    f"Failed to fetch data from API. Status code: {response.status_code}"
-                )
-                return None
-        except Exception as e:
-            print(f"An error occurred while fetching data from API: {e}")
-            return None
 
 
 def main():
