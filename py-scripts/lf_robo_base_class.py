@@ -3,26 +3,28 @@ import requests
 import time
 import json
 import logging
+import math
 
 class RobotClass:
-    def __init__(self):
-        self.robo_ip = ""
+    def __init__(self, robo_ip=None, angle_list=None):
+        self.robo_ip = robo_ip
         self.navdata_json = {}
         self.current_coordinate = None
         self.current_angle = None
         self.result_directory = None
         self.runtime_dir = None
         self.ip = ""
+        self.angle_list = angle_list
 
-    def move_to_coordinate(self, coordinate=None, result_dir=None):
+    def move_to_coordinate(self, coord=None, result_dir=None):
         url = f"http://{self.robo_ip}/cmd/nav_name"
-        data = {"coordinate": coordinate}
+        data = {"coordinate": coord}
         self.result_directory = result_dir
         stopped = False
         print(f"[MOVE] Sending coordinates: {data}")
         robo_moved = False
         self.navdata_json = {
-            "Canbee_location": coordinate,
+            "Canbee_location": coord,
             "status": "Running",
             "Canbee_angle": 0
         }
@@ -54,8 +56,7 @@ class RobotClass:
         print("[SAVE] Updated navdata.json:", self.navdata_json)
         return robo_moved,stopped
 
-    def rotate_angle(self, x, y, angle):
-
+    def rotate_angle(self, x=0, y=0, angle=0):
         url = f"http://{self.robo_ip}/cmd/nav_angle"
         data = {"x": x, "y": y, "angle": angle}
 
@@ -69,6 +70,17 @@ class RobotClass:
         # ✅ Only update the angle key — don't overwrite
         if not self.navdata_json:
             self.navdata_json = {}
+    
+    def angles_to_radians(self, angles):
+        result = []
+        for angle in angles:
+            angle=float(angle)
+            if angle > 180:
+                angle -= 360
+            elif angle <= -180:
+                angle += 360
+            result.append(round(math.radians(angle), 2))
+        return result
 
       
       
