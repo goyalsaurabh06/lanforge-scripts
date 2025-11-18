@@ -93,8 +93,6 @@ class TransferFiles:
                 self.successful_hosts.append(ip_address)
                 del self.failed_hosts[ip_address]   # remove entry, so it won't show in failed results
 
-                
-
         except Exception as e:
             error_msg = f"Error while transferring files to {ip_address}: {e}"
             logging.error(error_msg)
@@ -128,7 +126,6 @@ class TransferFiles:
         else:
             print("❌ No successful transfers.")
 
-
         if self.failed_hosts:
             print("\n================== ❌ FAILED TRANSFERS ==================\n")
             for host, data in self.failed_hosts.items():
@@ -147,8 +144,6 @@ class TransferFiles:
                 print("----------------------------------------------------------")
         else:
             print("\nNo failed transfers.")
-
-
 
 
 def main():
