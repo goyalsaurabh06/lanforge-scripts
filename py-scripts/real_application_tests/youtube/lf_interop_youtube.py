@@ -208,15 +208,16 @@ class Youtube(Realm):
         self.selected_groups = selected_groups
         self.selected_profiles = selected_profiles
         self.config_obj = config_obj
-        self.robo_ip = robo_ip
-        self.robo_obj = robo_base_class.RobotClass(robo_ip=self.robo_ip, angle_list=angles_list)
-        self.coordinates_list = coordinates_list
-        self.angles_list = angles_list
-        self.current_cord = current_cord
-        self.current_angle = current_angle
         self.do_robo = do_robo
-        self.rotations_enabled = rotations_enabled
-        self.radians_list = self.robo_obj.angles_to_radians(self.angles_list)
+        if self.do_robo:
+            self.robo_ip = robo_ip
+            self.robo_obj = robo_base_class.RobotClass(robo_ip=self.robo_ip, angle_list=angles_list)
+            self.coordinates_list = coordinates_list
+            self.angles_list = angles_list
+            self.current_cord = current_cord
+            self.current_angle = current_angle
+            self.rotations_enabled = rotations_enabled
+            self.radians_list = self.robo_obj.angles_to_radians(self.angles_list)
 
 
     def stop(self):
@@ -1022,10 +1023,11 @@ class Youtube(Realm):
                     self.stats_api_response[device_name] = {
                         **stats,
                         "stop": stop,
-                        "current_cord": self.current_cord,
-                        "current_angle": self.current_angle,
-                        "rotations_enabled": self.rotations_enabled,
                     }
+                    if self.do_robo:
+                        self.stats_api_response[device_name]["current_angle"] = self.current_angle
+                        self.stats_api_response[device_name]["current_cord"] = self.current_cord
+                        self.stats_api_response[device_name]["rotations_enabled"] = self.rotations_enabled
 
                 return jsonify({"message": "Stats updated"}), 200
 
