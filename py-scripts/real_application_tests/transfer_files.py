@@ -37,7 +37,8 @@ class TransferFiles:
                                      './real_browser/real_browser.py',
                                      './real_browser/real_browser.bat',
                                      './youtube/youtube_stream.bat',
-                                     './youtube/youtube.py']
+                                     './youtube/youtube.py',
+                                     './speed_test/ookla.py']
             elif os_type.lower() == 'linux':
                 remote_dir = '/home/lanforge'
                 files_to_transfer = ['./zoom_automation/zoom_client.py',
@@ -47,8 +48,8 @@ class TransferFiles:
                                      './youtube/ctyt.bash',
                                      './youtube/youtube.py',
                                      './real_browser/real_browser.py',
-                                     './real_browser/ctrb.bash'
-                                     ]
+                                     './real_browser/ctrb.bash',
+                                     './speed_test/ookla.py']
             elif os_type.lower() == 'mac':
                 remote_dir = '/Users/lanforge'
                 files_to_transfer = ['./zoom_automation/zoom_client.py',
@@ -58,8 +59,8 @@ class TransferFiles:
                                      './youtube/ctyt.bash',
                                      './youtube/youtube.py',
                                      './real_browser/real_browser.py',
-                                     './real_browser/ctrb.bash'
-                                     ]
+                                     './real_browser/ctrb.bash',
+                                     './speed_test/ookla.py']
             else:
                 error_msg = f"Unsupported OS type: {os_type}"
                 logging.error(error_msg)
