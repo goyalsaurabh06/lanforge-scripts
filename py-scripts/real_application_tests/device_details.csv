@@ -1,0 +1,4 @@
+res,ip_address,username,password,os_type,device_status
+1.5,192.168.204.56,Administrator,lanforge,windows,1
+1.20,192.168.204.83,lanforge,lanforge,mac,1
+1.32,192.168.204.92,lanforge,lanforge,linux,1
