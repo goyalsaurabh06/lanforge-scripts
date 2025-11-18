@@ -17,8 +17,11 @@ class TransferFiles:
         if device_status == 0:
             logging.info(f"Skipping file transfer to {ip_address} (status: {device_status})")
             return
+        # Initialize structure for failed files
+        self.failed_hosts.setdefault(ip_address, {"host_error": None, "file_errors": []})
 
         client = None
+        sftp = None
         try:
             # Initialize SSH client
             client = paramiko.SSHClient()
@@ -60,7 +63,7 @@ class TransferFiles:
             else:
                 error_msg = f"Unsupported OS type: {os_type}"
                 logging.error(error_msg)
-                self.failed_hosts[ip_address] = error_msg
+                self.failed_hosts[ip_address]["host_error"] = error_msg
                 return
 
             # Start SFTP for file transfer
@@ -79,20 +82,29 @@ class TransferFiles:
                 except Exception as file_transfer_error:
                     error_msg = f"Failed to transfer {file} to {ip_address}: {file_transfer_error}"
                     logging.error(error_msg)
-                    self.failed_hosts[ip_address] = error_msg
+                    # Store the failed file details
+                    self.failed_hosts[ip_address]["file_errors"].append((file, str(file_transfer_error)))
                     break
+            # Host is successful only if BOTH conditions are clean:
+            if (
+                self.failed_hosts[ip_address]["host_error"] is None
+                and len(self.failed_hosts[ip_address]["file_errors"]) == 0
+            ):
+                self.successful_hosts.append(ip_address)
+                del self.failed_hosts[ip_address]   # remove entry, so it won't show in failed results
 
-            self.successful_hosts.append(ip_address)
-            sftp.close()
+                
 
         except Exception as e:
             error_msg = f"Error while transferring files to {ip_address}: {e}"
             logging.error(error_msg)
-            self.failed_hosts[ip_address] = error_msg
+            self.failed_hosts[ip_address]["host_error"] = error_msg
 
         finally:
             if client:
                 client.close()
+            if sftp:
+                sftp.close()
 
     def read_data_from_csv(self, csv_file):
         with open(csv_file, mode='r') as file:
@@ -107,21 +119,36 @@ class TransferFiles:
                 self.ssh_and_transfer_files(ip_address, username, password, os_type, device_status)
 
     def print_transfer_results(self):
-        logging.info("\nTransfer Summary:")
+        print("\n===================== 📦 TRANSFER SUMMARY =====================\n")
 
         if self.successful_hosts:
-            logging.info("\nSuccessful Transfers:")
+            print("✅ Successful Transfers:")
             for host in self.successful_hosts:
-                logging.info(f"  - {host}")
+                print(f"  • {host}")
         else:
-            logging.info("\nNo successful transfers.")
+            print("❌ No successful transfers.")
+
 
         if self.failed_hosts:
-            logging.error("\nFailed Transfers:")
-            for host, reason in self.failed_hosts.items():
-                logging.error(f"  - {host}: {reason}")
+            print("\n================== ❌ FAILED TRANSFERS ==================\n")
+            for host, data in self.failed_hosts.items():
+                print(f"Host: {host}")
+
+                host_err = data.get("host_error")
+                if host_err:
+                    print(f"  ► Host Error: {host_err}")
+
+                file_errors = data.get("file_errors") or []
+                if file_errors:
+                    print("  ► File Errors:")
+                    for filename, err in file_errors:
+                        print(f"      - {filename}: {err}")
+
+                print("----------------------------------------------------------")
         else:
-            logging.info("\nNo failed transfers.")
+            print("\nNo failed transfers.")
+
+
 
 
 def main():
