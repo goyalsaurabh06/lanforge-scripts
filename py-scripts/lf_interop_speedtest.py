@@ -1,4 +1,5 @@
 
+import json
 import sys
 import os
 import csv
@@ -19,17 +20,16 @@ if sys.version_info[0] != 3:
     print("This script requires Python3")
     exit()
 
+if 'py-json' not in sys.path:
+    sys.path.append(os.path.join(os.path.abspath('..'), 'py-json'))
 sys.path.append(os.path.join(os.path.abspath(__file__ + "../../../")))
+
 realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
 from lf_report import lf_report
 from lf_graph import lf_bar_graph
+from lf_base_robo import RobotClass
 
-interop_connectivity = importlib.import_module("py-json.interop_connectivity")
-lf_robo_base_class = importlib.import_module("py-scripts.lf_robo_base_class")
-# lf_bar_graph = importlib.import_module("py-scripts.lf_graph.lf_bar_graph")
-# lf_report = importlib.import_module("py-scripts.lf_report.lf_report")
-RobotClass = lf_robo_base_class.RobotClass
 
 class SpeedTest(Realm):
     def __init__(self, 
@@ -45,7 +45,6 @@ class SpeedTest(Realm):
             _debug_on=False,
             robot_test=False,
             robot_ip=None,
-            robot_port=None,
             coordinate=None,
             rotation=None):
         super().__init__(lfclient_host=manager_ip,
@@ -76,7 +75,7 @@ class SpeedTest(Realm):
 
         self.robot_test = robot_test
         self.robot_ip = robot_ip
-        self.robot_port = robot_port
+        self.robot_port = 5000
         self.coordinate = coordinate
         self.rotation = rotation
         
@@ -94,11 +93,25 @@ class SpeedTest(Realm):
             else:
                 self.total_robot_tests = len(self.coordinate_list)
 
-        if self.dowebgui:
-            print('Initiating Server for WebGUI Ingest')
-            self.change_port_to_ip()
-            self._post_url = f"http://{self.manager_ip}:5050/api/speedtest"
-            self._start_ingest_server() 
+        if  self.coordinate is not None: 
+            base_dir = os.path.dirname(os.path.dirname(self.result_dir))
+            nav_data = os.path.join(base_dir, 'nav_data.json') # To generate nav_data.json in webgui folder
+            with open(nav_data, "w") as file:
+                json.dump({}, file)
+
+            self.robot_obj = RobotClass(robo_ip=self.robot_ip)
+            self.robot_obj.robo_ip = f"{self.robot_ip}" # for Fake server testing use port :{self.robot_port}
+            self.robot_obj.nav_data_path=nav_data
+            self.robot_obj.runtime_dir=self.result_dir
+            self.robot_obj.ip=self.robot_ip
+            self.robot_obj.testname=self.instance
+            self.rotation_list = self.robot_obj.angles_to_radians(self.rotation_list)
+
+        print('Initiating Server for WebGUI Ingest')
+        self.change_port_to_ip()
+        self._post_url = f"http://{self.manager_ip}:5050/api/speedtest"
+        self._start_ingest_server() 
+
         #reporting variable
         self.selected_device_type = set()
         self.selected_resources = None
@@ -136,12 +149,11 @@ class SpeedTest(Realm):
 
     def write_robot_results_to_csv(self, test_number, csv_file):
         """Write results to CSV with robot-specific columns"""
-        
+
         csv_exists = os.path.isfile(csv_file)
-        
         csv_data = []
         table_data = []
-        
+
         # Normalize keys we received this test
         received = {}
         for raw_ip, data in self.result_json.items():
@@ -153,21 +165,21 @@ class SpeedTest(Realm):
                 "Download Latency": data.get("Download Latency", "N/A"),
                 "Upload Latency": data.get("Upload Latency", "N/A"),
             }
-        
+
         # Expected devices
         expected_ips = list(self.ip_hostname.keys()) or list(self.device_info.keys())
-        
+
         # Emit rows for devices
         for ip, data in received.items():
             dev_type = self.device_info.get(ip, "N/A")
             hostname_safe = self.ip_hostname.get(ip, ip)
-            
+
             download = data["download"]
             upload = data["upload"]
             idle_latency = data["Idle Latency"]
             down_latency = data["Download Latency"]
             up_latency = data["Upload Latency"]
-            
+
             # Add robot-specific columns
             csv_data.append([
                 test_number,
@@ -182,7 +194,7 @@ class SpeedTest(Realm):
                 down_latency,
                 up_latency
             ])
-            
+
             table_data.append([
                 test_number,
                 self.total_robot_tests,
@@ -196,7 +208,7 @@ class SpeedTest(Realm):
                 down_latency,
                 up_latency
             ])
-        
+
         # Handle missing devices
         missing_ips = [ip for ip in expected_ips if ip not in received]
         for ip in missing_ips:
@@ -221,7 +233,7 @@ class SpeedTest(Realm):
                 dev_type,
                 "N/A", "N/A", "N/A", "N/A", "N/A"
             ])
-        
+
         # Append to CSV
         with open(csv_file, "a", newline="") as csvfile:
             writer = csv.writer(csvfile)
@@ -232,7 +244,7 @@ class SpeedTest(Realm):
                     "Idle Latency", "Download Latency", "Upload Latency"
                 ])
             writer.writerows(csv_data)
-        
+
         # Print table
         print(f"\n Robot Speedtest Results for Test #{test_number}")
         try:
@@ -254,14 +266,14 @@ class SpeedTest(Realm):
             print("\t".join(headers))
             for row in table_data:
                 print("\t".join(str(item) for item in row))
-        
+
         if missing_ips:
             print(f"[NOTE] No data received for robot test {test_number} from: {', '.join(missing_ips)}")
         print("=" * 158)
 
     def store_robot_results_in_iteration_dict(self, test_number):
         """Store robot test results in iteration_dict for report generation"""
-        
+
         # Initialize the result_dict for this test
         self.result_dict = {
             'ip': [],
@@ -271,7 +283,7 @@ class SpeedTest(Realm):
             'download_lat': [],
             'upload_lat': []
         }
-        
+
         # Process received results
         received = {}
         for raw_ip, data in self.result_json.items():
@@ -283,21 +295,21 @@ class SpeedTest(Realm):
                 "Download Latency": data.get("Download Latency", "N/A"),
                 "Upload Latency": data.get("Upload Latency", "N/A"),
             }
-        
+
         # Expected devices
         expected_ips = list(self.ip_hostname.keys()) or list(self.device_info.keys())
-        
+
         # Store data for devices that reported
         for ip, data in received.items():
             dev_type = self.device_info.get(ip, "N/A")
             hostname_safe = self.ip_hostname.get(ip, ip)
-            
+
             download = data["download"]
             upload = data["upload"]
             idle_latency = data["Idle Latency"]
             down_latency = data["Download Latency"]
             up_latency = data["Upload Latency"]
-            
+
             # Accumulate into per-iter dicts for graphs/tables
             self.result_dict['ip'].append(ip)
             self.result_dict['hostname'].append(hostname_safe)
@@ -313,13 +325,13 @@ class SpeedTest(Realm):
             self.result_dict['upload_speed'].append(_num(upload))
             self.result_dict['download_lat'].append(_num(down_latency))
             self.result_dict['upload_lat'].append(_num(up_latency))
-        
+
         # Handle missing devices
         missing_ips = [ip for ip in expected_ips if ip not in received]
         for ip in missing_ips:
             dev_type = self.device_info.get(ip, "N/A")
             hostname_safe = self.ip_hostname.get(ip, ip)
-            
+
             # For graphs: use zeros so categories & lengths stay aligned
             self.result_dict['ip'].append(ip)
             self.result_dict['hostname'].append(hostname_safe)
@@ -327,24 +339,24 @@ class SpeedTest(Realm):
             self.result_dict['upload_speed'].append(0.0)
             self.result_dict['download_lat'].append(0.0)
             self.result_dict['upload_lat'].append(0.0)
-        
+
         # Store in iteration_dict using test_number as key
         self.iteration_dict[test_number] = self.result_dict.copy()
-        
+
         print(f"Stored robot test {test_number} data in iteration_dict")
         print(f"Data: {self.iteration_dict[test_number]}")
 
     def perform_single_robot_test(self, test_number, csv_file):
         """Execute a single speed test for robot testing"""
-        
+
         print(f"Starting speed test for robot test #{test_number}")
-        
+
         self.start_generic()
         print(f"Test started at {self.start_time}")
         time.sleep(50)  # Speedtest duration wait time
         self.stop_generic()
         time.sleep(20)
-        
+
         # Wait for posts from all expected devices
         expected_ips = self.get_expected_post_ips()
         deadline = time.time() + 120
@@ -353,72 +365,75 @@ class SpeedTest(Realm):
             if len(got) >= len(expected_ips):
                 break
             time.sleep(1)
-        
+
         # Store results in iteration_dict for report generation
         self.store_robot_results_in_iteration_dict(test_number)
-        
+
         # Write results with robot metadata
         self.write_robot_results_to_csv(test_number, csv_file)
         self.result_json = {}
 
     def perform_robot_testing(self, csv_file):
         """Execute robot tests based on coordinates and rotations"""
-        
-        robot_obj = RobotClass()
-        robot_obj.robo_ip = f"{self.robot_ip}:{self.robot_port}"
-        
         test_count = 0
-        
         # Condition 1: Both coordinates and rotations provided
         if self.rotation_list and self.rotation_list[0] != "":
             for coord in self.coordinate_list:
                 coord = coord.strip()
                 print(f"Moving to coordinate: {coord}")
-                robo_moved = robot_obj.move_to_coordinate(coord)
+                robo_moved, abort = self.robot_obj.move_to_coordinate(coord)
 
                 if robo_moved:
                     for angle in self.rotation_list:
+                        pause_coord,test_stopped_by_user=self.robot_obj.wait_for_battery(self.cleanup)
+                        if pause_coord:
+                            print("Robot battery low. Pausing at current location to charge.")
+                            exit(0)
+
                         angle = angle.strip()
                         print(f"Rotating to angle: {angle}")
-                        robo_rotated = robot_obj.rotate_angle(1, 2, angle)
+                        robo_rotated = self.robot_obj.rotate_angle(angle)
 
                         if robo_rotated:
                             test_count += 1
                             self.current_coordinate = coord
                             self.current_rotation = angle
                             self.robot_iteration_count = test_count
-                            
+
                             print(f"Starting robot test {test_count}/{self.total_robot_tests}")
                             print(f"Coordinate: {coord}, Rotation: {angle}")
-                            
+
                             # Perform the speed test
                             self.perform_single_robot_test(test_count, csv_file)
                         else:
                             print(f"Failed to rotate to angle {angle}")
                 else:
                     print(f"Failed to move to coordinate {coord}")
-        
+
         # Condition 2: Only coordinates provided (no rotations)
         else:
             for coord in self.coordinate_list:
+                pause_coord,test_stopped_by_user=self.robot_obj.wait_for_battery(self.cleanup)
+                if pause_coord:
+                    print("Robot battery low. Pausing at current location to charge.")
+                    exit(0)
+
                 coord = coord.strip()
                 print(f"Moving to coordinate: {coord}")
-                robo_moved = robot_obj.move_to_coordinate(coord)
-                
+                robo_moved = self.robot_obj.move_to_coordinate(coord)
                 if robo_moved:
                     test_count += 1
                     self.current_coordinate = coord
                     self.current_rotation = "None"  # No rotation
                     self.robot_iteration_count = test_count
-                    
+
                     print(f"Starting robot test {test_count}/{self.total_robot_tests}")
                     print(f"Coordinate: {coord}, Rotation: None")
-                    
+
                     # Perform the speed test
                     self.perform_single_robot_test(test_count, csv_file)
                 else:
                     print(f"Failed to move to coordinate {coord}")
-        
         print(f"Completed {test_count} robot tests")
 
     def change_port_to_ip(self):
@@ -440,7 +455,7 @@ class SpeedTest(Realm):
         try:
             from flask import Flask, request, jsonify
         except Exception:
-            print("[WARN] Flask not installed; --dowebgui ingest disabled.")
+            print("[WARN] Flask not installed; ingest disabled.")
             return
 
         app = Flask(__name__)
@@ -647,7 +662,6 @@ class SpeedTest(Realm):
             if resource_data_dict['device type'] in devices:
                 resource_data[resource_id] = resource_data_dict
         print(resource_data)
-        # {'1.23': {'app-id': '1616138664', 'bps-rx-3s': 736, 'bps-tx-3s': 1666, 'build date': '2025-07-04 09', 'cli-port': '0', 'cpu': ' (0Mhz)(x7)', 'ct-kernel': False, 'ctrl-ip': '192.168.204.54', 'ctrl-port': '0', 'device type': 'Android', 'df-boot': '0', 'df-home': '0', 'df-root': '0', 'eid': '1.23', 'entity id': 'NA', 'free mem': 1758988, 'free swap': 0, 'gps': '0.0X 0.0X 0m', 'hostname': '21HHAG06', 'hw version': 'samsung SM-A750F r10 sdk: 29', 'kernel': '', 'load': 0.0, 'max if-up': 15, 'max staged': 50, 'mem': 3788288, 'phantom': False, 'ports': '0 1 2 ', 'rf-path': 'Line-of-Sight', 'rx bytes': 3435587, 'shelf': '1', 'sta up': 12, 'sw version': '  5.5.1', 'swap': 0, 'tx bytes': 101819830, 'user': 'Samsungnew'}}
         return resource_data
 
     def get_resource_data(self):
@@ -697,19 +711,19 @@ class SpeedTest(Realm):
 
             for device in self.devices_data:
                 dev_type = self.devices_data[device]['device type']
-                
+
                 # For regular devices (Linux, Windows, Mac)
                 if dev_type == 'Linux/Interop':
-                    self.devices_data[device]['cmd'] = f"DISPLAY=:1 ./vrf_exec.bash {device.split('.')[2]} python3 ookla.py --type {self.type}{' --post_url ' + self._post_url if self.dowebgui and self._post_url else ''} --ip {self.devices_data[device]['ip']}"
+                    self.devices_data[device]['cmd'] = f"DISPLAY=:1 ./vrf_exec.bash {device.split('.')[2]} python3 ookla.py --type {self.type}{' --post_url ' + self._post_url if self._post_url else ''} --ip {self.devices_data[device]['ip']}"
                 elif dev_type == 'Windows':
-                    self.devices_data[device]['cmd'] = f"py ookla.py --type {self.type}{' --post_url ' + self._post_url if self.dowebgui and self._post_url else ''} --ip {self.devices_data[device]['ip']}"
+                    self.devices_data[device]['cmd'] = f"py ookla.py --type {self.type}{' --post_url ' + self._post_url if self._post_url else ''} --ip {self.devices_data[device]['ip']}"
                 elif dev_type == 'Mac OS':
-                    self.devices_data[device]['cmd'] = f"python3 ookla.py --type {self.type}{' --post_url ' + self._post_url if self.dowebgui and self._post_url else ''} --ip {self.devices_data[device]['ip']}"
-                
+                    self.devices_data[device]['cmd'] = f"python3 ookla.py --type {self.type}{' --post_url ' + self._post_url if self._post_url else ''} --ip {self.devices_data[device]['ip']}"
+
                 # For ADB devices (override previous command if serial exists)
                 if self.devices_data[device].get("serial"):
-                    self.devices_data[device]['cmd'] = f"python3 ookla.py --type adb --adb_devices {self.devices_data[device]['serial']}{' --post_url ' + self._post_url if self.dowebgui and self._post_url else ''} --ip {self.devices_data[device]['ip']}"
-                
+                    self.devices_data[device]['cmd'] = f"python3 ookla.py --type adb --adb_devices {self.devices_data[device]['serial']}{' --post_url ' + self._post_url if self._post_url else ''} --ip {self.devices_data[device]['ip']}"
+
                 # REMOVE THIS DUPLICATE SECTION:
                 # if self.dowebgui and self._post_url:
                 #     self.devices_data[device]['cmd'] += f' --post_url {self._post_url}'
@@ -1158,67 +1172,6 @@ class SpeedTest(Realm):
         else:
             return "/home/lanforge/speedtest.txt"
 
-    def perform_robo_speedtest(self, coordinate=None, rotation=None):
-        csv_file = f"speedtest_results_{self.instance}.csv"
-        self.start_generic()
-        print(f"Test started at {self.start_time}")
-        time.sleep(50) # Speedtest duration wait time.
-        self.stop_generic()
-        time.sleep(20)
-
-        # Wait until we have received posts from all expected devices (or timeout)
-        def expected_post_ips(devices):
-            want = []
-            for info in devices.values():
-                cmd = (info.get('cmd') or '')
-                ip  = (info.get('ip')  or '')
-                if ip and '--post_url' in cmd:
-                    want.append(ip)
-            # de-dup (stable)
-            seen, out = set(), []
-            for ip in want:
-                if ip not in seen:
-                    seen.add(ip)
-                    out.append(ip)
-            return out
-
-        def has_post_for(ip):
-            k = ip.replace('.', '_')
-            # ookla.py posts using this exact key format
-            return (k in self.result_json) or (ip in self.result_json)
-
-        expected_ips = expected_post_ips(self.devices_data)
-        deadline = time.time() + 120
-        while time.time() < deadline:
-            got = [ip for ip in expected_ips if has_post_for(ip)]
-            if len(got) >= len(expected_ips):
-                break
-            time.sleep(1)
-
-        # Finally, write results for this iteration
-        self.write_results_to_csv(iter, csv_file)
-        self.result_json = {}
-
-    def perform_robo(self):
-            if(self.rotation_list[0]!=""):
-                self.rotation_enabled=True
-
-            robot_obj = RobotClass()
-            robot_obj.robo_ip = "127.0.0.1:5000" 
-            for coordinate in range(len(self.coordinate_list)):
-                robo_moved = robot_obj.move_to_coordinate(self.coordinate_list[coordinate])
-                if robo_moved:
-                    # if no rotation mode
-                    if not self.rotation_enabled:
-                        self.perform_robo_speedtest(coordinate=coordinate, rotation=None)
-                        
-                    # if rotation mode
-                    else:
-                        for angle in range(len(self.rotation_list)):
-                            robo_rotated = robot_obj.rotate_angle(1,2,self.rotation_list[angle])
-                            if robo_rotated:
-                                self.perform_robo_speedtest(coordinate=coordinate, rotation=self.rotation_list[angle])
-
     def generate_report(self, result_dir_name, per_post_timeout=120, poll_interval=2):
         """
         Build report, guaranteeing per-iteration completeness:
@@ -1645,21 +1598,15 @@ Key metrics collected include:
                         help='hostname for where Robot server is running')
 
     optional.add_argument(
-                        '--robot_port',
-                        type=str,
-                        default=5000,
-                        help='port Robot HTTP service is running on')
-
-    optional.add_argument(
                         '--coordinate',
                         type=str,
-                        default='',
+                        default=None,
                         help="The coordinate contains list of coordinates to be ")
 
     optional.add_argument(
                         '--rotation',
                         type=str,
-                        default='',
+                        default=None,
                         help="The set of angles to rotate at a particular point")
 
     # TODO Commented lines are for implementation of incremental testing.
@@ -1695,7 +1642,6 @@ Key metrics collected include:
                             dowebgui=args.dowebgui,
                             robot_test=args.robot_test,
                             robot_ip=args.robot_ip,
-                            robot_port=args.robot_port,
                             coordinate=args.coordinate,
                             rotation=args.rotation)
 
