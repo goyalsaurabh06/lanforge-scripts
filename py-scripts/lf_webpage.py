@@ -212,6 +212,7 @@ class HttpDownload(Realm):
         self.rotation_list = rotation.split(',')
         self.current_coordinate = ""
         self.current_angle = 0
+        self.robot_data = {}
 
 # The 'phantom_check' will be handled within the 'get_real_client_list' function
     def get_real_client_list(self):
@@ -647,7 +648,15 @@ class HttpDownload(Realm):
             df1 = pd.DataFrame(self.data)
             df1.to_csv("http_datavalues.csv", index=False)
             if self.robot_test:
-                df1.to_csv(f"{self.current_coordinate}_http_datavalues.csv", index=False)
+                if self.rotation_enabled:
+                    self.robot_data.setdefault(self.current_coordinate, {})[self.current_angle] = self.data
+                else:
+                    self.robot_data[self.current_coordinate] = self.data
+                if self.dowebgui:
+                    df1.to_csv(f"{self.result_dir}/{self.current_coordinate}_http_datavalues.csv", index=False)
+                else:
+                    df1.to_csv(f"{self.current_coordinate}_http_datavalues.csv", index=False)
+        print("Test Stop done", self.robot_data)
 
     def get_layer4_data(self):
         """
@@ -821,6 +830,8 @@ class HttpDownload(Realm):
                 exit(1)
             if self.dowebgui:
                 df1.to_csv('{}/http_datavalues.csv'.format(self.result_dir), index=False)
+                if(self.robot_test):
+                    df1.to_csv(f"{self.result_dir}/{self.current_coordinate}_http_datavalues.csv", index=False)
             elif self.client_type == 'Real':
                 df1.to_csv("http_datavalues.csv", index=False)
                 # IF ROBOT TEST PERFORMED
@@ -1104,7 +1115,7 @@ class HttpDownload(Realm):
     def check_station_ip(self):
         pass
 
-    def generate_graph(self, dataset, lis, bands):
+    def generate_graph(self, dataset, lis, bands, graph_image_name = "ucg-avg_http"):
         bands = ['Download']
         if self.client_type == "Real":
             lis = self.devices_list
@@ -1138,14 +1149,14 @@ class HttpDownload(Realm):
                                         _color_name=['steelblue'],
                                         _show_bar_value=True,
                                         _enable_csv=True,
-                                        _graph_image_name="ucg-avg_http", _color_edge=['black'],
+                                        _graph_image_name=graph_image_name, _color_edge=['black'],
                                         _color=['steelblue'],
                                         _label=bands)
         graph_png = graph.build_bar_graph_horizontal()
         print("graph name {}".format(graph_png))
         return graph_png
 
-    def graph_2(self, dataset2, lis, bands):
+    def graph_2(self, dataset2, lis, bands, graph_name = "Total-url_http"):
         bands = ['Download']
         if self.client_type == "Real":
             lis = self.devices_list
@@ -1170,7 +1181,7 @@ class HttpDownload(Realm):
                                           _color_name=['orange'],
                                           _show_bar_value=True,
                                           _enable_csv=True,
-                                          _graph_image_name="Total-url_http", _color_edge=['black'],
+                                          _graph_image_name=graph_name, _color_edge=['black'],
                                           _color=['orange'],
                                           _label=bands)
         graph_png = graph_2.build_bar_graph_horizontal()
@@ -1200,14 +1211,69 @@ class HttpDownload(Realm):
                     print("Timeout: Images not found within 60 seconds.")
                     break
                 time.sleep(1)
-            while not os.path.exists(http_img_path):
-                if os.path.exists(http_img_path):
-                    break
+            # while not os.path.exists(http_img_path):
+            #     if os.path.exists(http_img_path):
+            #         break
             if os.path.exists(http_img_path):
                 report.set_custom_html('<div style="page-break-before: always;"></div>')
                 report.build_custom()
                 report.set_custom_html(f'<img src="file://{http_img_path}"></img>')
                 report.build_custom()
+    
+    def build_graphs_and_table(self,coord="",rotation="",report="", lis="", bands=""):
+        rotation_suffix = f"_{rotation}" if rotation else ""
+        coord_label = f"<h2>Coordinate: {coord}</h2>"
+        if self.rotation_enabled:
+            coord_label = f"<h2>Coordinate: {coord}{', Rotation: ' + str(rotation) if rotation else ''}</h2>"
+        report.set_custom_html(coord_label)
+        report.build_custom()
+
+        report.set_obj_html("No of times file Downloads", "The below graph represents number of times a file downloads for each client"
+                            ". X- axis shows “No of times file downloads and Y-axis shows "
+                            "Client names.")
+        report.build_objective()
+        
+        robot_data = self.robot_data.get(coord, {})
+        if self.rotation_enabled:
+            robot_data = robot_data.get(rotation, {})
+
+        graph2 = self.graph_2(robot_data['url_data'], lis=lis, bands=bands,graph_name=f"Total-url_http_{coord}{rotation_suffix}")
+        print("graph name {}".format(graph2))
+        report.set_graph_image(graph2)
+        report.set_csv_filename(graph2)
+        report.move_csv_file()
+        report.move_graph_image()
+        report.build_graph()
+
+        report.set_obj_html("Average time taken to download file ", "The below graph represents average time taken to download for each client  "
+                    ".  X- axis shows “Average time taken to download a file ” and Y-axis shows "
+                    "Client names.")
+        report.build_objective()
+        graph = self.generate_graph(dataset=robot_data['uc_avg'], lis=lis, bands=bands, graph_image_name=f"ucg-avg_http_{coord}{rotation_suffix}")
+        report.set_graph_image(graph)
+        report.set_csv_filename(graph)
+        report.move_csv_file()
+        report.move_graph_image()
+        report.build_graph()
+
+        report.set_table_title("Overall Results")
+        report.build_table_title()
+
+        dataframe = {
+                        " Clients": self.devices,
+                        " MAC ": robot_data['MAC'],
+                        " Channel": robot_data['Channel'],
+                        " SSID ": robot_data['SSID'],
+                        " Mode": robot_data['Mode'],
+                        " No of times File downloaded ": robot_data['url_data'],
+                        " Average time taken to Download file (ms)": robot_data['uc_avg'],
+                        " Bytes-rd (Mega Bytes) ": robot_data['bytes_rd'],
+                        "Rx Rate (Mbps)": robot_data['rx rate (1m)'],
+                        "Failed url's": robot_data["total_err"]
+                    }
+        dataframe1 = pd.DataFrame(dataframe)
+        report.set_table_dataframe(dataframe1)
+        report.build_table()
 
     def generate_report(self, date, num_stations, duration, test_setup_info, dataset, lis, bands, threshold_2g,
                         threshold_5g, threshold_both, dataset2, dataset1,  # summary_table_value,
@@ -1247,214 +1313,244 @@ class HttpDownload(Realm):
                             "download some amount of file from HTTP server and measures the "
                             "time taken by the client to Download the file.")
         report.build_objective()
-        report.set_obj_html("No of times file Downloads", "The below graph represents number of times a file downloads for each client"
-                            ". X- axis shows “No of times file downloads and Y-axis shows "
-                            "Client names.")
-        report.build_objective()
-        graph2 = self.graph_2(dataset2, lis=lis, bands=bands)
-        print("graph name {}".format(graph2))
-        report.set_graph_image(graph2)
-        report.set_csv_filename(graph2)
-        report.move_csv_file()
-        report.move_graph_image()
-        report.build_graph()
-        report.set_obj_html("Average time taken to download file ", "The below graph represents average time taken to download for each client  "
-                            ".  X- axis shows “Average time taken to download a file ” and Y-axis shows "
-                            "Client names.")
-        report.build_objective()
-        graph = self.generate_graph(dataset=dataset, lis=lis, bands=bands)
-        report.set_graph_image(graph)
-        report.set_csv_filename(graph)
-        report.move_csv_file()
-        report.move_graph_image()
-        report.build_graph()
-        if (self.dowebgui and self.get_live_view):
-            self.add_live_view_images_to_report(report)
-
-        # report.set_obj_html("Summary Table Description", "This Table shows you the summary "
-        #                     "result of Webpage Download Test as PASS or FAIL criteria. If the average time taken by " +
-        #                     str(num_stations) + " clients to access the webpage is less than " + str( threshold_2g) +
-        #                     "s it's a PASS criteria for 2.4 ghz clients, If the average time taken by " + "" +
-        #                     str( num_stations) + " clients to access the webpage is less than " + str( threshold_5g) +
-        #                     "s it's a PASS criteria for 5 ghz clients and If the average time taken by " + str( num_stations) +
-        #                     " clients to access the webpage is less than " + str(threshold_both) +
-        #                     "s it's a PASS criteria for 2.4 ghz and 5ghz clients")
-
-        # report.build_objective()
-        # test_setup1 = pd.DataFrame(summary_table_value)
-        # report.set_table_dataframe(test_setup1)
-        # report.build_table()
-
-        report.set_obj_html("Download Time Table Description", "This Table will provide you information of the "
-                            "minimum, maximum and the average time taken by clients to download a webpage in seconds")
-
-        report.build_objective()
-        self.response_port = self.local_realm.json_get("/port/all")
-        # print(response_port)
-        # print("port list",self.port_list)
-        # To set channel_list,mode_list,port_list to append once again
-        self.channel_list, self.mode_list, self.ssid_list = [], [], []
-        if self.client_type == "Real":
-            self.devices = self.devices_list
-            for interface in self.response_port['interfaces']:
-                for port, port_data in interface.items():
-                    if port in self.port_list:
-                        self.channel_list.append(str(port_data['channel']))
-                        self.mode_list.append(str(port_data['mode']))
-                        self.ssid_list.append(str(port_data['ssid']))
-        elif self.client_type == "Virtual":
-            self.devices = self.station_list[0]
-            for interface in self.response_port['interfaces']:
-                for port, port_data in interface.items():
-                    if port in self.station_list[0]:
-                        self.channel_list.append(str(port_data['channel']))
-                        self.mode_list.append(str(port_data['mode']))
-                        self.macid_list.append(str(port_data['mac']))
-                        self.ssid_list.append(str(port_data['ssid']))
-
-        x = []
-        for fcc in list(result_data.keys()):
-            fcc_type = result_data[fcc]["min"]
-            # print(fcc_type)
-            for i in fcc_type:
-                x.append(i)
-            # print(x)
-        y = []
-        for i in x:
-            i = i / 1000
-            y.append(i)
-        z = []
-        for i in y:
-            i = str(round(i, 1))
-            z.append(i)
-        # rint(z)
-        x1 = []
-
-        for fcc in list(result_data.keys()):
-            fcc_type = result_data[fcc]["max"]
-            # print(fcc_type)
-            for i in fcc_type:
-                x1.append(i)
-            # print(x1)
-        y1 = []
-        for i in x1:
-            i = i / 1000
-            y1.append(i)
-        z1 = []
-        for i in y1:
-            i = str(round(i, 1))
-            z1.append(i)
-        # print(z1)
-        x2 = []
-
-        for fcc in list(result_data.keys()):
-            fcc_type = result_data[fcc]["avg"]
-            # print(fcc_type)
-            for i in fcc_type:
-                x2.append(i)
-            # print(x2)
-        y2 = []
-        for i in x2:
-            i = i / 1000
-            y2.append(i)
-        z2 = []
-        for i in y2:
-            i = str(round(i, 1))
-            z2.append(i)
-
-        download_table_value_dup = {
-            # "Band": bands,
-            "Minimum": z,
-            "Maximum": z1,
-            "Average": z2
-        }
-
-        download_table_value = {
-            "Band": bands,
-            "Minimum": z,
-            "Maximum": z1,
-            "Average": z2
-        }
-
-        # Get the report path to create the kpi.csv path
-        kpi_path = report.get_report_path()
-        print("kpi_path :{kpi_path}".format(kpi_path=kpi_path))
-
-        kpi_csv = lf_kpi_csv.lf_kpi_csv(
-            _kpi_path=kpi_path,
-            _kpi_test_rig=test_rig,
-            _kpi_test_tag=test_tag,
-            _kpi_dut_hw_version=dut_hw_version,
-            _kpi_dut_sw_version=dut_sw_version,
-            _kpi_dut_model_num=dut_model_num,
-            _kpi_dut_serial_num=dut_serial_num,
-            _kpi_test_id=test_id)
-        kpi_csv.kpi_dict['Units'] = "Mbps"
-        for band in range(len(download_table_value["Band"])):
-            kpi_csv.kpi_csv_get_dict_update_time()
-            kpi_csv.kpi_dict['Graph-Group'] = "Webpage Download {band}".format(
-                band=download_table_value['Band'][band])
-            kpi_csv.kpi_dict['short-description'] = "Webpage download {band} Minimum".format(
-                band=download_table_value['Band'][band])
-            kpi_csv.kpi_dict['numeric-score'] = "{min}".format(min=download_table_value['Minimum'][band])
-            kpi_csv.kpi_csv_write_dict(kpi_csv.kpi_dict)
-            kpi_csv.kpi_dict['short-description'] = "Webpage download {band} Maximum".format(
-                band=download_table_value['Band'][band])
-            kpi_csv.kpi_dict['numeric-score'] = "{max}".format(max=download_table_value['Maximum'][band])
-            kpi_csv.kpi_csv_write_dict(kpi_csv.kpi_dict)
-            kpi_csv.kpi_dict['short-description'] = "Webpage download {band} Average".format(
-                band=download_table_value['Band'][band])
-            kpi_csv.kpi_dict['numeric-score'] = "{avg}".format(avg=download_table_value['Average'][band])
-            kpi_csv.kpi_csv_write_dict(kpi_csv.kpi_dict)
-
-        if csv_outfile is not None:
-            current_time = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
-            csv_outfile = "{}_{}-test_l3_longevity.csv".format(
-                csv_outfile, current_time)
-            csv_outfile = report.file_add_path(csv_outfile)
-            print("csv output file : {}".format(csv_outfile))
-
-        test_setup = pd.DataFrame(download_table_value_dup)
-        report.set_table_dataframe(test_setup)
-        report.build_table()
-        if self.group_name:
-            report.set_table_title("Overall Results for Groups")
+        if(self.robot_test):
+            if (self.dowebgui and self.get_live_view):
+                self.add_live_view_images_to_report(report)
+            if self.rotation_enabled:
+                for coord, rotation_dict in self.robot_data.items():
+                    for rotation, robot_info in rotation_dict.items():
+                        self.build_graphs_and_table(coord, rotation, report, lis, bands)
+            else:
+                for coord, robot_info in self.robot_data.items():
+                    self.build_graphs_and_table(coord, "", report, lis, bands)
         else:
-            report.set_table_title("Overall Results")
-        report.build_table_title()
-        if self.client_type == "Real":
-            # When pass_fail criteria specified (expected_passfail_value / device_csv_name)
-            if self.expected_passfail_value or self.device_csv_name:
-                test_input_list, pass_fail_list = self.get_pass_fail_list(dataset2)
-            if self.group_name:
-                for key, val in self.group_device_map.items():
-                    # Generating Dataframe when Groups with their profiles and pass_fail case is specified
-                    if self.expected_passfail_value or self.device_csv_name:
-                        dataframe = self.generate_dataframe(
-                            val,
-                            self.devices,
-                            self.macid_list,
-                            self.channel_list,
-                            self.ssid_list,
-                            self.mode_list,
-                            dataset2,
-                            test_input_list,
-                            dataset,
-                            dataset1,
-                            rx_rate,
-                            pass_fail_list,
-                            self.data["total_err"])
-                    # Generating Dataframe for groups when pass_fail case is not specified
-                    else:
-                        dataframe = self.generate_dataframe(val, self.devices, self.macid_list, self.channel_list, self.ssid_list,
-                                                            self.mode_list, dataset2, [], dataset, dataset1, rx_rate, [], self.data["total_err"])
+            report.set_obj_html("No of times file Downloads", "The below graph represents number of times a file downloads for each client"
+                                ". X- axis shows “No of times file downloads and Y-axis shows "
+                                "Client names.")
+            report.build_objective()
+            graph2 = self.graph_2(dataset2, lis=lis, bands=bands)
+            print("graph name {}".format(graph2))
+            report.set_graph_image(graph2)
+            report.set_csv_filename(graph2)
+            report.move_csv_file()
+            report.move_graph_image()
+            report.build_graph()
+            report.set_obj_html("Average time taken to download file ", "The below graph represents average time taken to download for each client  "
+                                ".  X- axis shows “Average time taken to download a file ” and Y-axis shows "
+                                "Client names.")
+            report.build_objective()
+            graph = self.generate_graph(dataset=dataset, lis=lis, bands=bands)
+            report.set_graph_image(graph)
+            report.set_csv_filename(graph)
+            report.move_csv_file()
+            report.move_graph_image()
+            report.build_graph()
+            if (self.dowebgui and self.get_live_view):
+                self.add_live_view_images_to_report(report)
 
-                    if dataframe:
-                        report.set_obj_html("", "Group: {}".format(key))
-                        report.build_objective()
-                        dataframe1 = pd.DataFrame(dataframe)
-                        report.set_table_dataframe(dataframe1)
-                        report.build_table()
+            # report.set_obj_html("Summary Table Description", "This Table shows you the summary "
+            #                     "result of Webpage Download Test as PASS or FAIL criteria. If the average time taken by " +
+            #                     str(num_stations) + " clients to access the webpage is less than " + str( threshold_2g) +
+            #                     "s it's a PASS criteria for 2.4 ghz clients, If the average time taken by " + "" +
+            #                     str( num_stations) + " clients to access the webpage is less than " + str( threshold_5g) +
+            #                     "s it's a PASS criteria for 5 ghz clients and If the average time taken by " + str( num_stations) +
+            #                     " clients to access the webpage is less than " + str(threshold_both) +
+            #                     "s it's a PASS criteria for 2.4 ghz and 5ghz clients")
+
+            # report.build_objective()
+            # test_setup1 = pd.DataFrame(summary_table_value)
+            # report.set_table_dataframe(test_setup1)
+            # report.build_table()
+        
+            report.set_obj_html("Download Time Table Description", "This Table will provide you information of the "
+                                "minimum, maximum and the average time taken by clients to download a webpage in seconds")
+
+            report.build_objective()
+            self.response_port = self.local_realm.json_get("/port/all")
+            # print(response_port)
+            # print("port list",self.port_list)
+            # To set channel_list,mode_list,port_list to append once again
+            self.channel_list, self.mode_list, self.ssid_list = [], [], []
+            if self.client_type == "Real":
+                self.devices = self.devices_list
+                for interface in self.response_port['interfaces']:
+                    for port, port_data in interface.items():
+                        if port in self.port_list:
+                            self.channel_list.append(str(port_data['channel']))
+                            self.mode_list.append(str(port_data['mode']))
+                            self.ssid_list.append(str(port_data['ssid']))
+            elif self.client_type == "Virtual":
+                self.devices = self.station_list[0]
+                for interface in self.response_port['interfaces']:
+                    for port, port_data in interface.items():
+                        if port in self.station_list[0]:
+                            self.channel_list.append(str(port_data['channel']))
+                            self.mode_list.append(str(port_data['mode']))
+                            self.macid_list.append(str(port_data['mac']))
+                            self.ssid_list.append(str(port_data['ssid']))
+
+            x = []
+            for fcc in list(result_data.keys()):
+                fcc_type = result_data[fcc]["min"]
+                # print(fcc_type)
+                for i in fcc_type:
+                    x.append(i)
+                # print(x)
+            y = []
+            for i in x:
+                i = i / 1000
+                y.append(i)
+            z = []
+            for i in y:
+                i = str(round(i, 1))
+                z.append(i)
+            # rint(z)
+            x1 = []
+
+            for fcc in list(result_data.keys()):
+                fcc_type = result_data[fcc]["max"]
+                # print(fcc_type)
+                for i in fcc_type:
+                    x1.append(i)
+                # print(x1)
+            y1 = []
+            for i in x1:
+                i = i / 1000
+                y1.append(i)
+            z1 = []
+            for i in y1:
+                i = str(round(i, 1))
+                z1.append(i)
+            # print(z1)
+            x2 = []
+
+            for fcc in list(result_data.keys()):
+                fcc_type = result_data[fcc]["avg"]
+                # print(fcc_type)
+                for i in fcc_type:
+                    x2.append(i)
+                # print(x2)
+            y2 = []
+            for i in x2:
+                i = i / 1000
+                y2.append(i)
+            z2 = []
+            for i in y2:
+                i = str(round(i, 1))
+                z2.append(i)
+
+            download_table_value_dup = {
+                # "Band": bands,
+                "Minimum": z,
+                "Maximum": z1,
+                "Average": z2
+            }
+
+            download_table_value = {
+                "Band": bands,
+                "Minimum": z,
+                "Maximum": z1,
+                "Average": z2
+            }
+
+            # Get the report path to create the kpi.csv path
+            kpi_path = report.get_report_path()
+            print("kpi_path :{kpi_path}".format(kpi_path=kpi_path))
+
+            kpi_csv = lf_kpi_csv.lf_kpi_csv(
+                _kpi_path=kpi_path,
+                _kpi_test_rig=test_rig,
+                _kpi_test_tag=test_tag,
+                _kpi_dut_hw_version=dut_hw_version,
+                _kpi_dut_sw_version=dut_sw_version,
+                _kpi_dut_model_num=dut_model_num,
+                _kpi_dut_serial_num=dut_serial_num,
+                _kpi_test_id=test_id)
+            kpi_csv.kpi_dict['Units'] = "Mbps"
+            for band in range(len(download_table_value["Band"])):
+                kpi_csv.kpi_csv_get_dict_update_time()
+                kpi_csv.kpi_dict['Graph-Group'] = "Webpage Download {band}".format(
+                    band=download_table_value['Band'][band])
+                kpi_csv.kpi_dict['short-description'] = "Webpage download {band} Minimum".format(
+                    band=download_table_value['Band'][band])
+                kpi_csv.kpi_dict['numeric-score'] = "{min}".format(min=download_table_value['Minimum'][band])
+                kpi_csv.kpi_csv_write_dict(kpi_csv.kpi_dict)
+                kpi_csv.kpi_dict['short-description'] = "Webpage download {band} Maximum".format(
+                    band=download_table_value['Band'][band])
+                kpi_csv.kpi_dict['numeric-score'] = "{max}".format(max=download_table_value['Maximum'][band])
+                kpi_csv.kpi_csv_write_dict(kpi_csv.kpi_dict)
+                kpi_csv.kpi_dict['short-description'] = "Webpage download {band} Average".format(
+                    band=download_table_value['Band'][band])
+                kpi_csv.kpi_dict['numeric-score'] = "{avg}".format(avg=download_table_value['Average'][band])
+                kpi_csv.kpi_csv_write_dict(kpi_csv.kpi_dict)
+
+            if csv_outfile is not None:
+                current_time = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
+                csv_outfile = "{}_{}-test_l3_longevity.csv".format(
+                    csv_outfile, current_time)
+                csv_outfile = report.file_add_path(csv_outfile)
+                print("csv output file : {}".format(csv_outfile))
+
+            test_setup = pd.DataFrame(download_table_value_dup)
+            report.set_table_dataframe(test_setup)
+            report.build_table()
+            if self.group_name:
+                report.set_table_title("Overall Results for Groups")
+            else:
+                report.set_table_title("Overall Results")
+            report.build_table_title()
+            if self.client_type == "Real":
+                # When pass_fail criteria specified (expected_passfail_value / device_csv_name)
+                if self.expected_passfail_value or self.device_csv_name:
+                    test_input_list, pass_fail_list = self.get_pass_fail_list(dataset2)
+                if self.group_name:
+                    for key, val in self.group_device_map.items():
+                        # Generating Dataframe when Groups with their profiles and pass_fail case is specified
+                        if self.expected_passfail_value or self.device_csv_name:
+                            dataframe = self.generate_dataframe(
+                                val,
+                                self.devices,
+                                self.macid_list,
+                                self.channel_list,
+                                self.ssid_list,
+                                self.mode_list,
+                                dataset2,
+                                test_input_list,
+                                dataset,
+                                dataset1,
+                                rx_rate,
+                                pass_fail_list,
+                                self.data["total_err"])
+                        # Generating Dataframe for groups when pass_fail case is not specified
+                        else:
+                            dataframe = self.generate_dataframe(val, self.devices, self.macid_list, self.channel_list, self.ssid_list,
+                                                                self.mode_list, dataset2, [], dataset, dataset1, rx_rate, [], self.data["total_err"])
+
+                        if dataframe:
+                            report.set_obj_html("", "Group: {}".format(key))
+                            report.build_objective()
+                            dataframe1 = pd.DataFrame(dataframe)
+                            report.set_table_dataframe(dataframe1)
+                            report.build_table()
+                else:
+                    dataframe = {
+                        " Clients": self.devices,
+                        " MAC ": self.macid_list,
+                        " Channel": self.channel_list,
+                        " SSID ": self.ssid_list,
+                        " Mode": self.mode_list,
+                        " No of times File downloaded ": dataset2,
+                        " Average time taken to Download file (ms)": dataset,
+                        " Bytes-rd (Mega Bytes) ": dataset1,
+                        "Rx Rate (Mbps)": rx_rate,
+                        "Failed url's": self.data["total_err"]
+                    }
+                    if self.expected_passfail_value or self.device_csv_name:
+                        dataframe[" Expected value of no of times file downloaded"] = test_input_list
+                        dataframe["Status"] = pass_fail_list
+                    dataframe1 = pd.DataFrame(dataframe)
+                    report.set_table_dataframe(dataframe1)
+                    report.build_table()
             else:
                 dataframe = {
                     " Clients": self.devices,
@@ -1464,31 +1560,12 @@ class HttpDownload(Realm):
                     " Mode": self.mode_list,
                     " No of times File downloaded ": dataset2,
                     " Average time taken to Download file (ms)": dataset,
-                    " Bytes-rd (Mega Bytes) ": dataset1,
-                    "Rx Rate (Mbps)": rx_rate,
-                    "Failed url's": self.data["total_err"]
+                    " Bytes-rd (Mega Bytes) ": dataset1
+
                 }
-                if self.expected_passfail_value or self.device_csv_name:
-                    dataframe[" Expected value of no of times file downloaded"] = test_input_list
-                    dataframe["Status"] = pass_fail_list
                 dataframe1 = pd.DataFrame(dataframe)
                 report.set_table_dataframe(dataframe1)
                 report.build_table()
-        else:
-            dataframe = {
-                " Clients": self.devices,
-                " MAC ": self.macid_list,
-                " Channel": self.channel_list,
-                " SSID ": self.ssid_list,
-                " Mode": self.mode_list,
-                " No of times File downloaded ": dataset2,
-                " Average time taken to Download file (ms)": dataset,
-                " Bytes-rd (Mega Bytes) ": dataset1
-
-            }
-            dataframe1 = pd.DataFrame(dataframe)
-            report.set_table_dataframe(dataframe1)
-            report.build_table()
         report.build_footer()
         html_file = report.write_html()
         print("returned file {}".format(html_file))
@@ -1764,7 +1841,7 @@ class HttpDownload(Realm):
         robot_obj.robo_ip = "127.0.0.1:5000"  
 
         for coordinate in range(len(self.coordinate_list)):
-            robo_moved = robot_obj.move_to_coordinate(self.coordinate_list[coordinate])
+            robo_moved = robot_obj.move_to_coordinate(self.coordinate_list[coordinate],result_dir=os.path.dirname(os.path.dirname(self.result_dir)))
             if robo_moved:
                 self.current_coordinate = self.coordinate_list[coordinate]
                 # if no rotation mode
@@ -2184,18 +2261,18 @@ times the file is downloaded.
 
         if args.robot_test:
             http.perform_robo()
-            exit(1)
-
-        http.start()
-        if args.dowebgui:
-            # FOR WEBGUI, -This fumction is called to fetch the runtime data from layer-4
-            http.monitor_for_runtime_csv(args.duration)
-        elif args.client_type == 'Real':
-            # To fetch runtime csv during runtime
-            http.monitor_for_runtime_csv(args.duration)
+            # exit(1)
         else:
-            time.sleep(args.duration)
-        http.stop()
+            http.start()
+            if args.dowebgui:
+                # FOR WEBGUI, -This fumction is called to fetch the runtime data from layer-4
+                http.monitor_for_runtime_csv(args.duration)
+            elif args.client_type == 'Real':
+                # To fetch runtime csv during runtime
+                http.monitor_for_runtime_csv(args.duration)
+            else:
+                time.sleep(args.duration)
+            http.stop()
         # taking http.data, which got updated in the monitor_for_runtime_csv method
         if args.client_type == 'Real':
             uc_avg_val = http.data['uc_avg']
