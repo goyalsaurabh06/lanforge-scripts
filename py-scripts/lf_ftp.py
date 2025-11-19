@@ -836,7 +836,7 @@ class FtpTest(LFCliBase):
                 else:
                     self.robot_data[self.current_coordinate] = {
                                                                 "mac_id_list": self.mac_id_list,
-                                                                "channel_lis": self.channel_list,
+                                                                "channel_list": self.channel_list,
                                                                 "ssid_list": self.ssid_list,
                                                                 "mode_list": self.mode_list,
                                                                 "url_data": self.url_data,
@@ -1994,8 +1994,7 @@ class FtpTest(LFCliBase):
         # self.report.build_table()
         # self.generate_graph(ftp_data)
         if self.robot_test:
-            if not self.robot_test:
-                return
+
 
             # Optional live view
             if self.dowebgui:
@@ -2411,13 +2410,22 @@ class FtpTest(LFCliBase):
 
     def build_graphs_and_table(self, coord, rotation, robot_info, client_list):
         """Helper: Build graphs (URL + Avg Time) and table for one coordinate/rotation."""
-        url_data = robot_info['url_data']
-        uc_avg = robot_info['uc_avg']
-        uc_min = robot_info['uc_min']
-        uc_max = robot_info['uc_max']
+        url_data_robo = robot_info['url_data']
+        uc_avg_robo = robot_info['uc_avg']
+        uc_min_robo = robot_info['uc_min']
+        uc_max_robo = robot_info['uc_max']
+        mode_list_robo = robot_info['mode_list']
+        ssid_list_robo = robot_info['ssid_list']
+        channel_list_robo = robot_info['channel_list']
+        mac_id_list_robo = robot_info['mac_id_list']
+        bytes_rd_robo = robot_info['bytes_rd']
+        rx_rate_robo = robot_info['rx_rate']
+        total_err_robo = robot_info['total_err']
 
         rotation_suffix = f"_{rotation}" if rotation else ""
-        coord_label = f"<h2>Coordinate: {coord}{', Rotation: ' + str(rotation) if rotation else ''}</h2>"
+        coord_label = f"<h2>Coordinate: {coord}</h2>"
+        if self.rotation_enabled:
+            coord_label = f"<h2>Coordinate: {coord}{', Rotation: ' + str(rotation) if rotation else ''}</h2>"
         self.report.set_custom_html(coord_label)
         self.report.build_custom()
 
@@ -2430,7 +2438,7 @@ class FtpTest(LFCliBase):
         self.report.build_objective()
         self.build_single_graph(
             client_list=client_list,
-            data=url_data,
+            data=url_data_robo,
             graph_name=f"Total-url_ftp_{coord}{rotation_suffix}",
             title=f"No of times file {self.direction} (Count)",
             x_label=f"No of times file {self.direction}",
@@ -2447,7 +2455,7 @@ class FtpTest(LFCliBase):
         self.report.build_objective()
         self.build_single_graph(
             client_list=client_list,
-            data=uc_avg,
+            data=uc_avg_robo,
             graph_name=f"Avg-time_ftp_{coord}{rotation_suffix}",
             title=f"Average time taken to {self.direction} file",
             x_label=f"Average time taken to {self.direction} file in ms",
@@ -2463,13 +2471,32 @@ class FtpTest(LFCliBase):
         self.report.build_objective()
 
         table_data = {
-            "Minimum": [str(round(min(uc_min) / 1000, 1))],
-            "Maximum": [str(round(max(uc_max) / 1000, 1))],
-            "Average": [str(round((sum(uc_avg) / len(client_list)) / 1000, 1))]
+            "Minimum": [str(round(min(uc_min_robo) / 1000, 1))],
+            "Maximum": [str(round(max(uc_max_robo) / 1000, 1))],
+            "Average": [str(round((sum(uc_avg_robo) / len(client_list)) / 1000, 1))]
         }
 
         df = pd.DataFrame(table_data)
         self.report.set_table_dataframe(df)
+        self.report.build_table()
+
+        self.report.set_table_title("Overall Results")
+        self.report.build_table_title()
+
+        dataframe = {
+                        " Clients": client_list,
+                        " MAC ": mac_id_list_robo,
+                        " Channel": channel_list_robo,
+                        " SSID ": ssid_list_robo,
+                        " Mode": mode_list_robo,
+                        " No of times File downloaded ": url_data_robo,
+                        " Time Taken to Download file (ms)": uc_avg_robo,
+                        " Bytes-rd (Mega Bytes)": bytes_rd_robo,
+                        " RX RATE (Mbps) ": rx_rate_robo,
+                        "Failed Urls": total_err_robo
+                    }
+        dataframe1 = pd.DataFrame(dataframe)
+        self.report.set_table_dataframe(dataframe1)
         self.report.build_table()
 
 
