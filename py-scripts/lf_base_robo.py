@@ -21,6 +21,8 @@ class RobotClass:
         self.ip=None
         self.testname=None
 
+        # Create waypoint list on initialization
+        self.create_waypointlist()
     
     def create_waypointlist(self):
         position_url = 'http://'+self.robo_ip+'/reeman/position'
@@ -53,7 +55,7 @@ class RobotClass:
             if 'status' in run_status.keys() and run_status["status"] != "Running":
                 logging.info("Test is stopped by the user")
                 return True
-       
+
         return False
     
     def wait_for_battery(self,stop=None):
@@ -185,6 +187,15 @@ class RobotClass:
         return  matched,abort
 
     def rotate_angle(self,angle):
+
+        #convert angle to radians
+        angle=float(angle)
+        if angle > 180:
+            angle -= 360
+        elif angle <= -180:
+            angle += 360
+        angle = round(math.radians(angle), 2)
+
         nav_pathurl= 'http://'+self.robo_ip+'/cmd/nav'
         pose_url= 'http://'+self.robo_ip+'/reeman/pose'
         requests.post(nav_pathurl,json={"x":self.target_x,"y":self.target_y,"theta":angle})
