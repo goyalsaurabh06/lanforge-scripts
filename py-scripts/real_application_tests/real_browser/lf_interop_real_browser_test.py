@@ -284,15 +284,18 @@ class RealBrowserTest(Realm):
         # Initialize utility
         self.utility = base.UtilityInteropWifi(host_ip=self.host)
         self.serial_list = []
-        self.robo_obj = robo_base_class.RobotClass()
-        self.coordinates_list = coordinates_list
-        self.angles_list = angles_list
-        self.current_cord = current_cord
-        self.current_angle = current_angle
         self.do_robo = do_robo
-        self.rotations_enabled = rotations_enabled
-        self.robo_obj.robo_ip = robo_ip
-        self.robo_csv_files = []
+        if self.do_robo:
+            self.robo_ip = robo_ip
+            self.robo_obj = robo_base_class.RobotClass(robo_ip=self.robo_ip, angle_list=angles_list)
+            self.coordinates_list = coordinates_list
+            self.angles_list = angles_list
+            self.current_cord = current_cord
+            self.current_angle = current_angle
+            self.rotations_enabled = rotations_enabled
+            self.robo_csv_files = []
+            self.radians_list = self.robo_obj.angles_to_radians(self.angles_list)
+            self.robo_mobile_data = {}
 
     def get_test_results_data(self, test_results, group):
         groups_devices_map = self.config_obj.get_groups_devices(data=self.selected_groups, groupdevmap=True)
@@ -891,6 +894,10 @@ class RealBrowserTest(Realm):
             temp_data = request.get_json()
             for hostname, stats in temp_data.items():
                 self.laptop_stats[hostname] = stats
+                if self.do_robo:
+                    self.laptop_stats[hostname]['current_angle'] = self.current_angle
+                    self.laptop_stats[hostname]['current_cord'] = self.current_cord
+                    self.laptop_stats[hostname]['rotations_enabled'] = self.rotations_enabled
             return jsonify({"status": "success"}), 200
 
         # New route to check the health of the Flask server
@@ -901,6 +908,12 @@ class RealBrowserTest(Realm):
         @self.app.route('/check_stop', methods=['GET'])
         def check_stop():
             return jsonify({"stop": self.stop_signal})
+
+        @self.app.route('/get_rb_data', methods=['GET'])
+        def get_rb_data():
+            combined = {**self.laptop_stats, **self.robo_mobile_data}
+            print(combined)
+            return jsonify(combined), 200
 
         try:
             self.app.run(host='0.0.0.0', port=5003, debug=True, threaded=True, use_reloader=False)
@@ -1019,25 +1032,35 @@ class RealBrowserTest(Realm):
 
         if self.do_robo:
             for coordinate in self.coordinates_list:
-                self.robo_obj.move_to_coordinate(coordinate)
+                self.robo_obj.move_to_coordinate(coord=coordinate)
+                self.current_cord = coordinate
                 if self.rotations_enabled:
-                    for angle in self.angles_list:
-                        self.robo_obj.rotate_angle(x=0, y=1, angle=angle)
+                    print("-=======")
+                    print('going into this')
+                    for angle, rad in zip(self.angles_list, self.radians_list):
+                        self.robo_obj.rotate_angle(angle=rad)
+                        self.current_angle = angle
                         self.start_specific(cx_batch)
-                        time.sleep(10)
                         logging.info(f"Test started on Devices with resource Ids : {cx_batch}")
                         try:
                             self.get_robo_stats(self.duration, f"{coordinate}_{angle}_webBrowser.csv", self.count, angle)
                             self.robo_csv_files.append(f"{coordinate}_{angle}_webBrowser.csv")
+                            self.http_profile.stop_cx()
+                            self.clear_http_cx_data()
+                            time.sleep(5)
                         except Exception as e:
                             logging.error(f"Error while monitoring stats {e}", exc_info=True)
                 else:
                     self.start_specific(cx_batch)
-                    time.sleep(10)
                     logging.info(f"Test started on Devices with resource Ids : {cx_batch}")
                     try:
-                        self.get_robo_stats(self.duration, f"{coordinate}_webBrowser.csv", self.count, angle)
+                        print("====================================================")
+                        print("checking going in this lop")
+                        self.get_robo_stats(self.duration, f"{coordinate}_webBrowser.csv", self.count, None)
                         self.robo_csv_files.append(f"{coordinate}_webBrowser.csv")
+                        self.http_profile.stop_cx()
+                        self.clear_http_cx_data()
+                        time.sleep(5)
                     except Exception as e:
                         logging.error(f"Error while monitoring stats {e}", exc_info=True)
         else:
@@ -1048,6 +1071,13 @@ class RealBrowserTest(Realm):
                     self.get_stats(self.duration, "webBrowser.csv", i, available_resources, cx_batch, i, self.count)
                 except Exception as e:
                     logging.error(f"Error while monitoring stats {e}", exc_info=True)
+    
+    def clear_http_cx_data(self):
+        for cx in self.http_profile.created_cx:
+            print("Clearing data for endpoint:", cx)
+            url = "/cli-json/clear_endp_counters"
+            payload = {"endp_name": cx}
+            self.json_post(url, payload, debug_=self.debug, suppress_related_commands_=True)
     
     def create_robo_report(self):
         try:
@@ -1250,12 +1280,13 @@ class RealBrowserTest(Realm):
                     "Link Speed": tx_rate_data,
 
                 }
+            print("checking final test results", final_test_results)
             test_results_df = pd.DataFrame(final_test_results)
             self.report.set_table_dataframe(test_results_df)
             self.report.build_table()
         
         except Exception as e:
-            logging.error(f"Error in create_graphs_test_results function {e}", exc_info=True)
+            logging.error(f"Error in create_robo_graphs_test_results {e}", exc_info=True)
 
 
     def calculate_cx_order_list(self):
@@ -1663,6 +1694,7 @@ class RealBrowserTest(Realm):
             last_data = []
             mobile_data = {}
             time_taken = {}
+            self.robo_mobile_data = {}
             self.original_dir = os.getcwd()
             if self.dowebgui:
                 os.chdir(self.result_dir)
@@ -1742,6 +1774,13 @@ class RealBrowserTest(Realm):
                                             # Check if the mobile device reaches the current target URL count
                                             if pass_url >= self.device_targets[hostname] and hostname not in time_taken:
                                                 time_taken[hostname] = (datetime.now() - start_time).total_seconds()
+                                            if self.do_robo:
+                                                self.robo_mobile_data[hostname] = {
+                                                    'current_angle': self.current_angle,
+                                                    'current_cord': self.current_cord,
+                                                    'rotations_enabled': self.rotations_enabled,
+                                                    'total_urls': pass_url
+                                                }
                                 # Save each mobile device's data to the CSV
                                 for i in range(len(total_urls)):
                                     row = {
@@ -1786,6 +1825,13 @@ class RealBrowserTest(Realm):
                                         'cx_name': cx_name,
                                         'angle': angle
                                     }
+                                    if self.do_robo:
+                                        self.robo_mobile_data[hostname] = {
+                                            'current_angle': self.current_angle,
+                                            'current_cord': self.current_cord,
+                                            'rotations_enabled': self.rotations_enabled,
+                                            'total_urls': pass_url
+                                        }
                                     writer.writerow(row)
                                     last_data.append(row)
                     time.sleep(1)
@@ -2516,7 +2562,8 @@ def main():
         if args.do_robo:
             args.coordinates = args.coordinates.split(',') if args.coordinates else []
             args.rotations = [float(angle) for angle in args.rotations.split(',')] if args.rotations else []
-            rotations_enabled = True
+            if args.rotations:
+                rotations_enabled = True
 
         # Initialize an instance of RealBrowserTest with various parameters
         obj = RealBrowserTest(host=args.host,
@@ -2626,8 +2673,6 @@ def main():
                 obj.create_robo_report()
             else:
                 obj.create_report()
-            if obj.dowebgui:
-                obj.webui_stop()
             obj.stop()
 
             if not args.no_postcleanup:
