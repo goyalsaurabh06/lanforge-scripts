@@ -35,6 +35,16 @@ Pre-requisites: Real clients should be connected to the LANforge MGR and Interop
             python3 lf_interop_real_browser_test.py --mgr 192.168.204.74 --url "https://google.com" --duration 1m --debug --upstream_port 1.1.eth1
             --file_name grplaptops --group_name group1,group2 --profile_name netgear2g,netgear2g
 
+            Example-6:
+            Command Line Interface to run the Test along with IOT without device list
+            python3  lf_interop_real_browser_test.py --mgr 192.168.207.78 --duration 1 --url https://www.google.com --count 10 --upstream_port 192.168.200.191
+            --expected_passfail_value 5 --iot_testname "Real_Browser_Iot"
+
+            Example-7:
+            Command Line Interface to run the Test along with IOT with device list
+            python3  lf_interop_real_browser_test.py --mgr 192.168.207.78 --duration 1 --url https://www.google.com --count 10 --upstream_port 192.168.200.191
+            --expected_passfail_value 5 --iot_testname "Real_Browser_Iot" --iot_device_list "switch.smart_plug_1_socket_1"
+
 
             SCRIPT CLASSIFICATION: Test
 
@@ -80,6 +90,7 @@ import csv
 import re
 import traceback
 import requests
+from collections import OrderedDict
 
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
@@ -1630,7 +1641,7 @@ class RealBrowserTest(Realm):
 
         return pass_fail_list, test_input_list
 
-    def create_report(self):
+    def create_report(self, iot_summary=None):
         try:
             if self.dowebgui:
                 report = lf_report(_output_pdf='Real_Browser_Report',
@@ -1646,16 +1657,35 @@ class RealBrowserTest(Realm):
                                    _path='')
                 self.report_path_date_time = report.get_path_date_time()
 
-            report.set_title("Web Browser Test")
+            report.set_title("Web Browser Test Including IoT Devices" if iot_summary else "Web Browser Test")
             report.build_banner()
 
             report.set_table_title("Objective:")
             report.build_table_title()
-            report.set_text("The Candela Web browser test is designed to measure the Access Point performance and stability by browsing multiple websites in real clients" +
-                            " like android, Linux, windows" +
-                            "and IOS which are connected to the access point. This test allows the user to choose the options like website link," +
-                            "the number of times the page has to browse, and the Time taken to browse the page." +
-                            "The expected behavior is for the AP to be able to handle several stations(within the limitations of the AP specs) and make sure all clients can browse the page.")
+            if iot_summary:
+                report.set_text(
+                    "The Candela Real Browser Test Including IoT Devices is designed to evaluate an Access Point’s performance and "
+                    "stability when handling both Real clients (Android, Linux, Windows, iOS) and IoT devices (controlled via Home "
+                    "Assistant) simultaneously. "
+                    "For Real clients, the test measures browsing performance by repeatedly accessing user-defined websites, "
+                    "capturing metrics such as page load time, number of successful loads, and reasons for failed URLs. This "
+                    "validates the AP’s ability to support multiple stations browsing concurrently while maintaining stability and "
+                    "responsiveness. "
+                    "For IoT clients, the test concurrently executes device-specific actions (e.g., camera streaming, switch "
+                    "toggling, lock/unlock) in repeated iterations and monitors key metrics such as task execution success rate, "
+                    "latency, and failure rate. The goal is to ensure that the AP can reliably support diverse traffic types, "
+                    "providing consistent browsing performance for Real clients while maintaining responsive and reliable control "
+                    "for IoT devices."
+                )
+            else:
+                report.set_text(
+                    "The Candela Web browser test is designed to measure the Access Point performance and stability by browsing "
+                    "multiple websites in real clients like Android, Linux, Windows, and iOS which are connected to the access "
+                    "point. This test allows the user to choose options such as website link, the number of times the page has to "
+                    "be browsed, and the time taken to browse the page. The expected behavior is for the AP to handle several "
+                    "stations (within the limitations of the AP specs) while ensuring all clients can browse the page."
+                )
+
             report.build_text_simple()
 
             report.set_table_title("Test Parameters:")
@@ -1679,6 +1709,8 @@ class RealBrowserTest(Realm):
             final_eid_data, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = self.extract_device_data('real_time_data.csv')
 
             test_setup_info = self.generate_test_setup_info()
+            if iot_summary:
+                test_setup_info = with_iot_params_in_table(test_setup_info, iot_summary)
             report.test_setup_table(
                 test_setup_data=test_setup_info, value='Test Parameters')
 
@@ -1867,7 +1899,8 @@ class RealBrowserTest(Realm):
             if self.dowebgui:
 
                 os.chdir(self.original_dir)
-
+            if iot_summary:
+                self.build_iot_report_section(report, iot_summary)
             report.build_custom()
             report.build_footer()
             report.write_html()
@@ -1942,6 +1975,156 @@ class RealBrowserTest(Realm):
                         tx_rate_data.append(value.get("tx-rate", 'None'))
 
         return final_eid_data, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data
+
+    def build_iot_report_section(self, report, iot_summary):
+        """
+        Handles all IoT-related charts, tables, and increment-wise reports.
+        """
+        outdir = report.path_date_time
+        os.makedirs(outdir, exist_ok=True)
+
+        def copy_into_report(raw_path, new_name):
+            """Resolve and copy image into report dir."""
+            if not raw_path:
+                return None
+
+            abs_src = os.path.abspath(raw_path)
+            if not os.path.exists(abs_src):
+                # Search recursively under 'results' if absolute path missing
+                for root, _, files in os.walk(os.path.join(os.getcwd(), "results")):
+                    if os.path.basename(raw_path) in files:
+                        abs_src = os.path.join(root, os.path.basename(raw_path))
+                        break
+                else:
+                    return None
+
+            dst = os.path.join(outdir, new_name)
+            if os.path.abspath(abs_src) != os.path.abspath(dst):
+                shutil.copy2(abs_src, dst)
+            return new_name
+
+        # section header
+        report.set_custom_html('<div style="page-break-before: always;"></div>')
+        report.build_custom()
+        report.set_custom_html('<h2><u>IoT Results</u></h2>')
+        report.build_custom()
+
+        # Statistics
+        stats_png = copy_into_report(iot_summary.get("statistics_img"), "iot_statistics.png")
+        if stats_png:
+            report.build_chart_title("Test Statistics")
+            report.set_custom_html(f'<img src="{stats_png}" style="width:100%; height:auto;">')
+            report.build_custom()
+
+        # Request vs Latency
+        rvl_png = copy_into_report(iot_summary.get("req_vs_latency_img"), "iot_request_vs_latency.png")
+        if rvl_png:
+            report.build_chart_title("Request vs Average Latency")
+            report.set_custom_html(f'<img src="{rvl_png}" style="width:100%;">')
+            report.build_custom()
+
+        # Overall results table
+        ort = iot_summary.get("overall_result_table") or {}
+        if ort:
+            rows = [{
+                "Device": dev,
+                "Min Latency (ms)": stats.get("min_latency"),
+                "Avg Latency (ms)": stats.get("avg_latency"),
+                "Max Latency (ms)": stats.get("max_latency"),
+                "Total Iterations": stats.get("total_iterations"),
+                "Success Iters": stats.get("success_iterations"),
+                "Failed Iters": stats.get("failed_iterations"),
+                "No-Response Iters": stats.get("no_response_iterations"),
+            } for dev, stats in ort.items()]
+
+            df_overall = pd.DataFrame(rows).round(2)
+
+            report.set_custom_html('<div style="page-break-inside: avoid;">')
+            report.build_custom()
+            report.set_obj_html(_obj_title="Overall IoT Result Table", _obj=" ")
+            report.build_objective()
+            report.set_table_dataframe(df_overall)
+            report.build_table()
+            report.set_custom_html('</div>')
+            report.build_custom()
+
+        # Increment reports
+        inc = iot_summary.get("increment_reports") or {}
+        if inc:
+            report.set_custom_html('<h3>Reports by Increment Steps</h3>')
+            report.build_custom()
+
+            for step_name, rep in inc.items():
+
+                report.set_custom_html(f'<h4><u>{step_name.replace("_", " ")}</u></h4>')
+                report.build_custom()
+
+                # Latency graph
+                lat_png = copy_into_report(rep.get("latency_graph"), f"iot_{step_name}_latency.png")
+                if lat_png:
+                    report.build_chart_title("Average Latency")
+                    report.set_custom_html(f'<img src="{lat_png}" style="width:100%; height:auto;">')
+                    report.build_custom()
+
+                # Success count graph
+                res_png = copy_into_report(rep.get("result_graph"), f"iot_{step_name}_results.png")
+                if res_png:
+                    report.build_chart_title("Success Count")
+                    report.set_custom_html(f'<img src="{res_png}" style="width:100%; height:auto;">')
+                    report.build_custom()
+
+                # Tabular data for detailed iteration-level results
+                data_rows = rep.get("data") or []
+                if data_rows:
+                    df = pd.DataFrame(data_rows).rename(
+                        columns={"latency__ms": "Latency_ms", "latency_ms": "Latency_ms"}
+                    )
+                    if "Latency_ms" in df.columns:
+                        df["Latency_ms"] = pd.to_numeric(df["Latency_ms"], errors="coerce").round(3)
+                    if "Result" in df.columns:
+                        df["Result"] = df["Result"].map(lambda x: "Success" if bool(x) else "Failure")
+
+                    desired_cols = ["Iteration", "Device", "Current State", "Latency_ms", "Result"]
+                    df = df[[c for c in desired_cols if c in df.columns]]
+
+                    report.set_table_dataframe(df)
+                    report.build_table()
+
+                report.set_custom_html('<hr>')
+                report.build_custom()
+
+
+def with_iot_params_in_table(base: dict, iot_summary) -> dict:
+    """
+    Append IoT params into the existing Throughput Input Parameters table.
+    Adds: IoT Test name, IoT Iterations, IoT Delay (s), IoT Increment.
+    Accepts dict or JSON string.
+    """
+    try:
+        if not iot_summary:
+            return base
+        if isinstance(iot_summary, str):
+            try:
+                iot_summary = json.loads(iot_summary)
+            except Exception:
+                s = iot_summary.find("{")
+                e = iot_summary.rfind("}")
+                if s == -1 or e == -1 or e <= s:
+                    return base
+                try:
+                    iot_summary = json.loads(iot_summary[s:e + 1])
+                except Exception:
+                    return base
+
+        ti = (iot_summary.get("test_input_table") or {})
+        out = OrderedDict(base)
+        out["Iot Device List"] = ti.get("Device List", "")
+        out["IoT Iterations"] = ti.get("Iterations", "")
+        out["IoT Delay (s)"] = ti.get("Delay (seconds)", "")
+        out["IoT Increment"] = ti.get("Increment Pattern", "")
+        return out
+    except Exception:
+        return base
 
 
 def trigger_iot(ip, port, iterations, delay, device_list, testname, increment):
@@ -2299,6 +2482,13 @@ def main():
         obj.handle_incremental(args, obj, available_resources, available_resources)
         obj.handle_duration()
         obj.run_test(available_resources)
+        iot_summary = None
+        if args.iot_test and args.iot_testname:
+            base = os.path.join("results", args.iot_testname)
+            p = os.path.join(base, "iot_summary.json")
+            if os.path.exists(p):
+                with open(p) as f:
+                    iot_summary = json.load(f)
 
     except Exception as e:
         logging.error("Error occured", e)
@@ -2306,7 +2496,7 @@ def main():
         logger.error("An exception occurred:\n%s", tb_str)
     finally:
         if '--help' not in sys.argv and '-h' not in sys.argv:
-            obj.create_report()
+            obj.create_report(iot_summary=iot_summary)
             obj.stop()
 
             if not args.no_postcleanup:
