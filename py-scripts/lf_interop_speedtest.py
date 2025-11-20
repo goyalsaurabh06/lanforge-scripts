@@ -22,14 +22,13 @@ if sys.version_info[0] != 3:
 
 if 'py-json' not in sys.path:
     sys.path.append(os.path.join(os.path.abspath('..'), 'py-json'))
-sys.path.append(os.path.join(os.path.abspath(__file__ + "../../../")))
+
+from lf_graph import lf_bar_graph
+from lf_report import lf_report
+from lf_base_robo import RobotClass
 
 realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
-from lf_report import lf_report
-from lf_graph import lf_bar_graph
-from lf_base_robo import RobotClass
-
 
 class SpeedTest(Realm):
     def __init__(self, 
@@ -105,7 +104,7 @@ class SpeedTest(Realm):
             self.robot_obj.runtime_dir=self.result_dir
             self.robot_obj.ip=self.robot_ip
             self.robot_obj.testname=self.instance
-            self.rotation_list = self.robot_obj.angles_to_radians(self.rotation_list)
+            # self.rotation_list = self.robot_obj.angles_to_radians(self.rotation_list)
 
         print('Initiating Server for WebGUI Ingest')
         self.change_port_to_ip()
@@ -390,7 +389,7 @@ class SpeedTest(Realm):
                             print("Robot battery low. Pausing at current location to charge.")
                             exit(0)
 
-                        angle = angle.strip()
+                        # angle = angle.strip()
                         print(f"Rotating to angle: {angle}")
                         robo_rotated = self.robot_obj.rotate_angle(angle)
 
@@ -1312,9 +1311,10 @@ class SpeedTest(Realm):
             }
 
             if self.robot_test:
-                config_data["Robot Coordinates"] = ", ".join(self.coordinate_list)
+                config_data["Robot Coordinates"] = ", ".join(str(c) for c in self.coordinate_list)
+
                 if self.rotation_list and self.rotation_list[0] != "":
-                    config_data["Robot Rotations"] = ", ".join(self.rotation_list)
+                    config_data["Robot Rotations"] = ", ".join(str(r) for r in self.rotation_list)
                 else:
                     config_data["Robot Rotations"] = "None"
 
@@ -1325,6 +1325,16 @@ class SpeedTest(Realm):
 
             # --- Per-iteration graphs and tables ---
             missing_notes_all = []
+            self.rotation_graph_data = {
+                str(rotation_value): {
+                    "coordinates": [],
+                    "download": [],
+                    "upload": [],
+                    "download_lat": [],
+                    "upload_lat": [],
+                }
+                for rotation_value in (self.rotation_list if self.rotation_list else ["0"])
+            }
 
             for iter_idx in iteration_range:
                 print(f'Processing iteration {iter_idx} from iteration_dict: {self.iteration_dict.get(iter_idx, {})}')
@@ -1396,10 +1406,93 @@ class SpeedTest(Realm):
                         coord_idx = (iter_idx - 1) % len(self.coordinate_list)
                         coord = self.coordinate_list[coord_idx] if coord_idx < len(self.coordinate_list) else 'Unknown'
                         rotation = 'None'
+                    # -------- Build Line Graph Dataset --------
+                    rot_key = str(rotation)  # rotation in degrees or "0"
+
+                    if rot_key not in self.rotation_graph_data:
+                        self.rotation_graph_data[rot_key] = {"coordinates": [], "download": [], "upload": [], "download_lat": [], "upload_lat": []}
+
+                    self.rotation_graph_data[rot_key]["coordinates"].append(coord)
+                    self.rotation_graph_data[rot_key]["download"].append(sum(dls)/len(dls) if dls else 0)
+                    self.rotation_graph_data[rot_key]["upload"].append(sum(uls)/len(uls) if uls else 0)
+                    self.rotation_graph_data[rot_key]["download_lat"].append(sum(dlat)/len(dlat) if dlat else 0)
+                    self.rotation_graph_data[rot_key]["upload_lat"].append(sum(ulat)/len(ulat) if ulat else 0)
 
                     iteration_label = f"Coordinate: {coord} | Rotation Angle: {rotation}°"
                 else:
                     iteration_label = f"Iteration {iter_idx}"
+
+            # ============= LINE PLOTS FOR ROBOT TEST =============
+            if self.robot_test:
+
+                print("\n[INFO] Generating rotation-based bar plots")
+                print(self.rotation_graph_data)
+                print("====================================")
+
+                for rot, data in self.rotation_graph_data.items():
+                    coords = data["coordinates"]
+                    down = data["download"]
+                    up = data["upload"]
+                    dlat = data["download_lat"]
+                    ulat = data["upload_lat"]
+
+                    if not coords:
+                        print(f"[WARN] No data for rotation {rot}, skipping")
+                        continue
+
+                    report.set_table_title(f"<b>Rotation Angle: {rot}°</b>")
+                    report.build_table_title()
+
+                    report.set_table_title(f"Speed (Mbps) for Rotation {rot}°")
+                    report.build_table_title()
+
+                    bar_speed = lf_bar_graph(
+                        _data_set=[down, up],
+                        _xaxis_name="Coordinates",
+                        _yaxis_name="Speed (Mbps)",
+                        _xaxis_categories=coords,
+                        _graph_image_name=f"rotation_{rot}_speed_barplot",
+                        _label=["Download", "Upload"],
+                        _color=None,
+                        _color_edge="red",
+                        _show_bar_value=True,
+                        _text_font=7,
+                        _enable_csv=True
+                    )
+
+                    speed_png = bar_speed.build_bar_graph()
+
+                    if speed_png:
+                        report.set_graph_image(speed_png)
+                        report.move_graph_image()
+                        report.build_graph()
+
+                    # ----------------------------------------------
+                    # LATENCY PLOT (Download/Upload)
+                    # ----------------------------------------------
+                    report.set_table_title(f"Latency (ms) for Rotation {rot}°")
+                    report.build_table_title()
+
+                    bar_latency = lf_bar_graph(
+                        _data_set=[dlat, ulat],
+                        _xaxis_name="Coordinates",
+                        _yaxis_name="Latency (ms)",
+                        _xaxis_categories=coords,
+                        _graph_image_name=f"rotation_{rot}_latency_barplot",
+                        _label=["Download Latency", "Upload Latency"],
+                        _color=None,
+                        _color_edge="red",
+                        _show_bar_value=True,
+                        _text_font=7,
+                        _enable_csv=True
+                    )
+
+                    latency_png = bar_latency.build_bar_graph()
+
+                    if latency_png:
+                        report.set_graph_image(latency_png)
+                        report.move_graph_image()
+                        report.build_graph()
 
                 report.set_table_title(f'{iteration_label} - Speed Test Results')
                 report.build_table_title()
