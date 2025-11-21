@@ -96,7 +96,8 @@ base_RealDevice = base.RealDevice
 lf_report = importlib.import_module("py-scripts.lf_report")
 lf_report = lf_report.lf_report
 
-robo_base_class = importlib.import_module("py-scripts.lf_robo_base_class")
+# robo_base_class = importlib.import_module("py-scripts.lf_robo_base_class")
+robo_base_class = importlib.import_module("py-scripts.lf_base_robo")
 
 
 lf_graph = importlib.import_module("py-scripts.lf_graph")
@@ -172,6 +173,7 @@ class RealBrowserTest(Realm):
                  current_cord = "",
                  current_angle = None,
                  rotations_enabled = False,
+                #  mins_per_percent=5
 
                  
                  ):
@@ -296,6 +298,7 @@ class RealBrowserTest(Realm):
             self.robo_csv_files = []
             self.radians_list = self.robo_obj.angles_to_radians(self.angles_list)
             self.robo_mobile_data = {}
+            # self.mins_per_percent = mins_per_percent
 
     def get_test_results_data(self, test_results, group):
         groups_devices_map = self.config_obj.get_groups_devices(data=self.selected_groups, groupdevmap=True)
@@ -1032,12 +1035,14 @@ class RealBrowserTest(Realm):
 
         if self.do_robo:
             for coordinate in self.coordinates_list:
+                # self.robo_obj.ensure_battery_for_test(duration_min=self.duration, mins_per_percent=self.mins_per_percent)
                 self.robo_obj.move_to_coordinate(coord=coordinate)
                 self.current_cord = coordinate
                 if self.rotations_enabled:
                     print("-=======")
                     print('going into this')
                     for angle, rad in zip(self.angles_list, self.radians_list):
+                        # self.robo_obj.ensure_battery_for_test(duration_min=self.duration, mins_per_percent=self.mins_per_percent)
                         self.robo_obj.rotate_angle(angle=rad)
                         self.current_angle = angle
                         self.start_specific(cx_batch)
@@ -2528,6 +2533,7 @@ def main():
         parser.add_argument("--device_csv_name", type=str, help="Specify the device csv name for pass/fail", default=None)
         parser.add_argument("--wait_time", type=int, help="Specify the time for configuration", default=60)
         parser.add_argument('--config', action='store_true', help='specify this flag whether to config devices or not')
+        # parser.add_argument('--mins_per_percent', type=int, help='specify minutes per percent of robo charging', default=0)
 
         robo.add_argument('--robo_ip', type=str, help='Specify the robo ip')
         robo.add_argument(
@@ -2612,7 +2618,8 @@ def main():
                               coordinates_list=args.coordinates,
                               angles_list=args.rotations,
                               do_robo=args.do_robo,
-                              rotations_enabled=rotations_enabled
+                              rotations_enabled=rotations_enabled,
+                            #   mins_per_percent=args.mins_per_percent
                               )
         obj.change_port_to_ip()
         obj.validate_and_process_args()
@@ -2662,6 +2669,10 @@ def main():
         obj.handle_incremental(args, obj, available_resources, available_resources)
         obj.handle_duration()
         obj.run_test(available_resources)
+        if args.do_robo:
+                obj.create_robo_report()
+        else:
+            obj.create_report()
 
     except Exception as e:
         logging.error("Error occured", e)
@@ -2669,12 +2680,7 @@ def main():
         logger.error("An exception occurred:\n%s", tb_str)
     finally:
         if '--help' not in sys.argv and '-h' not in sys.argv:
-            if args.do_robo:
-                obj.create_robo_report()
-            else:
-                obj.create_report()
             obj.stop()
-
             if not args.no_postcleanup:
                 obj.postcleanup()
 
