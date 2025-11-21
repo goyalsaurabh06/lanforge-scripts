@@ -92,8 +92,8 @@ base = importlib.import_module('py-scripts.lf_base_interop_profile')
 base_RealDevice = base.RealDevice
 
 DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
-# robo_base_class = importlib.import_module("py-scripts.lf_base_robo")
-robo_base_class = importlib.import_module("py-scripts.lf_robo_base_class")
+robo_base_class = importlib.import_module("py-scripts.lf_base_robo")
+# robo_base_class = importlib.import_module("py-scripts.lf_robo_base_class")
 
 # Importing modules dynamically
 lf_report = importlib.import_module("py-scripts.lf_report")
@@ -139,8 +139,9 @@ class Youtube(Realm):
                  angles_list = None,
                  do_robo = False,
                  current_cord = "",
-                 current_angle = None,
+                 current_angle = "NA",
                  rotations_enabled = False,
+                #  mins_per_percent=5
 
                  ):
         """
@@ -218,6 +219,7 @@ class Youtube(Realm):
             self.current_angle = current_angle
             self.rotations_enabled = rotations_enabled
             self.radians_list = self.robo_obj.angles_to_radians(self.angles_list)
+            # self.mins_per_percent = mins_per_percent
 
 
     def stop(self):
@@ -250,10 +252,15 @@ class Youtube(Realm):
     
     def perform_robo_test(self):
         for coordinate in self.coordinates_list:
+            # self.robo_obj.ensure_battery_for_test(duration_min=self.duration, mins_per_percent=self.mins_per_percent)
+            self.robo_obj.wait_for_battery()
             self.robo_obj.move_to_coordinate(coord=coordinate)
             self.current_cord = coordinate
             if self.rotations_enabled:
                 for angle, rad in zip(self.angles_list, self.radians_list):
+                    # self.robo_obj.ensure_battery_for_test(duration_min=self.duration, mins_per_percent=self.mins_per_percent)
+                    pause = self.robo_obj.wait_for_battery()
+
                     self.robo_obj.rotate_angle(angle=rad)
                     self.current_angle = angle
                     self.start_generic()
@@ -266,6 +273,17 @@ class Youtube(Realm):
                     self.get_initial_data()
 
                     while datetime.now() < end_time or not self.check_gen_cx():
+                        pause = self.robo_obj.wait_for_battery()
+                        if pause:
+                            self.delete_existing_csvs_for_current_point()
+                            self.generic_endps_profile.stop_cx()
+                            self.start_generic()
+                            end_time = datetime.now() + timedelta(minutes=self.duration)
+                            self.mydatajson = {}
+                            self.data = {}
+                            self.stats_api_response = {}
+                            self.get_initial_data()
+
                         self.process_data()
                         time.sleep(1)
 
@@ -279,6 +297,17 @@ class Youtube(Realm):
                 self.get_initial_data()
 
                 while datetime.now() < end_time or not self.check_gen_cx():
+                    pause = self.robo_obj.wait_for_battery()
+                    if pause:
+                        self.delete_existing_csvs_for_current_point()
+                        self.generic_endps_profile.stop_cx()
+                        self.start_generic()
+                        end_time = datetime.now() + timedelta(minutes=self.duration)
+                        self.mydatajson = {}
+                        self.data = {}
+                        self.stats_api_response = {}
+                        self.get_initial_data()
+
                     self.process_data()
                     time.sleep(1)
 
@@ -379,7 +408,7 @@ class Youtube(Realm):
                 for angle in self.angles_list:
                     self.add_frames_graphs_to_report(coordinate, angle)
             else:
-                self.add_frames_graphs_to_report(coordinate, 0)
+                self.add_frames_graphs_to_report(coordinate, "NA")
         
     
         for hostname in self.real_sta_hostname:
@@ -475,6 +504,9 @@ class Youtube(Realm):
             - Max Buffer Health
             - Min Buffer Health
         """
+        print("PWD:", os.getcwd())
+        print("CSV files:", glob.glob("*.csv"))
+
 
         prefix = f"{current_cord}_"
         all_csv_files = glob.glob("*.csv")
@@ -502,7 +534,10 @@ class Youtube(Realm):
                     continue
 
                 df["Angle"] = pd.to_numeric(df["Angle"], errors="coerce")
-                df_filtered = df[df["Angle"] == float(current_angle)]
+                if current_angle == "NA":
+                    df_filtered = df
+                else:
+                    df_filtered = df[df["Angle"] == float(current_angle)]
 
                 if df_filtered.empty:
                     print(f"No data <= {current_angle}° in {csv_file}.")
@@ -534,7 +569,7 @@ class Youtube(Realm):
                 print(f"Error reading {csv_file}: {e}")
 
         # graph of frames dropped
-        if current_angle == 0:
+        if current_angle == "NA":
             self.report.set_graph_title(f"Total Frames vs Dropped Frames at coordinate: {current_cord}")
         else:
             self.report.set_graph_title(f"Total Frames vs Dropped Frames at coordinate: {current_cord} and angle: {current_angle}°")
@@ -903,6 +938,64 @@ class Youtube(Realm):
     def stop_generic_cx(self,):
         self.generic_endps_profile.stop_cx()
         self.stop_time = datetime.now()
+    
+    def remove_angle_data_from_csv(self, csv_file_path):
+        if self.rotations_enabled:
+            if not os.path.exists(csv_file_path):
+                logging.info(f"CSV not found: {csv_file_path}")
+                return
+
+            try:
+                df = pd.read_csv(csv_file_path)
+            except Exception as e:
+                logging.info(f"Unable to read CSV {csv_file_path}: {e}")
+                return
+
+            if "Angle" not in df.columns:
+                logging.info(f"No Angle column in CSV: {csv_file_path}")
+                return
+
+            # Convert Angle column to numeric (to handle strings like "30.0")
+            df["Angle"] = pd.to_numeric(df["Angle"], errors="coerce")
+
+            # Keep only rows where Angle != self.current_angle
+            df_filtered = df[df["Angle"] != float(self.current_angle)]
+
+            # Rewrite entire file
+            df_filtered.to_csv(csv_file_path, index=False)
+
+            logging.info(f"Removed all rows for angle {self.current_angle} from {csv_file_path}.")
+    
+    def delete_existing_csvs_for_current_point(self):
+        """
+        Deletes existing CSV files for the current coordinate and angle.
+
+        This method constructs the expected CSV file names based on the current
+        coordinate and angle, checks if they exist in the appropriate directory,
+        and deletes them if found. It handles both web UI and non-web UI scenarios.
+
+        """
+        for device_name, _ in self.stats_api_response.items():
+            # Define CSV file path using the device name as the file name
+            if self.do_webUI:
+                csv_file_path = os.path.join(self.ui_report_dir, f"{self.current_cord}_{device_name}_youtube_stats_report.csv")
+                if self.rotations_enabled:
+                    self.remove_angle_data_from_csv(csv_file_path)
+                else:
+                    if os.path.isfile(csv_file_path):
+                        os.remove(csv_file_path)
+                        logging.info(f"Deleted existing CSV file: {csv_file_path}")
+                
+            else:
+                current_path = os.path.dirname(os.path.abspath(__file__))
+                csv_file_path = os.path.join(current_path, f"{self.current_cord}_{device_name}_youtube_stats_report.csv")
+                if self.rotations_enabled:
+                    self.remove_angle_data_from_csv(csv_file_path)
+                else:
+                    if os.path.isfile(csv_file_path):
+                        os.remove(csv_file_path)
+                        logging.info(f"Deleted existing CSV file: {csv_file_path}")
+
 
     def process_data(self):
         """
@@ -914,7 +1007,7 @@ class Youtube(Realm):
         if self.stats_api_response:
             result_data = self.stats_api_response
             for device_name, device_data in result_data.items():
-                stats = {key: value for key, value in device_data.items() if key != "stop"}
+                stats = {key: value for key, value in device_data.items()}
                 timestamp = stats.get("Timestamp", {})
                 if device_name not in self.mydatajson:
                     self.mydatajson[device_name] = {}
@@ -1016,13 +1109,10 @@ class Youtube(Realm):
                         continue
                     device_name = key
                     stats = value
-                    stop = data.get("stop", False)
-
                     if device_name not in self.stats_api_response:
                         self.stats_api_response[device_name] = {}
                     self.stats_api_response[device_name] = {
                         **stats,
-                        "stop": stop,
                     }
                     if self.do_robo:
                         self.stats_api_response[device_name]["current_angle"] = self.current_angle
@@ -1364,7 +1454,7 @@ class Youtube(Realm):
 
                 endp_status = generic_endpoint["endpoint"].get("status", "")
 
-                if endp_status == "Run":
+                if endp_status in ["Run"]:
                     return False
 
             return True
@@ -1624,6 +1714,12 @@ NOTES:
             '--do_robo',
             help="Specify this flag to perform the test with robo", action='store_true'
         )
+        # robo.add_argument(
+        #     '--mins_per_percent',
+        #     type=int,
+        #     help="Specify the minutes per percent of robo charge",
+        #     default=5
+        # )
 
 
         args = parser.parse_args()
@@ -1646,7 +1742,8 @@ NOTES:
         if args.do_robo:
             args.coordinates = args.coordinates.split(',') if args.coordinates else []
             args.rotations = [float(angle) for angle in args.rotations.split(',')] if args.rotations else []
-            rotations_enabled = True
+            if args.rotations:
+                rotations_enabled = True
 
         mgr_ip = args.mgr
         mgr_port = args.mgr_port
@@ -1741,7 +1838,9 @@ NOTES:
                 coordinates_list=args.coordinates,
                 angles_list=args.rotations,
                 do_robo=args.do_robo,
-                rotations_enabled=rotations_enabled)
+                rotations_enabled=rotations_enabled,
+                # mins_per_percent=args.mins_per_percent
+                )
             youtube.start_flask_server()
             args.upstream_port = youtube.change_port_to_ip(args.upstream_port)
 
