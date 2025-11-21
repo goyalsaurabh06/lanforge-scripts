@@ -20,6 +20,7 @@ class RobotClass:
         self.runtime_dir=None
         self.ip=None
         self.testname=None
+        self.create_waypointlist()
 
         # Create waypoint list on initialization
         # self.create_waypointlist()
@@ -58,7 +59,7 @@ class RobotClass:
 
         return False
     
-    def wait_for_battery(self,stop=None):
+    def wait_for_battery(self, stop=None, battery_needed=20):
         stopped = False
         pause=False
         last_battery_check=0
@@ -73,7 +74,7 @@ class RobotClass:
                 battery = data.get("battery", 0)
                 charge_flag = data.get("chargeFlag", 0)
                 retries=0
-                if battery <= 20:
+                if battery <= battery_needed:
                     pause=True
                     if stop is not None:
                         stop()
@@ -129,7 +130,44 @@ class RobotClass:
 
             except Exception as e:
                 logging.info("[ERROR] Failed to check battery: {}".format(e))
-                time.sleep(600)
+                time.sleep(5)
+    
+    # def ensure_battery_for_test(self, duration_min, mins_per_percent=5):
+    #     battery_url = f"http://{self.robo_ip}/reeman/base_encode"
+    #     try:
+    #         # Read current battery level
+    #         response = requests.get(battery_url, timeout=60)
+    #         response.raise_for_status()
+    #         data = response.json()
+    #         current_battery = data.get("battery", 0)
+    #         # Total minutes robot can run with current battery
+    #         max_duration = (current_battery * mins_per_percent)
+    #         # If battery cannot support the test at all → stop
+    #         if duration_min >= max_duration:
+    #             logging.warning(f"Insufficient battery ({current_battery}%) for the test duration of {duration_min} minutes.")
+    #             exit(1)
+    #         # If battery too low (<20%), charge fully
+    #         if current_battery <= 20:
+    #             self.wait_for_battery()
+    #             # Re-read battery after charging
+    #             response = requests.get(battery_url, timeout=60)
+    #             response.raise_for_status()
+    #             data = response.json()
+    #             current_battery = data.get("battery", 0)
+    #         # Battery needed for this duration
+    #         battery_needed = duration_min / mins_per_percent
+    #         # If the robot has enough battery → proceed
+    #         if current_battery > battery_needed:
+    #             logging.info(f"Sufficient battery ({current_battery}%) for the test duration of {duration_min} minutes.")
+    #             return True  # OK to proceed
+    #         else:
+    #             # Otherwise charge fully again
+    #             self.wait_for_battery(battery_needed=battery_needed)
+
+    #     except Exception as e:
+    #         logging.error(f"Failed to check battery status: {e}")
+    #         exit(1)
+
 
     def move_to_coordinate(self,coord):
         abort=False
