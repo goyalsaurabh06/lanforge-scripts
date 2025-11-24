@@ -1178,11 +1178,6 @@ class SpeedTest(Realm):
         - For regular tests: uses iteration numbers
         """
 
-        print('===============================')
-        print('Devices DATA:', self.devices_data)
-        print('Iteration DATA:', self.iteration_dict)
-        print('===============================')
-
         # --- Build the canonical device roster (stable order) ---
         roster = []
         for key, info in self.devices_data.items():
@@ -1236,341 +1231,416 @@ class SpeedTest(Realm):
             iteration_range = range(1, self.iteration + 1)
             total_iterations = self.iteration
 
-        # --- Reporting only if not interop mode ---
-        if not self.do_interopability:
-            # Create report and make sure destination dirs exist
-            report = lf_report(
-                _output_pdf="speedtest.pdf",    
-                _output_html="speedtest.html",
-                _results_dir_name=result_dir_name,
-                _path=self.result_dir if self.dowebgui else "/home/lanforge/html-reports"
-            )
-            report_path = report.get_path()
-            report_path_date_time = report.get_path_date_time()
-            os.makedirs(report_path, exist_ok=True)
-            os.makedirs(report_path_date_time, exist_ok=True)
+        # Create report and make sure destination dirs exist
+        report = lf_report(
+            _output_pdf="speedtest.pdf",    
+            _output_html="speedtest.html",
+            _results_dir_name=result_dir_name,
+            _path=self.result_dir if self.dowebgui else "/home/lanforge/html-reports"
+        )
+        report_path = report.get_path()
+        report_path_date_time = report.get_path_date_time()
+        os.makedirs(report_path, exist_ok=True)
+        os.makedirs(report_path_date_time, exist_ok=True)
 
-            # Move CSV files
-            try:
-                if self.robot_test:
-                    robot_csv = f'speedtest_results_{self.instance}.csv'
-                    if os.path.exists(robot_csv):
-                        shutil.move(robot_csv, report_path_date_time)
-                        print(f"Moved robot CSV: {robot_csv}")
-                    else:
-                        print(f"Robot CSV not found: {robot_csv}")
-                else:
-                    regular_csv = f'speedtest_results_{self.instance}.csv'
-                    if os.path.exists(regular_csv):
-                        shutil.move(regular_csv, report_path_date_time)
-                        print(f"Moved regular CSV: {regular_csv}")
-                    else:
-                        print(f"Regular CSV not found: {regular_csv}")
-            except Exception as e:
-                print(f"[WARN] could not move CSV: {e}")
-
-            logger.info("path: {}".format(report_path))
-            logger.info("path_date_time: {}".format(report_path_date_time))
-
-            # --- Title & objective ---
-            report_title = "Robot Speed Test" if self.robot_test else "Speed Test"
-            report.set_title(report_title)
-            report.build_banner()
-
-            report.set_obj_html(
-                _obj_title="Objective",
-                _obj=("The Candela Speed Test evaluates AP performance under real-world conditions by measuring latency, "
-                    "download speed, and upload speed. The goal is to reflect true end-user experience in typical deployments.")
-            )
-            report.build_objective()
-
-            # --- Test configuration summary ---
-            android_devices = windows_devices = linux_devices = mac_devices = 0
-            for r in roster:
-                dt = r["device_type"]
-                if dt == 'Android':
-                    android_devices += 1
-                elif dt == 'Windows':
-                    windows_devices += 1
-                elif dt == 'Mac OS':
-                    mac_devices += 1
-                elif dt == 'Linux/Interop':
-                    linux_devices += 1
-            
-            total_devices = ""
-            if android_devices: total_devices += f" Android({android_devices})"
-            if windows_devices: total_devices += f" Windows({windows_devices})"
-            if linux_devices:   total_devices += f" Linux({linux_devices})"
-            if mac_devices:     total_devices += f" Mac({mac_devices})"
-
-            # Add robot-specific configuration if applicable
-            config_data = {
-                "Test name": "Robot Speed Test" if self.robot_test else "Speed Test",
-                "Number of Iterations": total_iterations,
-                "Number of Selected Devices": f"{device_count} {total_devices}".strip()
-            }
-
+        # Move CSV files
+        try:
             if self.robot_test:
-                config_data["Robot Coordinates"] = ", ".join(str(c) for c in self.coordinate_list)
-
-                if self.rotation_list and self.rotation_list[0] != "":
-                    config_data["Robot Rotations"] = ", ".join(str(r) for r in self.rotation_list)
+                robot_csv = f'speedtest_results_{self.instance}.csv'
+                if os.path.exists(robot_csv):
+                    shutil.move(robot_csv, report_path_date_time)
+                    print(f"Moved robot CSV: {robot_csv}")
                 else:
-                    config_data["Robot Rotations"] = "None"
+                    print(f"Robot CSV not found: {robot_csv}")
+            else:
+                regular_csv = f'speedtest_results_{self.instance}.csv'
+                if os.path.exists(regular_csv):
+                    shutil.move(regular_csv, report_path_date_time)
+                    print(f"Moved regular CSV: {regular_csv}")
+                else:
+                    print(f"Regular CSV not found: {regular_csv}")
+        except Exception as e:
+            print(f"[WARN] could not move CSV: {e}")
 
-            report.test_setup_table(
-                test_setup_data=config_data,
-                value="Test Configuration"
-            )
+        logger.info("path: {}".format(report_path))
+        logger.info("path_date_time: {}".format(report_path_date_time))
 
-            # --- Per-iteration graphs and tables ---
-            missing_notes_all = []
-            self.rotation_graph_data = {
-                str(rotation_value): {
-                    "coordinates": [],
-                    "download": [],
-                    "upload": [],
-                    "download_lat": [],
-                    "upload_lat": [],
-                }
-                for rotation_value in (self.rotation_list if self.rotation_list else ["0"])
+        # --- Title & objective ---
+        report_title = "Robot Speed Test" if self.robot_test else "Speed Test"
+        report.set_title(report_title)
+        report.build_banner()
+
+        report.set_obj_html(
+            _obj_title="Objective",
+            _obj=("The Candela Speed Test evaluates AP performance under real-world conditions by measuring latency, "
+                "download speed, and upload speed. The goal is to reflect true end-user experience in typical deployments.")
+        )
+        report.build_objective()
+
+        # --- Test configuration summary ---
+        android_devices = windows_devices = linux_devices = mac_devices = 0
+        for r in roster:
+            dt = r["device_type"]
+            if dt == 'Android':
+                android_devices += 1
+            elif dt == 'Windows':
+                windows_devices += 1
+            elif dt == 'Mac OS':
+                mac_devices += 1
+            elif dt == 'Linux/Interop':
+                linux_devices += 1
+        
+        total_devices = ""
+        if android_devices: total_devices += f" Android({android_devices})"
+        if windows_devices: total_devices += f" Windows({windows_devices})"
+        if linux_devices:   total_devices += f" Linux({linux_devices})"
+        if mac_devices:     total_devices += f" Mac({mac_devices})"
+
+        # Add robot-specific configuration if applicable
+        config_data = {
+            "Test name": "Robot Speed Test" if self.robot_test else "Speed Test",
+            "Number of Iterations": total_iterations,
+            "Number of Selected Devices": f"{device_count} {total_devices}".strip()
+        }
+
+        if self.robot_test:
+            config_data["Robot Coordinates"] = ", ".join(str(c) for c in self.coordinate_list)
+
+            if self.rotation_list and self.rotation_list[0] != "":
+                config_data["Robot Rotations"] = ", ".join(str(r) for r in self.rotation_list)
+            else:
+                config_data["Robot Rotations"] = "None"
+
+        report.test_setup_table(
+            test_setup_data=config_data,
+            value="Test Configuration"
+        )
+
+        # --- Per-iteration graphs and tables ---
+        missing_notes_all = []
+        self.rotation_graph_data = {
+            str(rotation_value): {
+                "coordinates": [],
+                "download": [],
+                "upload": [],
+                "download_lat": [],
+                "upload_lat": [],
             }
+            for rotation_value in (self.rotation_list if self.rotation_list else ["0"])
+        }
 
-            for iter_idx in iteration_range:
-                print(f'Processing iteration {iter_idx} from iteration_dict: {self.iteration_dict.get(iter_idx, {})}')
+        for iter_idx in iteration_range:
+            print(f'Processing iteration {iter_idx} from iteration_dict: {self.iteration_dict.get(iter_idx, {})}')
 
-                iter_block = self.iteration_dict.get(iter_idx, {
-                    'ip': [], 'hostname': [], 'download_speed': [], 'upload_speed': [], 'download_lat': [], 'upload_lat': []
-                })
+            iter_block = self.iteration_dict.get(iter_idx, {
+                'ip': [], 'hostname': [], 'download_speed': [], 'upload_speed': [], 'download_lat': [], 'upload_lat': []
+            })
 
-                # Map from IP -> index in lists
-                ip_to_idx = {ip: i for i, ip in enumerate(iter_block.get('ip', []))}
+            # Map from IP -> index in lists
+            ip_to_idx = {ip: i for i, ip in enumerate(iter_block.get('ip', []))}
 
-                hostnames = []
-                dls = []
-                uls = []
-                dlat = []
-                ulat = []
+            hostnames = []
+            dls = []
+            uls = []
+            dlat = []
+            ulat = []
 
-                t_hostname = []
-                t_mac = []
-                t_ssid = []
-                t_channel = []
-                t_type = []
+            t_hostname = []
+            t_mac = []
+            t_ssid = []
+            t_channel = []
+            t_type = []
 
-                for dev in roster:
-                    ip = dev["ip"]
-                    host = dev["hostname"]
-                    t_hostname.append(host)
-                    t_mac.append(dev["mac"])
-                    t_ssid.append(dev["ssid"])
-                    t_channel.append(dev["channel"])
-                    t_type.append(dev["device_type"])
+            for dev in roster:
+                ip = dev["ip"]
+                host = dev["hostname"]
+                t_hostname.append(host)
+                t_mac.append(dev["mac"])
+                t_ssid.append(dev["ssid"])
+                t_channel.append(dev["channel"])
+                t_type.append(dev["device_type"])
 
-                    if ip in ip_to_idx:
-                        j = ip_to_idx[ip]
-                        hostnames.append(host or ip)
-                        dls.append(iter_block['download_speed'][j])
-                        uls.append(iter_block['upload_speed'][j])
-                        dlat.append(iter_block['download_lat'][j])
-                        ulat.append(iter_block['upload_lat'][j])
-                    else:
-                        host_label = host or ip or "(unknown)"
-                        hostnames.append(host_label)
-                        dls.append(0.0)
-                        uls.append(0.0)
-                        dlat.append(0.0)
-                        ulat.append(0.0)
-                        missing_notes_all.append(
-                            f"Iteration {iter_idx}: no data received for device {host_label} (IP {ip or 'N/A'}); row filled with 0."
-                        )
+                if ip in ip_to_idx:
+                    j = ip_to_idx[ip]
+                    hostnames.append(host or ip)
+                    dls.append(iter_block['download_speed'][j])
+                    uls.append(iter_block['upload_speed'][j])
+                    dlat.append(iter_block['download_lat'][j])
+                    ulat.append(iter_block['upload_lat'][j])
+                else:
+                    host_label = host or ip or "(unknown)"
+                    hostnames.append(host_label)
+                    dls.append(0.0)
+                    uls.append(0.0)
+                    dlat.append(0.0)
+                    ulat.append(0.0)
+                    missing_notes_all.append(
+                        f"Iteration {iter_idx}: no data received for device {host_label} (IP {ip or 'N/A'}); row filled with 0."
+                    )
 
-                # Skip if no data at all
-                if not any(dls) and not any(uls):
-                    print(f"[WARN] iteration {iter_idx}: no speed data; skipping graphs/tables.")
+            # Skip if no data at all
+            if not any(dls) and not any(uls):
+                print(f"[WARN] iteration {iter_idx}: no speed data; skipping graphs/tables.")
+                continue
+
+            # Create descriptive label based on coordinate and rotation
+            if self.robot_test:
+                # Calculate coordinate and rotation based on CORRECT test order
+                if self.rotation_list and self.rotation_list[0] != "":
+                    # Both coordinates and rotations: calculate based on current position in sequence
+                    # After reordering, iter_idx now represents the correct position
+                    coord_idx = (iter_idx - 1) // len(self.rotation_list)
+                    rot_idx = (iter_idx - 1) % len(self.rotation_list)
+                    coord = self.coordinate_list[coord_idx] if coord_idx < len(self.coordinate_list) else 'Unknown'
+                    rotation = self.rotation_list[rot_idx] if rot_idx < len(self.rotation_list) else 'Unknown'
+                else:
+                    # Only coordinates
+                    coord_idx = (iter_idx - 1) % len(self.coordinate_list)
+                    coord = self.coordinate_list[coord_idx] if coord_idx < len(self.coordinate_list) else 'Unknown'
+                    rotation = 'None'
+                # -------- Build Line Graph Dataset --------
+                rot_key = str(rotation)  # rotation in degrees or "0"
+
+                if rot_key not in self.rotation_graph_data:
+                    self.rotation_graph_data[rot_key] = {"coordinates": [], "download": [], "upload": [], "download_lat": [], "upload_lat": []}
+
+                self.rotation_graph_data[rot_key]["coordinates"].append(coord)
+                self.rotation_graph_data[rot_key]["download"].append(sum(dls)/len(dls) if dls else 0)
+                self.rotation_graph_data[rot_key]["upload"].append(sum(uls)/len(uls) if uls else 0)
+                self.rotation_graph_data[rot_key]["download_lat"].append(sum(dlat)/len(dlat) if dlat else 0)
+                self.rotation_graph_data[rot_key]["upload_lat"].append(sum(ulat)/len(ulat) if ulat else 0)
+
+                iteration_label = f"Coordinate: {coord} | Rotation Angle: {rotation}°"
+            else:
+                iteration_label = f"Iteration {iter_idx}"
+
+        if self.robot_test:
+
+            print("\n[INFO] Generating rotation-based bar plots")
+            print(self.rotation_graph_data)
+            print("====================================")
+
+            for rot, data in self.rotation_graph_data.items():
+                coords = data["coordinates"]
+                down = data["download"]
+                up = data["upload"]
+                dlat = data["download_lat"]
+                ulat = data["upload_lat"]
+
+                if not coords:
+                    print(f"[WARN] No data for rotation {rot}, skipping")
                     continue
 
-                # ---- Graphs ----
-                # Create descriptive label based on coordinate and rotation
-                if self.robot_test:
-                    # Calculate coordinate and rotation based on CORRECT test order
-                    if self.rotation_list and self.rotation_list[0] != "":
-                        # Both coordinates and rotations: calculate based on current position in sequence
-                        # After reordering, iter_idx now represents the correct position
-                        coord_idx = (iter_idx - 1) // len(self.rotation_list)
-                        rot_idx = (iter_idx - 1) % len(self.rotation_list)
-                        coord = self.coordinate_list[coord_idx] if coord_idx < len(self.coordinate_list) else 'Unknown'
-                        rotation = self.rotation_list[rot_idx] if rot_idx < len(self.rotation_list) else 'Unknown'
-                    else:
-                        # Only coordinates
-                        coord_idx = (iter_idx - 1) % len(self.coordinate_list)
-                        coord = self.coordinate_list[coord_idx] if coord_idx < len(self.coordinate_list) else 'Unknown'
-                        rotation = 'None'
-                    # -------- Build Line Graph Dataset --------
-                    rot_key = str(rotation)  # rotation in degrees or "0"
-
-                    if rot_key not in self.rotation_graph_data:
-                        self.rotation_graph_data[rot_key] = {"coordinates": [], "download": [], "upload": [], "download_lat": [], "upload_lat": []}
-
-                    self.rotation_graph_data[rot_key]["coordinates"].append(coord)
-                    self.rotation_graph_data[rot_key]["download"].append(sum(dls)/len(dls) if dls else 0)
-                    self.rotation_graph_data[rot_key]["upload"].append(sum(uls)/len(uls) if uls else 0)
-                    self.rotation_graph_data[rot_key]["download_lat"].append(sum(dlat)/len(dlat) if dlat else 0)
-                    self.rotation_graph_data[rot_key]["upload_lat"].append(sum(ulat)/len(ulat) if ulat else 0)
-
-                    iteration_label = f"Coordinate: {coord} | Rotation Angle: {rotation}°"
-                else:
-                    iteration_label = f"Iteration {iter_idx}"
-
-            # ============= LINE PLOTS FOR ROBOT TEST =============
-            if self.robot_test:
-
-                print("\n[INFO] Generating rotation-based bar plots")
-                print(self.rotation_graph_data)
-                print("====================================")
-
-                for rot, data in self.rotation_graph_data.items():
-                    coords = data["coordinates"]
-                    down = data["download"]
-                    up = data["upload"]
-                    dlat = data["download_lat"]
-                    ulat = data["upload_lat"]
-
-                    if not coords:
-                        print(f"[WARN] No data for rotation {rot}, skipping")
-                        continue
-
-                    report.set_table_title(f"<b>Rotation Angle: {rot}°</b>")
-                    report.build_table_title()
-
-                    report.set_table_title(f"Speed (Mbps) for Rotation {rot}°")
-                    report.build_table_title()
-
-                    bar_speed = lf_bar_graph(
-                        _data_set=[down, up],
-                        _xaxis_name="Coordinates",
-                        _yaxis_name="Speed (Mbps)",
-                        _xaxis_categories=coords,
-                        _graph_image_name=f"rotation_{rot}_speed_barplot",
-                        _label=["Download", "Upload"],
-                        _color=None,
-                        _color_edge="red",
-                        _show_bar_value=True,
-                        _text_font=7,
-                        _enable_csv=True
-                    )
-
-                    speed_png = bar_speed.build_bar_graph()
-
-                    if speed_png:
-                        report.set_graph_image(speed_png)
-                        report.move_graph_image()
-                        report.build_graph()
-
-                    # ----------------------------------------------
-                    # LATENCY PLOT (Download/Upload)
-                    # ----------------------------------------------
-                    report.set_table_title(f"Latency (ms) for Rotation {rot}°")
-                    report.build_table_title()
-
-                    bar_latency = lf_bar_graph(
-                        _data_set=[dlat, ulat],
-                        _xaxis_name="Coordinates",
-                        _yaxis_name="Latency (ms)",
-                        _xaxis_categories=coords,
-                        _graph_image_name=f"rotation_{rot}_latency_barplot",
-                        _label=["Download Latency", "Upload Latency"],
-                        _color=None,
-                        _color_edge="red",
-                        _show_bar_value=True,
-                        _text_font=7,
-                        _enable_csv=True
-                    )
-
-                    latency_png = bar_latency.build_bar_graph()
-
-                    if latency_png:
-                        report.set_graph_image(latency_png)
-                        report.move_graph_image()
-                        report.build_graph()
-
-                report.set_table_title(f'{iteration_label} - Speed Test Results')
+                report.set_table_title(f"<b>Rotation Angle: {rot}°</b>")
                 report.build_table_title()
 
-                report.set_table_title('Per-Client Speed')
+                report.set_table_title(f"Speed (Mbps) for Rotation {rot}°")
                 report.build_table_title()
 
-                graph = lf_bar_graph(
+                bar_speed = lf_bar_graph(
+                    _data_set=[down, up],
+                    _xaxis_name="Coordinates",
+                    _yaxis_name="Speed (Mbps)",
+                    _xaxis_categories=coords,
+                    _graph_image_name=f"rotation_{rot}_speed_barplot",
+                    _label=["Download", "Upload"],
+                    _color=None,
+                    _color_edge="red",
+                    _show_bar_value=True,
+                    _text_font=7,
+                    _enable_csv=True
+                )
+
+                speed_png = bar_speed.build_bar_graph()
+
+                if speed_png:
+                    report.set_graph_image(speed_png)
+                    report.move_graph_image()
+                    report.build_graph()
+
+                # ----------------------------------------------
+                # LATENCY PLOT (Download/Upload)
+                # ----------------------------------------------
+                report.set_table_title(f"Latency (ms) for Rotation {rot}°")
+                report.build_table_title()
+
+                bar_latency = lf_bar_graph(
+                    _data_set=[dlat, ulat],
+                    _xaxis_name="Coordinates",
+                    _yaxis_name="Latency (ms)",
+                    _xaxis_categories=coords,
+                    _graph_image_name=f"rotation_{rot}_latency_barplot",
+                    _label=["Download Latency", "Upload Latency"],
+                    _color=None,
+                    _color_edge="red",
+                    _show_bar_value=True,
+                    _text_font=7,
+                    _enable_csv=True
+                )
+
+                latency_png = bar_latency.build_bar_graph()
+
+                if latency_png:
+                    report.set_graph_image(latency_png)
+                    report.move_graph_image()
+                    report.build_graph()
+
+            report.set_table_title(f'{iteration_label} - Speed Test Results')
+            report.build_table_title()
+
+            report.set_table_title('Per-Client Speed')
+            report.build_table_title()
+            print('=============================')
+            dls = [124.0, 85.0, 102.0]
+            uls = [42.0, 39.0, 55.0]
+            print('=============================')
+
+            graph = lf_bar_graph(
+                _data_set=[dls, uls],
+                _xaxis_name="Device Name",
+                _yaxis_name="Speed (in Mbps)",
+                _xaxis_categories=hostnames,
+                _graph_image_name=f"Download_upload_speed_{iter_idx}",
+                _label=["Download", "Upload"],
+                _color=None,
+                _color_edge='red',
+                _show_bar_value=True,
+                _text_font=7,
+                _text_rotation=None,
+                _enable_csv=True
+            )
+            graph_png = graph.build_bar_graph()
+            if graph_png:
+                report.set_graph_image(graph_png)
+                report.move_graph_image()
+                report.build_graph()
+
+            report.set_table_title('Per-Client Latency')
+            report.build_table_title()
+            graph2 = lf_bar_graph(
+                _data_set=[dlat, ulat],
+                _xaxis_name="Device Name",
+                _yaxis_name="Latency (in ms)",
+                _xaxis_categories=hostnames,
+                _graph_image_name=f"Download_upload_Latency_{iter_idx}",
+                _label=["Download", "Upload"],
+                _color=None,
+                _color_edge='red',
+                _show_bar_value=True,
+                _text_font=7,
+                _text_rotation=None,
+                _enable_csv=True
+            )
+            graph2_png = graph2.build_bar_graph()
+            if graph2_png:
+                report.set_graph_image(graph2_png)
+                report.move_graph_image()
+                report.build_graph()
+
+            # ---- Per-iteration device table ----
+            test_input_info = {
+                "hostname": t_hostname,
+                "MAC": t_mac,
+                "Device Type": t_type,
+                "SSID": t_ssid,
+                "Channel": t_channel,
+                "Download Speed (Mbps)": dls,
+                "Upload Speed (Mbps)": uls,
+                "Download Latency (ms)": dlat,
+                "Upload Latency (ms)": ulat,
+            }
+
+            report.set_table_title('Device Data')
+            report.build_table_title()
+
+            report.set_table_dataframe(pd.DataFrame(test_input_info))
+            report.build_table()
+
+        else:
+            print("\n[INFO] Generating CLI-based bar plots")
+            for iter_idx in iteration_range:
+                iter_block = self.iteration_dict.get(iter_idx, {})
+                hostnames = iter_block.get("hostname", [])
+                dls = iter_block.get("download_speed", [])
+                uls = iter_block.get("upload_speed", [])
+                dlat = iter_block.get("download_lat", [])
+                ulat = iter_block.get("upload_lat", [])
+
+                if not any(dls) and not any(uls):
+                    print(f"[WARN] iteration {iter_idx}: no data; skipping.")
+                    continue
+
+                iteration_label = f"Iteration {iter_idx}"
+                report.set_table_title(f"{iteration_label} - Speed Test Results")
+                report.build_table_title()
+
+                # ---- Speed (Mbps) ----
+                report.set_table_title("Per-Client Speed (Mbps)")
+                report.build_table_title()
+                bar_speed = lf_bar_graph(
                     _data_set=[dls, uls],
                     _xaxis_name="Device Name",
-                    _yaxis_name="Speed (in Mbps)",
+                    _yaxis_name="Speed (Mbps)",
                     _xaxis_categories=hostnames,
-                    _graph_image_name=f"Download_upload_speed_{iter_idx}",
+                    _graph_image_name=f"iteration_{iter_idx}_speed_barplot",
                     _label=["Download", "Upload"],
                     _color=None,
-                    _color_edge='red',
+                    _color_edge="red",
                     _show_bar_value=True,
                     _text_font=7,
-                    _text_rotation=None,
-                    _enable_csv=True
+                    _enable_csv=True,
                 )
-                graph_png = graph.build_bar_graph()
-                if graph_png:
-                    report.set_graph_image(graph_png)
+                speed_png = bar_speed.build_bar_graph()
+                if speed_png:
+                    report.set_graph_image(speed_png)
                     report.move_graph_image()
                     report.build_graph()
 
-                report.set_table_title('Per-Client Latency')
+                # ---- Latency (ms) ----
+                report.set_table_title("Per-Client Latency (ms)")
                 report.build_table_title()
-                graph2 = lf_bar_graph(
+                bar_latency = lf_bar_graph(
                     _data_set=[dlat, ulat],
                     _xaxis_name="Device Name",
-                    _yaxis_name="Latency (in ms)",
+                    _yaxis_name="Latency (ms)",
                     _xaxis_categories=hostnames,
-                    _graph_image_name=f"Download_upload_Latency_{iter_idx}",
-                    _label=["Download", "Upload"],
+                    _graph_image_name=f"iteration_{iter_idx}_latency_barplot",
+                    _label=["Download Latency", "Upload Latency"],
                     _color=None,
-                    _color_edge='red',
+                    _color_edge="red",
                     _show_bar_value=True,
                     _text_font=7,
-                    _text_rotation=None,
-                    _enable_csv=True
+                    _enable_csv=True,
                 )
-                graph2_png = graph2.build_bar_graph()
-                if graph2_png:
-                    report.set_graph_image(graph2_png)
+                latency_png = bar_latency.build_bar_graph()
+                if latency_png:
+                    report.set_graph_image(latency_png)
                     report.move_graph_image()
                     report.build_graph()
 
-                # ---- Per-iteration device table ----
+                # ---- Per-iteration table ----
                 test_input_info = {
-                    "hostname": t_hostname,
-                    "MAC": t_mac,
-                    "Device Type": t_type,
-                    "SSID": t_ssid,
-                    "Channel": t_channel,
+                    "Hostname": hostnames,
                     "Download Speed (Mbps)": dls,
                     "Upload Speed (Mbps)": uls,
                     "Download Latency (ms)": dlat,
                     "Upload Latency (ms)": ulat,
                 }
-
-                report.set_table_title('Device Data')
+                report.set_table_title("Device Data")
                 report.build_table_title()
-
                 report.set_table_dataframe(pd.DataFrame(test_input_info))
                 report.build_table()
 
-            # If anything was missing, add a Notes block at the end
-            if missing_notes_all:
-                notes_html = "<br>".join(missing_notes_all)
-                report.set_obj_html(_obj_title="Notes", _obj=notes_html)
-                report.build_objective()
+        # If anything was missing, add a Notes block at the end
+        if missing_notes_all:
+            notes_html = "<br>".join(missing_notes_all)
+            report.set_obj_html(_obj_title="Notes", _obj=notes_html)
+            report.build_objective()
 
-            # Footer + files
-            report.build_footer()
-            report.write_html()
-            report.write_pdf(_orientation="Landscape")
+        # Footer + files
+        report.build_footer()
+        report.write_html()
+        report.write_pdf(_orientation="Landscape")
 
         print(f"[REPORT] done, files in: {report_path_date_time}")
 
