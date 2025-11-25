@@ -1017,6 +1017,24 @@ class RealBrowserTest(Realm):
                 self.duration = int(self.duration[:-1]) * 60
             else:
                 self.duration = int(self.duration)
+    
+
+    def delete_current_csv_files(self):
+        """
+            Deletes a specific CSV file in the current working directory.
+        """
+        filename = f"{self.current_cord}_{self.current_angle}_webBrowser.csv" if self.rotations_enabled else f"{self.current_cord}_webBrowser.csv"
+        file_path = os.path.join(os.getcwd(), filename)
+
+        if not os.path.exists(file_path):
+            logging.info(f"CSV file not found: {file_path}")
+            return
+
+        try:
+            os.remove(file_path)
+            logging.info(f"Deleted CSV file: {file_path}")
+        except Exception as e:
+            logging.error(f"Error deleting file {file_path}: {e}", exc_info=True)
 
     def run_test(self, available_resources):
         """
@@ -1036,6 +1054,7 @@ class RealBrowserTest(Realm):
         if self.do_robo:
             for coordinate in self.coordinates_list:
                 # self.robo_obj.ensure_battery_for_test(duration_min=self.duration, mins_per_percent=self.mins_per_percent)
+                self.robo_obj.wait_for_battery()
                 self.robo_obj.move_to_coordinate(coord=coordinate)
                 self.current_cord = coordinate
                 if self.rotations_enabled:
@@ -1043,6 +1062,7 @@ class RealBrowserTest(Realm):
                     print('going into this')
                     for angle, rad in zip(self.angles_list, self.radians_list):
                         # self.robo_obj.ensure_battery_for_test(duration_min=self.duration, mins_per_percent=self.mins_per_percent)
+                        self.robo_obj.wait_for_battery()
                         self.robo_obj.rotate_angle(angle=rad)
                         self.current_angle = angle
                         self.start_specific(cx_batch)
@@ -1708,6 +1728,23 @@ class RealBrowserTest(Realm):
             self.device_targets = {}
             self.laptop_stats = {}
             while datetime.now() <= end_time or not self.check_gen_cx():
+                pause, _ = self.robo_obj.wait_for_battery()
+                if pause:
+                    last_data = []
+                    mobile_data = {}
+                    time_taken = {}
+                    self.robo_mobile_data = {}
+                    self.delete_current_csv_files()
+                    self.http_profile.stop_cx()
+                    self.clear_http_cx_data()
+                    time.sleep(5)
+                    test_time = timedelta(minutes=duration)
+                    end_time = datetime.now() + test_time
+                    est_end_time = end_time + timedelta(minutes=1)
+                    logging.info(f"End time of the Test {end_time}")
+                    logging.info(f"Estimated End time of the Test {est_end_time}")
+
+
                 try:
 
                     if datetime.now() > est_end_time:
