@@ -22,7 +22,7 @@ def nav_name():
 def nav_angle():
     data = request.json
     print(f"[FAKE SERVER] Rotate request: {data}")
-    print("Waiting for 5 seconds to ROTATE")
+    print("Waiting for 5 seconds to ROTATE=================")
     time.sleep(5)  # Simulate rotation delay
     return jsonify({"status": "success", "message": "Rotation complete"}), 200
 
