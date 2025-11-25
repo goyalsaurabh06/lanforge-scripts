@@ -2,6 +2,7 @@ import os
 import requests
 import time
 import json
+import logging
 
 class RobotClass:
     def __init__(self):
@@ -10,13 +11,16 @@ class RobotClass:
         self.current_coordinate = None
         self.current_angle = None
         self.result_directory = None
+        self.runtime_dir = None
+        self.ip = ""
 
     def move_to_coordinate(self, coordinate=None, result_dir=None):
         url = f"http://{self.robo_ip}/cmd/nav_name"
         data = {"coordinate": coordinate}
         self.result_directory = result_dir
+        stopped = False
         print(f"[MOVE] Sending coordinates: {data}")
-
+        robo_moved = False
         self.navdata_json = {
             "Canbee_location": coordinate,
             "status": "Running",
@@ -36,15 +40,22 @@ class RobotClass:
             print("[MOVE] Robot reached the target.")
             time.sleep(5)
             self.navdata_json["status"] = "Stopped"
+            robo_moved = True
         else:
             print("[MOVE] Failed:", response.text)
             self.navdata_json["status"] = "Failed"
+        
+        if self.result_directory is not None and self.check_test_status():
+            stopped=True
+            return robo_moved,stopped
+
 
         self._save_navdata(result_dir)
         print("[SAVE] Updated navdata.json:", self.navdata_json)
-        return self.navdata_json
+        return robo_moved,stopped
 
     def rotate_angle(self, x, y, angle):
+
         url = f"http://{self.robo_ip}/cmd/nav_angle"
         data = {"x": x, "y": y, "angle": angle}
 
@@ -72,22 +83,83 @@ class RobotClass:
             print("[ROTATE] Failed:", response.text)
             return False
 
-    def wait_for_battery(self):
-        url = f"http://{self.robo_ip}/reeman/battery"
-        try:
-            response = requests.get(url)
-            data = response.json()
-            level = data.get("level", 0)
-        except Exception as e:
-            print("[BATTERY] Error fetching battery info:", e)
-            return "error"
+    # def wait_for_battery(self):
+    #     url = f"http://{self.robo_ip}/reeman/battery"
+    #     try:
+    #         response = requests.get(url)
+    #         data = response.json()
+    #         level = data.get("level", 0)
+    #     except Exception as e:
+    #         print("[BATTERY] Error fetching battery info:", e)
+    #         return "error"
 
-        if level < 20:
-            print(f"[BATTERY] Low ({level}%). Waiting for charge...")
-            time.sleep(2)
+    #     if level < 20:
+    #         print(f"[BATTERY] Low ({level}%). Waiting for charge...")
+    #         time.sleep(2)
+    #     else:
+    #         print(f"[BATTERY] OK ({level}%). Continuing.")
+    #     return "ok"
+    def check_test_status(self):
+        file_path = os.path.join(
+            self.runtime_dir,
+            "Running_instances/{}_{}_running.json".format(self.ip, self.testname))
+        
+        print("ffff",file_path)
+        if not os.path.exists(file_path):
+            return True
+        
+        with open(file_path, 'r') as f:
+            run_status = json.load(f)
+
+            if 'status' in run_status.keys() and run_status["status"] != "Running":
+                logging.info("Test is stopped by the user")
+                return True
+       
+        return False
+    
+    def wait_for_battery(self, battery = "0", stop=None):
+        """
+        Simplified version:
+        - No API calls
+        - Uses only time.sleep
+        - You pass the current battery level as an argument
+        """
+
+        paused = False
+        stopped = False
+
+        # Battery low condition
+        if battery <= 21:
+            paused = True
+
+            if stop is not None:
+                stop()
+
+            logging.info(f"Battery low ({battery}%). Pausing test...")
+            logging.info("Sending robot to charging point... (simulated)")
+            
+            # Simulate time for robot to reach charging point
+            print("==============================================")
+            time.sleep(10)   # adjust as needed
+            if self.result_directory is not None and self.check_test_status():
+                stopped=True
+                return paused,stopped
+
+            logging.info("Robot reached charger. Charging... (simulated)")
+            
+            # Simulate charging time
+            # Example: 5 minutes = 300 seconds
+            charging_duration = 10    # change as needed
+            time.sleep(charging_duration)
+
+            logging.info("Battery charged. Resuming test...===============================================")
+            return paused, stopped
+
         else:
-            print(f"[BATTERY] OK ({level}%). Continuing.")
-        return "ok"
+            # Battery OK
+            logging.info(f"[OK] Battery at {battery}%. Continuing test.")
+            return paused, stopped
+
     
     def _save_navdata(self, result_dir=None):
         if result_dir:
@@ -95,7 +167,6 @@ class RobotClass:
             file_path = os.path.join(result_dir, "nav_data.json")
         else:
             file_path = "nav_data.json"
-
         with open(file_path, "w") as f:
             json.dump(self.navdata_json, f, indent=4)
         print("[SAVE] nav_data.json updated at:", file_path)
