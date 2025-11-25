@@ -220,6 +220,7 @@ class Youtube(Realm):
             self.rotations_enabled = rotations_enabled
             self.radians_list = self.robo_obj.angles_to_radians(self.angles_list)
             # self.mins_per_percent = mins_per_percent
+            self.pause = False
 
 
     def stop(self):
@@ -273,7 +274,7 @@ class Youtube(Realm):
                     self.get_initial_data()
 
                     while datetime.now() < end_time or not self.check_gen_cx():
-                        pause = self.robo_obj.wait_for_battery()
+                        pause, _ = self.robo_obj.wait_for_battery()
                         if pause:
                             self.delete_existing_csvs_for_current_point()
                             self.generic_endps_profile.stop_cx()
@@ -297,7 +298,8 @@ class Youtube(Realm):
                 self.get_initial_data()
 
                 while datetime.now() < end_time or not self.check_gen_cx():
-                    pause = self.robo_obj.wait_for_battery()
+                    pause, _ = self.robo_obj.wait_for_battery()
+                    print("Pause status:", pause)
                     if pause:
                         self.delete_existing_csvs_for_current_point()
                         self.generic_endps_profile.stop_cx()
@@ -1068,6 +1070,18 @@ class Youtube(Realm):
         Starts a Flask server with API endpoints for YouTube statistics.
         """
         app = Flask(__name__)
+
+        # useful to simulate wait for battery charging
+        @app.route('/pause_true', methods=['GET'])
+        def pause_true():
+            self.pause = True
+            return jsonify({"pause": self.pause})
+        
+        # useful to simulate wait for battery charging
+        @app.route('/pause_false', methods=['GET'])
+        def pause_false():
+            self.pause = False
+            return jsonify({"pause": self.pause})
 
         @app.route('/check_stop', methods=['GET'])
         def check_stop():
