@@ -723,7 +723,7 @@ class HttpDownload(Realm):
 
         return l4_dict
 
-    def monitor_for_runtime_csv(self, duration, rotation_angle = ""):
+    def monitor_for_runtime_csv(self, duration):
 
         time_now = datetime.now()
         starttime = time_now.strftime("%d/%m %I:%M:%S %p")
@@ -806,7 +806,7 @@ class HttpDownload(Realm):
                             break
 
                         if self.rotation_enabled:
-                            rotation_moni = self.robot_obj.rotate_angle(rotation_angle,self.current_angle)
+                            rotation_moni = self.robot_obj.rotate_angle(self.current_angle)
                             if not rotation_moni:
                                 test_stopped_by_user = True
                                 break
@@ -1402,7 +1402,10 @@ class HttpDownload(Realm):
         report.build_banner()
         report.set_table_title("Test Setup Information")
         report.build_table_title()
-
+        if self.robot_test:
+            test_setup_info["Robo IP"] = self.robot_ip
+            test_setup_info["Selected Coordinates"] = self.coordinate
+            test_setup_info["Rotation"] = self.rotation
         report.test_setup_table(value="Test Setup Information", test_setup_data=test_setup_info)
 
         report.set_obj_html("Objective", "The HTTP Download Test is designed to verify that N clients connected on specified band can "
@@ -1928,80 +1931,23 @@ class HttpDownload(Realm):
             logger.error('No cross connections created, aborting test')
             exit(1)
 
-    def perform_robo(self):
-        if(self.rotation_list[0]!=""):
-            self.rotation_enabled=True
-        test_stopped_by_user = False
-        self.robot_obj = RobotClass()
-        self.robot_obj.ip = self.host
-        self.robot_obj.testname = self.test_name
-        self.robot_obj.runtime_dir = self.result_dir
-        self.robot_obj.robo_ip = "127.0.0.1:5000" 
-        self.robot_obj.runtime_dir = os.path.dirname(os.path.dirname(self.result_dir))
-        for coordinate in range(len(self.coordinate_list)):
-            if_paused,test_stopped_by_user=self.robot_obj.wait_for_battery(25)
-
-            if test_stopped_by_user:
-                break
-            robo_moved = self.robot_obj.move_to_coordinate(self.coordinate_list[coordinate],result_dir=os.path.dirname(os.path.dirname(self.result_dir)))
-            
-            if robo_moved:
-                self.current_coordinate = self.coordinate_list[coordinate]
-                # if no rotation mode
-                if not self.rotation_enabled:
-                    self.start()
-                    test_stopped_by_user = self.monitor_for_runtime_csv(self.duration)
-                    self.stop()
-                    self.update_stop_status_robot()
-                    
-                # if rotation mode
-                else:
-                    for angle in self.rotation_list:
-                        self.current_angle = angle
-
-                        is_paused, test_stopped_by_user = self.robot_obj.wait_for_battery(25)
-                        if test_stopped_by_user:
-                            break
-                        
-                        rotated = self.robot_obj.rotate_angle(1,2,angle)  # depends on actual func
-                        if rotated:
-                            if test_stopped_by_user:
-                                break
-                            self.start()
-                            test_stopped_by_user = self.monitor_for_runtime_csv(self.duration)
-                            self.stop()
-                            self.update_stop_status_robot()
-
-                        if test_stopped_by_user:
-                            break
-
-            
-    
     # def perform_robo(self):
-
     #     if(self.rotation_list[0]!=""):
     #         self.rotation_enabled=True
-
+    #     test_stopped_by_user = False
     #     self.robot_obj = RobotClass()
-    #     self.robot_obj.robo_ip = self.robot_ip
-    #     base_dir = os.path.dirname(os.path.dirname(self.result_dir))
-    #     nav_data = os.path.join(base_dir, 'nav_data.json') # To generate nav_data.json in webgui folder
-    #     self.robot_obj.nav_data_path = nav_data
-    #     self.robot_obj.create_waypointlist()
     #     self.robot_obj.ip = self.host
     #     self.robot_obj.testname = self.test_name
     #     self.robot_obj.runtime_dir = self.result_dir
-    #     test_stopped_by_user = False
+    #     self.robot_obj.robo_ip = "127.0.0.1:5000" 
+    #     self.robot_obj.runtime_dir = os.path.dirname(os.path.dirname(self.result_dir))
     #     for coordinate in range(len(self.coordinate_list)):
+    #         if_paused,test_stopped_by_user=self.robot_obj.wait_for_battery(25)
+
     #         if test_stopped_by_user:
     #             break
-    #         if_paused,test_stopped_by_user=self.robot_obj.wait_for_battery()
-    #         if test_stopped_by_user:
-    #             break
-    #         # robo_moved = self.robot_obj.move_to_coordinate(self.coordinate_list[coordinate],result_dir=os.path.dirname(os.path.dirname(self.result_dir)))
-    #         robo_moved, abort = self.robot_obj.move_to_coordinate(self.coordinate_list[coordinate])
-    #         if abort:
-    #             break
+    #         robo_moved = self.robot_obj.move_to_coordinate(self.coordinate_list[coordinate],result_dir=os.path.dirname(os.path.dirname(self.result_dir)))
+            
     #         if robo_moved:
     #             self.current_coordinate = self.coordinate_list[coordinate]
     #             # if no rotation mode
@@ -2013,18 +1959,77 @@ class HttpDownload(Realm):
                     
     #             # if rotation mode
     #             else:
-    #                 rotation_list=self.robot_obj.angles_to_radians(self.rotation_list)
-    #                 for angle in range(len(rotation_list)):
-    #                     is_paused, test_stopped_by_user = self.robot_obj.wait_for_battery()
+    #                 for angle in self.rotation_list:
+    #                     self.current_angle = angle
+
+    #                     is_paused, test_stopped_by_user = self.robot_obj.wait_for_battery(25)
     #                     if test_stopped_by_user:
     #                         break
-    #                     robo_rotated = self.robot_obj.rotate_angle(rotation_list[angle], self.rotation_list[angle])
-    #                     if robo_rotated:
-    #                         self.current_angle = self.rotation_list[angle]
+                        
+    #                     rotated = self.robot_obj.rotate_angle(1,2,angle)  # depends on actual func
+    #                     if rotated:
+    #                         if test_stopped_by_user:
+    #                             break
     #                         self.start()
-    #                         test_stopped_by_user = self.monitor_for_runtime_csv(self.duration, rotation_list[angle])
+    #                         test_stopped_by_user = self.monitor_for_runtime_csv(self.duration)
     #                         self.stop()
     #                         self.update_stop_status_robot()
+
+    #                     if test_stopped_by_user:
+    #                         break
+
+            
+    
+    def perform_robo(self):
+
+        if(self.rotation_list[0]!=""):
+            self.rotation_enabled=True
+
+        self.robot_obj = RobotClass()
+        self.robot_obj.robo_ip = self.robot_ip
+        base_dir = os.path.dirname(os.path.dirname(self.result_dir))
+        nav_data = os.path.join(base_dir, 'nav_data.json') # To generate nav_data.json in webgui folder
+        self.robot_obj.nav_data_path = nav_data
+        self.robot_obj.create_waypointlist()
+        self.robot_obj.ip = self.host
+        self.robot_obj.testname = self.test_name
+        self.robot_obj.runtime_dir = self.result_dir
+        test_stopped_by_user = False
+        for coordinate in range(len(self.coordinate_list)):
+            if test_stopped_by_user:
+                break
+            if_paused,test_stopped_by_user=self.robot_obj.wait_for_battery()
+            if test_stopped_by_user:
+                break
+            # robo_moved = self.robot_obj.move_to_coordinate(self.coordinate_list[coordinate],result_dir=os.path.dirname(os.path.dirname(self.result_dir)))
+            robo_moved, abort = self.robot_obj.move_to_coordinate(self.coordinate_list[coordinate])
+            if abort:
+                break
+            if robo_moved:
+                self.current_coordinate = self.coordinate_list[coordinate]
+                # if no rotation mode
+                if not self.rotation_enabled:
+                    self.start()
+                    test_stopped_by_user = self.monitor_for_runtime_csv(self.duration)
+                    self.stop()
+                    self.update_stop_status_robot()
+                    
+                # if rotation mode
+                else:
+                    # rotation_list=self.robot_obj.angles_to_radians(self.rotation_list)
+                    for angle in range(len(self.rotation_list)):
+                        is_paused, test_stopped_by_user = self.robot_obj.wait_for_battery()
+                        if test_stopped_by_user:
+                            break
+                        robo_rotated = self.robot_obj.rotate_angle(self.rotation_list[angle])
+                        if robo_rotated:
+                            self.current_angle = self.rotation_list[angle]
+                            self.start()
+                            test_stopped_by_user = self.monitor_for_runtime_csv(self.duration)
+                            self.stop()
+                            self.update_stop_status_robot()
+                        if test_stopped_by_user:
+                                break
 
 
 def validate_args(args):
