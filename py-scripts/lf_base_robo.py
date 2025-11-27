@@ -22,7 +22,7 @@ class RobotClass:
         self.testname=None
 
         # Create waypoint list on initialization
-        self.create_waypointlist()
+        # self.create_waypointlist()
     
     def create_waypointlist(self):
         position_url = 'http://'+self.robo_ip+'/reeman/position'
@@ -185,11 +185,11 @@ class RobotClass:
                 json.dump(navdata, x, indent=4)
 
         return  matched,abort
-
-    def rotate_angle(self,angle):
+    
+    def rotate_angle(self,angle_degree):
 
         #convert angle to radians
-        angle=float(angle)
+        angle=float(angle_degree)
         if angle > 180:
             angle -= 360
         elif angle <= -180:
@@ -201,7 +201,7 @@ class RobotClass:
         requests.post(nav_pathurl,json={"x":self.target_x,"y":self.target_y,"theta":angle})
         retries_for_theta=0
         rotated=False
-        logging.info("Rotating to an angle".format(angle))
+        logging.info("Rotating to an angle {}".format(angle_degree))
         while True:
             try:
                 response = requests.get(pose_url,timeout=5)
@@ -222,10 +222,10 @@ class RobotClass:
                 if self.nav_data_path is not None:
                     with open(self.nav_data_path, 'r') as x:
                         navdata = json.load(x)                       
-                        navdata['Canbee_angle']=angle
+                        navdata['Canbee_angle']=angle_degree
                     with open(self.nav_data_path, 'w') as x:
                         json.dump(navdata, x, indent=4)
-                logging.info("Rotation completed to angle {}".format(angle))
+                logging.info("Rotation completed to angle {}".format(angle_degree))
                 break
         
         return rotated
