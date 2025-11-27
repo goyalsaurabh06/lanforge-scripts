@@ -118,8 +118,8 @@ from typing import List, Optional
 import asyncio
 import csv
 import traceback
-# from lf_robo_base_class import RobotClass
-from lf_base_robo import RobotClass
+from lf_robo_base_class import RobotClass
+# from lf_base_robo import RobotClass
 
 if sys.version_info[0] != 3:
     print("This script requires Python 3")
@@ -1006,7 +1006,7 @@ class FtpTest(LFCliBase):
 
     # FOR WEB-UI // function usd to fetch runtime values and fill the csv.
 
-    def monitor_for_runtime_csv(self, rotation_angle = ""):
+    def monitor_for_runtime_csv(self):
 
         time_now = datetime.now()
         start_time = time_now.strftime("%d/%m %I:%M:%S %p")
@@ -1031,30 +1031,58 @@ class FtpTest(LFCliBase):
         monitor_charge_time= current_time
         battery = 25
         while (current_time < endtime):
+            if self.robot_test:
+                if (datetime.now() - monitor_charge_time).total_seconds() >= 10:
+                    pause_start = datetime.now()
+                    battery-=3
+                    pause, test_stopped_by_user = self.robot_obj.wait_for_battery(battery=battery, stop=self.stop)
+                    if test_stopped_by_user:
+                        break
+                    if pause:
+                        battery = 30
+                        reached, abort = self.robot_obj.move_to_coordinate(self.current_coordinate,result_dir=os.path.dirname(os.path.dirname(self.result_dir)))
+                        if abort:
+                            test_stopped_by_user = True 
+                            break
+                        if not reached:
+                            break
+                        if self.rotation_enabled:
+                            rotation_moni = self.robot_obj.rotate_angle(1,2,self.current_angle)
+                            if not rotation_moni:
+                                # test_stopped_by_user = True
+                                break
+                        # restart traffic
+                        self.start()
+                        pause_end = datetime.now()
+                        charge_pause = pause_end - pause_start
+                        endtime += charge_pause
+                    monitor_charge_time = datetime.now()
+                    # IMPORTANT: Update loop time
+                    current_time = datetime.now()
+                    print("after endtime",start_time,endtime)
+
+
+
             # if self.robot_test:
-            #     if (datetime.now() - monitor_charge_time).total_seconds() >= 10:
-            #         print("battery===========",battery)
+            #     if (datetime.now() - monitor_charge_time).total_seconds() >= 150:
 
             #         pause_start = datetime.now()
 
-            #         battery-=3
-            #         pause, test_stopped_by_user = self.robot_obj.wait_for_battery(battery=battery, stop=self.stop)
+            #         pause, test_stopped_by_user = self.robot_obj.wait_for_battery()
             #         if test_stopped_by_user:
             #             break
 
             #         if pause:
-            #             battery = 30
-            #             reached, abort = self.robot_obj.move_to_coordinate(self.current_coordinate,result_dir=os.path.dirname(os.path.dirname(self.result_dir)))
+
+            #             reached, abort = self.robot_obj.move_to_coordinate(self.current_coordinate)
             #             if abort:
             #                 test_stopped_by_user = True 
             #                 break
             #             if not reached:
             #                 break
-
             #             if self.rotation_enabled:
-            #                 rotation_moni = self.robot_obj.rotate_angle(1,2,self.current_angle)
+            #                 rotation_moni = self.robot_obj.rotate_angle(self.current_angle)
             #                 if not rotation_moni:
-            #                     # test_stopped_by_user = True
             #                     break
 
             #             # restart traffic
@@ -1070,44 +1098,6 @@ class FtpTest(LFCliBase):
             #         # IMPORTANT: Update loop time
             #         current_time = datetime.now()
             #         print("after endtime",start_time,endtime)
-
-
-
-            if self.robot_test:
-                if (datetime.now() - monitor_charge_time).total_seconds() >= 150:
-
-                    pause_start = datetime.now()
-
-                    pause, test_stopped_by_user = self.robot_obj.wait_for_battery()
-                    if test_stopped_by_user:
-                        break
-
-                    if pause:
-
-                        reached, abort = self.robot_obj.move_to_coordinate(self.current_coordinate)
-                        if abort:
-                            test_stopped_by_user = True 
-                            break
-                        if not reached:
-                            break
-                        if self.rotation_enabled:
-                            rotation_moni = self.robot_obj.rotate_angle(rotation_angle)
-                            if not rotation_moni:
-                                break
-
-                        # restart traffic
-                        self.start()
-
-                        pause_end = datetime.now()
-                        charge_pause = pause_end - pause_start
-
-                        endtime += charge_pause
-
-                    monitor_charge_time = datetime.now()
-
-                    # IMPORTANT: Update loop time
-                    current_time = datetime.now()
-                    print("after endtime",start_time,endtime)
 
             # data in json format
             # data = self.json_get("layer4/list?fields=bytes-rd")
@@ -2070,7 +2060,7 @@ class FtpTest(LFCliBase):
             test_setup_info["Robot IP"] = self.robot_ip
             test_setup_info["Coordinates"] = self.coordinate
             if self.rotation_enabled:
-                test_setup_info["Rotation Enabled"] = self.rotation
+                test_setup_info["Rotations"] = self.rotation
         self.report.test_setup_table(value="Test Setup Information", test_setup_data=test_setup_info)
 
         self.report.set_obj_html("Objective",
@@ -2810,76 +2800,26 @@ class FtpTest(LFCliBase):
             logger.error('No cross connections created, aborting test')
             exit(1)
 
-    # def perform_robo(self):
-
-    #     if(self.rotation_list[0]!=""):
-    #         self.rotation_enabled=True
-
-    #     self.robot_obj = RobotClass()
-    #     self.robot_obj.robo_ip = "127.0.0.1:5000"  
-    #     test_stopped_by_user = False
-    #     self.robot_obj.ip = self.host
-    #     self.robot_obj.testname = self.test_name
-    #     self.robot_obj.runtime_dir = self.result_dir
-    #     self.robot_obj.runtime_dir = os.path.dirname(os.path.dirname(self.result_dir))
-
-    #     for coordinate in range(len(self.coordinate_list)):
-    #         if test_stopped_by_user:
-    #             break
-    #         if_paused,test_stopped_by_user=self.robot_obj.wait_for_battery(25)
-    #         if test_stopped_by_user:
-    #             break
-    #         robo_moved, abort = self.robot_obj.move_to_coordinate(coordinate=self.coordinate_list[coordinate],result_dir=os.path.dirname(os.path.dirname(self.result_dir)))
-    #         if abort:
-    #             break
-    #         if robo_moved:
-    #             self.current_coordinate = self.coordinate_list[coordinate]
-    #             # if no rotation mode
-    #             if not self.rotation_enabled:
-    #                 self.start(False, False)
-    #                 test_stopped_by_user = self.monitor_for_runtime_csv()
-    #                 self.my_monitor_for_real_devices()
-    #                 self.stop()
-    #                 self.update_stop_status_robot()
-    #             # if rotation mode
-    #             else:
-    #                 for angle in range(len(self.rotation_list)):
-    #                     is_paused, test_stopped_by_user = self.robot_obj.wait_for_battery(25)
-    #                     if test_stopped_by_user :
-    #                         print("breakeddd")
-    #                         break
-    #                     robo_rotated = self.robot_obj.rotate_angle(1,2,self.rotation_list[angle])
-    #                     if robo_rotated:
-    #                         self.current_angle = self.rotation_list[angle]
-    #                         self.start(False, False)
-    #                         test_stopped_by_user = self.monitor_for_runtime_csv()
-    #                         self.my_monitor_for_real_devices()
-    #                         self.stop()
-    #                         self.update_stop_status_robot()
-
-    #                     if test_stopped_by_user:
-    #                         break
-
     def perform_robo(self):
 
         if(self.rotation_list[0]!=""):
             self.rotation_enabled=True
 
         self.robot_obj = RobotClass()
-        self.robot_obj.robo_ip = self.robot_ip
-        base_dir = os.path.dirname(os.path.dirname(self.result_dir))
-        nav_data = os.path.join(base_dir, 'nav_data.json') # To generate nav_data.json in webgui folder
-        self.robot_obj.nav_data_path = nav_data
-        self.robot_obj.create_waypointlist()
+        self.robot_obj.robo_ip = "127.0.0.1:5000"  
         test_stopped_by_user = False
         self.robot_obj.ip = self.host
         self.robot_obj.testname = self.test_name
         self.robot_obj.runtime_dir = self.result_dir
+        self.robot_obj.runtime_dir = os.path.dirname(os.path.dirname(self.result_dir))
+
         for coordinate in range(len(self.coordinate_list)):
-            if_paused,test_stopped_by_user=self.robot_obj.wait_for_battery()
             if test_stopped_by_user:
                 break
-            robo_moved, abort = self.robot_obj.move_to_coordinate(self.coordinate_list[coordinate])
+            if_paused,test_stopped_by_user=self.robot_obj.wait_for_battery(25)
+            if test_stopped_by_user:
+                break
+            robo_moved, abort = self.robot_obj.move_to_coordinate(coordinate=self.coordinate_list[coordinate],result_dir=os.path.dirname(os.path.dirname(self.result_dir)))
             if abort:
                 break
             if robo_moved:
@@ -2891,24 +2831,74 @@ class FtpTest(LFCliBase):
                     self.my_monitor_for_real_devices()
                     self.stop()
                     self.update_stop_status_robot()
-                    
                 # if rotation mode
                 else:
-                    rotation_list=self.robot_obj.angles_to_radians(self.rotation_list)
-                    for angle in range(len(rotation_list)):
-                        is_paused, test_stopped_by_user = self.robot_obj.wait_for_battery()
+                    for angle in range(len(self.rotation_list)):
+                        is_paused, test_stopped_by_user = self.robot_obj.wait_for_battery(25)
                         if test_stopped_by_user :
+                            print("breakeddd")
                             break
-                        robo_rotated = self.robot_obj.rotate_angle(rotation_list[angle], self.rotation_list[angle])
+                        robo_rotated = self.robot_obj.rotate_angle(1,2,self.rotation_list[angle])
                         if robo_rotated:
                             self.current_angle = self.rotation_list[angle]
                             self.start(False, False)
-                            test_stopped_by_user = self.monitor_for_runtime_csv(rotation_list[angle])
+                            test_stopped_by_user = self.monitor_for_runtime_csv()
                             self.my_monitor_for_real_devices()
                             self.stop()
                             self.update_stop_status_robot()
+
                         if test_stopped_by_user:
-                                break
+                            break
+
+    # def perform_robo(self):
+
+    #     if(self.rotation_list[0]!=""):
+    #         self.rotation_enabled=True
+
+    #     self.robot_obj = RobotClass()
+    #     self.robot_obj.robo_ip = self.robot_ip
+    #     base_dir = os.path.dirname(os.path.dirname(self.result_dir))
+    #     nav_data = os.path.join(base_dir, 'nav_data.json') # To generate nav_data.json in webgui folder
+    #     self.robot_obj.nav_data_path = nav_data
+    #     self.robot_obj.create_waypointlist()
+    #     test_stopped_by_user = False
+    #     self.robot_obj.ip = self.host
+    #     self.robot_obj.testname = self.test_name
+    #     self.robot_obj.runtime_dir = self.result_dir
+    #     for coordinate in range(len(self.coordinate_list)):
+    #         if_paused,test_stopped_by_user=self.robot_obj.wait_for_battery()
+    #         if test_stopped_by_user:
+    #             break
+    #         robo_moved, abort = self.robot_obj.move_to_coordinate(self.coordinate_list[coordinate])
+    #         if abort:
+    #             break
+    #         if robo_moved:
+    #             self.current_coordinate = self.coordinate_list[coordinate]
+    #             # if no rotation mode
+    #             if not self.rotation_enabled:
+    #                 self.start(False, False)
+    #                 test_stopped_by_user = self.monitor_for_runtime_csv()
+    #                 self.my_monitor_for_real_devices()
+    #                 self.stop()
+    #                 self.update_stop_status_robot()
+                    
+    #             # if rotation mode
+    #             else:
+    #                 # rotation_list=self.robot_obj.angles_to_radians(self.rotation_list)
+    #                 for angle in range(len(self.rotation_list)):
+    #                     is_paused, test_stopped_by_user = self.robot_obj.wait_for_battery()
+    #                     if test_stopped_by_user :
+    #                         break
+    #                     robo_rotated = self.robot_obj.rotate_angle(self.rotation_list[angle])
+    #                     if robo_rotated:
+    #                         self.current_angle = self.rotation_list[angle]
+    #                         self.start(False, False)
+    #                         test_stopped_by_user = self.monitor_for_runtime_csv()
+    #                         self.my_monitor_for_real_devices()
+    #                         self.stop()
+    #                         self.update_stop_status_robot()
+    #                     if test_stopped_by_user:
+    #                             break
 
 def validate_args(args):
     """Validate CLI arguments."""
@@ -3382,70 +3372,74 @@ some amount of file data from the FTP server while measuring the time taken by c
                         "Robot IP": args.robot_ip,
                         "Contact": "support@candelatech.com"
                     }
-                    obj.generate_report(ftp_data, date, input_setup_info, test_rig=args.test_rig,
-                    test_tag=args.test_tag, dut_hw_version=args.dut_hw_version,
-                    dut_sw_version=args.dut_sw_version, dut_model_num=args.dut_model_num,
-                    dut_serial_num=args.dut_serial_num, test_id=args.test_id,
-                    bands=args.bands, csv_outfile=args.csv_outfile, local_lf_report_dir=args.local_lf_report_dir)
-                    exit(1)
-
-                obj.start(False, False)
-
-
-                # to fetch runtime values during the execution and fill the csv.
-                if args.dowebgui or args.clients_type == "Real":
-                    obj.monitor_for_runtime_csv()
-                    obj.my_monitor_for_real_devices()
+                    # obj.generate_report(ftp_data, date, input_setup_info, test_rig=args.test_rig,
+                    # test_tag=args.test_tag, dut_hw_version=args.dut_hw_version,
+                    # dut_sw_version=args.dut_sw_version, dut_model_num=args.dut_model_num,
+                    # dut_serial_num=args.dut_serial_num, test_id=args.test_id,
+                    # bands=args.bands, csv_outfile=args.csv_outfile, local_lf_report_dir=args.local_lf_report_dir)
+                    # exit(1)
                 else:
-                    time.sleep(args.traffic_duration)
-                    obj.my_monitor()
+                    obj.start(False, False)
 
-                # # return list of download/upload completed time stamp
-                # time_list = obj.my_monitor(time1)
-                # # print("pass_fail_duration - time_list:{time_list}".format(time_list=time_list))
-                # # check pass or fail
-                # pass_fail = obj.pass_fail_check(time_list)
 
-                # # dictionary of whole data
-                # ftp_data[interation_num] = obj.ftp_test_data(time_list, pass_fail, args.bands, args.file_sizes,
-                #                                              args.directions, args.num_stations)
-                # # print("pass_fail_duration - ftp_data:{ftp_data}".format(ftp_data=ftp_data))
-                obj.stop()
-                print("Traffic stopped running")
+                    # to fetch runtime values during the execution and fill the csv.
+                    if args.dowebgui or args.clients_type == "Real":
+                        obj.monitor_for_runtime_csv()
+                        obj.my_monitor_for_real_devices()
+                    else:
+                        time.sleep(args.traffic_duration)
+                        obj.my_monitor()
 
-                obj.postcleanup()
-                time2 = datetime.now()
-                logger.info("Test ended at %s", time2)
+                    # # return list of download/upload completed time stamp
+                    # time_list = obj.my_monitor(time1)
+                    # # print("pass_fail_duration - time_list:{time_list}".format(time_list=time_list))
+                    # # check pass or fail
+                    # pass_fail = obj.pass_fail_check(time_list)
 
-    # 2nd time stamp for test duration
-    # time_stamp2 = datetime.now()
+                    # # dictionary of whole data
+                    # ftp_data[interation_num] = obj.ftp_test_data(time_list, pass_fail, args.bands, args.file_sizes,
+                    #                                              args.directions, args.num_stations)
+                    # # print("pass_fail_duration - ftp_data:{ftp_data}".format(ftp_data=ftp_data))
+                    obj.stop()
+                    print("Traffic stopped running")
 
-    # total time for test duration
-    # test_duration = str(time_stamp2 - time_stamp1)[:-7]
+                    obj.postcleanup()
+                    time2 = datetime.now()
+                    logger.info("Test ended at %s", time2)
 
-    date = str(datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
+        # 2nd time stamp for test duration
+        # time_stamp2 = datetime.now()
 
-    # print(ftp_data)
+        # total time for test duration
+        # test_duration = str(time_stamp2 - time_stamp1)[:-7]
 
-    input_setup_info = {
-        "AP IP": args.ap_ip,
-        "File Size": args.file_sizes,
-        "Bands": args.bands,
-        "Direction": args.directions,
-        "Stations": args.num_stations,
-        "Upstream": args.upstream_port,
-        "SSID": args.ssid,
-        "Security": args.security,
-        "Contact": "support@candelatech.com"
-    }
+        date = str(datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
 
-   # FOR WEB-UI // to fetch the last logs of the execution.
-    if args.dowebgui:
-        obj.data_for_webui["status"] = ["STOPPED"] * len(obj.url_data)
+        # print(ftp_data)
 
-        df1 = pd.DataFrame(obj.data_for_webui)
-        df1.to_csv('{}/ftp_datavalues.csv'.format(obj.result_dir), index=False)
-    # Report generation when groups are specified
+        input_setup_info = {
+            "AP IP": args.ap_ip,
+            "File Size": args.file_sizes,
+            "Bands": args.bands,
+            "Direction": args.directions,
+            "Stations": args.num_stations,
+            "Upstream": args.upstream_port,
+            "SSID": args.ssid,
+            "Security": args.security,
+            "Contact": "support@candelatech.com"
+        }
+        if(args.robot_test):
+            input_setup_info["Robot IP"] = args.robot_ip
+            input_setup_info["Coordinate"] = args.coordinate
+            input_setup_info["Rotation"] = args.rotation
+
+    # FOR WEB-UI // to fetch the last logs of the execution.
+        if args.dowebgui and not args.robot_test:
+            obj.data_for_webui["status"] = ["STOPPED"] * len(obj.url_data)
+
+            df1 = pd.DataFrame(obj.data_for_webui)
+            df1.to_csv('{}/ftp_datavalues.csv'.format(obj.result_dir), index=False)
+        # Report generation when groups are specified
     if args.group_name:
         obj.generate_report(ftp_data, date, input_setup_info, test_rig=args.test_rig,
                             test_tag=args.test_tag, dut_hw_version=args.dut_hw_version,
