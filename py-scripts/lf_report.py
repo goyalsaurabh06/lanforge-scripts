@@ -51,6 +51,28 @@ os_name = platform.system()
 # internal candela references included during intial phases, to be deleted at future date
 # https://candelatech.atlassian.net/wiki/spaces/LANFORGE/pages/372703360/Scripting+Data+Collection+March+2021
 # base report class
+plt.rcParams.update({
+    "figure.figsize": (10, 6),
+    "figure.facecolor": "white",
+    "axes.facecolor": "#f8fafc",
+    "axes.edgecolor": "#cbd5e1",
+    "axes.grid": True,
+    "grid.color": "#e2e8f0",
+    "grid.linestyle": "-",
+    "grid.alpha": 0.7,
+    "axes.labelsize": 12,
+    "axes.labelcolor": "#334155",
+    "axes.titleweight": "bold",
+    "axes.titlecolor": "#1e293b",
+    "axes.titlesize": 14,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "xtick.color": "#475569",
+    "ytick.color": "#475569",
+    "xtick.labelsize": 11,
+    "ytick.labelsize": 11,
+})
+
 
 class lf_report:
     def __init__(self,
@@ -177,9 +199,9 @@ class lf_report:
         shutil.move(_src_file, _dst_file)
 
     def copy_css(self):
-        reportcss_src_file = str(self.current_path) + '/' + str(self.banner_directory) + '/report.css'
+        reportcss_src_file = str(self.current_path) + '/' + str(self.banner_directory) + '/report_updated.css'
         # print("copy_css: source file is: "+reportcss_src_file)
-        reportcss_dest_file = str(self.path_date_time) + '/report.css'
+        reportcss_dest_file = str(self.path_date_time) + '/report_updated.css'
 
         customcss_src_file = str(self.current_path) + '/' + str(self.banner_directory) + '/' + str(self.custom_css)
         customcss_dest_file = str(self.path_date_time) + '/custom.css'
@@ -646,7 +668,7 @@ class lf_report:
         <style>
         body {{ margin: 0; padding: 0; }}
         </style>
-        <link rel='stylesheet' href='report.css' />
+        <link rel='stylesheet' href='report_updated.css' />
         <link rel='stylesheet' href='custom.css' />
         <title>{title}</title>
     </head>""".format(title=title)
@@ -937,11 +959,33 @@ function copyTextToClipboard(ele) {
             """.format(title=self.graph_title)
         self.html += self.table_graph_html
 
+    # def build_graph(self):
+    #     self.graph_html_obj = """
+    #           <img align='center' style='padding:15px;margin:5px 5px 2em 5px;width:1000px;' src='{image}' border='1' />
+    #         """.format(image=self.graph_image)
+    #     self.html += self.graph_html_obj
+
     def build_graph(self):
-        self.graph_html_obj = """
-              <img align='center' style='padding:15px;margin:5px 5px 2em 5px;width:1000px;' src='{image}' border='1' />
-            """.format(image=self.graph_image)
+        self.graph_html_obj = f"""
+            <div style="
+                max-width: 1200px;
+                margin: 20px auto;
+                background: #ffffff;
+                padding: 20px;
+                border-radius: 12px;
+                box-shadow: 0 4px 18px rgba(0,0,0,0.06);
+                text-align: center;
+            ">
+                <img src="{self.graph_image}" style="
+                    width: 100%;
+                    max-width: 100%;
+                    border-radius: 10px;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                " />
+            </div>
+        """
         self.html += self.graph_html_obj
+
 
     def build_graph_without_border(self):
         self.graph_html_obj = """

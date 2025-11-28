@@ -21,6 +21,18 @@ import sys
 import os
 import importlib
 import matplotlib.pyplot as plt
+plt.rcParams.update({
+    "axes.facecolor": "#f8fafc",
+    "figure.facecolor": "white",
+    "axes.edgecolor": "#e2e8f0",
+    "axes.grid": True,
+    "grid.color": "#d1d5db",
+    "grid.alpha": 0.8,
+    "grid.linewidth": 0.8,
+    "axes.labelcolor": "#1e293b",
+    "xtick.color": "#475569",
+    "ytick.color": "#475569",
+})
 import numpy as np
 import pdfkit
 from matplotlib.colors import ListedColormap
@@ -97,7 +109,8 @@ class lf_bar_graph:
         if _label is None:
             _label = ["bi-downlink", "bi-uplink", 'uplink']
         if _color_name is None:
-            _color_name = ['lightcoral', 'darkgrey', 'r', 'g', 'b', 'y']
+            # _color_name = ['lightcoral', 'darkgrey', 'r', 'g', 'b', 'y']
+            _color_name=['#8cccde', '#10b981', '#8b5cf6', '#f59e0b', '#0ea5e9', '#ef4444']
         self.data_set = _data_set
         self.xaxis_name = _xaxis_name
         self.yaxis_name = _yaxis_name
@@ -260,7 +273,9 @@ class lf_bar_graph_horizontal:
         if _label is None:
             _label = ["bi-downlink", "bi-uplink", 'uplink']
         if _color_name is None:
-            _color_name = ['lightcoral', 'darkgrey', 'r', 'g', 'b', 'y']
+            # _color_name = ['lightcoral', 'darkgrey', 'r', 'g', 'b', 'y']
+            _color_name=['#8cccde', '#10b981', '#8b5cf6', '#f59e0b', '#0ea5e9', '#ef4444']
+
         self.data_set = _data_set
         self.xaxis_name = _xaxis_name
         self.yaxis_name = _yaxis_name
@@ -293,7 +308,6 @@ class lf_bar_graph_horizontal:
         self.remove_border = _remove_border
         self.alignment = _alignment
         self.yticks_rotation = _yticks_rotation
-
     def build_bar_graph_horizontal(self):
         if self.color is None:
             i = 0
@@ -381,6 +395,137 @@ class lf_bar_graph_horizontal:
                 logger.debug("No Dataset Found")
         logger.debug("{}.csv".format(self.graph_image_name))
         return "%s.png" % self.graph_image_name
+    # def build_bar_graph_horizontal(self):
+    #     import numpy as np
+    #     import matplotlib.pyplot as plt
+
+    #     # Prepare colors if not passed
+    #     if self.color is None:
+    #         self.color = []
+    #         for i, _ in enumerate(self.data_set):
+    #             self.color.append(self.color_name[i])
+
+    #     fig_size, ax = plt.subplots(figsize=self.figsize, gridspec_kw=self.alignment)
+
+    #     # Remove borders (optional)
+    #     if self.remove_border is not None:
+    #         for border in self.remove_border:
+    #             ax.spines[border].set_color(None)
+    #         ax.yaxis.set_visible("left" not in self.remove_border)
+
+    #     # Modern grid look
+    #     ax.grid(True, axis="x", linestyle="--", color="#d1d5db", alpha=0.7)
+    #     ax.spines["top"].set_visible(False)
+    #     ax.spines["right"].set_visible(False)
+
+    #     # Show value helper
+    #     def show_value(rectangles):
+    #         for rect in rectangles:
+    #             w = rect.get_width()
+    #             ax.text(
+    #                 w + (w * 0.02) + 0.1,
+    #                 rect.get_y() + rect.get_height() / 2,
+    #                 f"{w}",
+    #                 va="center",
+    #                 ha="left",
+    #                 fontsize=self.text_font or 11,
+    #                 color="#334155"
+    #             )
+
+    #     # Plot bars
+    #     br1 = None
+    #     for i, series in enumerate(self.data_set):
+    #         if i > 0:
+    #             br = br1
+    #             br2 = [y + self.bar_height for y in br]
+    #             rects = ax.barh(
+    #                 br2,
+    #                 series,
+    #                 height=self.bar_height,
+    #                 color=self.color[i],
+    #                 edgecolor="white",
+    #                 linewidth=1.2,
+    #                 alpha=0.9,
+    #                 label=self.label[i]
+    #             )
+    #             if self.show_bar_value:
+    #                 show_value(rects)
+    #             br1 = br2
+    #         else:
+    #             br1 = np.arange(len(series))
+    #             rects = ax.barh(
+    #                 br1,
+    #                 series,
+    #                 height=self.bar_height,
+    #                 color=self.color[i],
+    #                 edgecolor="white",
+    #                 linewidth=1.2,
+    #                 alpha=0.9,   # FIX: alphs → alpha
+    #                 label=self.label[i]
+    #             )
+    #             if self.show_bar_value:
+    #                 show_value(rects)
+
+    #     # Axis labels
+    #     ax.set_xlabel(self.xaxis_name, fontsize=13, color="#1e293b")
+    #     ax.set_ylabel(self.yaxis_name, fontsize=13, color="#1e293b")
+
+    #     # Y ticks
+    #     if self.yaxis_categories[0] == 0:
+    #         ax.set_yticks(
+    #             np.arange(0, len(self.yaxis_categories), step=self.yaxis_step)
+    #         )
+    #         ax.set_yticklabels(
+    #             self.yaxis_categories,
+    #             fontsize=self.yticks_font,
+    #             rotation=self.yticks_rotation
+    #         )
+    #     else:
+    #         ax.set_yticks([
+    #             i + self._yaxis_value_location
+    #             for i in np.arange(0, len(self.data_set[0]), step=self.yaxis_step)
+    #         ])
+    #         ax.set_yticklabels(
+    #             self.yaxis_categories,
+    #             fontsize=self.yticks_font,
+    #             rotation=self.yticks_rotation
+    #         )
+
+    #     # Modern legend
+    #     leg = ax.legend(
+    #         handles=self.legend_handles,
+    #         loc=self.legend_loc,
+    #         bbox_to_anchor=self.legend_box,
+    #         ncol=self.legend_ncol,
+    #         fontsize=self.legend_fontsize or 11,
+    #         frameon=True
+    #     )
+    #     leg.get_frame().set_edgecolor("#cbd5e1")
+    #     leg.get_frame().set_facecolor("#f1f5f9")
+
+    #     # Titles
+    #     plt.suptitle(self.title, fontsize=self.title_size)
+    #     plt.title(self.grp_title)
+
+    #     # Save image
+    #     plt.tight_layout()
+    #     output_file = f"{self.graph_image_name}.png"
+    #     plt.savefig(output_file, dpi=96)
+    #     plt.close()
+    #     logger.debug("{}.png".format(self.graph_image_name))
+
+    #     # CSV support
+    #     if self.enable_csv:
+    #         if len(self.yaxis_categories) == len(self.data_set[0]):
+    #             self.lf_csv.columns = [self.yaxis_name] + self.label
+    #             self.lf_csv.rows = [self.yaxis_categories] + self.data_set
+    #             self.lf_csv.filename = f"{self.graph_image_name}.csv"
+    #             self.lf_csv.generate_csv()
+    #         else:
+    #             raise ValueError("Length and y-axis values should be the same.")
+
+    #     logger.debug("{}.csv".format(self.graph_image_name))
+    #     return output_file
 
 
 class lf_scatter_graph:
