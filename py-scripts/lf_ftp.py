@@ -118,6 +118,7 @@ from typing import List, Optional
 import asyncio
 import csv
 import traceback
+from lf_base_robo import RobotClass
 
 if sys.version_info[0] != 3:
     print("This script requires Python 3")
@@ -170,7 +171,11 @@ class FtpTest(LFCliBase):
                  get_live_view=False,
                  total_floors=0,
                  config=False,
-                 csv_name=None):
+                 csv_name=None,
+                 robot_test = False,
+                 robot_ip=None,
+                 coordinate=None,
+                 rotation=None):
         super().__init__(lfclient_host, lfclient_port, _debug=_debug_on, _exit_on_fail=_exit_on_fail)
 
         if not device_list:
@@ -275,7 +280,17 @@ class FtpTest(LFCliBase):
         self.api_url = 'http://{}:{}'.format(self.host, self.port)
         self.get_live_view = get_live_view
         self.total_floors = total_floors
-
+        self.robot_test = robot_test
+        self.robot_ip = robot_ip
+        self.coordinate = coordinate
+        self.rotation = rotation
+        self.rotation_enabled = False
+        self.coordinate_list = coordinate.split(',')
+        self.rotation_list = rotation.split(',')
+        self.current_coordinate = ""
+        self.current_angle = "" 
+        self.robot_data = {} # To store robot data for each coordinate and each angle
+        self.robot_obj = {}
         logger.info("Test is Initialized")
 
     def query_realclients(self):
@@ -797,10 +812,54 @@ class FtpTest(LFCliBase):
         self.station_profile.admin_down()
         # To update status of devices and remaining_time in ftp_datavalues.csv file to stopped and 0 respectively.
         if self.clients_type == 'Real':
-            self.data["status"] = ["STOPPED"] * len(self.mac_id_list)
+            if not self.robot_test:
+                self.data["status"] = ["STOPPED"] * len(self.mac_id_list)
             self.data["remaining_time"] = ["0"] * len(self.mac_id_list)
             df1 = pd.DataFrame(self.data)
             df1.to_csv("ftp_datavalues.csv", index=False)
+            if self.robot_test:
+                if self.rotation_enabled:
+                    self.robot_data.setdefault(self.current_coordinate, {})[self.current_angle] = {
+                                                                "mac_id_list": self.mac_id_list,
+                                                                "channel_list": self.channel_list,
+                                                                "ssid_list": self.ssid_list,
+                                                                "mode_list": self.mode_list,
+                                                                "url_data": self.url_data,
+                                                                "uc_avg": self.uc_avg,
+                                                                "bytes_rd": self.bytes_rd,
+                                                                "rx_rate": self.rx_rate,
+                                                                "total_err": self.total_err,
+                                                                "uc_min": self.uc_min,
+                                                                "uc_max": self.uc_max,
+                                                            }
+                else:
+                    self.robot_data[self.current_coordinate] = {
+                                                                "mac_id_list": self.mac_id_list,
+                                                                "channel_list": self.channel_list,
+                                                                "ssid_list": self.ssid_list,
+                                                                "mode_list": self.mode_list,
+                                                                "url_data": self.url_data,
+                                                                "uc_avg": self.uc_avg,
+                                                                "bytes_rd": self.bytes_rd,
+                                                                "rx_rate": self.rx_rate,
+                                                                "total_err": self.total_err,
+                                                                "uc_min": self.uc_min,
+                                                                "uc_max": self.uc_max
+                                                            }
+                if self.dowebgui:
+                    df1.to_csv(f"{self.result_dir}/{self.current_coordinate}_ftp_datavalues.csv", index=False)
+                else:
+                    df1.to_csv(f"{self.current_coordinate}_ftp_datavalues.csv", index=False)
+    
+    def update_stop_status_robot(self):
+        # To update status of devices in csv file to stopped.
+        self.data["status"] = ["STOPPED"] * len(self.mac_id_list)
+        df1 = pd.DataFrame(self.data)
+        df1.to_csv("ftp_datavalues.csv", index=False)
+        if self.dowebgui:
+            df1.to_csv(f"{self.result_dir}/{self.current_coordinate}_ftp_datavalues.csv", index=False)
+        else:
+            df1.to_csv(f"{self.current_coordinate}_ftp_datavalues.csv", index=False)
 
     def postcleanup(self):
         self.cx_profile.cleanup()
@@ -951,21 +1010,57 @@ class FtpTest(LFCliBase):
         duration = self.traffic_duration
         endtime = time_now + timedelta(seconds=duration)
         end_time = endtime
-        endtime = endtime.isoformat()[0:19]
-        current_time = datetime.now().isoformat()[0:19]
+        current_time = datetime.now()
         self.data = {}
         self.data["url_data"] = []
         max_bytes_rd = []
         rx_rate_val = []
         individual_device_data = {}
         client_id_list = []
+        test_stopped_by_user = False
         for port in self.input_devices_list:
             columns = ['TIMESTAMP', 'Bytes-rd', 'total urls', 'download_rate', 'rx_rate', 'tx_rate', 'RSSI']
             individual_device_data[port] = pd.DataFrame(columns=columns)
             r_id = port.split('.')
             client_id_list.append('.'.join(r_id[:2]))
 
+        monitor_charge_time= current_time
         while (current_time < endtime):
+            # If robot test mode is enabled, periodically check if a battery pause is needed
+            if self.robot_test:
+                # Check if enough time has passed to trigger a battery check (150 sec)
+                if (datetime.now() - monitor_charge_time).total_seconds() >= 150:
+                    pause_start = datetime.now()
+                    # Wait for the robot to charge. Returns whether we paused and whether user aborted.
+                    pause, test_stopped_by_user = self.robot_obj.wait_for_battery()
+                    if test_stopped_by_user:
+                        break
+                    if pause:
+                        # After charging, return to the last coordinate
+                        reached, abort = self.robot_obj.move_to_coordinate(self.current_coordinate)
+                        # If user stopped the test during movement
+                        if abort:
+                            test_stopped_by_user = True
+                            break
+                        if not reached:
+                            break
+                        # Restore orientation if rotation is enabled
+                        if self.rotation_enabled:
+                            rotation_moni = self.robot_obj.rotate_angle(self.current_angle)
+                            if not rotation_moni:
+                                break
+                        # Resume test
+                        self.start()
+                        # Add pause duration to overall end time
+                        pause_end = datetime.now()
+                        charge_pause = pause_end - pause_start
+                        endtime += charge_pause
+                    # Reset battery-monitor timer
+                    monitor_charge_time = datetime.now()
+
+                    # IMPORTANT: update loop time after potential pause
+                    current_time = datetime.now()
+
 
             # data in json format
             # data = self.json_get("layer4/list?fields=bytes-rd")
@@ -1043,22 +1138,36 @@ class FtpTest(LFCliBase):
             total_hours = time_difference.total_seconds() / 3600
             remaining_minutes = (total_hours % 1) * 60
             self.data["start_time"] = [start_time] * len(self.cx_list)
+            if self.robot_test:
+                # To update end time at each interval
+                end_time = endtime
             self.data["end_time"] = [end_time.strftime("%d/%m %I:%M:%S %p")] * len(self.cx_list)
             self.data["remaining_time"] = [[str(int(total_hours)) + " hr and " + str(
                 int(remaining_minutes)) + " min" if int(total_hours) != 0 or int(
                 remaining_minutes) != 0 else '<1 min'][0]] * len(self.cx_list)
+            if self.robot_test and self.rotation_enabled:
+                self.data["current_angle"] = [self.current_angle] * len(self.cx_list)
             try:
                 df1 = pd.DataFrame(self.data)
             except Exception:
                 # Print the problematic data and error before exiting
                 logger.info("Failed to create DataFrame from self.data")
-                logger.info("self.data: %s", self.data)
-                traceback.print_exc()
+                logger.info("self.data: %s", self.data)  
+                             
+                tb_str = traceback.format_exc()  # capture traceback as string
+                logger.error("An exception occurred:\n%s", tb_str)
                 exit(1)
             if self.dowebgui:
                 df1.to_csv('{}/ftp_datavalues.csv'.format(self.result_dir), index=False)
+                # IF ROBOT TEST PERFORMED
+                if(self.robot_test):
+                    # Save FTP data values for the current coordinate when in robot test
+                    df1.to_csv(f"{self.result_dir}/{self.current_coordinate}_ftp_datavalues.csv", index=False)
             if self.clients_type == 'Real':
                 df1.to_csv("ftp_datavalues.csv", index=False)
+                # IF ROBOT TEST PERFORMED
+                if(self.robot_test):
+                    df1.to_csv(f"{self.current_coordinate}_ftp_datavalues.csv", index=False)
             time.sleep(5)
             if self.dowebgui == "True":
                 with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host,
@@ -1066,11 +1175,12 @@ class FtpTest(LFCliBase):
                           'r') as file:
                     data = json.load(file)
                     if data["status"] != "Running":
+                        test_stopped_by_user = True
                         logging.info('Test is stopped by the user')
                         self.data["end_time"] = [datetime.now().strftime("%d/%m %I:%M:%S %p")] * len(self.cx_list)
                         break
 
-            current_time = datetime.now().isoformat()[0:19]
+            current_time = datetime.now()
         individual_device_csv_names = []
         for port, df in individual_device_data.items():
             df.to_csv(f"{endtime}-ftp-{port}.csv", index=False)
@@ -1082,6 +1192,7 @@ class FtpTest(LFCliBase):
             df.to_csv("all_l4_data.csv", index=False)
         except Exception:
             logger.error("All l4 data not found")
+        return test_stopped_by_user
 
     def get_layer4_data(self):
         """
@@ -1779,9 +1890,6 @@ class FtpTest(LFCliBase):
                     print("Timeout: Images not found within 60 seconds.")
                     break
                 time.sleep(1)
-            while not os.path.exists(ftp_img_path):
-                if os.path.exists(ftp_img_path):
-                    break
             if os.path.exists(ftp_img_path):
                 self.report.set_custom_html('<div style="page-break-before: always;"></div>')
                 self.report.build_custom()
@@ -1912,6 +2020,12 @@ class FtpTest(LFCliBase):
                 "Traffic Direction": self.direction,
                 "Traffic Duration ": duration
             }
+        if self.robot_test:
+            # Added Robot details in Test setup information table
+            test_setup_info["Robot IP"] = self.robot_ip
+            test_setup_info["Coordinates"] = self.coordinate
+            if self.rotation_enabled:
+                test_setup_info["Rotations"] = self.rotation
         self.report.test_setup_table(value="Test Setup Information", test_setup_data=test_setup_info)
 
         self.report.set_obj_html("Objective",
@@ -1932,108 +2046,148 @@ class FtpTest(LFCliBase):
         # self.report.set_table_dataframe(dataframe2)
         # self.report.build_table()
         # self.generate_graph(ftp_data)
-        self.report.set_obj_html(
-            _obj_title=f"No of times file {self.direction}",
-            _obj=f"The below graph represents number of times a file {self.direction} for each client"
-            f"(WiFi) traffic.  X- axis shows “No of times file {self.direction}” and Y-axis shows "
-            f"Client names.")
+        if self.robot_test:
+            if self.dowebgui:
+                # To store heatmap images in report
+                self.add_live_view_images_to_report()
 
-        self.report.build_objective()
-        graph = lf_bar_graph_horizontal(_data_set=[self.url_data], _xaxis_name=f"No of times file {self.direction}",
-                                        _yaxis_name="Client names",
-                                        _yaxis_categories=[i for i in client_list],
-                                        _yaxis_label=[i for i in client_list],
-                                        _yaxis_step=1,
-                                        _yticks_font=8,
-                                        _yticks_rotation=None,
-                                        _graph_title=f"No of times file {self.direction} (Count)",
-                                        _title_size=16,
-                                        _figsize=(x_fig_size, y_fig_size),
-                                        _legend_loc="best",
-                                        _legend_box=(1.0, 1.0),
-                                        _color_name=['orange'],
-                                        _show_bar_value=True,
-                                        _enable_csv=True,
-                                        _graph_image_name="Total-url_ftp", _color_edge=['black'],
-                                        _color=['orange'],
-                                        _label=[self.direction])
-        graph_png = graph.build_bar_graph_horizontal()
-        print("graph name {}".format(graph_png))
-        self.report.set_graph_image(graph_png)
-        # need to move the graph image to the results
-        self.report.move_graph_image()
-        self.report.set_csv_filename(graph_png)
-        self.report.move_csv_file()
-        self.report.build_graph()
-        self.report.set_obj_html(
-            _obj_title=f"Average time taken to {self.direction} file ",
-            _obj=f"The below graph represents average time taken to {self.direction} for each client  "
-            f"(WiFi) traffic.  X- axis shows “Average time taken to {self.direction} a file ” and Y-axis shows "
-            f"Client names.")
+            # Unified iteration for rotation and non-rotation
+            if self.rotation_enabled:
+                for coord, rotation_dict in self.robot_data.items():
+                    for rotation, robot_info in rotation_dict.items():
+                        self.build_graphs_and_table(coord, rotation, robot_info, client_list)
+            else:
+                for coord, robot_info in self.robot_data.items():
+                    self.build_graphs_and_table(coord, None, robot_info, client_list)
+            # Final report
+            self.report.build_footer()
+            html_file = self.report.write_html()
+            logger.info(f"Returned file {html_file}")
+            self.report.write_pdf()          
+        else:
+            self.report.set_obj_html(
+                _obj_title=f"No of times file {self.direction}",
+                _obj=f"The below graph represents number of times a file {self.direction} for each client"
+                f"(WiFi) traffic.  X- axis shows “No of times file {self.direction}” and Y-axis shows "
+                f"Client names.")
 
-        self.report.build_objective()
-        graph = lf_bar_graph_horizontal(_data_set=[self.uc_avg], _xaxis_name=f"Average time taken to {self.direction} file in ms",
-                                        _yaxis_name="Client names",
-                                        _yaxis_categories=[i for i in client_list],
-                                        _yaxis_label=[i for i in client_list],
-                                        _yaxis_step=1,
-                                        _yticks_font=8,
-                                        _yticks_rotation=None,
-                                        _graph_title=f"Average time taken to {self.direction} file",
-                                        _title_size=16,
-                                        _figsize=(x_fig_size, y_fig_size),
-                                        _legend_loc="best",
-                                        _legend_box=(1.0, 1.0),
-                                        _color_name=['steelblue'],
-                                        _show_bar_value=True,
-                                        _enable_csv=True,
-                                        _graph_image_name="ucg-avg_ftp", _color_edge=['black'],
-                                        _color=['steelblue'],
-                                        _label=[self.direction])
-        graph_png = graph.build_bar_graph_horizontal()
-        print("graph name {}".format(graph_png))
-        self.report.set_graph_image(graph_png)
-        self.report.move_graph_image()
-        # need to move the graph image to the results
-        self.report.set_csv_filename(graph_png)
-        self.report.move_csv_file()
-        self.report.build_graph()
-        if (self.dowebgui and self.get_live_view):
-            self.add_live_view_images_to_report()
-        self.report.set_obj_html("File Download Time (sec)", "The below table will provide information of "
-                                 "minimum, maximum and the average time taken by clients to download a file in seconds")
-        self.report.build_objective()
-        dataframe2 = {
-            "Minimum": [str(round(min(self.uc_min) / 1000, 1))],
-            "Maximum": [str(round(max(self.uc_max) / 1000, 1))],
-            "Average": [str(round((sum(self.uc_avg) / len(client_list)) / 1000, 1))]
-        }
-        dataframe3 = pd.DataFrame(dataframe2)
-        self.report.set_table_dataframe(dataframe3)
-        self.report.build_table()
-        self.report.set_table_title("Overall Results")
-        self.report.build_table_title()
-        # self.report.test_setup_table(value="Information", test_setup_data=input_setup_info)
-        if self.clients_type == 'Real':
-            # Calculating the pass/fail criteria when either expected_passfail_val or csv_name is provided
-            if self.expected_passfail_val or self.csv_name:
-                self.get_pass_fail_list(client_list)
-            # When groups are provided a seperate table will be generated for each group using generate_dataframe
-            if self.group_name:
-                for key, val in self.group_device_map.items():
+            self.report.build_objective()
+            graph = lf_bar_graph_horizontal(_data_set=[self.url_data], _xaxis_name=f"No of times file {self.direction}",
+                                            _yaxis_name="Client names",
+                                            _yaxis_categories=[i for i in client_list],
+                                            _yaxis_label=[i for i in client_list],
+                                            _yaxis_step=1,
+                                            _yticks_font=8,
+                                            _yticks_rotation=None,
+                                            _graph_title=f"No of times file {self.direction} (Count)",
+                                            _title_size=16,
+                                            _figsize=(x_fig_size, y_fig_size),
+                                            _legend_loc="best",
+                                            _legend_box=(1.0, 1.0),
+                                            _color_name=['orange'],
+                                            _show_bar_value=True,
+                                            _enable_csv=True,
+                                            _graph_image_name="Total-url_ftp", _color_edge=['black'],
+                                            _color=['orange'],
+                                            _label=[self.direction])
+            graph_png = graph.build_bar_graph_horizontal()
+            print("graph name {}".format(graph_png))
+            self.report.set_graph_image(graph_png)
+            # need to move the graph image to the results
+            self.report.move_graph_image()
+            self.report.set_csv_filename(graph_png)
+            self.report.move_csv_file()
+            self.report.build_graph()
+            self.report.set_obj_html(
+                _obj_title=f"Average time taken to {self.direction} file ",
+                _obj=f"The below graph represents average time taken to {self.direction} for each client  "
+                f"(WiFi) traffic.  X- axis shows “Average time taken to {self.direction} a file ” and Y-axis shows "
+                f"Client names.")
+
+            self.report.build_objective()
+            graph = lf_bar_graph_horizontal(_data_set=[self.uc_avg], _xaxis_name=f"Average time taken to {self.direction} file in ms",
+                                            _yaxis_name="Client names",
+                                            _yaxis_categories=[i for i in client_list],
+                                            _yaxis_label=[i for i in client_list],
+                                            _yaxis_step=1,
+                                            _yticks_font=8,
+                                            _yticks_rotation=None,
+                                            _graph_title=f"Average time taken to {self.direction} file",
+                                            _title_size=16,
+                                            _figsize=(x_fig_size, y_fig_size),
+                                            _legend_loc="best",
+                                            _legend_box=(1.0, 1.0),
+                                            _color_name=['steelblue'],
+                                            _show_bar_value=True,
+                                            _enable_csv=True,
+                                            _graph_image_name="ucg-avg_ftp", _color_edge=['black'],
+                                            _color=['steelblue'],
+                                            _label=[self.direction])
+            graph_png = graph.build_bar_graph_horizontal()
+            print("graph name {}".format(graph_png))
+            self.report.set_graph_image(graph_png)
+            self.report.move_graph_image()
+            # need to move the graph image to the results
+            self.report.set_csv_filename(graph_png)
+            self.report.move_csv_file()
+            self.report.build_graph()
+            if (self.dowebgui and self.get_live_view):
+                self.add_live_view_images_to_report()
+            self.report.set_obj_html("File Download Time (sec)", "The below table will provide information of "
+                                    "minimum, maximum and the average time taken by clients to download a file in seconds")
+            self.report.build_objective()
+            dataframe2 = {
+                "Minimum": [str(round(min(self.uc_min) / 1000, 1))],
+                "Maximum": [str(round(max(self.uc_max) / 1000, 1))],
+                "Average": [str(round((sum(self.uc_avg) / len(client_list)) / 1000, 1))]
+            }
+            dataframe3 = pd.DataFrame(dataframe2)
+            self.report.set_table_dataframe(dataframe3)
+            self.report.build_table()
+            self.report.set_table_title("Overall Results")
+            self.report.build_table_title()
+            # self.report.test_setup_table(value="Information", test_setup_data=input_setup_info)
+            if self.clients_type == 'Real':
+                # Calculating the pass/fail criteria when either expected_passfail_val or csv_name is provided
+                if self.expected_passfail_val or self.csv_name:
+                    self.get_pass_fail_list(client_list)
+                # When groups are provided a seperate table will be generated for each group using generate_dataframe
+                if self.group_name:
+                    for key, val in self.group_device_map.items():
+                        if self.expected_passfail_val or self.csv_name:
+                            dataframe = self.generate_dataframe(val, client_list, self.mac_id_list, self.channel_list, self.ssid_list, self.mode_list,
+                                                                self.url_data, self.test_input_list, self.uc_avg, self.bytes_rd, self.rx_rate, self.pass_fail_list, self.total_err)
+                        else:
+                            dataframe = self.generate_dataframe(val, client_list, self.mac_id_list, self.channel_list, self.ssid_list,
+                                                                self.mode_list, self.url_data, [], self.uc_avg, self.bytes_rd, self.rx_rate, [], self.total_err)
+
+                        if dataframe:
+                            self.report.set_obj_html("", "Group: {}".format(key))
+                            self.report.build_objective()
+                            dataframe1 = pd.DataFrame(dataframe)
+                            self.report.set_table_dataframe(dataframe1)
+                            self.report.build_table()
+                else:
+                    dataframe = {
+                        " Clients": client_list,
+                        " MAC ": self.mac_id_list,
+                        " Channel": self.channel_list,
+                        " SSID ": self.ssid_list,
+                        " Mode": self.mode_list,
+                        " No of times File downloaded ": self.url_data,
+                        " Time Taken to Download file (ms)": self.uc_avg,
+                        " Bytes-rd (Mega Bytes)": self.bytes_rd,
+                        " RX RATE (Mbps) ": self.rx_rate,
+                        "Failed Urls": self.total_err
+                    }
                     if self.expected_passfail_val or self.csv_name:
-                        dataframe = self.generate_dataframe(val, client_list, self.mac_id_list, self.channel_list, self.ssid_list, self.mode_list,
-                                                            self.url_data, self.test_input_list, self.uc_avg, self.bytes_rd, self.rx_rate, self.pass_fail_list, self.total_err)
-                    else:
-                        dataframe = self.generate_dataframe(val, client_list, self.mac_id_list, self.channel_list, self.ssid_list,
-                                                            self.mode_list, self.url_data, [], self.uc_avg, self.bytes_rd, self.rx_rate, [], self.total_err)
+                        dataframe[" Expected output "] = self.test_input_list
+                        dataframe[" Status "] = self.pass_fail_list
 
-                    if dataframe:
-                        self.report.set_obj_html("", "Group: {}".format(key))
-                        self.report.build_objective()
-                        dataframe1 = pd.DataFrame(dataframe)
-                        self.report.set_table_dataframe(dataframe1)
-                        self.report.build_table()
+                    dataframe1 = pd.DataFrame(dataframe)
+                    self.report.set_table_dataframe(dataframe1)
+                    self.report.build_table()
+
             else:
                 dataframe = {
                     " Clients": client_list,
@@ -2044,222 +2198,330 @@ class FtpTest(LFCliBase):
                     " No of times File downloaded ": self.url_data,
                     " Time Taken to Download file (ms)": self.uc_avg,
                     " Bytes-rd (Mega Bytes)": self.bytes_rd,
-                    " RX RATE (Mbps) ": self.rx_rate,
-                    "Failed Urls": self.total_err
                 }
-                if self.expected_passfail_val or self.csv_name:
-                    dataframe[" Expected output "] = self.test_input_list
-                    dataframe[" Status "] = self.pass_fail_list
-
                 dataframe1 = pd.DataFrame(dataframe)
                 self.report.set_table_dataframe(dataframe1)
                 self.report.build_table()
+            self.report.build_footer()
+            html_file = self.report.write_html()
+            logger.info("returned file {}".format(html_file))
+            logger.info(html_file)
+            self.report.write_pdf()
 
-        else:
-            dataframe = {
-                " Clients": client_list,
-                " MAC ": self.mac_id_list,
-                " Channel": self.channel_list,
-                " SSID ": self.ssid_list,
-                " Mode": self.mode_list,
-                " No of times File downloaded ": self.url_data,
-                " Time Taken to Download file (ms)": self.uc_avg,
-                " Bytes-rd (Mega Bytes)": self.bytes_rd,
-            }
-            dataframe1 = pd.DataFrame(dataframe)
-            self.report.set_table_dataframe(dataframe1)
-            self.report.build_table()
-        self.report.build_footer()
-        html_file = self.report.write_html()
-        logger.info("returned file {}".format(html_file))
-        logger.info(html_file)
-        self.report.write_pdf()
+            # The following lines can be used when the kpi results are needed
+            # self.kpi_results
+            # print("generate_report - self.kpi_results:{kpi_results}".format(kpi_results=self.kpi_results))
 
-        # The following lines can be used when the kpi results are needed
-        # self.kpi_results
-        # print("generate_report - self.kpi_results:{kpi_results}".format(kpi_results=self.kpi_results))
+            # # Begin kpi.csv
+            # # start splicing data from self.kpi_results to feed table dicts
+            # for dwnld_rts in self.kpi_results[0]:
+            #     split_download_rates = dwnld_rts.split(',')
 
-        # # Begin kpi.csv
-        # # start splicing data from self.kpi_results to feed table dicts
-        # for dwnld_rts in self.kpi_results[0]:
-        #     split_download_rates = dwnld_rts.split(',')
+            #     # split download data rates for download_table_values dict
+            #     x_fin = []
+            #     y_fin = []
+            #     z_fin = []
 
-        #     # split download data rates for download_table_values dict
-        #     x_fin = []
-        #     y_fin = []
-        #     z_fin = []
+            #     x = split_download_rates[0]
+            #     y = split_download_rates[1]
+            #     z = split_download_rates[2]
 
-        #     x = split_download_rates[0]
-        #     y = split_download_rates[1]
-        #     z = split_download_rates[2]
+            #     split_min = x.split('=')
+            #     split_max = y.split('=')
+            #     split_avg = z.split('=')
 
-        #     split_min = x.split('=')
-        #     split_max = y.split('=')
-        #     split_avg = z.split('=')
+            #     x1 = split_min[1]
+            #     y1 = split_max[1]
+            #     z1 = split_avg[1]
+            #     z2 = z1.split()
+            #     z3 = z2[0]
 
-        #     x1 = split_min[1]
-        #     y1 = split_max[1]
-        #     z1 = split_avg[1]
-        #     z2 = z1.split()
-        #     z3 = z2[0]
+            #     x_fin.append(x1)
+            #     y_fin.append(y1)
+            #     z_fin.append(z3)
 
-        #     x_fin.append(x1)
-        #     y_fin.append(y1)
-        #     z_fin.append(z3)
+            #     download_table_value = {
+            #         "Band": bands,
+            #         "Minimum": x_fin,
+            #         "Maximum": y_fin,
+            #         "Average": z_fin
+            #     }
+            #     # print("download_table_value:{download_table_value}".format(download_table_value=download_table_value))
 
-        #     download_table_value = {
-        #         "Band": bands,
-        #         "Minimum": x_fin,
-        #         "Maximum": y_fin,
-        #         "Average": z_fin
-        #     }
-        #     # print("download_table_value:{download_table_value}".format(download_table_value=download_table_value))
+            # # if upload tests are being ran as well:
+            # if len(self.kpi_results) > 0:
+            #     for upload_rts in self.kpi_results[0]:
+            #         split_upload_rates = upload_rts.split(',')
+            #         # print("split_upload_rates:{split_upload_rates}".format(split_upload_rates=split_upload_rates))
+            #         # split upload data rates for upload_table_values dict
 
-        # # if upload tests are being ran as well:
-        # if len(self.kpi_results) > 0:
-        #     for upload_rts in self.kpi_results[0]:
-        #         split_upload_rates = upload_rts.split(',')
-        #         # print("split_upload_rates:{split_upload_rates}".format(split_upload_rates=split_upload_rates))
-        #         # split upload data rates for upload_table_values dict
+            #         up_x_fin = []
+            #         up_y_fin = []
+            #         up_z_fin = []
 
-        #         up_x_fin = []
-        #         up_y_fin = []
-        #         up_z_fin = []
+            #         up_x = split_upload_rates[0]
+            #         up_y = split_upload_rates[1]
+            #         up_z = split_upload_rates[2]
 
-        #         up_x = split_upload_rates[0]
-        #         up_y = split_upload_rates[1]
-        #         up_z = split_upload_rates[2]
+            #         up_split_min = up_x.split('=')
+            #         up_split_max = up_y.split('=')
+            #         up_split_avg = up_z.split('=')
 
-        #         up_split_min = up_x.split('=')
-        #         up_split_max = up_y.split('=')
-        #         up_split_avg = up_z.split('=')
+            #         up_x1 = up_split_min[1]
+            #         up_y1 = up_split_max[1]
+            #         up_z1 = up_split_avg[1]
+            #         up_z2 = up_z1.split()
+            #         up_z3 = up_z2[0]
 
-        #         up_x1 = up_split_min[1]
-        #         up_y1 = up_split_max[1]
-        #         up_z1 = up_split_avg[1]
-        #         up_z2 = up_z1.split()
-        #         up_z3 = up_z2[0]
+            #         up_x_fin.append(up_x1)
+            #         up_y_fin.append(up_y1)
+            #         up_z_fin.append(up_z3)
 
-        #         up_x_fin.append(up_x1)
-        #         up_y_fin.append(up_y1)
-        #         up_z_fin.append(up_z3)
+            #         upload_table_value = {
+            #             "Band": bands,
+            #             "Minimum": up_x_fin,
+            #             "Maximum": up_y_fin,
+            #             "Average": up_z_fin
+            #         }
+            #         print("upload_table_value:{upload_table_value}".format(upload_table_value=upload_table_value))
 
-        #         upload_table_value = {
-        #             "Band": bands,
-        #             "Minimum": up_x_fin,
-        #             "Maximum": up_y_fin,
-        #             "Average": up_z_fin
-        #         }
-        #         print("upload_table_value:{upload_table_value}".format(upload_table_value=upload_table_value))
+            # if local_lf_report_dir != "":
+            #     report = lf_report.lf_report(
+            #         _path=local_lf_report_dir,
+            #         _results_dir_name="lf_ftp",
+            #         _output_html="lf_ftp.html",
+            #         _output_pdf="lf_ftp.pdf")
+            # else:
+            #     report = lf_report.lf_report(
+            #         _results_dir_name="lf_ftp",
+            #         _output_html="lf_ftp.html",
+            #         _output_pdf="lf_ftp.pdf")
 
-        # if local_lf_report_dir != "":
-        #     report = lf_report.lf_report(
-        #         _path=local_lf_report_dir,
-        #         _results_dir_name="lf_ftp",
-        #         _output_html="lf_ftp.html",
-        #         _output_pdf="lf_ftp.pdf")
-        # else:
-        #     report = lf_report.lf_report(
-        #         _results_dir_name="lf_ftp",
-        #         _output_html="lf_ftp.html",
-        #         _output_pdf="lf_ftp.pdf")
+            # Get the report path to create the kpi.csv path
+            # kpi_path = report.get_report_path()
+            # print("kpi_path :{kpi_path}".format(kpi_path=kpi_path))
 
-        # Get the report path to create the kpi.csv path
-        # kpi_path = report.get_report_path()
-        # print("kpi_path :{kpi_path}".format(kpi_path=kpi_path))
+            # self.kpi_csv = lf_kpi_csv.lf_kpi_csv(
+            #     _kpi_path=kpi_path,
+            #     _kpi_test_rig=test_rig,
+            #     _kpi_test_tag=test_tag,
+            #     _kpi_dut_hw_version=dut_hw_version,
+            #     _kpi_dut_sw_version=dut_sw_version,
+            #     _kpi_dut_model_num=dut_model_num,
+            #     _kpi_dut_serial_num=dut_serial_num,
+            #     _kpi_test_id=test_id)
 
-        # self.kpi_csv = lf_kpi_csv.lf_kpi_csv(
-        #     _kpi_path=kpi_path,
-        #     _kpi_test_rig=test_rig,
-        #     _kpi_test_tag=test_tag,
-        #     _kpi_dut_hw_version=dut_hw_version,
-        #     _kpi_dut_sw_version=dut_sw_version,
-        #     _kpi_dut_model_num=dut_model_num,
-        #     _kpi_dut_serial_num=dut_serial_num,
-        #     _kpi_test_id=test_id)
+            # self.kpi_csv.kpi_dict['Units'] = "Mbps"
+            # for band in range(len(download_table_value["Band"])):
+            #     self.kpi_csv.kpi_csv_get_dict_update_time()
 
-        # self.kpi_csv.kpi_dict['Units'] = "Mbps"
-        # for band in range(len(download_table_value["Band"])):
-        #     self.kpi_csv.kpi_csv_get_dict_update_time()
+            #     # ftp download data for kpi.csv
+            #     self.kpi_csv.kpi_dict['Graph-Group'] = "FTP Download {band}".format(
+            #         band=download_table_value['Band'][band])
+            #     self.kpi_csv.kpi_dict['short-description'] = "FTP Download {band} Minimum".format(
+            #         band=download_table_value['Band'][band])
+            #     self.kpi_csv.kpi_dict['numeric-score'] = "{min}".format(min=download_table_value['Minimum'][band])
+            #     self.kpi_csv.kpi_csv_write_dict(self.kpi_csv.kpi_dict)
+            #     self.kpi_csv.kpi_dict['short-description'] = "FTP Download {band} Maximum".format(
+            #         band=download_table_value['Band'][band])
+            #     self.kpi_csv.kpi_dict['numeric-score'] = "{max}".format(max=download_table_value['Maximum'][band])
+            #     self.kpi_csv.kpi_csv_write_dict(self.kpi_csv.kpi_dict)
+            #     self.kpi_csv.kpi_dict['short-description'] = "FTP Download {band} Average".format(
+            #         band=download_table_value['Band'][band])
+            #     self.kpi_csv.kpi_dict['numeric-score'] = "{avg}".format(avg=download_table_value['Average'][band])
+            #     self.kpi_csv.kpi_csv_write_dict(self.kpi_csv.kpi_dict)
 
-        #     # ftp download data for kpi.csv
-        #     self.kpi_csv.kpi_dict['Graph-Group'] = "FTP Download {band}".format(
-        #         band=download_table_value['Band'][band])
-        #     self.kpi_csv.kpi_dict['short-description'] = "FTP Download {band} Minimum".format(
-        #         band=download_table_value['Band'][band])
-        #     self.kpi_csv.kpi_dict['numeric-score'] = "{min}".format(min=download_table_value['Minimum'][band])
-        #     self.kpi_csv.kpi_csv_write_dict(self.kpi_csv.kpi_dict)
-        #     self.kpi_csv.kpi_dict['short-description'] = "FTP Download {band} Maximum".format(
-        #         band=download_table_value['Band'][band])
-        #     self.kpi_csv.kpi_dict['numeric-score'] = "{max}".format(max=download_table_value['Maximum'][band])
-        #     self.kpi_csv.kpi_csv_write_dict(self.kpi_csv.kpi_dict)
-        #     self.kpi_csv.kpi_dict['short-description'] = "FTP Download {band} Average".format(
-        #         band=download_table_value['Band'][band])
-        #     self.kpi_csv.kpi_dict['numeric-score'] = "{avg}".format(avg=download_table_value['Average'][band])
-        #     self.kpi_csv.kpi_csv_write_dict(self.kpi_csv.kpi_dict)
+            #     if 'Upload' in self.directions:
+            #         for band in range(len(upload_table_value["Band"])):
+            #     # ftp upload data for kpi.csv
+            #             self.kpi_csv.kpi_dict['Graph-Group'] = "FTP Upload {band}".format(
+            #                 band=upload_table_value['Band'][band])
+            #             self.kpi_csv.kpi_dict['short-description'] = "FTP Upload {band} Minimum".format(
+            #                 band=upload_table_value['Band'][band])
+            #             print("self.kpi_csv.kpi_dict['numeric-score']",self.kpi_csv.kpi_dict['numeric-score'])
+            #             self.kpi_csv.kpi_dict['numeric-score'] = "{min}".format(min=upload_table_value['Minimum'][band])
+            #             self.kpi_csv.kpi_csv_write_dict(self.kpi_csv.kpi_dict)
+            #             self.kpi_csv.kpi_dict['short-description'] = "FTP Upload {band} Maximum".format(
+            #                 band=upload_table_value['Band'][band])
+            #             print(self.kpi_csv.kpi_dict['numeric-score'])
+            #             self.kpi_csv.kpi_dict['numeric-score'] = "{max}".format(max=upload_table_value['Maximum'][band])
+            #             self.kpi_csv.kpi_csv_write_dict(self.kpi_csv.kpi_dict)
+            #             self.kpi_csv.kpi_dict['short-description'] = "FTP Upload {band} Average".format(
+            #                 band=upload_table_value['Band'][band])
+            #             self.kpi_csv.kpi_dict['numeric-score'] = "{avg}".format(avg=upload_table_value['Average'][band])
+            #             self.kpi_csv.kpi_csv_write_dict(self.kpi_csv.kpi_dict)
 
-        #     if 'Upload' in self.directions:
-        #         for band in range(len(upload_table_value["Band"])):
-        #     # ftp upload data for kpi.csv
-        #             self.kpi_csv.kpi_dict['Graph-Group'] = "FTP Upload {band}".format(
-        #                 band=upload_table_value['Band'][band])
-        #             self.kpi_csv.kpi_dict['short-description'] = "FTP Upload {band} Minimum".format(
-        #                 band=upload_table_value['Band'][band])
-        #             print("self.kpi_csv.kpi_dict['numeric-score']",self.kpi_csv.kpi_dict['numeric-score'])
-        #             self.kpi_csv.kpi_dict['numeric-score'] = "{min}".format(min=upload_table_value['Minimum'][band])
-        #             self.kpi_csv.kpi_csv_write_dict(self.kpi_csv.kpi_dict)
-        #             self.kpi_csv.kpi_dict['short-description'] = "FTP Upload {band} Maximum".format(
-        #                 band=upload_table_value['Band'][band])
-        #             print(self.kpi_csv.kpi_dict['numeric-score'])
-        #             self.kpi_csv.kpi_dict['numeric-score'] = "{max}".format(max=upload_table_value['Maximum'][band])
-        #             self.kpi_csv.kpi_csv_write_dict(self.kpi_csv.kpi_dict)
-        #             self.kpi_csv.kpi_dict['short-description'] = "FTP Upload {band} Average".format(
-        #                 band=upload_table_value['Band'][band])
-        #             self.kpi_csv.kpi_dict['numeric-score'] = "{avg}".format(avg=upload_table_value['Average'][band])
-        #             self.kpi_csv.kpi_csv_write_dict(self.kpi_csv.kpi_dict)
+            #     '''
+            #     # ftp download data for kpi.csv
+            #     if self.direction == "Download":
+            #         self.kpi_csv.kpi_dict['Graph-Group'] = "FTP Download {band}".format(
+            #             band=download_table_value['Band'][band])
+            #         self.kpi_csv.kpi_dict['short-description'] = "FTP Download {band} Minimum".format(
+            #             band=download_table_value['Band'][band])
+            #         self.kpi_csv.kpi_dict['numeric-score'] = "{min}".format(min=download_table_value['Minimum'][band])
+            #         self.kpi_csv.kpi_csv_write_dict(self.kpi_csv.kpi_dict)
+            #         self.kpi_csv.kpi_dict['short-description'] = "FTP Download {band} Maximum".format(
+            #             band=download_table_value['Band'][band])
+            #         self.kpi_csv.kpi_dict['numeric-score'] = "{max}".format(max=download_table_value['Maximum'][band])
+            #         self.kpi_csv.kpi_csv_write_dict(self.kpi_csv.kpi_dict)
+            #         self.kpi_csv.kpi_dict['short-description'] = "FTP Download {band} Average".format(
+            #             band=download_table_value['Band'][band])
+            #         self.kpi_csv.kpi_dict['numeric-score'] = "{avg}".format(avg=download_table_value['Average'][band])
+            #         self.kpi_csv.kpi_csv_write_dict(self.kpi_csv.kpi_dict)
 
-        #     '''
-        #     # ftp download data for kpi.csv
-        #     if self.direction == "Download":
-        #         self.kpi_csv.kpi_dict['Graph-Group'] = "FTP Download {band}".format(
-        #             band=download_table_value['Band'][band])
-        #         self.kpi_csv.kpi_dict['short-description'] = "FTP Download {band} Minimum".format(
-        #             band=download_table_value['Band'][band])
-        #         self.kpi_csv.kpi_dict['numeric-score'] = "{min}".format(min=download_table_value['Minimum'][band])
-        #         self.kpi_csv.kpi_csv_write_dict(self.kpi_csv.kpi_dict)
-        #         self.kpi_csv.kpi_dict['short-description'] = "FTP Download {band} Maximum".format(
-        #             band=download_table_value['Band'][band])
-        #         self.kpi_csv.kpi_dict['numeric-score'] = "{max}".format(max=download_table_value['Maximum'][band])
-        #         self.kpi_csv.kpi_csv_write_dict(self.kpi_csv.kpi_dict)
-        #         self.kpi_csv.kpi_dict['short-description'] = "FTP Download {band} Average".format(
-        #             band=download_table_value['Band'][band])
-        #         self.kpi_csv.kpi_dict['numeric-score'] = "{avg}".format(avg=download_table_value['Average'][band])
-        #         self.kpi_csv.kpi_csv_write_dict(self.kpi_csv.kpi_dict)
+            #     # ftp upload data for kpi.csv
+            #     if self.direction == "Upload":
+            #         self.kpi_csv.kpi_dict['Graph-Group'] = "FTP Upload {band}".format(
+            #             band=upload_table_value['Band'][band])
+            #         self.kpi_csv.kpi_dict['short-description'] = "FTP Upload {band} Minimum".format(
+            #             band=upload_table_value['Band'][band])
+            #         self.kpi_csv.kpi_dict['numeric-score'] = "{min}".format(min=upload_table_value['Minimum'][band])
+            #         self.kpi_csv.kpi_csv_write_dict(self.kpi_csv.kpi_dict)
+            #         self.kpi_csv.kpi_dict['short-description'] = "FTP Upload {band} Maximum".format(
+            #             band=upload_table_value['Band'][band])
+            #         self.kpi_csv.kpi_dict['numeric-score'] = "{max}".format(max=upload_table_value['Maximum'][band])
+            #         self.kpi_csv.kpi_csv_write_dict(self.kpi_csv.kpi_dict)
+            #         self.kpi_csv.kpi_dict['short-description'] = "FTP Upload {band} Average".format(
+            #             band=upload_table_value['Band'][band])
+            #         self.kpi_csv.kpi_dict['numeric-score'] = "{avg}".format(avg=upload_table_value['Average'][band])
+            #         self.kpi_csv.kpi_csv_write_dict(self.kpi_csv.kpi_dict)
+            #     '''
 
-        #     # ftp upload data for kpi.csv
-        #     if self.direction == "Upload":
-        #         self.kpi_csv.kpi_dict['Graph-Group'] = "FTP Upload {band}".format(
-        #             band=upload_table_value['Band'][band])
-        #         self.kpi_csv.kpi_dict['short-description'] = "FTP Upload {band} Minimum".format(
-        #             band=upload_table_value['Band'][band])
-        #         self.kpi_csv.kpi_dict['numeric-score'] = "{min}".format(min=upload_table_value['Minimum'][band])
-        #         self.kpi_csv.kpi_csv_write_dict(self.kpi_csv.kpi_dict)
-        #         self.kpi_csv.kpi_dict['short-description'] = "FTP Upload {band} Maximum".format(
-        #             band=upload_table_value['Band'][band])
-        #         self.kpi_csv.kpi_dict['numeric-score'] = "{max}".format(max=upload_table_value['Maximum'][band])
-        #         self.kpi_csv.kpi_csv_write_dict(self.kpi_csv.kpi_dict)
-        #         self.kpi_csv.kpi_dict['short-description'] = "FTP Upload {band} Average".format(
-        #             band=upload_table_value['Band'][band])
-        #         self.kpi_csv.kpi_dict['numeric-score'] = "{avg}".format(avg=upload_table_value['Average'][band])
-        #         self.kpi_csv.kpi_csv_write_dict(self.kpi_csv.kpi_dict)
-        #     '''
+            if csv_outfile is not None:
+                current_time = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
+                csv_outfile = "{}_{}-test_l4_ftp.csv".format(
+                    csv_outfile, current_time)
+                csv_outfile = self.report.file_add_path(csv_outfile)
+                logger.info("csv output file : {}".format(csv_outfile))
 
-        if csv_outfile is not None:
-            current_time = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
-            csv_outfile = "{}_{}-test_l4_ftp.csv".format(
-                csv_outfile, current_time)
-            csv_outfile = self.report.file_add_path(csv_outfile)
-            logger.info("csv output file : {}".format(csv_outfile))
+    def build_single_graph(self, client_list, data, graph_name, title, x_label, color, direction):
+        """Build a horizontal bar graph and attach to report."""
+        x_fig_size = 18
+        y_fig_size = len(self.real_client_list1) * .5 + 4
+        graph = lf_bar_graph_horizontal(
+            _data_set=[data],
+            _xaxis_name=x_label,
+            _yaxis_name="Client names",
+            _yaxis_categories=client_list,
+            _yaxis_label=client_list,
+            _yaxis_step=1,
+            _yticks_font=8,
+            _yticks_rotation=None,
+            _graph_title=title,
+            _title_size=16,
+            _figsize=(x_fig_size, y_fig_size),
+            _legend_loc="best",
+            _legend_box=(1.0, 1.0),
+            _color_name=[color],
+            _show_bar_value=True,
+            _enable_csv=True,
+            _graph_image_name=graph_name,
+            _color_edge=['black'],
+            _color=[color],
+            _label=[direction]
+        )
+
+        graph_png = graph.build_bar_graph_horizontal()
+        logger.info(f"Graph generated: {graph_png}")
+
+        self.report.set_graph_image(graph_png)
+        self.report.move_graph_image()
+        self.report.set_csv_filename(graph_png)
+        self.report.move_csv_file()
+        self.report.build_graph()
+
+
+    def build_graphs_and_table(self, coord, rotation, robot_info, client_list):
+        """Build graphs (URL + Avg Time) and table for one coordinate/rotation."""
+        url_data_robo = robot_info['url_data']
+        uc_avg_robo = robot_info['uc_avg']
+        uc_min_robo = robot_info['uc_min']
+        uc_max_robo = robot_info['uc_max']
+        mode_list_robo = robot_info['mode_list']
+        ssid_list_robo = robot_info['ssid_list']
+        channel_list_robo = robot_info['channel_list']
+        mac_id_list_robo = robot_info['mac_id_list']
+        bytes_rd_robo = robot_info['bytes_rd']
+        rx_rate_robo = robot_info['rx_rate']
+        total_err_robo = robot_info['total_err']
+
+        rotation_suffix = f"_{rotation}" if rotation else ""
+        coord_label = f"<h2>Coordinate: {coord}</h2>"
+        if self.rotation_enabled:
+            coord_label = f"<h2>Coordinate: {coord}{', Rotation: ' + str(rotation) if rotation else ''}</h2>"
+        self.report.set_custom_html(coord_label)
+        self.report.build_custom()
+
+        # Graph 1: URL Count
+        self.report.set_obj_html(
+            _obj_title=f"No of times file {self.direction}",
+            _obj=(f"The below graph represents number of times a file {self.direction} for each client "
+                f"(WiFi) traffic. X-axis shows 'No of times file {self.direction}' and Y-axis shows Client names.")
+        )
+        self.report.build_objective()
+        self.build_single_graph(
+            client_list=client_list,
+            data=url_data_robo,
+            graph_name=f"Total-url_ftp_{coord}{rotation_suffix}",
+            title=f"No of times file {self.direction} (Count)",
+            x_label=f"No of times file {self.direction}",
+            color="orange",
+            direction=self.direction
+        )
+
+        # Graph 2: Average Time
+        self.report.set_obj_html(
+            _obj_title=f"Average time taken to {self.direction} file",
+            _obj=(f"The below graph represents average time taken to {self.direction} for each client "
+                f"(WiFi) traffic. X-axis shows 'Average time taken to {self.direction}' and Y-axis shows Client names.")
+        )
+        self.report.build_objective()
+        self.build_single_graph(
+            client_list=client_list,
+            data=uc_avg_robo,
+            graph_name=f"Avg-time_ftp_{coord}{rotation_suffix}",
+            title=f"Average time taken to {self.direction} file",
+            x_label=f"Average time taken to {self.direction} file in ms",
+            color="steelblue",
+            direction=self.direction
+        )
+
+        self.report.set_obj_html(
+            "File Download Time (sec)",
+            "The below table provides minimum, maximum and average time taken by clients to download a file (seconds)"
+        )
+        self.report.build_objective()
+
+        table_data = {
+            "Minimum": [str(round(min(uc_min_robo) / 1000, 1))],
+            "Maximum": [str(round(max(uc_max_robo) / 1000, 1))],
+            "Average": [str(round((sum(uc_avg_robo) / len(client_list)) / 1000, 1))]
+        }
+
+        df = pd.DataFrame(table_data)
+        self.report.set_table_dataframe(df)
+        self.report.build_table()
+
+        self.report.set_table_title("Overall Results")
+        self.report.build_table_title()
+
+        dataframe = {
+                        " Clients": client_list,
+                        " MAC ": mac_id_list_robo,
+                        " Channel": channel_list_robo,
+                        " SSID ": ssid_list_robo,
+                        " Mode": mode_list_robo,
+                        " No of times File downloaded ": url_data_robo,
+                        " Time Taken to Download file (ms)": uc_avg_robo,
+                        " Bytes-rd (Mega Bytes)": bytes_rd_robo,
+                        " RX RATE (Mbps) ": rx_rate_robo,
+                        "Failed Urls": total_err_robo
+                    }
+        dataframe1 = pd.DataFrame(dataframe)
+        self.report.set_table_dataframe(dataframe1)
+        self.report.build_table()
+
+
 
     def copy_reports_to_home_dir(self):
         curr_path = self.result_dir
@@ -2472,6 +2734,61 @@ class FtpTest(LFCliBase):
             logger.error('No cross connections created, aborting test')
             exit(1)
 
+    def perform_robo(self):
+
+        if self.rotation_list[0]!="":
+            self.rotation_enabled=True
+
+        self.robot_obj = RobotClass()
+        self.robot_obj.robo_ip = self.robot_ip
+        base_dir = os.path.dirname(os.path.dirname(self.result_dir))
+        nav_data = os.path.join(base_dir, 'nav_data.json') # To generate nav_data.json in webgui folder
+        self.robot_obj.nav_data_path = nav_data
+        self.robot_obj.create_waypointlist()
+        test_stopped_by_user = False
+        self.robot_obj.ip = self.host
+        self.robot_obj.testname = self.test_name
+        self.robot_obj.runtime_dir = self.result_dir
+        for coordinate in range(len(self.coordinate_list)):
+            # Check for battery status before moving to next coordinate
+            if_paused,test_stopped_by_user=self.robot_obj.wait_for_battery()
+            # If test is stopped by user during battery wait
+            if test_stopped_by_user:
+                break
+            robo_moved, abort = self.robot_obj.move_to_coordinate(self.coordinate_list[coordinate])
+            # If robot failed to reach the coordinate
+            if abort:
+                break
+            # If robot reached the coordinate
+            if robo_moved:
+                self.current_coordinate = self.coordinate_list[coordinate]
+                # if no rotation mode
+                if not self.rotation_enabled:
+                    # Start the test
+                    self.start(False, False)
+                    test_stopped_by_user = self.monitor_for_runtime_csv()
+                    self.my_monitor_for_real_devices()
+                    self.stop()
+                    self.update_stop_status_robot()
+                    
+                # if rotation mode
+                else:
+                    for angle in range(len(self.rotation_list)):
+                        is_paused, test_stopped_by_user = self.robot_obj.wait_for_battery()
+                        # If test is stopped by user during battery wait
+                        if test_stopped_by_user :
+                            break
+                        robo_rotated = self.robot_obj.rotate_angle(self.rotation_list[angle])
+                        if robo_rotated:
+                            self.current_angle = self.rotation_list[angle]
+                            self.start(False, False)
+                            test_stopped_by_user = self.monitor_for_runtime_csv()
+                            self.my_monitor_for_real_devices()
+                            self.stop()
+                            self.update_stop_status_robot()
+                        # If test is stopped by user
+                        if test_stopped_by_user:
+                                break
 
 def validate_args(args):
     """Validate CLI arguments."""
@@ -2741,6 +3058,10 @@ INCLUDE_IN_README: False
 
     optional.add_argument('--get_live_view', help="If true will heatmap will be generated from testhouse automation WebGui ", action='store_true')
     optional.add_argument('--total_floors', help="Total floors from testhouse automation WebGui ", default="0")
+    optional.add_argument("--robot_test", help='to trigger robot test', action='store_true')
+    optional.add_argument('--robot_ip', type=str, default='localhost', help='hostname for where Robot server is running')
+    optional.add_argument('--coordinate', type=str, default='', help="The coordinate contains list of coordinates to be ")
+    optional.add_argument('--rotation', type=str, default='', help="The set of angles to rotate at a particular point")
     # logging configuration
     optional.add_argument(
         "--lf_logger_config_json",
@@ -2871,7 +3192,11 @@ some amount of file data from the FTP server while measuring the time taken by c
                               wait_time=args.wait_time,
                               config=args.config,
                               get_live_view=args.get_live_view,
-                              total_floors=args.total_floors
+                              total_floors=args.total_floors,
+                              robot_test=args.robot_test,
+                              robot_ip=args.robot_ip,
+                              coordinate=args.coordinate,
+                              rotation=args.rotation
                               )
 
                 interation_num = interation_num + 1
@@ -2914,59 +3239,71 @@ some amount of file data from the FTP server while measuring the time taken by c
                 # First time stamp
                 time1 = datetime.now()
                 logger.info("Traffic started running at %s", time1)
-                obj.start(False, False)
-                # to fetch runtime values during the execution and fill the csv.
-                if args.dowebgui or args.clients_type == "Real":
-                    obj.monitor_for_runtime_csv()
-                    obj.my_monitor_for_real_devices()
+                if args.robot_test:
+                    obj.perform_robo()
+                    date = str(datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
+                    obj.postcleanup()
+                    time2 = datetime.now()
+                    logger.info("Test ended at %s", time2)
                 else:
-                    time.sleep(args.traffic_duration)
-                    obj.my_monitor()
+                    obj.start(False, False)
+                    # to fetch runtime values during the execution and fill the csv.
+                    if args.dowebgui or args.clients_type == "Real":
+                        obj.monitor_for_runtime_csv()
+                        obj.my_monitor_for_real_devices()
+                    else:
+                        time.sleep(args.traffic_duration)
+                        obj.my_monitor()
 
-                # # return list of download/upload completed time stamp
-                # time_list = obj.my_monitor(time1)
-                # # print("pass_fail_duration - time_list:{time_list}".format(time_list=time_list))
-                # # check pass or fail
-                # pass_fail = obj.pass_fail_check(time_list)
+                    # # return list of download/upload completed time stamp
+                    # time_list = obj.my_monitor(time1)
+                    # # print("pass_fail_duration - time_list:{time_list}".format(time_list=time_list))
+                    # # check pass or fail
+                    # pass_fail = obj.pass_fail_check(time_list)
 
-                # # dictionary of whole data
-                # ftp_data[interation_num] = obj.ftp_test_data(time_list, pass_fail, args.bands, args.file_sizes,
-                #                                              args.directions, args.num_stations)
-                # # print("pass_fail_duration - ftp_data:{ftp_data}".format(ftp_data=ftp_data))
-                obj.stop()
-                print("Traffic stopped running")
+                    # # dictionary of whole data
+                    # ftp_data[interation_num] = obj.ftp_test_data(time_list, pass_fail, args.bands, args.file_sizes,
+                    #                                              args.directions, args.num_stations)
+                    # # print("pass_fail_duration - ftp_data:{ftp_data}".format(ftp_data=ftp_data))
+                    obj.stop()
+                    print("Traffic stopped running")
 
-                obj.postcleanup()
-                time2 = datetime.now()
-                logger.info("Test ended at %s", time2)
+                    obj.postcleanup()
+                    time2 = datetime.now()
+                    logger.info("Test ended at %s", time2)
 
-    # 2nd time stamp for test duration
-    # time_stamp2 = datetime.now()
+        # 2nd time stamp for test duration
+        # time_stamp2 = datetime.now()
 
-    # total time for test duration
-    # test_duration = str(time_stamp2 - time_stamp1)[:-7]
+        # total time for test duration
+        # test_duration = str(time_stamp2 - time_stamp1)[:-7]
 
-    date = str(datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
+        date = str(datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
 
-    # print(ftp_data)
+        # print(ftp_data)
 
-    input_setup_info = {
-        "AP IP": args.ap_ip,
-        "File Size": args.file_sizes,
-        "Bands": args.bands,
-        "Direction": args.directions,
-        "Stations": args.num_stations,
-        "Upstream": args.upstream_port,
-        "SSID": args.ssid,
-        "Security": args.security,
-        "Contact": "support@candelatech.com"
-    }
+        input_setup_info = {
+            "AP IP": args.ap_ip,
+            "File Size": args.file_sizes,
+            "Bands": args.bands,
+            "Direction": args.directions,
+            "Stations": args.num_stations,
+            "Upstream": args.upstream_port,
+            "SSID": args.ssid,
+            "Security": args.security,
+            "Contact": "support@candelatech.com"
+        }
+        if args.robot_test:
+            # If robot test is enabled, add robot specific info to the report
+            input_setup_info["Robot IP"] = args.robot_ip
+            input_setup_info["Coordinate"] = args.coordinate
+            input_setup_info["Rotation"] = args.rotation
+
     # FOR WEB-UI // to fetch the last logs of the execution.
-    if args.dowebgui:
-        obj.data_for_webui["status"] = ["STOPPED"] * len(obj.url_data)
-
-        df1 = pd.DataFrame(obj.data_for_webui)
-        df1.to_csv('{}/ftp_datavalues.csv'.format(obj.result_dir), index=False)
+        if args.dowebgui and not args.robot_test:
+            obj.data_for_webui["status"] = ["STOPPED"] * len(obj.url_data)
+            df1 = pd.DataFrame(obj.data_for_webui)
+            df1.to_csv('{}/ftp_datavalues.csv'.format(obj.result_dir), index=False)
     # Report generation when groups are specified
     if args.group_name:
         obj.generate_report(ftp_data, date, input_setup_info, test_rig=args.test_rig,
