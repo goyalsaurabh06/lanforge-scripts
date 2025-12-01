@@ -555,6 +555,8 @@ class Ping(Realm):
 
         # Show the plot
         # plt.show()
+        plt.xticks(rotation=45, ha='right')
+        plt.tight_layout()
         plt.savefig("%s.png" % "uptime_graph", dpi=96)
         plt.close()
 
@@ -651,6 +653,8 @@ class Ping(Realm):
             # set origin on x-axis
             if rtts != []:
                 plt.ylim(0, max(rtts))
+            plt.xticks(rotation=45, ha='right')
+            plt.tight_layout()
             plt.savefig("%s.png" % device_name, dpi=96)
             graph_name = "%s.png" % device_name
             plt.close()
@@ -906,9 +910,6 @@ class Ping(Realm):
                 'No of Devices': '{} (V:{}, A:{}, W:{}, L:{}, M:{})'.format(len(self.sta_list), len(self.sta_list) - len(self.real_sta_list), self.android, self.windows, self.linux, self.mac),
                 'Duration': self.duration
             }
-        report.test_setup_table(
-            test_setup_data=test_setup_info, value='Test Setup Information')
-
         # objective and description
         report.set_obj_html(_obj_title='Objective',
                             _obj='''Candela Ping Plotter Test assesses the network connectivity for specified clients by measuring Round
@@ -917,6 +918,11 @@ class Ping(Realm):
                             connectivity problems.
                             ''')
         report.build_objective()
+        report.set_obj_html(_obj_title="Input Parameters",
+                                _obj="The below tables provides the input parameters for the test")
+        report.test_setup_table(
+            test_setup_data=test_setup_info, value='Test Setup Information')
+
 
         # uptime and downtime
         report.set_table_title(
