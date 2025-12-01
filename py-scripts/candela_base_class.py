@@ -40,6 +40,7 @@ error_logs = ""
 test_results_df = pd.DataFrame(columns=['test_name', 'status'])
 matplotlib.use('Agg')  # Before importing pyplot
 base_path = os.getcwd()
+print('base path',base_path)
 sys.path.insert(0, os.path.join(base_path, 'py-json'))     # for interop_connectivity, LANforge
 sys.path.insert(0, os.path.join(base_path, 'py-json', 'LANforge'))  # for LFUtils
 sys.path.insert(0, os.path.join(base_path, 'py-scripts'))  # for lf_logger_config
@@ -199,12 +200,14 @@ class Candela(Realm):
         return response
     def webgui_stop_check(self,test_name):
         try:
+            print("ENTERED STOP CHECKKK")
             with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.lanforge_ip, self.test_name), 'r') as file:
                 data = json.load(file)
                 if data["status"] != "Running":
                     logging.info('Test is stopped by the user')
                     self.test_stopped = True
             if not self.test_stopped:
+                print("ENTERED NOT STOPPED")
                 self.overall_status[test_name] = "started"
                 self.overall_status["time"] = datetime.datetime.now().strftime("%Y %d %H:%M:%S")
                 self.overall_status["current_mode"] = self.current_exec
@@ -230,15 +233,51 @@ class Candela(Realm):
             logger.info(e)
 
     def port_clean_up(self,port_no):
+        print('port cleanup......')
         time.sleep(5)
         hostname = self.lanforge_ip
         username = "root"
         password = "lanforge"
         ports = []
         ports.append(port_no)
+        # ssh = paramiko.SSHClient()
+        # ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        # ssh.connect(hostname, username=username, password=password)
+
+        # for cmd in commands:
+        #     print(f"--- Running: {cmd} ---")
+        #     stdin, stdout, stderr = ssh.exec_command(cmd)
+        #     print("Output:\n", stdout.read().decode())
+        #     print("Errors:\n", stderr.read().decode())
+        # ssh.close()
+
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         ssh.connect(hostname, username=username, password=password)
+
+        # for port in ports:
+        #     print(f"\n--- Checking port {port} ---")
+
+        #     try:
+        #         check_cmd = f"lsof -i :{port}"
+        #         stdin, stdout, stderr = ssh.exec_command(check_cmd, timeout=10)  # ⬅ timeout added
+        #         output = stdout.read().decode().strip()
+        #         error = stderr.read().decode().strip()
+
+        #         if output:
+        #             print(f"Processes using port {port}:\n{output}")
+
+        #             # kill_cmd = f"fuser -kv {port}/tcp"
+        #             # kill_cmd = f"fuser -k {port}/tcp"
+        #             kill_cmd = f"fuser -k {port}/tcp || true"
+        #             stdin, stdout, stderr = ssh.exec_command(kill_cmd, timeout=10)
+        #             print("Kill Output:\n", stdout.read().decode())
+        #             print("Kill Errors:\n", stderr.read().decode())
+        #         else:
+        #             print(f"No process found on port {port}")
+
+        #     except Exception as e:
+        #         print(f"Error checking port {port}: {e}")
 
         for port in ports:
             print(f"\n--- Checking port {port} ---")
@@ -266,7 +305,7 @@ class Candela(Realm):
         ssh.close()
 
 
-    def misc_clean_up(self,layer3=False,layer4=False,generic=False):
+    def misc_clean_up(self,layer3=False,layer4=False,generic=False,port_5000=False,port_5002=False,port_5003=False):
         """
         Use for the cleanup of cross connections
         arguments:
@@ -288,6 +327,82 @@ class Candela(Realm):
                         self.generic_endps_profile.created_cx.append('CX_' + list(i.values())[0]['name'])
                         self.generic_endps_profile.created_endp.append(list(i.values())[0]['name'])
             self.generic_endps_profile.cleanup()
+        # if port_5000 or port_5002 or port_5003:
+        #     print('port cleanup......')
+        #     time.sleep(5)
+        #     hostname = self.lanforge_ip
+        #     username = "root"
+        #     password = "lanforge"
+        #     ports = []
+        #     if port_5003:
+        #         ports.append(5003)
+        #     if port_5000:
+        #         ports.append(5000)
+        #     if port_5002:
+        #         ports.append(5002)
+        #     # ssh = paramiko.SSHClient()
+        #     # ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        #     # ssh.connect(hostname, username=username, password=password)
+
+        #     # for cmd in commands:
+        #     #     print(f"--- Running: {cmd} ---")
+        #     #     stdin, stdout, stderr = ssh.exec_command(cmd)
+        #     #     print("Output:\n", stdout.read().decode())
+        #     #     print("Errors:\n", stderr.read().decode())
+        #     # ssh.close()
+
+        #     ssh = paramiko.SSHClient()
+        #     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        #     ssh.connect(hostname, username=username, password=password)
+
+        #     # for port in ports:
+        #     #     print(f"\n--- Checking port {port} ---")
+
+        #     #     try:
+        #     #         check_cmd = f"lsof -i :{port}"
+        #     #         stdin, stdout, stderr = ssh.exec_command(check_cmd, timeout=10)  # ⬅ timeout added
+        #     #         output = stdout.read().decode().strip()
+        #     #         error = stderr.read().decode().strip()
+
+        #     #         if output:
+        #     #             print(f"Processes using port {port}:\n{output}")
+
+        #     #             # kill_cmd = f"fuser -kv {port}/tcp"
+        #     #             # kill_cmd = f"fuser -k {port}/tcp"
+        #     #             kill_cmd = f"fuser -k {port}/tcp || true"
+        #     #             stdin, stdout, stderr = ssh.exec_command(kill_cmd, timeout=10)
+        #     #             print("Kill Output:\n", stdout.read().decode())
+        #     #             print("Kill Errors:\n", stderr.read().decode())
+        #     #         else:
+        #     #             print(f"No process found on port {port}")
+
+        #     #     except Exception as e:
+        #     #         print(f"Error checking port {port}: {e}")
+
+        #     for port in ports:
+        #         print(f"\n--- Checking port {port} ---")
+
+        #         try:
+        #             # Get only the PIDs of processes using this port
+        #             check_cmd = f"lsof -t -i:{port}"
+        #             stdin, stdout, stderr = ssh.exec_command(check_cmd, timeout=10)
+        #             pids = stdout.read().decode().strip().splitlines()
+
+        #             if pids:
+        #                 print(f"Processes using port {port}: {', '.join(pids)}")
+
+        #                 # Kill each PID safely
+        #                 for pid in pids:
+        #                     kill_cmd = f"kill -9 {pid}"
+        #                     ssh.exec_command(kill_cmd, timeout=10)
+        #                     print(f"Killed PID {pid} on port {port}")
+        #             else:
+        #                 print(f"No process found on port {port}")
+
+        #         except Exception as e:
+        #             print(f"Error checking port {port}: {e}")
+
+        #     ssh.close()
 
     def get_device_info(self):
         """
@@ -300,6 +415,7 @@ class Candela(Realm):
         androids, linux, macbooks, windows, iOS = [], [], [], [], []
         all_devices = {}
 
+        # querying resource manager tab for fetching laptops data
         resource_manager_tab_response, resource_manager_data = self.api_get(
             endp='/resource/all')
         if resource_manager_tab_response.status_code != 200:
@@ -376,6 +492,7 @@ class Candela(Realm):
                 print('Device {} is not found.'.format(device))
                 continue
             device_data = device_data['resource']
+            # print(device_data)
             if 'Apple' in device_data['hw version'] and (device_data['app-id'] != '') and (device_data['app-id'] != '0' or device_data['kernel'] == ''):
                 print('{} is an iOS device. Currently we do not support iOS devices.'.format(device))
             else:
@@ -991,7 +1108,9 @@ class Candela(Realm):
             listReal, listReal_bytes, listReal_speed, listReal_urltimes = [], [], [], []  # For real devices (not band specific)
             dict_keys = []
             dict_keys.extend(bands)
+            # print(dict_keys)
             final_dict = dict.fromkeys(dict_keys)
+            # print(final_dict)
             dict1_keys = ['dl_time', 'min', 'max', 'avg', 'bytes_rd', 'speed', 'url_times']
             for i in final_dict:
                 final_dict[i] = dict.fromkeys(dict1_keys)
@@ -1139,6 +1258,7 @@ class Candela(Realm):
                     uc_avg_val = self.http_obj_dict[ce][obj_name]["obj"].data['uc_avg']
                     url_times = self.http_obj_dict[ce][obj_name]["obj"].data['url_data']
                     rx_bytes_val = self.http_obj_dict[ce][obj_name]["obj"].data['bytes_rd']
+                    print('rx_rate_Val',self.http_obj_dict[ce][obj_name]["obj"].data['rx rate (1m)'])
                     rx_rate_val = list(self.http_obj_dict[ce][obj_name]["obj"].data['rx rate (1m)'])
                 else:
                     uc_avg_val = self.http_obj_dict[ce][obj_name]["obj"].my_monitor('uc-avg')
@@ -1228,6 +1348,8 @@ class Candela(Realm):
                         final_dict['Both']['url_times'] = Both_urltimes
 
             result_data = final_dict
+            print("result", result_data)
+            print("Test Finished")
             test_end = datetime.datetime.now()
             test_end = test_end.strftime("%Y %d %H:%M:%S")
             print("Test ended at ", test_end)
@@ -1639,11 +1761,15 @@ class Candela(Realm):
                     time2 = datetime.datetime.now()
                     logger.info("Test ended at %s", time2)
 
+        # 2nd time stamp for test duration
         time_stamp2 = datetime.datetime.now()
 
+        # total time for test duration
+        # test_duration = str(time_stamp2 - time_stamp1)[:-7]
 
         date = str(datetime.datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
 
+        # print(ftp_data)
 
         input_setup_info = {
             "AP IP": args.ap_ip,
@@ -1699,6 +1825,307 @@ class Candela(Realm):
             params["config_devices"] = configuration
         self.ftp_obj_dict[ce][obj_name]["data"] = params.copy()
 
+        # if args.group_name:
+        #     config_devices = configuration
+        # else:
+        #     config_devices = ""
+
+        # ftp_data = ftp_data
+        # date = date
+        # input_setup_info = input_setup_info
+        # test_rig = args.test_rig
+        # test_tag = args.test_tag
+        # dut_hw_version = args.dut_hw_version
+        # dut_sw_version = args.dut_sw_version
+        # dut_model_num = args.dut_model_num
+        # dut_serial_num = args.dut_serial_num
+        # test_id = args.test_id
+        # bands = args.bands
+        # csv_outfile = args.csv_outfile
+        # local_lf_report_dir = args.local_lf_report_dir
+        # report_path = self.result_path
+
+        # no_of_stations = ""
+        # duration = ""
+        # x_fig_size = 18
+        # y_fig_size = len(obj.real_client_list1) * .5 + 4
+
+        # if int(obj.traffic_duration) < 60:
+        #     duration = str(obj.traffic_duration) + "s"
+        # elif int(obj.traffic_duration == 60) or (int(obj.traffic_duration) > 60 and int(obj.traffic_duration) < 3600):
+        #     duration = str(obj.traffic_duration / 60) + "m"
+        # else:
+        #     if int(obj.traffic_duration == 3600) or (int(obj.traffic_duration) > 3600):
+        #         duration = str(obj.traffic_duration / 3600) + "h"
+
+        # client_list = []
+        # if obj.clients_type == "Real":
+        #     client_list = obj.real_client_list1
+        #     android_devices, windows_devices, linux_devices, mac_devices = 0, 0, 0, 0
+        #     all_devices_names = []
+        #     device_type = []
+        #     total_devices = ""
+        #     for i in obj.real_client_list:
+        #         split_device_name = i.split(" ")
+        #         if 'android' in split_device_name:
+        #             all_devices_names.append(split_device_name[2] + ("(Android)"))
+        #             device_type.append("Android")
+        #             android_devices += 1
+        #         elif 'Win' in split_device_name:
+        #             all_devices_names.append(split_device_name[2] + ("(Windows)"))
+        #             device_type.append("Windows")
+        #             windows_devices += 1
+        #         elif 'Lin' in split_device_name:
+        #             all_devices_names.append(split_device_name[2] + ("(Linux)"))
+        #             device_type.append("Linux")
+        #             linux_devices += 1
+        #         elif 'Mac' in split_device_name:
+        #             all_devices_names.append(split_device_name[2] + ("(Mac)"))
+        #             device_type.append("Mac")
+        #             mac_devices += 1
+
+        #     if android_devices > 0:
+        #         total_devices += f" Android({android_devices})"
+        #     if windows_devices > 0:
+        #         total_devices += f" Windows({windows_devices})"
+        #     if linux_devices > 0:
+        #         total_devices += f" Linux({linux_devices})"
+        #     if mac_devices > 0:
+        #         total_devices += f" Mac({mac_devices})"
+        # else:
+        #     if obj.clients_type == "Virtual":
+        #         client_list = obj.station_list
+        # if 'ftp_test' not in self.test_count_dict:
+        #     self.test_count_dict['ftp_test']=0
+        # self.test_count_dict['ftp_test']+=1
+        # self.overall_report.set_obj_html(_obj_title=f'FTP Test ', _obj="")
+        # self.overall_report.build_objective()
+        # self.overall_report.set_table_title("Test Setup Information")
+        # self.overall_report.build_table_title()
+
+        # if obj.clients_type == "Virtual":
+        #     no_of_stations = str(len(obj.station_list))
+        # else:
+        #     no_of_stations = str(len(obj.input_devices_list))
+
+        # if obj.clients_type == "Real":
+        #     if config_devices == "":
+        #         test_setup_info = {
+        #             "AP Name": obj.ap_name,
+        #             "SSID": obj.ssid,
+        #             "Security": obj.security,
+        #             "Device List": ", ".join(all_devices_names),
+        #             "No of Devices": "Total" + f"({no_of_stations})" + total_devices,
+        #             "Failed CXs": obj.failed_cx if obj.failed_cx else "NONE",
+        #             "File size": obj.file_size,
+        #             "File location": "/home/lanforge",
+        #             "Traffic Direction": obj.direction,
+        #             "Traffic Duration ": duration
+        #         }
+        #     else:
+        #         group_names = ', '.join(config_devices.keys())
+        #         profile_names = ', '.join(config_devices.values())
+        #         configmap = "Groups:" + group_names + " -> Profiles:" + profile_names
+        #         test_setup_info = {
+        #             "AP Name": obj.ap_name,
+        #             'Configuration': configmap,
+        #             "No of Devices": "Total" + f"({no_of_stations})" + total_devices,
+        #             "File size": obj.file_size,
+        #             "File location": "/home/lanforge",
+        #             "Traffic Direction": obj.direction,
+        #             "Traffic Duration ": duration
+        #         }
+        # else:
+        #     test_setup_info = {
+        #         "AP Name": obj.ap_name,
+        #         "SSID": obj.ssid,
+        #         "Security": obj.security,
+        #         "No of Devices": no_of_stations,
+        #         "File size": obj.file_size,
+        #         "File location": "/home/lanforge",
+        #         "Traffic Direction": obj.direction,
+        #         "Traffic Duration ": duration
+        #     }
+
+        # self.overall_report.test_setup_table(value="Test Setup Information", test_setup_data=test_setup_info)
+
+        # self.overall_report.set_obj_html(
+        #     _obj_title=f"No of times file {obj.direction}",
+        #     _obj=f"The below graph represents number of times a file {obj.direction} for each client"
+        #     f"(WiFi) traffic.  X- axis shows “No of times file {obj.direction}” and Y-axis shows "
+        #     f"Client names.")
+
+        # self.overall_report.build_objective()
+        # graph = lf_bar_graph_horizontal(_data_set=[obj.url_data], _xaxis_name=f"No of times file {obj.direction}",
+        #                                 _yaxis_name="Client names",
+        #                                 _yaxis_categories=[i for i in client_list],
+        #                                 _yaxis_label=[i for i in client_list],
+        #                                 _yaxis_step=1,
+        #                                 _yticks_font=8,
+        #                                 _yticks_rotation=None,
+        #                                 _graph_title=f"No of times file {obj.direction} (Count)",
+        #                                 _title_size=16,
+        #                                 _figsize=(x_fig_size, y_fig_size),
+        #                                 _legend_loc="best",
+        #                                 _legend_box=(1.0, 1.0),
+        #                                 _color_name=['orange'],
+        #                                 _show_bar_value=True,
+        #                                 _enable_csv=True,
+        #                                 _graph_image_name="Total-url_ftp", _color_edge=['black'],
+        #                                 _color=['orange'],
+        #                                 _label=[obj.direction])
+        # graph_png = graph.build_bar_graph_horizontal()
+        # print("graph name {}".format(graph_png))
+        # self.overall_report.set_graph_image(graph_png)
+        # # need to move the graph image to the results
+        # self.overall_report.move_graph_image()
+        # self.overall_report.set_csv_filename(graph_png)
+        # self.overall_report.move_csv_file()
+        # self.overall_report.build_graph()
+        # self.overall_report.set_obj_html(
+        #     _obj_title=f"Average time taken to {obj.direction} file ",
+        #     _obj=f"The below graph represents average time taken to {obj.direction} for each client  "
+        #     f"(WiFi) traffic.  X- axis shows “Average time taken to {obj.direction} a file ” and Y-axis shows "
+        #     f"Client names.")
+
+        # self.overall_report.build_objective()
+        # graph = lf_bar_graph_horizontal(_data_set=[obj.uc_avg], _xaxis_name=f"Average time taken to {obj.direction} file in ms",
+        #                                 _yaxis_name="Client names",
+        #                                 _yaxis_categories=[i for i in client_list],
+        #                                 _yaxis_label=[i for i in client_list],
+        #                                 _yaxis_step=1,
+        #                                 _yticks_font=8,
+        #                                 _yticks_rotation=None,
+        #                                 _graph_title=f"Average time taken to {obj.direction} file",
+        #                                 _title_size=16,
+        #                                 _figsize=(x_fig_size, y_fig_size),
+        #                                 _legend_loc="best",
+        #                                 _legend_box=(1.0, 1.0),
+        #                                 _color_name=['steelblue'],
+        #                                 _show_bar_value=True,
+        #                                 _enable_csv=True,
+        #                                 _graph_image_name="ucg-avg_ftp", _color_edge=['black'],
+        #                                 _color=['steelblue'],
+        #                                 _label=[obj.direction])
+        # graph_png = graph.build_bar_graph_horizontal()
+        # print("graph name {}".format(graph_png))
+        # self.overall_report.set_graph_image(graph_png)
+        # self.overall_report.move_graph_image()
+        # # need to move the graph image to the results
+        # self.overall_report.set_csv_filename(graph_png)
+        # self.overall_report.move_csv_file()
+        # self.overall_report.build_graph()
+        # if(obj.dowebgui and obj.get_live_view):
+        #     for floor in range(0,int(obj.total_floors)):
+        #         script_dir = os.path.dirname(os.path.abspath(__file__))
+        #         throughput_image_path = os.path.join(script_dir, "heatmap_images", f"ftp_{obj.test_name}_{floor+1}.png")
+        #         # rssi_image_path = os.path.join(script_dir, "heatmap_images", f"{self.test_name}_rssi_{floor+1}.png")
+        #         timeout = 60  # seconds
+        #         start_time = time.time()
+
+        #         while not (os.path.exists(throughput_image_path)):
+        #             if time.time() - start_time > timeout:
+        #                 print("Timeout: Images not found within 60 seconds.")
+        #                 break
+        #             time.sleep(1)
+        #         while not os.path.exists(throughput_image_path):
+        #             if os.path.exists(throughput_image_path):
+        #                 break
+        #             # time.sleep(10)
+        #         if os.path.exists(throughput_image_path):
+        #             self.overall_report.set_custom_html('<div style="page-break-before: always;"></div>')
+        #             self.overall_report.build_custom()
+        #             # self.overall_report.set_custom_html("<h2>Average Throughput Heatmap: </h2>")
+        #             # self.overall_report.build_custom()
+        #             self.overall_report.set_custom_html(f'<img src="file://{throughput_image_path}"></img>')
+        #             self.overall_report.build_custom()
+        #             # os.remove(throughput_image_path)
+        # self.overall_report.set_obj_html("File Download Time (sec)", "The below table will provide information of "
+        #                          "minimum, maximum and the average time taken by clients to download a file in seconds")
+        # self.overall_report.build_objective()
+        # dataframe2 = {
+        #     "Minimum": [str(round(min(obj.uc_min) / 1000, 1))],
+        #     "Maximum": [str(round(max(obj.uc_max) / 1000, 1))],
+        #     "Average": [str(round((sum(obj.uc_avg) / len(client_list)) / 1000, 1))]
+        # }
+        # dataframe3 = pd.DataFrame(dataframe2)
+        # self.overall_report.set_table_dataframe(dataframe3)
+        # self.overall_report.build_table()
+        # self.overall_report.set_table_title("Overall Results")
+        # self.overall_report.build_table_title()
+        # if obj.clients_type == 'Real':
+        #     # Calculating the pass/fail criteria when either expected_passfail_val or csv_name is provided
+        #     if obj.expected_passfail_val or obj.csv_name:
+        #         obj.get_pass_fail_list(client_list)
+        #     # When groups are provided a seperate table will be generated for each group using generate_dataframe
+        #     if obj.group_name:
+        #         for key, val in obj.group_device_map.items():
+        #             if obj.expected_passfail_val or obj.csv_name:
+        #                 dataframe = obj.generate_dataframe(val, client_list, obj.mac_id_list, obj.channel_list, obj.ssid_list, obj.mode_list,
+        #                                                     obj.url_data, obj.test_input_list, obj.uc_avg, obj.bytes_rd, obj.rx_rate, obj.pass_fail_list)
+        #             else:
+        #                 dataframe = obj.generate_dataframe(val, client_list, obj.mac_id_list, obj.channel_list, obj.ssid_list,
+        #                                                     obj.mode_list, obj.url_data, [], obj.uc_avg, obj.bytes_rd, obj.rx_rate, [])
+
+        #             if dataframe:
+        #                 self.overall_report.set_obj_html("", "Group: {}".format(key))
+        #                 self.overall_report.build_objective()
+        #                 dataframe1 = pd.DataFrame(dataframe)
+        #                 self.overall_report.set_table_dataframe(dataframe1)
+        #                 self.overall_report.build_table()
+        #     else:
+        #         dataframe = {
+        #             " Clients": client_list,
+        #             " MAC ": obj.mac_id_list,
+        #             " Channel": obj.channel_list,
+        #             " SSID ": obj.ssid_list,
+        #             " Mode": obj.mode_list,
+        #             " No of times File downloaded ": obj.url_data,
+        #             " Time Taken to Download file (ms)": obj.uc_avg,
+        #             " Bytes-rd (Mega Bytes)": obj.bytes_rd,
+        #             " RX RATE (Mbps) ": obj.rx_rate,
+        #             "Failed Urls": obj.total_err
+        #         }
+        #         if obj.expected_passfail_val or obj.csv_name:
+        #             dataframe[" Expected output "] = obj.test_input_list
+        #             dataframe[" Status "] = obj.pass_fail_list
+
+        #         dataframe1 = pd.DataFrame(dataframe)
+        #         self.overall_report.set_table_dataframe(dataframe1)
+        #         self.overall_report.build_table()
+
+        # else:
+        #     dataframe = {
+        #         " Clients": client_list,
+        #         " MAC ": obj.mac_id_list,
+        #         " Channel": obj.channel_list,
+        #         " SSID ": obj.ssid_list,
+        #         " Mode": obj.mode_list,
+        #         " No of times File downloaded ": obj.url_data,
+        #         " Time Taken to Download file (ms)": obj.uc_avg,
+        #         " Bytes-rd (Mega Bytes)": obj.bytes_rd,
+        #     }
+        #     dataframe1 = pd.DataFrame(dataframe)
+        #     self.overall_report.set_table_dataframe(dataframe1)
+        #     self.overall_report.build_table()
+        # # self.overall_report.build_footer()
+        # # html_file = self.overall_report.write_html()
+        # # logger.info("returned file {}".format(html_file))
+        # # logger.info(html_file)
+        # # self.overall_report.write_pdf()
+
+        # if csv_outfile is not None:
+        #     current_time = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
+        #     csv_outfile = "{}_{}-test_l4_ftp.csv".format(
+        #         csv_outfile, current_time)
+        #     csv_outfile = self.overall_report.file_add_path(csv_outfile)
+        #     logger.info("csv output file : {}".format(csv_outfile))
+
+
+
+
+        # if args.dowebgui:
+        #     obj.copy_reports_to_home_dir()
         if self.dowebgui:
             self.webgui_test_done("ftp")
         return True
@@ -2839,6 +3266,8 @@ class Candela(Realm):
                 return False
         test_name = ""
         ip = ""
+        # print('newww',args.local_lf_report_dir)
+        # exit(0)
         if args.dowebgui:
             logger.info("In webGUI execution")
             if args.dowebgui:
@@ -3716,6 +4145,7 @@ class Candela(Realm):
             exec_type=None
     ):
         try:
+            print('duration',duration)
             if self.dowebgui:
                 if not self.webgui_stop_check("yt"):
                     return False
@@ -3951,6 +4381,7 @@ class Candela(Realm):
 
                 if len(self.yt_test_obj.real_sta_list) > 0:
                     logging.info(f"checking real sta list while creating endpionts {self.yt_test_obj.real_sta_list}")
+                    print('HII',self.yt_test_obj.real_sta_list)
                     self.yt_test_obj.create_generic_endp(self.yt_test_obj.real_sta_list)
                 else:
                     logging.info(f"checking real sta list while creating endpionts {self.yt_test_obj.real_sta_list}")
@@ -3999,6 +4430,7 @@ class Candela(Realm):
 
                 logging.info('Stopping the test')
                 if do_webUI:
+                    print("hii here data",self.yt_test_obj.stats_api_response)
                     self.yt_test_obj.create_report(self.yt_test_obj.stats_api_response, self.yt_test_obj.ui_report_dir)
                 else:
 
@@ -4517,8 +4949,42 @@ class Candela(Realm):
         return self.run_rb_test1(args)
     
     def browser_cleanup(self,rb_test=False,yt_test=False):
+        # count = 0
+        # series_tests = args.series_tests.split(',') if args.series_tests else None
+        # parallel_tests = args.parallel_tests.split(',') if args.parallel_tests else None
+        # zoom_test = False
+        # yt_test = False
+        # rb_test = False
+        # if 'zoom_test' in parallel_tests:
+        #     count += 1
+        # if 'yt_test' in parallel_tests:
+        #     count += 1
+        # if 'rb_test' in parallel_tests:
+        #     count += 1
+        # if count <=1:
+        #     self.browser_kill = True
+        # if args.series_test and not parallel_tests:
+        #     self.browser_kill = True
+        #     return True
+        # if rb_test:
+        #     cnt = 0
+        #     flag = False 
+        #     while not self.rb_build_done:
+        #         time.sleep(1)
+        #         cnt+=1
+        #         if cnt >= 30:
+        #             flag = True 
+        #             break
+        #     if flag:
+        #         return False
+        print('calledddddd')
+        # time.sleep(20)
         if rb_test:
+            print('inn000')
+            print('laptop_os_types',self.rb_test_obj.laptop_os_types)
+            print('endpsss',self.rb_test_obj.generic_endps_profile.created_endp)
             for i in range(0, len(self.rb_test_obj.laptop_os_types)):
+                print('inn1111')
                 if self.rb_test_obj.laptop_os_types[i] == 'windows':
                     cmd = "echo Performing POST cleanup of browser processes... & taskkill /F /IM chrome.exe /T >nul 2>&1 & taskkill /F /IM chromedriver.exe /T >nul 2>&1 & echo Browser processes terminated."
                     self.rb_test_obj.generic_endps_profile.set_cmd(self.rb_test_obj.generic_endps_profile.created_endp[i], cmd)
@@ -4537,6 +5003,7 @@ class Candela(Realm):
             for i, cx_batch in enumerate(self.rb_test_obj.cx_order_list):
                 self.rb_test_obj.start_specific(cx_batch)
                 logging.info(f"browser cleanup on {cx_batch}")
+            print('realbrowser test laptop cleaing.....')
             time.sleep(20)  
             
         
@@ -4554,12 +5021,28 @@ class Candela(Realm):
                     self.yt_test_obj.generic_endps_profile.set_cmd(self.yt_test_obj.generic_endps_profile.created_endp[i], cmd)
 
             self.yt_test_obj.generic_endps_profile.start_cx()
+            print('youtube test laptop cleaing.....')
             time.sleep(20)  
 
+        # if zoom_test:
+        #     for i in range(len(self.zoom_test_obj.real_sta_os_type)):
+        #         if self.zoom_test_obj.real_sta_os_type[i] == "windows":
+        #             cmd = f"py zoom_client.py --ip {self.zoom_test_obj.upstream_port}"
+        #             self.zoom_test_obj.generic_endps_profile.set_cmd(self.zoom_test_obj.generic_endps_profile.created_endp[i], cmd)
+        #         elif self.zoom_test_obj.real_sta_os_type[i] == 'linux':
+        #             cmd = "su -l lanforge ctzoom.bash %s %s %s" % (self.zoom_test_obj.new_port_list[i], self.zoom_test_obj.upstream_port, "client")
+        #             self.zoom_test_obj.generic_endps_profile.set_cmd(self.zoom_test_obj.generic_endps_profile.created_endp[i], cmd)
+        #         elif self.zoom_test_obj.real_sta_os_type[i] == 'macos':
+        #             cmd = "sudo bash ctzoom.bash %s %s" % (self.zoom_test_obj.upstream_port, "client")
+        #             self.zoom_test_obj.generic_endps_profile.set_cmd(self.zoom_test_obj.generic_endps_profile.created_endp[i], cmd)
+
+        #     self.zoom_test_obj.generic_endps_profile.start_cx()
     def render_each_test(self,ce):
         # ce = "series"
         unq_tests = []
         test_map = {}
+        print('self.rb_obj_dict',self.rb_obj_dict)
+        print('self.yt_obj_dict',self.yt_obj_dict)
         if ce == "series":
             series_tests = self.series_tests.copy()
             for test in series_tests:
@@ -4570,6 +5053,9 @@ class Candela(Realm):
                     test_map[test] += 1
         else:
             unq_tests = self.parallel_tests.copy()
+        print('self.series_tests',self.series_tests)
+        print('test_map',test_map)
+        print('unq_tests',unq_tests)
         for test_name in unq_tests:
             try:
                 if test_name == "http_test":
@@ -4581,10 +5067,17 @@ class Candela(Realm):
                     while obj_name in self.http_obj_dict[ce]:
                         if ce == "parallel":
                             obj_no = ''
+                        # report_path = self.result_path
+                        # print("Current working directory:", os.getcwd())
                         http_data = self.http_obj_dict[ce][obj_name]["data"]
                         if http_data["bands"] == "Both":
                             num_stations = num_stations * 2
 
+                        # report.set_title("HTTP DOWNLOAD TEST")
+                        # report.set_date(date)
+                        # if 'http_test' not in self.test_count_dict:
+                        #     self.test_count_dict['http_test']=0
+                        # self.test_count_dict['http_test']+=1
                         self.overall_report.set_obj_html(_obj_title=f'HTTP Test {obj_no}', _obj="")
                         self.overall_report.build_objective()
                         self.overall_report.set_table_title("Test Setup Information")
@@ -6247,6 +6740,7 @@ class Candela(Realm):
                                 "TOS": self.qos_obj_dict[ce][obj_name]["obj"].tos,
                                 "Per TOS Load in Mbps": load
                             }
+                        print(res["throughput_table_df"])
                         self.overall_report.set_obj_html(_obj_title=f'QOS Test {obj_no}', _obj="")
                         self.overall_report.build_objective()
                         self.overall_report.test_setup_table(test_setup_data=test_setup_info, value="Test Configuration")
@@ -6307,6 +6801,7 @@ class Candela(Realm):
                     while obj_name in self.mcast_obj_dict[ce]:
                         if ce == "parallel":
                             obj_no = ''
+                        print('is error',self.mcast_obj_dict)
                         params = self.mcast_obj_dict[ce][obj_name]["data"].copy()
                         config_devices = params["config_devices"].copy() if isinstance(params["config_devices"], (list, dict, set)) else params["config_devices"]
                         group_device_map = params["group_device_map"].copy() if isinstance(params["group_device_map"], (list, dict, set)) else params["group_device_map"]
@@ -6424,6 +6919,7 @@ class Candela(Realm):
                         tos_list = ['BK', 'BE', 'VI', 'VO']
                         if self.mcast_obj_dict[ce][obj_name]["obj"].real:
                             tos_types = ['BE', 'BK', 'VI', 'VO']
+                            print("BOOLLLLL",self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B is self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A)
                             for tos_key in tos_types:
                                 if tos_key in self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A:
                                     tos_data = self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos_key]
@@ -6472,6 +6968,7 @@ class Candela(Realm):
                                             tos_data[key] = filtered_list
                         # logger.info(f"AFTER REAL A {self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A}")
                         for tos in tos_list:
+                            print(self.mcast_obj_dict[ce][obj_name]["obj"].tos)
                             if tos not in self.mcast_obj_dict[ce][obj_name]["obj"].tos:
                                 continue
                             if (self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]["ul_A"] and self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]["dl_A"]):
@@ -7188,6 +7685,7 @@ class Candela(Realm):
 
                             x_fig_size = 18
                             y_fig_size = len(device_type_data) * 1 + 4
+                            print('DEVICE NAMES',device_names)
                             bar_graph_horizontal = lf_bar_graph_horizontal(
                                 _data_set=[total_urls],
                                 _xaxis_name="URL",
@@ -7492,9 +7990,12 @@ class Candela(Realm):
                         else:
                             csv_files = [f for f in os.listdir(self.yt_obj_dict[ce][obj_name]["obj"].report_path_date_time) if f.endswith('.csv')]
                             os.chdir(self.yt_obj_dict[ce][obj_name]["obj"].report_path_date_time)
+                        print("CSV FILES",csv_files)
+                        print("Script Directory:", os.path.dirname(os.path.abspath(__file__)))
                         scp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),self.report_path_date_time)
                         for file_name in csv_files:
                             data = pd.read_csv(file_name)
+                            print('dataaaaaaaaaaaaa',data)
                             self.overall_report.set_graph_title('Buffer Health vs Time Graph for {}'.format(file_name.split('_')[0]))
                             self.overall_report.build_graph_title()
 
@@ -8280,7 +8781,7 @@ def validate_args(args):
 def main():
 
     parser = argparse.ArgumentParser(
-    prog="candela_base_class.py",
+    prog="lf_interop_throughput.py",
     formatter_class=argparse.RawTextHelpFormatter,
     )
     parser = argparse.ArgumentParser(description="Run Candela API Tests")
@@ -8356,6 +8857,9 @@ def main():
     parser.add_argument("--ping_client_cert", type=str, default='NA', help='Specify the client certificate file name')
     parser.add_argument("--ping_pk_passwd", type=str, default='NA', help='Specify the password for the private key')
     parser.add_argument("--ping_pac_file", type=str, default='NA', help='Specify the pac file name')
+    # parser.add_argument('--ping_file_name', type=str, help='Specify the file name containing group details. Example:file1')
+    # parser.add_argument('--ping_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
+    # parser.add_argument('--ping_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
     parser.add_argument("--ping_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
     #http
     parser.add_argument('--http_test',
@@ -8793,9 +9297,13 @@ def main():
 
 
     args = parser.parse_args()
-    args_dict = vars(args) # changes args to dict
+    args_dict = vars(args)
     duration_dict = {}
     
+
+    print('argsss',args_dict)
+    # exit(0)
+    # validate_args(args_dict)
     candela_apis = Candela(ip=args.mgr, port=args.mgr_port,order_priority=args.order_priority,test_name=args.test_name,result_dir=args.result_dir,dowebgui=args.dowebgui,no_cleanup=args.no_cleanup)
     print(args)
     test_map = {
@@ -8874,7 +9382,7 @@ def main():
     isyt = 'yt_test' in tests_to_run_parallel or 'yt_test' in tests_to_run_series
     candela_apis.series_tests = tests_to_run_series
     candela_apis.parallel_tests = tests_to_run_parallel
-    candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
+    candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True,port_5000=iszoom,port_5002=isyt,port_5003=isrb)
     if args.series_tests or args.parallel_tests:
         series_threads = []
         parallel_threads = []
@@ -8907,6 +9415,7 @@ def main():
                                 obj_no+=1
                             obj_name = f"rb_test_{obj_no}"
                             candela_apis.rb_obj_dict["series"][obj_name] = manager.dict({"obj":None,"data":None})
+                            print('hiii data',candela_apis.rb_obj_dict)
                         elif test_name == "yt_test":
                             obj_no = 1
                             while f"yt_test_{obj_no}" in candela_apis.yt_obj_dict["series"]:
@@ -8919,6 +9428,7 @@ def main():
                                 obj_no+=1
                             obj_name = f"zoom_test_{obj_no}"
                             candela_apis.zoom_obj_dict["series"][obj_name] = manager.dict({"obj":None,"data":None})
+                            print('hiii data',candela_apis.zoom_obj_dict)
                         series_threads.append(multiprocessing.Process(target=run_test_safe(func, f"{label} [Series {idx+1}]", args, candela_apis,duration_dict[test_name])))
                     else:                 
                         series_threads.append(threading.Thread(
@@ -8951,10 +9461,13 @@ def main():
                         # candela_apis.parallel_connect[idx] = [test_name,parent_conn,child_conn]
                         if test_name == "rb_test":
                             candela_apis.rb_obj_dict["parallel"]["rb_test"] = manager.dict({"obj": None, "data": None})
+                            print('hiii data',candela_apis.rb_obj_dict)
                         elif test_name == "yt_test":
                             candela_apis.yt_obj_dict["parallel"]["yt_test"] = manager.dict({"obj": None, "data": None})
+                            print('hiii data',candela_apis.yt_obj_dict)
                         elif test_name == "zoom_test":
                             candela_apis.zoom_obj_dict["parallel"]["zoom_test"] = manager.dict({"obj": None, "data": None})
+                            print('hiii data',candela_apis.zoom_obj_dict) 
                         parallel_threads.append(multiprocessing.Process(target=run_test_safe(func, f"{label} [Parallel {idx+1}]", args, candela_apis,duration_dict[test_name])))
                     else:                 
                         parallel_threads.append(threading.Thread(
@@ -8962,7 +9475,13 @@ def main():
                         ))
                 else:
                     print(f"Warning: Unknown test '{test_name}' in --parallel_tests")
+        logging.info(f"Series Threads: {series_threads}")
+        logging.info(f"Parallel Threads: {parallel_threads}")
+        logging.info(f"connections parallel {candela_apis.parallel_connect}")
+        logging.info(f"connections series{candela_apis.series_connect}")
+        # time.sleep(20)
         if args.dowebgui:
+            # overall_path = os.path.join(args.result_dir, directory)
             candela_apis.overall_status = {"ping": "notstarted", "qos": "notstarted", "ftp": "notstarted", "http": "notstarted",
                             "mc": "notstarted", "vs": "notstarted", "thput": "notstarted","rb": "notstarted","vs": "notstarted","zoom": "notstarted","yt": "notstarted", "time": datetime.datetime.now().strftime("%Y %d %H:%M:%S"), "status": "running", "current_mode":"tbd" , "current_test_name": "tbd"}
             candela_apis.overall_csv.append(candela_apis.overall_status.copy())
@@ -8978,7 +9497,7 @@ def main():
             # Then run parallel tests
             if len(parallel_threads) != 0:
                 # candela_apis.misc_clean_up(layer3=False,layer4=False,generic=True)
-                candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
+                candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True,port_5000=iszoom,port_5002=isyt,port_5003=isrb)
                 print('starting parallel tests.......')
                 time.sleep(10)
             candela_apis.current_exec = "parallel"
@@ -9003,13 +9522,17 @@ def main():
             if len(series_threads) != 0:
                 rb_test = 'rb_test' in tests_to_run_parallel
                 yt_test = 'yt_test' in tests_to_run_parallel
-                candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
+                candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True,port_5000=iszoom,port_5002=isyt,port_5003=isrb)
                 print('starting Series tests.......')
                 time.sleep(5)
             candela_apis.current_exec="series"
             for t in series_threads:
                 t.start()
                 t.join()
+            # for p in series_processes:
+            #     p.start()
+            #     p.join()
+                # candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
     else:
         logger.error("provide either --paralell_tests or --series_tests")
         exit(1)
@@ -9017,7 +9540,7 @@ def main():
     yt_test = 'yt_test' in tests_to_run_parallel
     # candela_apis.browser_cleanup(rb_test=rb_test,yt_test=yt_test)
     # candela_apis.misc_clean_up(layer3=False,layer4=False,generic=True)
-    candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
+    candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True,port_5000=iszoom,port_5002=isyt,port_5003=isrb)
     log_file = save_logs()
     print(f"Logs saved to: {log_file}")
     test_results_df = pd.DataFrame(list(test_results_list))
@@ -9035,12 +9558,20 @@ def main():
 
     print("\nTest Results Summary:")
     print(test_results_df)
+    # candela_apis.overall_report.insert_table_at_marker(test_results_df,"for_table")
+    # candela_apis.overall_report.build_footer()
+    # html_file = candela_apis.overall_report.write_html()
+    # print("returned file {}".format(html_file))
+    # print(html_file)
+    # candela_apis.overall_report.write_pdf()
 
 def run_test_safe(test_func, test_name, args, candela_apis,duration):
     global error_logs
+    # global test_results_df
     def wrapper():
         global error_logs
-
+        # global test_results_df
+        
         try:
             result = test_func(args, candela_apis)
             if not result:
@@ -9507,4 +10038,6 @@ def run_zoom_test(args, candela_apis):
         report_dir= args.result_dir,
         testname= args.test_name,
     )
+# def browser_cleanup(args,candela_apis):
+#     return candela_apis.browser_cleanup(args)
 main()
