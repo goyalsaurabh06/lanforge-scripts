@@ -9243,9 +9243,6 @@ def main():
     parser.add_argument("--rb_client_cert", type=str, default='NA', help='Specify the client certificate file name')
     parser.add_argument("--rb_pk_passwd", type=str, default='NA', help='Specify the password for the private key')
     parser.add_argument("--rb_pac_file", type=str, default='NA', help='Specify the pac file name')
-    # parser.add_argument('--rb_file_name', type=str, help='Specify the file name containing group details. Example:file1')
-    # parser.add_argument('--rb_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
-    # parser.add_argument('--rb_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
     parser.add_argument("--rb_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
     #zoom
     parser.add_argument('--zoom_test',
@@ -9290,9 +9287,6 @@ def main():
     parser.add_argument("--zoom_client_cert", type=str, default='NA', help='Specify the client certificate file name')
     parser.add_argument("--zoom_pk_passwd", type=str, default='NA', help='Specify the password for the private key')
     parser.add_argument("--zoom_pac_file", type=str, default='NA', help='Specify the pac file name')
-    # parser.add_argument('--zoom_file_name', type=str, help='Specify the file name containing group details. Example:file1')
-    # parser.add_argument('--zoom_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
-    # parser.add_argument('--zoom_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
     parser.add_argument("--zoom_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
 
 
@@ -9524,22 +9518,15 @@ def main():
             for t in series_threads:
                 t.start()
                 t.join()
-            # for p in series_processes:
-            #     p.start()
-            #     p.join()
-                # candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True)
     else:
         logger.error("provide either --paralell_tests or --series_tests")
         exit(1)
     rb_test = 'rb_test' in tests_to_run_parallel
     yt_test = 'yt_test' in tests_to_run_parallel
-    # candela_apis.browser_cleanup(rb_test=rb_test,yt_test=yt_test)
-    # candela_apis.misc_clean_up(layer3=False,layer4=False,generic=True)
     candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True,port_5000=iszoom,port_5002=isyt,port_5003=isrb)
     log_file = save_logs()
     print(f"Logs saved to: {log_file}")
     test_results_df = pd.DataFrame(list(test_results_list))
-    # You can also access the test results dataframe:
     candela_apis.generate_overall_report(test_results_df=test_results_df,args_dict=args_dict)
     if candela_apis.dowebgui:
         try:
@@ -9553,19 +9540,11 @@ def main():
 
     print("\nTest Results Summary:")
     print(test_results_df)
-    # candela_apis.overall_report.insert_table_at_marker(test_results_df,"for_table")
-    # candela_apis.overall_report.build_footer()
-    # html_file = candela_apis.overall_report.write_html()
-    # print("returned file {}".format(html_file))
-    # print(html_file)
-    # candela_apis.overall_report.write_pdf()
 
 def run_test_safe(test_func, test_name, args, candela_apis,duration):
     global error_logs
-    # global test_results_df
     def wrapper():
         global error_logs
-        # global test_results_df
         
         try:
             result = test_func(args, candela_apis)
@@ -9827,6 +9806,8 @@ def run_thput_test(args, candela_apis):
     if args.thput_do_interopability and args.thput_config:
         args.thput_default_config = False
         args.thput_config = False
+    elif args.thput_do_interopability:
+        args.thput_default_config = True
     return candela_apis.run_throughput_test(
         upstream_port=args.upstream_port,
         test_duration=args.thput_test_duration,
