@@ -9299,11 +9299,6 @@ def main():
     args = parser.parse_args()
     args_dict = vars(args)
     duration_dict = {}
-    
-
-    print('argsss',args_dict)
-    # exit(0)
-    # validate_args(args_dict)
     candela_apis = Candela(ip=args.mgr, port=args.mgr_port,order_priority=args.order_priority,test_name=args.test_name,result_dir=args.result_dir,dowebgui=args.dowebgui,no_cleanup=args.no_cleanup)
     print(args)
     test_map = {
@@ -9346,7 +9341,7 @@ def main():
         logger.info(f"availble tests are {test_map.keys()}")
         exit(0)
     if args.parallel_tests and (len(tests_to_run_parallel) != len(set(tests_to_run_parallel))):
-        logger.error("in -parallel dont specify duplicate tests")
+        logger.error("in --parallel dont specify duplicate tests")
         exit(0)
     duration_flag = False
     if args.series_tests:
