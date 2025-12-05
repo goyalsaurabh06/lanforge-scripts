@@ -296,7 +296,6 @@ class RealBrowserTest(Realm):
             self.current_angle = current_angle
             self.rotations_enabled = rotations_enabled
             self.robo_csv_files = []
-            self.radians_list = self.robo_obj.angles_to_radians(self.angles_list)
             self.robo_mobile_data = {}
             # self.mins_per_percent = mins_per_percent
 
@@ -1058,12 +1057,10 @@ class RealBrowserTest(Realm):
                 self.robo_obj.move_to_coordinate(coord=coordinate)
                 self.current_cord = coordinate
                 if self.rotations_enabled:
-                    print("-=======")
-                    print('going into this')
-                    for angle, rad in zip(self.angles_list, self.radians_list):
+                    for angle in self.angles_list:
                         # self.robo_obj.ensure_battery_for_test(duration_min=self.duration, mins_per_percent=self.mins_per_percent)
                         self.robo_obj.wait_for_battery()
-                        self.robo_obj.rotate_angle(angle=rad)
+                        self.robo_obj.rotate_angle(angle_degree=angle)
                         self.current_angle = angle
                         self.start_specific(cx_batch)
                         logging.info(f"Test started on Devices with resource Ids : {cx_batch}")
@@ -1079,8 +1076,6 @@ class RealBrowserTest(Realm):
                     self.start_specific(cx_batch)
                     logging.info(f"Test started on Devices with resource Ids : {cx_batch}")
                     try:
-                        print("====================================================")
-                        print("checking going in this lop")
                         self.get_robo_stats(self.duration, f"{coordinate}_webBrowser.csv", self.count, None)
                         self.robo_csv_files.append(f"{coordinate}_webBrowser.csv")
                         self.http_profile.stop_cx()
@@ -1099,7 +1094,6 @@ class RealBrowserTest(Realm):
     
     def clear_http_cx_data(self):
         for cx in self.http_profile.created_cx:
-            print("Clearing data for endpoint:", cx)
             url = "/cli-json/clear_endp_counters"
             payload = {"endp_name": cx}
             self.json_post(url, payload, debug_=self.debug, suppress_related_commands_=True)
@@ -1148,6 +1142,7 @@ class RealBrowserTest(Realm):
                 else:
                     csv_file = f"{coordinate}_webBrowser.csv"
                     self.create_robo_graphs_test_results(csv_file, coordinate)
+            self.add_live_view_images_to_report()
 
             if self.dowebgui:
                 os.chdir(self.original_dir)
@@ -1305,7 +1300,6 @@ class RealBrowserTest(Realm):
                     "Link Speed": tx_rate_data,
 
                 }
-            print("checking final test results", final_test_results)
             test_results_df = pd.DataFrame(final_test_results)
             self.report.set_table_dataframe(test_results_df)
             self.report.build_table()
@@ -1705,6 +1699,44 @@ class RealBrowserTest(Realm):
         except Exception as e:
             logging.error(f"Error in get_stats function {e}", exc_info=True)
             logging.info(f"layer4 cx data {mobile_data}")
+
+    def stop_webui_test(self):
+        try:
+            file = f"{self.result_dir}/running_status.json"
+            with open(file, 'r') as f:
+                data = json.load(f)
+            data['status'] = "Completed"
+            with open(file, 'w') as f:
+                json.dump(data, f, indent=4)
+            logging.info("WebUI test status updated to Completed.")
+        except Exception as e:
+            logging.error(f"Error in stop_webui_test function {e}", exc_info=True)
+    
+
+    def add_live_view_images_to_report(self):
+        """
+        This function looks for live view images for each floor
+        in the 'live_view_images' folder within `self.result_dir`.
+        It waits up to **60 seconds** for each image. If an image is found,
+        it's added to the `report` on a new page; otherwise, it's skipped.
+        """
+        url_image_path = os.path.join(self.result_dir, "live_view_images", f"rb_{self.test_name}_1.png")
+        timeout = 60  # seconds
+        start_time = time.time()
+
+        while not os.path.exists(url_image_path):
+            if time.time() - start_time > timeout:
+                logging.error("Timeout: Images not found within 60 seconds.")
+                break
+            time.sleep(1)
+        if os.path.exists(url_image_path):
+            html_content = (
+                '<div style="page-break-before: always;"></div>'
+                f'<img src="file://{url_image_path}" style="width:1200px; height:800px;"></img>'
+            )
+            
+            self.report.set_custom_html(html_content)
+
 
     
     def get_robo_stats(self, duration, file_path, initial_target_urls, angle=None):
@@ -2707,6 +2739,8 @@ def main():
         obj.handle_duration()
         obj.run_test(available_resources)
         if args.do_robo:
+                if args.dowebgui:
+                    obj.stop_webui_test()
                 obj.create_robo_report()
         else:
             obj.create_report()

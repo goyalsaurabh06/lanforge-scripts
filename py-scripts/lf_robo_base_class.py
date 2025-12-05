@@ -56,9 +56,9 @@ class RobotClass:
         print("[SAVE] Updated navdata.json:", self.navdata_json)
         return robo_moved,stopped
 
-    def rotate_angle(self, x=0, y=0, angle=0):
+    def rotate_angle(self, x=0, y=0, angle_degree=0):
         url = f"http://{self.robo_ip}/cmd/nav_angle"
-        data = {"x": x, "y": y, "angle": angle}
+        data = {"x": x, "y": y, "angle": angle_degree}
 
         print(f"[ROTATE] Rotating: {data}")
         try:
@@ -129,7 +129,7 @@ class RobotClass:
        
         return False
     
-    def wait_for_battery(self, battery = "0", stop=None):
+    def wait_for_battery(self, battery = 80, stop=None):
         """
         Simplified version:
         - No API calls

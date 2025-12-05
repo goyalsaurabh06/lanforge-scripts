@@ -218,7 +218,6 @@ class Youtube(Realm):
             self.current_cord = current_cord
             self.current_angle = current_angle
             self.rotations_enabled = rotations_enabled
-            self.radians_list = self.robo_obj.angles_to_radians(self.angles_list)
             # self.mins_per_percent = mins_per_percent
             self.pause = False
 
@@ -258,11 +257,11 @@ class Youtube(Realm):
             self.robo_obj.move_to_coordinate(coord=coordinate)
             self.current_cord = coordinate
             if self.rotations_enabled:
-                for angle, rad in zip(self.angles_list, self.radians_list):
+                for angle in self.angles_list:
                     # self.robo_obj.ensure_battery_for_test(duration_min=self.duration, mins_per_percent=self.mins_per_percent)
                     pause = self.robo_obj.wait_for_battery()
 
-                    self.robo_obj.rotate_angle(angle=rad)
+                    self.robo_obj.rotate_angle(angle_degree=angle)
                     self.current_angle = angle
                     self.start_generic()
 
@@ -299,7 +298,6 @@ class Youtube(Realm):
 
                 while datetime.now() < end_time or not self.check_gen_cx():
                     pause, _ = self.robo_obj.wait_for_battery()
-                    print("Pause status:", pause)
                     if pause:
                         self.delete_existing_csvs_for_current_point()
                         self.generic_endps_profile.stop_cx()
@@ -416,6 +414,8 @@ class Youtube(Realm):
         for hostname in self.real_sta_hostname:
             self.add_buffer_health_graphs_to_report(hostname)
 
+        self.add_live_view_images_to_report()
+
         os.chdir(original_dir)
         
         # Closing
@@ -506,17 +506,13 @@ class Youtube(Realm):
             - Max Buffer Health
             - Min Buffer Health
         """
-        print("PWD:", os.getcwd())
-        print("CSV files:", glob.glob("*.csv"))
-
-
         prefix = f"{current_cord}_"
         all_csv_files = glob.glob("*.csv")
 
         # Filter CSV files starting with the prefix
         filtered_csv_files = [f for f in all_csv_files if f.startswith(prefix)]
         if not filtered_csv_files:
-            print(f"No CSV files found starting with '{prefix}'.")
+            logging.info(f"No CSV files found starting with '{prefix}'.")
             return {}
 
         result_dict = {}
@@ -532,7 +528,7 @@ class Youtube(Realm):
                 }
                 missing = required_cols - set(df.columns)
                 if missing:
-                    print(f"Skipping {csv_file}: missing columns {missing}")
+                    logging.info(f"Skipping {csv_file}: missing columns {missing}")
                     continue
 
                 df["Angle"] = pd.to_numeric(df["Angle"], errors="coerce")
@@ -542,7 +538,7 @@ class Youtube(Realm):
                     df_filtered = df[df["Angle"] == float(current_angle)]
 
                 if df_filtered.empty:
-                    print(f"No data <= {current_angle}° in {csv_file}.")
+                    logging.info(f"No data <= {current_angle}° in {csv_file}.")
                     continue
 
                 # Extract values
@@ -565,10 +561,10 @@ class Youtube(Realm):
                     "Max Buffer Health": round(float(max_buffer_health), 2),
                     "Min Buffer Health": round(float(min_buffer_health), 2),
                 }
-                print(f"Processed {csv_file}: {instance_name}")
+                logging.info(f"Processed {csv_file}: {instance_name}")
 
             except Exception as e:
-                print(f"Error reading {csv_file}: {e}")
+                logging.info(f"Error reading {csv_file}: {e}")
 
         # graph of frames dropped
         if current_angle == "NA":
@@ -632,9 +628,9 @@ class Youtube(Realm):
         self.report.build_table()
 
 
-        print("\n📊 Summary for all devices:")
+        logging.info("\n📊 Summary for all devices:")
         for k, v in result_dict.items():
-            print(f"{k}: {v}")
+            logging.info(f"{k}: {v}")
 
         
 
@@ -1588,6 +1584,50 @@ class Youtube(Realm):
 
         self.device_list = filtered_list
         return filtered_list
+    
+    def stop_webui_test(self):
+        try:
+            file = f"{self.ui_report_dir}/running_status.json"
+            with open(file, 'r') as f:
+                data = json.load(f)
+            data['status'] = "Completed"
+            with open(file, 'w') as f:
+                json.dump(data, f, indent=4)
+            logging.info("WebUI test status updated to Completed.")
+        except Exception as e:
+            logging.error(f"Error in stop_webui_test function {e}", exc_info=True)
+    
+
+    def add_live_view_images_to_report(self):
+        """
+        This function looks for live view images for each floor
+        in the 'live_view_images' folder within `self.ui_report_dir`.
+        It waits up to **60 seconds** for each image. If an image is found,
+        it's added to the `report` on a new page; otherwise, it's skipped.
+        """
+        url_image_path = os.path.join(self.ui_report_dir, "live_view_images", f"yt_{self.test_name}_1.png")
+        timeout = 60  # seconds
+        start_time = time.time()
+
+        while not os.path.exists(url_image_path):
+            if time.time() - start_time > timeout:
+                logging.info("Timeout: Images not found within 60 seconds.")
+                break
+            time.sleep(1)
+        if os.path.exists(url_image_path):
+            # self.report.set_custom_html('<div style="page-break-before: always;"></div>')
+            # self.report.build_custom()
+            # self.report.set_custom_html(f'<img src="file://{url_image_path}"></img>')
+            # self.report.build_custom()
+
+            # Combine the HTML into a single string
+            html_content = (
+                '<div style="page-break-before: always;"></div>'
+                f'<img src="file://{url_image_path}" style="width:1200px; height:800px;"></img>'
+            )
+            
+            # Set and build only once
+            self.report.set_custom_html(html_content)
 
 
 def main():
@@ -2011,6 +2051,7 @@ NOTES:
             if args.do_robo:
                 youtube.perform_robo_test()
                 if do_webUI:
+                    youtube.stop_webui_test()
                     youtube.create_robo_report(youtube.ui_report_dir)
                 else:
                     youtube.create_robo_report('')
