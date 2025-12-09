@@ -1866,8 +1866,6 @@ class FtpTest(LFCliBase):
         self.report.set_title("FTP Test")
         self.report.set_date(date)
         self.report.build_banner()
-        self.report.set_table_title("Test Setup Information")
-        self.report.build_table_title()
 
         if self.clients_type == "Virtual":
             no_of_stations = str(len(self.station_list))
@@ -1914,13 +1912,18 @@ class FtpTest(LFCliBase):
                 "Traffic Direction": self.direction,
                 "Traffic Duration ": duration
             }
-        self.report.test_setup_table(value="Test Setup Information", test_setup_data=test_setup_info)
-
         self.report.set_obj_html("Objective",
                                  "This FTP Test is used to Verify that N clients connected on Specified band and can "
                                  "simultaneously download some amount of file from FTP server and measuring the "
                                  "time taken by client to Download the file.")
         self.report.build_objective()
+        self.report.set_obj_html(_obj_title="Input Parameters",
+                                _obj="The below tables provides the input parameters for the test")
+        self.report.build_objective()
+
+        self.report.test_setup_table(value="Test Setup Information", test_setup_data=test_setup_info)
+
+       
         # self.report.set_obj_html("PASS/FAIL Results",
         #                          "This Table will give Pass/Fail results.")
         # self.report.build_objective()

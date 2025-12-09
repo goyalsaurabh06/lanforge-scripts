@@ -6672,8 +6672,8 @@ def configure_reporting(local_lf_report_dir: str,
     # Done outside of test class, as other test scripts currently use the
     # test class and will configure a different title
     report.set_title("Test Layer 3 Cross-Connect Traffic: test_l3.py ")
-    report.build_banner_left()
-    report.start_content_div2()
+    report.build_banner()
+    # report.start_content_div()
 
     # Configure KPI CSV. Output located in same directory as report
     kpi_path = report.get_report_path()

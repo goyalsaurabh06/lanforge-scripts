@@ -1200,6 +1200,9 @@ class ThroughputQOS(Realm):
                             " maintaining acceptable performance levels,ensuring that the network meets the required QoS"
                             " standards and can adequately support the expected user demands.")
         report.build_objective()
+        report.set_obj_html(_obj_title="Input Parameters",
+                                _obj="The below tables provides the input parameters for the test")
+        report.build_objective()
         # Initialize counts and lists for device types
         android_devices, windows_devices, linux_devices, ios_devices, ios_mob_devices = 0, 0, 0, 0, 0
         all_devices_names = []
