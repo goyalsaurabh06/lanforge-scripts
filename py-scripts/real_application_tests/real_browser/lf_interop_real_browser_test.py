@@ -914,7 +914,6 @@ class RealBrowserTest(Realm):
         @self.app.route('/get_rb_data', methods=['GET'])
         def get_rb_data():
             combined = {**self.laptop_stats, **self.robo_mobile_data}
-            print(combined)
             return jsonify(combined), 200
 
         try:
