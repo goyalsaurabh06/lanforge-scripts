@@ -11,7 +11,7 @@ class RobotClass:
         self.current_angle = None
         self.result_directory = None
 
-    def move_to_coordinate(self, coordinate=None, result_dir=None):
+    def move_to_coordinate(self, coordinate=None, angle=None,result_dir=None):
         url = f"http://{self.robo_ip}/cmd/nav_name"
         data = {"coordinate": coordinate}
         self.result_directory = result_dir
@@ -20,7 +20,7 @@ class RobotClass:
         self.navdata_json = {
             "Canbee_location": coordinate,
             "status": "Running",
-            "Canbee_angle": 0
+            "Canbee_angle": angle
         }
         self._save_navdata(result_dir)
 

@@ -71,11 +71,11 @@ class RobotClass:
                 battery = data.get("battery", 0)
                 charge_flag = data.get("chargeFlag", 0)
                 retries=0
-                if battery <= 20:
+                if battery <= 88:
                     pause=True
                     if stop is not None:
                         stop()
-                    logging.info("Battery low ({}%). Pausing test until fully charged...".format(battery))
+                    logging.info("Battery low ({}%). Pausing test until fully charged...{}".format(battery,time.time()))
                     requests.post(move_url,json={"point":self.charge_point_name})
                     while True:
                         matched = False
@@ -113,7 +113,7 @@ class RobotClass:
                                 charge_data = resp.json()   
                                 new_battery = charge_data.get("battery", 0)
                                 logging.info("Current battery: {}%".format(new_battery))
-                                if new_battery > 99:
+                                if new_battery > 88:
                                     logging.info("Battery full. Resuming test...")
                                     return pause,stopped
                             except Exception as e:
@@ -187,6 +187,7 @@ class RobotClass:
     def rotate_angle(self,angle):
         nav_pathurl= 'http://'+self.robo_ip+'/cmd/nav'
         pose_url= 'http://'+self.robo_ip+'/reeman/pose'
+        print("ddddd",self.target_x,self.target_y,angle)
         requests.post(nav_pathurl,json={"x":self.target_x,"y":self.target_y,"theta":angle})
         retries_for_theta=0
         rotated=False
@@ -228,6 +229,7 @@ class RobotClass:
             elif angle <= -180:
                 angle += 360
             result.append(round(math.radians(angle), 2))
+        print("result",result)
         return result
 
 

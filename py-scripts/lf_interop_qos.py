@@ -115,7 +115,9 @@ logger = logging.getLogger(__name__)
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 # Importing DeviceConfig to apply device configurations for ADB devices and laptops
 DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
-from lf_robo_base_class import RobotClass
+# from lf_robo_base_class import RobotClass
+from lf_base_robo import RobotClass
+
 
 class ThroughputQOS(Realm):
     def __init__(self,
@@ -193,7 +195,9 @@ class ThroughputQOS(Realm):
                  robot_ip=None,
                  robot_port=None,
                  coordinate=None,
-                 rotation=None):
+                 rotation=None,
+                 rotation_enabled=None,
+                 angle_list=None):
         super().__init__(lfclient_host=host,
                          lfclient_port=port)
         self.ssid_list = []
@@ -281,8 +285,11 @@ class ThroughputQOS(Realm):
         self.get_live_view = get_live_view
         self.total_floors = total_floors
         self.qos_data = {}
+        self.robot_test = robot_test
         if robot_test:
-            self.robot_test = robot_test
+            self.total_floors = 1
+            if self.dowebgui:
+                self.get_live_view=True
             self.robot_ip = robot_ip
             self.robot_port = robot_port
             self.coordinate = coordinate
@@ -292,6 +299,12 @@ class ThroughputQOS(Realm):
             self.rotation_list = rotation.split(',')
             self.current_coordinate = None
             self.current_angle = None
+            self.angle_list = angle_list
+            self.rotation_enabled = rotation_enabled
+            self.robot=RobotClass(robo_ip=self.robot_ip,angle_list=self.angle_list)
+            self.last_rotated_angles=[]
+            self.charge_point_name=None
+
 
     def os_type(self):
         response = self.json_get("/resource/all")
@@ -665,11 +678,12 @@ class ThroughputQOS(Realm):
             self.mac_id_list = list(self.mac_id_list)
             self.num_stations = len(self.real_client_list)
 
-    def monitor(self,curr_coordinate=None, curr_rotation=None):
+    def monitor(self,curr_coordinate=None, curr_rotation=None,monitor_charge_time=None):
         # TODO: Fix this. This is poor style
         throughput, upload, download, upload_throughput, download_throughput, connections_upload, connections_download, avg_upload, avg_download, avg_upload_throughput, avg_download_throughput, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, dropa_connections, dropb_connections = {  # noqa: E501
         }, [], [], [], [], {}, {}, [], [], [], [], {}, {}, [], [], {}, {}
-        curr_coordinate = self.current_coordinate
+        if self.robot_test:
+            curr_coordinate = self.current_coordinate
         # Initialized seperate variables for average values for report changes
         drop_a, drop_a_per, drop_b, drop_b_per, avg_drop_b_per, avg_drop_a_per = [], [], [], [], [], []
         if (self.test_duration is None) or (int(self.test_duration) <= 1):
@@ -746,6 +760,34 @@ class ThroughputQOS(Realm):
             columns = ['bps rx a', 'bps rx b']
             individual_device_data[cx] = pd.DataFrame(columns=columns)
         while datetime.now() < end_time or getattr(self, "background_run", None):
+            if self.rotation_enabled:
+                if (datetime.now() - monitor_charge_time).total_seconds() >= 300:
+                    print("dfghjk",(datetime.now() - previous_time).total_seconds())
+                    print("Checking battery status (5-minute interval)...")
+                    pause_start = datetime.now()
+                    pause=False
+                    pause,test_stopped_by_user=self.robot.wait_for_battery(stop=self.stop)
+                    print("pauseee",pause,"rotationnenabled",self.rotation_enabled)
+                    if test_stopped_by_user:
+                        break
+                    if pause:
+                        reached = self.robot.move_to_coordinate(curr_coordinate)
+                        if not reached:
+                            test_stopped_by_user=True
+                            break
+                        if self.rotation_enabled:
+                            print("enteredrotation")
+                            rotation_moni =self.robot.rotate_angle(curr_rotation)
+                            if not rotation_moni:
+                                test_stopped_by_user=True
+                                break
+                        self.start(False,False)
+                        pause_end = datetime.now()
+                        charge_pause = pause_end - pause_start
+                        end_time += charge_pause
+                        overall_end_time += charge_pause
+                        previous_time=datetime.now()
+                    monitor_charge_time = datetime.now()
             index += 1
             current_time = datetime.now()
             # removed the fields query from endp so that the cx names will be given in the reponse as keys instead of cx_ids
@@ -964,6 +1006,21 @@ class ThroughputQOS(Realm):
                 avg_download[ind].append(throughput[ind][0])
                 avg_drop_a[ind].append(throughput[ind][2])
                 avg_drop_b[ind].append(throughput[ind][3])
+        
+        if self.robot_test and self.dowebgui:
+            last_entry = self.df_for_webui[-1].copy()
+            last_entry["status"] = "Stopped"
+            last_entry["timestamp"] = datetime.now().strftime("%d/%m %I:%M:%S %p")
+            last_entry["remaining_time"] = "0"
+            last_entry["end_time"] = last_entry["timestamp"]
+            # self.df_for_webui.append(
+            #     last_entry
+            # )
+            self.df_for_webui.append(last_entry)
+            df1 = pd.DataFrame(self.df_for_webui)
+            df1.to_csv('{}/overall_throughput_{}.csv'.format(runtime_dir, curr_coordinate), index=False)
+            
+        
         # # rx_rate list is calculated
         for index, _key in enumerate(throughput):
             upload[index].append(throughput[index][1])
@@ -1456,10 +1513,12 @@ class ThroughputQOS(Realm):
         """
         image_paths_by_tos = {}      # { "BE": [img1, img2, ...], "VO": [...], ... }
         rssi_image_paths_by_floor = {} if not multicast_exists else {}  # Empty if skipping RSSI
-
+        print("sss",self.total_floors)
+        if self.robot_test:
+            self.total_floors=1
         for floor in range(int(self.total_floors)):
             for tos in self.tos:
-                timeout = 60  # seconds
+                timeout = 180  # seconds
 
                 throughput_image_path = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_throughput_{tos}_{floor + 1}.png")
 
@@ -1471,12 +1530,11 @@ class ThroughputQOS(Realm):
                 while True:
                     throughput_ready = os.path.exists(throughput_image_path)
                     rssi_ready = True if multicast_exists else os.path.exists(rssi_image_path)
-
                     if throughput_ready and rssi_ready:
                         break
 
                     if time.time() - start_time > timeout:
-                        print(f"Timeout: Images for TOS '{tos}' on Floor {floor + 1} not found within 60 seconds.")
+                        print(f"Timeout: Images for TOS '{tos}' on Floor {floor + 1} not found within 180 seconds.")
                         break
                     time.sleep(1)
 
@@ -1486,7 +1544,6 @@ class ThroughputQOS(Realm):
             # Only check and store RSSI if not multicast
             if not multicast_exists and os.path.exists(rssi_image_path):
                 rssi_image_paths_by_floor[floor + 1] = rssi_image_path
-
         return image_paths_by_tos, rssi_image_paths_by_floor
 
     def generate_individual_graph(self, res, report, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, totalfloors=None, multicast_exists=False,graph_no=''):
@@ -1670,11 +1727,12 @@ class ThroughputQOS(Realm):
                     report.move_csv_file()
                     report.build_graph()
                     if (self.dowebgui and self.get_live_view) or multicast_exists:
-                        for image_path in tos_images['BK']:
-                            report.set_custom_html('<div style="page-break-before: always;"></div>')
-                            report.build_custom()
-                            report.set_custom_html(f'<img src="file://{image_path}" style="width: 1200px; height: 800px;"></img>')
-                            report.build_custom()
+                        if not self.robot_test:
+                            for image_path in tos_images['BK']:
+                                report.set_custom_html('<div style="page-break-before: always;"></div>')
+                                report.build_custom()
+                                report.set_custom_html(f'<img src="file://{image_path}" style="width: 1200px; height: 800px;"></img>')
+                                report.build_custom()
                     individual_avgupload_list = []
                     individual_avgdownload_list = []
                     for i in range(len(individual_upload_list)):
@@ -1799,11 +1857,12 @@ class ThroughputQOS(Realm):
                     report.move_csv_file()
                     report.build_graph()
                     if (self.dowebgui and self.get_live_view) or multicast_exists:
-                        for image_path in tos_images['BE']:
-                            report.set_custom_html('<div style="page-break-before: always;"></div>')
-                            report.build_custom()
-                            report.set_custom_html(f'<img src="file://{image_path}" style="width: 1200px; height: 800px;"></img>')
-                            report.build_custom()
+                        if not self.robot_test:
+                            for image_path in tos_images['BE']:
+                                report.set_custom_html('<div style="page-break-before: always;"></div>')
+                                report.build_custom()
+                                report.set_custom_html(f'<img src="file://{image_path}" style="width: 1200px; height: 800px;"></img>')
+                                report.build_custom()
                     individual_avgupload_list = []
                     individual_avgdownload_list = []
                     for i in range(len(individual_upload_list)):
@@ -1926,11 +1985,12 @@ class ThroughputQOS(Realm):
                     report.move_csv_file()
                     report.build_graph()
                     if (self.dowebgui and self.get_live_view) or multicast_exists:
-                        for image_path in tos_images['VI']:
-                            report.set_custom_html('<div style="page-break-before: always;"></div>')
-                            report.build_custom()
-                            report.set_custom_html(f'<img src="file://{image_path}" style="width: 1200px; height: 800px;"></img>')
-                            report.build_custom()
+                        if not self.robot_test:
+                            for image_path in tos_images['VI']:
+                                report.set_custom_html('<div style="page-break-before: always;"></div>')
+                                report.build_custom()
+                                report.set_custom_html(f'<img src="file://{image_path}" style="width: 1200px; height: 800px;"></img>')
+                                report.build_custom()
                     individual_avgupload_list = []
                     individual_avgdownload_list = []
                     for i in range(len(individual_upload_list)):
@@ -2053,11 +2113,12 @@ class ThroughputQOS(Realm):
                     report.move_csv_file()
                     report.build_graph()
                     if (self.dowebgui and self.get_live_view) or multicast_exists:
-                        for image_path in tos_images['VO']:
-                            report.set_custom_html('<div style="page-break-before: always;"></div>')
-                            report.build_custom()
-                            report.set_custom_html(f'<img src="file://{image_path}" style="width: 1200px; height: 800px;"></img>')
-                            report.build_custom()
+                        if not self.robot_test:
+                            for image_path in tos_images['VO']:
+                                report.set_custom_html('<div style="page-break-before: always;"></div>')
+                                report.build_custom()
+                                report.set_custom_html(f'<img src="file://{image_path}" style="width: 1200px; height: 800px;"></img>')
+                                report.build_custom()
                     individual_avgupload_list = []
                     individual_avgdownload_list = []
                     for i in range(len(individual_upload_list)):
@@ -2129,12 +2190,13 @@ class ThroughputQOS(Realm):
                         report.build_table()
                 logger.info("Graph and table for VO tos are built")
             if self.dowebgui and self.get_live_view and not multicast_exists:
-                for _floor, rssi_image_path in rssi_images.items():
-                    if os.path.exists(rssi_image_path):
-                        report.set_custom_html('<div style="page-break-before: always;"></div>')
-                        report.build_custom()
-                        report.set_custom_html(f'<img src="file://{rssi_image_path}" style="width: 1000px; height: 800px;"></img>')
-                        report.build_custom()
+                if not self.robot_test:
+                    for _floor, rssi_image_path in rssi_images.items():
+                        if os.path.exists(rssi_image_path):
+                            report.set_custom_html('<div style="page-break-before: always;"></div>')
+                            report.build_custom()
+                            report.set_custom_html(f'<img src="file://{rssi_image_path}" style="width: 1000px; height: 800px;"></img>')
+                            report.build_custom()
         else:
             print("No individual graph to generate.")
         # storing overall throughput CSV in the report directory
@@ -2272,7 +2334,7 @@ class ThroughputQOS(Realm):
         self.generate_individual_graph(res, report, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b,graph_no=graph_no)
         
 
-    def generate_report_for_robo(self):
+    def generate_report_for_robo(self,coordinate_list=[],angle_list=[]):
         self.ssid_list = self.get_ssid_list(self.input_devices_list)
         built = False
         load = ''
@@ -2375,6 +2437,21 @@ class ThroughputQOS(Realm):
                 "Per TOS Load in Mbps": load
             }
         report.test_setup_table(test_setup_data=test_setup_info, value="Test Configuration")
+        if self.dowebgui:
+            tos_for_report = self.tos
+            tos_images, rssi_images = self.get_live_view_images()
+            for tos_val in tos_for_report:
+                for image_path in tos_images[tos_val]:
+                    report.set_custom_html('<div style="page-break-before: always;"></div>')
+                    report.build_custom()
+                    report.set_custom_html(f'<img src="file://{image_path}" style="width: 1200px; height: 800px;"></img>')
+                    report.build_custom()
+            for _floor, rssi_image_path in rssi_images.items():
+                if os.path.exists(rssi_image_path):
+                    report.set_custom_html('<div style="page-break-before: always;"></div>')
+                    report.build_custom()
+                    report.set_custom_html(f'<img src="file://{rssi_image_path}" style="width: 1000px; height: 800px;"></img>')
+                    report.build_custom()
         
         for coordinate in range(len(self.coordinate_list)):
             if self.rotation_enabled:
@@ -2453,89 +2530,72 @@ class ThroughputQOS(Realm):
 
 
     def perform_robo(self):
-
+        #coordinate list to track coordinates where the test needs to be triggered
         if(self.rotation_list[0]!=""):
             self.rotation_enabled=True
+        coord_list = []
+        if self.coordinate:
+            coord_list=self.coordinate_list
+            if self.dowebgui: 
+                base_dir = os.path.dirname(os.path.dirname(self.result_dir))
+                nav_data = os.path.join(base_dir, 'nav_data.json') # To generate nav_data.json in webgui folder
+                with open(nav_data, "w") as file:
+                    json.dump({}, file)
+                self.robot.nav_data_path=nav_data
+                self.robot.runtime_dir=self.result_dir
+                self.robot.ip=self.host
+                self.robot.testname=self.test_name
+            found=True
+            passed_coord_list = []
+            abort=False
+            self.robot.create_waypointlist()
+            # self.robot.waypoint_list = [{'ChargeDock': {'x': 0, 'y': -0.04, 'theta': -0.01}}, {'1': {'x': 1, 'y': 1, 'theta': 0.523}}, {'2': {'x': 2, 'y': 2, 'theta': 1.047}}]
+            # self.robot.charge_point_name = 'ChargeDock'
 
-        robot_obj = RobotClass()
-        robot_obj.robo_ip = "127.0.0.1:5000"  
-        base_dir = os.path.dirname(os.path.dirname(self.result_dir))
-        for coordinate in range(len(self.coordinate_list)):
-            robo_moved = robot_obj.move_to_coordinate(self.coordinate_list[coordinate],base_dir)
-            if robo_moved:
-                self.overall = []
-                self.df_for_webui = []
-                # if no rotation mode
-                if not self.rotation_enabled:
-                    test_results = {'test_results': []}
-                    data = {}
-                    input_setup_info = {
-                        "contact": "support@candelatech.com"
-                    }
-                    self.current_coordinate = self.coordinate_list[coordinate]
-                    # if self.dowebgui:
-                    #     json_path = "../../local/interop-webGUI/nav_data.json"
-                    #     with open(json_path, "r") as file:
-                    #         data = json.load(file)
-                    #     data["curren_coordinate"]
-                    self.start(False, False)
-                    time.sleep(10)
-                    connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b = self.monitor()
-                    logger.info("connections download {}".format(connections_download))
-                    logger.info("connections upload {}".format(connections_upload))
-                    self.stop()
-                    time.sleep(5)
-                    test_results['test_results'].append(self.evaluate_qos(connections_download, connections_upload, drop_a_per, drop_b_per))
-                    data.update(test_results)
-                    params = {
-                        "data": None,
-                        "input_setup_info": None,
-                        "connections_download_avg": None,
-                        "connections_upload_avg": None,
-                        "avg_drop_a": None,
-                        "avg_drop_b": None,
-                        "report_path": "",
-                        "result_dir_name": "Qos_Test_report",
-                        "selected_real_clients_names": None,
-                        "config_devices": ""
-                    }
+        # robot_obj = RobotClass()
+        # robot_obj.robo_ip = "127.0.0.1:5000"  
+        # base_dir = os.path.dirname(os.path.dirname(self.result_dir))
+        for coordinate in coord_list:
+            if self.robot_ip:
+                # Before moving to next coordinate, check if battery is sufficient
+                pause_coord,test_stopped_by_user=self.robot.wait_for_battery()
+                if test_stopped_by_user:
+                    break
+                passed_coord_list.append(coordinate)
+                matched,abort = self.robot.move_to_coordinate(coordinate)
 
-                    params.update({
-                        "data": data,
-                        "input_setup_info": input_setup_info,
-                        "report_path": (
-                            self.result_dir
-                            if self.dowebgui else ""
-                        ),
-                        "connections_upload_avg": connections_upload_avg,
-                        "connections_download_avg": connections_download_avg,
-                        "avg_drop_a": avg_drop_a,
-                        "avg_drop_b": avg_drop_b
-                    })
-                    self.qos_data[self.coordinate_list[coordinate]] = params
-                    
-                # if rotation mode
-                else:
-                    for angle in range(len(self.rotation_list)):
+                if matched:
+                    logger.info("Reached the coordinate {}".format(coordinate))
+                if abort:
+                    break 
+
+                if matched:
+                    self.overall = []
+                    self.df_for_webui = []
+                    # if no rotation mode
+                    if not self.rotation_enabled:
                         test_results = {'test_results': []}
                         data = {}
                         input_setup_info = {
                             "contact": "support@candelatech.com"
                         }
-                        robo_rotated = robot_obj.rotate_angle(1,2,self.rotation_list[angle])
-                        if robo_rotated:
-                            self.current_coordinate = self.coordinate_list[coordinate]
-                            self.current_angle = self.rotation_list[angle]
-                            self.start(False, False)
-                            time.sleep(10)
-                            connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b = self.monitor()
-                            logger.info("connections download {}".format(connections_download))
-                            logger.info("connections upload {}".format(connections_upload))
-                            self.stop()
-                            time.sleep(5)
-                            test_results['test_results'].append(self.evaluate_qos(connections_download, connections_upload, drop_a_per, drop_b_per))
-                            data.update(test_results)
-                            params = {
+                        self.current_coordinate = coordinate
+                        # if self.dowebgui:
+                        #     json_path = "../../local/interop-webGUI/nav_data.json"
+                        #     with open(json_path, "r") as file:
+                        #         data = json.load(file)
+                        #     data["curren_coordinate"]
+                        self.start(False, False)
+                        time.sleep(10)
+                        print("cx startedddd")
+                        connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b = self.monitor(curr_coordinate=coordinate)
+                        logger.info("connections download {}".format(connections_download))
+                        logger.info("connections upload {}".format(connections_upload))
+                        self.stop()
+                        time.sleep(5)
+                        test_results['test_results'].append(self.evaluate_qos(connections_download, connections_upload, drop_a_per, drop_b_per))
+                        data.update(test_results)
+                        params = {
                             "data": None,
                             "input_setup_info": None,
                             "connections_download_avg": None,
@@ -2560,11 +2620,79 @@ class ThroughputQOS(Realm):
                             "avg_drop_a": avg_drop_a,
                             "avg_drop_b": avg_drop_b
                         })
-                        if self.coordinate_list[coordinate] not in self.qos_data:
-                            self.qos_data[self.coordinate_list[coordinate]] = {}
-                        self.qos_data[self.coordinate_list[coordinate]][self.rotation_list[angle]] = params
+                        self.qos_data[coordinate] = params
+                        
+                    # if rotation mode
+                    else:
+                        exit_from_monitor=False
+                        for angle in range(len(self.rotation_list)):
+                            test_results = {'test_results': []}
+                            data = {}
+                            input_setup_info = {
+                                "contact": "support@candelatech.com"
+                            }
+                            print("jjjjjjjjjjjj",self.rotation_list[angle],self.rotation_list,angle)
+                            self.last_rotated_angles=[]
+                            # Continuously collect data until end time is reached
+                            rotation_list=self.robot.angles_to_radians(self.robot.angle_list)
+                            self.current_coordinate = coordinate
+                            self.current_angle = rotation_list[angle]
+                            pause_angle,test_stopped_by_user = self.robot.wait_for_battery(stop=self.stop)
+                            if test_stopped_by_user:
+                                break
+                            if pause_angle:
+                                reached = self.robot.move_to_coordinate(coordinate)
+                                if not reached:
+                                    test_stopped_by_user = True
+                                    break
+                            final_angle=self.robot.angle_list[angle]
+                            rotation = self.robot.rotate_angle(float(self.current_angle))
+                            if not rotation:
+                                exit_from_monitor=True
+                            end_time = datetime.now() + timedelta(seconds=int(self.test_duration))
+                            if exit_from_monitor:
+                                break
+                            if final_angle not in self.last_rotated_angles:
+                                self.last_rotated_angles.append(final_angle)
+                            self.start(False,False)
+                            monitor_charge_time=datetime.now()
+                            connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b = self.monitor(curr_coordinate=coordinate,curr_rotation=self.current_angle,monitor_charge_time=monitor_charge_time)
+                            logger.info("connections download {}".format(connections_download))
+                            logger.info("connections upload {}".format(connections_upload))
+                            self.stop()
+                            time.sleep(5)
+                            test_results['test_results'].append(self.evaluate_qos(connections_download, connections_upload, drop_a_per, drop_b_per))
+                            data.update(test_results)
+                            params = {
+                            "data": None,
+                            "input_setup_info": None,
+                            "connections_download_avg": None,
+                            "connections_upload_avg": None,
+                            "avg_drop_a": None,
+                            "avg_drop_b": None,
+                            "report_path": "",
+                            "result_dir_name": "Qos_Test_report",
+                            "selected_real_clients_names": None,
+                            "config_devices": ""
+                        }
 
-        self.generate_report_for_robo()
+                            params.update({
+                                "data": data,
+                                "input_setup_info": input_setup_info,
+                                "report_path": (
+                                    self.result_dir
+                                    if self.dowebgui else ""
+                                ),
+                                "connections_upload_avg": connections_upload_avg,
+                                "connections_download_avg": connections_download_avg,
+                                "avg_drop_a": avg_drop_a,
+                                "avg_drop_b": avg_drop_b
+                            })
+                            if coordinate not in self.qos_data:
+                                self.qos_data[coordinate] = {}
+                            self.qos_data[coordinate][self.rotation_list[angle]] = params
+
+        self.generate_report_for_robo(coordinate_list=coord_list,angle_list=self.rotation_list)
 
 def validate_args(args):
     if args.group_name:
@@ -2891,6 +3019,7 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
     optional.add_argument("--config", action="store_true", help="Specify for configuring the devices")
     optional.add_argument('--get_live_view', help="If true will heatmap will be generated from testhouse automation WebGui ", action='store_true')
     optional.add_argument('--total_floors', help="Total floors from testhouse automation WebGui ", default="0")
+    # Args for robot testing
     optional.add_argument("--robot_test", help='to trigger robot test', action='store_true')
     optional.add_argument('--robot_ip', type=str, default='localhost', help='hostname for where Robot server is running')
     optional.add_argument('--robot_port', type=str,default=5000, help='port Robot HTTP service is running on')
@@ -2912,6 +3041,14 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
 
     loads = {}
     data = {}
+    rotation_enabled = False
+    test_stopped_by_user = False
+    angle_list = []
+
+    if args.rotation:
+        angle_list = args.rotation.split(',')
+        print("Angle list : ", angle_list)
+        rotation_enabled = True
 
     if args.download and args.upload:
         loads = {'upload': str(args.upload).split(","), 'download': str(args.download).split(",")}
@@ -2997,7 +3134,9 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
                                        robot_ip=args.robot_ip,
                                        robot_port=args.robot_port,
                                        coordinate=args.coordinate,
-                                       rotation=args.rotation
+                                       rotation=args.rotation,
+                                       rotation_enabled=rotation_enabled,
+                                       angle_list=angle_list
                                        )
         throughput_qos.os_type()
         _, configured_device, _, configuration = throughput_qos.phantom_check()

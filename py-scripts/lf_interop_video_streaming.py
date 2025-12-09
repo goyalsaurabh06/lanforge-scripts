@@ -97,7 +97,8 @@ from datetime import datetime, timedelta
 from lf_graph import lf_bar_graph_horizontal
 from lf_graph import lf_line_graph
 from lf_robo_base_class import RobotClass
-
+import os 
+from os import path
 
 
 if sys.version_info[0] != 3:
@@ -394,7 +395,7 @@ class VideoStreamingTest(Realm):
         try:
             for i in self.http_profile.created_cx.keys():
                 print("/cx/" + i)
-                print("data",self.local_realm.json_get("/cx/" + i))
+                print("data",self.local_realm)
                 while self.local_realm.json_get("/cx/" + i).get(i).get('state') != 'Run':
                     continue
         except Exception as e:
@@ -933,8 +934,8 @@ class VideoStreamingTest(Realm):
                         overall_video_rate.append(0)
                         min_value_video_rate = self.process_list(video_rate_dict[i])
                         individual_df_data.extend([0, 0, self.data["total_urls"][i], rssi_data[i], link_speed_data[i], self.data["total_buffer"][i], self.data["total_err"][i],
-                                                   min_value_video_rate, max(video_rate_dict[i]), sum(video_rate_dict[i]) / len(video_rate_dict[i]), self.data["bytes_rd"][i],
-                                                   self.data["rx_rate"][i], self.data['frame_rate'][i], self.data['video_quality'][i]])
+                                                    min_value_video_rate, max(video_rate_dict[i]), sum(video_rate_dict[i]) / len(video_rate_dict[i]), self.data["bytes_rd"][i],
+                                                    self.data["rx_rate"][i], self.data['frame_rate'][i], self.data['video_quality'][i]])
 
                     # If the status is not 'Stopped', append the calculated video rate to the video rate dictionary and overall video rate
                     else:
@@ -960,20 +961,24 @@ class VideoStreamingTest(Realm):
                                                    self.data['video_quality'][i]])
 
                 individual_df_data.extend([sum(overall_video_rate), present_time, iteration + 1, actual_start_time.strftime('%Y-%m-%d %H:%M:%S'),
-                                          self.data['end_time_webGUI'][0], self.data['remaining_time_webGUI'][0], "Running"])
+                                            self.data['end_time_webGUI'][0], self.data['remaining_time_webGUI'][0], "Running"])
+                if self.robot_test and self.rotation_enabled:
+                    individual_df_data.append(self.current_angle)
                 individual_df.loc[len(individual_df)] = individual_df_data
+                new_row_df = individual_df.tail(1)
                 if self.robot_test:
-                    if self.rotation_enabled:
-                        individual_df.to_csv('video_streaming_realtime_data_{}_{}.csv'.format(self.current_coordinate,self.current_angle), index=False)
-                    else:
-                        individual_df.to_csv('video_streaming_realtime_data_{}.csv'.format(self.current_coordinate), index=False)
+                    csv_filename = f'video_streaming_realtime_data_{self.current_coordinate}.csv'
                 else:
-                    individual_df.to_csv('video_streaming_realtime_data.csv', index=False)
+                    csv_filename = 'video_streaming_realtime_data.csv'
+
+                write_header = not (os.path.exists(csv_filename) and os.path.getsize(csv_filename) > 0)
+                new_row_df.to_csv(csv_filename, index=False, mode='a', header=write_header)
+
                     
 
                 if self.dowebgui:
                     with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host,
-                                                                                                     self.test_name), 'r') as file:
+                                                                                                        self.test_name), 'r') as file:
                         data = json.load(file)
                         if data["status"] != "Running":
                             logging.info('Test is stopped by the user')
@@ -982,12 +987,12 @@ class VideoStreamingTest(Realm):
 
                 if self.dowebgui:
                     if self.robot_test:
-                        if self.rotation_enabled:
-                            individual_df.to_csv('{}/video_streaming_realtime_data_{}_{}.csv'.format(self.result_dir, self.current_coordinate,self.current_angle), index=False)
-                        else:
-                            individual_df.to_csv('{}/video_streaming_realtime_data_{}.csv'.format(self.result_dir, self.robot_iteration), index=False)
+                        webgui_csv = '{}/video_streaming_realtime_data_{}.csv'.format(self.result_dir, self.current_coordinate)
                     else:
-                        individual_df.to_csv('{}/video_streaming_realtime_data.csv'.format(self.result_dir), index=False)
+                        webgui_csv = '{}/video_streaming_realtime_data.csv'.format(self.result_dir)
+
+                    webgui_header = not (os.path.exists(webgui_csv) and os.path.getsize(webgui_csv) > 0)
+                    new_row_df.to_csv(webgui_csv, index=False, mode='a', header=webgui_header)
                 else:
                     individual_df.to_csv(file_path, mode='w', index=False)
 
@@ -1037,13 +1042,26 @@ class VideoStreamingTest(Realm):
                 individual_df_data.extend([sum(overall_video_rate), present_time, iteration + 1, actual_start_time.strftime('%Y-%m-%d %H:%M:%S'), self.data['end_time_webGUI'][0], 0, "Stopped"])
             else:
                 individual_df_data.extend([sum(overall_video_rate), present_time, iteration + 1, actual_start_time.strftime('%Y-%m-%d %H:%M:%S'),
-                                          self.data['end_time_webGUI'][0], self.data['remaining_time_webGUI'][0], "Stopped"])
-            individual_df.loc[len(individual_df)] = individual_df_data
+                                            self.data['end_time_webGUI'][0], self.data['remaining_time_webGUI'][0], "Stopped"])
+                
+            if self.robot_test and self.rotation_enabled:
+                individual_df_data.append(self.current_angle)
 
+            individual_df.loc[len(individual_df)] = individual_df_data
+            final_row_df = individual_df.tail(1)
+            
             if self.dowebgui:
-                individual_df.to_csv('{}/video_streaming_realtime_data.csv'.format(self.result_dir), index=False)
+                if self.robot_test:
+                    final_row_df.to_csv('{}/video_streaming_realtime_data_{}.csv'.format(self.result_dir, self.current_coordinate), index=False, mode='a', header=False)
+                else:
+                    individual_df.to_csv('{}/video_streaming_realtime_data.csv'.format(self.result_dir), index=False)
             else:
-                individual_df.to_csv('video_streaming_realtime_data.csv', index=False)
+                if self.robot_test:
+                    csv_filename = f'video_streaming_realtime_data_{self.current_coordinate}.csv'
+                else:
+                    csv_filename = 'video_streaming_realtime_data.csv'
+
+                final_row_df.to_csv(csv_filename, index=False, mode='a', header=False)
 
             if self.data['end_time_webGUI'][0] < current_time.strftime('%Y-%m-%d %H:%M:%S'):
                 self.data['end_time_webGUI'] = [current_time.strftime('%Y-%m-%d %H:%M:%S')]
@@ -1065,6 +1083,7 @@ class VideoStreamingTest(Realm):
             logger.error(f"Error in monitor_for_runtime_csv function: {e}", exc_info=True)
             logger.info(f"eid_data {eid_data}")
             return test_stopped_by_user
+
 
     def get_incremental_capacity_list(self):
         keys = list(self.http_profile.created_cx.keys())
@@ -1927,20 +1946,24 @@ class VideoStreamingTest(Realm):
                         tx_rate.append(alias[i]['tx-rate'])
 
         # self.generate_individual_coordinate()
+        self.add_buffer_and_wait_time_images(report=report)
         for coordinate in range(len(self.coordinate_list)):
             self.current_coordinate = self.coordinate_list[coordinate]
+            csv_suffix = "_{}".format(self.current_coordinate)
             if self.rotation_enabled:
                 for angle in range(len(self.rotation_list)):
                     self.current_angle = self.rotation_list[angle]
-                    csv_suffix = "_{}_{}".format(self.current_coordinate,self.current_angle)
-                    shutil.move('video_streaming_realtime_data{}.csv'.format(csv_suffix), report_path_date_time)
+                    # csv_suffix = "_{}_{}".format(self.current_coordinate,self.current_angle)
+                    # csv_suffix = "_{}".format(self.current_coordinate)
+                    # shutil.move('video_streaming_realtime_data{}.csv'.format(csv_suffix), report_path_date_time)
 
                     coord, ang = self.coordinate_list[coordinate], self.rotation_list[angle]
                     self.data = self.vs_data[coord][ang]["self_data"]
                     self.generate_individual_coordinate(report, device_type, username, ssid, mac, channel, mode, rssi, tx_rate, created_incremental_values, keys)
+                shutil.move('video_streaming_realtime_data{}.csv'.format(csv_suffix), report_path_date_time)
             else:
                 self.data = self.vs_data[self.coordinate_list[coordinate]]["self_data"]
-                csv_suffix = "_{}".format(self.current_coordinate)
+                #csv_suffix = "_{}".format(self.current_coordinate)
                 shutil.move('video_streaming_realtime_data{}.csv'.format(csv_suffix), report_path_date_time)
                 self.generate_individual_coordinate(report, device_type, username, ssid, mac, channel, mode, rssi, tx_rate, created_incremental_values, keys)
     
@@ -2135,7 +2158,8 @@ class VideoStreamingTest(Realm):
             report.set_graph_image(graph_png)
             report.move_graph_image()
             report.build_graph()
-            self.add_buffer_and_wait_time_images(report=report)
+            if not self.robot_test:
+                self.add_buffer_and_wait_time_images(report=report)
 
             # Table 1
             report.set_obj_html("Overall - Detailed Result Table", "The below tables provides detailed information for the Video Streaming test.")
@@ -2191,9 +2215,13 @@ class VideoStreamingTest(Realm):
 
         robot_obj = RobotClass()
         robot_obj.robo_ip = "127.0.0.1:5000"  
-
+        coord_list = []
         for coordinate in range(len(self.coordinate_list)):
-            robo_moved = robot_obj.move_to_coordinate(self.coordinate_list[coordinate])
+            coordinate_df = pd.DataFrame(columns=individual_dataframe_columns)
+            if self.dowebgui:
+                robo_moved = robot_obj.move_to_coordinate(self.coordinate_list[coordinate],0,self.result_dir.split('/results/')[0])
+            else:
+                robo_moved = robot_obj.move_to_coordinate(self.coordinate_list[coordinate])
             if robo_moved:
                 self.current_coordinate = self.coordinate_list[coordinate]
                 # if no rotation mode
@@ -2202,7 +2230,7 @@ class VideoStreamingTest(Realm):
                     self.data["start_time_webGUI"] = [datetime.now().strftime('%Y-%m-%d %H:%M:%S')]
                     end_time_webGUI = (datetime.now() + timedelta(minutes=int(args.duration))).strftime('%Y-%m-%d %H:%M:%S')
                     self.data['end_time_webGUI'] = [end_time_webGUI]
-                    individual_df = pd.DataFrame(columns=individual_dataframe_columns)
+                    #individual_df = pd.DataFrame(columns=individual_dataframe_columns)
                     self.start_specific(cx_order_list[i])
                     if cx_order_list[i]:
                         logging.info("Test started on Devices with resource Ids : {selected}".format(selected=cx_order_list[i]))
@@ -2222,9 +2250,9 @@ class VideoStreamingTest(Realm):
                                 data = json.load(file)
                                 if data["status"] != "Running":
                                     break
-                        test_stopped_by_user = self.monitor_for_runtime_csv(args.duration, file_path, individual_df, i, actual_start_time, cx_order_list[i])
+                        test_stopped_by_user = self.monitor_for_runtime_csv(args.duration, file_path, coordinate_df, i, actual_start_time, cx_order_list[i])
                     else:
-                        test_stopped_by_user = self.monitor_for_runtime_csv(args.duration, file_path, individual_df, i, actual_start_time, cx_order_list[i])
+                        test_stopped_by_user = self.monitor_for_runtime_csv(args.duration, file_path, coordinate_df, i, actual_start_time, cx_order_list[i])
                     if not test_stopped_by_user:
                         # Append current iteration index to iterations_before_test_stopped_by_user
                         iterations_before_test_stopped_by_user.append(i)
@@ -2233,7 +2261,7 @@ class VideoStreamingTest(Realm):
                         iterations_before_test_stopped_by_user.append(i)
                         break
                     self.stop()
-                    params = self.build_report_params_for_robo(args, cx_order_list, individual_df, iterations_before_test_stopped_by_user)
+                    params = self.build_report_params_for_robo(args, cx_order_list, coordinate_df, iterations_before_test_stopped_by_user)
                     params["self_data"] = self.data.copy()
                     self.vs_data[self.current_coordinate] = params
                     
@@ -2289,6 +2317,7 @@ class VideoStreamingTest(Realm):
                             self.vs_data[self.coordinate_list[coordinate]][self.rotation_list[angle]] = params
         test_setup_info = self.create_test_setup_info(media_source=args.media_source, media_quality=args.media_quality)
         self.generate_report_for_robo(test_setup_info)      
+
 def main():
     help_summary = '''\
     The Candela Video streaming test is designed to measure the access point performance and stability by streaming the videos from the local browser"
@@ -2708,8 +2737,9 @@ def main():
         ])
 
     individual_dataframe_columns.extend(['overall_video_format_bitrate', 'timestamp', 'iteration', 'start_time', 'end_time', 'remaining_Time', 'status'])
+    if args.robot_test and args.rotation:
+        individual_dataframe_columns.append('angle')
     individual_df = pd.DataFrame(columns=individual_dataframe_columns)
-
     cx_order_list = []
     index = 0
     file_path = ""
