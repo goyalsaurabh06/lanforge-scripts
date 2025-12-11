@@ -15,14 +15,15 @@ class RobotClass:
         self.target_y=None
         self.charge_point_name=None
         self.radian_list=[]
-        self.angle_list=angle_list
+        self.angle_list=angle_list or []
         self.nav_data_path=None
         self.runtime_dir=None
         self.ip=None
         self.testname=None
 
         # Create waypoint list on initialization
-        # self.create_waypointlist()
+        if self.robo_ip is not None :
+            self.create_waypointlist()
     
     def create_waypointlist(self):
         position_url = 'http://'+self.robo_ip+'/reeman/position'
