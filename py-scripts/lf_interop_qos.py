@@ -294,7 +294,7 @@ class ThroughputQOS(Realm):
             self.robot_port = robot_port
             self.coordinate = coordinate
             self.rotation = rotation
-            self.rotation_enabled = False
+            self.test_stopped_by_user=False
             self.coordinate_list = coordinate.split(',')
             self.rotation_list = rotation.split(',')
             self.current_coordinate = None
@@ -762,12 +762,10 @@ class ThroughputQOS(Realm):
         while datetime.now() < end_time or getattr(self, "background_run", None):
             if self.rotation_enabled:
                 if (datetime.now() - monitor_charge_time).total_seconds() >= 300:
-                    print("dfghjk",(datetime.now() - previous_time).total_seconds())
                     print("Checking battery status (5-minute interval)...")
                     pause_start = datetime.now()
                     pause=False
                     pause,test_stopped_by_user=self.robot.wait_for_battery(stop=self.stop)
-                    print("pauseee",pause,"rotationnenabled",self.rotation_enabled)
                     if test_stopped_by_user:
                         break
                     if pause:
@@ -776,7 +774,6 @@ class ThroughputQOS(Realm):
                             test_stopped_by_user=True
                             break
                         if self.rotation_enabled:
-                            print("enteredrotation")
                             rotation_moni =self.robot.rotate_angle(curr_rotation)
                             if not rotation_moni:
                                 test_stopped_by_user=True
@@ -963,6 +960,7 @@ class ThroughputQOS(Realm):
                 with open(runtime_dir + "/../../Running_instances/{}_{}_running.json".format(self.ip, self.test_name), 'r') as file:
                     data = json.load(file)
                     if data["status"] != "Running":
+                        self.test_stopped_by_user=True
                         logger.warning('Test is stopped by the user')
                         break
                 # Adjust time_gap based on elapsed time since start (for webui)
@@ -1513,12 +1511,11 @@ class ThroughputQOS(Realm):
         """
         image_paths_by_tos = {}      # { "BE": [img1, img2, ...], "VO": [...], ... }
         rssi_image_paths_by_floor = {} if not multicast_exists else {}  # Empty if skipping RSSI
-        print("sss",self.total_floors)
         if self.robot_test:
             self.total_floors=1
         for floor in range(int(self.total_floors)):
             for tos in self.tos:
-                timeout = 180  # seconds
+                timeout = 300  # seconds
 
                 throughput_image_path = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_throughput_{tos}_{floor + 1}.png")
 
@@ -2334,7 +2331,7 @@ class ThroughputQOS(Realm):
         self.generate_individual_graph(res, report, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b,graph_no=graph_no)
         
 
-    def generate_report_for_robo(self,coordinate_list=[],angle_list=[]):
+    def generate_report_for_robo(self,coordinate_list=[],angle_list=[],passed_coordinates=[]):
         self.ssid_list = self.get_ssid_list(self.input_devices_list)
         built = False
         load = ''
@@ -2408,7 +2405,7 @@ class ThroughputQOS(Realm):
             total_devices += f" iOS({ios_mob_devices})"
 
         # Test setup information table for devices in device list
-        if self.qos_data["configuration"] == "":
+        if self.qos_data["configuration"] == "" or self.qos_data["configuration"] == {}:
             test_setup_info = {
                 "Device List": ", ".join(all_devices_names),
                 "Number of Stations": "Total" + f"({self.num_stations})" + total_devices,
@@ -2453,7 +2450,7 @@ class ThroughputQOS(Realm):
                     report.set_custom_html(f'<img src="file://{rssi_image_path}" style="width: 1000px; height: 800px;"></img>')
                     report.build_custom()
         
-        for coordinate in range(len(self.coordinate_list)):
+        for coordinate in range(len(passed_coordinates)):
             if self.rotation_enabled:
                 for angle in range(len(self.rotation_list)):
                     report.set_obj_html(_obj_title=f"Coordinate: {self.coordinate_list[coordinate]} | Rotation Angle: {self.rotation_list[angle]}°",
@@ -2534,6 +2531,7 @@ class ThroughputQOS(Realm):
         if(self.rotation_list[0]!=""):
             self.rotation_enabled=True
         coord_list = []
+        test_stopped_by_user=False
         if self.coordinate:
             coord_list=self.coordinate_list
             if self.dowebgui: 
@@ -2557,6 +2555,8 @@ class ThroughputQOS(Realm):
         # base_dir = os.path.dirname(os.path.dirname(self.result_dir))
         for coordinate in coord_list:
             if self.robot_ip:
+                if self.test_stopped_by_user:
+                    break
                 # Before moving to next coordinate, check if battery is sufficient
                 pause_coord,test_stopped_by_user=self.robot.wait_for_battery()
                 if test_stopped_by_user:
@@ -2631,7 +2631,6 @@ class ThroughputQOS(Realm):
                             input_setup_info = {
                                 "contact": "support@candelatech.com"
                             }
-                            print("jjjjjjjjjjjj",self.rotation_list[angle],self.rotation_list,angle)
                             self.last_rotated_angles=[]
                             # Continuously collect data until end time is reached
                             rotation_list=self.robot.angles_to_radians(self.robot.angle_list)
@@ -2692,7 +2691,7 @@ class ThroughputQOS(Realm):
                                 self.qos_data[coordinate] = {}
                             self.qos_data[coordinate][self.rotation_list[angle]] = params
 
-        self.generate_report_for_robo(coordinate_list=coord_list,angle_list=self.rotation_list)
+        self.generate_report_for_robo(coordinate_list=coord_list,angle_list=self.rotation_list,passed_coordinates=passed_coord_list)
 
 def validate_args(args):
     if args.group_name:

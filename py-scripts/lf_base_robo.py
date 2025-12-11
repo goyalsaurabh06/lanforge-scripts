@@ -71,7 +71,7 @@ class RobotClass:
                 battery = data.get("battery", 0)
                 charge_flag = data.get("chargeFlag", 0)
                 retries=0
-                if battery <= 88:
+                if battery <= 20:
                     pause=True
                     if stop is not None:
                         stop()
@@ -113,7 +113,7 @@ class RobotClass:
                                 charge_data = resp.json()   
                                 new_battery = charge_data.get("battery", 0)
                                 logging.info("Current battery: {}%".format(new_battery))
-                                if new_battery > 88:
+                                if new_battery > 100:
                                     logging.info("Battery full. Resuming test...")
                                     return pause,stopped
                             except Exception as e:
