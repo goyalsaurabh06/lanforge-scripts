@@ -121,6 +121,7 @@ class InteropPortReset(Realm):
         self.encryp = encryp
         self.mgr_ip = mgr_ip
         self.reset = reset
+        self.my_debug = []
         self.time_int = time_int
         self.device_list = device_list
         self.forget_network = forget_network
@@ -128,9 +129,11 @@ class InteropPortReset(Realm):
         self.dowebgui = dowebgui
         self.test_name = test_name
         self.result_df = {}
+        self.client_count = {}
         self.port_reset_data = {}
+        self.i_df = {}
+        self.robot_test = robot_test
         if robot_test:
-            self.robot_test = robot_test
             self.robot_ip = robot_ip
             self.robot_port = robot_port
             self.coordinate = coordinate
@@ -724,7 +727,8 @@ class InteropPortReset(Realm):
                     robot_obj.robo_ip = "127.0.0.1:5000"  
                     base_dir = os.path.dirname(os.path.dirname(self.result_dir))
                     for coordinate in range(len(self.coordinate_list)):
-                        robo_moved = robot_obj.move_to_coordinate(self.coordinate_list[coordinate],base_dir)
+                        robo_moved = robot_obj.move_to_coordinate(self.coordinate_list[coordinate])
+                        self.current_coordinate = self.coordinate_list[coordinate]
                         if robo_moved:
                             if not self.rotation_enabled:
                                 reset_dict, test_duration = self.performing_resets(test_start_time=test_start_time)
@@ -733,6 +737,7 @@ class InteropPortReset(Realm):
                                 for angle in range(len(self.rotation_list)):
                                     robo_rotated = robot_obj.rotate_angle(1,2,self.rotation_list[angle])
                                     if robo_rotated:
+                                        self.current_angle = self.rotation_list[angle]
                                         reset_dict, test_duration = self.performing_resets(test_start_time=test_start_time)
                                     if self.coordinate_list[coordinate] not in self.port_reset_data:
                                         self.port_reset_data[self.coordinate_list[coordinate]] = {}
@@ -742,11 +747,13 @@ class InteropPortReset(Realm):
 
         except Exception as e:
             logger.error(str(e))
+            import traceback
+            traceback.print_exc()
 
     def generate_overall_graph(self, reset_dict=None, figsize=(13, 5), _alignmen=None, remove_border=None,
                                bar_width=0.7, _legend_handles=None, _legend_loc="best", _legend_box=None,
                                _legend_ncol=1,
-                               _legend_fontsize=None, text_font=12, bar_text_rotation=45):
+                               _legend_fontsize=None, text_font=12, bar_text_rotation=45,graph_suffix=""):
         dict_ = ['Port Resets', 'Disconnected', 'Scans', 'Assoc Attempts', "Association Rejection", 'Connected']
         data = dict.fromkeys(dict_)
         data['Port Resets'] = self.reset * len(self.all_selected_devices)
@@ -824,7 +831,7 @@ class InteropPortReset(Realm):
         # print("Final data for overall graph: ", data)
 
         # creating the dataset
-        self.graph_image_name = "overall_graph"
+        self.graph_image_name = "overall_graph{}".format(graph_suffix)
         courses = list(data.keys())
         values = list(data.values())
 
@@ -907,7 +914,7 @@ class InteropPortReset(Realm):
         return "%s.png" % self.graph_image_name
 
     def generate_overall_graph_table(self, reset_dict, device_list):
-        # self.total_resets, self.total_disconnects, self.total_scans, self.total_ass_attemst, self.total_ass_rejects, self.total_connects = [], [], [], [], [], []
+        self.total_resets, self.total_disconnects, self.total_scans, self.total_ass_attemst, self.total_ass_rejects, self.total_connects = [], [], [], [], [], []
         for y, _ in zip(device_list, range(len(device_list))):
             reset_count_ = list(reset_dict.keys())
             reset_count = []
@@ -1228,6 +1235,19 @@ class InteropPortReset(Realm):
         self.lf_report.set_table_title("Test Setup Information")
         self.lf_report.build_table_title()
 
+        self.lf_report.set_obj_html("Overall Port Resets Graphs",
+                                        "The following graph presents an overview of different events during the test, "
+                                        "including Port Resets, Disconnects, Scans, Association Attempts, Association Rejections and Connections. "
+                                        "Each category represents the total count achieved by all clients.<br><br>"
+                                        "1.  Port Resets: Total number of reset occurrences provided as test input.<br>"
+                                        "2.  Disconnects: Total number of disconnects that happened for all clients during the test when WiFi was disabled.<br>"
+                                        "3.  Scans: Total number of scanning states achieved by all clients during the test when the network is re-enabled.<br>"
+                                        "4.  Association Attempts: Total number of association attempts (Associating state) made by all clients after WiFi is re-enabled in the full test.<br>"
+                                        "4.  Association Rejections: Total number of association rejections made by all clients after WiFi is re-enabled in the full test.<br>"
+                                        "6.  Connected: Total number of successful connections (Associated state) achieved by all clients during the test when WiFi is re-enabled.<br>"
+                                        # " Here real clients used is "+ str(self.clients) + "and number of resets provided is " + str(self.reset)
+                                        )
+        self.lf_report.build_objective()
         self.lf_report.test_setup_table(value="Basic Test Information", test_setup_data=test_setup_info)
         for coordinate in range(len(self.coordinate_list)):
             if self.rotation_enabled:
@@ -1235,29 +1255,139 @@ class InteropPortReset(Realm):
                     self.lf_report.set_obj_html(_obj_title=f"Coordinate: {self.coordinate_list[coordinate]} | Rotation Angle: {self.rotation_list[angle]}°",
                                         _obj="")
                     self.lf_report.build_objective()
-                    data = self.qos_data[self.coordinate_list[coordinate]][self.rotation_list[angle]]["data"]
-                    connections_download_avg = self.qos_data[self.coordinate_list[coordinate]][self.rotation_list[angle]]["connections_download_avg"]
-                    connections_upload_avg = self.qos_data[self.coordinate_list[coordinate]][self.rotation_list[angle]]["connections_upload_avg"]
-                    avg_drop_a = self.qos_data[self.coordinate_list[coordinate]][self.rotation_list[angle]]["avg_drop_a"]
-                    avg_drop_b = self.qos_data[self.coordinate_list[coordinate]][self.rotation_list[angle]]["avg_drop_b"]
-                    self.generate_individual_coordinate(self.lf_report, data, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b,coordinate,angle)
+                    
+                    reset_dict = self.port_reset_data[self.coordinate_list[coordinate]][self.rotation_list[angle]]['reset_dict']
+                    graph_suffix = "{}_{}".format(self.coordinate_list[coordinate],self.rotation_list[angle])
+                    graph1 = self.generate_overall_graph(reset_dict=reset_dict, figsize=(13, 5), _alignmen=None, bar_width=0.5,
+                                                 _legend_loc="upper center", _legend_ncol=6, _legend_fontsize=10,
+                                                 _legend_box=(0.5, -0.06), text_font=12,graph_suffix=graph_suffix)
+                    # graph1 = self.generate_per_station_graph()
+                    self.lf_report.set_graph_image(graph1)
+                    self.lf_report.move_graph_image()
+                    self.lf_report.build_graph()
+                    all_devices = self.adb_device_list + self.all_laptops
+
+                    self.generate_overall_graph_table(reset_dict=reset_dict, device_list=all_devices)
+
+                    d_name, device_type, model, user_name, release = [], [], [], [], []  # noqa: F841
+
+                    for y in all_devices:
+                        if "1.1." in y:
+                            d_name.append(self.interop.get_device_details(device=y, query="name"))
+                            device_type.append(self.interop.get_device_details(device=y, query="device-type"))
+                            # model.append(self.interop.get_device_details(device=y, query="model"))
+                            user_name.append(self.interop.get_device_details(device=y, query="user-name"))
+                            # release.append(self.interop.get_device_details(device=y, query="release"))
+                        else:
+                            d_name.append(y)
+                            user_name.append(self.interop.get_laptop_devices_details(device=y, query="host_name"))
+                            hw_version = self.interop.get_laptop_devices_details(device=y, query="hw_version")
+                            if "Linux" in hw_version:
+                                dev_type = "Linux"
+                            elif "Win" in hw_version:
+                                dev_type = "Windows"
+                            elif "Apple" in hw_version:
+                                dev_type = "Apple"
+                            else:
+                                dev_type = ""
+                            device_type.append(dev_type)
+                            # release.append("")
+                    s_no = []
+                    for i in range(len(d_name)):
+                        s_no.append(i + 1)
+                    
+                    table_2 = {
+                        "S.No": s_no,
+                        "Name of the Devices": d_name,
+                        "Hardware Version": user_name,
+                        "Device Type": device_type,
+                        # "Model": model,
+                        # "SDK Release": release,
+                        "Port Resets": self.total_resets,
+                        "Disconnects": self.total_disconnects,
+                        "Scans": self.total_scans,
+                        "Assoc Attemts": self.total_ass_attemst,
+                        "Assoc Rejects": self.total_ass_rejects,
+                        "Connects": self.total_connects
+                    }
+                    print('table2',table_2)
+                    test_setup = pd.DataFrame(table_2)
+                    self.lf_report.set_table_dataframe(test_setup)
+                    self.lf_report.build_table()
             else:
                 self.lf_report.set_obj_html(_obj_title=f"Coordinate: {self.coordinate_list[coordinate]}",
                                     _obj="")
                 self.lf_report.build_objective()
-                data = self.qos_data[self.coordinate_list[coordinate]]["data"]
-                connections_download_avg = self.qos_data[self.coordinate_list[coordinate]]["connections_download_avg"]
-                connections_upload_avg = self.qos_data[self.coordinate_list[coordinate]]["connections_upload_avg"]
-                avg_drop_a = self.qos_data[self.coordinate_list[coordinate]]["avg_drop_a"]
-                avg_drop_b = self.qos_data[self.coordinate_list[coordinate]]["avg_drop_b"]
-                self.generate_individual_coordinate(self.lf_report, data, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b,coordinate,None)
+                reset_dict = self.port_reset_data[self.coordinate_list[coordinate]]['reset_dict']
+                graph_suffix = "{}".format(self.coordinate_list[coordinate])
+                graph1 = self.generate_overall_graph(reset_dict=reset_dict, figsize=(13, 5), _alignmen=None, bar_width=0.5,
+                                                 _legend_loc="upper center", _legend_ncol=6, _legend_fontsize=10,
+                                                 _legend_box=(0.5, -0.06), text_font=12,graph_suffix=graph_suffix)
+                # graph1 = self.generate_per_station_graph()
+                self.lf_report.set_graph_image(graph1)
+                self.lf_report.move_graph_image()
+                self.lf_report.build_graph()
+                all_devices = self.adb_device_list + self.all_laptops
 
+                self.generate_overall_graph_table(reset_dict=reset_dict, device_list=all_devices)
+
+                d_name, device_type, model, user_name, release = [], [], [], [], []  # noqa: F841
+
+                for y in all_devices:
+                    if "1.1." in y:
+                        d_name.append(self.interop.get_device_details(device=y, query="name"))
+                        device_type.append(self.interop.get_device_details(device=y, query="device-type"))
+                        # model.append(self.interop.get_device_details(device=y, query="model"))
+                        user_name.append(self.interop.get_device_details(device=y, query="user-name"))
+                        # release.append(self.interop.get_device_details(device=y, query="release"))
+                    else:
+                        d_name.append(y)
+                        user_name.append(self.interop.get_laptop_devices_details(device=y, query="host_name"))
+                        hw_version = self.interop.get_laptop_devices_details(device=y, query="hw_version")
+                        if "Linux" in hw_version:
+                            dev_type = "Linux"
+                        elif "Win" in hw_version:
+                            dev_type = "Windows"
+                        elif "Apple" in hw_version:
+                            dev_type = "Apple"
+                        else:
+                            dev_type = ""
+                        device_type.append(dev_type)
+                        # release.append("")
+                s_no = []
+                for i in range(len(d_name)):
+                    s_no.append(i + 1)
+
+                table_2 = {
+                    "S.No": s_no,
+                    "Name of the Devices": d_name,
+                    "Hardware Version": user_name,
+                    "Device Type": device_type,
+                    # "Model": model,
+                    # "SDK Release": release,
+                    "Port Resets": self.total_resets,
+                    "Disconnects": self.total_disconnects,
+                    "Scans": self.total_scans,
+                    "Assoc Attemts": self.total_ass_attemst,
+                    "Assoc Rejects": self.total_ass_rejects,
+                    "Connects": self.total_connects
+                }
+                test_setup = pd.DataFrame(table_2)
+                self.lf_report.set_table_dataframe(test_setup)
+                self.lf_report.build_table()
+        self.lf_report.build_footer()
+        self.lf_report.write_html()
+        if self.dowebgui:
+            self.lf_report.write_pdf(_page_size='A4', _orientation='Portrait')
+        else:
+            self.lf_report.write_pdf_with_timestamp(_page_size='A4', _orientation='Portrait') 
 
 
     def create_dict_csv(self, port_reset_dict):
         """
         Aggregate client connection stats from all iterations and save a summary CSV (overall_reset.csv).
         """
+        self.my_debug.append(port_reset_dict)
         i_df = {}
 
         for _, devices in port_reset_dict.items():
@@ -1473,6 +1603,7 @@ INCLUDE_IN_README: False
     else:
         obj.generate_report(reset_dict=reset_dict, test_dur=duration)
 
+    print(obj.my_debug)
     if args.dowebgui:
         obj.result_df['Status'] = 'stopped'
         obj.result_df.to_csv(f"{obj.report_path}/overall_reset.csv", index=False)
