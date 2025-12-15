@@ -515,7 +515,8 @@ class InteropPortReset(Realm):
 
         return local_dict
 
-    def performing_resets(self,test_start_time=None):
+    def performing_resets(self,test_start_time=None,i_df=None):
+        i_df = {} if i_df is None else i_df
         reset_list = []
         for i in range(self.reset):
             reset_list.append(i)
@@ -581,7 +582,7 @@ class InteropPortReset(Realm):
                 get_dicct = self.get_time_from_wifi_msgs(local_dict=local_dict, phn_name=i, timee=timee,
                                                             file_name=f"reset_{r}_log.json", reset_cnt=r)
                 reset_dict[r] = get_dicct
-                self.create_dict_csv(reset_dict)
+                self.create_dict_csv(reset_dict,i_df=i_df)
                 if self.dowebgui:
                     with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host,
                                                                                                         self.test_name),
@@ -730,15 +731,16 @@ class InteropPortReset(Realm):
                         robo_moved = robot_obj.move_to_coordinate(self.coordinate_list[coordinate])
                         self.current_coordinate = self.coordinate_list[coordinate]
                         if robo_moved:
+                            i_df = {}
                             if not self.rotation_enabled:
-                                reset_dict, test_duration = self.performing_resets(test_start_time=test_start_time)
+                                reset_dict, test_duration = self.performing_resets(test_start_time=test_start_time,i_df=i_df)
                                 self.port_reset_data[self.coordinate_list[coordinate]] = {'reset_dict': reset_dict, 'test_duration': test_duration}
                             else:
                                 for angle in range(len(self.rotation_list)):
                                     robo_rotated = robot_obj.rotate_angle(1,2,self.rotation_list[angle])
                                     if robo_rotated:
                                         self.current_angle = self.rotation_list[angle]
-                                        reset_dict, test_duration = self.performing_resets(test_start_time=test_start_time)
+                                        reset_dict, test_duration = self.performing_resets(test_start_time=test_start_time,i_df=i_df)
                                     if self.coordinate_list[coordinate] not in self.port_reset_data:
                                         self.port_reset_data[self.coordinate_list[coordinate]] = {}
                                     self.port_reset_data[self.coordinate_list[coordinate]][self.rotation_list[angle]] = {'reset_dict': reset_dict, 'test_duration': test_duration}
@@ -1383,19 +1385,25 @@ class InteropPortReset(Realm):
             self.lf_report.write_pdf_with_timestamp(_page_size='A4', _orientation='Portrait') 
 
 
-    def create_dict_csv(self, port_reset_dict):
+    def create_dict_csv(self, port_reset_dict,i_df):
         """
         Aggregate client connection stats from all iterations and save a summary CSV (overall_reset.csv).
         """
         self.my_debug.append(port_reset_dict)
-        i_df = {}
 
         for _, devices in port_reset_dict.items():
             if devices is None:
                 continue
+            client_suffix = ""
+            if self.robot_test:
+                if self.rotation_enabled:
+                    client_suffix = "_{}_{}".format(self.current_coordinate, self.current_angle)
+                else:
+                    client_suffix = "_{}".format(self.current_coordinate)
             for client, stats in devices.items():
-                if client not in i_df:
-                    i_df[client] = {
+                client_key = "{}{}".format(client, client_suffix)
+                if client_key not in i_df:
+                    i_df[client_key] = {
                         'ConnectAttempt': 0,
                         'Disconnected': 0,
                         'Scanning': 0,
@@ -1406,21 +1414,24 @@ class InteropPortReset(Realm):
                     }
 
                 # Use safe addition (handles None and missing keys)
-                i_df[client]['ConnectAttempt'] += stats.get('ConnectAttempt', 0) or 0
-                i_df[client]['Disconnected'] += stats.get('Disconnected', 0) or 0
-                i_df[client]['Scanning'] += stats.get('Scanning', 0) or 0
-                i_df[client]['Association Rejection'] += stats.get('Association Rejection', 0) or 0
-                i_df[client]['Connected'] += stats.get('Connected', 0) or 0
-                i_df[client]['Iterations'] += 1
+                i_df[client_key]['ConnectAttempt'] += stats.get('ConnectAttempt', 0) or 0
+                i_df[client_key]['Disconnected'] += stats.get('Disconnected', 0) or 0
+                i_df[client_key]['Scanning'] += stats.get('Scanning', 0) or 0
+                i_df[client_key]['Association Rejection'] += stats.get('Association Rejection', 0) or 0
+                i_df[client_key]['Connected'] += stats.get('Connected', 0) or 0
+                i_df[client_key]['Iterations'] += 1
 
         # Create DataFrame
         df_summary = pd.DataFrame.from_dict(i_df, orient='index').reset_index()
         df_summary = df_summary.rename(columns={'index': 'Client'})
         self.result_df = df_summary.copy()
         # Save and print
-        df_summary.to_csv(f"{self.report_path}/overall_reset.csv", index=False)
+        csv_suffix = ""
+        if self.robot_test:
+            csv_suffix = "_{}".format(self.current_coordinate)
+        df_summary.to_csv(f"{self.report_path}/overall_reset{csv_suffix}.csv", index=False)
         if self.dowebgui:
-            df_summary.to_csv(f"{self.result_dir}/overall_reset.csv", index=False)
+            df_summary.to_csv(f"{self.result_dir}/overall_reset{csv_suffix}.csv", index=False)
         print(df_summary)
 
 
