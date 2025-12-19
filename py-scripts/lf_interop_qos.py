@@ -758,31 +758,32 @@ class ThroughputQOS(Realm):
             columns = ['bps rx a', 'bps rx b']
             individual_device_data[cx] = pd.DataFrame(columns=columns)
         while datetime.now() < end_time or getattr(self, "background_run", None):
-            if self.rotation_enabled:
-                if (datetime.now() - monitor_charge_time).total_seconds() >= 300:
-                    print("Checking battery status (5-minute interval)...")
-                    pause_start = datetime.now()
-                    pause=False
-                    pause,test_stopped_by_user=self.robot.wait_for_battery(stop=self.stop)
-                    if test_stopped_by_user:
-                        break
-                    if pause:
-                        reached = self.robot.move_to_coordinate(curr_coordinate)
-                        if not reached:
-                            test_stopped_by_user=True
+            if self.robot_test:
+                if self.rotation_enabled:
+                    if (datetime.now() - monitor_charge_time).total_seconds() >= 300:
+                        print("Checking battery status (5-minute interval)...")
+                        pause_start = datetime.now()
+                        pause=False
+                        pause,test_stopped_by_user=self.robot.wait_for_battery(stop=self.stop)
+                        if test_stopped_by_user:
                             break
-                        if self.rotation_enabled:
-                            rotation_moni =self.robot.rotate_angle(curr_rotation)
-                            if not rotation_moni:
+                        if pause:
+                            reached = self.robot.move_to_coordinate(curr_coordinate)
+                            if not reached:
                                 test_stopped_by_user=True
                                 break
-                        self.start(False,False)
-                        pause_end = datetime.now()
-                        charge_pause = pause_end - pause_start
-                        end_time += charge_pause
-                        overall_end_time += charge_pause
-                        previous_time=datetime.now()
-                    monitor_charge_time = datetime.now()
+                            if self.rotation_enabled:
+                                rotation_moni =self.robot.rotate_angle(curr_rotation)
+                                if not rotation_moni:
+                                    test_stopped_by_user=True
+                                    break
+                            self.start(False,False)
+                            pause_end = datetime.now()
+                            charge_pause = pause_end - pause_start
+                            end_time += charge_pause
+                            overall_end_time += charge_pause
+                            previous_time=datetime.now()
+                        monitor_charge_time = datetime.now()
             index += 1
             current_time = datetime.now()
             # removed the fields query from endp so that the cx names will be given in the reponse as keys instead of cx_ids
@@ -2416,8 +2417,11 @@ class ThroughputQOS(Realm):
                 "Protocol": (self.traffic_type.strip("lf_")).upper(),
                 "Traffic Direction": self.direction,
                 "TOS": self.tos,
-                "Per TOS Load in Mbps": load
+                "Per TOS Load in Mbps": load,
+                "Coordinates":self.coordinate_list
             }
+            if self.rotation_enabled:
+                test_setup_info["Rotations"] = self.rotation_list
         # Test setup information table for devices in groups
         else:
             group_names = ', '.join(self.qos_data["configuration"].keys())
