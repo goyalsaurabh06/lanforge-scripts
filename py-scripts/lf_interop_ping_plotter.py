@@ -413,7 +413,51 @@ class Ping(Realm):
     def stop_generic(self):
         self.generic_endps_profile.stop_cx()
         self.stop_time = datetime.now()
+    
+    def clear_counter_endp(self):
+        print("genericendp",self.generic_endps_profile.created_endp)
+        if len(self.generic_endps_profile.created_endp) > 0:
+            for endp in self.generic_endps_profile.created_endp:
+                clear_endp = "cli-json/clear_endp_counters"
+                data = {
+                    "endp_name": endp
+                }
+                self.json_post(clear_endp, data)
+        while True:
+            
+            result_data = self.get_results()
+            all_lastresults_empty = True
+            
+            if isinstance(result_data, dict):
+                for station in self.real_sta_list:
+                    if station in result_data.get('name', ''):
+                        if result_data['last results'].strip():
+                            all_lastresults_empty = False
+                            break
+                
+            else:
+                for station in self.real_sta_list:
+                    for entry in result_data:
+                        # print("entered entry")
+                        ping_endp, ping_data = list(entry.keys())[
+                                    0], list(entry.values())[0]
+                        if station in ping_endp:
+                            print("matched",ping_endp)
+                            station_data = entry[ping_endp]
+                            # print("station_data",station_data['last results'].strip())
+                            # print("entry",entry)
+                            if station_data['last results'].strip():
+                                print("hiiii",all_lastresults_empty)
+                                all_lastresults_empty = False
+                                break
+                    if not all_lastresults_empty:
+                        break
+            print("all",all_lastresults_empty)
+            if all_lastresults_empty:
+                logging.info("All stations have empty lastresults – exiting")
+                return
 
+      
     def get_results(self):
         # logging.info(self.generic_endps_profile.created_endp)
         results = self.json_get(
@@ -721,7 +765,9 @@ class Ping(Realm):
     def store_csv(self, data=None,coordinate=None):
         if data is None:
             data = self.result_json
-
+        # print("currentangle",self.currentangle)
+        # print("resultjson",self.result_json)
+        # print("anglejson",self.angle_json)
         if 'status' in data.keys() and data['status'] == 'Aborted':
             return False
         else:
@@ -730,6 +776,7 @@ class Ping(Realm):
             for device, device_data in data.items():
                 if device == 'status':
                     continue
+                # print("rtts",device_data['rtts'])
                 new_dict = {}
                 sequence_numbers = {}
                 for seq in device_data['rtts'].keys():
@@ -1337,7 +1384,7 @@ class Ping(Realm):
                 packet_loss_image = os.path.join(self.ui_report_dir, "live_view_images", f"{test_name}_ping_packet_loss_{floor + 1}.png")
 
                 # Wait for all required images to be generated (up to timeout)
-                timeout = 300 # seconds
+                timeout = 300# seconds
                 start_time = time.time()
 
                 while not (os.path.exists(packet_sent_image) and os.path.exists(packet_recv_image) and os.path.exists(packet_loss_image)):
@@ -1491,8 +1538,8 @@ class Ping(Realm):
             self.add_ping_packet_images(report=report)
 
         coordinate_map = self.generate_overall_data()
-        x_fig_size = max(6,len(self.coordinates_completed)*0.8)
-        y_fig_size = 4
+        # x_fig_size =len(self.coordinates_completed)*0.5+4
+        # y_fig_size = 4
         for key,value in coordinate_map.items():
             if self.rotation_enabled:
                 report.set_table_title("Overall Packetssent vs Received vs dropped of all coordinates at angle {}".format(key))
@@ -1515,7 +1562,7 @@ class Ping(Realm):
                                                 'orange', 'steelblue'],
                                         _color_edge=['black'],
                                         _bar_width=0.15,
-                                        _figsize=(x_fig_size, y_fig_size),
+                                        # _figsize=(x_fig_size, y_fig_size),
                                         _legend_loc="best",
                                         _legend_box=(1.0, 1.0),
                                         _dpi=96,
@@ -2449,10 +2496,10 @@ connectivity problems.
             port, port_data = list(ports.keys())[0], list(ports.values())[0]
             ports_data[port] = port_data
 
-        
+        # initial=False
         # print("durationn",duration)
         
-        logging.info(ping.result_json)
+        # logging.info(ping.result_json)
         
         # if rotation_enabled:
         #     # rotation_list=ping.robot.angles_to_radians(ping.robot.angle_list)
@@ -2475,6 +2522,11 @@ connectivity problems.
                     'dropped': [],
                     # **({'Angle':[]} if rotation_enabled is not False else {}),
                 }
+            # print("beforemonitor",rtts,"bfmonilist",rtts_list,"currentangle",ping.currentangle)
+            # print("beforemonitor",rtts)
+            # if ping.robo_ip:
+            #     if j!=0 and coord!=coord_list[0]:
+            #         initial=True
             ping.result_json={}
             loop_timer = 0
             if rotation_enabled:
@@ -2702,7 +2754,11 @@ connectivity problems.
                                 if not rotation:
                                     break
                         monitor_charge_time=datetime.now()
+                    # if initial:
+                    #     initial=False
+                    #     continue
                     if isinstance(result_data, dict):
+                        
                         for station in ping.real_sta_list:
                             current_device_data = Devices.devices_data[station]
                             # logging.info(current_device_data)
@@ -2775,7 +2831,8 @@ connectivity problems.
                                                 rtt = float(t_data.strip('time='))
                                         rtts[station][seq_number] = rtt
                                         rtts_list.append(rtt)
-
+                                        # print("angle",ping.currentangle)
+                                        # print("rtts_list",rtts)
                                         # finding dropped packets
                                         t_fail = t_fail.split()  # [' drop:', '0', '(0, 0.000)', 'rx:', '28', 'fail:', '0', 'bytes:', '1792', 'min/avg/max:', '2.160/3.422/5.190']
                                         t_drop_val = t_fail[1]  # t_drop_val = '0'
@@ -2899,7 +2956,8 @@ connectivity problems.
                                                         rtt = float(t_data.strip('time='))
                                                 rtts[station][seq_number] = rtt
                                                 rtts_list.append(rtt)
-
+                                                # print("angle",ping.currentangle)
+                                                # print("rtts_list",rtts)
                                                 # finding dropped packets
                                                 t_fail = t_fail.split()  # [' drop:', '0', '(0, 0.000)', 'rx:', '28', 'fail:', '0', 'bytes:', '1792', 'min/avg/max:', '2.160/3.422/5.190']
                                                 t_drop_val = t_fail[1]  # t_drop_val = '0'
@@ -2976,6 +3034,9 @@ connectivity problems.
             
             logging.info('Stopping the cx')
             ping.stop_generic()
+            if args.real and ping.robo_ip:
+                ping.clear_counter_endp()
+            
 
         logging.info(ping.result_json)
 
