@@ -44,7 +44,8 @@ class CaptivePortalHandler:
         # Disables automation info bar
         options.add_argument("--disable-infobars")
 
-        service = Service() 
+        service = Service("/usr/local/bin/chromedriver", log_path="/home/lanforge/chromedriver.log")
+
 
         # 3. Instantiate Driver
         driver = webdriver.Chrome(service=service, options=options)
