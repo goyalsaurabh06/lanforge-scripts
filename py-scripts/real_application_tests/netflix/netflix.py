@@ -35,14 +35,24 @@ class Netflix:
         # self.opt.add_argument("--start-fullscreen")  # request fullscreen on startup
         self.opt.add_argument("--no-sandbox")
         self.opt.add_argument("--disable-blink-features=AutomationControlled")
-        self.opt.add_experimental_option("excludeSwitches", ["enable-automation"])
         self.opt.add_experimental_option("useAutomationExtension", False)
+        self.opt.add_experimental_option("excludeSwitches", ["enable-automation", "disable-component-update"])
+        # set binary for the real Chrome installation
+        self.opt.binary_location = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+
+        # add profile and other args (use add_argument for Python)
+        self.opt.add_argument(r'--user-data-dir=C:/ChromeProfile')   # Chrome will create folder if missing
+        self.opt.add_argument('--no-first-run')
+        self.opt.add_argument('--no-default-browser-check')
+
 
         prefs = {
             # commonly used keys (set both for safety)
             "profile.default_content_setting_values.notifications": 2,  # 1=allow, 2=block
             "profile.managed_default_content_settings.notifications": 2,
             "intl.accept_languages": "en-GB,en",
+            "profile.default_content_setting_values.protected_media_identifier": 1,
+            "profile.default_content_setting_values.geolocation": 1,
         }
         self.opt.add_experimental_option("prefs", prefs)
         self.opt.add_argument("--disable-notifications")
@@ -127,7 +137,7 @@ class Netflix:
         #     EC.element_to_be_clickable(self.PLAY_BTN)
         # )
         # play_button.click()
-        # time.sleep(1000000)  # Let the video play for a bit to gather stats
+        time.sleep(1000000)  # Let the video play for a bit to gather stats
 
     def enable_stats(self):
         print("enable_stats() called...")
