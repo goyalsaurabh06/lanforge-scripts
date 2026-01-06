@@ -120,6 +120,16 @@ class Netflix(Realm):
         ]
         self.credentials = []
         self.cred_index = 0
+        self.mac_list = []
+        self.rssi_list = []
+        self.link_rate_list = []
+        self.ssid_list = []
+        self.serial_list = []
+        self.lanforge_port_list = set()
+        self.url = "http://www.netflix.com/watch/81776760"
+        self.lanforge_os_type = []
+        self.serial_list_str = ""
+        self.user_list = []
 
     def check_gen_cx(self):
         try:
@@ -241,6 +251,157 @@ class Netflix(Realm):
         flask_thread.daemon = True
         flask_thread.start()
 
+    def get_device_data(self):
+        """
+        Collect and correlate device, resource, and port information for real stations.
+
+        This method gathers metadata for devices listed in `self.real_sta_list` by:
+        1. Extracting user-specified resource identifiers from real station entries.
+        2. Querying the '/resource/all' API to map resources to device names,
+        controller IPs, EIDs, and associated users.
+        3. Querying the '/port/all' API to locate ports belonging to the matched
+        resources, preserving the order defined by the real station list.
+        4. Extracting wireless-specific attributes for ports associated with
+        the 'wiphy0' parent device.
+
+        The method builds several internal lists that are later used for endpoint
+        creation, test execution, and result processing.
+
+        Side Effects:
+        - Populates self.device_names with matched device hostnames
+        - Populates self.user_list with users associated with each resource
+        - Populates self.mac_list with MAC addresses for wireless ports
+        - Populates self.rssi_list with signal strength values
+        - Populates self.link_rate_list with RX link rates
+        - Populates self.ssid_list with SSID values
+
+        Notes:
+        - The method preserves the order of devices as specified in
+        `self.real_sta_list`.
+        - Only ports whose parent device is 'wiphy0' are considered wireless
+        and used to collect RSSI, MAC, link rate, and SSID information.
+        - This method does not return any value; all results are stored as
+        instance attributes.
+
+        Returns:
+            None
+        """
+
+        ports_list = []
+        user_resources = [".".join(item.split(".")[:2]) for item in self.real_sta_list]
+
+        # Step 1: Retrieve information about all resources
+        response = self.json_get("/resource/all")
+
+        resource_data_list = response.get("resources", [])
+
+        # Step 2. Loop through the user resources you want to find
+        for user_resource in user_resources:
+
+            # Look through the data to find that user
+            for element in resource_data_list:
+
+                # Check if the user_resource (e.g., "1.1") exists in this dictionary element
+                if user_resource in element:
+                    resource_values = element[user_resource]
+
+                    # Extract the data
+                    self.device_names.append(resource_values["hostname"])
+                    self.user_list.append(resource_values["user"])
+                    ports_list.append(
+                        {
+                            "eid": resource_values["eid"],
+                            "ctrl-ip": resource_values["ctrl-ip"],
+                        }
+                    )
+
+                    # Found it! Stop searching specifically for this user_resource
+                    break
+        self.mac_list = []
+        self.rssi_list = []
+        self.link_rate_list = []
+        self.ssid_list = []
+
+        # Step 3: Retrieve all port information
+        all_ports_response = self.json_get("/port/all")
+        interfaces_list = all_ports_response.get("interfaces", [])
+
+        # Step 4: Find matching wifi ports for our target resources
+        for target_resource in ports_list:
+            target_eid = target_resource["eid"]
+
+            # Search through all available interfaces
+            for interface_entry in interfaces_list:
+                for port_name, port_details in interface_entry.items():
+
+                    # Logic: Extract EID from port name (e.g., "1.1.wlan0" -> "1.1")
+                    current_eid = ".".join(port_name.split(".")[:2])
+
+                    if (
+                        current_eid == target_eid
+                        and port_details.get("parent dev") == "wiphy0"
+                    ):
+                        self.mac_list.append(port_details.get("mac"))
+                        self.rssi_list.append(port_details.get("signal"))
+                        self.link_rate_list.append(port_details.get("rx-rate"))
+                        self.ssid_list.append(port_details.get("ssid"))
+
+    def get_android_device_data(self):
+        """
+        Fetch and process Android device information from the ADB interop API.
+
+        This method queries the '/adb' endpoint to retrieve connected Android
+        device details, matches devices against the configured user list,
+        and extracts relevant metadata for test execution.
+
+        Behavior:
+        - Supports both dictionary and list response formats from the API
+        - Filters devices based on matching 'user-name' entries
+        - Extracts device serial numbers and LANforge resource IDs
+        - Builds LANforge port identifiers in the format: 1.<resource>.eth0
+        - Populates internal lists used for endpoint and test setup
+
+        Side Effects:
+        - Updates self.serial_list with Android device serial numbers
+        - Updates self.lanforge_port_list with LANforge port identifiers
+        - Sets self.lanforge_os_type to 'Linux' for all discovered devices
+        - Generates a comma-separated serial string in self.serial_list_str
+
+        Returns:
+            None
+        """
+        interop_data = self.json_get("/adb")
+        interop_mobile_data = interop_data.get("devices", {})
+
+        if isinstance(interop_mobile_data, dict):
+            for user in self.user_list:
+                if user != "":
+                    if interop_mobile_data.get("user-name") == user:
+
+                        serial = interop_mobile_data.get("name", "")
+                        resource = serial.split(".")[1]
+                        serial_no = serial.split(".")[2]
+                        self.serial_list.append(serial_no)
+                        lanforge_port = f"1.{resource}.eth0"
+                        self.lanforge_port_list.add(lanforge_port)
+
+        else:
+            for user in self.user_list:
+                if user != "":
+                    for mobile_device in interop_mobile_data:
+                        for serial, device_data in mobile_device.items():
+                            if device_data.get("user-name") == user:
+                                resource = serial.split(".")[1]
+                                serial_no = serial.split(".")[2]
+                                self.serial_list.append(serial_no)
+                                lanforge_port = f"1.{resource}.eth0"
+                                self.lanforge_port_list.add(lanforge_port)
+                                break
+
+        self.lanforge_port_list = list(self.lanforge_port_list)
+        self.lanforge_os_type = ["Linux"] * len(self.lanforge_port_list)
+        self.serial_list_str = ",".join(self.serial_list)
+
     def create_generic_endp(self):
         self.wifi_interface_list = [item.split(".")[2] for item in self.real_sta_list]
 
@@ -282,6 +443,27 @@ class Netflix(Realm):
                 self.generic_endps_profile.set_cmd(
                     self.generic_endps_profile.created_endp[i], cmd
                 )
+
+        if self.generic_endps_profile.create(
+            ports=self.lanforge_port_list,
+            sleep_time=0.5,
+            real_client_os_types=self.lanforge_os_type,
+        ):
+            logging.info("Real client generic endpoint creation completed.")
+        else:
+            logging.error("Real client generic endpoint creation failed.")
+            exit(0)
+
+        for i in range(0, len(self.lanforge_os_type)):
+
+            cmd = (
+                "python3 /home/lanforge/lanforge-scripts/py-scripts/real_application_tests/netflix/netflix_android_test.py --url %s --duration %s --devices %s --upstream_port %s "
+            ) % (self.url, self.duration, self.serial_list_str, self.host)
+
+            logging.info(f"Setting command for Android devices: {cmd}")
+            self.generic_endps_profile.set_cmd(
+                self.generic_endps_profile.created_endp[-(i + 1)], cmd
+            )
 
         self.generic_endps_profile.start_cx()
 
@@ -492,6 +674,8 @@ def main():
         netflix_obj.select_real_devices(
             real_sta_list=args.device_list.split(",") if args.device_list else None
         )
+        netflix_obj.get_device_data()
+        netflix_obj.get_android_device_data()
         netflix_obj.create_generic_endp()
         start_time = datetime.now()
         end_time = start_time + timedelta(minutes=args.duration)
