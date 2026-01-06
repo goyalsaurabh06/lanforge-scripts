@@ -106,7 +106,11 @@ class Netflix:
     def simulate_human_movements(self):
         try:
 
-            body = self.driver.find_element(By.TAG_NAME, "body")
+            # Wait up to 10 seconds for the body tag to be present
+            body = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+
             ActionChains(self.driver).move_to_element(body).perform()
 
             for _ in range(random.randint(2, 5)):
