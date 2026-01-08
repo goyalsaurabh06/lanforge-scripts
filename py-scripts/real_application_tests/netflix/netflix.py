@@ -257,11 +257,11 @@ class Netflix:
 
             # Extract videoBuffered from VideoDiag line
             m = re.search(r"videoBuffered=([\d\.]+)", stats_text)
-            self.stats["video_buffered"] = float(m.group(1)) if m else None
+            self.stats["video_buffered(sec)"] = float(m.group(1)) if m else None
 
             # Extract audioBuffered from VideoDiag line
             m = re.search(r"audioBuffered=([\d\.]+)", stats_text)
-            self.stats["audio_buffered"] = float(m.group(1)) if m else None
+            self.stats["audio_buffered(sec)"] = float(m.group(1)) if m else None
 
             m = re.search(
                 r"Playing bitrate \(a\/v\):\s*(\d+)\s*/\s*(\d+)(?:\s*\(\s*(\d+)x(\d+)\s*\))?",
