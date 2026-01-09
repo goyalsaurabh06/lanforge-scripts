@@ -102,6 +102,7 @@ class Netflix:
         self.hostname = socket.gethostname()
         self.duration = duration
         self.upstream_port = upstream_port
+        self.stop_signal = False
 
     def simulate_human_movements(self):
         try:
@@ -119,8 +120,7 @@ class Netflix:
                 ).perform()
                 time.sleep(random.uniform(0.1, 0.3))
         except Exception as e:
-            logging.error(f"Error in simulate_human_movements(): {e}")
-            traceback.print_exc()
+            pass
 
     def get_credentials(self):
         # For demonstration, returning hardcoded credentials
@@ -367,6 +367,27 @@ class Netflix:
         except Exception as e:
             logging.error(f"An error occurred during logout: {e}")
             traceback.print_exc()
+    
+    def check_stop_signal(self):
+        """Check the stop signal from the Flask server."""
+        try:
+            endpoint_url = f"http://{self.upstream_port}:5010/check_stop"
+
+            response = requests.get(endpoint_url)  # Replace with your Flask server URL
+            if response.status_code == 200:
+
+                stop_signal_from_server = response.json().get("stop", False)
+
+                # Only update if the server's stop signal is True
+                if stop_signal_from_server:
+                    self.stop_signal = True
+                    print("Stop signal received from the server. Exiting the loop.")
+                else:
+
+                    print("No stop signal received from the server. Continuing.")
+            return self.stop_signal
+        except Exception as e:
+            print(f"Error checking stop signal: {e}")
 
 
 def main():
@@ -390,6 +411,8 @@ def main():
         while datetime.now() < end_time:
             netflix.extract_stats()
             netflix.send_stats()
+            if netflix.check_stop_signal():
+                break
             time.sleep(1)  # Interval between stats collection
 
         # netflix.logout()

@@ -103,7 +103,6 @@ class Netflix(Realm):
         self.real_sta_data_dict = {}
         self.real_sta_list = []
         self.wifi_interface_list = []
-        self.stop_signal = False
         self.header = [
             "timestamp",
             "total_frames",
@@ -130,6 +129,7 @@ class Netflix(Realm):
         self.lanforge_os_type = []
         self.serial_list_str = ""
         self.user_list = []
+        self.stop_signal = False
 
     def check_gen_cx(self):
         try:
@@ -242,6 +242,10 @@ class Netflix(Realm):
                     ]
                     writer.writerow(row)
             return jsonify({"status": "success"})
+        
+        @app.route('/check_stop', methods=['GET'])
+        def check_stop():
+            return jsonify({"stop": self.stop_signal})
 
         def run_flask():
             app.run(host="0.0.0.0", port=5010, debug=False, use_reloader=False)
