@@ -13,7 +13,8 @@ class RobotClass:
         self.result_directory = None
         self.runtime_dir = None
         self.ip = ""
-
+        self.testname = None
+ 
     def move_to_coordinate(self, coordinate=None, result_dir=None):
         url = f"http://{self.robo_ip}/cmd/nav_name"
         data = {"coordinate": coordinate}

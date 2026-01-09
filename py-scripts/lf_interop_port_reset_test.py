@@ -91,7 +91,9 @@ class InteropPortReset(Realm):
                  robot_ip=None,
                  robot_port=None,
                  coordinate=None,
-                 rotation=None
+                 rotation=None,
+                 get_live_view=False,
+                 total_floors=0,
                  ):
         super().__init__(lfclient_host=host,
                          lfclient_port=8080)
@@ -133,6 +135,9 @@ class InteropPortReset(Realm):
         self.port_reset_data = {}
         self.i_df = {}
         self.robot_test = robot_test
+        self.coordinate_df = {}
+        self.get_live_view = get_live_view
+        self.total_floors = total_floors
         if robot_test:
             self.robot_ip = robot_ip
             self.robot_port = robot_port
@@ -170,6 +175,14 @@ class InteropPortReset(Realm):
         real_device_data = self.base_interop_profile.devices_data
         if len(self.real_sta_list) == 0:
             logging.error('There are no real devices in this testbed. Aborting the test.')
+            if self.dowebgui:
+                self.result_df = pd.DataFrame.from_dict(self.result_df, orient="index")
+                self.result_df["Status"] = "Stopped"
+                if self.robot_test:
+                    self.result_df.to_csv(f"{self.result_dir}/overall_reset_{self.current_coordinate}.csv", index=False)
+                else:
+                    self.result_df.to_csv(f"{self.result_dir}/overall_reset.csv", index=False)
+                pass
             exit(0)
         logging.info(f"{self.real_sta_list}")
 
@@ -515,6 +528,80 @@ class InteropPortReset(Realm):
 
         return local_dict
 
+    def aggregate_reset_dict(self,reset_dict):
+        aggregated = {}
+        for reset_id in sorted(reset_dict.keys()):
+            if reset_dict[reset_id] is None:
+                continue
+            devices = reset_dict[reset_id]
+
+            for device, stats in devices.items():
+
+                if device not in aggregated:
+                    aggregated[device] = {}
+
+                for key, value in stats.items():
+
+                    if key in ("Remarks", "cx time (us)"):
+                        aggregated[device][key] = value
+
+                    else:
+                        print("key here",key)
+                        print("value here",value)
+                        if key not in aggregated[device]:
+                            aggregated[device][key] = 0
+                        aggregated[device][key] += int(value) if str(value).isdigit() else 0
+
+        return dict(aggregated)
+
+    def generate_coordinate_csv(self,reset_dict,r):
+        print('at coordinate {} and reset {}'.format(self.current_coordinate,r))
+        cols = ['Client','ConnectAttempt','Disconnected','Scanning','Association Rejection','Connected','Iterations','Status','coordinate']
+        if self.rotation_enabled:
+            cols.append('angle')
+        if self.rotation_enabled:
+            suffix = "_{}_{}".format(self.current_coordinate,self.current_angle)
+        else:
+            suffix = "_{}".format(self.current_coordinate)
+        aggregated_dict = self.aggregate_reset_dict(reset_dict=reset_dict)
+        if self.current_coordinate not in self.coordinate_df:
+            self.coordinate_df[self.current_coordinate] = {}
+        df = pd.DataFrame(columns=cols)
+        for client,stats in aggregated_dict.items():
+            client_name = "{}{}".format(client,suffix)
+            self.coordinate_df[self.current_coordinate][client_name] = stats.copy()
+            self.coordinate_df[self.current_coordinate][client_name]["coordinate"] = self.current_coordinate
+            self.coordinate_df[self.current_coordinate][client_name]["Status"] = "running"
+
+            if self.rotation_enabled:
+                self.coordinate_df[self.current_coordinate][client_name]["angle"] = self.current_angle
+        rows = []
+        for client, stats in self.coordinate_df[self.current_coordinate].items():
+            row = {
+                'Client': client,
+                'ConnectAttempt': stats.get('ConnectAttempt', 0),
+                'Disconnected': stats.get('Disconnected', 0),
+                'Scanning': stats.get('Scanning', 0),
+                'Association Rejection': stats.get('Association Rejection', 0),
+                'Connected': stats.get('Connected', 0),
+                'Iterations': r+1,
+                'Status': stats.get('Status','NA'),
+                'coordinate': stats.get('coordinate','NA')
+            }
+            if self.rotation_enabled:
+                row['angle'] = stats.get('angle','NA')
+            rows.append(row)
+
+        df = pd.DataFrame(rows, columns=cols)
+        self.result_df = df.copy()
+
+        df.to_csv(f"{self.report_path}/overall_reset_{self.current_coordinate}.csv", index=False)
+        if self.dowebgui:
+            df.to_csv(f"{self.result_dir}/overall_reset_{self.current_coordinate}.csv", index=False)
+        print('endddd')
+
+
+        
     def performing_resets(self,test_start_time=None,i_df=None):
         i_df = {} if i_df is None else i_df
         reset_list = []
@@ -582,7 +669,11 @@ class InteropPortReset(Realm):
                 get_dicct = self.get_time_from_wifi_msgs(local_dict=local_dict, phn_name=i, timee=timee,
                                                             file_name=f"reset_{r}_log.json", reset_cnt=r)
                 reset_dict[r] = get_dicct
-                self.create_dict_csv(reset_dict,i_df=i_df)
+                if self.robot_test:
+                    self.generate_coordinate_csv(reset_dict=reset_dict,r=r)
+                else:
+                    self.create_dict_csv(reset_dict,i_df={})
+                # self.create_dict_csv(reset_dict,i_df=i_df)
                 if self.dowebgui:
                     with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host,
                                                                                                         self.test_name),
@@ -661,8 +752,12 @@ class InteropPortReset(Realm):
                 logging.info("There is no active devices please check system.")
                 logging.info('Aborting the test.')
                 if self.dowebgui:
+                    self.result_df = pd.DataFrame.from_dict(self.result_df, orient="index")
                     self.result_df["Status"] = "Stopped"
-                    self.result_df.to_csv(f"{self.result_dir}/overall_reset.csv", index=False)
+                    if self.robot_test:
+                        self.result_df.to_csv(f"{self.result_dir}/overall_reset_{self.current_coordinate}.csv", index=False)
+                    else:
+                        self.result_df.to_csv(f"{self.result_dir}/overall_reset.csv", index=False)
                     pass
                 exit(1)
             else:
@@ -725,16 +820,21 @@ class InteropPortReset(Realm):
                         self.rotation_enabled=True
 
                     robot_obj = RobotClass()
-                    robot_obj.robo_ip = "127.0.0.1:5000"  
+                    robot_obj.robo_ip = "127.0.0.1:5000"
+                    robot_obj.testname = self.test_name  
+                    robot_obj.runtime_dir = self.result_dir
                     base_dir = os.path.dirname(os.path.dirname(self.result_dir))
                     for coordinate in range(len(self.coordinate_list)):
-                        robo_moved = robot_obj.move_to_coordinate(self.coordinate_list[coordinate])
+                        
+                        robo_moved = robot_obj.move_to_coordinate(self.coordinate_list[coordinate],base_dir)
                         self.current_coordinate = self.coordinate_list[coordinate]
                         if robo_moved:
                             i_df = {}
                             if not self.rotation_enabled:
                                 reset_dict, test_duration = self.performing_resets(test_start_time=test_start_time,i_df=i_df)
                                 self.port_reset_data[self.coordinate_list[coordinate]] = {'reset_dict': reset_dict, 'test_duration': test_duration}
+                                print("sleeping 15 secs to update")
+                                time.sleep(15)
                             else:
                                 for angle in range(len(self.rotation_list)):
                                     robo_rotated = robot_obj.rotate_angle(1,2,self.rotation_list[angle])
@@ -744,7 +844,8 @@ class InteropPortReset(Realm):
                                     if self.coordinate_list[coordinate] not in self.port_reset_data:
                                         self.port_reset_data[self.coordinate_list[coordinate]] = {}
                                     self.port_reset_data[self.coordinate_list[coordinate]][self.rotation_list[angle]] = {'reset_dict': reset_dict, 'test_duration': test_duration}
-                            
+                                    print("sleeping 15 secs to update")
+                                    time.sleep(15)
 
 
         except Exception as e:
@@ -1197,7 +1298,34 @@ class InteropPortReset(Realm):
             # self.lf_report.move_data(directory="log", _file_name="port_reset.log")
         except Exception as e:
             logging.warning(str(e))
-    
+
+    def add_live_view_images_to_report(self):
+        """
+        This function looks for throughput and RSSI images for each floor
+        in the 'live_view_images' folder within `self.result_dir`.
+        It waits up to **60 seconds** for each image. If an image is found,
+        it's added to the `report` on a new page; otherwise, it's skipped.
+        """
+        for floor in range(0, int(self.total_floors)):
+            port_reset_img_path = os.path.join(self.result_dir, "live_view_images", f"port_reset_{self.test_name}_{floor + 1}.png")
+            print('port_reset_img_path',port_reset_img_path)
+            timeout = 60  # seconds
+            start_time = time.time()
+
+            while not (os.path.exists(port_reset_img_path)):
+                if time.time() - start_time > timeout:
+                    print("Timeout: Images not found within 60 seconds.")
+                    break
+                time.sleep(1)
+            # while not os.path.exists(port_reset_img_path):
+            #     if os.path.exists(port_reset_img_path):
+            #         break
+            if os.path.exists(port_reset_img_path):
+                self.lf_report.set_custom_html('<div style="page-break-before: always;"></div>')
+                self.lf_report.build_custom()
+                self.lf_report.set_custom_html(f'<img src="file://{port_reset_img_path}"></img>')
+                self.lf_report.build_custom()
+
     def generate_report_for_robo(self):
         date = str(datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
         # self.lf_report.move_data(_file_name="overall_reset_test.log")
@@ -1236,6 +1364,7 @@ class InteropPortReset(Realm):
 
         self.lf_report.set_table_title("Test Setup Information")
         self.lf_report.build_table_title()
+        self.lf_report.test_setup_table(value="Basic Test Information", test_setup_data=test_setup_info)
 
         self.lf_report.set_obj_html("Overall Port Resets Graphs",
                                         "The following graph presents an overview of different events during the test, "
@@ -1250,7 +1379,8 @@ class InteropPortReset(Realm):
                                         # " Here real clients used is "+ str(self.clients) + "and number of resets provided is " + str(self.reset)
                                         )
         self.lf_report.build_objective()
-        self.lf_report.test_setup_table(value="Basic Test Information", test_setup_data=test_setup_info)
+        if (self.dowebgui and self.get_live_view):
+            self.add_live_view_images_to_report()
         for coordinate in range(len(self.coordinate_list)):
             if self.rotation_enabled:
                 for angle in range(len(self.rotation_list)):
@@ -1553,7 +1683,6 @@ INCLUDE_IN_README: False
                         action="store_true")
 
     parser.add_argument('--dowebgui', help="If true will execute script for webgui", action='store_true')
-
     parser.add_argument('--result_dir', help='Specify the result dir to store the runtime logs', default='')
     parser.add_argument('--test_name', help='Specify test name to store the runtime csv results', default=None)
     parser.add_argument("--robot_test", help='to trigger robot test', action='store_true')
@@ -1561,6 +1690,8 @@ INCLUDE_IN_README: False
     parser.add_argument('--robot_port', type=str,default=5000, help='port Robot HTTP service is running on')
     parser.add_argument('--coordinate', type=str, default='', help="The coordinate contains list of coordinates to be ")
     parser.add_argument('--rotation', type=str, default='', help="The set of angles to rotate at a particular point")
+    parser.add_argument('--get_live_view', help="If true will heatmap will be generated from testhouse automation WebGui ", action='store_true')
+    parser.add_argument('--total_floors', help="Total floors from testhouse automation WebGui ", default="0")
     args = parser.parse_args()
 
     # help summary
@@ -1601,24 +1732,29 @@ INCLUDE_IN_README: False
                            robot_ip=args.robot_ip,
                            robot_port=args.robot_port,
                            coordinate=args.coordinate,
-                           rotation=args.rotation
+                           rotation=args.rotation,
+                           get_live_view= args.get_live_view,
+                           total_floors = args.total_floors
                            )
     obj.selecting_devices_from_available()
     if obj.robot_test:
         obj.run()
     else:
         reset_dict, duration = obj.run()
-    
+    if args.dowebgui:
+        obj.result_df['Status'] = 'stopped'
+        if obj.robot_test:
+            obj.result_df.to_csv(f"{obj.report_path}/overall_reset_{obj.current_coordinate}.csv", index=False)
+            obj.result_df.to_csv(f"{obj.result_dir}/overall_reset_{obj.current_coordinate}.csv", index=False)
+        else:
+            obj.result_df.to_csv(f"{obj.report_path}/overall_reset.csv", index=False)
+            obj.result_df.to_csv(f"{obj.result_dir}/overall_reset.csv", index=False)
     if obj.robot_test:
         obj.generate_report_for_robo()
     else:
         obj.generate_report(reset_dict=reset_dict, test_dur=duration)
 
     print(obj.my_debug)
-    if args.dowebgui:
-        obj.result_df['Status'] = 'stopped'
-        obj.result_df.to_csv(f"{obj.report_path}/overall_reset.csv", index=False)
-        obj.result_df.to_csv(f"{obj.result_dir}/overall_reset.csv", index=False)
 
 
 if __name__ == '__main__':
