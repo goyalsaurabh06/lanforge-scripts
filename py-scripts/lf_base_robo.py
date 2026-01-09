@@ -4,6 +4,8 @@ import os
 import json
 import math
 import logging
+import csv
+from datetime import datetime
 
 
 class RobotClass:
@@ -36,7 +38,7 @@ class RobotClass:
         # Create waypoint list on initialization
         if self.robo_ip is not None:
             self.create_waypointlist()
-
+        open("robot_x_y.csv", "w").write("timestamp,x,y\n")
     def create_waypointlist(self):
         """
         Fetch  data from the robot and Map each point name to its x, y, and theta in waypoint_list.
@@ -107,7 +109,7 @@ class RobotClass:
                 data = response.json()
                 battery = data.get("battery", 0)
                 retries = 0
-                if battery <= 20:
+                if battery <= 10:
                     pause = True
                     if stop is not None:
                         stop()
@@ -187,8 +189,10 @@ class RobotClass:
             matched = False
             try:
                 response = requests.get(status_url, timeout=5)
+                self.update_robot_pose()
                 response.raise_for_status()
                 nav_status = response.json()
+                time.sleep(0.8)
             except (requests.RequestException, ValueError) as e:
                 logging.info("[ERROR] Failed to get robot status: {}".format(e))
                 time.sleep(5)
@@ -302,3 +306,23 @@ class RobotClass:
                 angle += 360
             result.append(round(math.radians(angle), 2))
         return result
+
+
+
+    def update_robot_pose(self):
+        pose_url = f"http://{self.robo_ip}/reeman/pose"
+
+        try:
+            response = requests.get(pose_url, timeout=5)
+            response.raise_for_status()
+            data_pose = response.json()
+
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+            x = data_pose.get("x", 0)
+            y = data_pose.get("y", 0)
+
+            with open("robot_x_y.csv", "a") as f:
+                f.write(f"{timestamp},{x},{y}\n")
+
+        except Exception as e:
+            logging.error("Failed to get robot pose: %s", e)

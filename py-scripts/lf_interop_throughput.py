@@ -184,6 +184,8 @@ Realm = realm.Realm
 from lf_report import lf_report  # noqa: E402
 from lf_graph import lf_bar_graph_horizontal  # noqa: E402
 # from lf_graph import lf_line_graph  # noqa: E402
+import matplotlib 
+matplotlib.use('Agg')  
 
 from datetime import datetime, timedelta  # noqa: E402
 
