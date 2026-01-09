@@ -83,7 +83,7 @@ class Adb:
     def check_stop_signal(self):
         """Check the stop signal from the Flask server."""
         try:
-            endpoint_url = f"http://{self.upstream_port}:5002/check_stop"
+            endpoint_url = f"http://{self.upstream_port}:5010/check_stop"
 
             response = requests.get(endpoint_url)
             if response.status_code == 200:
