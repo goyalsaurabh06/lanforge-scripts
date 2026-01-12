@@ -201,10 +201,6 @@ class Netflix(Realm):
         """
         app = Flask(__name__)
 
-        @app.route("/check_stop", methods=["GET"])
-        def check_stop():
-            return jsonify({"stop": self.stop_signal})
-
         @app.route("/get_credentials", methods=["GET"])
         def get_credentials():
             if self.cred_index < len(self.credentials):
