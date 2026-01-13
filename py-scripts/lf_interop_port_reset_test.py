@@ -810,7 +810,6 @@ class InteropPortReset(Realm):
                 logging.info(f"Health Status for the Android Devices: {health}")
 
                 logging.info(f"Health Status for the Laptop Devices: {health_for_laptops}")
-
                 # Resting Starts from here
                 if not self.robot_test:
                     reset_dict, test_duration = self.performing_resets(test_start_time=test_start_time)

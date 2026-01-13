@@ -229,6 +229,7 @@ class BaseInteropWifi(Realm):
         logging.info(f"Active Device list: {devices}")
         for i in devices:
             release_ver = self.get_device_details(query="release", device=i)
+            print('realse version',release_ver)
             for j in self.release:
                 if release_ver == j:
                     # check if the release is supported in supported sdk  version
@@ -1161,21 +1162,21 @@ class RealDevice(Realm):
                 await self.laptops_obj.reboot_laptop(port_list=selected_laptops)
                 time.sleep(5)
         if self.disconnect_devices:
-            if (selected_androids != []):
-                await self.androids_obj.forget_all_networks(port_list=selected_androids)
-                time.sleep(10)
             if (selected_laptops != []):
                 await self.laptops_obj.disconnect_wifi(port_list=selected_laptops)
                 time.sleep(10)
         # if self.reboot==False and self.disconnect_devices==False:
         if (selected_androids != []):
             await self.androids_obj.stop_app(port_list=selected_androids)
+            if (self.disconnect_devices):
+                await self.androids_obj.forget_all_networks(port_list=selected_androids)
+                time.sleep(10)
             # await self.androids_obj.forget_all_networks(port_list=selected_androids)
             await self.androids_obj.configure_wifi(port_list=selected_androids)
 
             if (selected_laptops == []):
                 logging.info("WAITING FOR 120 seconds")
-                time.sleep(120)
+                time.sleep(60)
         if (selected_laptops != []):
             # if laptop['eap_method']!="" or laptop['eap_method']!= None or laptop['eap_method']!="NA":
             await self.laptops_obj.rm_station(port_list=selected_laptops)
