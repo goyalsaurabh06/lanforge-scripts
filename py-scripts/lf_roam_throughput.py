@@ -46,16 +46,12 @@ class ROAMThroughput(RobotClass):
         self.stop_event = threading.Event()
         self.roam_robo_thread = None
         self.roam_throughput_thread = None
-        # self.roam_robo_thread.start()
-        # self.roam_throughput_thread.start()
-
-        # # wait for completion
-        # self.roam_robo_thread.join()
-        # self.roam_throughput_thread.join()
         logger.info("Moving robot to first coordinate to start the test")
         self.move_to_coordinate(self.coordinates_list[0])
         open("robot_x_y.csv", "w").write("timestamp,x,y\n")
         self.perform_throughput_test()
+        self.perform_roam_robot()
+        
    
     def perform_roam_robot(self):
         try:
@@ -63,8 +59,7 @@ class ROAMThroughput(RobotClass):
             first_coordinate = self.coordinates_list[0]
 
             while self.total_roams == -1 or self.roam_count < self.total_roams:
-                if self.stop_event.is_set():
-                    break
+
 
                 logger.info("Starting roam cycle %s", self.roam_count + 1)
 
@@ -73,16 +68,12 @@ class ROAMThroughput(RobotClass):
                     # print("Battery pause:", pause, "stopped:", stopped)
                     if pause:
                         self.throughput_tester.start_specific(self.created_cx_lists_keys)
-                    if self.stop_event.is_set():
-                        break
-                    self.move_to_coordinate(coordinate)
+                    self.move_to_coordinate(coordinate, monitor_function=self.monitor_throughput)
 
-                if self.stop_event.is_set():
-                    break
                 pause, stopped = self.wait_for_battery(stop=self.throughput_tester.stop)
                 if pause:
                     self.throughput_tester.start_specific(self.created_cx_lists_keys)
-                self.move_to_coordinate(first_coordinate)
+                self.move_to_coordinate(first_coordinate, monitor_function=self.monitor_throughput)
 
                 self.roam_count += 1
                 logger.info("Completed roam cycle %s", self.roam_count)
@@ -90,7 +81,6 @@ class ROAMThroughput(RobotClass):
         except KeyboardInterrupt:
             logger.info("Test interrupted by user")
         finally:
-            self.stop_event.set()
             logger.info("Test completed")
 
 
@@ -136,72 +126,52 @@ class ROAMThroughput(RobotClass):
                 # print("Starting Throughput Test",created_cx_lists_keys)
                 self.throughput_tester.start_specific(self.created_cx_lists_keys)
                 time.sleep(10)
-                open("roam_throughput.csv","w").write("Timestamp,MAC,Channel,BSSID,Signal,Download (Mbps),Upload (Mbps)\n")
+                # open("roam_throughput.csv","w").write("Timestamp,MAC,Channel,BSSID,Signal,Download (Mbps),Upload (Mbps)\n")
 
-                self.roam_throughput_thread = threading.Thread(target=self.monitor_throughput,daemon=True)
-                self.roam_robo_thread = threading.Thread(target=self.perform_roam_robot,daemon=True)
-                self.roam_throughput_thread.start()
-                self.roam_robo_thread.start()
-
-                # wait for completion
-                self.roam_throughput_thread.join()
-                self.roam_robo_thread.join()
 
         except KeyboardInterrupt:
             logger.info("Test interrupted by user")
         finally:
-            self.stop_event.set()
-
-            if self.throughput_tester:
-                self.throughput_tester.stop()
-                self.throughput_tester.cleanup()
-            if self.roam_robo_thread:
-                self.roam_robo_thread.join()
-
-            if self.roam_throughput_thread:
-                self.roam_throughput_thread.join()
-
-            logger.info("Throughput thread exited")
+            logger.info("Test completed")
     
     def monitor_throughput(self):
-        while not self.stop_event.is_set():
-            try:
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        
+        try:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
-                port_manager_data_lists = [self.throughput_tester.mac_id_list]
-                port_manager_data_lists.extend(
-                    self.get_signal_and_channel_data(
-                        self.throughput_tester.input_devices_list
-                    )
+            port_manager_data_lists = [self.throughput_tester.mac_id_list]
+            port_manager_data_lists.extend(
+                self.get_signal_and_channel_data(
+                    self.throughput_tester.input_devices_list
                 )
+            )
 
-                layer3_data = self.throughput_tester.get_layer3_endp_data()
+            layer3_data = self.throughput_tester.get_layer3_endp_data()
 
-                device_dict = {}
+            device_dict = {}
 
-                for device in self.throughput_tester.input_devices_list:
-                    device_dict[device] = [timestamp]
+            for device in self.throughput_tester.input_devices_list:
+                device_dict[device] = [timestamp]
 
-                for i, device in enumerate(self.throughput_tester.input_devices_list):
-                    for extra in port_manager_data_lists[:4]:
-                        device_dict[device].append(extra[i])
+            for i, device in enumerate(self.throughput_tester.input_devices_list):
+                for extra in port_manager_data_lists[:4]:
+                    device_dict[device].append(extra[i])
 
-                for i, device in enumerate(self.throughput_tester.input_devices_list):
-                    v = layer3_data[i]
-                    data = v[:2]
-                    if v[4] != 'Run':
-                        data.extend([0, 0])
-                    device_dict[device].extend(data)
+            for i, device in enumerate(self.throughput_tester.input_devices_list):
+                v = layer3_data[i]
+                data = v[:2]
+                if v[4] != 'Run':
+                    data.extend([0, 0])
+                device_dict[device].extend(data)
 
-                for _, data in device_dict.items():
-                    open("roam_throughput.csv", "a").write(
-                        ",".join(map(str, data)) + "\n"
-                    )
+            # for _, data in device_dict.items():
+            #     open("roam_throughput.csv", "a").write(
+            #         ",".join(map(str, data)) + "\n"
+            #     )
+            return device_dict  
 
-                time.sleep(1)
-
-            except Exception as e:
-                logger.error("Throughput error: %s", e)
+        except Exception as e:
+            logger.error("Throughput error: %s", e)
 
     def get_signal_and_channel_data(self, station_names):
         """
@@ -269,7 +239,7 @@ def main():
     early_args, remaining_args = base_parser.parse_known_args()
     help_summary = """\
 
-    EXAMPLE CLI: python3 lf_roam_throughput.py --robot_ip 192.168.210.82 --coordinates 8,9,10 --mgr_ip 192.168.207.78 --port 8080 --download 1000000 --traffic_type lf_tcp --total_roams 50 --upstream_port
+    EXAMPLE CLI: python3 lf_roam_throughput.py --robot_ip 192.168.210.82 --coordinates 8,9,10 --mgr_ip 192.168.207.78 --port 8080 --download 1000000 --traffic_type lf_tcp --total_roams 50 --upstream_port eth2
     """
     if early_args.help_summary:
         print(help_summary)

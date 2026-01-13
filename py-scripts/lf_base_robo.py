@@ -38,7 +38,8 @@ class RobotClass:
         # Create waypoint list on initialization
         if self.robo_ip is not None:
             self.create_waypointlist()
-        open("robot_x_y.csv", "w").write("timestamp,x,y\n")
+        # open("robot_x_y.csv", "w").write("timestamp,x,y\n")
+        open("roam_throughput.csv","w").write("Timestamp,MAC,Channel,BSSID,Signal,Download (Mbps),Upload (Mbps),Robot x,Robot y\n")
     def create_waypointlist(self):
         """
         Fetch  data from the robot and Map each point name to its x, y, and theta in waypoint_list.
@@ -164,13 +165,13 @@ class RobotClass:
                 stopped = True
                 return pause, stopped
 
-    def move_to_coordinate(self, coord):
+    def move_to_coordinate(self, coord, monitor_function=None):
         """
         Move the robot to a specified position.
 
         Args:
             coord (str): position name.
-
+            monitor_function (function, optional): Function to call during movement.
         Returns:
             tuple: (matched (bool), abort (bool))
         """
@@ -189,10 +190,17 @@ class RobotClass:
             matched = False
             try:
                 response = requests.get(status_url, timeout=5)
-                self.update_robot_pose()
+                if monitor_function:
+                    x_coord, y_coord=self.get_robot_pose()
+                    device_dict = monitor_function()
+                    for _, data in device_dict.items():
+                        
+                        data.extend([x_coord, y_coord])
+                        open("roam_throughput.csv", "a").write(
+                            ",".join(map(str, data)) + "\n"
+                        )
                 response.raise_for_status()
-                nav_status = response.json()
-                time.sleep(0.8)
+                nav_status = response.json()                
             except (requests.RequestException, ValueError) as e:
                 logging.info("[ERROR] Failed to get robot status: {}".format(e))
                 time.sleep(5)
@@ -309,7 +317,7 @@ class RobotClass:
 
 
 
-    def update_robot_pose(self):
+    def get_robot_pose(self):
         pose_url = f"http://{self.robo_ip}/reeman/pose"
 
         try:
@@ -317,12 +325,10 @@ class RobotClass:
             response.raise_for_status()
             data_pose = response.json()
 
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
             x = data_pose.get("x", 0)
             y = data_pose.get("y", 0)
 
-            with open("robot_x_y.csv", "a") as f:
-                f.write(f"{timestamp},{x},{y}\n")
+            return x, y
 
         except Exception as e:
             logging.error("Failed to get robot pose: %s", e)
