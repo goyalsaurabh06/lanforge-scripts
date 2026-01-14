@@ -39,7 +39,9 @@ class RobotClass:
         if self.robo_ip is not None:
             self.create_waypointlist()
         # open("robot_x_y.csv", "w").write("timestamp,x,y\n")
-        open("roam_throughput.csv","w").write("Timestamp,MAC,Channel,BSSID,Signal,Download (Mbps),Upload (Mbps),Robot x,Robot y\n")
+        # open("roam_throughput.csv","w").write("Timestamp,MAC,Channel,BSSID,Signal,Download (Mbps),Upload (Mbps),Robot x,Robot y\n")
+        open("bandsteering.csv","w").write("Timestamp,MAC,Channel,BSSID,Signal,Robot x,Robot y\n")
+
     def create_waypointlist(self):
         """
         Fetch  data from the robot and Map each point name to its x, y, and theta in waypoint_list.
@@ -190,13 +192,20 @@ class RobotClass:
             matched = False
             try:
                 response = requests.get(status_url, timeout=5)
+                x_coord, y_coord=self.get_robot_pose()
                 if monitor_function:
-                    x_coord, y_coord=self.get_robot_pose()
                     device_dict = monitor_function()
                     for _, data in device_dict.items():
-                        
                         data.extend([x_coord, y_coord])
-                        open("roam_throughput.csv", "a").write(
+                        # time.sleep(4)
+                        with open("bandsteering.csv", "r") as f:
+                            last_line = f.readlines()[-1]
+                            last_bssid = last_line.split(",")[3]
+                            if last_bssid == data[3]:
+                                continue
+
+
+                        open("bandsteering.csv", "a").write(
                             ",".join(map(str, data)) + "\n"
                         )
                 response.raise_for_status()
