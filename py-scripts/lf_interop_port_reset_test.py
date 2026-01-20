@@ -138,6 +138,7 @@ class InteropPortReset(Realm):
         self.coordinate_df = {}
         self.get_live_view = get_live_view
         self.total_floors = total_floors
+        self.robo_test_stopped = False
         if robot_test:
             self.robot_ip = robot_ip
             self.robot_port = robot_port
@@ -176,13 +177,7 @@ class InteropPortReset(Realm):
         if len(self.real_sta_list) == 0:
             logging.error('There are no real devices in this testbed. Aborting the test.')
             if self.dowebgui:
-                self.result_df = pd.DataFrame.from_dict(self.result_df, orient="index")
-                self.result_df["Status"] = "Stopped"
-                if self.robot_test:
-                    self.result_df.to_csv(f"{self.result_dir}/overall_reset_{self.current_coordinate}.csv", index=False)
-                else:
-                    self.result_df.to_csv(f"{self.result_dir}/overall_reset.csv", index=False)
-                pass
+                raise RuntimeError("here are no real devices in this testbed. Aborting the test.")
             exit(0)
         logging.info(f"{self.real_sta_list}")
 
@@ -682,6 +677,7 @@ class InteropPortReset(Realm):
                         if data["status"] != "Running":
                             logging.info('Test is stopped by the user')
                             test_stopped = True
+                            self.robo_test_stopped = True
                             break
             logging.info('{}'.format(reset_dict))
             if test_stopped:
@@ -752,14 +748,7 @@ class InteropPortReset(Realm):
                 logging.info("There is no active devices please check system.")
                 logging.info('Aborting the test.')
                 if self.dowebgui:
-                    self.result_df = pd.DataFrame.from_dict(self.result_df, orient="index")
-                    self.result_df["Status"] = "Stopped"
-                    if self.robot_test:
-                        self.result_df.to_csv(f"{self.result_dir}/overall_reset_{self.current_coordinate}.csv", index=False)
-                    else:
-                        self.result_df.to_csv(f"{self.result_dir}/overall_reset.csv", index=False)
-                    pass
-                exit(1)
+                    raise RuntimeError("There is no active devices please check system.")
             else:
                 for i in range(len(self.adb_device_list)):
                     self.phn_name.append(self.adb_device_list[i].split(".")[2])
@@ -824,7 +813,8 @@ class InteropPortReset(Realm):
                     robot_obj.runtime_dir = self.result_dir
                     base_dir = os.path.dirname(os.path.dirname(self.result_dir))
                     for coordinate in range(len(self.coordinate_list)):
-                        
+                        if self.robo_test_stopped:
+                            break
                         robo_moved = robot_obj.move_to_coordinate(self.coordinate_list[coordinate],base_dir)
                         self.current_coordinate = self.coordinate_list[coordinate]
                         if robo_moved:
@@ -845,6 +835,8 @@ class InteropPortReset(Realm):
                                     self.port_reset_data[self.coordinate_list[coordinate]][self.rotation_list[angle]] = {'reset_dict': reset_dict, 'test_duration': test_duration}
                                     print("sleeping 15 secs to update")
                                     time.sleep(15)
+                                    print("debug extra timeeee")
+                                    time.sleep(60)
 
 
         except Exception as e:
@@ -1386,8 +1378,18 @@ class InteropPortReset(Realm):
                     self.lf_report.set_obj_html(_obj_title=f"Coordinate: {self.coordinate_list[coordinate]} | Rotation Angle: {self.rotation_list[angle]}°",
                                         _obj="")
                     self.lf_report.build_objective()
-                    
-                    reset_dict = self.port_reset_data[self.coordinate_list[coordinate]][self.rotation_list[angle]]['reset_dict']
+                    coord_key = self.coordinate_list[coordinate]
+                    angle_key = self.rotation_list[angle]
+
+                    if (
+                        coord_key in self.port_reset_data and
+                        angle_key in self.port_reset_data[coord_key] and
+                        'reset_dict' in self.port_reset_data[coord_key][angle_key]
+                    ):
+                        reset_dict = self.port_reset_data[coord_key][angle_key]['reset_dict']
+                    else:
+                        continue
+                    # reset_dict = self.port_reset_data[self.coordinate_list[coordinate]][self.rotation_list[angle]]['reset_dict']
                     graph_suffix = "{}_{}".format(self.coordinate_list[coordinate],self.rotation_list[angle])
                     graph1 = self.generate_overall_graph(reset_dict=reset_dict, figsize=(13, 5), _alignmen=None, bar_width=0.5,
                                                  _legend_loc="upper center", _legend_ncol=6, _legend_fontsize=10,
@@ -1449,7 +1451,16 @@ class InteropPortReset(Realm):
                 self.lf_report.set_obj_html(_obj_title=f"Coordinate: {self.coordinate_list[coordinate]}",
                                     _obj="")
                 self.lf_report.build_objective()
-                reset_dict = self.port_reset_data[self.coordinate_list[coordinate]]['reset_dict']
+                coord_key = self.coordinate_list[coordinate]
+
+                if (
+                    coord_key in self.port_reset_data and
+                    'reset_dict' in self.port_reset_data[coord_key]
+                ):
+                    reset_dict = self.port_reset_data[coord_key]['reset_dict']
+                else:
+                    continue
+                # reset_dict = self.port_reset_data[self.coordinate_list[coordinate]]['reset_dict']
                 graph_suffix = "{}".format(self.coordinate_list[coordinate])
                 graph1 = self.generate_overall_graph(reset_dict=reset_dict, figsize=(13, 5), _alignmen=None, bar_width=0.5,
                                                  _legend_loc="upper center", _legend_ncol=6, _legend_fontsize=10,
