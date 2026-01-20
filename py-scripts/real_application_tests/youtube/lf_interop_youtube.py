@@ -585,7 +585,7 @@ class Youtube(Realm):
                 self.devices_list.append(csv_file_path)
 
                 file_exists = os.path.isfile(csv_file_path)
-                headers = ["Instance Name", "TimeStamp", "Viewport", "DroppedFrames", "TotalFrames", "CurrentRes", "OptimalRes", "BufferHealth"]
+                headers = ["Instance Name", "TimeStamp", "Viewport", "DroppedFrames", "TotalFrames", "CurrentRes", "OptimalRes", "BufferHealth", "VideoCodec", "AudioCodec", "ConnectionSpeedKbps", "NetworkActivityKB", "LiveLatency(sec)"]
 
                 with open(csv_file_path, mode='a', newline='') as file:
                     writer = csv.writer(file)
