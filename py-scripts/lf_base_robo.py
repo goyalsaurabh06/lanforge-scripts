@@ -34,6 +34,8 @@ class RobotClass:
         self.runtime_dir = None
         self.ip = None
         self.testname = None
+        self.report_folder_path = None
+        self.current_coordinate = None
 
         # Create waypoint list on initialization
         if self.robo_ip is not None:
@@ -192,22 +194,38 @@ class RobotClass:
             matched = False
             try:
                 response = requests.get(status_url, timeout=5)
+                next_coordinate = response.json().get("goal", "")
                 x_coord, y_coord=self.get_robot_pose()
                 if monitor_function:
+                    if(self.current_coordinate == next_coordinate):
+                        continue
                     device_dict = monitor_function()
-                    for _, data in device_dict.items():
+                    for device, data in device_dict.items():
                         data.extend([x_coord, y_coord])
-                        # time.sleep(4)
-                        with open("bandsteering.csv", "r") as f:
-                            last_line = f.readlines()[-1]
-                            last_bssid = last_line.split(",")[3]
-                            if last_bssid == data[3]:
-                                continue
+                        data.extend([self.current_coordinate, next_coordinate])
 
+                        file_path = os.path.join(self.report_folder_path, f"{device}.csv")
 
-                        open("bandsteering.csv", "a").write(
-                            ",".join(map(str, data)) + "\n"
-                        )
+                        last_bssid = None
+
+                        with open(file_path, "r") as f:
+                            lines = f.readlines()
+
+                            # if len(lines) > 1: 
+                            last_line = lines[-1]
+                            last_bssid = last_line.strip().split(",")[4] 
+                            index_number = len(lines) 
+                            # else:
+                            #     index_number = 1
+
+                        # if last_bssid is not None and last_bssid == data[3]:
+                        #     continue
+
+                        data.insert(0, index_number)
+                        with open(file_path, "a") as f:
+                            f.write(",".join(map(str, data)) + "\n")
+                    time.sleep(4)
+
                 response.raise_for_status()
                 nav_status = response.json()                
             except (requests.RequestException, ValueError) as e:
@@ -226,6 +244,7 @@ class RobotClass:
             state = nav_status.get("res", "")
             distance = nav_status.get("dist", "")
             if goal == coord and state == 3 and distance < 0.5:
+                self.current_coordinate = goal
                 matched = True
                 break
 
@@ -323,8 +342,6 @@ class RobotClass:
                 angle += 360
             result.append(round(math.radians(angle), 2))
         return result
-
-
 
     def get_robot_pose(self):
         pose_url = f"http://{self.robo_ip}/reeman/pose"
