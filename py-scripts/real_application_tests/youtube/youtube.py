@@ -16,6 +16,7 @@ import re
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import random
+import platform
 
 
 class YouTube(object):
@@ -388,6 +389,19 @@ Example:
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
+
+    if platform.system() == "Windows":
+        adguard_path = os.path.join(
+            "C:\\", "Program Files (x86)", "LANforge-Server", "adguard"
+        )
+    elif platform.system() == "Linux":
+        adguard_path = os.path.join(os.sep, "home", "lanforge", "adguard")
+    elif platform.system() == "Darwin":  # macOS
+        adguard_path = os.path.join(os.sep, "Users", "lanforge", "adguard")
+    else:
+        raise Exception("Unsupported OS")
+
+    options.add_argument(f"load-extension={adguard_path}")
 
     driver = webdriver.Chrome(
         service=service, options=options
