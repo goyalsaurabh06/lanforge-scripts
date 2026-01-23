@@ -312,6 +312,7 @@ class Candela(Realm):
         layer3: (Boolean : optional) Default : False To Delete all layer3 connections
         layer4: (Boolean : optional) Default : False To Delete all layer4 connections
         """
+        return
         if self.no_cleanup:
             return
         if layer3:
