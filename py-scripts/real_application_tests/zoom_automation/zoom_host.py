@@ -16,6 +16,7 @@ import socket
 import argparse
 import json
 import pickle
+import pyautogui
 if sys.platform.lower() == "darwin":
     pyperclip.set_clipboard('pbcopy')
 else:
@@ -71,7 +72,7 @@ class ZoomHost:
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-notifications")
         chrome_options.add_experimental_option("prefs", prefs)
-        chrome_options.add_argument("--use-fake-ui-for-media-stream")
+        # chrome_options.add_argument("--use-fake-ui-for-media-stream")
 
         chrome_options.add_argument("--disable-extensions")
         chrome_options.add_argument("--disable-infobars")
@@ -296,6 +297,13 @@ class ZoomHost:
 
         elif audio_join_btn.text.lower() == "mute":
             print("already unmuted")
+        
+        # try sharing screen
+        try:
+            time.sleep(3)
+            self.share_screen()
+        except Exception as e:
+            print("error in sharing screen at login", e)
         self.wait.until(EC.presence_of_element_located((By.XPATH,
                                                         "//*[@id='audioOptionMenu']")))
         self.driver.execute_script("document.querySelector('#audioOptionMenu button').click()")
@@ -691,10 +699,9 @@ class ZoomHost:
 
     def update_login_completed(self):
         endpoint_url = f"{self.base_url}/login_completed"
-        data = {"login_completed": 1}  # Assuming you want to mark login as completed
 
         try:
-            response = requests.post(endpoint_url, json=data)
+            response = requests.get(endpoint_url)
             if response.status_code == 200:
                 print("Login completed status updated successfully.")
             else:
@@ -854,6 +861,42 @@ class ZoomHost:
                 print(f"Failed to send stats. Status code: {response.status_code}")
         except requests.RequestException as e:
             print(f"Request error: {e}")
+    
+    def move_mouse_to_browser_center(self):
+        rect = self.driver.get_window_rect()
+        center_x = rect["x"] + rect["width"] // 2
+        center_y = rect["y"] + rect["height"] // 2
+
+        print(f"[INFO] Moving mouse to browser center: ({center_x}, {center_y})")
+        pyautogui.moveTo(center_x, center_y, duration=0.3)
+        pyautogui.click()
+
+    def share_screen(self):
+        print("sharing screen now")
+        self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".footer-button-base__button.sharing-entry-button-container")))
+        self.driver.execute_script("document.querySelector('.footer-button-base__button.sharing-entry-button-container').click()")
+        time.sleep(2)
+        print("Share Screen clicked")
+        
+        # Handle system popup
+        time.sleep(1)
+        print("Focusing on system popup...")
+        self.move_mouse_to_browser_center()
+
+        time.sleep(0.5)
+        print("[INFO] Pressing Tab, Tab, Tab, Tab...")
+        pyautogui.press('tab')
+        time.sleep(0.3)
+        pyautogui.press('tab')
+        time.sleep(0.3)
+        pyautogui.press('tab')
+        time.sleep(0.3)
+        pyautogui.press('tab')
+        time.sleep(1)
+        pyautogui.press('return')
+        
+        print("[INFO] Entire Screen shared successfully")
+        time.sleep(1)
 
 
 if __name__ == "__main__":
