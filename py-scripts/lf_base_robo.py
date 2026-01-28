@@ -237,7 +237,7 @@ class RobotClass:
                 navdata['Canbee_angle'] = ''
             with open(self.nav_data_path, 'w') as x:
                 json.dump(navdata, x, indent=4)
-        if self.do_bandsteering:
+        if monitor_function and self.do_bandsteering:
             return matched,abort,all_dataframes
         return matched, abort
 

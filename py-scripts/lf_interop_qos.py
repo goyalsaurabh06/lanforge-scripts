@@ -220,7 +220,8 @@ class ThroughputQOS(Realm):
                  coordinate=None,
                  rotation=None,
                  rotation_enabled=None,
-                 angle_list=None):
+                 angle_list=None,
+                 do_bandsteering=False):
         super().__init__(lfclient_host=host,
                          lfclient_port=port)
         self.ssid_list = []
@@ -308,6 +309,10 @@ class ThroughputQOS(Realm):
         self.get_live_view = get_live_view
         self.total_floors = total_floors
         self.qos_data = {}
+        self.throughput_data = []
+        self.band_steering_df = []
+        self.do_bandsteering = do_bandsteering
+        self.track_coordinates = []
         # Initializing robot test parameters
         self.robot_test = robot_test
         if robot_test:
@@ -826,6 +831,7 @@ class ThroughputQOS(Realm):
                             rates_data['.'.join(port.split('.')[:2]) + ' rx_rate'].append(port_data['rx-rate'])
                             rates_data['.'.join(port.split('.')[:2]) + ' tx_rate'].append(port_data['tx-rate'])
                             rates_data['.'.join(port.split('.')[:2]) + ' RSSI'].append(port_data['signal'])
+                            rates_data['.'.join(port.split('.')[:2]) + ' BSSID'].append(port_data['ap'])
                 cx_list = list(self.cx_profile.created_cx.keys())
                 # t_response data order - [rx rate(last)_A,rx rate(last)_B,rx drop % A,rx drop %B] A or B will considered based upon the name in L3 Endps tab
                 for cx in cx_list:
@@ -911,10 +917,18 @@ class ThroughputQOS(Realm):
                     for col_keys, col_values in rates_data.items():
                         self.overall[-1].update({
                             col_keys: col_values[-1]})
+                    if self.do_bandsteering:
+                        robot_x, robot_y = self.robot.get_robot_pose()
+                        self.overall[-1]["robot_x"] = robot_x
+                        self.overall[-1]["robot_y"] = robot_y
+                        self.overall[-1]["from_coordinate"] = self.track_coordinates[-2]
+                        self.overall[-1]["to_coordinate"] = self.track_coordinates[-1]
+
                     # Appending the data according to the time gap (for webgui)
                     if self.dowebgui and (current_time - previous_time).total_seconds() >= time_break:
                         self.df_for_webui.append(self.overall[-1])
                         previous_time = current_time
+                    
 
                 elif self.direction == "Upload":
                     self.overall.append({
@@ -941,6 +955,13 @@ class ThroughputQOS(Realm):
                     for col_keys, col_values in rates_data.items():
                         self.overall[-1].update({
                             col_keys: col_values[-1]})
+                    if self.do_bandsteering:
+                        robot_x, robot_y = self.robot.get_robot_pose()
+                        self.overall[-1]["robot_x"] = robot_x
+                        self.overall[-1]["robot_y"] = robot_y
+                        self.overall[-1]["from_coordinate"] = self.track_coordinates[-2]
+                        self.overall[-1]["to_coordinate"] = self.track_coordinates[-1]
+
                     # Appending the data according to the time gap (for webgui)
                     if self.dowebgui and (current_time - previous_time).total_seconds() >= time_break:
                         self.df_for_webui.append(self.overall[-1])
@@ -970,10 +991,21 @@ class ThroughputQOS(Realm):
                     for col_keys, col_values in rates_data.items():
                         self.overall[-1].update({
                             col_keys: col_values[-1]})
+                    if self.do_bandsteering:
+                        robot_x, robot_y = self.robot.get_robot_pose()
+                        self.overall[-1]["robot_x"] = robot_x
+                        self.overall[-1]["robot_y"] = robot_y
+                        self.overall[-1]["from_coordinate"] = self.track_coordinates[-2]
+                        self.overall[-1]["to_coordinate"] = self.track_coordinates[-1]
                     # Appending the data according to the time gap (for webgui)
                     if self.dowebgui and (current_time - previous_time).total_seconds() >= time_break:
                         self.df_for_webui.append(self.overall[-1])
                         previous_time = current_time
+            # print("self.overall",self.overall)
+            # print("throughput",throughput)
+            # return 1, 1, 1, 1, 1, 1, 1, 1
+            if self.do_bandsteering:
+                self.band_steering_df.append(self.overall[-1])
             if self.dowebgui == "True":
                 for key, value in t_response.items():
                     row_data = [value[0], value[1]]
@@ -981,10 +1013,15 @@ class ThroughputQOS(Realm):
                 for port, df in individual_device_data.items():
                     df.to_csv(f"{runtime_dir}/{port}.csv", index=False)
                 df1 = pd.DataFrame(self.df_for_webui)
+                print("df_for_webgui",self.df_for_webui)
                 if not self.robot_test:
                     df1.to_csv('{}/overall_throughput.csv'.format(runtime_dir), index=False)
                 else:
-                    df1.to_csv('{}/overall_throughput_{}.csv'.format(runtime_dir, curr_coordinate), index=False)
+                    if self.do_bandsteering:
+                        df1 = pd.DataFrame(self.band_steering_df)
+                        df1.to_csv('{}/overall_throughput.csv'.format(runtime_dir), index=False)
+                    else:
+                        df1.to_csv('{}/overall_throughput_{}.csv'.format(runtime_dir, curr_coordinate), index=False)
                 with open(runtime_dir + "/../../Running_instances/{}_{}_running.json".format(self.ip, self.test_name), 'r') as file:
                     data = json.load(file)
                     if data["status"] != "Running":
@@ -1025,6 +1062,9 @@ class ThroughputQOS(Realm):
                     else:
                         time_break = 120
             else:
+                if self.do_bandsteering:
+                    df1 = pd.DataFrame(self.band_steering_df)
+                    df1.to_csv('overall_throughput.csv', index=False)
                 time_break = 1
             # average upload download and drop is calculated
             for ind, _k in enumerate(throughput):
@@ -1032,6 +1072,19 @@ class ThroughputQOS(Realm):
                 avg_download[ind].append(throughput[ind][0])
                 avg_drop_a[ind].append(throughput[ind][2])
                 avg_drop_b[ind].append(throughput[ind][3])
+            
+            if self.do_bandsteering:
+                self.band_steering_df.append(self.overall[-1])
+                df = pd.DataFrame(self.band_steering_df)
+                self.throughput_data.append(throughput.copy())
+                # # band_steering_data = {"dataframe":df,
+                # #                       "throughput":throughput,
+                # #                       "avg_upload":avg_upload,
+                # #                       "avg_download":avg_download,
+                # #                       "avg_drop_a":avg_drop_a,
+                # #                       "avg_drop_b":avg_drop_b,
+                #                       }
+                return df
 
         if self.robot_test and self.dowebgui:
             last_entry = self.df_for_webui[-1].copy()
@@ -1286,6 +1339,19 @@ class ThroughputQOS(Realm):
                         selected_real_clients_names=None, config_devices="", iot_summary=None):
         # getting ssid list for devices, on which the test ran
         self.ssid_list = self.get_ssid_list(self.input_devices_list)
+        print(
+            f"data: {data}\n"
+            f"input_setup_info: {input_setup_info}\n"
+            f"connections_download_avg: {connections_download_avg}\n"
+            f"connections_upload_avg: {connections_upload_avg}\n"
+            f"avg_drop_a: {avg_drop_a}\n"
+            f"avg_drop_b: {avg_drop_b}\n"
+            f"report_path: {report_path}\n"
+            f"result_dir_name: {result_dir_name}\n"
+            f"selected_real_clients_names: {selected_real_clients_names}\n"
+            f"config_devices: {config_devices}\n"
+            f"iot_summary: {iot_summary}"
+        )
 
         if selected_real_clients_names is not None:
             self.num_stations = selected_real_clients_names
@@ -2559,6 +2625,116 @@ class ThroughputQOS(Realm):
                 self.robot.testname = self.test_name
             passed_coord_list = []
             abort = False
+        if self.do_bandsteering:
+            self.overall = []
+            self.df_for_webui = []
+            matched, abort = self.robot.move_to_coordinate(coord_list[0])
+            self.robot.do_bandsteering = True
+            if matched:
+                logger.info("Reached the coordinate {}".format(coord_list[0]))
+                self.track_coordinates.append(coord_list[0])
+                self.start(False,False)
+            if abort:
+                logger.info("test aborted")
+                exit(0)
+            cycles = 1
+            cycle_coords = [coord_list[(1 + i) % len(coord_list)] for i in range(cycles * len(coord_list))]
+            for coordinate in cycle_coords:
+                self.track_coordinates.append(coordinate)
+                matched, abort, band_steering_data = self.robot.move_to_coordinate(
+                    coordinate,
+                    monitor_function=lambda: self.monitor()
+                                                )
+                if matched:
+                    logger.info("Reached the coordinate {}".format(coordinate))
+                if abort:
+                    break
+            self.stop()
+
+            # throughput = band_steering_data["throughput"]
+            upload = []
+            download = []
+            drop_a = []
+            drop_b = []
+            avg_upload = []
+            avg_download = []
+            avg_drop_a = []
+            avg_drop_b = []
+            [(upload.append([]), download.append([]), drop_a.append([]), drop_b.append([]), avg_upload.append([]), avg_download.append([]), avg_drop_a.append([]), avg_drop_b.append([])) for i in
+         range(len(self.cx_profile.created_cx))]
+            dropa_connections = dict.fromkeys(list(self.cx_profile.created_cx.keys()), float(0))
+            dropb_connections = dict.fromkeys(list(self.cx_profile.created_cx.keys()), float(0))
+            connections_upload = dict.fromkeys(list(self.cx_profile.created_cx.keys()), float(0))
+            connections_download = dict.fromkeys(list(self.cx_profile.created_cx.keys()), float(0))
+            connections_upload_avg = dict.fromkeys(list(self.cx_profile.created_cx.keys()), float(0))
+            connections_download_avg = dict.fromkeys(list(self.cx_profile.created_cx.keys()), float(0))
+            # # rx_rate list is calculated
+            for thpt in self.throughput_data:
+                for ind, _k in enumerate(thpt):
+                    avg_upload[ind].append(thpt[ind][1])
+                    avg_download[ind].append(thpt[ind][0])
+                    avg_drop_a[ind].append(thpt[ind][2])
+                    avg_drop_b[ind].append(thpt[ind][3])
+            throughput = self.throughput_data[-1]
+            for index, _key in enumerate(throughput):
+                upload[index].append(throughput[index][1])
+                download[index].append(throughput[index][0])
+                drop_a[index].append(throughput[index][2])
+                drop_b[index].append(throughput[index][3])
+                
+            # Rounding of the results upto 2 decimals
+            upload_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in upload]
+            download_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in download]
+            drop_a_per = [float(round(sum(i) / len(i), 2)) for i in drop_a]
+            drop_b_per = [float(round(sum(i) / len(i), 2)) for i in drop_b]
+            avg_upload_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in avg_upload]
+            avg_download_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in avg_download]
+            avg_drop_a_per = [float(round(sum(i) / len(i), 2)) for i in avg_drop_a]
+            avg_drop_b_per = [float(round(sum(i) / len(i), 2)) for i in avg_drop_b]
+            keys = list(connections_download.keys())
+            # Updated the calculated values to the respective connections in dictionary
+            for i in range(len(download_throughput)):
+                connections_download.update({keys[i]: download_throughput[i]})
+            for i in range(len(upload_throughput)):
+                connections_upload.update({keys[i]: upload_throughput[i]})
+            for i in range(len(avg_download_throughput)):
+                connections_download_avg.update({keys[i]: avg_download_throughput[i]})
+            for i in range(len(avg_upload_throughput)):
+                connections_upload_avg.update({keys[i]: avg_upload_throughput[i]})
+            for i in range(len(avg_drop_a_per)):
+                dropa_connections.update({keys[i]: avg_drop_a_per[i]})
+            for i in range(len(avg_drop_b_per)):
+                dropb_connections.update({keys[i]: avg_drop_b_per[i]})
+            logger.info("connections download {}".format(connections_download))
+            logger.info("connections {}".format(connections_upload))
+            test_results = {'test_results': []}
+            data = {}
+            test_results['test_results'].append(self.evaluate_qos(connections_download, connections_upload, drop_a_per, drop_b_per))
+            data.update(test_results)
+            input_setup_info = {
+                "contact": "support@candelatech.com"
+            }
+            self.generate_report(
+                data=data,
+                input_setup_info=input_setup_info,
+                report_path=self.result_dir,
+                connections_upload_avg=connections_upload_avg,
+                connections_download_avg=connections_download_avg,
+                avg_drop_a=dropa_connections,
+                avg_drop_b=dropb_connections)
+            exit(0)
+
+
+
+
+
+
+        
+
+
+
+
+
         for coordinate in coord_list:
             if self.robot_ip:
                 if self.test_stopped_by_user:
@@ -3138,6 +3314,7 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
     optional.add_argument('--robot_ip', type=str, default='localhost', help='hostname for where Robot server is running')
     optional.add_argument('--coordinate', type=str, default='', help="The coordinate contains list of coordinates to be ")
     optional.add_argument('--rotation', type=str, default='', help="The set of angles to rotate at a particular point")
+    optional.add_argument('--do_bandsteering', help='Enable bandsteering', action='store_true')
     # IOT ARGS
     parser.add_argument('--iot_test', help="If true will execute script for iot", action='store_true')
     optional.add_argument('--iot_ip',
@@ -3288,7 +3465,8 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
                                        coordinate=args.coordinate,
                                        rotation=args.rotation,
                                        rotation_enabled=rotation_enabled,
-                                       angle_list=angle_list
+                                       angle_list=angle_list,
+                                       do_bandsteering=args.do_bandsteering
                                        )
         throughput_qos.os_type()
         _, configured_device, _, configuration = throughput_qos.phantom_check()
@@ -3359,6 +3537,8 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
         connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b = throughput_qos.monitor()
         logger.info("connections download {}".format(connections_download))
         logger.info("connections upload {}".format(connections_upload))
+        print("the df",throughput_qos.band_steering_df)
+        exit(0)
         throughput_qos.stop()
         time.sleep(5)
         test_results['test_results'].append(throughput_qos.evaluate_qos(connections_download, connections_upload, drop_a_per, drop_b_per))
@@ -3390,6 +3570,7 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
         )
         df1 = pd.DataFrame(throughput_qos.df_for_webui)
         df1.to_csv('{}/overall_throughput.csv'.format(args.result_dir, ), index=False)
+        
     if args.group_name:
         throughput_qos.generate_report(
             data=data,
