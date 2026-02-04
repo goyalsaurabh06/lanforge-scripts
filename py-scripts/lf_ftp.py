@@ -326,7 +326,8 @@ class FtpTest(LFCliBase):
         self.robot_obj = {}
         self.do_bandsteering = do_bandsteering
         self.cycles = cycles
-
+        self.rx_rate_val = []
+        self.max_bytes_rd = []
         logger.info("Test is Initialized")
 
     def query_realclients(self):
@@ -1039,7 +1040,25 @@ class FtpTest(LFCliBase):
         return result
 
     # FOR WEB-UI // function usd to fetch runtime values and fill the csv.
-
+    def aggregate_rx_bytes(self,rx_rate_val, max_bytes_rd):
+        for j in range(len(rx_rate_val[0])):
+            rx_rate_sum = 0
+            non_zero = 0
+            for i in range(len(rx_rate_val)):
+                if rx_rate_val[i][j] != 0:
+                    rx_rate_sum += rx_rate_val[i][j]
+                    non_zero += 1
+            rx_rate_average = rx_rate_sum / non_zero if non_zero > 0 else 0
+            self.rx_rate[j] = round(rx_rate_average, 4)
+        dataset = self.rx_rate
+        dataset = [round(x / 1000000, 4) for x in dataset]  # converting bps to mbps
+        # calculating max in bytes rd
+        if len(max_bytes_rd) == 0:
+            max_bytes_rd = list(self.bytes_rd)
+        for i in range(len(max_bytes_rd)):
+            self.bytes_rd[i] = max(max_bytes_rd[i], self.bytes_rd[i])
+        return list(rx_rate_val),list(max_bytes_rd),list(dataset)
+    
     def monitor_for_runtime_csv(self):
 
         time_now = datetime.now()
@@ -1055,7 +1074,6 @@ class FtpTest(LFCliBase):
         rx_rate_val = []
         client_id_list = []
         test_stopped_by_user = False
-        print("self input",self.input_devices_list)
         for port in self.input_devices_list:
             if port not in self.individual_device_data:
                 columns = ['TIMESTAMP', 'Bytes-rd', 'total urls', 'download_rate', 'rx_rate', 'tx_rate', 'RSSI', 'BSSID', 'Channel']
@@ -1124,7 +1142,6 @@ class FtpTest(LFCliBase):
             self.data['client_id'] = client_id_list
             self.data['total_err'] = self.total_err
 
-            rx_rate_val.append(list(self.rx_rate))
             for i, port in enumerate(self.input_devices_list):
                 try:
                     row_data = [current_time, self.bytes_rd[i], self.url_data[i], self.rx_rate[i], self.port_rx_rate[i], self.tx_rate[i], self.rssi_list[i], self.bssid_list[i],self.channel_list[i]]
@@ -1139,25 +1156,17 @@ class FtpTest(LFCliBase):
                     logger.error("An exception occurred:\n%s", tb_str)
                     exit(1)
             # calculating average for rx_rate
-            for j in range(len(rx_rate_val[0])):
-                rx_rate_sum = 0
-                non_zero = 0
-                for i in range(len(rx_rate_val)):
-                    if rx_rate_val[i][j] != 0:
-                        rx_rate_sum += rx_rate_val[i][j]
-                        non_zero += 1
-                rx_rate_average = rx_rate_sum / non_zero if non_zero > 0 else 0
-                self.rx_rate[j] = round(rx_rate_average, 4)
-            dataset = self.rx_rate
-            dataset = [round(x / 1000000, 4) for x in dataset]  # converting bps to mbps
-            self.rx_rate = dataset
+            if self.do_bandsteering:
+                self.rx_rate_val.append(list(self.rx_rate))
+            else:
+                rx_rate_val.append(list(self.rx_rate))
+            
+            if self.do_bandsteering:
+                self.rx_rate_val, self.max_bytes_rd, dataset = self.aggregate_rx_bytes(self.rx_rate_val,self.max_bytes_rd)
+            else:
+                rx_rate_val, max_bytes_rd, dataset = self.aggregate_rx_bytes(rx_rate_val,max_bytes_rd)
             self.data['Rx Rate(1m)'] = self.rx_rate
-            # calculating max in bytes rd
-            if len(max_bytes_rd) == 0:
-                max_bytes_rd = list(self.bytes_rd)
-            for i in range(len(max_bytes_rd)):
-                self.bytes_rd[i] = max(max_bytes_rd[i], self.bytes_rd[i])
-            max_bytes_rd = list(self.bytes_rd)
+            self.rx_rate = dataset
 
             self.data['Bytes RD'] = self.bytes_rd
 
@@ -1298,7 +1307,7 @@ class FtpTest(LFCliBase):
 
     def get_device_details(self):
         dataset = []
-        self.channel_list, self.mode_list, self.ssid_list, self.uc_avg, self.uc_max, self.url_data, self.uc_min, self.bytes_rd, self.rx_rate = [], [], [], [], [], [], [], [], []
+        self.channel_list, self.mode_list, self.ssid_list, self.uc_avg, self.uc_max, self.url_data, self.uc_min, self.bytes_rd, self.rx_rate, self.bssid_list = [], [], [], [], [], [], [], [], [], []
         self.total_err = []
         if self.clients_type == "Real":
             self.get_port_data()
@@ -3075,6 +3084,13 @@ class FtpTest(LFCliBase):
                 report.set_custom_html('<hr>')
                 report.build_custom()
 
+    # def clear_l4_counters(self):
+    #     for cx in self.cx_list:
+    #         self.json_post("cli-json/clear_endp_counters",{"endp_name" : cx})
+    #         time.sleep(2)
+    #     print('cleared counters for all cx_list')
+    #     time.sleep(10)
+
     def perform_robo(self):
         """
         Controls robot movement through a list of coordinates.
@@ -3112,7 +3128,7 @@ class FtpTest(LFCliBase):
                 if test_stopped_by_user:
                     break
                 # Check for battery status before moving to next coordinate
-                if_paused, test_stopped_by_user = self.robot_obj.wait_for_battery()
+                if_paused, test_stopped_by_user, test_status = self.robot_obj.wait_for_battery(monitor_function=lambda: self.monitor_for_runtime_csv())
                 # If test is stopped by user during battery wait
                 if test_stopped_by_user:
                     break
