@@ -31,12 +31,13 @@ logger = logging.getLogger(__name__)
 
 
 class GoogleMeetHost:
-    def __init__(self, email, password, duration, upstream_port_ip):
-        self.email = email
-        self.password = password
-        self.duration = duration
+    def __init__(self, upstream_port_ip):
+        self.email = None
+        self.password = None
         self.upstream_port_ip = upstream_port_ip
         self.meeting_url = str()
+        self.start_time = None
+        self.end_time = None
 
         # configure chrome options
         self.opt = Options()
@@ -108,6 +109,9 @@ class GoogleMeetHost:
                 )
         except Exception as e:
             logger.error(f"Exception occurred while sending meeting URL: {e}")
+    
+    def inform_host_failed(self):
+        requests.get(f'http://{self.upstream_port_ip}:5020/host_failed')
 
     def dismiss_popup(self):
         try:
@@ -153,14 +157,6 @@ class GoogleMeetHost:
 def main():
     try:
         parser = argparse.ArgumentParser(description="Google Meet Host Automation")
-        parser.add_argument("--email", required=True, help="Email address for login")
-        parser.add_argument("--password", required=True, help="Password for login")
-        parser.add_argument(
-            "--duration",
-            type=int,
-            help="Duration to run the meeting in minutes",
-            required=True,
-        )
         parser.add_argument(
             "--upstream_port_ip",
             type=str,
@@ -170,10 +166,7 @@ def main():
         args = parser.parse_args()
 
         host = GoogleMeetHost(
-            email=args.email,
-            password=args.password,
-            duration=args.duration,
-            upstream_port_ip=args.upstream_port_ip,
+            upstream_port_ip=args.upstream_port_ip
         )
         host.login()
         host.create_meeting()
@@ -181,6 +174,7 @@ def main():
     except Exception as e:
         logger.error(f"Exception occurred: {e}")
         logger.error(traceback.format_exc())
+        host.inform_host_failed()
     finally:
         host.driver.quit()
 

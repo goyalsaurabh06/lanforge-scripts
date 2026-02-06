@@ -18,7 +18,7 @@ import traceback
 import threading
 import glob
 import pytz
-import dateutil.parser # pip install python-dateutil
+import dateutil.parser  # pip install python-dateutil
 
 flask_server_logger = logging.getLogger("werkzeug")
 flask_server_logger.setLevel(logging.ERROR)
@@ -71,8 +71,9 @@ class Gmeet(Realm):
         self.hostname_os_combination = list()
         self.real_sta_os_types = list()
         self.real_sta_hostname = list()
-        self.tz = pytz.timezone('Asia/Kolkata')
-    
+        self.tz = pytz.timezone("Asia/Kolkata")
+        self.host_failed = False
+        self.participants = 0
 
     def get_api_time(self, timezone_str="UTC"):
         try:
@@ -80,18 +81,18 @@ class Gmeet(Realm):
             url = f"http://worldtimeapi.org/api/timezone/{timezone_str}"
             response = requests.get(url, timeout=5)
             response.raise_for_status()
-            
+
             data = response.json()
             # Parse the standard ISO format string returned by the API
-            return dateutil.parser.isoparse(data['datetime'])
+            return dateutil.parser.isoparse(data["datetime"])
         except Exception as e:
             print(f"API Time check failed: {e}")
-            return datetime.now() # Fallback
+            return datetime.now()  # Fallback
 
     def set_start_time(self):
         # Fetch accurate time via HTTP
-        current_true_time = self.get_api_time("UTC") 
-        
+        current_true_time = self.get_api_time("UTC")
+
         # If you need to convert it to self.tz manually:
         if self.tz:
             current_true_time = current_true_time.astimezone(self.tz)
@@ -101,7 +102,7 @@ class Gmeet(Realm):
 
         logger.info(f"Start Time of the Test {self.start_time}")
         logger.info(f"End Time of the Test {self.end_time}")
-        
+
         return [self.start_time, self.end_time]
 
     def change_port_to_ip(self, upstream_port):
@@ -224,6 +225,14 @@ class Gmeet(Realm):
             elif request.method == "GET":
                 return jsonify({"meeting_url": self.meeting_url})
 
+        @app.route("/host_failed", methods=["GET"])
+        def host_failed():
+            self.host_failed = True
+
+        @app.route("/update_participants", methods=["GET"])
+        def update_participants():
+            self.participants += 1
+
         def run_flask():
             app.run(host="0.0.0.0", port=5020, debug=False, use_reloader=False)
 
@@ -231,30 +240,40 @@ class Gmeet(Realm):
         flask_thread = Thread(target=run_flask)
         flask_thread.daemon = True
         flask_thread.start()
-    
 
     def create_host(self):
 
-        if self.generic_endps_profile.create(ports=[self.real_sta_list[0]], real_client_os_types=[self.real_sta_os_types[0]]):
-            logging.info('Real client generic endpoint creation completed.')
+        if self.generic_endps_profile.create(
+            ports=[self.real_sta_list[0]],
+            real_client_os_types=[self.real_sta_os_types[0]],
+        ):
+            logging.info("Real client generic endpoint creation completed.")
         else:
-            logging.error('Real client generic endpoint creation failed.')
+            logging.error("Real client generic endpoint creation failed.")
             exit(0)
 
         if self.real_sta_os_types[0] == "windows":
-            cmd = f"py gmeet_host.py --ip {self.upstream_port}"
-            self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[0], cmd)
-        elif self.real_sta_os_types[0] == 'linux':
+            cmd = f"py gmeet_host.py --upstream_port_ip {self.upstream_port}"
+            self.generic_endps_profile.set_cmd(
+                self.generic_endps_profile.created_endp[0], cmd
+            )
+        elif self.real_sta_os_types[0] == "linux":
 
-            cmd = "su -l lanforge ctteams.bash %s %s %s" % (self.wifi_interfaces[0], self.upstream_port, "host")
+            cmd = "su -l lanforge gmeet.bash %s %s %s" % (
+                self.wifi_interface_list[0],
+                self.upstream_port,
+                "host",
+            )
 
-            self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[0], cmd)
-        elif self.real_sta_os_types[0] == 'macos':
-            cmd = "sudo bash ctteams.bash %s %s" % (self.upstream_port, "host")
-            self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[0], cmd)
+            self.generic_endps_profile.set_cmd(
+                self.generic_endps_profile.created_endp[0], cmd
+            )
+        elif self.real_sta_os_types[0] == "macos":
+            cmd = "sudo bash gmeet.bash %s %s" % (self.upstream_port, "host")
+            self.generic_endps_profile.set_cmd(
+                self.generic_endps_profile.created_endp[0], cmd
+            )
         self.generic_endps_profile.start_cx()
-        time.sleep(5)
-
 
     def process_device_data(self):
         """
@@ -450,6 +469,47 @@ class Gmeet(Realm):
 
         return self.real_sta_list
 
+    def wait_for_meet_link(self):
+        while not self.meeting_url:
+            if self.host_failed:
+                logger.error("Unable to Create Meeting from Host Side")
+                return False
+            time.sleep(5)
+        return True
+
+    def create_clients(self):
+        if self.generic_endps_profile.create(
+            ports=self.real_sta_list[1:],
+            real_client_os_types=self.real_sta_os_types[1:],
+        ):
+            logging.info("Real client generic endpoint creation completed.")
+        else:
+            logging.error("Real client generic endpoint creation failed.")
+            exit(0)
+        for i in range(1, len(self.real_sta_os_types)):
+
+            if self.real_sta_os_types[i] == "windows":
+                cmd = f"py gmeet_client.py --ip {self.upstream_port}"
+                self.generic_endps_profile.set_cmd(
+                    self.generic_endps_profile.created_endp[i], cmd
+                )
+            elif self.real_sta_os_types[i] == "linux":
+                cmd = "su -l lanforge gmeet.bash %s %s %s" % (
+                    self.wifi_interface_list[i],
+                    self.upstream_port,
+                    "client",
+                )
+                self.generic_endps_profile.set_cmd(
+                    self.generic_endps_profile.created_endp[i], cmd
+                )
+            elif self.real_sta_os_types[i] == "macos":
+                cmd = "sudo bash gmeet.bash %s %s" % (self.upstream_port, "client")
+                self.generic_endps_profile.set_cmd(
+                    self.generic_endps_profile.created_endp[i], cmd
+                )
+
+        self.generic_endps_profile.start_cx()
+
 
 def main():
     parser = argparse.ArgumentParser("Google Meet Automation")
@@ -511,4 +571,5 @@ def main():
     gmeet.get_android_device_data()
     gmeet.process_device_data()
     gmeet.create_host()
-
+    if gmeet.wait_for_meet_link():
+        gmeet.create_clients()
