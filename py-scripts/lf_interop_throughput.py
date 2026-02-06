@@ -2280,7 +2280,6 @@ class Throughput(Realm):
         Retrieves and adds bandsteering statistics to the report.
 
         """
-        import pandas as pd
 
         # df = pd.DataFrame({
         #     'TIMESTAMP': [
