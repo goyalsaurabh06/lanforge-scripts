@@ -269,7 +269,7 @@ class Throughput(Realm):
                  user_list=None, real_client_list=None, real_client_list1=None, hw_list=None, laptop_list=None, android_list=None, mac_list=None, windows_list=None, linux_list=None,
                  total_resources_list=None, working_resources_list=None, hostname_list=None, username_list=None, eid_list=None,
                  devices_available=None, input_devices_list=None, mac_id1_list=None, mac_id_list=None, overall_avg_rssi=None,
-                 coordinate_list=None, rotation_enabled=None, robo_ip=None, angle_list=None):
+                 coordinate_list=None, rotation_enabled=None, robo_ip=None, angle_list=None,endp_count=1, multi_conn=1):
         super().__init__(lfclient_host=host,
                          lfclient_port=port)
         self.ssid_list = []
@@ -318,6 +318,10 @@ class Throughput(Realm):
         self.cx_profile.side_b_max_bps = side_b_max_rate
         self.cx_profile.side_a_min_pdu = side_a_min_pdu
         self.cx_profile.side_b_min_pdu = side_b_min_pdu
+        if do_interopability:
+            self.cx_profile.mconn_A = multi_conn
+            self.endp_count = endp_count
+        self.filtered_cx_list = []
         self.hw_list = hw_list if hw_list is not None else []
         self.laptop_list = laptop_list if laptop_list is not None else []
         self.android_list = android_list if android_list is not None else []
@@ -1011,30 +1015,46 @@ class Throughput(Realm):
             traffic_type_list.append(traffic_type)
 
         # Construct connection names
+        filtered_cx_list = []
         for _ in self.tos:
             for i in self.real_client_list1:
                 for j in traffic_direction_list:
                     for k in traffic_type_list:
                         cxs = "%s_%s_%s" % (i, k, j)
                         cx_names = cxs.replace(" ", "")
-                cx_list.append(cx_names)
+                if self.do_interopability:
+                    filtered_cx_list.append(cx_names)
+                    for endp_no in range(1, self.endp_count + 1):
+                        cx_list.append("{}_endp_{}".format(cx_names,endp_no))
+                else:
+                    cx_list.append(cx_names)
         logger.info('cx_list{}'.format(cx_list))
         count = 0
-
+        self.filtered_cx_dict = {k: [k + '-A', k + '-B'] for k in filtered_cx_list}
+        print("filtered_cx_dict", self.filtered_cx_dict)
         # creating duplicate created_cx's for precleanup of CX's if there are already existed
         if self.precleanup is True:
             self.cx_profile.created_cx = {k: [k + '-A', k + '-B'] for k in cx_list}
             self.pre_cleanup()
 
         # for ip_tos in range(len(self.tos)):
-        for device in range(len(self.input_devices_list)):
-            logger.info("Creating connections for endpoint type: %s cx-count: %s" % (
-                self.traffic_type, self.cx_profile.get_cx_count()))
-            self.cx_profile.create(endp_type=self.traffic_type, side_a=[self.input_devices_list[device]],
-                                   side_b=self.upstream, sleep_time=0, cx_name="%s" % (cx_list[count]))
-            count += 1
-        logger.info("cross connections with created")
-
+        if self.do_interopability:
+            for device in range(len(self.input_devices_list)):
+                for endp_no in range(1, self.endp_count + 1):
+                    logger.info("Creating connections for endpoint type: %s cx-count: %s cx-name: %s" % (
+                        self.traffic_type, self.cx_profile.get_cx_count(),cx_list[count]))
+                    self.cx_profile.create(endp_type=self.traffic_type, side_a=[self.input_devices_list[device]],
+                                        side_b=self.upstream, sleep_time=0, cx_name="%s" % (cx_list[count]))
+                    count += 1
+        else:
+            for device in range(len(self.input_devices_list)):
+                logger.info("Creating connections for endpoint type: %s cx-count: %s cx-name: %s" % (
+                    self.traffic_type, self.cx_profile.get_cx_count(), cx_list[count]))
+                self.cx_profile.create(endp_type=self.traffic_type, side_a=[self.input_devices_list[device]],
+                                    side_b=self.upstream, sleep_time=0, cx_name="%s" % (cx_list[count]))
+                count += 1
+            logger.info("cross connections with created")
+        print(self.cx_profile.__dict__)
     # def start(self,print_pass=False, print_fail=False):
     #     if(len(self.cx_profile.created_cx))>0:
     #         # print(type(self.cx_profile.created_cx),self.cx_profile.created_cx.keys())
@@ -1130,27 +1150,56 @@ class Throughput(Realm):
         i = 0
         throughput = {}
         # mapping the data based upon the cx_list order
-        for cx in cx_list:
-            throughput[i] = [0, 0, 0, 0, "Stopped", 0]
-            for j in l3_endp_data:
-                key, value = next(iter(j.items()))
-                endp_a = cx + '-A'
-                endp_b = cx + '-B'
-                if value['name'] == endp_a:
-                    throughput[i][0] = value['rx rate (last)']
-                    throughput[i][2] = value['rx drop %']
-                elif value['name'] == endp_b:
-                    throughput[i][1] = value['rx rate (last)']
-                    throughput[i][3] = value['rx drop %']
-                if value['name'] == endp_a or value['name'] == endp_b:
-                    throughput[i][4] = 'Run' if value['run'] else 'Stopped'
-            # To add average RTT
-            for j in l3_cx_data:
-                if (j == "handler" or j == "uri"):
-                    continue
-                if cx == l3_cx_data[j]['name']:
-                    throughput[i][5] = l3_cx_data[j]['avg rtt']
-            i += 1
+        if not self.do_interopability:
+            for cx in cx_list:
+                throughput[i] = [0, 0, 0, 0, "Stopped", 0]
+                for j in l3_endp_data:
+                    key, value = next(iter(j.items()))
+                    endp_a = cx + '-A'
+                    endp_b = cx + '-B'
+                    if value['name'] == endp_a:
+                        throughput[i][0] = value['rx rate (last)']
+                        throughput[i][2] = value['rx drop %']
+                    elif value['name'] == endp_b:
+                        throughput[i][1] = value['rx rate (last)']
+                        throughput[i][3] = value['rx drop %']
+                    if value['name'] == endp_a or value['name'] == endp_b:
+                        throughput[i][4] = 'Run' if value['run'] else 'Stopped'
+                # To add average RTT
+                for j in l3_cx_data:
+                    if (j == "handler" or j == "uri"):
+                        continue
+                    if cx == l3_cx_data[j]['name']:
+                        throughput[i][5] = l3_cx_data[j]['avg rtt']
+                i += 1
+        else:
+            resource_id_list = ['.'.join(r_id.split('.')[:-1]) for r_id in self.input_devices_list]
+            print("resource_id_list", resource_id_list)
+            print("cx_list", cx_list)
+            for i, resource_id in enumerate(resource_id_list):
+                throughput[i] = [0, 0, 0, 0, "Stopped", 0]
+                for cx in cx_list:
+                    for j in l3_endp_data:
+                        key, value = next(iter(j.items()))
+                        endp_a = cx + '-A'
+                        endp_b = cx + '-B'
+                        print("value",value)
+                        if value['name'] == endp_a and resource_id in value['name']:
+                            print("value['name'] in A", value['name'])
+                            throughput[i][0] += value['rx rate (last)']
+                            throughput[i][2] += value['rx drop %']//self.endp_count
+                        elif value['name'] == endp_b and resource_id in value['name']:
+                            print("value['name'] in B", value['name'])
+                            throughput[i][1] += value['rx rate (last)']
+                            throughput[i][3] += value['rx drop %']/self.endp_count
+                        if (value['name'] == endp_a or value['name'] == endp_b) and resource_id in value['name']:
+                            throughput[i][4] = 'Run' if value['run'] else 'Stopped'
+                    # To add average RTT
+                    for j in l3_cx_data:
+                        if (j == "handler" or j == "uri"):
+                            continue
+                        if cx == l3_cx_data[j]['name'] and resource_id in l3_cx_data[j]['name']:
+                            throughput[i][5] += l3_cx_data[j]['avg rtt']/self.endp_count
         return throughput
 
     def monitor(self, iteration, individual_df, device_names, incremental_capacity_list, overall_start_time, overall_end_time, is_device_configured):
@@ -1160,7 +1209,7 @@ class Throughput(Realm):
         test_stopped_by_user = False
         if (self.test_duration is None) or (int(self.test_duration) <= 1):
             raise ValueError("Monitor test duration should be > 1 second")
-        if self.cx_profile.created_cx is None:
+        if self.cx_profile.created_cx is None and not self.do_interopability or self.filtered_cx_dict is None and self.do_interopability:
             raise ValueError("Monitor needs a list of Layer 3 connections")
 
         start_time = datetime.now()
@@ -1171,13 +1220,13 @@ class Throughput(Realm):
 
         # Initialize variables for real-time connections data
         index = -1
-        connections_upload = dict.fromkeys(list(self.cx_profile.created_cx.keys()), float(0))
-        connections_download = dict.fromkeys(list(self.cx_profile.created_cx.keys()), float(0))
-        connections_upload_realtime = dict.fromkeys(list(self.cx_profile.created_cx.keys()), float(0))
-        connections_download_realtime = dict.fromkeys(list(self.cx_profile.created_cx.keys()), float(0))
+        connections_upload = dict.fromkeys(list(self.cx_profile.created_cx.keys() if not self.do_interopability else self.filtered_cx_dict.keys()), float(0))
+        connections_download = dict.fromkeys(list(self.cx_profile.created_cx.keys() if not self.do_interopability else self.filtered_cx_dict.keys()), float(0))
+        connections_upload_realtime = dict.fromkeys(list(self.cx_profile.created_cx.keys() if not self.do_interopability else self.filtered_cx_dict.keys()), float(0))
+        connections_download_realtime = dict.fromkeys(list(self.cx_profile.created_cx.keys() if not self.do_interopability else self.filtered_cx_dict.keys()), float(0))
 
         # Initialize lists for throughput and drops for each connection
-        [(upload.append([]), download.append([]), drop_a.append([]), drop_b.append([]), state.append([]), avg_rtt.append([])) for i in range(len(self.cx_profile.created_cx))]
+        [(upload.append([]), download.append([]), drop_a.append([]), drop_b.append([]), state.append([]), avg_rtt.append([])) for i in range(len(self.cx_profile.created_cx if not self.do_interopability else self.filtered_cx_dict))]
 
         # If using web GUI, set runtime directory
         if self.dowebgui:
@@ -1191,6 +1240,7 @@ class Throughput(Realm):
             signal_list, channel_list, mode_list, link_speed_list, rx_rate_list = self.get_signal_and_channel_data(self.input_devices_list)
             signal_list = [int(i) if i != "" else 0 for i in signal_list]
             throughput[index] = self.get_layer3_endp_data()
+            print("through_put[index]", throughput[index])
             # Check if next sleep would overshoot the end_time
             is_last_iteration = ((current_time + timedelta(seconds=1 if self.dowebgui else self.report_timer)) >= end_time)
             # For the WebUI, data is appended as "STOPPED" outside the loop.
@@ -1321,7 +1371,7 @@ class Throughput(Realm):
                 time.sleep(self.report_timer)
 
                 # Aggregate data from throughput
-
+                print("throughput", throughput)
                 for _, key in enumerate(throughput):
                     for i in range(len(throughput[key])):
                         upload[i], download[i], drop_a[i], drop_b[i], avg_rtt[i] = [], [], [], [], []
@@ -1338,6 +1388,7 @@ class Throughput(Realm):
                             drop_b[i].append(throughput[key][i][3])
                             avg_rtt[i].append(throughput[key][i][5])
                 # Calculate average throughput and drop percentages
+                print("upload", upload)
                 upload_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in upload]
                 download_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in download]
                 drop_a_per = [float(round(sum(i) / len(i), 2)) for i in drop_a]
@@ -2064,7 +2115,7 @@ class Throughput(Realm):
 
         cx_incremental_capacity_lists, cx_incremental_capacity_names_lists, incremental_capacity_list_values = [], [], []
 
-        created_cx_lists_keys = list(self.cx_profile.created_cx.keys())
+        created_cx_lists_keys = list(self.cx_profile.created_cx.keys() if not self.do_interopability else self.filtered_cx_dict)
         device_list_length = len(created_cx_lists_keys)
 
         # Check if incremental capacity is not provided
@@ -2115,6 +2166,7 @@ class Throughput(Realm):
             incremental_capacity_list_values.append(new_cx_list[-1])
             cx_incremental_capacity_lists.append(new_cx_list)
             cx_incremental_capacity_names_lists.append(new_cx_names_list)
+        created_cx_lists_keys = list(self.cx_profile.created_cx.keys())
         return cx_incremental_capacity_names_lists, cx_incremental_capacity_lists, created_cx_lists_keys, incremental_capacity_list_values
 
     # Ensures maximum of 60 plots in line graph
@@ -4420,7 +4472,10 @@ Copyright 2023 Candela Technologies Inc.
     optional.add_argument("--config", action="store_true", help="Specify for configuring the devices")
     optional.add_argument("--interopability_config", action="store_true", help="To do individual configuration for each device in interoperability")
     optional.add_argument("--tput_mbps", action="store_true", help="Interpret rated download and upload values as Mbps instead of bytes")
+    optional.add_argument("--endp_count", type=int, help='Specify the maximum time to wait for Configuration', default=3)
+    optional.add_argument("--multi_conn", type=int, help='Specify the maximum time to wait for Configuration', default=1)
     parser.add_argument('--help_summary', help='Show summary of what this script does', action="store_true")
+
     # IOT ARGS
     parser.add_argument('--iot_test', help="If true will execute script for iot", action='store_true')
     optional.add_argument('--iot_ip',
@@ -4486,6 +4541,35 @@ Copyright 2023 Candela Technologies Inc.
     loads = {}
     iterations_before_test_stopped_by_user = []
     gave_incremental = False
+
+    if args.do_interopability:
+        if args.download != '2560' and args.download != '0' and args.upload != '0' and args.upload != '2560':
+            if args.traffic_type == "lf_udp":
+                args.upload = int(round(int(args.upload) / args.endp_count))
+                args.download = int(round(int(args.download) / args.endp_count))
+                args.multi_conn = 1
+            else:
+                args.upload = int(round((int(args.upload) / args.endp_count) / args.multi_conn))
+                args.download = int(round((int(args.download) / args.endp_count) / args.multi_conn))
+
+        elif args.upload != '2560' and args.upload != '0':
+            if args.traffic_type == "lf_udp":
+                args.upload = int(round(int(args.upload) / args.endp_count))
+                args.multi_conn = 1
+            else:
+                args.upload = int(round((int(args.upload) / args.endp_count) / args.multi_conn))
+        else:
+            if args.traffic_type == "lf_udp":
+                args.download = int(round(int(args.download) / args.endp_count))
+                args.multi_conn = 1
+            else:
+                args.download = int(round((int(args.download) / args.endp_count) / args.multi_conn))
+
+    print("rates")
+    print(args.download, args.upload)
+
+
+        
     # Case based on download and upload arguments are provided
     if args.download and args.upload:
         loads = {'upload': str(args.upload).split(","), 'download': str(args.download).split(",")}
@@ -4554,6 +4638,7 @@ Copyright 2023 Candela Technologies Inc.
         iot_device_list = args.iot_device_list
         iot_testname = args.iot_testname
         iot_increment = args.iot_increment
+    print("loads data",loads_data)
     for index in range(len(loads_data)):
         throughput = Throughput(host=args.mgr,
                                 ip=args.mgr,
@@ -4614,7 +4699,9 @@ Copyright 2023 Candela Technologies Inc.
                                 robo_ip=args.robot_ip,
                                 rotation_enabled=True if args.rotation else False,
                                 coordinate_list=args.coordinate.split(",") if args.coordinate else [],
-                                angle_list=args.rotation.split(",") if args.rotation else []
+                                angle_list=args.rotation.split(",") if args.rotation else [],
+                                endp_count=args.endp_count,
+                                multi_conn=args.multi_conn
                                 )
 
         if gave_incremental:
@@ -4668,7 +4755,11 @@ Copyright 2023 Candela Technologies Inc.
         individual_dataframe_column = []
 
         to_run_cxs, to_run_cxs_len, created_cx_lists_keys, incremental_capacity_list = throughput.get_incremental_capacity_list()
-
+        print("to_run_cxs", to_run_cxs)
+        print("to_run_cxs_len", to_run_cxs_len)
+        print("created_cx_lists_keys", created_cx_lists_keys)
+        print("incremental_capacity_list", incremental_capacity_list)
+        # exit(0)
         for i in range(len(clients_to_run)):
 
             # Extend individual_dataframe_column with dynamically generated column names
