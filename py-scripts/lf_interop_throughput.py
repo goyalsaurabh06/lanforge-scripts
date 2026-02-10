@@ -321,6 +321,7 @@ class Throughput(Realm):
         if do_interopability:
             self.cx_profile.mconn_A = multi_conn
             self.endp_count = endp_count
+            self.multi_conn = multi_conn
         self.filtered_cx_list = []
         self.hw_list = hw_list if hw_list is not None else []
         self.laptop_list = laptop_list if laptop_list is not None else []
@@ -1039,12 +1040,20 @@ class Throughput(Realm):
 
         # for ip_tos in range(len(self.tos)):
         if self.do_interopability:
+            # self.cx_profile.created_cx = self.filtered_cx_dict.copy()
+            self.cx_profile.created_cx = {k: [k + '-A', k + '-B'] for k in cx_list}
+            self.pre_cleanup()
+            print("cleaitnttt")
+            if self.traffic_type == "lf_tcp" and self.multi_conn>1:
+                ip_port_a = 0
+            else:
+                ip_port_a = -1
             for device in range(len(self.input_devices_list)):
                 for endp_no in range(1, self.endp_count + 1):
                     logger.info("Creating connections for endpoint type: %s cx-count: %s cx-name: %s" % (
                         self.traffic_type, self.cx_profile.get_cx_count(),cx_list[count]))
                     self.cx_profile.create(endp_type=self.traffic_type, side_a=[self.input_devices_list[device]],
-                                        side_b=self.upstream, sleep_time=0, cx_name="%s" % (cx_list[count]))
+                                        side_b=self.upstream, sleep_time=0, cx_name="%s" % (cx_list[count]),ip_port_a=ip_port_a)
                     count += 1
         else:
             for device in range(len(self.input_devices_list)):
@@ -1149,6 +1158,7 @@ class Throughput(Realm):
         cx_list = list(self.cx_profile.created_cx.keys())
         i = 0
         throughput = {}
+        check_temp_data = {}
         # mapping the data based upon the cx_list order
         if not self.do_interopability:
             for cx in cx_list:
@@ -1177,6 +1187,7 @@ class Throughput(Realm):
             print("resource_id_list", resource_id_list)
             print("cx_list", cx_list)
             for i, resource_id in enumerate(resource_id_list):
+                check_temp_data[i] = [[], [], [], [], []]
                 throughput[i] = [0, 0, 0, 0, "Stopped", 0]
                 for cx in cx_list:
                     for j in l3_endp_data:
@@ -1188,10 +1199,15 @@ class Throughput(Realm):
                             print("value['name'] in A", value['name'])
                             throughput[i][0] += value['rx rate (last)']
                             throughput[i][2] += value['rx drop %']//self.endp_count
+                            check_temp_data[i][0].append(value['rx rate (last)'])
+                            check_temp_data[i][2].append(value['rx drop %']//self.endp_count)
                         elif value['name'] == endp_b and resource_id in value['name']:
                             print("value['name'] in B", value['name'])
                             throughput[i][1] += value['rx rate (last)']
                             throughput[i][3] += value['rx drop %']/self.endp_count
+
+                            check_temp_data[i][1].append(value['rx rate (last)'])
+                            check_temp_data[i][3].append(value['rx drop %']/self.endp_count)
                         if (value['name'] == endp_a or value['name'] == endp_b) and resource_id in value['name']:
                             throughput[i][4] = 'Run' if value['run'] else 'Stopped'
                     # To add average RTT
@@ -1200,6 +1216,7 @@ class Throughput(Realm):
                             continue
                         if cx == l3_cx_data[j]['name'] and resource_id in l3_cx_data[j]['name']:
                             throughput[i][5] += l3_cx_data[j]['avg rtt']/self.endp_count
+        print("ctd",check_temp_data)
         return throughput
 
     def monitor(self, iteration, individual_df, device_names, incremental_capacity_list, overall_start_time, overall_end_time, is_device_configured):
@@ -2115,7 +2132,7 @@ class Throughput(Realm):
 
         cx_incremental_capacity_lists, cx_incremental_capacity_names_lists, incremental_capacity_list_values = [], [], []
 
-        created_cx_lists_keys = list(self.cx_profile.created_cx.keys() if not self.do_interopability else self.filtered_cx_dict)
+        created_cx_lists_keys = list(self.cx_profile.created_cx.keys())
         device_list_length = len(created_cx_lists_keys)
 
         # Check if incremental capacity is not provided
@@ -2166,7 +2183,7 @@ class Throughput(Realm):
             incremental_capacity_list_values.append(new_cx_list[-1])
             cx_incremental_capacity_lists.append(new_cx_list)
             cx_incremental_capacity_names_lists.append(new_cx_names_list)
-        created_cx_lists_keys = list(self.cx_profile.created_cx.keys())
+        # created_cx_lists_keys = list(self.cx_profile.created_cx.keys())
         return cx_incremental_capacity_names_lists, cx_incremental_capacity_lists, created_cx_lists_keys, incremental_capacity_list_values
 
     # Ensures maximum of 60 plots in line graph
@@ -3970,6 +3987,27 @@ class Throughput(Realm):
 
         return test_input_list, pass_fail_list
 
+    def get_interopability_list(self):
+        resource_id_list = ['.'.join(r_id.split('.')[:-1]) for r_id in self.input_devices_list]
+        to_run_cxs = []
+        to_run_cxs_len = []
+        incremental_capacity_list = []
+        cnt = 1
+        for _ in resource_id_list:
+            to_run_cxs.append([])
+            to_run_cxs_len.append([cnt])
+            incremental_capacity_list.append(cnt)
+            cnt += 1
+
+        for cx in self.cx_profile.created_cx.keys():
+            for resource_id in resource_id_list:
+                if resource_id in cx:
+                    to_run_cxs[resource_id_list.index(resource_id)].append(cx)
+        return to_run_cxs, to_run_cxs_len, list(self.cx_profile.created_cx), incremental_capacity_list
+        
+
+
+
     def copy_reports_to_home_dir(self):
         curr_path = self.result_dir
         home_dir = os.path.expanduser("~")
@@ -4753,8 +4791,11 @@ Copyright 2023 Candela Technologies Inc.
             exit(1)
 
         individual_dataframe_column = []
+        if not throughput.do_interopability:
+            to_run_cxs, to_run_cxs_len, created_cx_lists_keys, incremental_capacity_list = throughput.get_incremental_capacity_list()
+        else:
+            to_run_cxs, to_run_cxs_len, created_cx_lists_keys, incremental_capacity_list = throughput.get_interopability_list()
 
-        to_run_cxs, to_run_cxs_len, created_cx_lists_keys, incremental_capacity_list = throughput.get_incremental_capacity_list()
         print("to_run_cxs", to_run_cxs)
         print("to_run_cxs_len", to_run_cxs_len)
         print("created_cx_lists_keys", created_cx_lists_keys)
