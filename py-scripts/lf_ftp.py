@@ -204,7 +204,8 @@ class FtpTest(LFCliBase):
                  coordinate=None,
                  rotation=None,
                  do_bandsteering=False,
-                 cycles=None
+                 cycles=None,
+                 bssids=None
                  ):
         super().__init__(lfclient_host, lfclient_port, _debug=_debug_on, _exit_on_fail=_exit_on_fail)
 
@@ -329,6 +330,7 @@ class FtpTest(LFCliBase):
         self.cycles = cycles
         self.rx_rate_val = []
         self.max_bytes_rd = []
+        self.bssids = bssids.split(",") if bssids else []
         logger.info("Test is Initialized")
 
     def query_realclients(self):
@@ -2117,7 +2119,7 @@ class FtpTest(LFCliBase):
 
     def get_bandsteering_stats(self):
         """
-        QOS Band Steering Statistics
+        FTP Band Steering Statistics
         data format:
         {
             dev_name: dataframe,
@@ -2126,13 +2128,14 @@ class FtpTest(LFCliBase):
         """
         import pandas as pd
         from collections import Counter
+
         data = self.individual_device_data
+
         for dev_name, df in data.items():
 
             if df.empty:
                 continue
 
-            # 1️⃣ Normalize column names
             rename_map = {
                 "timestamp": "TIMESTAMP",
                 "from_coordinate": "From Coordinate",
@@ -2140,32 +2143,42 @@ class FtpTest(LFCliBase):
             }
             df = df.rename(columns=rename_map)
 
-            # 2️⃣ Detect BSSID change points
-            mask = df["BSSID"] != df["BSSID"].shift()
+            allowed_bssids = set(self.bssids)
 
-            bssid_list = df.loc[mask, "BSSID"].tolist()
-            channel_list = df.loc[mask, "Channel"].tolist()
-            timestamp_list = df.loc[mask, "TIMESTAMP"].tolist()
+            mask = (
+                (df["BSSID"] != df["BSSID"].shift()) &
+                (df["BSSID"].isin(allowed_bssids))
+            )
+
+            skip_table = not mask.any()
+
+            if skip_table:
+                bssid_counts = {bssid: 0 for bssid in self.bssids}
+            else:
+                bssid_list = df.loc[mask, "BSSID"].tolist()
+                channel_list = df.loc[mask, "Channel"].tolist()
+                timestamp_list = df.loc[mask, "TIMESTAMP"].tolist()
+
+                bssid_counts = Counter(bssid_list)
 
             from_coordinate_list = (
                 df.loc[mask, "From Coordinate"].tolist()
-                if "From Coordinate" in df.columns else []
+                if "From Coordinate" in df.columns and not skip_table else []
             )
             to_coordinate_list = (
                 df.loc[mask, "To Coordinate"].tolist()
-                if "To Coordinate" in df.columns else []
+                if "To Coordinate" in df.columns and not skip_table else []
             )
 
-            # 3️⃣ Count BSSID switches
-            bssid_counts = Counter(bssid_list)
+            final_bssid_counts = {
+                bssid: bssid_counts.get(bssid, 0)
+                for bssid in self.bssids
+            }
 
-            if not bssid_counts:
-                continue
+            x_axis = list(final_bssid_counts.keys())
+            y_axis = [[float(v)] for v in final_bssid_counts.values()]
 
-            x_axis = list(bssid_counts.keys())
-            y_axis = [[float(v)] for v in bssid_counts.values()]
-
-            # 📊 Graph section
+            # 📊 Graph
             self.report.set_obj_html(
                 _obj_title=f"BSSID Change Count Of The Client {dev_name}",
                 _obj=" "
@@ -2197,7 +2210,15 @@ class FtpTest(LFCliBase):
             self.report.move_csv_file()
             self.report.build_graph()
 
-            # 📋 Table section
+            # 📋 Table
+            if skip_table:
+                self.report.set_obj_html(
+                    _obj_title=f"Band Steering Results for {dev_name}",
+                    _obj="No band steering events observed for the configured BSSID list."
+                )
+                self.report.build_objective()
+                continue
+
             self.report.set_obj_html(
                 _obj_title=f"Band Steering Results for {dev_name}",
                 _obj=" "
@@ -3600,6 +3621,7 @@ INCLUDE_IN_README: False
     optional.add_argument('--rotation', type=str, default='', help="The set of angles to rotate at a particular point")
     optional.add_argument('--do_bandsteering', help='Enable bandsteering', action='store_true')
     optional.add_argument('--cycles', type=int, default=1, help='No of cycles to perform band steering')
+    optional.add_argument('--bssids', type=str, default='', help='hostname for where Robot server is running')
     # logging configuration
     optional.add_argument(
         "--lf_logger_config_json",
@@ -3796,7 +3818,8 @@ some amount of file data from the FTP server while measuring the time taken by c
                               coordinate=args.coordinate,
                               rotation=args.rotation,
                               do_bandsteering=args.do_bandsteering,
-                              cycles=args.cycles
+                              cycles=args.cycles,
+                              bssids=args.bssids
                               )
 
                 interation_num = interation_num + 1
