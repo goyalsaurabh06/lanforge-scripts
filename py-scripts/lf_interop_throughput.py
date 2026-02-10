@@ -1032,7 +1032,6 @@ class Throughput(Realm):
         logger.info('cx_list{}'.format(cx_list))
         count = 0
         self.filtered_cx_dict = {k: [k + '-A', k + '-B'] for k in filtered_cx_list}
-        print("filtered_cx_dict", self.filtered_cx_dict)
         # creating duplicate created_cx's for precleanup of CX's if there are already existed
         if self.precleanup is True:
             self.cx_profile.created_cx = {k: [k + '-A', k + '-B'] for k in cx_list}
@@ -1043,7 +1042,6 @@ class Throughput(Realm):
             # self.cx_profile.created_cx = self.filtered_cx_dict.copy()
             self.cx_profile.created_cx = {k: [k + '-A', k + '-B'] for k in cx_list}
             self.pre_cleanup()
-            print("cleaitnttt")
             if self.traffic_type == "lf_tcp" and self.multi_conn>1:
                 ip_port_a = 0
             else:
@@ -1063,7 +1061,6 @@ class Throughput(Realm):
                                     side_b=self.upstream, sleep_time=0, cx_name="%s" % (cx_list[count]))
                 count += 1
             logger.info("cross connections with created")
-        print(self.cx_profile.__dict__)
     # def start(self,print_pass=False, print_fail=False):
     #     if(len(self.cx_profile.created_cx))>0:
     #         # print(type(self.cx_profile.created_cx),self.cx_profile.created_cx.keys())
@@ -1184,30 +1181,22 @@ class Throughput(Realm):
                 i += 1
         else:
             resource_id_list = ['.'.join(r_id.split('.')[:-1]) for r_id in self.input_devices_list]
-            print("resource_id_list", resource_id_list)
-            print("cx_list", cx_list)
             for i, resource_id in enumerate(resource_id_list):
-                check_temp_data[i] = [[], [], [], [], []]
                 throughput[i] = [0, 0, 0, 0, "Stopped", 0]
                 for cx in cx_list:
                     for j in l3_endp_data:
                         key, value = next(iter(j.items()))
                         endp_a = cx + '-A'
                         endp_b = cx + '-B'
-                        print("value",value)
                         if value['name'] == endp_a and resource_id in value['name']:
                             print("value['name'] in A", value['name'])
                             throughput[i][0] += value['rx rate (last)']
                             throughput[i][2] += value['rx drop %']//self.endp_count
-                            check_temp_data[i][0].append(value['rx rate (last)'])
-                            check_temp_data[i][2].append(value['rx drop %']//self.endp_count)
                         elif value['name'] == endp_b and resource_id in value['name']:
                             print("value['name'] in B", value['name'])
                             throughput[i][1] += value['rx rate (last)']
                             throughput[i][3] += value['rx drop %']/self.endp_count
 
-                            check_temp_data[i][1].append(value['rx rate (last)'])
-                            check_temp_data[i][3].append(value['rx drop %']/self.endp_count)
                         if (value['name'] == endp_a or value['name'] == endp_b) and resource_id in value['name']:
                             throughput[i][4] = 'Run' if value['run'] else 'Stopped'
                     # To add average RTT
@@ -1216,7 +1205,6 @@ class Throughput(Realm):
                             continue
                         if cx == l3_cx_data[j]['name'] and resource_id in l3_cx_data[j]['name']:
                             throughput[i][5] += l3_cx_data[j]['avg rtt']/self.endp_count
-        print("ctd",check_temp_data)
         return throughput
 
     def monitor(self, iteration, individual_df, device_names, incremental_capacity_list, overall_start_time, overall_end_time, is_device_configured):
@@ -1257,7 +1245,6 @@ class Throughput(Realm):
             signal_list, channel_list, mode_list, link_speed_list, rx_rate_list = self.get_signal_and_channel_data(self.input_devices_list)
             signal_list = [int(i) if i != "" else 0 for i in signal_list]
             throughput[index] = self.get_layer3_endp_data()
-            print("through_put[index]", throughput[index])
             # Check if next sleep would overshoot the end_time
             is_last_iteration = ((current_time + timedelta(seconds=1 if self.dowebgui else self.report_timer)) >= end_time)
             # For the WebUI, data is appended as "STOPPED" outside the loop.
@@ -1388,7 +1375,6 @@ class Throughput(Realm):
                 time.sleep(self.report_timer)
 
                 # Aggregate data from throughput
-                print("throughput", throughput)
                 for _, key in enumerate(throughput):
                     for i in range(len(throughput[key])):
                         upload[i], download[i], drop_a[i], drop_b[i], avg_rtt[i] = [], [], [], [], []
@@ -1405,7 +1391,6 @@ class Throughput(Realm):
                             drop_b[i].append(throughput[key][i][3])
                             avg_rtt[i].append(throughput[key][i][5])
                 # Calculate average throughput and drop percentages
-                print("upload", upload)
                 upload_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in upload]
                 download_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in download]
                 drop_a_per = [float(round(sum(i) / len(i), 2)) for i in drop_a]
@@ -2866,6 +2851,8 @@ class Throughput(Realm):
                 "Traffic Direction": self.direction,
                 "Upload Rate(Mbps)": str(round(int(self.cx_profile.side_a_min_bps) / 1000000, 2)) + "Mbps",
                 "Download Rate(Mbps)": str(round(int(self.cx_profile.side_b_min_bps) / 1000000, 2)) + "Mbps",
+                "Endpoint count": str(self.endp_count),
+                "Multi conn" : str(self.multi_conn),
                 # "Packet Size" : str(self.cx_profile.side_a_min_pdu) + " Bytes"
             }
             report.test_setup_table(test_setup_data=test_setup_info, value="Test Configuration")
@@ -4603,8 +4590,6 @@ Copyright 2023 Candela Technologies Inc.
             else:
                 args.download = int(round((int(args.download) / args.endp_count) / args.multi_conn))
 
-    print("rates")
-    print(args.download, args.upload)
 
 
         
@@ -4676,7 +4661,6 @@ Copyright 2023 Candela Technologies Inc.
         iot_device_list = args.iot_device_list
         iot_testname = args.iot_testname
         iot_increment = args.iot_increment
-    print("loads data",loads_data)
     for index in range(len(loads_data)):
         throughput = Throughput(host=args.mgr,
                                 ip=args.mgr,
@@ -4796,11 +4780,6 @@ Copyright 2023 Candela Technologies Inc.
         else:
             to_run_cxs, to_run_cxs_len, created_cx_lists_keys, incremental_capacity_list = throughput.get_interopability_list()
 
-        print("to_run_cxs", to_run_cxs)
-        print("to_run_cxs_len", to_run_cxs_len)
-        print("created_cx_lists_keys", created_cx_lists_keys)
-        print("incremental_capacity_list", incremental_capacity_list)
-        # exit(0)
         for i in range(len(clients_to_run)):
 
             # Extend individual_dataframe_column with dynamically generated column names
