@@ -15,7 +15,6 @@ import time
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import logging
-import traceback
 import requests
 import sys
 import pytz
@@ -378,8 +377,8 @@ def main():
 
     except Exception as e:
         logger.error(f"Exception occurred: {e}")
-        logger.error(traceback.format_exc())
         host.inform_host_failed()
+        logger.error("An Error occured", exc_info=True)
     finally:
         host.driver.quit()
 

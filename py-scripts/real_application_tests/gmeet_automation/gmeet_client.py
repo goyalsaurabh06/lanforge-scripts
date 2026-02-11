@@ -248,7 +248,8 @@ def main():
                     break
 
     except Exception as e:
-        logger.error(f"Error Occured {e}")
+        logger.error(f"Exception Occured {e}")
+        logger.error("An error Occured", exc_info=True)
 
     finally:
         client.driver.quit()
