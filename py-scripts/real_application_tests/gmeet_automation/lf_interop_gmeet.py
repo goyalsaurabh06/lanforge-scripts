@@ -703,7 +703,6 @@ class Gmeet(Realm):
             endp_status = generic_endpoint["endpoint"]["status"]
             if endp_status == "Stopped":
                 logger.info("Failed to Start the Host Device")
-                self.generic_endps_profile.cleanup()
                 sys.exit(1)
             time.sleep(5)
         except Exception as e:
@@ -882,6 +881,8 @@ def main():
             passwd=args.passwd,
             duration=args.duration,
         )
+        if not args.no_pre_cleanup:
+            gmeet.generic_endps_profile.cleanup()
         gmeet.start_flask_server()
         gmeet.change_port_to_ip(args.upstream_port)
 
@@ -931,6 +932,8 @@ def main():
             "Waiting for the browser or application to close on laptops and mobile devices."
         )
         time.sleep(10)
+        if not args.no_post_cleanup:
+            gmeet.generic_endps_profile.cleanup()
 
 
 if __name__ == "__main__":
