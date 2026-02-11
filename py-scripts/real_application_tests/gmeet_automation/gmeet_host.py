@@ -116,15 +116,15 @@ class GoogleMeetHost:
             return response.json()
 
         except requests.exceptions.ConnectionError:
-            logger.error(f"❌ Connection Error: Could not reach {url}.")
+            logger.error(f"Connection Error: Could not reach {url}.")
         except requests.exceptions.Timeout:
-            logger.error(f"❌ Timeout: {url} did not respond in {timeout}s.")
+            logger.error(f"Timeout: {url} did not respond in {timeout}s.")
         except requests.exceptions.HTTPError as err:
-            logger.error(f"❌ HTTP Error {err.response.status_code}: {err}")
+            logger.error(f"HTTP Error {err.response.status_code}: {err}")
         except ValueError:
-            logger.error(f"❌ Data Error: Invalid JSON from {url}.")
+            logger.error(f"Data Error: Invalid JSON from {url}.")
         except Exception as e:
-            logger.error(f"❌ Unexpected error calling {url}: {e}")
+            logger.error(f"Unexpected error calling {url}: {e}")
 
         return None  # Return None on any failure
 
@@ -135,7 +135,7 @@ class GoogleMeetHost:
         """
         # 1. Validation
         if not self.meeting_url:
-            logger.warning("⚠️ Attempted to send meeting URL, but it is empty.")
+            logger.warning("Attempted to send meeting URL, but it is empty.")
             return False
 
         # 2. Call the helper
@@ -149,13 +149,13 @@ class GoogleMeetHost:
         # 3. Verify application success
         # We check if response_data exists AND if the 'status' key is 'success'
         if response_data and response_data.get("status") == "success":
-            logger.info("✅ Meeting URL sent successfully.")
+            logger.info("Meeting URL sent successfully.")
             return True
         else:
             # If we got a response but the server said "error" (e.g. invalid data)
             if response_data:
                 logger.error(
-                    f"❌ Server rejected update: {response_data.get('message')}"
+                    f"Server rejected update: {response_data.get('message')}"
                 )
             return False
 
@@ -172,13 +172,13 @@ class GoogleMeetHost:
 
         # 2. Check the response
         if response_data and response_data.get("status") == "success":
-            logger.info("✅ Successfully notified server of host failure.")
+            logger.info("Successfully notified server of host failure.")
             return True
 
         # 3. Handle specific failure messages if needed
         if response_data:
             logger.error(
-                f"❌ Server received request but returned error: {response_data.get('message')}"
+                f"Server received request but returned error: {response_data.get('message')}"
             )
 
         return False
@@ -205,11 +205,11 @@ class GoogleMeetHost:
         # 2. Validate
         if data and data.get("email"):
             self.email = data.get("email")
-            logger.info(f"✅ Fetched Email: {self.email}")
+            logger.info(f"Fetched Email: {self.email}")
             return True
 
         # 3. Handle Failure
-        logger.error("❌ Unable to Fetch Email ID for login.")
+        logger.error("Unable to Fetch Email ID for login.")
         sys.exit(1)
 
     def get_password(self):
@@ -222,15 +222,16 @@ class GoogleMeetHost:
         # 2. Validate
         if data and data.get("password"):
             self.password = data.get("password")
-            logger.info("✅ Fetched Password.")
+            logger.info("Fetched Password.")
             return True
 
         # 3. Handle Failure
-        logger.error("❌ Unable to Fetch Password for login.")
+        logger.error("Unable to Fetch Password for login.")
         sys.exit(1)
 
     def login(self):
         self.get_email()
+        self.get_password()
         self.driver.get("https://meet.google.com/landing?pli=1")
 
         email_input = self.dynamic_wait(10).until(
@@ -272,7 +273,7 @@ class GoogleMeetHost:
             current_count = data.get("current_count")
 
             logger.info(
-                f"✅ Successfully updated participants. New count: {current_count}"
+                f"Successfully updated participants. New count: {current_count}"
             )
             return True, current_count
 
@@ -280,7 +281,7 @@ class GoogleMeetHost:
         elif data:
             # Request worked, but server returned an error (e.g. database full)
             logger.warning(
-                f"⚠️ API call completed but returned error status while updating participants: {data.get('message')}"
+                f"API call completed but returned error status while updating participants: {data.get('message')}"
             )
         else:
             # safe_request returned None (network error/timeout).
@@ -307,7 +308,7 @@ class GoogleMeetHost:
             self.end_time = data.get("end_time")
 
             logger.info(
-                f"✅ Times updated successfully - Start: {self.start_time}, End: {self.end_time}"
+                f"Times updated successfully - Start: {self.start_time}, End: {self.end_time}"
             )
             return True
 
@@ -315,7 +316,7 @@ class GoogleMeetHost:
         elif payload:
             # We got a response, but the server said "error"
             logger.error(
-                f"❌ Server returned application error: {payload.get('message')}"
+                f"Server returned application error: {payload.get('message')}"
             )
         else:
             # safe_request returned None (network error, timeout, etc.)
@@ -337,7 +338,7 @@ class GoogleMeetHost:
         # We only update if we got valid data AND the 'stop' flag is explicitly True.
         if data and data.get("stop") is True:
             self.stop_signal = True
-            logger.warning("🛑 Stop signal received from server. Flag set to True.")
+            logger.warning("Stop signal received from server. Flag set to True.")
 
         # 3. Always return the current state
         # (If the request failed/returned None, we simply return the existing state)

@@ -98,24 +98,13 @@ class Gmeet(Realm):
         self.generic_endps_profile = self.new_generic_endp_profile()
         self.generic_endps_profile.name_prefix = "gmeet"
         self.generic_endps_profile.type = "gmeet"
+        self.start_time = None
+        self.end_time = None
 
-    def get_api_time(self, timezone_str="UTC"):
-        try:
-            # Request time for a specific timezone (e.g., "Europe/London" or "Etc/UTC")
-            url = f"http://worldtimeapi.org/api/timezone/{timezone_str}"
-            response = requests.get(url, timeout=5)
-            response.raise_for_status()
-
-            data = response.json()
-            # Parse the standard ISO format string returned by the API
-            return dateutil.parser.isoparse(data["datetime"])
-        except Exception as e:
-            logger.error(f"API Time check failed: {e}")
-            return datetime.now()  # Fallback
-
+    
     def set_start_time(self):
         # Fetch accurate time via HTTP
-        current_true_time = self.get_api_time("UTC")
+        current_true_time = datetime.now()
 
         # If you need to convert it to self.tz manually:
         if self.tz:

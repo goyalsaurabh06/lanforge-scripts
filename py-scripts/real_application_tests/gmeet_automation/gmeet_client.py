@@ -81,15 +81,15 @@ class GmeetClient:
             return response.json()
 
         except requests.exceptions.ConnectionError:
-            logger.error(f"❌ Connection Error: Could not reach {url}.")
+            logger.error(f"Connection Error: Could not reach {url}.")
         except requests.exceptions.Timeout:
-            logger.error(f"❌ Timeout: {url} did not respond in {timeout}s.")
+            logger.error(f"Timeout: {url} did not respond in {timeout}s.")
         except requests.exceptions.HTTPError as err:
-            logger.error(f"❌ HTTP Error {err.response.status_code}: {err}")
+            logger.error(f"HTTP Error {err.response.status_code}: {err}")
         except ValueError:
-            logger.error(f"❌ Data Error: Invalid JSON from {url}.")
+            logger.error(f"Data Error: Invalid JSON from {url}.")
         except Exception as e:
-            logger.error(f"❌ Unexpected error calling {url}: {e}")
+            logger.error(f"Unexpected error calling {url}: {e}")
 
         return None  # Return None on any failure
 
@@ -112,7 +112,7 @@ class GmeetClient:
             else:
                 # The server responded (200 OK), but the key 'meeting_url' was missing or empty
                 logger.warning(
-                    f"⚠️ API returned 200 OK, but 'meeting_url' was missing. Response: {data}"
+                    f"API returned 200 OK, but 'meeting_url' was missing. Response: {data}"
                 )
 
         # Return None if request failed or link was missing
@@ -151,7 +151,7 @@ class GmeetClient:
         # Only update if we received valid data and the 'stop' flag is explicitly True
         if data and data.get("stop") is True:
             self.stop_signal = True
-            logger.warning("🛑 Stop signal received from server. Flag set to True.")
+            logger.warning("Stop signal received from server. Flag set to True.")
 
         # 3. Always return the current state
         # If the request failed (data is None), we simply return the existing state
@@ -171,14 +171,14 @@ class GmeetClient:
             current_count = data.get("current_count")
 
             logger.info(
-                f"✅ Successfully updated participants. New count: {current_count}"
+                f"Successfully updated participants. New count: {current_count}"
             )
             return True, current_count
 
         # 3. Handle specific application errors (e.g. server said "database full")
         elif data:
             logger.warning(
-                f"⚠️ API call completed but returned error status: {data.get('message')}"
+                f"API call completed but returned error status: {data.get('message')}"
             )
 
         # 4. Return failure (Covers network errors, timeouts, or application errors)
@@ -202,7 +202,7 @@ class GmeetClient:
             self.end_time = data.get("end_time")
 
             logger.info(
-                f"✅ Times updated successfully - Start: {self.start_time}, End: {self.end_time}"
+                f"Times updated successfully - Start: {self.start_time}, End: {self.end_time}"
             )
             return True
 
@@ -210,7 +210,7 @@ class GmeetClient:
         elif payload:
             # We got a response, but the server said "error"
             logger.error(
-                f"❌ Server returned application error: {payload.get('message')}"
+                f"Server returned application error: {payload.get('message')}"
             )
         else:
             # safe_request returned None (network error, timeout, etc.)
