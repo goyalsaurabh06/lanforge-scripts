@@ -3,7 +3,6 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-import os
 import socket
 import argparse
 import requests
@@ -12,9 +11,6 @@ from datetime import datetime
 import sys
 import pytz
 import logging
-import traceback
-from requests.exceptions import RequestException, JSONDecodeError
-import platform
 
 # 1. Configure the logging system
 logging.basicConfig(
