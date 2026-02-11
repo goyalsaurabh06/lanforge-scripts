@@ -149,7 +149,7 @@ class HttpDownload(Realm):
                  device_list=None, get_url_from_file=None, file_path=None, device_csv_name='', expected_passfail_value=None, file_name=None, group_name=None, profile_name=None, eap_method=None,
                  eap_identity=None, ieee80211=None, ieee80211u=None, ieee80211w=None, enable_pkc=None, bss_transition=None, power_save=None, disable_ofdma=None, roam_ft_ds=None, key_management=None,
                  pairwise=None, private_key=None, ca_cert=None, client_cert=None, pk_passwd=None, pac_file=None, config=False, wait_time=60, get_live_view=False, total_floors=0, robot_test=False,
-                 robot_ip=None, coordinate=None, rotation=None, duration=None, do_bandsteering=False, cycles=None):
+                 robot_ip=None, coordinate=None, rotation=None, duration=None, do_bandsteering=False, cycles=None,bssids=None):
         # super().__init__(lfclient_host=lfclient_host,
         #                  lfclient_port=lfclient_port)
         self.ssid_list = []
@@ -249,6 +249,7 @@ class HttpDownload(Realm):
         self.individual_device_data = {}
         self.rx_rate_val = []
         self.max_bytes_rd = []
+        self.bssids = bssids.split(',') if bssids else []
 
 # The 'phantom_check' will be handled within the 'get_real_client_list' function
     def get_real_client_list(self):
@@ -1329,7 +1330,7 @@ class HttpDownload(Realm):
                 report.set_custom_html(f'<img src="file://{http_img_path}"></img>')
                 report.build_custom()
 
-    def get_bandsteering_stats(self,report):
+    def get_bandsteering_stats(self, report):
         """
         QOS Band Steering Statistics
         data format:
@@ -1340,13 +1341,14 @@ class HttpDownload(Realm):
         """
         import pandas as pd
         from collections import Counter
+
         data = self.individual_device_data
+
         for dev_name, df in data.items():
 
             if df.empty:
                 continue
 
-            # 1️⃣ Normalize column names
             rename_map = {
                 "timestamp": "TIMESTAMP",
                 "from_coordinate": "From Coordinate",
@@ -1354,32 +1356,42 @@ class HttpDownload(Realm):
             }
             df = df.rename(columns=rename_map)
 
-            # 2️⃣ Detect BSSID change points
-            mask = df["BSSID"] != df["BSSID"].shift()
+            allowed_bssids = set(self.bssids)
 
-            bssid_list = df.loc[mask, "BSSID"].tolist()
-            channel_list = df.loc[mask, "Channel"].tolist()
-            timestamp_list = df.loc[mask, "TIMESTAMP"].tolist()
+            mask = (
+                (df["BSSID"] != df["BSSID"].shift()) &
+                (df["BSSID"].isin(allowed_bssids))
+            )
+
+            skip_table = not mask.any()
+
+            if skip_table:
+                bssid_counts = {bssid: 0 for bssid in self.bssids}
+            else:
+                bssid_list = df.loc[mask, "BSSID"].tolist()
+                channel_list = df.loc[mask, "Channel"].tolist()
+                timestamp_list = df.loc[mask, "TIMESTAMP"].tolist()
+
+                bssid_counts = Counter(bssid_list)
 
             from_coordinate_list = (
                 df.loc[mask, "From Coordinate"].tolist()
-                if "From Coordinate" in df.columns else []
+                if "From Coordinate" in df.columns and not skip_table else []
             )
             to_coordinate_list = (
                 df.loc[mask, "To Coordinate"].tolist()
-                if "To Coordinate" in df.columns else []
+                if "To Coordinate" in df.columns and not skip_table else []
             )
 
-            # 3️⃣ Count BSSID switches
-            bssid_counts = Counter(bssid_list)
+            final_bssid_counts = {
+                bssid: bssid_counts.get(bssid, 0)
+                for bssid in self.bssids
+            }
 
-            if not bssid_counts:
-                continue
+            x_axis = list(final_bssid_counts.keys())
+            y_axis = [[float(v)] for v in final_bssid_counts.values()]
 
-            x_axis = list(bssid_counts.keys())
-            y_axis = [[float(v)] for v in bssid_counts.values()]
-
-            # 📊 Graph section
+            # 📊 Graph
             report.set_obj_html(
                 _obj_title=f"BSSID Change Count Of The Client {dev_name}",
                 _obj=" "
@@ -1411,7 +1423,15 @@ class HttpDownload(Realm):
             report.move_csv_file()
             report.build_graph()
 
-            # 📋 Table section
+            # 📋 Table
+            if skip_table:
+                report.set_obj_html(
+                    _obj_title=f"Band Steering Results for {dev_name}",
+                    _obj="No band steering events observed for the configured BSSID list."
+                )
+                report.build_objective()
+                continue
+
             report.set_obj_html(
                 _obj_title=f"Band Steering Results for {dev_name}",
                 _obj=" "
@@ -2702,6 +2722,7 @@ def main():
     optional.add_argument('--rotation', type=str, default='', help="The set of angles to rotate at a particular point")
     optional.add_argument('--do_bandsteering', help='Enable bandsteering', action='store_true')
     optional.add_argument('--cycles', type=int, default=1, help='No of cycles to perform band steering')
+    optional.add_argument('--bssids', type=str, default='', help='hostname for where Robot server is running')
 
     help_summary = '''\
 lf_webpage.py will verify that N clients are connected on a specified band and can download
@@ -2848,7 +2869,8 @@ times the file is downloaded.
                             rotation=args.rotation,
                             duration=args.duration,
                             do_bandsteering=args.do_bandsteering,
-                            cycles=args.cycles
+                            cycles=args.cycles,
+                            bssids=args.bssids
                             )
         if args.client_type == "Real":
             if not isinstance(args.device_list, list):
