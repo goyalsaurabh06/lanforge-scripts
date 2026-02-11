@@ -28,6 +28,15 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler("lf_interop_gmeet.log", mode="w"),
+        logging.StreamHandler(sys.stdout),
+    ],
+)
+
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -45,15 +54,20 @@ base_RealDevice = base.RealDevice
 lf_report = importlib.import_module("py-scripts.lf_report")
 lf_graph = importlib.import_module("py-scripts.lf_graph")
 lf_base_interop_profile = importlib.import_module("py-scripts.lf_base_interop_profile")
+# Import LF logger configuration module
+lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 
 # Accessing specific classes
 lf_report = lf_report.lf_report
 lf_bar_graph_horizontal = lf_graph.lf_bar_graph_horizontal
 RealDevice = lf_base_interop_profile.RealDevice
 
+logger_config = lf_logger_config.lf_logger_config()
+
 
 class Gmeet(Realm):
-    def __init__(self):
+    def __init__(self, lanforge_ip, email, passwd, duration):
+        super().__init__(lfclient_host=lanforge_ip)
         self.stop_signal = False
         self.meeting_url = str()
         self.upstream_port = None
@@ -74,6 +88,16 @@ class Gmeet(Realm):
         self.tz = pytz.timezone("Asia/Kolkata")
         self.host_failed = False
         self.participants = 0
+        self.email = email
+        self.passwd = passwd
+        self.duration = duration
+        self.device_names = list()
+        self.user_list = list()
+        self.serial_list_str = str()
+        self.serial_list = list()
+        self.generic_endps_profile = self.new_generic_endp_profile()
+        self.generic_endps_profile.name_prefix = "gmeet"
+        self.generic_endps_profile.type = "gmeet"
 
     def get_api_time(self, timezone_str="UTC"):
         try:
@@ -86,7 +110,7 @@ class Gmeet(Realm):
             # Parse the standard ISO format string returned by the API
             return dateutil.parser.isoparse(data["datetime"])
         except Exception as e:
-            print(f"API Time check failed: {e}")
+            logger.error(f"API Time check failed: {e}")
             return datetime.now()  # Fallback
 
     def set_start_time(self):
@@ -210,28 +234,171 @@ class Gmeet(Realm):
         """
         app = Flask(__name__)
 
+        @app.route("/get_email", methods=["GET"])
+        def get_email():
+            try:
+                return jsonify({"status": "success", "email": self.email}), 200
+            except Exception as e:
+                return jsonify({"status": "error", "message": str(e)}), 500
+
+        @app.route("/get_passwd", methods=["GET"])  # Fixed: Added '/' before get_passwd
+        def get_password_route():
+            try:
+                return (
+                    jsonify(
+                        {
+                            "status": "success",
+                            "password": self.passwd,  # Ensure self.passwd is set in your class
+                        }
+                    ),
+                    200,
+                )
+            except Exception as e:
+                return jsonify({"status": "error", "message": str(e)}), 500
+
         @app.route("/check_stop", methods=["GET"])
         def check_stop():
             return jsonify({"stop": self.stop_signal})
 
         @app.route("/meeting_url", methods=["GET", "POST"])
         def meeting_url():
-            if request.method == "POST":
-                data = request.json
-                self.meeting_url = data.get("meeting_url")
+            try:
+                if request.method == "POST":
+                    # 1. Validate that the request contains JSON
+                    if not request.is_json:
+                        return (
+                            jsonify(
+                                {
+                                    "status": "error",
+                                    "message": "Content-Type must be application/json",
+                                }
+                            ),
+                            415,
+                        )
 
-                return jsonify({"message": "meeting url updated"}), 200
+                    data = request.json
+                    new_url = data.get("meeting_url")
 
-            elif request.method == "GET":
-                return jsonify({"meeting_url": self.meeting_url})
+                    # 2. Validate that the key exists and is not empty
+                    if not new_url:
+                        return (
+                            jsonify(
+                                {
+                                    "status": "error",
+                                    "message": "Missing 'meeting_url' in payload",
+                                }
+                            ),
+                            400,
+                        )
+
+                    # 3. Update state
+                    self.meeting_url = new_url
+                    logger.info(f"Meeting URL updated to: {self.meeting_url}")
+
+                    return (
+                        jsonify(
+                            {
+                                "status": "success",
+                                "message": "Meeting URL updated successfully",
+                            }
+                        ),
+                        200,
+                    )
+
+                elif request.method == "GET":
+                    # Return the current URL (or null if not set)
+                    return (
+                        jsonify({"status": "success", "meeting_url": self.meeting_url}),
+                        200,
+                    )
+
+            except Exception as e:
+                logger.error(f"Error in meeting_url route: {str(e)}")
+                return (
+                    jsonify({"status": "error", "message": "Internal Server Error"}),
+                    500,
+                )
 
         @app.route("/host_failed", methods=["GET"])
         def host_failed():
-            self.host_failed = True
+            try:
+                # 1. Update the internal state
+                self.host_failed = True
+
+                # 2. Log this critical event
+                logger.error("⚠️ Host failure signal received via API.")
+
+                # 3. Return a proper JSON response indicating success
+                return (
+                    jsonify(
+                        {
+                            "status": "success",
+                            "message": "Host failure recorded",
+                            "current_state": self.host_failed,
+                        }
+                    ),
+                    200,
+                )
+
+            except Exception as e:
+                # Log the error if the state update fails
+                logger.error(f"Failed to process host failure signal: {str(e)}")
+
+                # Return 500 to the client so they know it failed
+                return (
+                    jsonify({"status": "error", "message": "Internal Server Error"}),
+                    500,
+                )
+
+        @app.route("/get_start_end_time", methods=["GET"])
+        def get_start_end_time():
+            try:
+                response_data = {
+                    "start_time": (
+                        self.start_time.isoformat() if self.start_time else None
+                    ),
+                    "end_time": self.end_time.isoformat() if self.end_time else None,
+                }
+
+                return jsonify({"status": "success", "data": response_data}), 200
+
+            except Exception as e:
+                logger.error(f"Error serving start/end time: {str(e)}")
+                return (
+                    jsonify({"status": "error", "message": "Internal Server Error"}),
+                    500,
+                )
 
         @app.route("/update_participants", methods=["GET"])
         def update_participants():
-            self.participants += 1
+            try:
+                # Increment the counter
+                self.participants += 1
+
+                # Log the success
+                logging.info(f"Participant added. Total count: {self.participants}")
+
+                # Return success status and the new count to the client
+                return (
+                    jsonify(
+                        {
+                            "status": "success",
+                            "message": "Participant count updated",
+                            "current_count": self.participants,
+                        }
+                    ),
+                    200,
+                )
+
+            except Exception as e:
+                # Log the specific error
+                logging.error(f"Failed to update participants: {str(e)}")
+
+                # Return a 500 Internal Server Error to the client
+                return (
+                    jsonify({"status": "error", "message": "Internal Server Error"}),
+                    500,
+                )
 
         def run_flask():
             app.run(host="0.0.0.0", port=5020, debug=False, use_reloader=False)
@@ -242,7 +409,6 @@ class Gmeet(Realm):
         flask_thread.start()
 
     def create_host(self):
-
         if self.generic_endps_profile.create(
             ports=[self.real_sta_list[0]],
             real_client_os_types=[self.real_sta_os_types[0]],
@@ -415,6 +581,87 @@ class Gmeet(Realm):
 
         self.wifi_interface_list = [item.split(".")[2] for item in self.real_sta_list]
 
+    def filter_ios_devices(self, device_list):
+        """
+        Filters out iOS devices from the given device list based on hardware and software identifiers.
+
+        This method accepts a list or comma-separated string of device identifiers and removes
+        devices identified as iOS (Apple) based on their hardware version, app ID, and kernel info
+        fetched via the `/resource/{shelf}/{resource}` API endpoint.
+
+        Supported input formats for each device:
+        - "shelf.resource"
+        - "shelf.resource.port"
+        - "resource" (assumes shelf = 1)
+
+        iOS devices are identified if:
+        - 'Apple' is found in the hardware version, and
+        - `app-id` is not empty and is either non-zero or the kernel is empty
+
+        Args:
+            device_list (Union[list[str], str]): A list or comma-separated string of devices to be filtered.
+
+        Returns:
+            Union[list[int], str]: A list of valid (non-iOS) device IDs as integers,
+                                or a comma-separated string if the input was a string.
+
+        Logs:
+            - Warnings for invalid formats or missing device data.
+            - Info when an iOS device is skipped.
+            - Exceptions if errors occur during processing.
+
+        """
+        modified_device_list = device_list
+        if isinstance(device_list, str):
+            modified_device_list = device_list.split(",")
+
+        filtered_list = []
+
+        for device in modified_device_list:
+            device = str(device).strip()
+            try:
+                if device.count(".") == 1:
+                    shelf, resource = device.split(".")
+                elif device.count(".") == 2:
+                    shelf, resource, port = device.split(".")
+                elif device.count(".") == 0:
+                    shelf, resource = 1, device
+                else:
+                    logger.warning("Invalid device format: %s", device)
+                    continue
+
+                device_data_resp = self.json_get(f"/resource/{shelf}/{resource}")
+                if not device_data_resp or "resource" not in device_data_resp:
+                    logger.warning("Device data not found for %s", device)
+                    continue
+
+                device_data = device_data_resp["resource"]
+                hw_version = device_data.get("hw version", "")
+                app_id = device_data.get("app-id", "")
+                kernel = device_data.get("kernel", "")
+
+                if (
+                    "Apple" in hw_version
+                    and app_id != ""
+                    and (app_id != "0" or kernel == "")
+                ):
+                    logger.info(
+                        "%s is an iOS device. Currently, we do not support iOS devices.",
+                        device,
+                    )
+                else:
+                    filtered_list.append(device)
+
+            except Exception as e:
+                logger.exception(f"Error processing device {device}: {e}")
+                continue
+
+        if isinstance(device_list, str):
+            filtered_list = ",".join(filtered_list)
+
+        self.device_list = filtered_list
+        return filtered_list
+
     def select_real_devices(self, real_sta_list=None):
         self.real_devices_obj.get_devices()
         # Query and retrieve all user-defined real stations if `real_sta_list` is not provided
@@ -469,8 +716,24 @@ class Gmeet(Realm):
 
         return self.real_sta_list
 
+    def check_host_gen_cx(self):
+        try:
+            generic_endpoint = self.json_get(
+                f"/generic/{self.generic_endps_profile.created_endp[0]}"
+            )
+            endp_status = generic_endpoint["endpoint"]["status"]
+            if endp_status == "Stopped":
+                logger.info("Failed to Start the Host Device")
+                self.generic_endps_profile.cleanup()
+                sys.exit(1)
+            time.sleep(5)
+        except Exception as e:
+            logging.info(f"Error while checking Host Gen CX Status: {e}")
+            time.sleep(5)
+
     def wait_for_meet_link(self):
         while not self.meeting_url:
+            self.check_host_gen_cx()
             if self.host_failed:
                 logger.error("Unable to Create Meeting from Host Side")
                 return False
@@ -489,7 +752,7 @@ class Gmeet(Realm):
         for i in range(1, len(self.real_sta_os_types)):
 
             if self.real_sta_os_types[i] == "windows":
-                cmd = f"py gmeet_client.py --ip {self.upstream_port}"
+                cmd = f"py gmeet_client.py --upstream_port_ip {self.upstream_port}"
                 self.generic_endps_profile.set_cmd(
                     self.generic_endps_profile.created_endp[i], cmd
                 )
@@ -507,69 +770,189 @@ class Gmeet(Realm):
                 self.generic_endps_profile.set_cmd(
                     self.generic_endps_profile.created_endp[i], cmd
                 )
+        self.start_client_cx()
 
-        self.generic_endps_profile.start_cx()
+    def start_client_cx(self):
+        client_cx = self.generic_endps_profile.created_cx[1:]
+        for cx_name in client_cx:
+            self.json_post(
+                "/cli-json/set_cx_state",
+                {"test_mgr": "default_tm", "cx_name": cx_name, "cx_state": "RUNNING"},
+                debug_=True,
+            )
+
+    def check_gen_cx(self):
+        try:
+
+            for gen_endp in self.generic_endps_profile.created_endp:
+                generic_endpoint = self.json_get(f"/generic/{gen_endp}")
+
+                if not generic_endpoint or "endpoint" not in generic_endpoint:
+                    logger.info(f"Error fetching endpoint data for {gen_endp}")
+                    return False
+
+                endp_status = generic_endpoint["endpoint"].get("status", "")
+
+                if endp_status not in [
+                    "Stopped",
+                    "WAITING",
+                    "NO-CX",
+                    "PHANTOM",
+                    "FTM_WAIT",
+                ]:
+                    return False
+
+            return True
+        except Exception as e:
+            logger.error(f"Error in check_gen_cx function {e}", exc_info=True)
+            logger.info(f"generic endpoint data {generic_endpoint}")
+
+    def wait_for_clients(self):
+        start_time = datetime.now()
+        end_time = start_time + timedelta(minutes=2)
+
+        while end_time > datetime.now():
+            if len(self.real_sta_os_types) == self.participants:
+                break
+
+            time.sleep(5)
+
+    def monitor_test(self):
+        logger.info("TEST WILL BE STARTING")
+        while datetime.now(self.tz) < self.end_time or not self.check_gen_cx():
+            if self.stop_signal:
+                break
+
+            time.sleep(5)
 
 
 def main():
-    parser = argparse.ArgumentParser("Google Meet Automation")
+    try:
 
-    # Define required arguments group
-    required = parser.add_argument_group("Required arguments")
-    # Define optional arguments group
-    optional = parser.add_argument_group("Optional arguments")
+        parser = argparse.ArgumentParser("Google Meet Automation")
 
-    # Add parser arguments
-    required.add_argument(
-        "--mgr", type=str, help="hostname where LANforge GUI is running", parser=True
-    )
-    required.add_argument(
-        "--duration", type=int, help="duration to run the test", parser=True
-    )
+        # Define required arguments group
+        required = parser.add_argument_group("Required arguments")
+        # Define optional arguments group
+        optional = parser.add_argument_group("Optional arguments")
 
-    required.add_argument(
-        "--upstream_port",
-        type=str,
-        help="Upstream port ip or EID for data transfer and communcation with clients",
-    )
+        # Add parser arguments
+        required.add_argument(
+            "--mgr",
+            type=str,
+            help="hostname where LANforge GUI is running",
+            required=True,
+        )
+        required.add_argument(
+            "--duration", type=int, help="duration to run the test", required=True
+        )
 
-    optional.add_argument(
-        "--resources", help="Specify the real device ports seperated by comma"
-    )
-    optional.add_argument(
-        "--no_pre_cleanup",
-        action="store_true",
-        help="specify this flag to stop cleaning up generic cxs before the test",
-    )
-    optional.add_argument(
-        "--no_post_cleanup",
-        action="store_true",
-        help="specify this flag to stop cleaning up generic cxs after the test",
-    )
+        required.add_argument(
+            "--upstream_port",
+            type=str,
+            help="Upstream port ip or EID for data transfer and communcation with clients",
+            required=True,
+        )
 
-    args = parser.parse_args()
+        required.add_argument(
+            "--email",
+            type=str,
+            help="Google Account Mail ID for Sign in",
+            required=True,
+        )
 
-    gmeet = Gmeet()
-    gmeet.change_port_to_ip(args.upstream_port)
+        required.add_argument(
+            "--passwd",
+            type=str,
+            help="Google Account Password for Sign in",
+            required=True,
+        )
 
-    gmeet.real_devices_obj = RealDevice(
-        manager_ip=args.mgr, server_ip=gmeet.upstream_port
-    )
+        optional.add_argument(
+            "--resources", help="Specify the real device ports seperated by comma"
+        )
+        optional.add_argument(
+            "--no_pre_cleanup",
+            action="store_true",
+            help="specify this flag to stop cleaning up generic cxs before the test",
+        )
+        optional.add_argument(
+            "--no_post_cleanup",
+            action="store_true",
+            help="specify this flag to stop cleaning up generic cxs after the test",
+        )
+        optional.add_argument("--lf_logger_config_json", help="lf_logger config json")
+        optional.add_argument(
+            "--log_level", help="Level of the logs to be dispalyed", default="info"
+        )
 
-    gmeet.real_devices_obj.get_devices()
+        args = parser.parse_args()
 
-    if args.resources:
-        resources = [r.strip() for r in args.resources.split(",")]
-        resources = [r for r in resources if len(r.split(".")) > 1]
+        logger_config = lf_logger_config.lf_logger_config()
 
-        gmeet.select_real_devices(real_sta_list=resources)
+        if args.log_level:
+            logger_config.set_level(level=args.log_level)
 
-    else:
-        gmeet.select_real_devices()
+        if args.lf_logger_config_json:
+            logger_config.lf_logger_config_json = args.lf_logger_config_json
+            logger_config.load_lf_logger_config()
 
-    gmeet.get_device_data()
-    gmeet.get_android_device_data()
-    gmeet.process_device_data()
-    gmeet.create_host()
-    if gmeet.wait_for_meet_link():
-        gmeet.create_clients()
+        gmeet = Gmeet(
+            lanforge_ip=args.mgr,
+            email=args.email,
+            passwd=args.passwd,
+            duration=args.duration,
+        )
+        gmeet.start_flask_server()
+        gmeet.change_port_to_ip(args.upstream_port)
+
+        gmeet.real_devices_obj = RealDevice(
+            manager_ip=args.mgr,
+            server_ip="192.168.1.61",
+            ssid_2g="Test Configured",
+            passwd_2g="",
+            encryption_2g="",
+            ssid_5g="Test Configured",
+            passwd_5g="",
+            encryption_5g="",
+            ssid_6g="Test Configured",
+            passwd_6g="",
+            encryption_6g="",
+            selected_bands=["5G"],
+        )
+
+        gmeet.real_devices_obj.get_devices()
+
+        if args.resources:
+            resources = [r.strip() for r in args.resources.split(",")]
+            resources = [r for r in resources if len(r.split(".")) > 1]
+
+            gmeet.select_real_devices(real_sta_list=resources)
+
+        else:
+            gmeet.select_real_devices()
+
+        gmeet.get_device_data()
+        gmeet.get_android_device_data()
+        gmeet.process_device_data()
+        gmeet.create_host()
+        time.sleep(10)
+        if gmeet.wait_for_meet_link():
+            gmeet.create_clients()
+            gmeet.wait_for_clients()
+            gmeet.set_start_time()
+            gmeet.monitor_test()
+
+    except Exception as e:
+        logger.error(f"Error occured {e}")
+        logger.error(traceback.print_exc())
+    finally:
+        gmeet.stop_signal = True
+        logger.info(
+            "Waiting for the browser or application to close on laptops and mobile devices."
+        )
+        time.sleep(10)
+
+
+if __name__ == "__main__":
+    main()

@@ -17,13 +17,18 @@ from selenium.webdriver.support import expected_conditions as EC
 import logging
 import traceback
 import requests
+import sys
+import pytz
+from datetime import datetime
 
 # 1. Configure the logging system
 logging.basicConfig(
-    filename="gmeet_host.log",
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
-    filemode="w",
+    handlers=[
+        logging.FileHandler("gmeet_host.log", mode="w"),
+        logging.StreamHandler(sys.stdout),
+    ],
 )
 
 # 2. Create the logger instance
@@ -38,6 +43,8 @@ class GoogleMeetHost:
         self.meeting_url = str()
         self.start_time = None
         self.end_time = None
+        self.tz = pytz.timezone("Asia/Kolkata")
+        self.stop_signal = False
 
         # configure chrome options
         self.opt = Options()
@@ -75,8 +82,6 @@ class GoogleMeetHost:
 
         open_option.click()
 
-        time.sleep(300)
-
     def create_meeting(self):
         target_element = self.dynamic_wait(10).until(
             EC.presence_of_element_located(
@@ -95,23 +100,88 @@ class GoogleMeetHost:
         self.allow_all()
         self.meeting_url = self.driver.current_url
 
-    def send_meeting_url(self):
+    def safe_request(self, method, endpoint, payload=None, timeout=5):
+        """
+        Generic wrapper to handle requests with consistent error logging.
+        """
+        url = f"http://{self.upstream_port_ip}:5020/{endpoint}"
+
         try:
-            response = requests.post(
-                f"http://{self.upstream_port_ip}:5020/meeting_url",
-                json={"meeting_url": self.meeting_url},
-            )
-            if response.status_code == 200:
-                logger.info("Meeting URL sent successfully.")
+            if method.upper() == "GET":
+                response = requests.get(url, timeout=timeout)
             else:
-                logger.error(
-                    f"Failed to send meeting URL. Status code: {response.status_code}"
-                )
+                response = requests.post(url, json=payload, timeout=timeout)
+
+            response.raise_for_status()
+            return response.json()
+
+        except requests.exceptions.ConnectionError:
+            logger.error(f"❌ Connection Error: Could not reach {url}.")
+        except requests.exceptions.Timeout:
+            logger.error(f"❌ Timeout: {url} did not respond in {timeout}s.")
+        except requests.exceptions.HTTPError as err:
+            logger.error(f"❌ HTTP Error {err.response.status_code}: {err}")
+        except ValueError:
+            logger.error(f"❌ Data Error: Invalid JSON from {url}.")
         except Exception as e:
-            logger.error(f"Exception occurred while sending meeting URL: {e}")
-    
+            logger.error(f"❌ Unexpected error calling {url}: {e}")
+
+        return None  # Return None on any failure
+
+    def send_meeting_url(self):
+        """
+        Sends the current meeting URL to the upstream server.
+        Returns: bool (True if successful)
+        """
+        # 1. Validation
+        if not self.meeting_url:
+            logger.warning("⚠️ Attempted to send meeting URL, but it is empty.")
+            return False
+
+        # 2. Call the helper
+        # The helper handles crashes/timeouts and returns None if they happen.
+        response_data = self.safe_request(
+            method="POST",
+            endpoint="meeting_url",
+            payload={"meeting_url": self.meeting_url},
+        )
+
+        # 3. Verify application success
+        # We check if response_data exists AND if the 'status' key is 'success'
+        if response_data and response_data.get("status") == "success":
+            logger.info("✅ Meeting URL sent successfully.")
+            return True
+        else:
+            # If we got a response but the server said "error" (e.g. invalid data)
+            if response_data:
+                logger.error(
+                    f"❌ Server rejected update: {response_data.get('message')}"
+                )
+            return False
+
     def inform_host_failed(self):
-        requests.get(f'http://{self.upstream_port_ip}:5020/host_failed')
+        """
+        Notifies the upstream server that the host has failed.
+        Returns: bool (True if notification was successful)
+        """
+        logger.info("Attempting to report host failure...")
+
+        # 1. Call the helper
+        # The helper handles crashes/timeouts and returns None if they happen.
+        response_data = self.safe_request(method="GET", endpoint="host_failed")
+
+        # 2. Check the response
+        if response_data and response_data.get("status") == "success":
+            logger.info("✅ Successfully notified server of host failure.")
+            return True
+
+        # 3. Handle specific failure messages if needed
+        if response_data:
+            logger.error(
+                f"❌ Server received request but returned error: {response_data.get('message')}"
+            )
+
+        return False
 
     def dismiss_popup(self):
         try:
@@ -125,7 +195,42 @@ class GoogleMeetHost:
         except Exception as e:
             logger.info("No popup to dismiss.")
 
+    def get_email(self):
+        """
+        Fetches the login email from the upstream server.
+        """
+        # 1. Call helper
+        data = self.safe_request("GET", "get_email")
+
+        # 2. Validate
+        if data and data.get("email"):
+            self.email = data.get("email")
+            logger.info(f"✅ Fetched Email: {self.email}")
+            return True
+
+        # 3. Handle Failure
+        logger.error("❌ Unable to Fetch Email ID for login.")
+        sys.exit(1)
+
+    def get_password(self):
+        """
+        Fetches the login password from the upstream server.
+        """
+        # 1. Call helper
+        data = self.safe_request("GET", "get_passwd")
+
+        # 2. Validate
+        if data and data.get("password"):
+            self.password = data.get("password")
+            logger.info("✅ Fetched Password.")
+            return True
+
+        # 3. Handle Failure
+        logger.error("❌ Unable to Fetch Password for login.")
+        sys.exit(1)
+
     def login(self):
+        self.get_email()
         self.driver.get("https://meet.google.com/landing?pli=1")
 
         email_input = self.dynamic_wait(10).until(
@@ -153,6 +258,91 @@ class GoogleMeetHost:
 
         self.dismiss_popup()
 
+    def update_participants(self):
+        """
+        Calls the upstream API to increment the participant count.
+        Returns: (success: bool, current_count: int or None)
+        """
+        # 1. Call the helper
+        # This handles timeouts, connection errors, and bad JSON automatically.
+        data = self.safe_request("GET", "update_participants")
+
+        # 2. Verify application-level success
+        if data and data.get("status") == "success":
+            current_count = data.get("current_count")
+
+            logger.info(
+                f"✅ Successfully updated participants. New count: {current_count}"
+            )
+            return True, current_count
+
+        # 3. Handle failure cases
+        elif data:
+            # Request worked, but server returned an error (e.g. database full)
+            logger.warning(
+                f"⚠️ API call completed but returned error status while updating participants: {data.get('message')}"
+            )
+        else:
+            # safe_request returned None (network error/timeout).
+            # The specific error has already been logged by safe_request.
+            pass
+
+        return False, None
+
+    def get_start_and_end_time(self):
+        """
+        Fetches start and end times from the upstream server.
+        Updates self.start_time and self.end_time.
+        Returns: bool (True if update succeeded, False otherwise)
+        """
+        # 1. Call the helper
+        # This handles timeouts, connection errors, and bad JSON automatically.
+        payload = self.safe_request("GET", "get_start_end_time")
+
+        # 2. Verify application-level success
+        if payload and payload.get("status") == "success":
+            data = payload.get("data", {})
+
+            self.start_time = data.get("start_time")
+            self.end_time = data.get("end_time")
+
+            logger.info(
+                f"✅ Times updated successfully - Start: {self.start_time}, End: {self.end_time}"
+            )
+            return True
+
+        # 3. Handle failure cases
+        elif payload:
+            # We got a response, but the server said "error"
+            logger.error(
+                f"❌ Server returned application error: {payload.get('message')}"
+            )
+        else:
+            # safe_request returned None (network error, timeout, etc.)
+            # The specific error has already been logged by safe_request
+            pass
+
+        return False
+
+    def check_stop_signal(self):
+        """
+        Check the stop signal from the Flask server.
+        Returns: bool (The current state of the stop signal)
+        """
+        # 1. Call the helper
+        # We use a shorter timeout (3s) so the main loop doesn't freeze if the server hangs.
+        data = self.safe_request("GET", "check_stop", timeout=3)
+
+        # 2. Process the response
+        # We only update if we got valid data AND the 'stop' flag is explicitly True.
+        if data and data.get("stop") is True:
+            self.stop_signal = True
+            logger.warning("🛑 Stop signal received from server. Flag set to True.")
+
+        # 3. Always return the current state
+        # (If the request failed/returned None, we simply return the existing state)
+        return self.stop_signal
+
 
 def main():
     try:
@@ -165,12 +355,26 @@ def main():
         )
         args = parser.parse_args()
 
-        host = GoogleMeetHost(
-            upstream_port_ip=args.upstream_port_ip
-        )
+        host = GoogleMeetHost(upstream_port_ip=args.upstream_port_ip)
         host.login()
         host.create_meeting()
         host.send_meeting_url()
+        host.update_participants()
+        while host.start_time is None or host.end_time is None:
+            host.get_start_and_end_time()
+            time.sleep(5)
+
+        while datetime.fromisoformat(host.start_time) > datetime.now(host.tz):
+            time.sleep(2)
+            logger.info("Waiting for the start time of The Test")
+
+        while datetime.fromisoformat(host.end_time) > datetime.now(host.tz):
+            logger.info("monitoring the test")
+            host.check_stop_signal()
+            if host.stop_signal:
+                logger.info("Stop signal received. Exiting the Test")
+                break
+
     except Exception as e:
         logger.error(f"Exception occurred: {e}")
         logger.error(traceback.format_exc())
