@@ -1044,6 +1044,7 @@ class Throughput(Realm):
             self.pre_cleanup()
             if self.traffic_type == "lf_tcp" and self.multi_conn>1:
                 ip_port_a = 0
+                self.cx_profile.mconn_B = 1
             else:
                 ip_port_a = -1
             for device in range(len(self.input_devices_list)):
@@ -1189,11 +1190,9 @@ class Throughput(Realm):
                         endp_a = cx + '-A'
                         endp_b = cx + '-B'
                         if value['name'] == endp_a and resource_id in value['name']:
-                            print("value['name'] in A", value['name'])
                             throughput[i][0] += value['rx rate (last)']
                             throughput[i][2] += value['rx drop %']//self.endp_count
                         elif value['name'] == endp_b and resource_id in value['name']:
-                            print("value['name'] in B", value['name'])
                             throughput[i][1] += value['rx rate (last)']
                             throughput[i][3] += value['rx drop %']/self.endp_count
 
@@ -4497,8 +4496,8 @@ Copyright 2023 Candela Technologies Inc.
     optional.add_argument("--config", action="store_true", help="Specify for configuring the devices")
     optional.add_argument("--interopability_config", action="store_true", help="To do individual configuration for each device in interoperability")
     optional.add_argument("--tput_mbps", action="store_true", help="Interpret rated download and upload values as Mbps instead of bytes")
-    optional.add_argument("--endp_count", type=int, help='Specify the maximum time to wait for Configuration', default=3)
-    optional.add_argument("--multi_conn", type=int, help='Specify the maximum time to wait for Configuration', default=1)
+    optional.add_argument("--endp_count", type=int, help='Specify the maximum time to wait for Configuration')
+    optional.add_argument("--multi_conn", type=int, help='Specify the maximum time to wait for Configuration')
     parser.add_argument('--help_summary', help='Show summary of what this script does', action="store_true")
 
     # IOT ARGS
@@ -4566,6 +4565,12 @@ Copyright 2023 Candela Technologies Inc.
     loads = {}
     iterations_before_test_stopped_by_user = []
     gave_incremental = False
+    if args.traffic_type == "lf_tcp":
+        args.multi_conn = 10
+        args.endp_count = 3
+    else:
+        args.multi_conn = 1
+        args.endp_count = 3
 
     if args.do_interopability:
         if args.download != '2560' and args.download != '0' and args.upload != '0' and args.upload != '2560':
