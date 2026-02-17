@@ -2175,9 +2175,7 @@ class RealBrowserTest(Realm):
                 # 'Incremental Values': self.test_setup_info_incremental_values,
                 'Required URL Count': self.count,
                 'URL': self.url,
-                'Test Duration (min)': (
-                    "Path-based (Band-Steering)" if self.do_bandsteering else self.duration
-                ),
+                'Test Duration (min)': self.duration,
                 'SSID': self.report_ssid,
                 "Security": self.encryp
             }
@@ -2206,7 +2204,8 @@ class RealBrowserTest(Realm):
                 'URL': self.url,
                 'Test Duration (min)': self.duration,
             }
-
+        if self.do_bandsteering and 'Test Duration (min)' in test_setup_info:
+            del test_setup_info['Test Duration (min)']
         return test_setup_info
 
     def generate_pass_fail_list(self, device_type_data, device_names, total_urls):
@@ -3547,6 +3546,11 @@ def main():
                               rotations_enabled=rotations_enabled,
                               )
         obj.change_port_to_ip()
+
+        ## ---- FORCE OVERRIDE UPSTREAM PORT ----
+        #obj.upstream_port = "192.168.200.227"
+        #logging.info(f"[OVERRIDE] Upstream port forced to {obj.upstream_port}")
+
         obj.validate_and_process_args()
         obj.config_obj = DeviceConfig.DeviceConfig(lanforge_ip=obj.host, file_name=obj.file_name, wait_time=obj.wait_time)
         if not obj.expected_passfail_value and obj.device_csv_name is None:
