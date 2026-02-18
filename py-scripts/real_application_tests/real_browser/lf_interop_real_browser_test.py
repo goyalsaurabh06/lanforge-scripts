@@ -134,8 +134,8 @@ log.setLevel(logging.ERROR)
 
 from IOT.iot_helper import start_iot_thread, with_iot_params_in_table, add_iot_report_section  # noqa: E402
 
-# robo_base_class = importlib.import_module("py-scripts.lf_robo_base_class")
-robo_base_class = importlib.import_module("py-scripts.lf_base_robo")
+robo_base_class = importlib.import_module("py-scripts.lf_robo_base_class")
+# robo_base_class = importlib.import_module("py-scripts.lf_base_robo")
 
 
 class RealBrowserTest(Realm):
@@ -303,7 +303,9 @@ class RealBrowserTest(Realm):
         self.do_robo = do_robo
         if self.do_robo:
             self.robo_ip = robo_ip
-            self.robo_obj = robo_base_class.RobotClass(robo_ip=self.robo_ip, angle_list=angles_list)
+            # self.robo_obj = robo_base_class.RobotClass(robo_ip=self.robo_ip, angle_list=angles_list)
+            self.robo_obj = robo_base_class.RobotClass()
+            self.robo_obj.robo_ip = self.robo_ip
             self.coordinates_list = coordinates_list
             self.angles_list = angles_list
             self.current_cord = current_cord
@@ -1047,14 +1049,15 @@ class RealBrowserTest(Realm):
         if self.do_robo:
             for coordinate in self.coordinates_list:
                 # self.robo_obj.ensure_battery_for_test(duration_min=self.duration, mins_per_percent=self.mins_per_percent)
-                self.robo_obj.wait_for_battery()
-                self.robo_obj.move_to_coordinate(coord=coordinate)
+                self.robo_obj.wait_for_battery(battery=90)
+                self.robo_obj.move_to_coordinate(coordinate=coordinate)
                 self.current_cord = coordinate
                 if self.rotations_enabled:
                     for angle in self.angles_list:
                         # self.robo_obj.ensure_battery_for_test(duration_min=self.duration, mins_per_percent=self.mins_per_percent)
-                        self.robo_obj.wait_for_battery()
-                        self.robo_obj.rotate_angle(angle_degree=angle)
+                        self.robo_obj.wait_for_battery(battery=90)
+                        # self.robo_obj.rotate_angle(1,2,angle_degree=angle)
+                        self.robo_obj.rotate_angle(1,2,angle=angle)
                         self.current_angle = angle
                         self.start_specific(cx_batch)
                         logging.info(f"Test started on Devices with resource Ids : {cx_batch}")
@@ -1995,6 +1998,7 @@ class RealBrowserTest(Realm):
 
     def extract_device_data(self, file_path):
         # Load the CSV file
+        print("pathhhhhhh",file_path)
         data = pd.read_csv(file_path)
 
         # Initialize lists to store data
@@ -2133,7 +2137,7 @@ class RealBrowserTest(Realm):
             self.device_targets = {}
             self.laptop_stats = {}
             while datetime.now() <= end_time or not self.check_gen_cx():
-                pause, _ = self.robo_obj.wait_for_battery()
+                pause, _ = self.robo_obj.wait_for_battery(battery=90)
                 if pause:
                     last_data = []
                     mobile_data = {}
@@ -2375,7 +2379,6 @@ class RealBrowserTest(Realm):
         latency metrics, error counts, and signal strength for all devices.
         """
         try:
-
             _, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = self.extract_device_data(csv_file)
             if self.rotations_enabled:
                 self.report.set_graph_title(f"Successful URL's per Device at coordinate {coordinate} and angle {angle}")

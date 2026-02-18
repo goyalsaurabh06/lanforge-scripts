@@ -140,7 +140,8 @@ import csv
 import traceback
 import threading
 from collections import OrderedDict
-from lf_base_robo import RobotClass
+# from lf_base_robo import RobotClass
+from lf_robo_base_class import RobotClass
 
 if sys.version_info[0] != 3:
     print("This script requires Python 3")
@@ -1063,7 +1064,7 @@ class FtpTest(LFCliBase):
                 if (datetime.now() - monitor_charge_time).total_seconds() >= 300:
                     pause_start = datetime.now()
                     # Wait for the robot to charge. Returns whether we paused and whether user aborted.
-                    pause, test_stopped_by_user = self.robot_obj.wait_for_battery()
+                    pause, test_stopped_by_user = self.robot_obj.wait_for_battery(battery=40)
                     if test_stopped_by_user:
                         break
                     if pause:
@@ -1077,7 +1078,7 @@ class FtpTest(LFCliBase):
                             break
                         # Restore orientation if rotation is enabled
                         if self.rotation_enabled:
-                            rotation_moni = self.robot_obj.rotate_angle(self.current_angle)
+                            rotation_moni = self.robot_obj.rotate_angle(1,2,self.current_angle)
                             if not rotation_moni:
                                 break
                         # Resume test
@@ -2943,7 +2944,8 @@ class FtpTest(LFCliBase):
         base_dir = os.path.dirname(os.path.dirname(self.result_dir))
         nav_data = os.path.join(base_dir, 'nav_data.json')  # To generate nav_data.json in webgui folder
         self.robot_obj.nav_data_path = nav_data
-        self.robot_obj.create_waypointlist()
+        # Enable this for testing with actual robot
+        # self.robot_obj.create_waypointlist()
         test_stopped_by_user = False
         self.robot_obj.ip = self.host
         self.robot_obj.testname = self.test_name
@@ -2952,7 +2954,7 @@ class FtpTest(LFCliBase):
             if test_stopped_by_user:
                 break
             # Check for battery status before moving to next coordinate
-            if_paused, test_stopped_by_user = self.robot_obj.wait_for_battery()
+            if_paused, test_stopped_by_user = self.robot_obj.wait_for_battery(battery=40)
             # If test is stopped by user during battery wait
             if test_stopped_by_user:
                 break
@@ -2976,11 +2978,11 @@ class FtpTest(LFCliBase):
                 else:
                     for angle in range(len(self.rotation_list)):
                         # Check for battery status before rotating to next angle
-                        is_paused, test_stopped_by_user = self.robot_obj.wait_for_battery()
+                        is_paused, test_stopped_by_user = self.robot_obj.wait_for_battery(battery=40)
                         # If test is stopped by user during battery wait
                         if test_stopped_by_user:
                             break
-                        robo_rotated = self.robot_obj.rotate_angle(self.rotation_list[angle])
+                        robo_rotated = self.robot_obj.rotate_angle(1,2,self.rotation_list[angle])
                         if robo_rotated:
                             # Start the test if robot rotated to the angle
                             self.current_angle = self.rotation_list[angle]

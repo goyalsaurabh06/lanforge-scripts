@@ -87,6 +87,7 @@ import logging
 import traceback
 import asyncio
 import csv
+import json
 
 if 'py-json' not in sys.path:
     sys.path.append(os.path.join(os.path.abspath('..'), 'py-json'))
@@ -95,7 +96,7 @@ if 'py-scripts' not in sys.path:
     sys.path.append('/home/lanforge/lanforge-scripts/py-scripts')
 
 from lf_base_interop_profile import RealDevice
-from lf_graph import lf_bar_graph_horizontal
+from lf_graph import lf_bar_graph_horizontal, lf_bar_graph
 from lf_report import lf_report
 from station_profile import StationProfile
 from typing import List, Optional
@@ -112,7 +113,8 @@ if sys.version_info[0] != 3:
 
 realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
-
+# from lf_base_robo import RobotClass
+from lf_robo_base_class import RobotClass
 
 class Ping(Realm):
     def __init__(self,
@@ -155,7 +157,8 @@ class Ping(Realm):
                  wait_time=60,
                  total_floors: int = None,
                  get_live_view: bool = None,
-                 result_dir: str = None):
+                 result_dir: str = None,
+                 robo_ip=None,angle_list=None,coordinate_list = [],rotation_enabled=None,local_lf_report_dir=''):
         super().__init__(lfclient_host=host,
                          lfclient_port=port)
         self.ssid_list = []
@@ -219,6 +222,23 @@ class Ping(Realm):
         self.test_input_list = []
         self.percent_pac_loss = []
         self.wait_time = wait_time
+
+        # variables related to robot 
+        self.coordinate_list = coordinate_list
+        self.rotation_enabled = rotation_enabled
+        self.last_rotated_angles=[]
+        self.robo_ip=robo_ip
+        self.angle_list=angle_list if rotation_enabled else [0]
+        self.currentangle=None
+        self.currentcoordinate=None
+        if robo_ip is not None:
+            self.robot=RobotClass()
+            self.robot.robo_ip=robo_ip
+        self.coordinate_json={}
+        self.angle_json={}
+        self.coordinates_completed=[]
+        self.starttime_track={}
+        self.local_lf_report_dir = local_lf_report_dir
 
     def change_target_to_ip(self):
 
@@ -882,6 +902,538 @@ class Ping(Realm):
         else:
             return None
 
+    def perform_robo(self,args,Devices):
+        rotation_enabled=bool(self.rotation_enabled)
+        self.robot.ip=self.host
+        # self.robot.testname=self.result_dir.split("/")[-1]
+        abort=False
+        print("Proceeding with robot test execution")
+        ports_data_dict = self.json_get('/ports/all/')['interfaces']
+        ports_data = {}
+        for ports in ports_data_dict:
+            port, port_data = list(ports.keys())[0], list(ports.values())[0]
+            ports_data[port] = port_data
+        
+        for coord in self.coordinate_list:
+            pause,stop_test=self.robot.wait_for_battery(battery=80)
+            matched,abort=self.robot.move_to_coordinate(coord)
+            if abort:
+                break
+            self.coordinates_completed.append(coord)
+            self.currentcoordinate=coord
+            logging.info("rotationlist {}".format(self.angle_list))
+            self.result_json={}
+            pause_angle=False
+            for j in range(len(self.angle_list)):
+                if rotation_enabled:
+                    pause_angle,stop_test= self.robot.wait_for_battery(battery=80)
+                if stop_test:
+                    break
+                if pause_angle:
+                    reached=self.robot.move_to_coordinate(coord)
+                    if not reached:
+                        continue
+                if rotation_enabled:
+                    angle=self.angle_list[j]
+                    rotation = self.robot.rotate_angle(1,2,angle)
+                    if not rotation:
+                        break
+                    
+                    self.currentangle=self.angle_list[j]
+                self.start_generic()
+                duration=self.duration * 60
+                time.sleep(duration)
+                logging.info('Stopping the cx')
+                self.stop_generic()
+
+                result_data = self.get_results()
+                if (args.real):
+                    if (isinstance(result_data, dict)):
+                        for station in self.real_sta_list:
+                            current_device_data = Devices.devices_data[station]
+                            # logging.info(current_device_data)
+                            if (station in result_data['name']):
+                                try:
+                                    # logging.info(result_data['last results'].split('\n'))
+                                    self.result_json[station] = {
+                                        'command': result_data['command'],
+                                        'sent': result_data['tx pkts'],
+                                        'recv': result_data['rx pkts'],
+                                        'dropped': result_data['dropped'],
+                                        'min_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[0] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                        'avg_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[1] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                        'max_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[2] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                        'mac': current_device_data['mac'],
+                                        'ssid': current_device_data['ssid'],
+                                        'channel': current_device_data['channel'],
+                                        'mode': current_device_data['mode'],
+                                        'name': [current_device_data['user'] if current_device_data['user'] != '' else current_device_data['hostname']][0],
+                                        'os': ['Windows' if 'Win' in current_device_data['hw version'] else 'Linux' if 'Linux' in current_device_data['hw version'] else 'Mac' if 'Apple' in current_device_data['hw version'] else 'Android'][0],  # noqa E501
+                                        'remarks': [],
+                                        'last_result': [result_data['last results'].split('\n')[-2] if len(result_data['last results']) != 0 else ""][0]
+                                    }
+                                    self.result_json[station]['remarks'] = self.generate_remarks(self.result_json[station])
+                                except Exception:
+                                    logging.error('Failed parsing the result for the station {}'.format(station))
+                    else:
+                        for station in self.real_sta_list:
+                            current_device_data = Devices.devices_data[station]
+                            for ping_device in result_data:
+                                ping_endp, ping_data = list(ping_device.keys())[
+                                    0], list(ping_device.values())[0]
+                                if (station in ping_endp):
+                                    try:
+                                        self.result_json[station] = {
+                                            'command': ping_data['command'],
+                                            'sent': ping_data['tx pkts'],
+                                            'recv': ping_data['rx pkts'],
+                                            'dropped': ping_data['dropped'],
+                                            'min_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[0] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                            'avg_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[1] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                            'max_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[2] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                            'mac': current_device_data['mac'],
+                                            'ssid': current_device_data['ssid'],
+                                            'channel': current_device_data['channel'],
+                                            'mode': current_device_data['mode'],
+                                            'name': [current_device_data['user'] if current_device_data['user'] != '' else current_device_data['hostname']][0],
+                                            'os': ['Windows' if 'Win' in current_device_data['hw version'] else 'Linux' if 'Linux' in current_device_data['hw version'] else 'Mac' if 'Apple' in current_device_data['hw version'] else 'Android'][0],  # noqa E501
+                                            'remarks': [],
+                                            'last_result': [ping_data['last results'].split('\n')[-2] if len(ping_data['last results']) != 0 else ""][0]
+                                        }
+                                        self.result_json[station]['remarks'] = self.generate_remarks(self.result_json[station])
+                                    except Exception:
+                                        logging.error('Failed parsing the result for the station {}'.format(station))
+
+                if self.currentcoordinate not in self.coordinate_json:
+
+                    self.coordinate_json[self.currentcoordinate]={}
+                if self.rotation_enabled:
+                        if self.currentangle not in self.coordinate_json[self.currentcoordinate]:
+                            self.coordinate_json[self.currentcoordinate][self.currentangle]={}
+                        self.coordinate_json[self.currentcoordinate][self.currentangle]=self.result_json                        
+                else:
+                    self.coordinate_json[self.currentcoordinate]=self.result_json
+        
+        print("coordinatejson",self.coordinate_json)
+        if self.local_lf_report_dir == "":
+            self.generate_report_robo()
+        else:
+            self.generate_report_robo(report_path=self.local_lf_report_dir)
+
+
+    def check_stop_status(self):
+        test_name = self.result_dir.split("/")[-1]
+
+        file_path = os.path.join(
+            self.result_dir,
+            "../../Running_instances/{}_{}_running.json".format(self.host, test_name))
+        
+
+        if not os.path.exists(file_path):
+            return False
+        
+        with open(file_path, 'r') as f:
+            run_status = json.load(f)
+
+            if 'status' in run_status.keys() and run_status["status"] != "Running":
+                logging.info("Test is stopped by the user")
+                return True
+       
+        return False
+
+    
+    def generate_report_robo(self, result_json=None, result_dir='Ping_Test_Report', report_path='', config_devices='', group_device_map=None):
+        
+        logging.info('Generating Report')
+
+        report = lf_report(_output_pdf='interop_ping.pdf',
+                           _output_html='interop_ping.html',
+                           _results_dir_name=result_dir,
+                           _path=report_path)
+        report_path = report.get_path()
+        report_path_date_time = report.get_path_date_time()
+        logging.info('path: {}'.format(report_path))
+        logging.info('path_date_time: {}'.format(report_path_date_time))
+
+        # setting report title
+        report.set_title('Ping Test Report')
+        report.build_banner()
+
+        # Test setup information table for devices in device list
+        if config_devices == '':
+            test_setup_info = {
+                'SSID': self.ssid,
+                'Security': self.security,
+                'Website / IP': self.target,
+                'No of Devices': '{} (V:{}, A:{}, W:{}, L:{}, M:{})'.format(len(self.sta_list), len(self.sta_list) - len(self.real_sta_list), self.android, self.windows, self.linux, self.mac),
+                'Duration (in minutes)': self.duration
+            }
+        # Test setup information table for devices in groups
+        else:
+            group_names = ', '.join(config_devices.keys())
+            profile_names = ', '.join(config_devices.values())
+            configmap = "Groups:" + group_names + " -> Profiles:" + profile_names
+            test_setup_info = {
+                'Configuration': configmap,
+                'Website / IP': self.target,
+                'No of Devices': '{} (V:{}, A:{}, W:{}, L:{}, M:{})'.format(len(self.sta_list), len(self.sta_list) - len(self.real_sta_list), self.android, self.windows, self.linux, self.mac),
+                'Duration (in minutes)': self.duration
+            }
+        report.test_setup_table(
+            test_setup_data=test_setup_info, value='Test Setup Information')
+
+        # objective and description
+        report.set_obj_html(_obj_title='Objective',
+                            _obj='''The objective of the ping test is to evaluate network connectivity and measure the round-trip time taken for
+                            data packets to travel from the source to the destination and back. It helps assess the reliability and latency of the network,
+                            identifying any packet loss, delays, or variations in response times. The test aims to ensure that devices can communicate
+                            effectively over the network and pinpoint potential issues affecting connectivity.
+                            ''')
+        report.build_objective()
+        coordinate_map = self.generate_overall_data()
+        print("ddddd",coordinate_map)
+               # y_fig_size = 4
+        for key,value in coordinate_map.items():
+            if self.rotation_enabled:
+                report.set_table_title("Overall Packetssent vs Received vs dropped of all coordinates at angle {}".format(key))
+            else:
+                report.set_table_title("Overall Packetssent vs Received vs dropped of all coordinates")
+            report.build_table_title()
+            overallgraph = lf_bar_graph(_data_set=value,
+                                        _yaxis_name='Packets Count',
+                                        _xaxis_name='Coordinates',
+                                        _label=[
+                                            'Packets Loss', 'Packets Received', 'Packets Sent'],
+                                        _graph_image_name='OverallPackets sent vs received vs dropped_{}'.format(key),
+                                        # _xaxis_label=self.coordinates_completed,
+                                        _xaxis_categories=self.coordinates_completed,
+                                        _xaxis_step=1,
+                                        _xticks_font=8,
+                                        _graph_title='OverallPackets sent vs received vs dropped',
+                                        _title_size=16,
+                                        _color=['lightgrey',
+                                                'orange', 'steelblue'],
+                                        _color_edge=['black'],
+                                        _bar_width=0.15,
+                                        # _figsize=(x_fig_size, y_fig_size),
+                                        _legend_loc="best",
+                                        _legend_box=(1.0, 1.0),
+                                        _dpi=96,
+                                        _show_bar_value=False,
+                                        _enable_csv=False,
+                                        _color_name=['lightgrey', 'orange', 'steelblue']
+                                        )
+
+            overallgraph_png=overallgraph.build_bar_graph()
+            report.set_graph_image(overallgraph_png)
+            report.move_graph_image()
+            report.build_graph()
+
+        last_interation = False
+        for coord in self.coordinates_completed:
+            for angle in self.angle_list:
+                if coord == len(self.coordinates_completed)-1 and self.angle_list[angle]== self.currentangle:
+                    last_interation=True
+
+                if self.rotation_enabled:
+                    report.set_table_title("Coordinate {} : Angle {}".format(coord,angle))
+                    report.build_table_title()
+                    self.result_json=self.coordinate_json[coord][angle]
+                else:
+                    report.set_table_title("Coordinate {}".format(coord))
+                    report.build_table_title()
+                    self.result_json=self.coordinate_json[coord]
+          
+                # packets sent vs received vs dropped
+                report.set_table_title(
+                    'Packets sent vs packets received vs packets dropped')
+                report.build_table_title()
+                # graph for the above
+                self.packets_sent = []
+                self.packets_received = []
+                self.packets_dropped = []
+                self.device_names = []
+                self.device_modes = []
+                self.device_channels = []
+                self.device_min = []
+                self.device_max = []
+                self.device_avg = []
+                self.device_mac = []
+                self.device_names_with_errors = []
+                self.devices_with_errors = []
+                self.report_names = []
+                self.remarks = []
+                self.device_ssid = []
+                # packet_count_data = {}
+                os_type = []
+                for device, device_data in self.result_json.items():
+                    logging.info('Device data: {} {}'.format(device, device_data))
+                    os_type.append(device_data['os'])
+                    self.packets_sent.append(int(device_data['sent']))
+                    self.packets_received.append(int(device_data['recv']))
+                    self.packets_dropped.append(int(device_data['dropped']))
+                    self.device_names.append(device_data['name'] + ' ' + device_data['os'])
+                    self.device_modes.append(device_data['mode'])
+                    self.device_channels.append(device_data['channel'])
+                    self.device_mac.append(device_data['mac'])
+                    self.device_ssid.append(device_data['ssid'])
+                    self.device_min.append(float(device_data['min_rtt'].replace(',', '')))
+                    self.device_max.append(float(device_data['max_rtt'].replace(',', '')))
+                    self.device_avg.append(float(device_data['avg_rtt'].replace(',', '')))
+                    if (device_data['os'] == 'Virtual'):
+                        self.report_names.append('{} {}'.format(device, device_data['os'])[0:25])
+                    else:
+                        self.report_names.append('{} {} {}'.format(device, device_data['os'], device_data['name']))
+                    if (device_data['remarks'] != []):
+                        self.device_names_with_errors.append(device_data['name'])
+                        self.devices_with_errors.append(device)
+                        self.remarks.append(','.join(device_data['remarks']))
+                    # logging.info(self.packets_sent,
+                    #       self.packets_received,
+                    #       self.packets_dropped)
+                    # logging.info(self.device_min,
+                    #       self.device_max,
+                    #       self.device_avg)
+
+                    # packet_count_data[device] = {
+                    #     'MAC': device_data['mac'],
+                    #     'Channel': device_data['channel'],
+                    #     'Mode': device_data['mode'],
+                    #     'Packets Sent': device_data['sent'],
+                    #     'Packets Received': device_data['recv'],
+                    #     'Packets Loss': device_data['dropped'],
+                    # }
+                x_fig_size = 15
+                y_fig_size = len(self.device_names) * .5 + 4
+                graph = lf_bar_graph_horizontal(_data_set=[self.packets_dropped, self.packets_received, self.packets_sent],
+                                                _xaxis_name='Packets Count',
+                                                _yaxis_name='Wireless Clients',
+                                                _label=[
+                                                    'Packets Loss', 'Packets Received', 'Packets Sent'],
+                                                _graph_image_name='Packets sent vs received vs dropped',
+                                                _yaxis_label=self.report_names,
+                                                _yaxis_categories=self.report_names,
+                                                _yaxis_step=1,
+                                                _yticks_font=8,
+                                                _graph_title='Packets sent vs received vs dropped',
+                                                _title_size=16,
+                                                _color=['lightgrey',
+                                                        'orange', 'steelblue'],
+                                                _color_edge=['black'],
+                                                _bar_height=0.15,
+                                                _figsize=(x_fig_size, y_fig_size),
+                                                _legend_loc="best",
+                                                _legend_box=(1.0, 1.0),
+                                                _dpi=96,
+                                                _show_bar_value=False,
+                                                _enable_csv=True,
+                                                _color_name=['lightgrey', 'orange', 'steelblue'])
+                if self.rotation_enabled:
+                    graph.graph_image_name='Packets sent vs received vs dropped_{}_{}'.format(coord,angle)
+                else:
+                    graph.graph_image_name='Packets sent vs received vs dropped_{}'.format(coord)
+                
+                graph_png = graph.build_bar_graph_horizontal()
+                logging.info('graph name {}'.format(graph_png))
+                report.set_graph_image(graph_png)
+                # need to move the graph image to the results directory
+                report.move_graph_image()
+                report.set_csv_filename(graph_png)
+                report.move_csv_file()
+                report.build_graph()
+
+                if self.real:
+                    # Calculating the pass/fail criteria when either expected_passfail_val or csv_name is provided
+                    if self.expected_passfail_val or self.csv_name:
+                        self.get_pass_fail_list(os_type)
+                    # When groups are provided a seperate table will be generated for each group using generate_dataframe
+                    if self.group_name:
+                        for key, val in group_device_map.items():
+                            if self.expected_passfail_val or self.csv_name:
+                                dataframe = self.generate_dataframe(
+                                    val,
+                                    self.device_names,
+                                    self.device_mac,
+                                    self.device_channels,
+                                    self.device_ssid,
+                                    self.device_modes,
+                                    self.packets_sent,
+                                    self.packets_received,
+                                    self.packets_dropped,
+                                    self.percent_pac_loss,
+                                    self.test_input_list,
+                                    self.pass_fail_list)
+                            else:
+                                dataframe = self.generate_dataframe(val, self.device_names, self.device_mac, self.device_channels, self.device_ssid,
+                                                                    self.device_modes, self.packets_sent, self.packets_received, self.packets_dropped, [], [], [])
+                            if dataframe:
+                                report.set_obj_html("", "Group: {}".format(key))
+                                report.build_objective()
+                                dataframe1 = pd.DataFrame(dataframe)
+                                report.set_table_dataframe(dataframe1)
+                                report.build_table()
+
+                    else:
+                        dataframe1 = pd.DataFrame({
+                            'Wireless Client': self.device_names,
+                            'MAC': self.device_mac,
+                            'Channel': self.device_channels,
+                            'SSID ': self.device_ssid,
+                            'Mode': self.device_modes,
+                            'Packets Sent': self.packets_sent,
+                            'Packets Received': self.packets_received,
+                            'Packets Loss': self.packets_dropped,
+                        })
+                        if self.expected_passfail_val or self.csv_name:
+                            dataframe1[" Percentage of Packet loss %"] = self.percent_pac_loss
+                            dataframe1['Expected Packet loss %'] = self.test_input_list
+                            dataframe1['Status'] = self.pass_fail_list
+                        report.set_table_dataframe(dataframe1)
+                        report.build_table()
+                    if self.get_live_view:
+                        self.add_live_view_images_to_report(report=report, report_path=report_path)
+
+                else:
+                    dataframe1 = pd.DataFrame({
+                        'Wireless Client': self.device_names,
+                        'MAC': self.device_mac,
+                        'Channel': self.device_channels,
+                        'SSID ': self.device_ssid,
+                        'Mode': self.device_modes,
+                        'Packets Sent': self.packets_sent,
+                        'Packets Received': self.packets_received,
+                        'Packets Loss': self.packets_dropped,
+                    })
+                    report.set_table_dataframe(dataframe1)
+                    report.build_table()
+
+                # packets latency graph
+                report.set_table_title('Ping Latency Graph')
+                report.build_table_title()
+
+                graph = lf_bar_graph_horizontal(_data_set=[self.device_min, self.device_avg, self.device_max],
+                                                _xaxis_name='Time (ms)',
+                                                _yaxis_name='Wireless Clients',
+                                                _label=[
+                                                    'Min Latency (ms)', 'Average Latency (ms)', 'Max Latency (ms)'],
+                                                _graph_image_name='Ping Latency per client',
+                                                _yaxis_label=self.report_names,
+                                                _yaxis_categories=self.report_names,
+                                                _yaxis_step=1,
+                                                _yticks_font=8,
+                                                _graph_title='Ping Latency per client',
+                                                _title_size=16,
+                                                _color=['lightgrey',
+                                                        'orange', 'steelblue'],
+                                                _color_edge='black',
+                                                _bar_height=0.15,
+                                                _figsize=(x_fig_size, y_fig_size),
+                                                _legend_loc="best",
+                                                _legend_box=(1.0, 1.0),
+                                                _dpi=96,
+                                                _show_bar_value=False,
+                                                _enable_csv=True,
+                                                _color_name=['lightgrey', 'orange', 'steelblue'])
+
+                if self.rotation_enabled:
+                    graph.graph_image_name='Ping Latency per client_{}_{}'.format(coord,angle)
+                else:
+                    graph.graph_image_name='Ping Latency per client_{}'.format(coord)
+                
+                graph_png = graph.build_bar_graph_horizontal()
+                logging.info('graph name {}'.format(graph_png))
+                report.set_graph_image(graph_png)
+                # need to move the graph image to the results directory
+                report.move_graph_image()
+                report.set_csv_filename(graph_png)
+                report.move_csv_file()
+                report.build_graph()
+
+                dataframe2 = pd.DataFrame({
+                    'Wireless Client': self.device_names,
+                    'MAC': self.device_mac,
+                    'Channel': self.device_channels,
+                    'SSID ': self.device_ssid,
+                    'Mode': self.device_modes,
+                    'Min Latency (ms)': self.device_min,
+                    'Average Latency (ms)': self.device_avg,
+                    'Max Latency (ms)': self.device_max
+                })
+                report.set_table_dataframe(dataframe2)
+                report.build_table()
+
+                # check if there are remarks for any device. If there are remarks, build table else don't
+                if (self.remarks != []):
+                    report.set_table_title('Notes')
+                    report.build_table_title()
+                    dataframe3 = pd.DataFrame({
+                        'Wireless Client': self.device_names_with_errors,
+                        'Port': self.devices_with_errors,
+                        'Remarks': self.remarks
+                    })
+                    report.set_table_dataframe(dataframe3)
+                    report.build_table()
+
+            if last_interation:
+                break  
+        # closing
+        report.build_custom()
+        report.build_footer()
+        report.write_html()
+        report.write_pdf()
+
+    def generate_overall_data(self):
+        json={}
+        coordinate_map={}
+        last_iteration = False
+        for coord in self.coordinates_completed:
+            for angle in self.angle_list:
+
+                if self.rotation_enabled:
+                    json=self.coordinate_json[coord][angle]
+                    if coord == self.coordinates_completed[len(self.coordinates_completed)-1] and angle==self.currentangle:
+                        last_iteration=True
+                else:
+                    json=self.coordinate_json[coord]
+
+                sent=[]
+                received=[]
+                dropped=[]
+                for device, device_data in json.items():
+                    if device == 'status':
+                        continue
+                    sent.append(int(device_data['sent']))
+                    received.append(int(device_data['recv']))
+                    dropped.append(int(device_data['dropped']))
+                
+                def avg(values):
+                    return round(sum(values) / len(values) if values else 0 ,2)
+                
+                if angle not in coordinate_map:
+                    coordinate_map[angle]=[[],[],[]]
+            
+                
+                sent_list=coordinate_map[angle][2]
+                recv_list=coordinate_map[angle][1]
+                drop_list=coordinate_map[angle][0]
+
+                print("sentt",sent)
+                sent_list.append(avg(sent))
+                recv_list.append(avg(received))
+                drop_list.append(avg(dropped))
+                print("sent_list",sent_list)
+
+                coordinate_map[angle][2]=sent_list
+                coordinate_map[angle][1]=recv_list
+                coordinate_map[angle][0]=drop_list
+
+                logging.info("coordinatemap {}".format(coordinate_map))
+                if last_iteration:
+                    break
+        
+        return coordinate_map
+        
+
 
 def validate_args(args):
     # input sanity
@@ -1142,6 +1694,11 @@ effectively over the network and pinpoint potential issues affecting connectivit
     parser.add_argument('--expected_passfail_value', help='Enter the expected packet loss', default=None)
     parser.add_argument('--device_csv_name', type=str, help='Enter the csv name to store expected values', default=None)
     parser.add_argument('--wait_time', type=int, help="Enter the maximum wait time for configurations to apply", default=60)
+    
+    # Arguments related to robo
+    optional.add_argument('--robot_ip', help='hostname for where Robot server is running')
+    optional.add_argument('--coordinate',help="The coordinate dictionary consists points and their respective x and y values")
+    optional.add_argument('--rotation',help="The set of angles to rotate at a particular point")
 
     args = parser.parse_args()
 
@@ -1195,6 +1752,7 @@ effectively over the network and pinpoint potential issues affecting connectivit
     client_cert = args.client_cert
     pk_passwd = args.pk_passwd
     pac_file = args.pac_file
+    rotation_enabled=bool(args.rotation)
 
     if (debug):
         print('''Specified configuration:
@@ -1216,7 +1774,7 @@ effectively over the network and pinpoint potential issues affecting connectivit
     # ping object creation
     ping = Ping(host=mgr_ip, port=mgr_port, ssid=ssid, security=security, password=password, radio=radio,
                 lanforge_password=mgr_password, target=target, interval=interval, sta_list=[], virtual=args.virtual, real=args.real, duration=duration, debug=debug, csv_name=args.device_csv_name,
-                expected_passfail_val=args.expected_passfail_value, wait_time=args.wait_time, group_name=group_name)
+                expected_passfail_val=args.expected_passfail_value, wait_time=args.wait_time, group_name=group_name,robo_ip=args.robot_ip,rotation_enabled=rotation_enabled,coordinate_list=args.coordinate.split(",") if args.coordinate else [],angle_list=args.rotation.split(",") if rotation_enabled else [],local_lf_report_dir=args.local_lf_report_dir)
 
     # changing the target from port to IP
     ping.change_target_to_ip()
@@ -1317,6 +1875,10 @@ effectively over the network and pinpoint potential issues affecting connectivit
     ping.create_generic_endp()
 
     logging.info(ping.generic_endps_profile.created_cx)
+
+    if args.robot_ip:
+        ping.perform_robo(args,Devices)
+        exit(1)
 
     # run the test for the given duration
     logging.info('Running the ping test for {} minutes'.format(duration))

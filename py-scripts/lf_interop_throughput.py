@@ -177,7 +177,8 @@ import matplotlib.pyplot as plt
 import re
 import threading
 from collections import OrderedDict
-from lf_base_robo import RobotClass
+# from lf_base_robo import RobotClass # REAL
+from lf_robo_base_class import RobotClass # Fake Server Testing
 logger = logging.getLogger(__name__)
 
 if sys.version_info[0] != 3:
@@ -382,7 +383,9 @@ class Throughput(Realm):
         self.robo_ip = robo_ip
         self.angle_list = angle_list if angle_list else [0]
         if self.robo_ip:
-            self.robot = RobotClass(robo_ip=self.robo_ip, angle_list=self.angle_list)
+            # self.robot = RobotClass(robo_ip=self.robo_ip, angle_list=self.angle_list)
+            self.robot = RobotClass() # Fake Server Testing
+            self.robot.robo_ip = f"{self.robo_ip}" # Fake Server Testing
             self.rotation_enabled = rotation_enabled
             self.coordinate_list = coordinate_list if coordinate_list else [0]
             self.current_coordinate = None
@@ -420,7 +423,7 @@ class Throughput(Realm):
         # Loop through the coordinate list when coordinates are specified.
         for coord in self.coordinate_list:
             # checking the battery status of robot before moving to a point
-            pause_coord, test_stopped_by_user = self.robot.wait_for_battery()
+            pause_coord, test_stopped_by_user = self.robot.wait_for_battery(battery=90)
             if test_stopped_by_user:
                 break
 
@@ -1529,7 +1532,7 @@ class Throughput(Realm):
         for j in range(len(self.angle_list)):
 
             # Check robot battery status before proceeding to monitor
-            pause_angle, test_stopped_by_user = self.robot.wait_for_battery(stop=self.stop)
+            pause_angle, test_stopped_by_user = self.robot.wait_for_battery(battery=90,stop=self.stop)
 
             if test_stopped_by_user:
                 break
@@ -1548,7 +1551,7 @@ class Throughput(Realm):
 
             # Perform rotation only when rotation is enabled
             if self.rotation_enabled:
-                rotation = self.robot.rotate_angle(self.angle_list[j])
+                rotation = self.robot.rotate_angle(1,2,self.angle_list[j])
                 if not rotation:
                     break
                 end_time = datetime.now() + timedelta(seconds=int(self.test_duration))
@@ -1575,7 +1578,7 @@ class Throughput(Realm):
                     pause_start = datetime.now()
                     pause = False
                     timestamp = datetime.now().strftime("%d/%m %I:%M:%S %p")
-                    pause, test_stopped_by_user = self.robot.wait_for_battery(stop=self.stop)
+                    pause, test_stopped_by_user = self.robot.wait_for_battery(battery=90,stop=self.stop)
 
                     if test_stopped_by_user:
                         break
@@ -1588,7 +1591,7 @@ class Throughput(Realm):
                         if self.rotation_enabled:
                             self.battery_log[self.current_coordinate] = {}
                             self.battery_log[self.current_coordinate][float(self.angle_list[j])] = timestamp
-                            rotation_moni = self.robot.rotate_angle(self.angle_list[j])
+                            rotation_moni = self.robot.rotate_angle(1,2,self.angle_list[j])
                             if not rotation_moni:
                                 test_stopped_by_user = True
                                 break

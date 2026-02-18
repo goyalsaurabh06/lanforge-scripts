@@ -748,8 +748,10 @@ lf_attenuator = importlib.import_module("py-scripts.lf_atten_mod_test")
 lf_modify_radio = importlib.import_module("py-scripts.lf_modify_radio")
 lf_cleanup = importlib.import_module("py-scripts.lf_cleanup")
 lf_base_robo = importlib.import_module("py-scripts.lf_base_robo")
-from lf_base_robo import RobotClass
+# from lf_base_robo import RobotClass
 Realm = realm.Realm
+# from lf_base_robo import RobotClass # REAL
+from lf_robo_base_class import RobotClass # Fake Server Testing
 
 logger = logging.getLogger(__name__)
 
@@ -1437,19 +1439,18 @@ class L3VariableTime(Realm):
         if self.robo_test:
             self.coordinate_list = coordinate.split(',')
             self.robo_ip = robot_ip
-            self.robot_obj = RobotClass(robo_ip=self.robo_ip, angle_list=self.rotation_list)
-
-            # self.robot_obj = RobotClass() # Fake Server Testing
+            # self.robot_obj = RobotClass(robo_ip=self.robo_ip, angle_list=self.rotation_list)  # REAL
+            self.robot_obj = RobotClass() # Fake Server Testing
             base_dir = os.path.dirname(os.path.dirname(self.result_dir))
             nav_data = os.path.join(base_dir, 'nav_data.json')
             with open(nav_data, "w") as file:
                 json.dump({}, file)
-
-            # self.robot_obj.robo_ip = f"{self.robo_ip}" # Fake Server Testing
-            self.robot_obj.nav_data_path = nav_data
-            self.robot_obj.result_directory = os.path.dirname(nav_data)
-            self.robot_obj.runtime_dir = self.result_dir
-            self.robot_obj.testname = self.test_name
+            self.robot_obj.robo_ip = f"{self.robo_ip}" # Fake Server Testing
+            self.robot_obj.nav_data_path=nav_data
+            self.robot_obj.result_directory=os.path.dirname(nav_data)
+            self.robot_obj.runtime_dir=self.result_dir
+            # self.robot_obj.ip=self.robo_ip
+            self.robot_obj.testname=self.test_name
 
             self.robot_test_data = {}
             self.multicast_robot_results = {}
@@ -2307,8 +2308,7 @@ class L3VariableTime(Realm):
         # Iterate through all coordinates
         for coord_index, coordinate in enumerate(self.coordinate_list):
             logger.info(f"Moving to coordinate {coord_index}: {coordinate}")
-
-            pause_coord, test_stopped_by_user = self.robot_obj.wait_for_battery(self.stop)
+            pause_coord,test_stopped_by_user=self.robot_obj.wait_for_battery(battery=90,stop=self.stop)
             if pause_coord:
                 print("Test stopped by user, exiting...")
                 exit(0)
@@ -2326,13 +2326,13 @@ class L3VariableTime(Realm):
                 else:
                     # Rotation mode - run test at each rotation angle
                     for angle_index, rotation_angle in enumerate(self.rotation_list):
-                        pause_coord, test_stopped_by_user = self.robot_obj.wait_for_battery(self.stop)
+                        pause_coord,test_stopped_by_user=self.robot_obj.wait_for_battery(battery=90,stop=self.stop)
                         if pause_coord:
                             print("Test stopped by user, exiting...")
                             exit(0)
                         logger.info(f"Rotating to angle {angle_index}: {rotation_angle} degrees")
 
-                        robo_rotated = self.robot_obj.rotate_angle(rotation_angle)
+                        robo_rotated = self.robot_obj.rotate_angle(1,2,rotation_angle)
 
                         if robo_rotated:
                             logger.info(f"Successfully rotated to {rotation_angle} degrees")
@@ -6556,7 +6556,8 @@ class L3VariableTime(Realm):
         # Generate per-coordinate/rotation graphs and tables for robot test
         if self.robo_test:
             logger.info("Building per-coordinate/rotation graphs and tables for robot test (from memory dict)")
-            self.add_live_view_images_to_report()
+            if self.dowebgui and self.get_live_view:
+                self.add_live_view_images_to_report()
             if not hasattr(self, "multicast_robot_results") or not self.multicast_robot_results:
                 self.report.set_custom_html("<p><i>No robot test results found.</i></p>")
                 self.report.build_custom()

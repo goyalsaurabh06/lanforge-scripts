@@ -110,7 +110,8 @@
 
 
 """
-from lf_base_robo import RobotClass
+# from lf_base_robo import RobotClass  # REAL
+from lf_robo_base_class import RobotClass # Fake Server Testing
 import sys
 import os
 import importlib
@@ -252,7 +253,9 @@ class VideoStreamingTest(Realm):
             self.current_angle = None
             self.angle_list = angle_list
             self.rotation_enabled = rotation_enabled
-            self.robot = RobotClass(robo_ip=self.robot_ip, angle_list=self.angle_list)
+            # self.robot = RobotClass(robo_ip=self.robot_ip, angle_list=self.angle_list)
+            self.robot = RobotClass() # Fake Server Testing
+            self.robot.robo_ip = f"{self.robot_ip}"
             self.last_rotated_angles = []
             self.charge_point_name = None
 
@@ -943,7 +946,7 @@ class VideoStreamingTest(Realm):
                             pause_start = datetime.now()
                             pause = False
                             # Check battery level: if below 20% robot charges fully before resuming
-                            pause, test_stopped_by_user = self.robot.wait_for_battery(stop=self.stop)
+                            pause, test_stopped_by_user = self.robot.wait_for_battery(battery=90,stop=self.stop)
                             if test_stopped_by_user:
                                 break
                             if pause:
@@ -954,7 +957,7 @@ class VideoStreamingTest(Realm):
                                     break
                                 if self.rotation_enabled:
                                     # Restore robot's previous orientation before resuming the test
-                                    rotation_moni = self.robot.rotate_angle(curr_rotation)
+                                    rotation_moni = self.robot.rotate_angle(1,2,curr_rotation)
                                     if not rotation_moni:
                                         test_stopped_by_user = True
                                         break
@@ -2342,7 +2345,7 @@ class VideoStreamingTest(Realm):
                 break
             if self.robot_ip:
                 # Check battery level: if below 20% robot charges fully before resuming
-                pause_coord, test_stopped_by_user = self.robot.wait_for_battery()
+                pause_coord, test_stopped_by_user = self.robot.wait_for_battery(battery=90)
                 if test_stopped_by_user:
                     break
                 # Move the robot to the selected coordinate
@@ -2399,6 +2402,7 @@ class VideoStreamingTest(Realm):
                         params = self.build_report_params_for_robo(args, cx_order_list, coordinate_df, iterations_before_test_stopped_by_user)
                         params["self_data"] = self.data.copy()
                         self.vs_data[self.current_coordinate] = params
+                        print("ggggg",self.vs_data)
 
                     # if rotation mode
                     else:
@@ -2406,7 +2410,7 @@ class VideoStreamingTest(Realm):
                         for angle in range(len(self.rotation_list)):
                             final_angle = 0
                             # Check battery level: if below 20% robot charges fully before resuming
-                            pause_angle, test_stopped_by_user = self.robot.wait_for_battery(stop=self.stop)
+                            pause_angle, test_stopped_by_user = self.robot.wait_for_battery(battery=90,stop=self.stop)
                             if test_stopped_by_user:
                                 break
                             if pause_angle:
@@ -2417,7 +2421,7 @@ class VideoStreamingTest(Realm):
                                     break
                             final_angle = angle
                             # Rotate the robot to the given rotation
-                            rotation = self.robot.rotate_angle(self.rotation_list[angle])
+                            rotation = self.robot.rotate_angle(1,2,self.rotation_list[angle])
                             if not rotation:
                                 exit_from_monitor = True
                             if exit_from_monitor:
