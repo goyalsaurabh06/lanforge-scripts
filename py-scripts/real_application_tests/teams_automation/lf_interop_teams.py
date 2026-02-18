@@ -69,6 +69,9 @@ log.setLevel(logging.ERROR)
 # Import LF logger configuration module
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 
+robo_base_class = importlib.import_module("py-scripts.lf_robo_base_class")
+# robo_base_class = importlib.import_module("py-scripts.lf_base_robo")
+
 
 class TeamsAutomation(Realm):
     def __init__(self,
@@ -82,7 +85,14 @@ class TeamsAutomation(Realm):
                  video=None,
                  do_webui=None,
                  test_name=None,
-                 report_dir=None
+                 report_dir=None,
+                 robo_ip="127.0.0.1",
+                 coordinates_list=None,
+                 angles_list=None,
+                 do_robo=False,
+                 current_cord="",
+                 current_angle="",
+                 rotations_enabled=False,
 
                  ):
         super().__init__(lfclient_host=lanforge_ip)
@@ -157,6 +167,17 @@ class TeamsAutomation(Realm):
         self.test_name = test_name
         self.report_dir = report_dir
         self.execute_finally = False
+        self.do_robo = do_robo
+        if self.do_robo:
+            self.robo_ip = robo_ip
+            self.robo_obj = robo_base_class.RobotClass(robo_ip=self.robo_ip, angle_list=angles_list)
+            self.coordinates_list = coordinates_list
+            self.angles_list = angles_list
+            self.current_cord = current_cord
+            self.current_angle = current_angle
+            self.rotations_enabled = rotations_enabled
+            self.robo_csv_files = []
+            self.robo_mobile_data = {}
 
     def updating_webui_runningjson(self, obj):
         data = {}
@@ -207,79 +228,63 @@ class TeamsAutomation(Realm):
                 time.sleep(1)
         logging.error("Flask server did not start within 10 seconds. Exiting.")
         sys.exit(1)
-
-    def run(self):
+    
+    def create_flask_server(self):
         flask_thread = threading.Thread(target=self.start_flask_server)
         flask_thread.daemon = True
         flask_thread.start()
         self.wait_for_flask()
+    
 
-        if self.generic_endps_profile.create(ports=[self.real_sta_list[0]], real_client_os_types=[self.real_sta_os_types[0]]):
-            logging.info('Real client generic endpoint creation completed.')
-        else:
-            logging.error('Real client generic endpoint creation failed.')
-            exit(0)
+    def delete_current_csv_files(self):
+        filename_pattern = (
+            f"*_{self.current_cord}_{self.current_angle}.csv"
+            if self.rotations_enabled
+            else f"*_{self.current_cord}.csv"
+        )
+        csv_files_pattern = os.path.join(self.path, filename_pattern)
+        csv_files = glob.glob(csv_files_pattern)
 
-        if self.real_sta_os_types[0] == "windows":
-            cmd = f"py teams_host.py --ip {self.upstream_port}"
-            self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[0], cmd)
-        elif self.real_sta_os_types[0] == 'linux':
-
-            cmd = "su -l lanforge ctteams.bash %s %s %s" % (self.wifi_interfaces[0], self.upstream_port, "host")
-
-            self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[0], cmd)
-        elif self.real_sta_os_types[0] == 'macos':
-            cmd = "sudo bash ctteams.bash %s %s" % (self.upstream_port, "host")
-            self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[0], cmd)
-        self.generic_endps_profile.start_cx()
-        time.sleep(5)
-
-        while not self.login_completed:
+        for file_path in csv_files:
             try:
-
-                generic_endpoint = self.json_get(f'/generic/{self.generic_endps_profile.created_endp[0]}')
-                endp_status = generic_endpoint["endpoint"]["status"]
-                if endp_status == "Stopped":
-                    logging.error("Failed to Start the Host Device")
-                    self.generic_endps_profile.cleanup()
-                    os._exit(1)
-                time.sleep(5)
+                os.remove(file_path)
+                logging.info(f"Deleted CSV file: {file_path}")
             except Exception as e:
-                logging.info(f"Error while checking login_completed status: {e}")
-                time.sleep(5)
+                logging.error(f"Error deleting file {file_path}: {e}")
 
-        if self.generic_endps_profile.create(ports=self.real_sta_list[1:], real_client_os_types=self.real_sta_os_types[1:]):
-            logging.info('Real client generic endpoint creation completed.')
-        else:
-            logging.error('Real client generic endpoint creation failed.')
-            exit(0)
-        for i in range(1, len(self.real_sta_os_types)):
 
-            if self.real_sta_os_types[i] == "windows":
-                cmd = f"py teams_client.py --ip {self.upstream_port}"
-                self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
-            elif self.real_sta_os_types[i] == 'linux':
-                cmd = "su -l lanforge ctteams.bash %s %s %s" % (self.wifi_interfaces[i], self.upstream_port, "client")
-                self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
-            elif self.real_sta_os_types[i] == 'macos':
-                cmd = "sudo bash ctteams.bash %s %s" % (self.upstream_port, "client")
-                self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
-
+    def run(self):
+        self.create_host()
+        self.wait_for_host_ready()
+        self.create_participants()
+        self.wait_for_test_start()
         self.generic_endps_profile.start_cx()
-
-        while not self.test_start:
-
-            logging.info("WAITING FOR THE TEST TO BE STARTED")
-            time.sleep(5)
-
-        self.set_start_time()
-        logging.info("TEST WILL BE STARTING")
-
         while datetime.now(self.tz) < self.end_time or not self.check_gen_cx():
-            if self.stop_signal:
-                break
+            pause, _ = self.robo_obj.wait_for_battery()
+            if pause:
+                self.stop_signal = True
+                self.generic_endps_profile.stop_cx()
+                self.generic_endps_profile.cleanup()
+                self.delete_current_csv_files()
+                self.start_time = None
+                self.end_time = None
+                time.sleep(20)
+                self.stop_signal = False
+                self.participants_joined = 0
+                self.create_host()
+                self.wait_for_host_ready()
+                self.create_participants()
+                self.wait_for_test_start()
 
             time.sleep(5)
+        
+        self.generic_endps_profile.stop_cx()
+        self.generic_endps_profile.cleanup()
+
+        self.start_time = None
+        self.end_time = None
+        self.cred_index = 0
+        self.participants_joined = 0
 
     def generate_report(self):
         report = lf_report(_output_pdf='teams_call_report.pdf',
@@ -744,12 +749,20 @@ class TeamsAutomation(Realm):
 
             for hostname, stats in data.items():
                 self.data_store[hostname] = stats
+                if self.do_robo:
+                    if self.rotations_enabled:
+                        csv_filename = f"{hostname}_{self.current_cord}_{self.current_angle}.csv"
+                    else:
+                        csv_filename = f"{hostname}_{self.current_cord}.csv"
+                
+                else:
+                    csv_filename = f"{hostname}.csv"
+                csv_filename = os.path.join(self.path, csv_filename)
 
-                csv_file = os.path.join(self.path, f'{hostname}.csv')
-                with open(csv_file, mode='a', newline='') as file:
+                with open(csv_filename, mode='a', newline='') as file:
                     writer = csv.writer(file)
 
-                    if os.path.getsize(csv_file) == 0:
+                    if os.path.getsize(csv_filename) == 0:
                         writer.writerow(
                             self.header
                         )
@@ -839,6 +852,73 @@ class TeamsAutomation(Realm):
 
         summary_df.to_csv(output_file, index=False)
         logger.info(f"Avg data saved to {output_file}")
+    
+
+    def create_position_avg_data(self):
+        """
+        Creates an average CSV specifically for the current coordinate (and angle if enabled).
+        This allows you to have a summary file like 'teams_call_avg_data_cord_angle.csv'
+        immediately after that specific test run completes.
+        """
+        # Define suffix and search pattern based on rotation mode
+        if self.rotations_enabled:
+            suffix = f"_{self.current_cord}_{self.current_angle}"
+        else:
+            suffix = f"_{self.current_cord}"
+
+        output_filename = f"teams_call_avg_data{suffix}.csv"
+        output_file = os.path.join(self.path, output_filename)
+        search_pattern = os.path.join(self.path, f"*{suffix}.csv")
+
+        summary_rows = []
+        
+        # Find all files matching the current position (e.g., "DeviceA_cord_angle.csv")
+        for csv_path in glob.glob(search_pattern):
+            filename = os.path.basename(csv_path)
+
+            # Skip the output file itself if it already exists or matches the pattern
+            if filename == output_filename or filename.endswith("teams_cred.csv"):
+                continue
+
+            try:
+                df = pd.read_csv(csv_path)
+                df = df.drop(columns=["timestamp"], errors="ignore")
+
+                # Calculate averages
+                numeric_cols = df.select_dtypes(include="number").columns
+                averages = df[numeric_cols].mean().round(2)
+
+                row = averages.to_dict()
+
+                # Extract Device Name: Remove the suffix (.csv is handled by logic)
+                # Example: "DeviceA_1_90.csv" -> "DeviceA"
+                if filename.endswith(f"{suffix}.csv"):
+                    device_name = filename.replace(f"{suffix}.csv", "")
+                else:
+                    device_name = os.path.splitext(filename)[0]
+
+                row["Device Name"] = device_name
+                
+                # Add metadata columns for clarity
+                row["Coordinate"] = self.current_cord
+                row["Angle"] = self.current_angle if self.rotations_enabled else 0
+                
+                summary_rows.append(row)
+            except Exception as e:
+                logger.error(f"Error processing {filename} for position avg: {e}")
+
+        if not summary_rows:
+            logger.warning(f"No data files found for position {suffix}")
+            return
+
+        summary_df = pd.DataFrame(summary_rows)
+
+        # Reorder columns: Metadata first
+        cols = ["Device Name", "Coordinate", "Angle"] + [col for col in summary_df.columns if col not in ["Device Name", "Coordinate", "Angle"]]
+        summary_df = summary_df[cols]
+
+        summary_df.to_csv(output_file, index=False)
+        logger.info(f"Position Avg data saved to {output_file}")
 
     def stop_test_in_webui(self):
         try:
@@ -862,6 +942,102 @@ class TeamsAutomation(Realm):
 
         except Exception as e:
             logging.error(f"An error occurred while updating status: {e}")
+    
+    
+    def run_robo_test(self):
+        for coordinate in self.coordinates_list:
+            self.robo_obj.wait_for_battery()
+            self.robo_obj.move_to_coordinate(coord=coordinate)
+            self.current_cord = coordinate
+            if self.rotations_enabled:
+                for angle in self.angles_list:
+                    self.robo_obj.wait_for_battery()
+                    self.robo_obj.rotate_angle(angle_degree=angle)
+                    self.current_angle = angle
+                    self.run()
+
+            else:
+                self.run()
+    
+    def create_host(self):
+        if self.generic_endps_profile.create(ports=[self.real_sta_list[0]], real_client_os_types=[self.real_sta_os_types[0]]):
+            logging.info('Real client generic endpoint creation completed.')
+        else:
+            logging.error('Real client generic endpoint creation failed.')
+            exit(0)
+
+        if self.real_sta_os_types[0] == "windows":
+            cmd = f"py teams_host.py --ip {self.upstream_port}"
+            self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[0], cmd)
+        elif self.real_sta_os_types[0] == 'linux':
+
+            cmd = "su -l lanforge ctteams.bash %s %s %s" % (self.wifi_interfaces[0], self.upstream_port, "host")
+
+            self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[0], cmd)
+        elif self.real_sta_os_types[0] == 'macos':
+            cmd = "sudo bash ctteams.bash %s %s" % (self.upstream_port, "host")
+            self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[0], cmd)
+        self.generic_endps_profile.start_cx()
+        time.sleep(5)
+    
+    def wait_for_host_ready(self):
+        while not self.login_completed:
+            try:
+
+                generic_endpoint = self.json_get(f'/generic/{self.generic_endps_profile.created_endp[0]}')
+                endp_status = generic_endpoint["endpoint"]["status"]
+                if endp_status == "Stopped":
+                    logging.error("Failed to Start the Host Device")
+                    self.generic_endps_profile.cleanup()
+                    os._exit(1)
+                time.sleep(5)
+            except Exception as e:
+                logging.info(f"Error while checking login_completed status: {e}")
+                time.sleep(5)
+    
+    def create_participants(self):
+        if self.generic_endps_profile.create(ports=self.real_sta_list[1:], real_client_os_types=self.real_sta_os_types[1:]):
+            logging.info('Real client generic endpoint creation completed.')
+        else:
+            logging.error('Real client generic endpoint creation failed.')
+            exit(0)
+        for i in range(1, len(self.real_sta_os_types)):
+
+            if self.real_sta_os_types[i] == "windows":
+                cmd = f"py teams_client.py --ip {self.upstream_port}"
+                self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
+            elif self.real_sta_os_types[i] == 'linux':
+                cmd = "su -l lanforge ctteams.bash %s %s %s" % (self.wifi_interfaces[i], self.upstream_port, "client")
+                self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
+            elif self.real_sta_os_types[i] == 'macos':
+                cmd = "sudo bash ctteams.bash %s %s" % (self.upstream_port, "client")
+                self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
+
+    def wait_for_test_start(self):
+        while not self.test_start:
+
+            logging.info("WAITING FOR THE TEST TO BE STARTED")
+            time.sleep(5)
+        
+        self.test_start = False
+
+        self.set_start_time()
+        logging.info("TEST WILL BE STARTING")
+    
+    def generate_robo_report(self):
+        self.report = lf_report(_output_pdf='teams_call_report.pdf',
+                           _output_html='teams_call_report.html',
+                           _results_dir_name="teams_call_report",
+                           _path=self.path)
+        self.report_path_date_time = self.report.get_path_date_time()
+
+
+        
+
+    
+
+
+
 
 
 def main():
@@ -898,6 +1074,7 @@ def main():
         required = parser.add_argument_group('Required arguments')
         # Define optional arguments group
         optional = parser.add_argument_group('Optional arguments')
+        robo = parser.add_argument_group('Robo arguments')
 
         required.add_argument('--mgr', type=str, help="hostname where LANforge GUI is running", required=True)
         required.add_argument('--duration', type=int, help='duration to run the test in min', required=True)
@@ -915,6 +1092,21 @@ def main():
         optional.add_argument('--do_webUI', action='store_true', help='useful to specify whether we are running through webui or cli')
         optional.add_argument('--testname', help="report directory while running test through web ui")
         optional.add_argument('--report_dir', help="report directory while running test through web ui")
+        # ROBO ARGS
+        robo.add_argument('--robo_ip', type=str, help='Specify the robo ip')
+        robo.add_argument(
+            '--coordinates',
+            help="Comma-separated list of coordinate point names (e.g. 1,2,3), each mapping to x and y values"
+        )
+
+        robo.add_argument(
+            '--rotations',
+            help="Comma-separated list of rotation angles (in degrees) to apply at respective points"
+        )
+        robo.add_argument(
+            '--do_robo',
+            help="Specify this flag to perform the test with robo", action='store_true'
+        )
 
         args = parser.parse_args()
 
@@ -927,6 +1119,14 @@ def main():
         if args.lf_logger_config_json:
             logger_config.lf_logger_config_json = args.lf_logger_config_json
             logger_config.load_lf_logger_config()
+        
+
+        rotations_enabled = False
+        if args.do_robo:
+            args.coordinates = args.coordinates.split(',') if args.coordinates else []
+            args.rotations = [float(angle) for angle in args.rotations.split(',')] if args.rotations else []
+            if args.rotations:
+                rotations_enabled = True
 
         teams = TeamsAutomation(
             lanforge_ip=args.mgr,
@@ -939,7 +1139,13 @@ def main():
             video=args.video,
             do_webui=args.do_webUI,
             test_name=args.testname,
-            report_dir=args.report_dir
+            report_dir=args.report_dir,
+            robo_ip=args.robo_ip,
+            coordinates_list=args.coordinates,
+            angles_list=args.rotations,
+            do_robo=args.do_robo,
+            rotations_enabled=rotations_enabled,
+
 
         )
 
@@ -961,9 +1167,14 @@ def main():
             teams.path = args.report_dir
             teams.update_webui_data()
         teams.load_credentials()
-        teams.run()
-        time.sleep(10)
-        teams.create_avg_data()
+        teams.create_flask_server()
+        if args.do_robo:
+            teams.run_robo_test()
+            time.sleep(10)
+        else:
+            teams.run()
+            time.sleep(10)
+            teams.create_avg_data()
         teams.execute_finally = True
 
     except Exception as e:
@@ -974,7 +1185,10 @@ def main():
         if not ('--help' in sys.argv or '-h' in sys.argv):
             if teams.execute_finally:
                 teams.stop_signal = True
-                teams.generate_report()
+                if args.do_robo:
+                    teams.generate_robo_report()
+                else:
+                    teams.generate_report()
                 teams.move_csv_files()
                 if args.do_webUI:
                     teams.stop_test_in_webui()
