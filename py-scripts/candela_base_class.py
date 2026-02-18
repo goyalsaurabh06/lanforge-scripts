@@ -7,6 +7,9 @@ import requests
 # cmd /c "echo Performing POST cleanup of browser processes... && taskkill /F /IM chrome.exe /T >nul 2>&1 && taskkill /F /IM chromedriver.exe /T >nul 2>&1 && echo Browser processes terminated."
 import paramiko
 import threading
+from collections import OrderedDict
+from os import path
+import shutil
 import logging
 from lf_graph import lf_bar_graph_horizontal,lf_bar_graph,lf_line_graph
 import pandas as pd
@@ -86,6 +89,11 @@ lf_report = importlib.import_module("py-scripts.lf_report")
 from station_profile import StationProfile
 import interop_connectivity
 from LANforge import LFUtils
+
+iot_scripts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../local/interop-webGUI/IoT/scripts/"))
+if os.path.exists(iot_scripts_path):
+    sys.path.insert(0, iot_scripts_path)
+    from test_automation import Automation 
 class Candela(Realm):
     """
     Candela Class file to invoke different scripts from py-scripts.
@@ -5016,6 +5024,124 @@ class Candela(Realm):
         #             self.zoom_test_obj.generic_endps_profile.set_cmd(self.zoom_test_obj.generic_endps_profile.created_endp[i], cmd)
 
         #     self.zoom_test_obj.generic_endps_profile.start_cx()
+    
+    def build_iot_report_section(self, report, iot_summary):
+        """
+        Handles all IoT-related charts, tables, and increment-wise reports.
+        """
+        outdir = report.path_date_time
+        os.makedirs(outdir, exist_ok=True)
+
+        def copy_into_report(raw_path, new_name):
+            """Resolve and copy image into report dir."""
+            if not raw_path:
+                return None
+
+            abs_src = os.path.abspath(raw_path)
+            if not os.path.exists(abs_src):
+                # Search recursively under 'results' if absolute path missing
+                for root, _, files in os.walk(os.path.join(os.getcwd(), "results")):
+                    if os.path.basename(raw_path) in files:
+                        abs_src = os.path.join(root, os.path.basename(raw_path))
+                        break
+                else:
+                    return None
+
+            dst = os.path.join(outdir, new_name)
+            if os.path.abspath(abs_src) != os.path.abspath(dst):
+                shutil.copy2(abs_src, dst)
+            return new_name
+
+        # section header
+        report.set_custom_html('<div style="page-break-before: always;"></div>')
+        report.build_custom()
+        report.set_custom_html('<h2><u>IoT Results</u></h2>')
+        report.build_custom()
+
+        # Statistics
+        stats_png = copy_into_report(iot_summary.get("statistics_img"), "iot_statistics.png")
+        if stats_png:
+            report.build_chart_title("Test Statistics")
+            report.set_custom_html(f'<img src="{stats_png}" style="width:100%; height:auto;">')
+            report.build_custom()
+
+        # Request vs Latency
+        rvl_png = copy_into_report(iot_summary.get("req_vs_latency_img"), "iot_request_vs_latency.png")
+        if rvl_png:
+            report.build_chart_title("Request vs Average Latency")
+            report.set_custom_html(f'<img src="{rvl_png}" style="width:100%;">')
+            report.build_custom()
+
+        # Overall results table
+        ort = iot_summary.get("overall_result_table") or {}
+        if ort:
+            rows = [{
+                "Device": dev,
+                "Min Latency (ms)": stats.get("min_latency"),
+                "Avg Latency (ms)": stats.get("avg_latency"),
+                "Max Latency (ms)": stats.get("max_latency"),
+                "Total Iterations": stats.get("total_iterations"),
+                "Success Iters": stats.get("success_iterations"),
+                "Failed Iters": stats.get("failed_iterations"),
+                "No-Response Iters": stats.get("no_response_iterations"),
+            } for dev, stats in ort.items()]
+
+            df_overall = pd.DataFrame(rows).round(2)
+
+            report.set_custom_html('<div style="page-break-inside: avoid;">')
+            report.build_custom()
+            report.set_obj_html(_obj_title="Overall IoT Result Table", _obj=" ")
+            report.build_objective()
+            report.set_table_dataframe(df_overall)
+            report.build_table()
+            report.set_custom_html('</div>')
+            report.build_custom()
+
+        # Increment reports
+        inc = iot_summary.get("increment_reports") or {}
+        if inc:
+            report.set_custom_html('<h3>Reports by Increment Steps</h3>')
+            report.build_custom()
+
+            for step_name, rep in inc.items():
+
+                report.set_custom_html(f'<h4><u>{step_name.replace("_", " ")}</u></h4>')
+                report.build_custom()
+
+                # Latency graph
+                lat_png = copy_into_report(rep.get("latency_graph"), f"iot_{step_name}_latency.png")
+                if lat_png:
+                    report.build_chart_title("Average Latency")
+                    report.set_custom_html(f'<img src="{lat_png}" style="width:100%; height:auto;">')
+                    report.build_custom()
+
+                # Success count graph
+                res_png = copy_into_report(rep.get("result_graph"), f"iot_{step_name}_results.png")
+                if res_png:
+                    report.build_chart_title("Success Count")
+                    report.set_custom_html(f'<img src="{res_png}" style="width:100%; height:auto;">')
+                    report.build_custom()
+
+                # Tabular data for detailed iteration-level results
+                data_rows = rep.get("data") or []
+                if data_rows:
+                    df = pd.DataFrame(data_rows).rename(
+                        columns={"latency__ms": "Latency_ms", "latency_ms": "Latency_ms"}
+                    )
+                    if "Latency_ms" in df.columns:
+                        df["Latency_ms"] = pd.to_numeric(df["Latency_ms"], errors="coerce").round(3)
+                    if "Result" in df.columns:
+                        df["Result"] = df["Result"].map(lambda x: "Success" if bool(x) else "Failure")
+
+                    desired_cols = ["Iteration", "Device", "Current State", "Latency_ms", "Result"]
+                    df = df[[c for c in desired_cols if c in df.columns]]
+
+                    report.set_table_dataframe(df)
+                    report.build_table()
+
+                report.set_custom_html('<hr>')
+                report.build_custom()
+
     def render_each_test(self,ce):
         # ce = "series"
         unq_tests = []
@@ -8620,7 +8746,7 @@ class Candela(Realm):
                 series_df = series_df[["s/no", "test_name", "Duration", "status"]]
         return series_df,parallel_df
 
-    def generate_overall_report(self,test_results_df='',args_dict={}):
+    def generate_overall_report(self,test_results_df='',args_dict={},iot_summary=None):
         self.overall_report = lf_report.lf_report(_results_dir_name="Base_Class_Test_Overall_report", _output_html="base_class_overall.html",
                                          _output_pdf="base_class_overall.pdf", _path=self.result_path if not self.dowebgui else self.result_dir)
         self.report_path_date_time = self.overall_report.get_path_date_time()
@@ -8668,6 +8794,8 @@ class Candela(Realm):
                 self.overall_report.set_custom_html(series_df.to_html(index=False, justify='center'))
                 self.overall_report.build_custom()
                 self.render_each_test(ce="series")
+        if iot_summary:
+            self.build_iot_report_section(self.overall_report,iot_summary)
         # self.overall_report.insert_table_at_marker(test_results_df,"for_table")
         self.overall_report.build_footer()
         html_file = self.overall_report.write_html()
@@ -8803,6 +8931,8 @@ def main():
     formatter_class=argparse.RawTextHelpFormatter,
     )
     parser = argparse.ArgumentParser(description="Run Candela API Tests")
+    optional = parser.add_argument_group('Optional arguments')
+
     #Always Common
     parser.add_argument('--mgr', '--lfmgr', default='localhost', help='hostname for where LANforge GUI is running')
     parser.add_argument('--mgr_port', '--port', default=8080, help='port LANforge GUI HTTP service is running on')
@@ -9306,9 +9436,50 @@ def main():
     parser.add_argument("--zoom_pk_passwd", type=str, default='NA', help='Specify the password for the private key')
     parser.add_argument("--zoom_pac_file", type=str, default='NA', help='Specify the pac file name')
     parser.add_argument("--zoom_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
+    
 
+    parser.add_argument('--iot_test', help="If true will execute script for iot", action='store_true')
+    optional.add_argument('--iot_ip',
+                          default='127.0.0.1',
+                          help='IP of the server')
+
+    optional.add_argument('--iot_port',
+                          default='8000',
+                          help='Port of the server')
+    optional.add_argument('--iot_iterations',
+                          type=int,
+                          default=1,
+                          help='Iterations to run the test')
+
+    optional.add_argument('--iot_delay',
+                          type=int,
+                          default=5,
+                          help='Delay in seconds between iterations (min. 5 seconds)')
+
+    optional.add_argument('--iot_device_list',
+                          type=str,
+                          default='',
+                          help='Entity IDs of the devices to include in testing (comma separated)')
+
+    optional.add_argument('--iot_testname',
+                          type=str,
+                          default='',
+                          help='Testname for reporting')
+
+    optional.add_argument('--iot_increment',
+                          type=str,
+                          default='',
+                          help='Comma-separated list of device counts to incrementally test (e.g., "1,3,5")')
 
     args = parser.parse_args()
+    if args.iot_test:
+        iot_ip = args.iot_ip
+        iot_port = args.iot_port
+        iot_iterations = args.iot_iterations
+        iot_delay = args.iot_delay
+        iot_device_list = args.iot_device_list
+        iot_testname = args.iot_testname
+        iot_increment = args.iot_increment
     args_dict = vars(args)
     duration_dict = {}
     candela_apis = Candela(ip=args.mgr, port=args.mgr_port,order_priority=args.order_priority,test_name=args.test_name,result_dir=args.result_dir,dowebgui=args.dowebgui,no_cleanup=args.no_cleanup)
@@ -9494,6 +9665,27 @@ def main():
             candela_apis.overall_csv.append(candela_apis.overall_status.copy())
             df1 = pd.DataFrame(candela_apis.overall_csv)
             df1.to_csv('{}/overall_status.csv'.format(args.result_dir), index=False)
+        if args.iot_test:
+            if args.iot_iterations > 1:
+                thread = threading.Thread(target=trigger_iot, args=(iot_ip, iot_port, iot_iterations, iot_delay, iot_device_list, iot_testname, iot_increment))
+                thread.start()
+            else:
+                total_secs = 60
+                iot_iterations = max(1, total_secs // args.iot_delay)
+                iot_thread = threading.Thread(
+                    target=trigger_iot,
+                    args=(
+                        args.iot_ip,
+                        args.iot_port,
+                        iot_iterations,
+                        args.iot_delay,
+                        args.iot_device_list,
+                        args.iot_testname,
+                        args.iot_increment
+                    ),
+                    daemon=True
+                )
+                iot_thread.start()
 
         if args.order_priority == 'series':
             candela_apis.current_exec="series"
@@ -9545,7 +9737,14 @@ def main():
     log_file = save_logs()
     print(f"Logs saved to: {log_file}")
     test_results_df = pd.DataFrame(list(test_results_list))
-    candela_apis.generate_overall_report(test_results_df=test_results_df,args_dict=args_dict)
+    iot_summary = None
+    if args.iot_test and args.iot_testname:
+        base = path.join("results", args.iot_testname)
+        p = path.join(base, "iot_summary.json")
+        if path.exists(p):
+            with open(p) as f:
+                iot_summary = json.load(f)
+    candela_apis.generate_overall_report(test_results_df=test_results_df,args_dict=args_dict,iot_summary=iot_summary)
     if candela_apis.dowebgui:
         try:
             candela_apis.overall_status["status"] = "completed"
@@ -9622,6 +9821,78 @@ def save_logs():
         
     logger.info(f"Test logs saved to {log_filename}")
     return log_filename
+
+def trigger_iot(ip, port, iterations, delay, device_list, testname, increment):
+    """
+    Entry point to start the IoT test in a separate thread.
+    This function is called from the throughput test script when IoT testing
+    is enabled. It wraps the asynchronous `run_iot()`.
+    """
+    asyncio.run(run_iot(ip, port, iterations, delay, device_list, testname, increment))
+
+
+async def run_iot(ip: str = '127.0.0.1',
+                  port: str = '8000',
+                  iterations: int = 1,
+                  delay: int = 5,
+                  device_list: str = '',
+                  testname: str = '',
+                  increment: str = ''):
+    try:
+
+        if delay < 5:
+            logger.error('The minimum delay should be 5 seconds.')
+            exit(1)
+
+        if device_list != '':
+            device_list = device_list.split(',')
+        else:
+            device_list = None
+        # Parse and validate increment pattern if provided
+        if increment:
+            print("the increment is : ", increment)
+            try:
+                increment = list(map(int, increment.split(',')))
+                if any(i < 1 for i in increment):
+                    logger.error('Increment values must be positive integers')
+                    exit(1)
+            except ValueError:
+                logger.error('Invalid increment format. Please provide comma-separated integers (e.g., "1,3,5")')
+                exit(1)
+
+        testname = testname
+
+        # Ensure test name is unique (avoid overwriting previous results)
+        if testname in os.listdir('../../local/interop-webGUI/IoT/scripts/results/'):
+            logger.error('Test with same name already existing. Please give a different testname.')
+            exit(1)
+        automation = Automation(ip=ip,
+                                port=port,
+                                iterations=iterations,
+                                delay=delay,
+                                device_list=device_list,
+                                testname=testname,
+                                increment=increment)
+
+        # fetch the available iot devices
+        automation.devices = await automation.fetch_iot_devices()
+
+        # select the iot devices for testing
+        automation.select_iot_devices()
+
+        # run the iot test on selected devices
+        automation.run_test()
+
+        # generate the iot report
+        automation.generate_report()
+
+    except Exception as e:
+        logger.error(f"Iot Test failed: {str(e)}")
+        raise
+
+    await automation.session.close()
+
+    logger.info('Iot Test Completed.')
 
 def run_ping_test(args, candela_apis):
     return candela_apis.run_ping_test(
