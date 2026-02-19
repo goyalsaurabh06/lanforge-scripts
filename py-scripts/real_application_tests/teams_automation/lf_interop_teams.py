@@ -37,6 +37,7 @@ import json
 import sys
 import traceback
 import glob
+import re
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
@@ -115,8 +116,8 @@ class TeamsAutomation(Realm):
         self.cred_index = 0
         self.tz = pytz.timezone('Asia/Kolkata')
         self.generic_endps_profile = self.new_generic_endp_profile()
-        self.generic_endps_profile.name_prefix = "zoom"
-        self.generic_endps_profile.type = "zoom"
+        self.generic_endps_profile.name_prefix = "teams"
+        self.generic_endps_profile.type = "teams"
         self.audio = audio
         self.video = video
         self.audio_stats_header = [
@@ -125,9 +126,9 @@ class TeamsAutomation(Realm):
             'Audio RTT(ms)',
             'sent Audio codec',
             'Received Audio Jitter(ms)',
-            'Receievd Audio Packet Loss(%)',
+            'Received Audio Packet Loss(%)',
             'Received Audio Packets',
-            'Recevied Audio Codec'
+            'Received Audio Codec'
         ]
 
         self.video_stats_header = [
@@ -157,6 +158,143 @@ class TeamsAutomation(Realm):
         self.test_name = test_name
         self.report_dir = report_dir
         self.execute_finally = False
+        self.check_gen_cx_start_time = None
+
+    def _safe_float(self, value, default=0.0):
+        if pd.isna(value):
+            return default
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _extract_resolution_p(self, value):
+        if pd.isna(value):
+            return 0.0
+        if isinstance(value, (int, float)):
+            return float(value)
+
+        text = str(value).strip().lower()
+        if not text or text == "na":
+            return 0.0
+
+        match = re.search(r"(\d+)\s*[xX]\s*(\d+)", text)
+        if match:
+            return float(match.group(2))
+
+        single = re.search(r"(\d+)", text)
+        if single:
+            return float(single.group(1))
+
+        return 0.0
+
+    def calculate_mos_scores(self, rtt_ms, packet_loss_percent, fps, resolution_p, bitrate_mbps):
+        rtt_ms = self._safe_float(rtt_ms)
+        packet_loss_percent = self._safe_float(packet_loss_percent)
+        fps = self._safe_float(fps)
+        resolution_p = self._safe_float(resolution_p)
+        bitrate_mbps = self._safe_float(bitrate_mbps)
+
+        R0 = 94.2
+        Is = 0
+        A = 0
+        Ie_codec = 5
+        Bpl = 20
+
+        d = self._safe_float(rtt_ms) / 2
+        if d < 177.3:
+            Id = 0.024 * d
+        else:
+            Id = 0.024 * d + 0.11 * (d - 177.3)
+
+        Ppl = packet_loss_percent
+        Ie = Ie_codec + (95 - Ie_codec) * (Ppl / (Ppl + Bpl))
+
+        R = R0 - Is - Id - Ie + A
+
+        if R < 0:
+            audio_mos = 1.0
+        elif R > 100:
+            audio_mos = 4.5
+        else:
+            audio_mos = 1 + (0.035 * R) + (7e-6 * R * (R - 60) * (100 - R))
+
+        if rtt_ms <= 150:
+            rtt_score = 5
+        elif rtt_ms <= 250:
+            rtt_score = 4
+        elif rtt_ms <= 350:
+            rtt_score = 3
+        elif rtt_ms <= 450:
+            rtt_score = 2
+        else:
+            rtt_score = 1
+
+        if fps >= 30:
+            fps_score = 5
+        elif fps >= 25:
+            fps_score = 4
+        elif fps >= 15:
+            fps_score = 3
+        elif fps >= 10:
+            fps_score = 2
+        else:
+            fps_score = 1
+
+        if resolution_p >= 1080:
+            res_score = 5
+        elif resolution_p >= 900:
+            res_score = 4.7
+        elif resolution_p >= 720:
+            res_score = 4.2
+        elif resolution_p >= 600:
+            res_score = 3.8
+        elif resolution_p >= 540:
+            res_score = 3.6
+        elif resolution_p >= 480:
+            res_score = 3.2
+        elif resolution_p >= 432:
+            res_score = 2.9
+        elif resolution_p >= 360:
+            res_score = 2.4
+        elif resolution_p >= 240:
+            res_score = 1.8
+        elif resolution_p >= 180:
+            res_score = 1.3
+        else:
+            res_score = 1
+
+        if bitrate_mbps >= 2.5:
+            bitrate_score = 5
+        elif bitrate_mbps >= 2.0:
+            bitrate_score = 4.7
+        elif bitrate_mbps >= 1.2:
+            bitrate_score = 4.2
+        elif bitrate_mbps >= 0.9:
+            bitrate_score = 3.8
+        elif bitrate_mbps >= 0.8:
+            bitrate_score = 3.6
+        elif bitrate_mbps >= 0.6:
+            bitrate_score = 3.2
+        elif bitrate_mbps >= 0.45:
+            bitrate_score = 2.9
+        elif bitrate_mbps >= 0.30:
+            bitrate_score = 2.4
+        elif bitrate_mbps >= 0.15:
+            bitrate_score = 1.8
+        elif bitrate_mbps >= 0.08:
+            bitrate_score = 1.3
+        else:
+            bitrate_score = 1
+
+        video_mos = (0.35 * fps_score) + (0.30 * bitrate_score) + (0.20 * res_score) + (0.15 * rtt_score)
+        overall_mos = (0.6 * audio_mos) + (0.4 * video_mos)
+
+        return {
+            "Audio_MOS": round(audio_mos, 2),
+            "Video_MOS": round(video_mos, 2),
+            "Overall_MOS": round(overall_mos, 2)
+        }
 
     def updating_webui_runningjson(self, obj):
         data = {}
@@ -321,6 +459,9 @@ class TeamsAutomation(Realm):
         # Read per-device average metrics
         df = pd.read_csv(os.path.join(self.path, "teams_call_avg_data.csv"))
         df.columns = df.columns.str.strip()
+        for mos_col in ["Audio_MOS", "Video_MOS", "Overall_MOS"]:
+            if mos_col not in df.columns:
+                df[mos_col] = "NA"
 
         report.set_table_title("Test Devices:")
         report.build_table_title()
@@ -389,7 +530,9 @@ class TeamsAutomation(Realm):
                 "Sent Audio Packets",
                 "Audio RTT(ms)",
                 "Received Audio Jitter(ms)",
-                "Receievd Audio Packet Loss(%)",
+                "Received Audio Packet Loss(%)",
+                "Audio_MOS",
+                "Overall_MOS",
             ]
 
             column_headings = {
@@ -398,7 +541,9 @@ class TeamsAutomation(Realm):
                 "Sent Audio Packets": "AVG Sent Audio Packets",
                 "Audio RTT(ms)": "AVG Audio RTT (ms)",
                 "Received Audio Jitter(ms)": "AVG Received Audio Jitter (ms)",
-                "Receievd Audio Packet Loss(%)": "AVG Received Audio Packet Loss (%)",
+                "Received Audio Packet Loss(%)": "AVG Received Audio Packet Loss (%)",
+                "Audio_MOS": "Audio MOS",
+                "Overall_MOS": "Overall MOS",
             }
 
             filtered_df = df[selected_columns].rename(columns=column_headings)
@@ -416,6 +561,8 @@ class TeamsAutomation(Realm):
                 "Sent video frame rate(fps)",
                 "video RTT (ms)",
                 "sent video packets",
+                "Video_MOS",
+                "Overall_MOS",
             ]
 
             column_headings = {
@@ -425,6 +572,8 @@ class TeamsAutomation(Realm):
                 "Sent video frame rate(fps)": "AVG Sent Video Frame Rate (fps)",
                 "video RTT (ms)": "AVG Video RTT (ms)",
                 "sent video packets": "AVG Sent Video Packets",
+                "Video_MOS": "Video MOS",
+                "Overall_MOS": "Overall MOS",
             }
 
             filtered_df = df[selected_columns].rename(columns=column_headings)
@@ -438,6 +587,12 @@ class TeamsAutomation(Realm):
         report.write_pdf()
 
     def check_gen_cx(self):
+        if self.check_gen_cx_start_time is None:
+            self.check_gen_cx_start_time = time.time()
+
+        if time.time() - self.check_gen_cx_start_time >= 30:
+            return True
+
         try:
 
             for gen_endp in self.generic_endps_profile.created_endp:
@@ -456,6 +611,8 @@ class TeamsAutomation(Realm):
         except Exception as e:
             logging.error(f"Error in check_gen_cx function {e}", exc_info=True)
             logging.info(f"generic endpoint data {generic_endpoint}")
+            return False
+            
 
     def set_start_time(self):
         self.start_time = datetime.now(self.tz) + timedelta(seconds=30)
@@ -825,6 +982,20 @@ class TeamsAutomation(Realm):
             device_name = os.path.splitext(os.path.basename(csv_path))[0]
             df = df.drop(columns=["timestamp"], errors="ignore")
 
+            if "Sent video resolution(px)" in df.columns:
+                df["Sent video resolution(px)"] = df["Sent video resolution(px)"].apply(self._extract_resolution_p)
+
+            for col in [
+                "Audio RTT(ms)",
+                "video RTT (ms)",
+                "Received Audio Packet Loss(%)",
+                "Sent video frame rate(fps)",
+                "Sent video bitrate(Mbps)",
+                "Sent video resolution(px)",
+            ]:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors="coerce")
+
             numeric_cols = df.select_dtypes(include="number").columns
             averages = df[numeric_cols].mean().round(2)
 
@@ -834,8 +1005,24 @@ class TeamsAutomation(Realm):
 
         summary_df = pd.DataFrame(summary_rows)
 
+        if not summary_df.empty:
+            mos_scores = []
+            for _, row in summary_df.iterrows():
+                mos = self.calculate_mos_scores(
+                    rtt_ms=self._safe_float(row.get("Audio RTT(ms)", row.get("video RTT (ms)", 0))),
+                    packet_loss_percent=self._safe_float(row.get("Received Audio Packet Loss(%)", 0)),
+                    fps=self._safe_float(row.get("Sent video frame rate(fps)", 0)),
+                    resolution_p=self._safe_float(row.get("Sent video resolution(px)", 0)),
+                    bitrate_mbps=self._safe_float(row.get("Received video bitrate(Mbps)", 0))
+                )
+                mos_scores.append(mos)
+
+            mos_df = pd.DataFrame(mos_scores)
+            summary_df = pd.concat([summary_df.reset_index(drop=True), mos_df], axis=1)
+
         cols = ["Device Name"] + [col for col in summary_df.columns if col != "Device Name"]
         summary_df = summary_df[cols]
+        
 
         summary_df.to_csv(output_file, index=False)
         logger.info(f"Avg data saved to {output_file}")
