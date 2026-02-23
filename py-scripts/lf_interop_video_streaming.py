@@ -3365,7 +3365,8 @@ def main():
             thread = threading.Thread(target=trigger_iot, args=(iot_ip, iot_port, iot_iterations, iot_delay, iot_device_list, iot_testname, iot_increment))
             thread.start()
         else:
-            total_secs = int(LFCliBase.parse_time(args.duration).total_seconds())
+            # total_secs = int(LFCliBase.parse_time(args.duration).total_seconds())
+            total_secs = int(args.duration*60)
             iot_iterations = max(1, total_secs // args.iot_delay)
             iot_thread = threading.Thread(
                 target=trigger_iot,
