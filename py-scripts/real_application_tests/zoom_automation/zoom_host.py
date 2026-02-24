@@ -2,7 +2,6 @@ import time
 import csv
 import sys
 import re
-import pyperclip
 import pytz
 from datetime import datetime, timedelta
 from selenium import webdriver
@@ -16,11 +15,6 @@ import socket
 import argparse
 import json
 import pickle
-if sys.platform.lower() == "darwin":
-    pyperclip.set_clipboard('pbcopy')
-else:
-    print("This is not macOS.")
-
 
 class ZoomHost:
     def __init__(self, server_ip=None):
@@ -72,12 +66,41 @@ class ZoomHost:
         chrome_options.add_argument("--disable-notifications")
         chrome_options.add_experimental_option("prefs", prefs)
         chrome_options.add_argument("--use-fake-ui-for-media-stream")
+        chrome_options.add_argument("--auto-select-desktop-capture-source=Entire screen")
 
         chrome_options.add_argument("--disable-extensions")
         chrome_options.add_argument("--disable-infobars")
         self.driver = webdriver.Chrome(options=chrome_options)
         self.driver.maximize_window()
         self.wait = WebDriverWait(self.driver, 90)
+    
+
+    def share_screen(self):
+        print("sharing screen now")
+        try:
+            # Wait for the Zoom share button to be present in the DOM
+            self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".footer-button-base__button.sharing-entry-button-container")))
+            
+            # Click the Zoom share button
+            self.driver.execute_script("document.querySelector('.footer-button-base__button.sharing-entry-button-container').click()")
+            print("[INFO] Share Screen clicked in Zoom UI.")
+            
+            # Give the WebRTC connection a moment to establish
+            time.sleep(2) 
+            
+            print("[INFO] Entire Screen shared successfully via Chrome flags")
+
+            # We use a short wait here because if it's not there, we don't want to wait 90 seconds
+            pause_audio_btn = WebDriverWait(self.driver, 5).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "button[aria-label='Pause Audio Share']"))
+            )
+            
+            # Click it to pause the audio sharing
+            self.driver.execute_script("arguments[0].click();", pause_audio_btn)
+            print("[INFO] Screen share audio has been muted/paused.")
+            
+        except Exception as e:
+            print(f"Error in sharing screen: {e}")
 
     def saveCookies(self):
         # Save cookies to a file
@@ -112,6 +135,28 @@ class ZoomHost:
         # After starting Zoom, retrieve new_login_url and new_password
         self.update_login_completed()
         time.sleep(1)
+    
+
+    def keep_footer_visible(self):
+        print("[INFO] Disabling Zoom's auto-hide footer...")
+        try:
+            # Injects a background script that fires a fake mouse movement every 2 seconds
+            js_script = """
+                if (!window.keepZoomActiveInterval) {
+                    window.keepZoomActiveInterval = setInterval(() => {
+                        document.dispatchEvent(new MouseEvent('mousemove', {
+                            bubbles: true,
+                            cancelable: true,
+                            clientX: 100,
+                            clientY: 100
+                        }));
+                    }, 2000);
+                }
+            """
+            self.driver.execute_script(js_script)
+            print("[INFO] Footer is now locked to visible.")
+        except Exception as e:
+            print(f"[ERROR] Failed to lock footer visibility: {e}")
 
     def zoom_login(self):
         print("getting host email and password")
@@ -227,7 +272,6 @@ class ZoomHost:
         except Exception as e:
             print(f"Error clicking the element inside the iframe: {str(e)}")
 
-        # time.sleep(20000)
         time.sleep(2)
         print("after 2 sec sleep")
         vel = self.wait.until(EC.presence_of_element_located((By.XPATH, '//*[@id="webclient"]')))
@@ -238,49 +282,16 @@ class ZoomHost:
         action = webdriver.ActionChains(self.driver)
 
         action.move_by_offset(10, 20).perform()
-        # self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#participant button")))
-        # self.driver.execute_script("document.querySelector('#participant button').click()")
-        # try:
-        #     print("trying opening participants section")
-        #     self.dynamic_wait(20).until(EC.presence_of_element_located((By.CSS_SELECTOR, ".participants-section-container__participants-footer-bottom")))
-        #     participent_column = self.driver.find_elements(By.CSS_SELECTOR,".participants-section-container__participants-footer-bottom button")
-        #     print("after clicking participants columns")
-        # except:
-        #     print("except in opening participants section")
-        #     action.move_by_offset(10, 20).perform()
-        #     self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#participant button")))
-        #     self.driver.execute_script("document.querySelector('#participant button').click()")
-        #     self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".participants-section-container__participants-footer-bottom")))
-        #     participent_column = self.driver.find_elements(By.CSS_SELECTOR,".participants-section-container__participants-footer-bottom button")
-        #     print("after clicking participants columns")
-        # for btn in participent_column:
-        #     print(btn.text)
-        #     if btn.text == "Invite":
-        #         btn.click()
-        #         break
-        # self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".invite-footer__button-group")))
-        # invite_column = self.driver.find_elements(By.CSS_SELECTOR,".invite-footer__button-group button")
-        # for btn in invite_column:
-        #     print(btn.text)
-        #     if btn.text == "Copy URL":
-        #         btn.click()
-        #         break
-        # time.sleep(2)
-        # for btn in invite_column:
-        #     print(btn.text)
-        #     if btn.text == "Cancel":
-        #         btn.click()
-        #         break
-
         self.meeting_link = self.driver.current_url
-        # self.android_meet_link = pyperclip.paste()
-        print("+++++++++++++++++++++++++++++++++++++++++")
-        print("========================================")
-        print("checking meeting link")
-        # print(self.android_meet_link)
-        # self.send_meet_link()
         action.move_by_offset(10, 20).perform()
         time.sleep(1)
+        self.keep_footer_visible()
+        try:
+            time.sleep(3)
+            self.share_screen()
+        except Exception as e:
+            print("error in sharing screen", e)
+
         audio_join_btn = self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR,
                                                                          ".footer-button-base__button.join-audio-container__btn")))
 
@@ -323,6 +334,7 @@ class ZoomHost:
 
         elif video_join_btn.text.lower() == "stop video":
             print("already video on")
+
 
         self.wait.until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, "#stats")))
@@ -691,10 +703,9 @@ class ZoomHost:
 
     def update_login_completed(self):
         endpoint_url = f"{self.base_url}/login_completed"
-        data = {"login_completed": 1}  # Assuming you want to mark login as completed
 
         try:
-            response = requests.post(endpoint_url, json=data)
+            response = requests.get(endpoint_url)
             if response.status_code == 200:
                 print("Login completed status updated successfully.")
             else:
