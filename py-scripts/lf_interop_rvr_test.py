@@ -63,7 +63,7 @@ class RvR(Realm):
                  sta_list=[1, 1], atten_dict={"2222": ['all']},
                  atten_val=[["0"]], traffic=500, radio_list=['wiphy0', 'wiphy3'],
                  test_name=None, dowebgui=False, result_dir='', multiple_attenuation_values=False,
-                 _debug_on=False, _exit_on_error=False, _exit_on_fail=False):
+                 _debug_on=False, _exit_on_error=False, _exit_on_fail=False,do_interopability=False):
         super().__init__(lfclient_host=host,
                          lfclient_port=port),
         self.upstream = upstream
@@ -94,14 +94,19 @@ class RvR(Realm):
         self.station_profile.number_template_ = self.number_template
         self.station_profile.debug = self.debug
         self.station_profile.mode = mode
-        self.cx_profile = self.new_l3_cx_profile()
-        self.cx_profile.host = self.host
-        self.cx_profile.port = self.port
-        self.cx_profile.name_prefix = self.name_prefix
-        self.cx_profile.side_a_min_bps = side_a_min_rate
-        self.cx_profile.side_a_max_bps = side_a_max_rate
-        self.cx_profile.side_b_min_bps = side_b_min_rate
-        self.cx_profile.side_b_max_bps = side_b_max_rate
+        # self.cx_profile = self.new_l3_cx_profile()
+        # self.cx_profile.host = self.host
+        # self.cx_profile.port = self.port
+        # self.cx_profile.name_prefix = self.name_prefix
+        # self.cx_profile.side_a_min_bps = side_a_min_rate
+        # self.cx_profile.side_a_max_bps = side_a_max_rate
+        # self.cx_profile.side_b_min_bps = side_b_min_rate
+        # self.cx_profile.side_b_max_bps = side_b_max_rate
+        self.side_a_min_rate = side_a_min_rate
+        self.side_a_max_rate = side_a_max_rate
+        self.side_b_min_rate = side_b_min_rate
+        self.side_b_max_rate = side_b_max_rate
+        self.set_default_l3_cx_profile()
         self.attenuator_profile = self.new_attenuator_profile()
         self.atten_dict = atten_dict
         self.atten_values = atten_val
@@ -117,6 +122,17 @@ class RvR(Realm):
         self.overall_df = []
         self.overall_end_time = None
         self.overall_start_time = None
+        self.do_interopability = do_interopability
+
+    def set_default_l3_cx_profile(self):
+        self.cx_profile = self.new_l3_cx_profile()
+        self.cx_profile.host = self.host
+        self.cx_profile.port = self.port
+        self.cx_profile.name_prefix = self.name_prefix
+        self.cx_profile.side_a_min_bps = self.side_a_min_rate
+        self.cx_profile.side_a_max_bps = self.side_a_max_rate
+        self.cx_profile.side_b_min_bps = self.side_b_min_rate
+        self.cx_profile.side_b_max_bps = self.side_b_max_rate
 
     def initialize_attenuator(self):
         for atten in self.atten_dict:
@@ -187,48 +203,147 @@ class RvR(Realm):
             throughput_phone = {f"{self.traffic_type[0]}": {}}
         self.list_of_data = self.get_resource_data()
         self.station_profile.station_names = self.list_of_data[5]
-        for traffic in self.traffic_type:
-            self.cx_profile.create(endp_type=traffic, side_a=self.station_profile.station_names,
-                                   side_b=self.upstream,
-                                   sleep_time=0)
-            self.initialize_attenuator()
-            phone_list = self.list_of_data[1]
-            for index, atten_set in enumerate(zip(*self.atten_values)):
-                self.attenuator_db_signal.append(f"{atten_set} dB" if self.multiple_attenuation_values else f"{atten_set[0]} dB")
-                throughput = {'upload': [], 'download': []}
-                signal = []
-                for atten in self.atten_dict:
-                    for mod in self.atten_dict[atten]["modules"]:
-                        self.set_attenuation(atten, mod, value=self.atten_dict[atten]["attenuation"][index])
-                self.start_l3()
-                time.sleep(20)
-                upload, download = self.monitor()
-                self.stop_l3()
-                self.reset_l3()
-                throughput['upload'] = upload
-                throughput['download'] = download
-                throughput['signal'] = signal
-                eid_data = self.json_get("ports?fields=alias,signal")
-                for alias in eid_data["interfaces"]:
-                    for i in alias:
-                        if i in self.station_names:
-                            # resource_hw_data = self.json_get("/resource/" + i.split(".")[0] + "/" + i.split(".")[1])
-                            signal.append(int(alias[i]["signal"].split(" ")[0]) if alias[i]["signal"] else 0)
+        if getattr(self, "do_interopability", False):
+            logger.info("Interop mode enabled")
 
-                for i in range(len(phone_list)):
-                    if throughput_phone[''.join(traffic)].get(phone_list[i]) is None:
-                        throughput_phone[''.join(traffic)][phone_list[i]] = {"upload": [upload[i]],
-                                                                             "download": [download[i]],
-                                                                             "Signal Strength": [signal[i]]}
-                    else:
-                        throughput_phone[''.join(traffic)][phone_list[i]]["upload"].append(upload[i])
-                        throughput_phone[''.join(traffic)][phone_list[i]]["download"].append(download[i])
-                        throughput_phone[''.join(traffic)][phone_list[i]]["Signal Strength"].append(signal[i])
-                throughput_dbm[''.join(traffic)][f"{atten_set} dB" if self.multiple_attenuation_values else f"{atten_set[0]} dB"] = throughput
+            for traffic in self.traffic_type:
+                phone_list = self.list_of_data[1]
+
+                # Pre-create empty storage for each attenuation
+                per_atten_results = {}
+                for atten_set in zip(*self.atten_values):
+                    key = f"{atten_set} dB" if self.multiple_attenuation_values else f"{atten_set[0]} dB"
+                    per_atten_results[key] = {
+                        "upload": [0] * len(self.station_profile.station_names),
+                        "download": [0] * len(self.station_profile.station_names),
+                        "signal": [0] * len(self.station_profile.station_names)
+                    }
+
+                # Run per station
+                for sta_index, sta in enumerate(self.station_profile.station_names):
+                    logger.info("Running interop for station: %s", sta)
+
+                    self.initialize_attenuator()
+                    # cleanup & recreate cx for single station
+                    if self.cx_profile.created_cx:
+                        self.cx_profile.cleanup()
+
+                    self.set_default_l3_cx_profile()
+
+                    self.cx_profile.create(endp_type=traffic,
+                                        side_a=[sta],
+                                        side_b=self.upstream,
+                                        sleep_time=0,cx_name="RVR_{}_{}".format(traffic, sta))
+
+                    for index, atten_set in enumerate(zip(*self.atten_values)):
+                        key = f"{atten_set} dB" if self.multiple_attenuation_values else f"{atten_set[0]} dB"
+
+                        if sta_index == 0:
+                            self.attenuator_db_signal.append(key)
+
+                        for atten in self.atten_dict:
+                            for mod in self.atten_dict[atten]["modules"]:
+                                self.set_attenuation(atten, mod,
+                                                    value=self.atten_dict[atten]["attenuation"][index])
+
+                        # # cleanup & recreate cx for single station
+                        # if self.cx_profile.created_cx:
+                        #     self.cx_profile.cleanup()
+
+                        # self.set_default_l3_cx_profile()
+
+                        # self.cx_profile.create(endp_type=traffic,
+                        #                     side_a=[sta],
+                        #                     side_b=self.upstream,
+                        #                     sleep_time=0)
+
+                        self.start_l3()
+                        time.sleep(20)
+                        print("started test on station {} with attenuation {}".format(sta, key))
+                        up, down = self.monitor()
+
+                        self.stop_l3()
+                        self.reset_l3()
+
+                        per_atten_results[key]["upload"][sta_index] = up[0]
+                        per_atten_results[key]["download"][sta_index] = down[0]
+
+                        eid_data = self.json_get("ports?fields=alias,signal")
+                        for alias in eid_data["interfaces"]:
+                            if sta in alias:
+                                per_atten_results[key]["signal"][sta_index] = int(alias[sta]["signal"].split(" ")[0]) if alias[sta]["signal"] else 0
+
+                        if self.stop_test:
+                            logger.warning("Test stopped by user")
+                            break
+
+                    if self.stop_test:
+                        break
+
+                throughput_dbm[''.join(traffic)] = per_atten_results
+
+                # prepare phone format (same as earlier)
+                for sta_index, phone in enumerate(phone_list):
+                    throughput_phone[''.join(traffic)][phone] = {
+                        "upload": [],
+                        "download": [],
+                        "Signal Strength": []
+                    }
+                    for key in per_atten_results:
+                        throughput_phone[''.join(traffic)][phone]["upload"].append(
+                            per_atten_results[key]["upload"][sta_index])
+                        throughput_phone[''.join(traffic)][phone]["download"].append(
+                            per_atten_results[key]["download"][sta_index])
+                        throughput_phone[''.join(traffic)][phone]["Signal Strength"].append(
+                            per_atten_results[key]["signal"][sta_index])
+
                 if self.stop_test:
                     break
-            if self.stop_test:
-                break
+
+        else:
+            for traffic in self.traffic_type:
+                self.cx_profile.create(endp_type=traffic, side_a=self.station_profile.station_names,
+                                    side_b=self.upstream,
+                                    sleep_time=0)
+                self.initialize_attenuator()
+                phone_list = self.list_of_data[1]
+                for index, atten_set in enumerate(zip(*self.atten_values)):
+                    self.attenuator_db_signal.append(f"{atten_set} dB" if self.multiple_attenuation_values else f"{atten_set[0]} dB")
+                    throughput = {'upload': [], 'download': []}
+                    signal = []
+                    for atten in self.atten_dict:
+                        for mod in self.atten_dict[atten]["modules"]:
+                            self.set_attenuation(atten, mod, value=self.atten_dict[atten]["attenuation"][index])
+                    self.start_l3()
+                    time.sleep(20)
+                    upload, download = self.monitor()
+                    self.stop_l3()
+                    self.reset_l3()
+                    throughput['upload'] = upload
+                    throughput['download'] = download
+                    throughput['signal'] = signal
+                    eid_data = self.json_get("ports?fields=alias,signal")
+                    for alias in eid_data["interfaces"]:
+                        for i in alias:
+                            if i in self.station_names:
+                                # resource_hw_data = self.json_get("/resource/" + i.split(".")[0] + "/" + i.split(".")[1])
+                                signal.append(int(alias[i]["signal"].split(" ")[0]) if alias[i]["signal"] else 0)
+
+                    for i in range(len(phone_list)):
+                        if throughput_phone[''.join(traffic)].get(phone_list[i]) is None:
+                            throughput_phone[''.join(traffic)][phone_list[i]] = {"upload": [upload[i]],
+                                                                                "download": [download[i]],
+                                                                                "Signal Strength": [signal[i]]}
+                        else:
+                            throughput_phone[''.join(traffic)][phone_list[i]]["upload"].append(upload[i])
+                            throughput_phone[''.join(traffic)][phone_list[i]]["download"].append(download[i])
+                            throughput_phone[''.join(traffic)][phone_list[i]]["Signal Strength"].append(signal[i])
+                    throughput_dbm[''.join(traffic)][f"{atten_set} dB" if self.multiple_attenuation_values else f"{atten_set[0]} dB"] = throughput
+                    if self.stop_test:
+                        break
+                if self.stop_test:
+                    break
+        
         self.throughput_phone = throughput_phone
         logger.info(throughput_dbm)
         return throughput_dbm
@@ -291,6 +406,61 @@ class RvR(Realm):
                     channels.append(alias[i]["channel"])
         return [resource_id_list, phone_name_list, mac_address, user_name, phone_radio, station_name, rx_rate, tx_rate,
                 ssid, os_type_list, modes, channels]
+    def get_layer3_endp_data(self):
+        """
+        Fetches Layer 3 endpoint data for all created cross connections.
+
+        Returns:
+            dict: A dictionary with  Each key corresponds to
+            the index of a each device in the order of cx_list, and its value is a list of 5 elements:
+            [0]: RX rate (last) at the A endpoint
+            [1]: RX rate (last) at the B endpoint
+            [2]: RX drop percentage at the A endpoint
+            [3]: RX drop percentage at the B endpoint
+            [4]: Status of the Device ("Run" or "Stopped")
+        """
+        cx_list_endp = []
+        cx_list_l3 = []
+        for i in self.cx_profile.created_cx.keys():
+            cx_list_endp.append(i + '-A')
+            cx_list_endp.append(i + '-B')
+            cx_list_l3.append(i)
+        # Fetch required throughput data from Lanforge
+        try:
+            # for dynamic data, taken rx rate lasts from layer3 endp tab
+            l3_endp_data = list(self.json_get('/endp/{}/list?fields=rx rate (last),rx drop %25,name,run,name'.format(','.join(cx_list_endp)))['endpoint'])
+            l3_cx_data = self.json_get('/cx/all')
+        except Exception as e:
+            cx_data = self.json_get('/cx/all/')
+            logger.info(cx_data)
+            logger.error(f"Endpoint not fetched from API {e}")
+        # Extracting and storing throughput data
+        cx_list = list(self.cx_profile.created_cx.keys())
+        i = 0
+        throughput = {}
+        # mapping the data based upon the cx_list order
+        for cx in cx_list:
+            throughput[i] = [0, 0, 0, 0, "Stopped", 0]
+            for j in l3_endp_data:
+                key, value = next(iter(j.items()))
+                endp_a = cx + '-A'
+                endp_b = cx + '-B'
+                if value['name'] == endp_a:
+                    throughput[i][0] = value['rx rate (last)']
+                    throughput[i][2] = value['rx drop %']
+                elif value['name'] == endp_b:
+                    throughput[i][1] = value['rx rate (last)']
+                    throughput[i][3] = value['rx drop %']
+                if value['name'] == endp_a or value['name'] == endp_b:
+                    throughput[i][4] = 'Run' if value['run'] else 'Stopped'
+            # To add average RTT
+            for j in l3_cx_data:
+                if (j == "handler" or j == "uri"):
+                    continue
+                if cx == l3_cx_data[j]['name']:
+                    throughput[i][5] = l3_cx_data[j]['avg rtt']
+            i += 1
+        return throughput
 
     def monitor(self):
         throughput, upload, download, timestamps = {}, [], [], []
@@ -306,12 +476,14 @@ class RvR(Realm):
         [(upload.append([]), download.append([])) for i in range(len(self.cx_profile.created_cx))]
         while datetime.now() < end_time:
             index += 1
-            response = list(
-                self.json_get('/cx/%s?fields=%s' % (
-                    ','.join(self.cx_profile.created_cx.keys()), ",".join(['bps rx a', 'bps rx b']))).values())[2:]
-            throughput[index] = list(
-                map(lambda i: [x for x in i.values()], response))
+            # response = list(
+            #     self.json_get('/cx/%s?fields=%s' % (
+            #         ','.join(self.cx_profile.created_cx.keys()), ",".join(['bps rx a', 'bps rx b']))).values())[2:]
+            # throughput[index] = list(
+            #     map(lambda i: [x for x in i.values()], response))
+            throughput[index] = self.get_layer3_endp_data()
             curr_time = datetime.now()
+
             timestamps.append(curr_time.strftime("%Y-%m-%d %H:%M:%S"))
             # if test is executed from webui then updating csv in realtime
             if self.dowebgui:
@@ -319,13 +491,15 @@ class RvR(Realm):
                 upload_sum = 0
                 download_sum = 0
                 # Accumulating upload/download values for cxs
-                for res in response:
-                    upload_sum += res["bps rx b"]
-                    download_sum += res["bps rx a"]
+                # for res in response:
+                #     upload_sum += res["bps rx b"]
+                #     download_sum += res["bps rx a"]
+                for key in throughput[index]:
+                    upload_sum += throughput[index][key][1]
+                    download_sum += throughput[index][key][0]
                 # converting bytes to megabytes
                 upload_sum = float(f"{upload_sum / 1000000:.2f}")
                 download_sum = float(f"{download_sum / 1000000:.2f}")
-
                 if not self.overall_end_time or not self.overall_start_time:
                     self.overall_start_time = start_time
                     self.overall_end_time = start_time + timedelta(seconds=(int(self.test_duration) * len(self.atten_values[0])) + 20 * (len(self.atten_values[0]) - 1))
@@ -528,7 +702,13 @@ class RvR(Realm):
 
     def generate_overall_csv(self, dir_path):
         for idx, obj in enumerate(self.overall_data):
-            filename = "attenuation_at_" + "-".join([atten_val[idx] for atten_val in self.atten_values]) + "_overall_data.csv" if self.multiple_attenuation_values else f"attenuation_at_{self.atten_values[0][idx]}" + "_overall_data.csv"  # noqa: E501
+            if self.do_interopability:
+                atten_count = len(self.atten_values[0])
+                atten_index = idx % atten_count
+
+                filename = "attenuation_at_" + "-".join([atten_val[atten_index] for atten_val in self.atten_values]) + "_overall_data.csv" if self.multiple_attenuation_values else f"attenuation_at_{self.atten_values[0][atten_index]}" + "_overall_data.csv"
+            else:
+                filename = "attenuation_at_" + "-".join([atten_val[idx] for atten_val in self.atten_values]) + "_overall_data.csv" if self.multiple_attenuation_values else f"attenuation_at_{self.atten_values[0][idx]}" + "_overall_data.csv"  # noqa: E501
             file_path = os.path.join(dir_path, filename)
             upload = obj["upload"]
             download = obj["download"]
@@ -779,6 +959,8 @@ def main():
                           help='To notify if the script triggered from webui')
     optional.add_argument('--result_dir', type=str, default='', help='result directory for webui execution')
     optional.add_argument('--test_name', type=str, default=None, help='Test name parameter for webgui execution')
+    optional.add_argument('--do_interopability', action='store_true', help='Ensures test on devices run sequentially, capturing each device’s data individually for plotting in the final report.')
+
 
     args = parser.parse_args()
 
@@ -899,7 +1081,9 @@ using programmable attenuators and throughput test is run at each distance/RSSI 
                   test_name=args.test_name,
                   dowebgui=args.dowebgui,
                   result_dir=args.result_dir,
-                  _debug_on=args.debug)
+                  _debug_on=args.debug,
+                  do_interopability=args.do_interopability
+                  )
 
     data = rvr_obj.build()
     rvr_obj.stop_l3()
