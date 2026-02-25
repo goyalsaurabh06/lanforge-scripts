@@ -43,15 +43,15 @@ class TeamsAndroid:
         self.base_url = f"http://{self.upstream_port}:5005"
         self.participant_name = participant_name
 
-        os.makedirs("last_run_logs", exist_ok=True)
+        os.makedirs(f"{os.getcwd()}/last_run_logs", exist_ok=True)
 
         # Configure the logging system
         logging.basicConfig(
-            level=logging.DEBUG,
+            level=logging.INFO,
             format="%(asctime)s - %(levelname)s - %(message)s",
             handlers=[
                 logging.FileHandler(
-                    f"last_run_logs/{self.participant_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log",
+                    f"{os.getcwd()}/last_run_logs/{self.participant_name}.log",
                     mode="w",
                 ),  # Writes to file
                 logging.StreamHandler(sys.stdout),  # Writes to terminal
@@ -60,6 +60,7 @@ class TeamsAndroid:
 
         # Create the logger instance
         self.logger = logging.getLogger(__name__)
+        self.logger.info(f"checking current working directory and log file creation... {os.getcwd()}")
 
     def get_devices(self):
         """Return list of connected ADB serials"""

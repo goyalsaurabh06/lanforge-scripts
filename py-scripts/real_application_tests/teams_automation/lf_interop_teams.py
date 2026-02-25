@@ -74,11 +74,11 @@ os.makedirs("last_run_logs", exist_ok=True)
 
 # 1. Configure the logging system
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
         logging.FileHandler(
-            f"last_run_logs/lf_interop_teams_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log",
+            f"last_run_logs/lf_interop_teams_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.log",
             mode="w",
         ),  # Writes to file
         logging.StreamHandler(sys.stdout),  # Writes to terminal
