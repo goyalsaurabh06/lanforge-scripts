@@ -259,8 +259,9 @@ class RvR(Realm):
                         #                     side_b=self.upstream,
                         #                     sleep_time=0)
 
-                        self.start_l3()
-                        cx_val = monitor_data.monitor_l3_endp_data(cx_list=self.cx_profile.created_cx.keys().copy(),direction=self.traffic_direction,duration=self.cx_wait_time)
+                        self.start_l3() 
+                        cx_list = list(self.cx_profile.created_cx.keys())
+                        cx_val = monitor_data.monitor_l3_endp_data(cx_list=cx_list,direction=self.traffic_direction,duration=self.cx_wait_time)
                         if not cx_val:
                             logger.info("Rx Rates are still zero on CXs, Starting the test..")
                         # time.sleep(20)
@@ -461,11 +462,6 @@ class RvR(Realm):
                 if value['name'] == endp_a or value['name'] == endp_b:
                     throughput[i][4] = 'Run' if value['run'] else 'Stopped'
             # To add average RTT
-            for j in l3_cx_data:
-                if (j == "handler" or j == "uri"):
-                    continue
-                if cx == l3_cx_data[j]['name']:
-                    throughput[i][5] = l3_cx_data[j]['avg rtt']
             i += 1
         return throughput
 
