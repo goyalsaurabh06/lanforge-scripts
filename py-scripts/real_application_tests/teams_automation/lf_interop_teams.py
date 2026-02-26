@@ -97,7 +97,6 @@ class TeamsAutomation(Realm):
         upstream_port=None,
         no_pre_cleanup=None,
         no_post_cleanup=None,
-        participants_req=None,
         audio=None,
         video=None,
         do_webui=None,
@@ -123,7 +122,6 @@ class TeamsAutomation(Realm):
         self.mac = 0
         self.meet_link = None
         self.participants_joined = None
-        self.participants_req = participants_req
         self.test_start = False
         self.start_time = None
         self.end_time = None
@@ -181,6 +179,46 @@ class TeamsAutomation(Realm):
         self.lanforge_os_type = []
         self.device_names = []
         self.user_list = []
+
+    def change_port_to_ip(self, upstream_port):
+        """
+        Convert a given port name to its corresponding IP address if it's not already an IP.
+
+        This function checks whether the provided `upstream_port` is a valid IPv4 address.
+        If it's not, it attempts to extract the IP address of the port by resolving it
+        via the internal `name_to_eid()` method and then querying the IP using `json_get()`.
+
+        Args:
+            upstream_port (str): The name or IP of the upstream port. This could be a
+                                 LANforge port name like '1.1.eth1' or an IP address.
+
+        Returns:
+            str: The resolved IP address if the port name was converted successfully,
+                otherwise returns the original input if it was already an IP or
+                if resolution fails.
+
+        Logs:
+            - A warning if the port is not Ethernet or IP resolution fails.
+            - Info logs for the resolved or passed IP.
+
+        """
+        if upstream_port.count(".") != 3:
+            target_port_list = self.name_to_eid(upstream_port)
+            shelf, resource, port, _ = target_port_list
+            try:
+                target_port_ip = self.json_get(
+                    f"/port/{shelf}/{resource}/{port}?fields=ip"
+                )["interface"]["ip"]
+                upstream_port = target_port_ip
+            except Exception as e:
+                logging.warning(
+                    f"The upstream port is not an ethernet port. Proceeding with the given upstream_port {upstream_port}. Exception: {e}"
+                )
+            logging.info(f"Upstream port IP {upstream_port}")
+        else:
+            logging.info(f"Upstream port IP {upstream_port}")
+
+        return upstream_port
 
     def updating_webui_runningjson(self, obj):
         data = {}
@@ -446,13 +484,20 @@ class TeamsAutomation(Realm):
             logger.info(f"sending running state to.. {cx_name}")
 
     def wait_for_test_start(self):
-        while not self.test_start:
-
-            logging.info("WAITING FOR THE TEST TO BE STARTED")
+        check_count = 0
+        while len(self.real_sta_list) != self.participants_joined:
+            logger.info(
+                f"Waiting for all participants to join the call. Joined: {self.participants_joined}, Expected: {len(self.real_sta_list)}"
+            )
             time.sleep(5)
-
+            check_count += 1
+            if check_count > 24:
+                logger.warning(
+                    "Waited for 5 minutes but not all participants joined. Proceeding with the test."
+                )
+                break
         self.set_start_time()
-        logging.info("TEST WILL BE STARTING")
+        logger.info("TEST WILL BE STARTING")
 
     def monitor_test(self):
         while datetime.now(self.tz) < self.end_time or not self.check_gen_cx():
@@ -1026,34 +1071,14 @@ class TeamsAutomation(Realm):
                     }
                 )
 
-        @self.app.route("/get_participants_joined", methods=["GET"])
-        def get_participants_joined():
-            return jsonify({"participants": self.participants_joined})
-
-        @self.app.route("/set_participants_joined", methods=["POST"])
+        @self.app.route("/set_participants_joined", methods=["GET"])
         def set_participants_joined():
-            data = request.json
-            self.participants_joined = data.get("participants_joined", None)
+            self.participants_joined += 1
             return jsonify(
                 {
-                    "message": f"Updated participants jopind status to {self.participants_joined}"
+                    "message": f"Updated participants joined status to {self.participants_joined}"
                 }
             )
-
-        @self.app.route("/get_participants_req", methods=["GET"])
-        def get_participants_req():
-            return jsonify({"participants": self.participants_req})
-
-        @self.app.route("/test_started", methods=["GET", "POST"])
-        def test_started():
-            if request.method == "GET":
-                return jsonify({"test_started": self.test_start})
-            elif request.method == "POST":
-                data = request.json
-                self.test_start = data.get("test_started", False)
-                return jsonify(
-                    {"message": f"Updated test_start status to {self.test_start}"}
-                )
 
         @self.app.route("/get_start_end_time", methods=["GET"])
         def get_start_end_time():
@@ -1230,11 +1255,11 @@ def main():
 
                 EXAMPLE-1:
                 Command Line Interface to run Teams:
-                python3 lf_interop_teams.py --mgr 192.168.204.75 --upstream_port 1.1.eth1 --participants 3 --duration 1 --audio --video
+                python3 lf_interop_teams.py --mgr 192.168.204.75 --upstream_port 1.1.eth1 --duration 1 --audio --video
 
                 EXAMPLE-2:
                 Command Line Interface to run Teams on Specified Resources:
-                python3 lf_interop_teams.py --mgr 192.168.204.75 --upstream_port 1.1.eth1 --participants 3 --duration 1 --audio --video --resources 1.95,1.400,1.300
+                python3 lf_interop_teams.py --mgr 192.168.204.75 --upstream_port 1.1.eth1 --duration 1 --audio --video --resources 1.95,1.400,1.300
 
 
                 NOTES:
@@ -1269,9 +1294,6 @@ def main():
             type=str,
             help="Specify The Upstream Port name or IP address",
             required=True,
-        )
-        required.add_argument(
-            "--participants", type=int, help="No of Devices in the test", required=True
         )
 
         # Add optional arguments
@@ -1324,13 +1346,14 @@ def main():
             upstream_port=args.upstream_port,
             no_pre_cleanup=args.no_pre_cleanup,
             no_post_cleanup=args.no_post_cleanup,
-            participants_req=args.participants,
             audio=args.audio,
             video=args.video,
             do_webui=args.do_webUI,
             test_name=args.testname,
             report_dir=args.report_dir,
         )
+
+        teams.upstream_port = teams.change_port_to_ip(args.upstream_port)
 
         teams.realdevice = RealDevice(
             manager_ip=args.mgr,

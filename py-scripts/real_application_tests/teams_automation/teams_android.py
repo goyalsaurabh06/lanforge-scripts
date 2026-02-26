@@ -60,7 +60,6 @@ class TeamsAndroid:
 
         # Create the logger instance
         self.logger = logging.getLogger(__name__)
-        self.logger.info(f"checking current working directory and log file creation... {os.getcwd()}")
 
     def get_devices(self):
         """Return list of connected ADB serials"""
@@ -370,7 +369,22 @@ class TeamsAndroid:
             )
             d.app_stop("com.android.chrome")
 
+    def update_participation(self):
+
+        endpoint_url = f"{self.base_url}/set_participants_joined"
+        try:
+            response = requests.get(endpoint_url)
+            if response.status_code == 200:
+                self.logger.info("Device participation status updated successfully.")
+            else:
+                self.logger.error(
+                    f"Failed to update device participation status. Status code: {response.status_code}"
+                )
+        except requests.RequestException as e:
+            self.logger.error(f"Request error: {e}")
+
     def enable_stats(self, d):
+        self.update_participation()
         time.sleep(10)
         xml = d.dump_hierarchy()
         while "callingButtons-showMoreBtn" not in xml:
