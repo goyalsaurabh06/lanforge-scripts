@@ -121,7 +121,7 @@ class TeamsAutomation(Realm):
         self.linux = 0
         self.mac = 0
         self.meet_link = None
-        self.participants_joined = None
+        self.participants_joined = 0
         self.test_start = False
         self.start_time = None
         self.end_time = None
@@ -132,8 +132,8 @@ class TeamsAutomation(Realm):
         self.cred_index = 0
         self.tz = pytz.timezone("Asia/Kolkata")
         self.generic_endps_profile = self.new_generic_endp_profile()
-        self.generic_endps_profile.name_prefix = "zoom"
-        self.generic_endps_profile.type = "zoom"
+        self.generic_endps_profile.name_prefix = "teams"
+        self.generic_endps_profile.type = "teams"
         self.audio = audio
         self.video = video
         self.audio_stats_header = [
@@ -353,7 +353,7 @@ class TeamsAutomation(Realm):
             else:
                 name = port_info[2]
 
-            gen_name_a = "%s-%s" % ("zoom", "_".join(port_name.split(".")))
+            gen_name_a = "%s-%s" % ("teams", "_".join(port_name.split(".")))
             endp_tpls.append((shelf, resource, name, gen_name_a))
 
         for endp_tpl in endp_tpls:
@@ -493,9 +493,11 @@ class TeamsAutomation(Realm):
             check_count += 1
             if check_count > 24:
                 logger.warning(
-                    "Waited for 5 minutes but not all participants joined. Proceeding with the test."
+                    f"Waited for 2 minutes but not all participants joined. Proceeding with the test with the participants that have joined. Joined: {self.participants_joined}, Expected: {len(self.real_sta_list)}"
                 )
                 break
+        if len(self.real_sta_list) == self.participants_joined:
+            logger.info("All participants have joined the call. Starting the test.")
         self.set_start_time()
         logger.info("TEST WILL BE STARTING")
 
@@ -1102,7 +1104,7 @@ class TeamsAutomation(Realm):
         @self.app.route("/stop_teams", methods=["GET"])
         def stop_teams():
             """
-            Endpoint to stop the Zoom test and trigger a graceful application shutdown.
+            Endpoint to stop the Teams test and trigger a graceful application shutdown.
             """
             logging.info("Stopping the test through web UI")
             self.stop_signal = True
