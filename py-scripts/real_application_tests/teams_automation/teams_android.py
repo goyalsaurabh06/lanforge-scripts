@@ -43,7 +43,7 @@ class TeamsAndroid:
         self.base_url = f"http://{self.upstream_port}:5005"
         self.participant_name = participant_name
 
-        os.makedirs(f"{os.getcwd()}/last_run_logs", exist_ok=True)
+        os.makedirs(f"{os.getcwd()}/ms_teams_mobile_logs", exist_ok=True)
 
         # Configure the logging system
         logging.basicConfig(
@@ -51,7 +51,7 @@ class TeamsAndroid:
             format="%(asctime)s - %(levelname)s - %(message)s",
             handlers=[
                 logging.FileHandler(
-                    f"{os.getcwd()}/last_run_logs/{self.participant_name}.log",
+                    f"{os.getcwd()}/ms_teams_mobile_logs/{self.participant_name}.log",
                     mode="w",
                 ),  # Writes to file
                 logging.StreamHandler(sys.stdout),  # Writes to terminal
@@ -348,13 +348,14 @@ class TeamsAndroid:
                     raise Exception(
                         f"Camera toggle button not found in time for device {d.serial}"
                     )
-                camera_toggle_btn = d(text="Turn camera on (Ctrl+Shift+O)")
-                if camera_toggle_btn.wait(timeout=60):
-                    camera_toggle_btn.click()
-                else:
-                    raise Exception(
-                        f"Camera toggle button not found for device {d.serial}"
-                    )
+            
+            camera_toggle_btn = d(text="Turn camera on (Ctrl+Shift+O)")
+            if camera_toggle_btn.wait(timeout=60):
+                camera_toggle_btn.click()
+            else:
+                raise Exception(
+                    f"Camera toggle button not found for device {d.serial}"
+                )
 
             join_btn = d(resourceId="prejoin-join-button")
             if join_btn.wait(timeout=60):
