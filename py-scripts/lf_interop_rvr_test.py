@@ -21,7 +21,7 @@ import time
 import pandas as pd
 import csv
 import json
-
+from monitor_interop_data import MonitorInteropData
 if sys.version_info[0] != 3:
     print("This script requires Python 3")
     exit(1)
@@ -63,7 +63,7 @@ class RvR(Realm):
                  sta_list=[1, 1], atten_dict={"2222": ['all']},
                  atten_val=[["0"]], traffic=500, radio_list=['wiphy0', 'wiphy3'],
                  test_name=None, dowebgui=False, result_dir='', multiple_attenuation_values=False,
-                 _debug_on=False, _exit_on_error=False, _exit_on_fail=False,do_interopability=False):
+                 _debug_on=False, _exit_on_error=False, _exit_on_fail=False,do_interopability=False,cx_wait_time=20):
         super().__init__(lfclient_host=host,
                          lfclient_port=port),
         self.upstream = upstream
@@ -123,6 +123,7 @@ class RvR(Realm):
         self.overall_end_time = None
         self.overall_start_time = None
         self.do_interopability = do_interopability
+        self.cx_wait_time = cx_wait_time
 
     def set_default_l3_cx_profile(self):
         self.cx_profile = self.new_l3_cx_profile()
@@ -194,6 +195,7 @@ class RvR(Realm):
     def build(self):
         throughput_dbm = {}
         throughput_phone = {}
+        monitor_data = MonitorInteropData(host=self.host, port=self.port)
         # phone_signal = {}
         if len(self.traffic_type) == 2:
             throughput_dbm = {f"{self.traffic_type[0]}": {}, f"{self.traffic_type[1]}": {}}
@@ -258,7 +260,12 @@ class RvR(Realm):
                         #                     sleep_time=0)
 
                         self.start_l3()
-                        time.sleep(20)
+                        cx_val = monitor_data.monitor_l3_endp_data(cx_list=self.cx_profile.created_cx.keys().copy(),direction=self.traffic_direction,duration=self.cx_wait_time)
+                        if not cx_val:
+                            logger.info("Rx Rates are still zero on CXs, Starting the test..")
+                        # time.sleep(20)
+
+
                         print("started test on station {} with attenuation {}".format(sta, key))
                         up, down = self.monitor()
 
@@ -960,7 +967,7 @@ def main():
     optional.add_argument('--result_dir', type=str, default='', help='result directory for webui execution')
     optional.add_argument('--test_name', type=str, default=None, help='Test name parameter for webgui execution')
     optional.add_argument('--do_interopability', action='store_true', help='Ensures test on devices run sequentially, capturing each device’s data individually for plotting in the final report.')
-
+    optional.add_argument("--cx_wait_time", type=int, help='Specify the maximum time to wait for Configuration',default=20)
 
     args = parser.parse_args()
 
@@ -1082,7 +1089,8 @@ using programmable attenuators and throughput test is run at each distance/RSSI 
                   dowebgui=args.dowebgui,
                   result_dir=args.result_dir,
                   _debug_on=args.debug,
-                  do_interopability=args.do_interopability
+                  do_interopability=args.do_interopability,
+                  cx_wait_time=args.cx_wait_time
                   )
 
     data = rvr_obj.build()
