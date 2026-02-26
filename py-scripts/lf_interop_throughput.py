@@ -195,7 +195,7 @@ Realm = realm.Realm
 from lf_report import lf_report  # noqa: E402
 from lf_graph import lf_bar_graph_horizontal  # noqa: E402
 # from lf_graph import lf_line_graph  # noqa: E402
-
+from monitor_interop_data import MonitorInteropData
 from datetime import datetime, timedelta  # noqa: E402
 
 DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
@@ -4498,6 +4498,7 @@ Copyright 2023 Candela Technologies Inc.
     optional.add_argument("--tput_mbps", action="store_true", help="Interpret rated download and upload values as Mbps instead of bytes")
     optional.add_argument("--endp_count", type=int, help='Specify the maximum time to wait for Configuration')
     optional.add_argument("--multi_conn", type=int, help='Specify the maximum time to wait for Configuration')
+    optional.add_argument("--cx_wait_time", type=int, help='Specify the maximum time to wait for Configuration',default=20)
     parser.add_argument('--help_summary', help='Show summary of what this script does', action="store_true")
 
     # IOT ARGS
@@ -4798,7 +4799,13 @@ Copyright 2023 Candela Technologies Inc.
 
         overall_start_time = datetime.now()
         overall_end_time = overall_start_time + timedelta(seconds=int(args.test_duration) * len(incremental_capacity_list))
-
+        if throughput.direction == "Upload":
+            interopa_direction = 'upload'
+        elif throughput.direction == "Download":
+            interop_direction = 'download'
+        else:
+            interop_direction = 'bidirectional'
+        monitor_data = MonitorInteropData(host=throughput.host, port=throughput.port)
         for i in range(len(to_run_cxs)):
             is_device_configured = True
             if args.do_interopability:
@@ -4830,6 +4837,10 @@ Copyright 2023 Candela Technologies Inc.
                         is_device_configured = throughput.configure_specific([device_to_run_resource])
                 if is_device_configured:
                     throughput.start_specific(to_run_cxs[i])
+                    if throughput.do_interopability:
+                        cx_val = monitor_data.monitor_l3_endp_data(cx_list=to_run_cxs[i],direction=interop_direction,duration=args.cx_wait_time)
+                        if not cx_val:
+                            logger.info("Rx Rates are still zero on CXs, Starting the test..")
 
             # Determine device names based on the current iteration
             device_names = created_cx_lists_keys[:to_run_cxs_len[i][-1]]
