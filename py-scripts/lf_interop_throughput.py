@@ -269,7 +269,7 @@ class Throughput(Realm):
                  user_list=None, real_client_list=None, real_client_list1=None, hw_list=None, laptop_list=None, android_list=None, mac_list=None, windows_list=None, linux_list=None,
                  total_resources_list=None, working_resources_list=None, hostname_list=None, username_list=None, eid_list=None,
                  devices_available=None, input_devices_list=None, mac_id1_list=None, mac_id_list=None, overall_avg_rssi=None,
-                 coordinate_list=None, rotation_enabled=None, robo_ip=None, angle_list=None,endp_count=1, multi_conn=1):
+                 coordinate_list=None, rotation_enabled=None, robo_ip=None, angle_list=None,endp_count=1, multi_conn=1,interopability_upload=None,interopability_download=None):
         super().__init__(lfclient_host=host,
                          lfclient_port=port)
         self.ssid_list = []
@@ -382,6 +382,9 @@ class Throughput(Realm):
         self.config_dict = {}
         self.configured_devices_check = {}
         self.interopability_config = interopability_config
+        self.interopability_download = interopability_download
+        self.interopability_upload = interopability_upload
+
 
         # Variables related to Robo
         self.robo_ip = robo_ip
@@ -2848,8 +2851,8 @@ class Throughput(Realm):
                 "Traffic Duration in minutes": round(int(self.test_duration) * len(incremental_capacity_list) / 60, 2),
                 "Traffic Type": (self.traffic_type.strip("lf_")).upper(),
                 "Traffic Direction": self.direction,
-                "Upload Rate(Mbps)": str(round(int(self.cx_profile.side_a_min_bps) / 1000000, 2)) + "Mbps",
-                "Download Rate(Mbps)": str(round(int(self.cx_profile.side_b_min_bps) / 1000000, 2)) + "Mbps",
+                "Upload Rate(Mbps)": str(round(int(self.interopability_upload) / 1000000, 2)) + "Mbps",
+                "Download Rate(Mbps)": str(round(int(self.interopability_download) / 1000000, 2)) + "Mbps",
                 "Endpoint count": str(self.endp_count),
                 "Multi conn" : str(self.multi_conn),
                 # "Packet Size" : str(self.cx_profile.side_a_min_pdu) + " Bytes"
@@ -2912,8 +2915,8 @@ class Throughput(Realm):
                                          len(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()), 2)) * -1)
                         avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
                         # Calculate and append upload and download throughput to lists
-                        upload_list.append(str(round(int(self.cx_profile.side_a_min_bps) / 1000000, 2)))
-                        download_list.append(str(round(int(self.cx_profile.side_b_min_bps) / 1000000, 2)))
+                        upload_list.append(str(round(int(self.interopability_upload) / 1000000, 2)))
+                        download_list.append(str(round(int(self.interopability_download) / 1000000, 2)))
 
                         direction_in_table.append(self.direction)
                     elif self.direction == 'Download':
@@ -2929,15 +2932,15 @@ class Throughput(Realm):
                         avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
 
                         # Calculate and append upload and download throughput to lists
-                        upload_list.append(str(round(int(self.cx_profile.side_a_min_bps) / 1000000, 2)))
-                        download_list.append(str(round(int(self.cx_profile.side_b_min_bps) / 1000000, 2)))
+                        upload_list.append(str(round(int(self.interopability_upload) / 1000000, 2)))
+                        download_list.append(str(round(int(self.interopability_download) / 1000000, 2)))
 
                         direction_in_table.append(self.direction)
                     elif self.direction == 'Upload':
 
                         # Calculate and append upload and download throughput to lists
-                        upload_list.append(str(round(int(self.cx_profile.side_a_min_bps) / 1000000, 2)))
-                        download_list.append(str(round(int(self.cx_profile.side_b_min_bps) / 1000000, 2)))
+                        upload_list.append(str(round(int(self.interopability_upload) / 1000000, 2)))
+                        download_list.append(str(round(int(self.interopability_download) / 1000000, 2)))
                         rssi_data.append(int(round(sum(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()) /
                                          len(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()), 2)) * -1)
                         upload_drop.append(round(sum(upload_drop_col) / len(upload_drop_col), 2))
@@ -4572,7 +4575,8 @@ Copyright 2023 Candela Technologies Inc.
     else:
         args.multi_conn = 1
         args.endp_count = 3
-
+    interopability_download = str(args.download)
+    interopability_upload = str(args.upload)
     if args.do_interopability:
         if args.download != '2560' and args.download != '0' and args.upload != '0' and args.upload != '2560':
             if args.traffic_type == "lf_udp":
@@ -4729,7 +4733,9 @@ Copyright 2023 Candela Technologies Inc.
                                 coordinate_list=args.coordinate.split(",") if args.coordinate else [],
                                 angle_list=args.rotation.split(",") if args.rotation else [],
                                 endp_count=args.endp_count,
-                                multi_conn=args.multi_conn
+                                multi_conn=args.multi_conn,
+                                interopability_download=interopability_download,
+                                interopability_upload=interopability_upload
                                 )
 
         if gave_incremental:
