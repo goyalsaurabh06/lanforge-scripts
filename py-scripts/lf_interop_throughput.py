@@ -4499,8 +4499,9 @@ Copyright 2023 Candela Technologies Inc.
     optional.add_argument("--config", action="store_true", help="Specify for configuring the devices")
     optional.add_argument("--interopability_config", action="store_true", help="To do individual configuration for each device in interoperability")
     optional.add_argument("--tput_mbps", action="store_true", help="Interpret rated download and upload values as Mbps instead of bytes")
-    optional.add_argument("--endp_count", type=int, help='Specify the maximum time to wait for Configuration')
-    optional.add_argument("--multi_conn", type=int, help='Specify the maximum time to wait for Configuration')
+    optional.add_argument("--endp_count", type=int, help='Specify number of CXs to be created for each device',default=-1)
+    optional.add_argument("--multi_conn", type=int, help='Specify the multi conn config for layer 3CXs',default=-1)
+    
     optional.add_argument("--cx_wait_time", type=int, help='Specify the maximum time to wait for Configuration',default=20)
     parser.add_argument('--help_summary', help='Show summary of what this script does', action="store_true")
 
@@ -4570,11 +4571,16 @@ Copyright 2023 Candela Technologies Inc.
     iterations_before_test_stopped_by_user = []
     gave_incremental = False
     if args.traffic_type == "lf_tcp":
-        args.multi_conn = 10
-        args.endp_count = 3
+        if args.multi_conn == -1:
+            args.multi_conn = 10
+        if args.endp_count == -1:
+            args.endp_count = 3
     else:
-        args.multi_conn = 1
-        args.endp_count = 3
+        if args.multi_conn == -1:
+            args.multi_conn = 1
+        if args.endp_count == -1:
+            args.endp_count = 3
+    
     interopability_download = str(args.download)
     interopability_upload = str(args.upload)
     if args.do_interopability:
@@ -4806,7 +4812,7 @@ Copyright 2023 Candela Technologies Inc.
         overall_start_time = datetime.now()
         overall_end_time = overall_start_time + timedelta(seconds=int(args.test_duration) * len(incremental_capacity_list))
         if throughput.direction == "Upload":
-            interopa_direction = 'upload'
+            interop_direction = 'upload'
         elif throughput.direction == "Download":
             interop_direction = 'download'
         else:
