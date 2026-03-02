@@ -124,6 +124,7 @@ class RvR(Realm):
         self.overall_start_time = None
         self.do_interopability = do_interopability
         self.cx_wait_time = cx_wait_time
+        self.interop_data = {}
 
     def set_default_l3_cx_profile(self):
         self.cx_profile = self.new_l3_cx_profile()
@@ -269,7 +270,8 @@ class RvR(Realm):
 
                         print("started test on station {} with attenuation {}".format(sta, key))
                         up, down = self.monitor()
-
+                        csv_suffix = "{}_{}".format(self.list_of_data[1][sta_index], key.strip())
+                        self.interop_data[csv_suffix] = self.overall_data[-1].copy()
                         self.stop_l3()
                         self.reset_l3()
 
@@ -700,8 +702,28 @@ class RvR(Realm):
         report.build_footer()
         report.write_html()
         report.write_pdf()
+        if not self.do_interopability:
+            self.generate_overall_csv(report_path_date_time)
+        else:
+            self.generate_interop_csv(report_path_date_time)
+    def generate_interop_csv(self,path=""):
+        data =self.interop_data.copy()
+        for key, value in data.items():
 
-        self.generate_overall_csv(report_path_date_time)
+            timestamps = value['timestamps']
+            upload = value['upload'][0]
+            download = value['download'][0]
+
+            df = pd.DataFrame({
+                "timestamp": timestamps,
+                "upload_bps": upload,
+                "download_bps": download
+            })
+
+            clean_key = key.replace(" ", "_")
+            file_name = f"overall_attenuation_for_{clean_key}.csv"
+            df.to_csv(os.path.join(path, file_name), index=False)
+
 
     def generate_overall_csv(self, dir_path):
         for idx, obj in enumerate(self.overall_data):
