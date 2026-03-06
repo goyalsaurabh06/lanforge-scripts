@@ -1024,6 +1024,7 @@ class Throughput(Realm):
             for i in self.real_client_list1:
                 for j in traffic_direction_list:
                     for k in traffic_type_list:
+                        i = " ".join(i.split(" ")[:2])
                         cxs = "%s_%s_%s" % (i, k, j)
                         cx_names = cxs.replace(" ", "")
                 if self.do_interopability:
