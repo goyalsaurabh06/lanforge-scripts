@@ -74,6 +74,8 @@ from flask import Flask, request, jsonify
 from threading import Thread
 import traceback
 import threading
+import plotly.express as px
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 log = logging.getLogger('werkzeug')
@@ -1010,6 +1012,26 @@ class Youtube(Realm):
             self.report.set_graph_image(output_file)
 
             self.report.build_graph()
+
+            # --- 2. Generate Interactive Plotly HTML (The new part) ---
+            path_obj = Path(file_name)
+            device_name = path_obj.stem
+            plotly_fig = px.line(
+                x=timestamps, 
+                y=buffer_health, 
+                title=f'Interactive Buffer Health vs Time for {device_name}',
+                labels={'x': 'Time', 'y': 'Buffer Health (Seconds)'},
+                markers=True # This adds a visible dot for every single data point
+            )
+            
+            # Save the interactive graph as a standalone HTML file in the report folder
+            output_html = f"{device_name}_interactive_buffer_health.html"
+            plotly_fig.write_html(output_html)
+
+            # Inject a clickable hyperlink into the LANforge report
+            link_html = f'<br><p style="font-size: 16px; font-weight: bold;">👉 <a href="{output_html}" target="_blank">Click here to open the Interactive Point-by-Point Graph for {device_name}</a></p><br>'
+            self.report.set_custom_html(link_html)
+            self.report.build_custom()
 
         os.chdir(original_dir)
         if iot_summary:
