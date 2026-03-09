@@ -1129,7 +1129,7 @@ using programmable attenuators and throughput test is run at each distance/RSSI 
         "Password": rvr_obj.password,
         "Encryption": rvr_obj.security,
         "Traffic Direction": rvr_obj.traffic_direction.capitalize(),
-        "Traffic Pumped for each Station": f"{rvr_obj.traffic} Mbps",
+        "Per client load": f"{rvr_obj.traffic} Mbps",
         "Test Duration": datetime.strptime(test_end_time, "%b %d %H:%M:%S") - datetime.strptime(
             test_start_time, "%b %d %H:%M:%S")
     }
