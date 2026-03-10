@@ -65,8 +65,8 @@ class ZoomHost:
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-notifications")
         chrome_options.add_experimental_option("prefs", prefs)
-        chrome_options.add_argument("--use-fake-ui-for-media-stream")
-        chrome_options.add_argument("--auto-select-desktop-capture-source=Entire screen")
+        # chrome_options.add_argument("--use-fake-ui-for-media-stream")
+        # chrome_options.add_argument("--auto-select-desktop-capture-source=Entire screen")
 
         chrome_options.add_argument("--disable-extensions")
         chrome_options.add_argument("--disable-infobars")
