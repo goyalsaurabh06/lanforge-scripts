@@ -91,13 +91,13 @@ class ZoomHost:
             print("[INFO] Entire Screen shared successfully via Chrome flags")
 
             # We use a short wait here because if it's not there, we don't want to wait 90 seconds
-            pause_audio_btn = WebDriverWait(self.driver, 5).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "button[aria-label='Pause Audio Share']"))
-            )
+            # pause_audio_btn = WebDriverWait(self.driver, 5).until(
+            #     EC.element_to_be_clickable((By.CSS_SELECTOR, "button[aria-label='Pause Audio Share']"))
+            # )
             
-            # Click it to pause the audio sharing
-            self.driver.execute_script("arguments[0].click();", pause_audio_btn)
-            print("[INFO] Screen share audio has been muted/paused.")
+            # # Click it to pause the audio sharing
+            # self.driver.execute_script("arguments[0].click();", pause_audio_btn)
+            # print("[INFO] Screen share audio has been muted/paused.")
             
         except Exception as e:
             print(f"Error in sharing screen: {e}")
