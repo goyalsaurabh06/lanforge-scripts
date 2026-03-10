@@ -288,7 +288,7 @@ class ZoomHost:
         self.keep_footer_visible()
         try:
             time.sleep(3)
-            self.share_screen()
+            # self.share_screen()
         except Exception as e:
             print("error in sharing screen", e)
 
