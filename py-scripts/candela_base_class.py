@@ -261,12 +261,77 @@ class Candela(Realm):
         self.sniff=sniff
         self.sniff_frequency=sniff_frequency
         self.sniff_channel=sniff_channel
-    
+
+    def channel_switch(self,radio="wiphy0",channel='',ap_data=None):
+        eid = self.name_to_eid(radio)
+        shelf = eid[0]
+        resource_id = eid[1]
+        port_name = eid[2]
+        print(eid)
+        # exit(0)
+        port_up_data = self.port_up_request(resource_id=resource_id,port_name=port_name)
+        self.json_post("cli-json/set_port", port_up_data)
+        time.sleep(10)
+        channel_change_data = {"shelf":shelf,
+                                "resource":resource_id,
+                                "radio":port_name,
+                                "channel":channel}
+        print("channel change data",channel_change_data)
+        channel_change_url = "cli-json/set_wifi_radio"
+        self.json_post(channel_change_url,channel_change_data)
+        total_retries = 10
+        current_retries = 1
+        created = False
+        print("Waiting until {} radio switches the channel to {}".format(radio,channel))
+        query = '.'.join([str(shelf), str(resource_id), str(port_name)])
+        while current_retries <= total_retries:
+            logger.debug(f'retrying for {query}')
+            logger.debug(f"Waiting for station {query} to appear in port list...")
+            # ports_all_data = self.json_get('/ports')
+            ports_data = self.json_get("/port/{}/{}/{}?fields=phantom,channel".format(shelf, resource_id, port_name))
+            logger.debug(ports_data)
+            if ports_data is not None and ports_data['interface']['phantom'] == False and str(ports_data['interface']['channel']) == str(channel):
+                created = True
+                break
+            time.sleep(1)
+        if created:
+            logger.info("{} successfully switched to channel {}".format(radio,channel))
+            return True
+        else:
+            return False
+
+    def setup_monitor_interface(self,port,mon_iface_name="moni0"):
+        """Create monitor interface via LANforge API"""
+        url = "/cli-json/add_monitor"
+        eid = self.name_to_eid(port)
+        payload = {
+            "shelf": eid[0],
+            "resource": eid[1],
+            "radio": eid[2],
+            "ap_name": mon_iface_name
+        }
+        try:
+            # resp = requests.post(url, json=payload, timeout=10)
+            self.json_post(url,payload)
+            # if resp.status_code == 200:
+            #     logger.info(f"[LANforge] Monitor interface '{self.mon_iface}' created on radio {self.radio}", "SUCCESS")
+            #     return True
+            # else:
+            #     logger.info(f"[LANforge ERROR] Failed to create monitor: {resp.text}", "ERROR")
+            #     return False
+        except Exception as e:
+            logger.info(f"[LANforge EXCEPTION] {e}", "ERROR")
+            return False
+
     def create_monitor(self,moni_name="moni0"):
         self.cleanup.sta_clean()
-        self.monitor.create(resource_=self.sniff_radio_resource,
-                            radio_=self.sniff_radio_port, channel=self.sniff_channel, frequency=self.sniff_frequency,
-                            name_=moni_name)
+        channel_switched = self.channel_switch(radio=self.sniff_radio,channel=self.sniff_channel)
+        if not channel_switched:
+            logger.info("Radio : {} failed to shift channel to {}".format(self.sniff_frequency,self.sniff_channel))
+        self.setup_monitor_interface(port=self.sniff_radio,mon_iface_name=moni_name)
+        # self.monitor.create(resource_=self.sniff_radio_resource,
+        #                     radio_=self.sniff_radio_port, channel=self.sniff_channel, frequency=self.sniff_frequency,
+        #                     name_=moni_name)
     def start_sniff(self, capname='roam_test.pcap'):
         self.monitor.admin_up()
         base_dir = os.getcwd()
