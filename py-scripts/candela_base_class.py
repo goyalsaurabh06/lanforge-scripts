@@ -10,6 +10,7 @@ import threading
 from collections import OrderedDict
 from os import path
 import shutil
+import subprocess
 import logging
 from tabulate import tabulate
 from lf_graph import lf_bar_graph_horizontal,lf_bar_graph,lf_line_graph
@@ -134,7 +135,12 @@ class Candela(Realm):
                  upstream_port="eth1",
                  ssid=None,
                  passwd=None,
-                 security=None):
+                 security=None,
+                 sniff_radio='1.1.wiphy0',
+                 sniff_duration=300,
+                 sniff=False,
+                 sniff_frequency=-1,
+                 sniff_channel='AUTO'):
 
         """
         Constructor to initialize the LANforge IP and port
@@ -244,7 +250,49 @@ class Candela(Realm):
         self.wait_time = wait_time
         self.group_device_map = {}
         self.config = config
+        self.sniff_radio_resource = ""
+        self.sniff_radio_shelf = "" 
+        self.sniff_radio_port = "" 
+        self.sniff_radio = ""
+        self.monitor = None
+
+        self.sniff_radio=sniff_radio
+        self.sniff_duration=sniff_duration
+        self.sniff=sniff
+        self.sniff_frequency=sniff_frequency
+        self.sniff_channel=sniff_channel
     
+    def create_monitor(self,moni_name="moni0"):
+        self.cleanup.sta_clean()
+        self.monitor.create(resource_=self.sniff_radio_resource,
+                            radio_=self.sniff_radio_port, channel=self.sniff_channel, frequency=self.sniff_frequency,
+                            name_=moni_name)
+    def start_sniff(self, capname='roam_test.pcap'):
+        self.monitor.admin_up()
+        base_dir = os.getcwd()
+        pcap_path = os.path.join(base_dir, 'roam_test.pcap')
+        c = f"tshark -i moni0 -w {pcap_path}"
+        try:
+            print("RUNNING TSHARK")
+            self.tshark_process = subprocess.Popen(c, shell=True)
+        except Exception as e:
+            print(e, "In start_sniff Exception")
+        # self.monitor.start_sniff(capname=capname, duration_sec=self.sniff_duration, flags=0x1)
+
+    def stop_sniff(self):
+        try:
+            self.tshark_process.terminate()
+        except Exception as e:
+            print(e, "In stop_sniff Exception")
+        try:
+            return_code = self.tshark_process.returncode
+            print("RETURN CODE", return_code)
+
+        except BaseException as err:
+            print(err, "ERRORR")
+
+        self.monitor.admin_down()
+
     def api_get(self, endp: str):
         """
         Sends a GET request to fetch data
@@ -10044,7 +10092,7 @@ def ensure_path(path_str, create_if_missing=False):
 def main():
 
     parser = argparse.ArgumentParser(
-    prog="lf_interop_throughput.py",
+    prog="candela_base_class.py",
     formatter_class=argparse.RawTextHelpFormatter,
     )
     parser = argparse.ArgumentParser(description="Run Candela API Tests")
@@ -10686,6 +10734,13 @@ def main():
     parser.add_argument('--vs_groups', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2',default="all")
     parser.add_argument('--vlc_groups', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2',default="all")
 
+    parser.add_argument("--sniff", action="store_true", help="To sniff packets")
+    parser.add_argument('--sniff_frequency',help='Frequency',type=int,default=-1)
+    parser.add_argument('--sniff_channel',help='Channel',type=str,default='AUTO')
+    parser.add_argument('--sniff_radio',help='Sniffer Radio',default='1.1.wiphy0')
+    parser.add_argument('--sniff_duration',help='Sniff duration',type=int,default=300)
+    parser.add_argument('--pcap_name',help='pcap name',type=str,default='capture.pcap')
+
     args = parser.parse_args()
 
     if args.vlc_duration.endswith('s') or args.vlc_duration.endswith('S'):
@@ -10775,8 +10830,28 @@ def main():
                             ssid=args.ssid,
                             passwd=args.passwd,
                             security=args.security,
-                            result_path=args.result_path)
+                            result_path=args.result_path,
+                            sniff_radio=args.sniff_radio,
+                            sniff_duration=args.sniff_duration,
+                            sniff=args.sniff,
+                            sniff_frequency=args.sniff_frequency,
+                            sniff_channel=args.sniff_channel
+                            )
 
+    if args.sniff:
+        candela_apis.sniff_radio_resource, candela_apis.sniff_radio_shelf, candela_apis.sniff_radio_port, _ = candela_apis.name_to_eid(
+            args.sniff_radio)
+
+        candela_apis.monitor = candela_apis.new_wifi_monitor_profile(
+            resource_=candela_apis.sniff_radio_resource, up_=False)
+        candela_apis.create_monitor(moni_name="moni0")
+        logging.info(
+            'Starting sniffer with roam_test.pcap')
+        candela_apis.start_sniff(
+            capname=args.pcap_name)
+        print('10000')
+        time.sleep(10)
+        candela_apis.stop_sniff()
     if (args.config and args.device_list) or (args.file_name and args.group_name and args.profile_name):
         candela_apis.configure_devices()
         logger.info("Devices configured are {}".format(candela_apis.device_list))
@@ -11672,6 +11747,7 @@ def run_vlc_test(args,candela_apis):
         help_summary=args.vlc_help_summary,
         device_list=args.vlc_device_list
     )
+
 def run_teams_test(args, candela_apis):
     return candela_apis.run_teams_test(
         upstream_port=args.upstream_port,
@@ -11684,6 +11760,8 @@ def run_teams_test(args, candela_apis):
         report_dir=args.result_dir,
         testname=args.test_name   
     )
+
 # def browser_cleanup(args,candela_apis):
 #     return candela_apis.browser_cleanup(args)
-main()
+if __name__ =="__main__":
+    main()
