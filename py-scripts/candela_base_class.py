@@ -10803,7 +10803,7 @@ def main():
     parser.add_argument('--sniff_frequency',help='Frequency',type=int,default=None)
     parser.add_argument('--sniff_channel',help='Channel',type=str,default='AUTO')
     parser.add_argument('--sniff_radio',help='Sniffer Radio',default='1.1.wiphy0')
-    parser.add_argument('--sniff_duration',help='Sniff duration',type=int,default=300)
+    parser.add_argument('--sniff_duration',help='Sniff duration',type=int,default=30)
     parser.add_argument('--pcap_name',help='pcap name',type=str,default='capture.pcap')
 
     args = parser.parse_args()
@@ -10915,7 +10915,7 @@ def main():
         candela_apis.start_sniff(
             capname=args.pcap_name)
         print('10000')
-        time.sleep(10)
+        time.sleep(args.sniff_duration)
         candela_apis.stop_sniff()
     if (args.config and args.device_list) or (args.file_name and args.group_name and args.profile_name):
         candela_apis.configure_devices()
