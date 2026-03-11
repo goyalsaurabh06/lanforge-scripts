@@ -10735,7 +10735,7 @@ def main():
     parser.add_argument('--vlc_groups', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2',default="all")
 
     parser.add_argument("--sniff", action="store_true", help="To sniff packets")
-    parser.add_argument('--sniff_frequency',help='Frequency',type=int,default=-1)
+    parser.add_argument('--sniff_frequency',help='Frequency',type=int,default=None)
     parser.add_argument('--sniff_channel',help='Channel',type=str,default='AUTO')
     parser.add_argument('--sniff_radio',help='Sniffer Radio',default='1.1.wiphy0')
     parser.add_argument('--sniff_duration',help='Sniff duration',type=int,default=300)
