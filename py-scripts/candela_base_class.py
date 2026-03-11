@@ -335,7 +335,7 @@ class Candela(Realm):
     def start_sniff(self, capname='roam_test.pcap'):
         self.monitor.admin_up()
         base_dir = os.getcwd()
-        pcap_path = os.path.join(base_dir, 'roam_test.pcap')
+        pcap_path = os.path.join(base_dir, capname)
         c = f"tshark -i moni0 -w {pcap_path}"
         try:
             print("RUNNING TSHARK")
