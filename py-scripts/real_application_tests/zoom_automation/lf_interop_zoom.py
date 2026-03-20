@@ -219,8 +219,8 @@ class ZoomAutomation(Realm):
             "Receive Video Frames ps (khz)",
         ]
         self.config = config
-        self.selected_groups = selected_groups
-        self.selected_profiles = selected_profiles
+        self.selected_groups = list(selected_groups or [])
+        self.selected_profiles = list(selected_profiles or [])
         self.duration = duration
 
         # api live data response store
@@ -744,34 +744,28 @@ class ZoomAutomation(Realm):
 
         # Step 2: Match user-specified resources with available resources sequentially
         if self.user_resources:
-            # Iterate through user_resources sequentially, processing each value only once
+            resources = response.get("resources", [])
             for user_resource in self.user_resources:
-                # Break loop if no more user_resources left to process
-                if not self.user_resources:
-                    break
+                found = False
+                for element in resources:
+                    if user_resource in element:
+                        resource_values = element[user_resource]
+                        eid = resource_values["eid"]
+                        resource_ip = resource_values["ctrl-ip"]
+                        hostname = resource_values["hostname"]
+                        user = resource_values["user"]
 
-                for key, value in response.items():
-                    if key == "resources":
-                        for element in value:
-                            for resource_key, resource_values in element.items():
-                                # Match the current user_resource
-                                if resource_key == user_resource:
-                                    eid = resource_values["eid"]
-                                    resource_ip = resource_values["ctrl-ip"]
-                                    self.device_names.append(
-                                        resource_values["hostname"]
-                                    )
-                                    self.ports_list.append(
-                                        {"eid": eid, "ctrl-ip": resource_ip}
-                                    )
-                                    self.user_list.append(resource_values["user"])
+                        self.device_names.append(hostname)
+                        self.ports_list.append({"eid": eid, "ctrl-ip": resource_ip})
+                        self.user_list.append(user)
 
-                                    break
-                            else:
-                                # Continue outer loop only if no break occurred
-                                continue
-                            # Break if a match was found and processed
-                            break
+                        found = True
+                        break
+
+                if not found:
+                    logger.warning(
+                        f"Resource {user_resource} not found in LANforge response"
+                    )
 
     def get_ports_data(self):
         self.gen_ports_list = []
@@ -1025,7 +1019,12 @@ class ZoomAutomation(Realm):
                 # Detect change points
                 df["prev_bssid"] = df["BSSID"].shift()
 
-                mask = (df["BSSID"] != df["prev_bssid"]) & (df["BSSID"] != "NA")
+                mask = (
+                    (df["BSSID"] != df["prev_bssid"])
+                    & (df["BSSID"] != "NA")
+                    & (df["prev_bssid"] != "NA")
+                    & (df["prev_bssid"].notnull())
+                )
 
                 bssid_list = df.loc[mask, "BSSID"].tolist()
                 timestamp_list = df.loc[mask, "TimeStamp"].tolist()
@@ -3935,9 +3934,16 @@ and downstream traffic"""
 
     def wait_for_test_start(self):
         # Wait for the test to be started
+        count = 0
         while not self.test_start:
             logger.info("WAITING FOR THE TEST TO BE STARTED")
             time.sleep(5)
+            count += 1
+            if count > 36:
+                logger.error(
+                    "Unable to get the Test Start signal Even after 3 minutes. Exiting."
+                )
+                sys.exit(1)
         self.test_start = False
         if self.do_bs:
             self.bs_coord_result = self.robo_obj.get_coordinates_list()
@@ -4653,8 +4659,8 @@ def main():
             elif args.config and (
                 (
                     args.ssid is None
-                    or (args.passwd is None and args.security.lower() != "open")
-                    or (args.passwd is None and args.security is None)
+                    or args.encryp is None
+                    or (args.passwd is None and args.encryp.lower() != "open")
                 )
             ):
                 logger.error(
