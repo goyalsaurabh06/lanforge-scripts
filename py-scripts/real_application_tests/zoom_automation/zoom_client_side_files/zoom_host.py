@@ -1006,11 +1006,7 @@ class ZoomHost:
             self.video_stats = self.capture_video_stats()
         else:
             self.video_stats = ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0"]
-        return (
-            [self.get_formated_time(datetime.now(self.tz).isoformat())]
-            + self.audio_stats
-            + self.video_stats
-        )
+        return self.audio_stats + self.video_stats
 
     def get_formated_time(self, timestamp_str):
         timestamp = datetime.fromisoformat(timestamp_str)
