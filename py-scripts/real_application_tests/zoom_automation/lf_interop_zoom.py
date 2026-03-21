@@ -630,11 +630,11 @@ class ZoomAutomation(Realm):
             try:
                 response = requests.get(url, timeout=1)
                 if response.status_code == 200:
-                    logger.info("? Flask server is up and running!")
+                    logger.info("Flask server is up and running!")
                     return
             except requests.exceptions.ConnectionError:
                 time.sleep(1)
-        logger.error("? Flask server did not start within 10 seconds. Exiting.")
+        logger.error("Flask server did not start within 10 seconds. Exiting.")
         sys.exit(1)
 
     def create_android(
@@ -1198,7 +1198,7 @@ class ZoomAutomation(Realm):
                         self.wait_for_host_ready()
                         self.create_participants()
                         self.wait_for_test_start()
-
+                logger.info("Monitoring the Test")
                 time.sleep(5)
 
         self.generic_endps_profile.stop_cx()
@@ -3460,7 +3460,7 @@ class ZoomAutomation(Realm):
             dict: {device_name: {metric_field_avg/max: value, ...}}
         """
         metrics = ["audio_input", "audio_output", "video_input", "video_output"]
-        fields = ["bitrate", "latency", "jitter", "avg_loss_avg", "frame_rate"]
+        fields = ["bitrate", "latency", "jitter", "avg_loss", "frame_rate"]
 
         summary = {}
         count = 0
@@ -3483,6 +3483,7 @@ class ZoomAutomation(Realm):
             temp_values = {m: {f: [] for f in fields} for m in metrics}
 
             for sample in participant.get("user_qos", []):
+                # print(sample)
                 for m in metrics:
                     data = sample.get(m, {})
                     for f in fields:
