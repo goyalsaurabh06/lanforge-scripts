@@ -2746,27 +2746,11 @@ class ZoomAutomation(Realm):
             self.report.build_graph_title()
             x_data_set = [
                 [
-                    (
-                        device_data.get(client, {}).get("audio_input_bitrate_avg")
-                        or 0
-                        # if index != 0
-                        # else device_data.get("Host Device", {}).get(
-                        #     "audio_input_bitrate_avg"
-                        # )
-                        # or 0
-                    )
+                    (device_data.get(client, {}).get("audio_input_bitrate_avg") or 0)
                     for index, client in enumerate(self.real_sta_hostname)
                 ],
                 [
-                    (
-                        device_data.get(client, {}).get("audio_output_bitrate_avg")
-                        or 0
-                        # if index != 0
-                        # else device_data.get("Host Device", {}).get(
-                        #     "audio_output_bitrate_avg"
-                        # )
-                        # or 0
-                    )
+                    (device_data.get(client, {}).get("audio_output_bitrate_avg") or 0)
                     for index, client in enumerate(self.real_sta_hostname)
                 ],
             ]
@@ -2801,27 +2785,11 @@ class ZoomAutomation(Realm):
             self.report.build_graph_title()
             x_data_set = [
                 [
-                    (
-                        device_data.get(client, {}).get("audio_input_latency_avg")
-                        or 0
-                        # if index != 0
-                        # else device_data.get("Host Device", {}).get(
-                        #     "audio_input_latency_avg"
-                        # )
-                        # or 0
-                    )
+                    (device_data.get(client, {}).get("audio_input_latency_avg") or 0)
                     for index, client in enumerate(self.real_sta_hostname)
                 ],
                 [
-                    (
-                        device_data.get(client, {}).get("audio_output_latency_avg")
-                        or 0
-                        # if index != 0
-                        # else device_data.get("Host Device", {}).get(
-                        #     "audio_output_latency_avg"
-                        # )
-                        # or 0
-                    )
+                    (device_data.get(client, {}).get("audio_output_latency_avg") or 0)
                     for index, client in enumerate(self.real_sta_hostname)
                 ],
             ]
@@ -2855,27 +2823,11 @@ class ZoomAutomation(Realm):
             self.report.build_graph_title()
             x_data_set = [
                 [
-                    (
-                        device_data.get(client, {}).get("audio_input_jitter_avg")
-                        or 0
-                        # if index != 0
-                        # else device_data.get("Host Device", {}).get(
-                        #     "audio_input_jitter_avg"
-                        # )
-                        # or 0
-                    )
+                    (device_data.get(client, {}).get("audio_input_jitter_avg") or 0)
                     for index, client in enumerate(self.real_sta_hostname)
                 ],
                 [
-                    (
-                        device_data.get(client, {}).get("audio_output_jitter_avg")
-                        or 0
-                        # if index != 0
-                        # else device_data.get("Host Device", {}).get(
-                        #     "audio_output_jitter_avg"
-                        # )
-                        # or 0
-                    )
+                    (device_data.get(client, {}).get("audio_output_jitter_avg") or 0)
                     for index, client in enumerate(self.real_sta_hostname)
                 ],
             ]
@@ -2909,27 +2861,11 @@ class ZoomAutomation(Realm):
             self.report.build_graph_title()
             x_data_set = [
                 [
-                    (
-                        device_data.get(client, {}).get("audio_input_avg_loss_avg")
-                        or 0
-                        # if index != 0
-                        # else device_data.get("Host Device", {}).get(
-                        #     "audio_input_avg_loss_avg"
-                        # )
-                        # or 0
-                    )
+                    (device_data.get(client, {}).get("audio_input_avg_loss_avg") or 0)
                     for index, client in enumerate(self.real_sta_hostname)
                 ],
                 [
-                    (
-                        device_data.get(client, {}).get("audio_output_avg_loss_avg")
-                        or 0
-                        # if index != 0
-                        # else device_data.get("Host Device", {}).get(
-                        #     "audio_output_avg_loss_avg"
-                        # )
-                        # or 0
-                    )
+                    (device_data.get(client, {}).get("audio_output_avg_loss_avg") or 0)
                     for index, client in enumerate(self.real_sta_hostname)
                 ],
             ]
@@ -2969,22 +2905,12 @@ class ZoomAutomation(Realm):
                                     "audio_input_bitrate_avg"
                                 )
                                 or 0
-                                # if index != 0
-                                # else device_data.get("Host Device", {}).get(
-                                #     "audio_input_bitrate_avg"
-                                # )
-                                # or 0
                             ),
                             (
                                 device_data.get(client, {}).get(
                                     "audio_output_bitrate_avg"
                                 )
                                 or 0
-                                # if index != 0
-                                # else device_data.get("Host Device", {}).get(
-                                #     "audio_output_bitrate_avg"
-                                # )
-                                # or 0
                             ),
                         )
                         for index, client in enumerate(self.real_sta_hostname)
@@ -2996,22 +2922,12 @@ class ZoomAutomation(Realm):
                                     "audio_input_latency_avg"
                                 )
                                 or 0
-                                # if index != 0
-                                # else device_data.get("Host Device", {}).get(
-                                #     "audio_input_latency_avg"
-                                # )
-                                # or 0
                             ),
                             (
                                 device_data.get(client, {}).get(
                                     "audio_output_latency_avg"
                                 )
                                 or 0
-                                # if index != 0
-                                # else device_data.get("Host Device", {}).get(
-                                #     "audio_output_latency_avg"
-                                # )
-                                # or 0
                             ),
                         )
                         for index, client in enumerate(self.real_sta_hostname)
@@ -3023,22 +2939,12 @@ class ZoomAutomation(Realm):
                                     "audio_input_jitter_avg"
                                 )
                                 or 0
-                                # if index != 0
-                                # else device_data.get("Host Device", {}).get(
-                                #     "audio_input_jitter_avg"
-                                # )
-                                # or 0
                             ),
                             (
                                 device_data.get(client, {}).get(
                                     "audio_output_jitter_avg"
                                 )
                                 or 0
-                                # if index != 0
-                                # else device_data.get("Host Device", {}).get(
-                                #     "audio_output_jitter_avg"
-                                # )
-                                # or 0
                             ),
                         )
                         for index, client in enumerate(self.real_sta_hostname)
@@ -3050,22 +2956,12 @@ class ZoomAutomation(Realm):
                                     "audio_input_avg_loss_avg"
                                 )
                                 or 0
-                                # if index != 0
-                                # else device_data.get("Host Device", {}).get(
-                                #     "audio_input_avg_loss_avg"
-                                # )
-                                # or 0
                             ),
                             (
                                 device_data.get(client, {}).get(
                                     "audio_output_avg_loss_avg"
                                 )
                                 or 0
-                                # if index != 0
-                                # else device_data.get("Host Device", {}).get(
-                                #     "audio_output_avg_loss_avg"
-                                # )
-                                # or 0
                             ),
                         )
                         for index, client in enumerate(self.real_sta_hostname)
@@ -3094,27 +2990,11 @@ class ZoomAutomation(Realm):
             self.report.build_graph_title()
             x_data_set = [
                 [
-                    (
-                        device_data.get(client, {}).get("video_input_bitrate_avg")
-                        or 0
-                        # if index != 0
-                        # else device_data.get("Host Device", {}).get(
-                        #     "video_input_bitrate_avg"
-                        # )
-                        # or 0
-                    )
+                    (device_data.get(client, {}).get("video_input_bitrate_avg") or 0)
                     for index, client in enumerate(self.real_sta_hostname)
                 ],
                 [
-                    (
-                        device_data.get(client, {}).get("video_output_bitrate_avg")
-                        or 0
-                        # if index != 0
-                        # else device_data.get("Host Device", {}).get(
-                        #     "video_output_bitrate_avg"
-                        # )
-                        # or 0
-                    )
+                    (device_data.get(client, {}).get("video_output_bitrate_avg") or 0)
                     for index, client in enumerate(self.real_sta_hostname)
                 ],
             ]
@@ -3148,27 +3028,11 @@ class ZoomAutomation(Realm):
             self.report.build_graph_title()
             x_data_set = [
                 [
-                    (
-                        device_data.get(client, {}).get("video_input_latency_avg")
-                        or 0
-                        # if index != 0
-                        # else device_data.get("Host Device", {}).get(
-                        #     "video_input_latency_avg"
-                        # )
-                        # or 0
-                    )
+                    (device_data.get(client, {}).get("video_input_latency_avg") or 0)
                     for index, client in enumerate(self.real_sta_hostname)
                 ],
                 [
-                    (
-                        device_data.get(client, {}).get("video_output_latency_avg")
-                        or 0
-                        # if index != 0
-                        # else device_data.get("Host Device", {}).get(
-                        #     "video_output_latency_avg"
-                        # )
-                        # or 0
-                    )
+                    (device_data.get(client, {}).get("video_output_latency_avg") or 0)
                     for index, client in enumerate(self.real_sta_hostname)
                 ],
             ]
@@ -3202,27 +3066,11 @@ class ZoomAutomation(Realm):
             self.report.build_graph_title()
             x_data_set = [
                 [
-                    (
-                        device_data.get(client, {}).get("video_input_jitter_avg")
-                        or 0
-                        # if index != 0
-                        # else device_data.get("Host Device", {}).get(
-                        #     "video_input_jitter_avg"
-                        # )
-                        # or 0
-                    )
+                    (device_data.get(client, {}).get("video_input_jitter_avg") or 0)
                     for index, client in enumerate(self.real_sta_hostname)
                 ],
                 [
-                    (
-                        device_data.get(client, {}).get("video_output_jitter_avg")
-                        or 0
-                        # if index != 0
-                        # else device_data.get("Host Device", {}).get(
-                        #     "video_output_jitter_avg"
-                        # )
-                        # or 0
-                    )
+                    (device_data.get(client, {}).get("video_output_jitter_avg") or 0)
                     for index, client in enumerate(self.real_sta_hostname)
                 ],
             ]
@@ -3256,27 +3104,11 @@ class ZoomAutomation(Realm):
             self.report.build_graph_title()
             x_data_set = [
                 [
-                    (
-                        device_data.get(client, {}).get("video_input_avg_loss_avg")
-                        or 0
-                        # if index != 0
-                        # else device_data.get("Host Device", {}).get(
-                        #     "video_input_avg_loss_avg"
-                        # )
-                        # or 0
-                    )
+                    (device_data.get(client, {}).get("video_input_avg_loss_avg") or 0)
                     for index, client in enumerate(self.real_sta_hostname)
                 ],
                 [
-                    (
-                        device_data.get(client, {}).get("video_output_avg_loss_avg")
-                        or 0
-                        # if index != 0
-                        # else device_data.get("Host Device", {}).get(
-                        #     "video_output_avg_loss_avg"
-                        # )
-                        # or 0
-                    )
+                    (device_data.get(client, {}).get("video_output_avg_loss_avg") or 0)
                     for index, client in enumerate(self.real_sta_hostname)
                 ],
             ]
@@ -3316,22 +3148,12 @@ class ZoomAutomation(Realm):
                                     "video_input_bitrate_avg"
                                 )
                                 or 0
-                                # if index != 0
-                                # else device_data.get("Host Device", {}).get(
-                                #     "video_input_bitrate_avg"
-                                # )
-                                # or 0
                             ),
                             (
                                 device_data.get(client, {}).get(
                                     "video_output_bitrate_avg"
                                 )
                                 or 0
-                                # if index != 0
-                                # else device_data.get("Host Device", {}).get(
-                                #     "video_output_bitrate_avg"
-                                # )
-                                # or 0
                             ),
                         )
                         for index, client in enumerate(self.real_sta_hostname)
@@ -3343,22 +3165,12 @@ class ZoomAutomation(Realm):
                                     "video_input_latency_avg"
                                 )
                                 or 0
-                                # if index != 0
-                                # else device_data.get("Host Device", {}).get(
-                                #     "video_input_latency_avg"
-                                # )
-                                # or 0
                             ),
                             (
                                 device_data.get(client, {}).get(
                                     "video_output_latency_avg"
                                 )
                                 or 0
-                                # if index != 0
-                                # else device_data.get("Host Device", {}).get(
-                                #     "video_output_latency_avg"
-                                # )
-                                # or 0
                             ),
                         )
                         for index, client in enumerate(self.real_sta_hostname)
@@ -3370,22 +3182,12 @@ class ZoomAutomation(Realm):
                                     "video_input_jitter_avg"
                                 )
                                 or 0
-                                # if index != 0
-                                # else device_data.get("Host Device", {}).get(
-                                #     "video_input_jitter_avg"
-                                # )
-                                # or 0
                             ),
                             (
                                 device_data.get(client, {}).get(
                                     "video_output_jitter_avg"
                                 )
                                 or 0
-                                # if index != 0
-                                # else device_data.get("Host Device", {}).get(
-                                #     "video_output_jitter_avg"
-                                # )
-                                # or 0
                             ),
                         )
                         for index, client in enumerate(self.real_sta_hostname)
@@ -3397,22 +3199,12 @@ class ZoomAutomation(Realm):
                                     "video_input_avg_loss_avg"
                                 )
                                 or 0
-                                # if index != 0
-                                # else device_data.get("Host Device", {}).get(
-                                #     "video_input_avg_loss_avg"
-                                # )
-                                # or 0
                             ),
                             (
                                 device_data.get(client, {}).get(
                                     "video_output_avg_loss_avg"
                                 )
                                 or 0
-                                # if index != 0
-                                # else device_data.get("Host Device", {}).get(
-                                #     "video_output_avg_loss_avg"
-                                # )
-                                # or 0
                             ),
                         )
                         for index, client in enumerate(self.real_sta_hostname)
@@ -3550,6 +3342,13 @@ class ZoomAutomation(Realm):
             if source_key not in used_source_keys:
                 normalized_summary[source_key] = dict(stats)
         self.live_data = normalized_summary
+        if self.do_robo:
+            self.save_json(
+                self.live_data,
+                f"{self.remote_login_url}_{self.current_cord}_{self.current_angle}_qos.json",
+            )
+        else:
+            self.save_json(self.live_data, f"{self.remote_login_url}_qos.json")
         return normalized_summary
 
     def summarize_csv_audio_video(self, csv_path):
@@ -4422,15 +4221,6 @@ class ZoomAutomation(Realm):
                 self.remote_login_url, token, "live"
             )
             self.summarize_audio_video(self.participants_qos_last)
-            if self.do_robo:
-                self.save_json(
-                    self.participants_qos_last,
-                    f"{self.remote_login_url}_{self.current_cord}_{self.current_angle}_qos.json",
-                )
-            else:
-                self.save_json(
-                    self.participants_qos_last, f"{self.remote_login_url}_qos.json"
-                )
 
         except Exception as e:
             logger.info(

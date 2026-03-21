@@ -224,7 +224,7 @@ class ZoomHost:
                     (By.CSS_SELECTOR, "button.btn-index-signin")
                 )
             )
-            element.click()
+            self.driver.execute_script("arguments[0].click();", element)
             print("clicked sign in button")
         except Exception:
             print("Loaded session through cookies")
@@ -232,24 +232,6 @@ class ZoomHost:
         if "signin" in self.driver.current_url:
             print(self.login_email)
             print(self.login_passwd)
-
-            # if sys.platform.lower()=="linux":
-            #     email_field=self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input#email")))
-            #     for char in self.login_email:
-            #         email_field.send_keys(char)
-            #     pass_field=self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input#password")))
-            #     for char in self.login_passwd:
-            #         pass_field.send_keys(char)
-
-            # pyautogui.write(self.login_email)
-            # time.sleep(2)
-            # # password_field = self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input#password")))
-            # self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input#password"))).click()
-
-            # #self.driver.execute_script("arguments[0].click();", password_field)
-            # pyautogui.write(self.login_passwd)
-
-            # else:
             self.wait.until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "input#email"))
             ).send_keys(self.login_email)
@@ -403,20 +385,18 @@ class ZoomHost:
     def wait_for_exit(self):
         print("waiting for clients to disconnect")
         tries = 0
-        print(
-            self.monitor_client_count(),
-            "participent count",
-            self.monitor_client_count() > 1,
-        )
-        print(self.monitor_client_count() > 1)
-        while self.monitor_client_count() > 1:
-            print(self.monitor_client_count(), "participent count")
+
+        count = self.monitor_client_count()
+        print(count, "participent count")
+
+        while count > 1:
+            print(count, "participent count")
             time.sleep(2)
             tries += 1
             if tries > 20:
                 print("max tries reach for client disconnection wait")
                 break
-        print(self.monitor_client_count(), self.monitor_client_count() > 1)
+            count = self.monitor_client_count()
 
     # To download the csv
     def download_csv(self):
@@ -480,7 +460,7 @@ class ZoomHost:
         export_btn = self.wait.until(
             EC.element_to_be_clickable((By.XPATH, export_xpath))
         )
-        export_btn.click()
+        self.driver.execute_script("arguments[0].click();", export_btn)
         print("Clicked Export button.")
         try:
             # Wait for modal and click "Go to Downloads Page"
@@ -492,7 +472,7 @@ class ZoomHost:
                     )
                 )
             )
-            modal_btn.click()
+            self.driver.execute_script("arguments[0].click();", modal_btn)
             print("Clicked 'Go to Downloads Page'.")
         except BaseException:
             # did not get the download popup refresh here"
@@ -501,7 +481,7 @@ class ZoomHost:
             export_btn = self.wait.until(
                 EC.element_to_be_clickable((By.XPATH, export_xpath))
             )
-            export_btn.click()
+            self.driver.execute_script("arguments[0].click();", export_btn)
             print("Clicked Export button.")
             modal_btn = self.wait.until(
                 EC.element_to_be_clickable(
@@ -511,7 +491,7 @@ class ZoomHost:
                     )
                 )
             )
-            modal_btn.click()
+            self.driver.execute_script("arguments[0].click();", modal_btn)
             print("Clicked 'Go to Downloads Page'.")
 
         # Wait for download to start
@@ -610,12 +590,24 @@ class ZoomHost:
         self.driver.quit()
 
     def monitor_client_count(self):
-        no_of_participants = self.wait.until(
-            EC.presence_of_element_located(
-                (By.CSS_SELECTOR, ".footer-button__number-counter")
-            )
-        ).text
-        return int(no_of_participants)
+        try:
+            counter_text = self.wait.until(
+                EC.presence_of_element_located(
+                    (By.CSS_SELECTOR, ".footer-button__number-counter")
+                )
+            ).text.strip()
+
+            if not counter_text:
+                return 1
+
+            if not counter_text.isdigit():
+                print(f"Unexpected participant counter value: {counter_text!r}")
+                return 1
+
+            return int(counter_text)
+        except Exception as e:
+            print(f"Error reading participant count: {e}")
+            return 1
 
     def set_start_test(self, flag=False):
         try:
