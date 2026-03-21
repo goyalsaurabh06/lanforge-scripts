@@ -1146,7 +1146,9 @@ class ZoomAutomation(Realm):
 
         if self.do_bs:
             time.sleep(60)
-            print("Band-Steering Test coordinates to be visited:", self.bs_coord_result)
+            logger.info(
+                f"Band-Steering Test coordinates to be visited: {self.bs_coord_result}"
+            )
             for coordinate in self.bs_coord_result:
                 logger.info(f"Moving robot to coordinate: {coordinate}")
                 if not self.to_cord:
@@ -1192,11 +1194,6 @@ class ZoomAutomation(Realm):
                         self.wait_for_test_start()
 
                 time.sleep(5)
-
-        # if self.api_stats_collection:
-        #     self.stop_signal = True
-        #     time.sleep(10)
-        # self.get_final_qos_data()
 
         self.generic_endps_profile.stop_cx()
         self.generic_endps_profile.cleanup()

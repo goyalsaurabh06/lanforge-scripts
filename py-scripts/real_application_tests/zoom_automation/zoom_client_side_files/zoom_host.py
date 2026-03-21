@@ -1105,35 +1105,28 @@ if __name__ == "__main__":
         zoom_host.get_start_and_end_time()
         time.sleep(5)
     print("end_time and start time is", zoom_host.start_time, zoom_host.end_time)
-    while zoom_host.start_time > datetime.now(zoom_host.tz).isoformat():
+    try:
+        start_dt = datetime.fromisoformat(zoom_host.start_time.replace("Z", "+00:00"))
+        end_dt = datetime.fromisoformat(zoom_host.end_time.replace("Z", "+00:00"))
+        if start_dt.tzinfo is None:
+            start_dt = zoom_host.tz.localize(start_dt)
+        else:
+            start_dt = start_dt.astimezone(zoom_host.tz)
+        if end_dt.tzinfo is None:
+            end_dt = zoom_host.tz.localize(end_dt)
+        else:
+            end_dt = end_dt.astimezone(zoom_host.tz)
+    except Exception as e:
+        print(f"Invalid start/end time format from server: {e}")
+        zoom_host.driver.quit()
+        sys.exit(1)
+
+    while start_dt > datetime.now(zoom_host.tz):
         time.sleep(2)
         print("waiting for the start time")
-    header = [
-        "timestamp",
-        "Sent Audio Frequency (khz)",
-        "Sent Audio Latency (ms)",
-        "Sent Audio Jitter (ms)",
-        "Sent Audio Packet loss (%)",
-        "Receive Audio Frequency (khz)",
-        "Receive Audio Latency (ms)",
-        "Receive Audio Jitter (ms)",
-        "Receive Audio Packet loss (%)",
-        "Sent Video Latency (ms)",
-        "Sent Video Jitter (ms)",
-        "Sent Video Packet loss (%)",
-        "Sent Video Resolution (khz)",
-        "Sent Video Frames ps (khz)",
-        "Receive Video Latency (ms)",
-        "Receive Video Jitter (ms)",
-        "Receive Video Packet loss (%)",
-        "Receive Video Resolution (khz)",
-        "Receive Video Frames ps (khz)",
-    ]
 
-    while zoom_host.end_time > datetime.now(zoom_host.tz).isoformat():
+    while end_dt > datetime.now(zoom_host.tz):
         print("monitoring the test")
-        print(header)
-        print(len(header))
         if zoom_host.check_stop_signal():
             break
         # stats = zoom_host.collecting_stats()
