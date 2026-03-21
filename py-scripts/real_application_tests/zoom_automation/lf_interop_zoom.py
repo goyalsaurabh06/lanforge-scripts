@@ -292,7 +292,7 @@ class ZoomAutomation(Realm):
                 self.meet_link = data.get("meet_link", "")
                 self.meet_link = self.meet_link.rsplit(".", 1)[0] + ".1"
 
-                print(f"Updating meeting link to: {self.meet_link}")
+                logger.info(f"Zoom host Updated Meet link: {self.meet_link}")
                 # "checking self.meet_link",self.meet_link)
                 return jsonify({"message": "Meeting Link Updated sucessfully"})
 
@@ -312,14 +312,14 @@ class ZoomAutomation(Realm):
 
         @self.app.route("/get_participants_joined", methods=["GET"])
         def get_participants_joined():
-            print("participants joined is", self.participants_joined)
+            # print("participants joined is", self.participants_joined)
             return jsonify({"participants": self.participants_joined})
 
         @self.app.route("/set_participants_joined", methods=["POST"])
         def set_participants_joined():
             data = request.json
             self.participants_joined = data.get("participants_joined", None)
-            print("participants joined is", self.participants_joined)
+            # logger.info(f"Participants joined is {self.participants_joined}")
             return jsonify(
                 {
                     "message": f"Updated participants joined status to {self.participants_joined}"
@@ -328,7 +328,7 @@ class ZoomAutomation(Realm):
 
         @self.app.route("/get_participants_req", methods=["GET"])
         def get_participants_req():
-            print("participants req is", self.participants_req)
+            # logger.info(f"Participants req is {self.participants_req}")
             return jsonify({"participants": self.participants_req})
 
         @self.app.route("/test_started", methods=["GET", "POST"])
@@ -379,7 +379,7 @@ class ZoomAutomation(Realm):
         def upload_stats():
             if self.do_robo or self.do_bs or self.api_stats_collection:
                 self.get_live_data()
-                # print(self.live_data)
+                # logger.info(f"Live data: {self.live_data}")
                 if self.live_data:
                     if self.do_bs:
                         lf_wifi_data = self.get_signal_and_channel_data_dict()
@@ -544,8 +544,8 @@ class ZoomAutomation(Realm):
                 filename = data.get("filename", "csvdata.csv")
                 self.csv_file_name = f"received_{filename}"
                 rows = data.get("rows", [])
-                print("filename", filename)
-                print("rows", rows)
+                # logger.info(f"Filename: {filename}")
+                # logger.info(f"Rows: {rows}")
                 if not rows:
                     return (
                         jsonify({"status": "error", "message": "No rows received"}),
@@ -553,7 +553,9 @@ class ZoomAutomation(Realm):
                     )
 
                 filepath = f"received_{filename}"
-                print("created is", filepath)
+                logger.info(
+                    f"Data Received from Zoom dashboard is stored at: {filepath}"
+                )
                 with open(filepath, "w", newline="") as f:
                     writer = csv.writer(f)
                     if rows:
@@ -670,7 +672,7 @@ class ZoomAutomation(Realm):
             gen_name_a = "%s-%s" % ("zoom", "_".join(port_name.split(".")))
             endp_tpls.append((shelf, resource, name, gen_name_a))
 
-        print("endp_tpls", endp_tpls)
+        # print("endp_tpls", endp_tpls)
         for endp_tpl in endp_tpls:
             shelf = endp_tpl[0]
             resource = endp_tpl[1]
@@ -897,7 +899,7 @@ class ZoomAutomation(Realm):
             for port in port_data:
                 interfaces_dict.update(port)
         except Exception as e:
-            print(f"Error fetching port data: {e}")
+            logger.error(f"Error fetching port data: {e}")
             return {}
 
         # Loop through your managed stations (e.g., sta001, sta002)
@@ -931,7 +933,7 @@ class ZoomAutomation(Realm):
                     "ap", "-"
                 )  # 'ap' is usually BSSID
 
-        print(lf_stats_map)
+        # logger.info(f"LANforge stats map: {lf_stats_map}")
 
         return lf_stats_map
 
@@ -954,14 +956,14 @@ class ZoomAutomation(Realm):
                 logger.error(f"Bandsteering report: invalid report dir: {report_dir}")
                 return
 
-            logging.info(f"Bandsteering report dir: {report_dir}")
+            logger.info(f"Bandsteering report dir: {report_dir}")
 
             # Search for CSV files in self.path
             csv_files = glob.glob(os.path.join(report_dir, "*.csv"))
-            logging.info(f"Bandsteering CSV files found: {csv_files}")
+            logger.info(f"Bandsteering CSV files found: {csv_files}")
 
             if not csv_files:
-                logging.warning("No CSVs found in report dir for bandsteering")
+                logger.warning("No CSVs found in report dir for bandsteering")
                 return
 
             report.set_obj_html(
@@ -976,7 +978,7 @@ class ZoomAutomation(Realm):
                 try:
                     df = pd.read_csv(csv_file_path)
                 except Exception as e:
-                    logging.error(
+                    logger.error(
                         f"Unable to read CSV {csv_file_path}: {e}", exc_info=True
                     )
                     continue
@@ -1330,7 +1332,7 @@ class ZoomAutomation(Realm):
         self.hostname_to_station_map = dict(
             zip(self.real_sta_hostname, self.real_sta_list)
         )
-        print("checking self.hostname_to_station_map", self.hostname_to_station_map)
+        # print("checking self.hostname_to_station_map", self.hostname_to_station_map)
 
         return self.real_sta_list
 
@@ -2643,8 +2645,8 @@ class ZoomAutomation(Realm):
             # we will use api response to generate report
 
             device_data = self.summarize_audio_video(self.participants_qos_last)
-            print("========================================================")
-            print("device_data", device_data)
+            # print("========================================================")
+            # print("device_data", device_data)
             self.report.set_table_title("Test Devices:")
             self.report.build_table_title()
             device_details = pd.DataFrame(
@@ -3753,15 +3755,15 @@ class ZoomAutomation(Realm):
                 time.sleep(5)
 
         self.meet_link = f"https://us04web.zoom.us/j/{self.remote_login_url}?pwd={self.remote_login_passwd}"
-        print("checking meet link for android devices", self.meet_link)
+        logger.info(f"Meet link for android devices: {self.meet_link}")
         self.login_completed = False
 
     def create_participants(self):
-        print("=============================")
-        print("Creating Participants with the following details:")
-        print(self.lanforge_port_list)
-        print(self.real_sta_hostname)
-        print(self.serial_list)
+        # print("=============================")
+        # print("Creating Participants with the following details:")
+        # print(self.lanforge_port_list)
+        # print(self.real_sta_hostname)
+        # print(self.serial_list)
         for i in range(1, len(self.real_sta_os_type)):
             if self.real_sta_os_type[i] == "android":
                 status, created_cx, created_endp = self.create_android(
@@ -3818,7 +3820,7 @@ class ZoomAutomation(Realm):
                 {"test_mgr": "default_tm", "cx_name": cx_name, "cx_state": "RUNNING"},
                 debug_=True,
             )
-            print("sending running state to..", cx_name)
+            logger.info(f"Sending running state to.. {cx_name}")
 
     def wait_for_test_start(self):
         # Wait for the test to be started
@@ -3948,10 +3950,10 @@ class ZoomAutomation(Realm):
             with open(json_path, "w") as f:
                 json.dump(data, f, indent=4)
 
-            print(f"Updated running_status.json at {json_path}")
+            logger.info(f"Updated running_status.json at {json_path}")
 
         except Exception as e:
-            print(f"Error updating running_status.json: {e}")
+            logger.error(f"Error updating running_status.json: {e}")
 
     def _move_report_files(self, report_path_date_time):
         """
@@ -4008,8 +4010,6 @@ class ZoomAutomation(Realm):
                 json_pattern = f"*_{coord}_{angle}_qos.json"
                 file_path = os.path.join("zoom_api_responses", json_pattern)
                 found_files = glob.glob(file_path)
-                print("checking found files", found_files)
-
                 device_data = {}
                 if found_files:
                     try:
@@ -4017,8 +4017,6 @@ class ZoomAutomation(Realm):
                             raw_data = json.load(f)
                         # Parse data to get per-device averages
                         device_data = self.summarize_audio_video(raw_data)
-                        print("checking device data in robo report")
-                        print(device_data)
                     except Exception as e:
                         logger.error(f"Error reading {found_files[0]}: {e}")
                         self.report.set_text(f"Error loading data for {coord}/{angle}")
@@ -4809,7 +4807,9 @@ def main():
                 if args.env_file:
                     if os.path.exists(args.env_file):
                         load_dotenv(args.env_file)
-                        print(f"Loaded environment variables from {args.env_file}")
+                        logger.info(
+                            f"Loaded environment variables from {args.env_file}"
+                        )
                     else:
                         raise FileNotFoundError(
                             f".env file '{args.env_file}' not found"
