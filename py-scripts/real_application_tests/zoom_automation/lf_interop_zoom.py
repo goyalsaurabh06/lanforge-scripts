@@ -3549,7 +3549,7 @@ class ZoomAutomation(Realm):
         for source_key, stats in summary.items():
             if source_key not in used_source_keys:
                 normalized_summary[source_key] = dict(stats)
-
+        self.live_data = normalized_summary
         return normalized_summary
 
     def summarize_csv_audio_video(self, csv_path):
@@ -3583,26 +3583,26 @@ class ZoomAutomation(Realm):
         # Mapping from JSON-style keys to CSV columns
         metric_map = {
             # Audio
-            "audio_input_bitrate_avg": "Audio (Sending) Bitrate",
-            "audio_output_bitrate_avg": "Audio (Receiving) Bitrate",
-            "audio_input_latency_avg": "Audio (Sending) Latency-Avg/Max",
-            "audio_output_latency_avg": "Audio (Receiving) Latency-Avg/Max",
-            "audio_input_jitter_avg": "Audio (Sending) Jitter-Avg/Max",
-            "audio_output_jitter_avg": "Audio (Receiving) Jitter-Avg/Max",
-            "audio_input_avg_loss_avg": "Audio (Sending) Packet Loss-Avg/Max",
-            "audio_output_avg_loss_avg": "Audio (Receiving) Packet Loss-Avg/Max",
+            "audio_output_bitrate_avg": "Audio (Sending) Bitrate",
+            "audio_input_bitrate_avg": "Audio (Receiving) Bitrate",
+            "audio_output_latency_avg": "Audio (Sending) Latency-Avg/Max",
+            "audio_input_latency_avg": "Audio (Receiving) Latency-Avg/Max",
+            "audio_output_jitter_avg": "Audio (Sending) Jitter-Avg/Max",
+            "audio_input_jitter_avg": "Audio (Receiving) Jitter-Avg/Max",
+            "audio_output_avg_loss_avg": "Audio (Sending) Packet Loss-Avg/Max",
+            "audio_input_avg_loss_avg": "Audio (Receiving) Packet Loss-Avg/Max",
             "audio_mos_avg": "Audio Quality",
             # Video
-            "video_input_bitrate_avg": "Video (Sending) Bitrate",
-            "video_output_bitrate_avg": "Video (Receiving) Bitrate",
-            "video_input_latency_avg": "Video (Sending) Latency-Avg/Max",
-            "video_output_latency_avg": "Video (Receiving) Latency-Avg/Max",
-            "video_input_jitter_avg": "Video (Sending) Jitter-Avg/Max",
-            "video_output_jitter_avg": "Video (Receiving) Jitter-Avg/Max",
-            "video_input_avg_loss_avg": "Video (Sending) Packet Loss-Avg/Max",
-            "video_output_avg_loss_avg": "Video (Receiving) Packet Loss-Avg/Max",
-            "video_input_frame_rate_avg": "Video (Sending) Frame Rate",
-            "video_output_frame_rate_avg": "Video (Receiving) Frame Rate",
+            "video_output_bitrate_avg": "Video (Sending) Bitrate",
+            "video_input_bitrate_avg": "Video (Receiving) Bitrate",
+            "video_output_latency_avg": "Video (Sending) Latency-Avg/Max",
+            "video_input_latency_avg": "Video (Receiving) Latency-Avg/Max",
+            "video_output_jitter_avg": "Video (Sending) Jitter-Avg/Max",
+            "video_input_jitter_avg": "Video (Receiving) Jitter-Avg/Max",
+            "video_output_avg_loss_avg": "Video (Sending) Packet Loss-Avg/Max",
+            "video_input_avg_loss_avg": "Video (Receiving) Packet Loss-Avg/Max",
+            "video_output_frame_rate_avg": "Video (Sending) Frame Rate",
+            "video_input_frame_rate_avg": "Video (Receiving) Frame Rate",
             "video_mos_avg": "Video Quality",
         }
 
@@ -4421,7 +4421,7 @@ class ZoomAutomation(Realm):
             self.participants_qos_last = self.get_participants_qos(
                 self.remote_login_url, token, "live"
             )
-            self.live_data = self.summarize_audio_video(self.participants_qos_last)
+            self.summarize_audio_video(self.participants_qos_last)
             if self.do_robo:
                 self.save_json(
                     self.participants_qos_last,
@@ -5064,13 +5064,14 @@ def main():
             zoom_automation.stop_signal = True
             logger.info("Waiting for Browser Cleanup in Laptops")
             time.sleep(10)
-            if zoom_automation.do_webui:
-                zoom_automation.stop_webui()
 
             if args.do_robo and args.api_stats_collection:
                 zoom_automation.generate_report_from_data()
             elif args.api_stats_collection:
                 zoom_automation.generate_report_from_api()
+            time.sleep(5)
+            if zoom_automation.do_webui:
+                zoom_automation.stop_webui()
             zoom_automation.generic_endps_profile.cleanup()
             logger.info("Done.")
 
