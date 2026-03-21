@@ -6,14 +6,14 @@ PURPOSE: lf_interop_zoom.py provides the available devices and allows the user t
 
 EXAMPLE-1:
 Command Line Interface to run Zoom with specified duration:
-python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.214.219" --signin_email "demo@gmail.com" --signin_passwd "Demo@123" --participants 3 --audio --video --server_ip 192.168.214.123
+python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.214.219" --signin_email "demo@gmail.com" --signin_passwd "Demo@123" --participants 3 --audio --video --upstream_port 192.168.214.123
 
 
 
 EXAMPLE-2:
 Command Line Interface to run Zoom on multiple devices:
 python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.214.219" --signin_email "demo@gmail.com" --signin_passwd "Demo@123" --participants 3 --audio --video
-  --resources 1.400,1.375 --zoom_host 1.95 --server_ip 192.168.214.123
+  --resources 1.400,1.375 --zoom_host 1.95 --upstream_port 192.168.214.123
 
 Example-3:
 Command Line Interface to run Zoom on multiple devices with Device Configuration
@@ -27,8 +27,12 @@ python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.204.74" --signin
 
 Example-5:
 Command Line Interface to run Zoom test with robo feature
-python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.214.219" --signin_email "demo@gmail.com" --signin_passwd "Demo@123" --participants 3 --audio --video --server_ip 192.168.214.123 --robo_ip 192.168.200.131 --coordinates 1,2 --rotations 30,40 --do_robo
+python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.214.219" --signin_email "demo@gmail.com" --signin_passwd "Demo@123" --participants 3 --audio --video --upstream_port 192.168.214.123 --robo_ip 192.168.200.131 --coordinates 1,2 --rotations 30,40 --do_robo
 
+Example-6:
+Command Line Interface to get Mos Score in the report:
+python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.214.219" --signin_email "demo@gmail.com" --signin_passwd "Demo@123" --participants 3 --audio --video
+--resources 1.400,1.375 --zoom_host 1.95 --upstream_port 1.1.eth1 --api_stats_collection --env_file .env --download_csv
 
 
 NOTES:
@@ -4564,7 +4568,7 @@ def main():
         parser.add_argument(
             "--download_csv",
             action="store_true",
-            help="Specify if wanted to collect csv from dashboard.Only works with buiseness account",
+            help="Specify if wanted to collect csv from dashboard. Only works with business account",
         )
 
         # Arguments related to robo feature
