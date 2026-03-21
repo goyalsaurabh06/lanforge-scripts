@@ -2550,14 +2550,15 @@ class ZoomAutomation(Realm):
         self.report.build_table_title()
         self.report.set_text(
             """The Zoom Conference Test is designed to evaluate an Access Point ability
-to handle real-time conferencing workloads when multiple clients, including Windows,
-Linux, macOS, and Android devices, participate in a Zoom meeting. The test measures
-the AP’s efficiency in managing audio, video, and screen share traffic while maintaining
-acceptable latency, jitter, packet loss, and bitrate. Additional observations include client
-connection stability, airtime fairness, and MOS Score. The expected behavior is for the
-Access Point to sustain consistent Zoom performance as the client load increases,
-ensuring reliable conferencing quality without significant degradation across upstream
-and downstream traffic"""
+                to handle real-time conferencing workloads when multiple clients, including Windows,
+                Linux, macOS, and Android devices, participate in a Zoom meeting. The test measures
+                the AP’s efficiency in managing audio, video, and screen share traffic while maintaining
+                acceptable latency, jitter, packet loss, and bitrate. Additional observations include client
+                connection stability, airtime fairness, and MOS Score. The expected behavior is for the
+                Access Point to sustain consistent Zoom performance as the client load increases,
+                ensuring reliable conferencing quality without significant degradation across upstream
+                and downstream traffic
+            """
         )
         self.report.build_text_simple()
         self.report.set_table_title("Test Parameters:")
@@ -2699,28 +2700,12 @@ and downstream traffic"""
                                 for index, hostname in enumerate(self.real_sta_hostname)
                             ],
                             "Overall Audio MOS": [
-                                (
-                                    device_data.get(client, {}).get("audio_mos_avg")
-                                    or 0
-                                    if index != 0
-                                    else device_data.get("Host Device", {}).get(
-                                        "audio_mos_avg"
-                                    )
-                                    or 0
-                                )
-                                for index, client in enumerate(self.real_sta_hostname)
+                                device_data.get(client, {}).get("audio_mos_avg") or 0
+                                for client in self.real_sta_hostname
                             ],
                             "Overall Video MOS": [
-                                (
-                                    device_data.get(client, {}).get("video_mos_avg")
-                                    or 0
-                                    if index != 0
-                                    else device_data.get("Host Device", {}).get(
-                                        "video_mos_avg"
-                                    )
-                                    or 0
-                                )
-                                for index, client in enumerate(self.real_sta_hostname)
+                                device_data.get(client, {}).get("video_mos_avg") or 0
+                                for client in self.real_sta_hostname
                             ],
                         }
                     )
@@ -3498,10 +3483,86 @@ and downstream traffic"""
         except Exception:
             return None
 
+    def _clean_zoom_participant_name(self, participant_name):
+        if participant_name is None:
+            return None
+
+        return str(participant_name).replace("(Guest)", "").strip()
+
+    def _match_summary_data_to_hostnames(self, summary, host_key=None):
+        if not summary or not self.real_sta_hostname:
+            return summary
+
+        normalized_summary = {}
+        used_source_keys = set()
+        target_host_key = self.real_sta_hostname[0]
+
+        if host_key in summary:
+            host_stats = dict(summary[host_key])
+            host_stats["is_host"] = True
+            normalized_summary[target_host_key] = host_stats
+            used_source_keys.add(host_key)
+
+        remaining_source_keys = [
+            key for key in summary.keys() if key not in used_source_keys
+        ]
+        remaining_target_keys = [
+            hostname
+            for hostname in self.real_sta_hostname
+            if hostname not in normalized_summary
+        ]
+
+        for hostname in list(remaining_target_keys):
+            cleaned_hostname = self._clean_zoom_participant_name(hostname)
+            matched_source_key = next(
+                (
+                    source_key
+                    for source_key in remaining_source_keys
+                    if self._clean_zoom_participant_name(source_key)
+                    and cleaned_hostname
+                    and self._clean_zoom_participant_name(source_key)
+                    == cleaned_hostname
+                ),
+                None,
+            )
+            if matched_source_key is None:
+                continue
+
+            normalized_summary[hostname] = dict(summary[matched_source_key])
+            used_source_keys.add(matched_source_key)
+            remaining_source_keys.remove(matched_source_key)
+
+        remaining_target_keys = [
+            hostname
+            for hostname in self.real_sta_hostname
+            if hostname not in normalized_summary
+        ]
+
+        if remaining_target_keys or remaining_source_keys:
+            logger.warning(
+                "Could not confidently normalize all Zoom participant names. "
+                "Unmapped configured hostnames: %s, unmapped Zoom participants: %s",
+                remaining_target_keys,
+                remaining_source_keys,
+            )
+
+        for source_key, stats in summary.items():
+            if source_key not in used_source_keys:
+                normalized_summary[source_key] = dict(stats)
+
+        return normalized_summary
+
     def summarize_csv_audio_video(self, csv_path):
         # Step 1: Find the correct header line
         with open(csv_path, "r", encoding="utf-8-sig") as f:
             lines = f.readlines()
+
+        meeting_summary = pd.read_csv(csv_path, nrows=1, encoding="utf-8-sig")
+        csv_host_name = None
+        if not meeting_summary.empty and "Host" in meeting_summary.columns:
+            host_value = meeting_summary.iloc[0].get("Host")
+            if pd.notna(host_value):
+                csv_host_name = self._clean_zoom_participant_name(host_value)
 
         # Step 2: Find the line index where real participant data header starts
         header_line_idx = None
@@ -3546,10 +3607,19 @@ and downstream traffic"""
         }
 
         summary = {}
+        host_device_key = None
 
-        for _, row in df.iterrows():
-            device = row["Participant"].replace("(Guest)", "").strip()
-            summary[device] = {"is_host": "host" in device.lower()}
+        for index, row in df.iterrows():
+            participant_value = row.get("Participant")
+            if pd.isna(participant_value):
+                continue
+
+            device = self._clean_zoom_participant_name(participant_value)
+            if not device:
+                continue
+
+            summary[device] = {key: None for key in metric_map}
+            summary[device]["is_host"] = False
 
             for metric_key, csv_column in metric_map.items():
                 raw_value = row.get(csv_column)
@@ -3559,7 +3629,24 @@ and downstream traffic"""
                 else:
                     summary[device][metric_key] = parsed_value
 
-        return summary
+            if (
+                csv_host_name
+                and self._clean_zoom_participant_name(device)
+                and self._clean_zoom_participant_name(device) == csv_host_name
+            ):
+                summary[device]["is_host"] = True
+                host_device_key = device
+            elif index == 0 and host_device_key is None:
+                host_device_key = device
+
+        if not summary:
+            return summary
+
+        if host_device_key not in summary:
+            host_device_key = next(iter(summary))
+
+        summary[host_device_key]["is_host"] = True
+        return self._match_summary_data_to_hostnames(summary, host_device_key)
 
     def summarize_audio_video(self, json_data):
         """
@@ -3576,10 +3663,12 @@ and downstream traffic"""
 
         summary = {}
         count = 0
+        host_device_key = None
         for index, participant in enumerate(json_data):
-            device = participant.get("user_name") or "Unknown Device {count}".format(
-                count=count + 1
-            )
+            participant_name = participant.get(
+                "user_name"
+            ) or "Unknown Device {count}".format(count=count + 1)
+            device = self._clean_zoom_participant_name(participant_name)
             if device not in summary:
                 summary[device] = {
                     f"{m}_{f}_avg": None for m in metrics for f in fields
@@ -3587,6 +3676,8 @@ and downstream traffic"""
                 summary[device].update(
                     {"is_host": participant.get("is_original_host", False)}
                 )
+                if participant.get("is_original_host", False):
+                    host_device_key = device
 
             temp_values = {m: {f: [] for f in fields} for m in metrics}
 
@@ -3607,14 +3698,11 @@ and downstream traffic"""
                             sum(vals) / len(vals), 2
                         )
 
-            if index == 0:
-                summary["Host Device"] = summary.pop(device)
+        if summary and host_device_key not in summary:
+            host_device_key = next(iter(summary))
+            summary[host_device_key]["is_host"] = True
 
-        if "Host Device" in summary and self.real_sta_hostname:
-            # .pop() removes "Host Device" and returns its value, which we assign to the new key
-            summary[self.real_sta_hostname[0]] = summary.pop("Host Device")
-
-        return summary
+        return self._match_summary_data_to_hostnames(summary, host_device_key)
 
     def change_port_to_ip(self, upstream_port):
         """
