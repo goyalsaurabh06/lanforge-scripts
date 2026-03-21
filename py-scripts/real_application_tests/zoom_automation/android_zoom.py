@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 from ppadb.client import Client as AdbClient
 import requests
 import pytz
+import sys
 
 
 class ZoomAutomator:
@@ -25,6 +26,7 @@ class ZoomAutomator:
         self.end_time = None
         self.adb_device = None
         self.stop_signal = False
+        self.tz = pytz.timezone("Asia/Kolkata")
 
     @staticmethod
     def _parse_bounds(bounds):
@@ -251,20 +253,32 @@ class ZoomAutomator:
         time.sleep(2)
         self.enable_audio_video(d, tap_coords=(width // 2, height // 2))
         time.sleep(2)
+        count = 0
         while self.end_time is None:
+            count += 1
+            if count > 60:
+                print(
+                    f"[{serial}] Failed to retrieve meeting end time from server after 5 minutes. Leaving meeting."
+                )
+                sys.exit(1)
             try:
                 self.get_start_and_end_time()
-                time.sleep(2)
+                time.sleep(5)
             except Exception as e:
                 print(f"[{serial}] Error fetching start/end time: {e}")
                 time.sleep(5)
         print(f"[{serial}] Meeting scheduled from {self.start_time} to {self.end_time}")
-        while (
-            datetime.now(pytz.timezone("Asia/Kolkata")).isoformat()
-            < (
-                datetime.fromisoformat(self.end_time) - timedelta(seconds=10)
-            ).isoformat()
-        ):
+        try:
+            end_dt = datetime.fromisoformat(self.end_time.replace("Z", "+00:00"))
+            if end_dt.tzinfo is None:
+                end_dt = self.tz.localize(end_dt)
+            else:
+                end_dt = end_dt.astimezone(self.tz)
+            meeting_end_dt = end_dt - timedelta(seconds=10)
+        except Exception as e:
+            raise RuntimeError(f"Invalid end_time received from server: {e}")
+
+        while datetime.now(self.tz) < meeting_end_dt:
             if self.check_stop_signal():
                 print(f"[{serial}] Stop signal received. Leaving meeting early.")
                 break
