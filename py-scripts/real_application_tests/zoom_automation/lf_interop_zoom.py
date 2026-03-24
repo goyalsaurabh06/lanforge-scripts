@@ -259,9 +259,9 @@ class ZoomAutomation(Realm):
         logger.info("Zoom Automation Initialized with the following parameters:")
         if self.do_bs or self.do_roam:
             logger.info(f"checking coordinates list: {self.coordinates_list}")
-            self.robo_obj.coordinates_list = self.coordinates_list
+            self.robo_obj.coordinate_list = self.coordinates_list
             self.robo_obj.total_cycles = self.cycles
-            logger.info(f"Robo coordinates list: {self.robo_obj.coordinates_list}")
+            logger.info(f"Robo coordinates list: {self.robo_obj.coordinate_list}")
         self.successful_coords = []
         self.failed_coords = []
 
@@ -1182,6 +1182,12 @@ class ZoomAutomation(Realm):
                 time.sleep(10)
 
             logger.info("All coordinates completed — stopping Band-Steering Test")
+            self.stop_signal = True
+            while not self.check_gen_cx():
+                logger.info(
+                    "Waiting for all the Gen Cx to be Stopped/NO-CX/WAITING before proceeding with the Report generation and cleanup"
+                )
+                time.sleep(5)
 
         else:
             while datetime.now(self.tz) < self.end_time or not self.check_gen_cx():
@@ -1203,11 +1209,11 @@ class ZoomAutomation(Realm):
                         self.wait_for_test_start()
                 logger.info("Monitoring the Test")
                 time.sleep(5)
-
-        self.generic_endps_profile.stop_cx()
-        self.generic_endps_profile.cleanup()
-        self.start_time = None
-        self.end_time = None
+        if self.do_robo:
+            self.generic_endps_profile.stop_cx()
+            self.generic_endps_profile.cleanup()
+            self.start_time = None
+            self.end_time = None
 
     def select_real_devices(self, real_device_obj, real_sta_list=None):
         final_device_list = []
@@ -3269,9 +3275,15 @@ class ZoomAutomation(Realm):
         if re.match(r"^[A-Za-z]+\([\d.]+\)$", value):
             return value
 
-        # Handle "21 ms/40 ms" (avg/max - take avg)
+        # Handle "21 ms/40 ms" (avg/max -> take avg only)
         if "/" in value:
-            nums = re.findall(r"[\d.]+", value)
+            avg_part = value.split("/", 1)[0].strip()
+
+            # Missing avg like "-/3.9 %" should not use max
+            if avg_part in ["", "-"]:
+                return None
+
+            nums = re.findall(r"[\d.]+", avg_part)
             return float(nums[0]) if nums else None
 
         # General case: "123 kbps", "45 ms", "6.7 %"
@@ -4556,7 +4568,7 @@ def main():
 
             rotations_enabled = False
             bssids = []
-            if args.do_robo or args.do_bs:
+            if args.do_robo or args.do_bs or args.do_roam:
                 args.coordinates = (
                     args.coordinates.split(",") if args.coordinates else []
                 )
