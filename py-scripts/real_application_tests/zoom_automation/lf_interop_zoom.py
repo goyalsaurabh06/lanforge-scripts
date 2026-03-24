@@ -149,6 +149,7 @@ class ZoomAutomation(Realm):
         do_webui=False,
         cycles=1,
         bssids=None,
+        do_roam=False,
     ):
 
         super().__init__(lfclient_host=lanforge_ip)
@@ -226,7 +227,6 @@ class ZoomAutomation(Realm):
         self.selected_groups = list(selected_groups or [])
         self.selected_profiles = list(selected_profiles or [])
         self.duration = duration
-
         # api live data response store
         self.participants_qos_last = None
         self.env_file = env_file
@@ -234,7 +234,8 @@ class ZoomAutomation(Realm):
 
         self.do_robo = do_robo
         self.do_bs = do_bs
-        if self.do_robo or self.do_bs:
+        self.do_roam = do_roam
+        if self.do_robo or self.do_bs or self.do_roam:
             self.robo_ip = robo_ip
             self.robo_obj = robo_base_class.RobotClass(
                 robo_ip=self.robo_ip, angle_list=angles_list
@@ -255,10 +256,12 @@ class ZoomAutomation(Realm):
         self.from_cord = None
         self.to_cord = None
         self.bssids = bssids or []
-
-        if self.do_bs:
+        logger.info("Zoom Automation Initialized with the following parameters:")
+        if self.do_bs or self.do_roam:
+            logger.info(f"checking coordinates list: {self.coordinates_list}")
             self.robo_obj.coordinates_list = self.coordinates_list
             self.robo_obj.total_cycles = self.cycles
+            logger.info(f"Robo coordinates list: {self.robo_obj.coordinates_list}")
         self.successful_coords = []
         self.failed_coords = []
 
@@ -377,11 +380,11 @@ class ZoomAutomation(Realm):
 
         @self.app.route("/upload_stats", methods=["POST", "GET"])
         def upload_stats():
-            if self.do_robo or self.do_bs or self.api_stats_collection:
+            if self.do_robo or self.do_bs or self.api_stats_collection or self.do_roam:
                 self.get_live_data()
                 # logger.info(f"Live data: {self.live_data}")
                 if self.live_data:
-                    if self.do_bs:
+                    if self.do_bs or self.do_roam:
                         lf_wifi_data = self.get_signal_and_channel_data_dict()
                     for hostname, stats in self.live_data.items():
 
@@ -390,7 +393,7 @@ class ZoomAutomation(Realm):
                         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         stats["timestamp"] = timestamp
 
-                        if self.do_bs:
+                        if self.do_bs or self.do_roam:
                             x, y, _, _ = self.robo_obj.get_robot_pose()
                             stats["X"] = x
                             stats["Y"] = y
@@ -416,7 +419,7 @@ class ZoomAutomation(Realm):
                                     }
                                 )
 
-                        if self.do_robo or self.do_bs:
+                        if self.do_robo or self.do_bs or self.do_roam:
                             # Add current coordinate and angle to stats
                             stats["current_cord"] = self.current_cord
                             if self.rotations_enabled:
@@ -597,7 +600,7 @@ class ZoomAutomation(Realm):
 
     def set_start_time(self):
         self.start_time = datetime.now(self.tz) + timedelta(seconds=60)
-        if self.do_bs:
+        if self.do_bs or self.do_roam:
             self.end_time = self.start_time + timedelta(minutes=300000)
         else:
             self.end_time = self.start_time + timedelta(minutes=self.duration)
@@ -1150,7 +1153,7 @@ class ZoomAutomation(Realm):
         self.create_participants()
         self.wait_for_test_start()
 
-        if self.do_bs:
+        if self.do_bs or self.do_roam:
             time.sleep(60)
             logger.info(
                 f"Band-Steering Test coordinates to be visited: {self.bs_coord_result}"
@@ -1539,7 +1542,7 @@ class ZoomAutomation(Realm):
                 ]
             )
 
-            if self.do_bs:
+            if self.do_bs or self.do_roam:
                 test_parameters = test_parameters.drop(
                     columns=["Test Duration(min)"], errors="ignore"
                 )
@@ -3836,7 +3839,7 @@ class ZoomAutomation(Realm):
                 )
                 sys.exit(1)
         self.test_start = False
-        if self.do_bs:
+        if self.do_bs or self.do_roam:
             self.bs_coord_result = self.robo_obj.get_coordinates_list()
             if self.bs_coord_result:
                 self.from_cord = self.coordinates_list[0]
@@ -4478,6 +4481,11 @@ def main():
             type=str,
             help="Comma-separated list of BSSIDs for bandsteering test",
         )
+        parser.add_argument(
+            "--do_roam",
+            help="Specify this flag to perform the test with robo for Roaming",
+            action="store_true",
+        )
 
         args = parser.parse_args()
 
@@ -4588,6 +4596,7 @@ def main():
                 do_webui=args.do_webUI,
                 cycles=args.cycles,
                 bssids=bssids,
+                do_roam=args.do_roam,
             )
             if args.download_csv:
                 zoom_automation.download_csv = True
