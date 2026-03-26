@@ -40,7 +40,7 @@ class PingMonitor:
         """Start ping subprocess in background"""
         try:
             self.process = subprocess.Popen(
-                ["ping", "-D", "google.com"],
+                ["ping", "-D", "8.8.8.8"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,

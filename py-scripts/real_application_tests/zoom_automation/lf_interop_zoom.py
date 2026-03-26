@@ -3409,12 +3409,13 @@ class ZoomAutomation(Realm):
         ]
 
         if remaining_target_keys or remaining_source_keys:
-            logger.warning(
-                "Could not confidently normalize all Zoom participant names. "
-                "Unmapped configured hostnames: %s, unmapped Zoom participants: %s",
-                remaining_target_keys,
-                remaining_source_keys,
-            )
+            # logger.warning(
+            #     "Could not confidently normalize all Zoom participant names. "
+            #     "Unmapped configured hostnames: %s, unmapped Zoom participants: %s",
+            #     remaining_target_keys,
+            #     remaining_source_keys,
+            # )
+            pass
 
         for source_key, stats in summary.items():
             if source_key not in used_source_keys:
@@ -3747,7 +3748,7 @@ class ZoomAutomation(Realm):
         path = os.path.join("zoom_api_responses", filename)
         with open(path, "w") as f:
             json.dump(data, f, indent=2)
-        logger.info(f"Saved data to {path}")
+        # logger.info(f"Saved data to {path}")
 
     def run_robo_test(self):
         for coordinate in self.coordinates_list:
