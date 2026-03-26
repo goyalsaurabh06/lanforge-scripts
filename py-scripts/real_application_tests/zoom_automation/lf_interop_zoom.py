@@ -265,14 +265,14 @@ class ZoomAutomation(Realm):
         self.successful_coords = []
         self.failed_coords = []
 
-    def move_ping_logs(self, report_path_date_time):
+    def move_ping_logs(self):
         source_dir = os.path.join(self.path, "ping_logs")
         if not os.path.isdir(source_dir):
             logger.info(f"No ping_logs directory found at {source_dir}")
             return
 
-        destination_dir = os.path.join(report_path_date_time, "ping_logs")
-        os.makedirs(report_path_date_time, exist_ok=True)
+        destination_dir = os.path.join(self.report_path_date_time, "ping_logs")
+        os.makedirs(self.report_path_date_time, exist_ok=True)
 
         # If destination exists, merge files and remove source
         if os.path.exists(destination_dir):
@@ -2614,7 +2614,7 @@ class ZoomAutomation(Realm):
             _results_dir_name="zoom_call_report",
             _path=self.path,
         )
-        report_path_date_time = self.report.get_path_date_time()
+        self.report_path_date_time = self.report.get_path_date_time()
         self.report.set_title("Zoom Call Automated Report")
         self.report.build_banner()
         self.report.set_table_title("Objective:")
@@ -3293,16 +3293,17 @@ class ZoomAutomation(Realm):
         self.report.write_pdf(_page_size="Legal", _orientation="Landscape")
         for client in self.real_sta_hostname:
             file_to_move_path = os.path.join(self.path, f"{client}.csv")
-            self.move_files(file_to_move_path, report_path_date_time)
+            self.move_files(file_to_move_path, self.report_path_date_time)
         if self.download_csv:
             self.move_files(
-                os.path.join(os.getcwd(), self.csv_file_name), report_path_date_time
+                os.path.join(os.getcwd(), self.csv_file_name),
+                self.report_path_date_time,
             )
         self.move_files(
             os.path.join(
                 os.getcwd(), "zoom_api_responses", f"{self.remote_login_url}_qos.json"
             ),
-            report_path_date_time,
+            self.report_path_date_time,
         )
 
     def parse_value(self, value):
