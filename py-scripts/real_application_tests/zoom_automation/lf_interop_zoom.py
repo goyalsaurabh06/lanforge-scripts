@@ -265,6 +265,28 @@ class ZoomAutomation(Realm):
         self.successful_coords = []
         self.failed_coords = []
 
+    def move_ping_logs(self, report_path_date_time):
+        source_dir = os.path.join(self.path, "ping_logs")
+        if not os.path.isdir(source_dir):
+            logger.info(f"No ping_logs directory found at {source_dir}")
+            return
+
+        destination_dir = os.path.join(report_path_date_time, "ping_logs")
+        os.makedirs(report_path_date_time, exist_ok=True)
+
+        # If destination exists, merge files and remove source
+        if os.path.exists(destination_dir):
+            for file_name in os.listdir(source_dir):
+                src_file = os.path.join(source_dir, file_name)
+                dst_file = os.path.join(destination_dir, file_name)
+                if os.path.isfile(src_file):
+                    shutil.move(src_file, dst_file)
+            shutil.rmtree(source_dir, ignore_errors=True)
+            logger.info(f"Merged ping logs into {destination_dir}")
+        else:
+            shutil.move(source_dir, destination_dir)
+            logger.info(f"Moved ping logs folder to {destination_dir}")
+
     def start_flask_server(self):
         @self.app.route("/login_url", methods=["GET", "POST"])
         def login_url():
@@ -575,6 +597,44 @@ class ZoomAutomation(Realm):
                     200,
                 )
 
+            except Exception as e:
+                return jsonify({"status": "error", "message": str(e)}), 500
+
+        @self.app.route("/upload_ping_log", methods=["POST"])
+        def upload_ping_log():
+            try:
+                if "file" not in request.files:
+                    return jsonify({"status": "error", "message": "Missing file"}), 400
+
+                f = request.files["file"]
+                participant_name = request.form.get(
+                    "participant_name", "unknown_participant"
+                )
+
+                if not f.filename:
+                    return (
+                        jsonify({"status": "error", "message": "Empty filename"}),
+                        400,
+                    )
+
+                ping_dir = os.path.join(self.path, "ping_logs")
+                os.makedirs(ping_dir, exist_ok=True)
+
+                # Force controlled filename format to avoid unsafe names from client
+                save_name = f"{participant_name}_ping.log"
+                save_path = os.path.join(ping_dir, save_name)
+                f.save(save_path)
+
+                return (
+                    jsonify(
+                        {
+                            "status": "success",
+                            "message": "Ping log uploaded",
+                            "saved_as": save_path,
+                        }
+                    ),
+                    200,
+                )
             except Exception as e:
                 return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -4885,6 +4945,7 @@ def main():
             if zoom_automation.do_webui:
                 zoom_automation.stop_webui()
             zoom_automation.generic_endps_profile.cleanup()
+            zoom_automation.move_ping_logs()
             logger.info("Done.")
 
 

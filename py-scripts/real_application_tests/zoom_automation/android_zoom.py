@@ -10,6 +10,7 @@ import pytz
 import sys
 import logging
 import os
+from ping_monitor import PingMonitor
 
 
 class ZoomAutomator:
@@ -36,6 +37,7 @@ class ZoomAutomator:
         self.tz = pytz.timezone("Asia/Kolkata")
         self.participant_name = participant_name or "android_zoom"
         self.logger = self._create_logger()
+        self.ping_monitor = PingMonitor(self.participant_name)
 
     def _create_logger(self):
         log_dir = os.path.join(os.getcwd(), "zoom_mobile_logs")
@@ -335,6 +337,7 @@ class ZoomAutomator:
         except Exception as e:
             raise RuntimeError(f"Invalid end_time received from server: {e}")
 
+        self.ping_monitor.start_ping()
         while datetime.now(self.tz) < meeting_end_dt:
             if self.check_stop_signal():
                 self.logger.info(
@@ -495,6 +498,32 @@ class ZoomAutomator:
                 f"[{serial}]Could not fully enable audio/video after {max_retries} retries."
             )
 
+    def upload_ping_log(self):
+        log_path = os.path.join(
+            os.getcwd(), "zoom_mobile_logs", f"{self.participant_name}_ping.log"
+        )
+        if not os.path.exists(log_path):
+            self.logger.warning(f"Ping log not found: {log_path}")
+            return
+
+        endpoint_url = f"{self.base_url}/upload_ping_log"
+        try:
+            with open(log_path, "rb") as fp:
+                files = {"file": (os.path.basename(log_path), fp, "text/plain")}
+                data = {"participant_name": self.participant_name}
+                resp = requests.post(endpoint_url, files=files, data=data, timeout=30)
+
+            if resp.status_code == 200:
+                self.logger.info(
+                    f"[{self.device_serial}] Ping log uploaded successfully"
+                )
+            else:
+                self.logger.error(
+                    f"[{self.device_serial}] Ping log upload failed: {resp.status_code} {resp.text}"
+                )
+        except Exception as e:
+            self.logger.error(f"[{self.device_serial}] Error uploading ping log: {e}")
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -524,9 +553,14 @@ def main():
         automator.logger.error(f"Error: {e}")
     finally:
         try:
-            automator.start_interop_app()
+            if hasattr(automator, "ping_monitor") and automator.ping_monitor:
+                automator.ping_monitor.stop_ping()
+                automator.upload_ping_log()
+                automator.start_interop_app()
         except Exception as e:
-            automator.logger.error(f"Error starting interop app: {e}")
+            automator.logger.error(
+                f"Error stopping ping monitor or uploading ping log: {e}"
+            )
 
 
 if __name__ == "__main__":
