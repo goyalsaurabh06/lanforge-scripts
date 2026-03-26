@@ -101,6 +101,64 @@ iot_scripts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 if os.path.exists(iot_scripts_path):
     sys.path.insert(0, iot_scripts_path)
     from test_automation import Automation 
+
+class RemoteSniffer:
+    # This can be usable remote sniffing standalone class to avoid confusions
+    def __init__(self, hostname, username, password=None, key_filename=None, moni_name='eth0', pcap_name='capture.pcap'):
+        self.hostname = hostname
+        self.username = username
+        self.password = password
+        self.key_filename = key_filename
+        self.moni_name = moni_name
+        self.pcap_name = pcap_name
+        self.ssh_client = None
+        self.sftp = None
+        self.remote_process_pid = None
+    def connect(self):
+        self.ssh_client = paramiko.SSHClient()
+        self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        self.ssh_client.connect(
+            self.hostname,
+            username=self.username,
+            password=self.password,
+            key_filename=self.key_filename
+        )
+        self.sftp = self.ssh_client.open_sftp()
+
+    def start_sniff(self, remote_dir="/tmp"):
+        """Start remote tshark capture in background on remote system."""
+        remote_pcap_path = os.path.join(remote_dir, self.pcap_name)
+        cmd = f"nohup tshark -i {self.moni_name} -w {remote_pcap_path} >/dev/null 2>&1 & echo $!"
+        print(f"Starting remote sniffing: {cmd}")
+        stdin, stdout, stderr = self.ssh_client.exec_command(cmd)
+        pid = stdout.read().decode().strip()
+        self.remote_process_pid = pid
+        print(f"tshark started with PID {pid} on remote host")
+        return remote_pcap_path
+
+    def stop_sniff(self):
+        """Stop remote tshark capture using stored PID."""
+        if not self.remote_process_pid:
+            print("No remote process PID available — sniff not started or already stopped.")
+            return
+        cmd = f"kill -2 {self.remote_process_pid}"
+        print(f"Stopping remote sniffing with: {cmd}")
+        self.ssh_client.exec_command(cmd)
+        time.sleep(1)
+        print("Sniffing stopped.")
+
+    def fetch_pcap(self, remote_path, local_path):
+        """Download the pcap file from remote system."""
+        print(f"Fetching PCAP from {remote_path} -> {local_path}")
+        self.sftp.get(remote_path, local_path)
+        print("Download complete:", local_path)
+
+    def close(self):
+        if self.sftp:
+            self.sftp.close()
+        if self.ssh_client:
+            self.ssh_client.close()
+
 class Candela(Realm):
     """
     Candela Class file to invoke different scripts from py-scripts.
