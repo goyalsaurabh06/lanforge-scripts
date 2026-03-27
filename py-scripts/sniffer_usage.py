@@ -1,16 +1,26 @@
-from candela_base_class import initialize_sniffer_obj
-import time
-sniffer_obj = initialize_sniffer_obj(mgr="192.168.204.75",port=8080,sniff_radio="1.1.wiphy0",sniff_channel="7")
-monitor_created = sniffer_obj.create_monitor()
-if monitor_created:
-    sniffer_obj.start_sniff()
+# from candela_base_class import initialize_sniffer_obj
+# import time
+# from datetime import datetime
+# print("hiiiii")
+# sniffer_obj = initialize_sniffer_obj(mgr="10.17.1.208",port=8080,sniff_radio="1.2.wiphy1",sniff_channel="44")
+# monitor_created = sniffer_obj.create_monitor()
+# time.sleep(10)
+# if monitor_created:
+#     # sniffer_obj.start_sniff()
+#     # remote_path = "home/lanforge/captures_at_{}".format(datetime.now())
+#     remote_path = "/home/lanforge/".format(
+#     datetime.now().strftime("%Y%m%d_%H%M%S")
+# )
+#     # here get ip from port's the below IP's should be clustred resource IPs
+#     sniffer_obj.start_sniff_remote(ip="10.17.1.43",username="lanforge",password="lanforge",remote_path=remote_path)
 
-    # after call the stop with same obj
-    time.sleep(30)
-
-    sniffer_obj.stop_sniff()
-else:
-    print("FAILED TO create Monitor")
+#     # after call the stop with same obj
+#     time.sleep(10)
+#     sniffer_obj.stop_sniff_remote()
+#     # sniffer_obj.fetch_pcap(local_path="./captures_new")
+#     # sniffer_obj.stop_sniff()
+# else:
+#     print("FAILED TO create Monitor")
 
 # FOR MULTIPLE RADIOS build LISTS OF EQUAL SIZE RESPECTIVE LISTS
 # EXAMPLE radios=["1.1.wiphy0","1.1.wiphy1","1.1.wiphy2"]
@@ -20,3 +30,126 @@ else:
 #"1.1.wiphy1"        6
 #"1.1.wiphy2"        7
 #can create objects for each radio and start sniffing and stopping accordingly
+    
+
+
+
+# from candela_base_class import initialize_sniffer_obj,RemoteSniffer
+# import time
+# from datetime import datetime
+# sniffer_obj = initialize_sniffer_obj(mgr="10.17.1.208",port=8080,sniff_radio="1.2.wiphy1",sniff_channel="44",moni_name="moni11w0")
+# monitor_created = sniffer_obj.create_monitor()
+# time.sleep(15)
+# sniffer = RemoteSniffer("10.17.1.43", "lanforge", password="lanforge", moni_name="moni11w0", pcap_name="capture_clad.pcap")
+# sniffer.connect()
+# remote_pcap_path = sniffer.start_sniff("/home/lanforge")
+# print("remote pcap path",remote_pcap_path)
+# time.sleep(10)  # capture for 10 seconds
+# sniffer.stop_sniff()
+# sniffer.fetch_pcap(remote_pcap_path, "./downloaded_capture.pcap")
+# sniffer.close()
+
+
+from candela_base_class import initialize_sniffer_obj,RemoteSniffer
+import time
+from datetime import datetime
+from post_roam_analysis import RoamAnalyzer
+# sniffer_obj = initialize_sniffer_obj(mgr="10.17.1.208",port=8080,sniff_radio="1.2.wiphy1",sniff_channel="44",moni_name="moni11w0")
+# monitor_created = sniffer_obj.create_monitor()
+# time.sleep(15)
+# sniffer = RemoteSniffer("10.17.1.43", "lanforge", password="lanforge", moni_name="moni11w0", pcap_name="10_roams_capture.pcap")
+# sniffer.connect()
+# remote_pcap_path = sniffer.start_sniff("/home/lanforge/lanforge-scripts/py-scripts")
+# print("remote pcap path",remote_pcap_path)
+# time.sleep(5)  # capture for 10 seconds
+# sniffer.stop_sniff()
+# sniffer.fetch_pcap(remote_pcap_path, "./10_roams_capture.pcap")
+# sniffer.close()
+
+# analyzer = RoamAnalyzer(
+#     pcap_file="/home/litin/Document/lanforge-scripts/py-scripts/10_roams_capture.pcap",
+#     clients={
+#         "vivo": "38:39:cd:76:57:41",
+#         "iphone": "66:c6:97:ac:b3:64",
+#         "samsung": "34:f0:43:d7:21:43"
+#     },
+#     ap_bssids={
+#         "06:03:7f:19:01:05",
+#         "06:03:7f:19:01:09",
+#         "06:03:7f:41:15:07",
+#     }
+# )
+# analyzer.analyze()
+
+
+
+from candela_base_class import initialize_sniffer_obj, RemoteSniffer
+import time
+from datetime import datetime
+from post_roam_analysis import RoamAnalyzer
+import os
+
+sniffer_obj = initialize_sniffer_obj(
+    mgr="10.17.1.208",
+    port=8080,
+    sniff_radio="1.2.wiphy1",
+    sniff_channel="44",
+    moni_name="moni11w0"
+)
+
+monitor_created = sniffer_obj.create_monitor()
+
+if not monitor_created:
+    print("FAILED TO create Monitor")
+    exit()
+
+print("Monitor created")
+
+sniffer = RemoteSniffer(
+    "10.17.1.43",
+    "lanforge",
+    password="lanforge",
+    moni_name="moni11w0",
+    pcap_name="400_seconds.pcap"
+)
+
+try:
+    sniffer.connect()
+    remote_pcap_path = sniffer.start_sniff("/home/lanforge")
+
+    print("Sniffing started")
+    print("Remote pcap path:", remote_pcap_path)
+
+    time.sleep(400)  # capture duration
+
+    sniffer.stop_sniff()
+    sniffer.fetch_pcap(remote_pcap_path, "./400_seconds.pcap")
+    sniffer.close()
+
+except Exception as e:
+    print("Error:", e)
+    exit()
+
+path = "./400_seconds.pcap"
+
+if os.path.isfile(path):
+    print("File exists")
+else:
+    print("File does not exist")
+    exit()
+
+analyzer = RoamAnalyzer(
+    pcap_file=path,
+    clients={
+        "vivo": "38:39:cd:76:57:41",
+        "iphone": "66:c6:97:ac:b3:64",
+        "samsung": "34:f0:43:d7:21:43"
+    },
+    ap_bssids={
+        "06:03:7f:19:01:05",
+        "06:03:7f:19:01:09",
+        "06:03:7f:41:15:07",
+    }
+)
+
+analyzer.analyze()

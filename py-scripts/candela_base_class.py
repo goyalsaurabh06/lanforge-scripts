@@ -22,7 +22,7 @@ import lf_interop_qos as qos_test
 import lf_interop_ping as ping_test
 from lf_interop_throughput import Throughput
 from lf_interop_video_streaming import VideoStreamingTest
-from lf_interop_vlc import VLCStream
+# from lf_interop_vlc import VLCStream
 # from lf_interop_real_browser_test import RealBrowserTest
 from test_l3 import L3VariableTime,change_port_to_ip,configure_reporting,query_real_clients,valid_endp_types
 from lf_kpi_csv import lf_kpi_csv
@@ -101,6 +101,58 @@ iot_scripts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 if os.path.exists(iot_scripts_path):
     sys.path.insert(0, iot_scripts_path)
     from test_automation import Automation 
+
+class RemoteSniffer:
+    def __init__(self, hostname, username, password=None, key_filename=None, moni_name='eth0', pcap_name='capture.pcap'):
+        self.hostname = hostname
+        self.username = username
+        self.password = password
+        self.key_filename = key_filename
+        self.moni_name = moni_name
+        self.pcap_name = pcap_name
+        self.ssh_client = None
+        self.sftp = None
+        self.remote_process_pid = None
+    def connect(self):
+        self.ssh_client = paramiko.SSHClient()
+        self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        self.ssh_client.connect(
+            self.hostname,
+            username=self.username,
+            password=self.password,
+            key_filename=self.key_filename
+        )
+        self.sftp = self.ssh_client.open_sftp()
+    def start_sniff(self, remote_dir="/tmp"):
+        """Start remote tshark capture in background on remote system."""
+        remote_pcap_path = os.path.join(remote_dir, self.pcap_name)
+        cmd = f'nohup tshark -i {self.moni_name} -w {remote_pcap_path} -f "(type mgt and not subtype beacon and not subtype probe-req and not subtype probe-resp) or ether proto 0x888e" > /dev/null 2>&1 & echo $!'        
+        print(f"Starting remote sniffing: {cmd}")
+        stdin, stdout, stderr = self.ssh_client.exec_command(cmd)
+        pid = stdout.read().decode().strip()
+        self.remote_process_pid = pid
+        print(f"tshark started with PID {pid} on remote host")
+        return remote_pcap_path
+    def stop_sniff(self):
+        """Stop remote tshark capture using stored PID."""
+        if not self.remote_process_pid:
+            print("No remote process PID available — sniff not started or already stopped.")
+            return
+        cmd = f"kill -2 {self.remote_process_pid}"
+        print(f"Stopping remote sniffing with: {cmd}")
+        self.ssh_client.exec_command(cmd)
+        time.sleep(1)
+        print("Sniffing stopped.")
+    def fetch_pcap(self, remote_path, local_path):
+        """Download the pcap file from remote system."""
+        print(f"Fetching PCAP from {remote_path} -> {local_path}")
+        self.sftp.get(remote_path, local_path)
+        print("Download complete:", local_path)
+    def close(self):
+        if self.sftp:
+            self.sftp.close()
+        if self.ssh_client:
+            self.ssh_client.close()
 class Candela(Realm):
     """
     Candela Class file to invoke different scripts from py-scripts.
@@ -142,7 +194,8 @@ class Candela(Realm):
                  sniff_frequency=-1,
                  sniff_channel='AUTO',
                  pcap_name=None,
-                 moni_name=None):
+                 moni_name=None,
+                 args=None):
 
         """
         Constructor to initialize the LANforge IP and port
@@ -245,8 +298,8 @@ class Candela(Realm):
         self.pk_passwd = pk_passwd
         self.pac_file = pac_file
         self.resource_stats = DeviceConfig.DeviceConfig(lanforge_ip=self.lanforge_ip,port=self.port,wait_time=self.config_wait_time,file_name=self.file_name)
-        self.upstream_ip = self.resource_stats.change_port_to_ip(self.upstream_port)
-        self.resource_stats.get_all_devices()
+        # self.upstream_ip = self.resource_stats.change_port_to_ip(self.upstream_port)
+        # self.resource_stats.get_all_devices()
         self.expected_passfail_val = expected_passfail_val
         self.csv_name = csv_name
         self.wait_time = wait_time
@@ -269,6 +322,21 @@ class Candela(Realm):
         self.sniff_channel = sniff_channel
         self.pcap_name = pcap_name
         self.tshark_process = None
+        self.args = args
+        self.test_map = {
+        "ping_test":   (run_ping_test, "PING TEST"),
+        "http_test":   (run_http_test, "HTTP TEST"),
+        "ftp_test":    (run_ftp_test, "FTP TEST"),
+        "qos_test":    (run_qos_test, "QoS TEST"),
+        "vs_test":     (run_vs_test, "VIDEO STREAMING TEST"),
+        "thput_test":  (run_thput_test, "THROUGHPUT TEST"),
+        "mcast_test":  (run_mcast_test, "MULTICAST TEST"),
+        "yt_test":     (run_yt_test, "YOUTUBE TEST"),
+        "rb_test":     (run_rb_test, "REAL BROWSER TEST"),
+        "zoom_test":   (run_zoom_test, "ZOOM TEST"),
+        "teams_test":  (run_teams_test, "TEAMS TEST"),
+        "vlc_test":     (run_vlc_test, "VLC TEST")
+        }
 
 # only for sniffer 
 
@@ -717,6 +785,334 @@ class Candela(Realm):
         #             print(f"Error checking port {port}: {e}")
 
         #     ssh.close()
+
+    def use_device_list(self,device_list=None):
+        device_list = device_list if device_list else []
+        self.device_list = device_list
+
+    
+    def filter_tests(self):
+        args = self.args
+        if not args.series_tests and not args.parallel_tests:
+            logger.error("Please provide tests cases --parallel_tests or --series_tests")
+            logger.info(f"availbe tests are {self.test_map.keys()}")
+            exit(0)
+        if args.do_mix_exec:
+            if "ping_test" not in args.parallel_tests:
+                logger.error("With --do_mix_exec true, ping_test should be in parallel_tests")
+                exit(0)
+        flag=1
+        tests_to_run_series = []
+        tests_to_run_parallel = []
+        if args.series_tests:
+            tests_to_run_series = args.series_tests.split(',')
+            for test in tests_to_run_series:
+                if test not in self.test_map:
+                    logger.error(f"{test} is not availble in test suite")
+                    flag = 0
+        if args.parallel_tests:
+            tests_to_run_parallel = args.parallel_tests.split(',')
+            for test in tests_to_run_parallel:
+                if test not in self.test_map:
+                    logger.error(f"{test} is not availble in test suite")
+                    flag = 0
+
+
+        if not flag:
+            logger.info(f"availble tests are {self.test_map.keys()}")
+            exit(0)
+        if args.parallel_tests and (len(tests_to_run_parallel) != len(set(tests_to_run_parallel))):
+            logger.error("in --parallel dont specify duplicate tests")
+            exit(0)
+        return tests_to_run_series,tests_to_run_parallel
+
+    def start_scenario(self):
+        test_map = self.test_map.copy()
+        tests_to_run_series,tests_to_run_parallel = self.filter_tests()
+
+        duration_dict = self.create_duration_dict_and_validate()
+        
+
+        self.duration_dict = duration_dict.copy()
+        # args.current = "series"
+        self.start_tests(tests_to_run_parallel, tests_to_run_series,duration_dict)
+
+    def start_tests(self,tests_to_run_parallel, tests_to_run_series,duration_dict):
+        args = self.args
+        iszoom = 'zoom_test' in tests_to_run_parallel or 'zoom_test' in tests_to_run_series
+        isrb = 'rb_test' in tests_to_run_parallel or 'rb_test' in tests_to_run_series
+        isyt = 'yt_test' in tests_to_run_parallel or 'yt_test' in tests_to_run_series
+        isteams = 'teams_test' in tests_to_run_parallel or 'teams_test' in tests_to_run_series
+        self.series_tests = tests_to_run_series
+        self.parallel_tests = tests_to_run_parallel
+        self.misc_clean_up(layer3=True,layer4=True,generic=True,port_5000=iszoom,port_5002=isyt,port_5003=isrb,port_5005=isteams)
+        if args.series_tests or args.parallel_tests:
+            series_threads = []
+            parallel_threads = []
+            parallel_connect = []
+            series_connect = []
+            rb_test = 'rb_test' in tests_to_run_parallel
+            yt_test = 'yt_test' in tests_to_run_parallel
+            zoom_test = 'zoom_test' in tests_to_run_parallel
+            # Process series tests
+            if args.series_tests:
+                ordered_series_tests = args.series_tests.split(',')
+                if args.device_list or (args.file_name and args.group_name and args.profile_name):
+                    args = update_device_list(args,ordered_series_tests,self)
+                    # print("Args",args)
+                    # exit(0)
+                # ordered_parallel_tests = args.parallel_tests.split(',')
+                # phase 1
+                if args.dowebgui:
+                    gen_order = ["ping_test","qos_test","ftp_test","http_test","mcast_test","vs_test","thput_test","yt_test","rb_test","zoom_test","teams_test"]
+                    temp_ord_list = []
+                    for test_name in gen_order:
+                        if test_name in ordered_series_tests:
+                            temp_ord_list.append(test_name)
+                    ordered_series_tests = temp_ord_list.copy()
+                for idx, test_name in enumerate(ordered_series_tests):
+                    test_name = test_name.strip().lower()
+                    if test_name in self.test_map:
+                        func, label = self.test_map[test_name]
+                        args.current = "series"
+                        if test_name in ['rb_test','zoom_test','yt_test','teams_test', 'vlc_test']:
+                            if test_name == "rb_test":
+                                obj_no = 1
+                                while f"rb_test_{obj_no}" in self.rb_obj_dict["series"]:
+                                    obj_no+=1
+                                obj_name = f"rb_test_{obj_no}"
+                                self.rb_obj_dict["series"][obj_name] = manager.dict({"obj":None,"data":None})
+                                print('hiii data',self.rb_obj_dict)
+                            elif test_name == "yt_test":
+                                obj_no = 1
+                                while f"yt_test_{obj_no}" in self.yt_obj_dict["series"]:
+                                    obj_no+=1
+                                obj_name = f"yt_test_{obj_no}"
+                                self.yt_obj_dict["series"][obj_name] = manager.dict({"obj":None,"data":None})
+                            elif test_name == "zoom_test":
+                                obj_no = 1
+                                while f"zoom_test_{obj_no}" in self.zoom_obj_dict["series"]:
+                                    obj_no+=1
+                                obj_name = f"zoom_test_{obj_no}"
+                                self.zoom_obj_dict["series"][obj_name] = manager.dict({"obj":None,"data":None})
+                                print('hiii data',self.zoom_obj_dict)
+                            elif test_name == "teams_test":
+                                obj_no = 1
+                                while f"teams_test_{obj_no}" in self.teams_obj_dict["series"]:
+                                    obj_no+=1
+                                obj_name = f"teams_test_{obj_no}"
+                                self.teams_obj_dict["series"][obj_name] = manager.dict({"obj":None,"data":None})
+                            elif test_name == "vlc_test":
+                                obj_no = 1
+                                while f"vlc_test_{obj_no}" in self.vlc_obj_dict["series"]:
+                                    obj_no+=1
+                                obj_name = f"vlc_test_{obj_no}"
+                                self.vlc_obj_dict["series"][obj_name] = manager.dict({"obj":None,"data":None})
+                                print('hiii data',self.vlc_obj_dict)
+                            series_threads.append(multiprocessing.Process(target=run_test_safe(func, f"{label} [Series {idx+1}]", args, self,duration_dict[test_name])))
+                        else:                 
+                            series_threads.append(threading.Thread(
+                                target=run_test_safe(func, f"{label} [Series {idx+1}]", args, self,duration_dict[test_name])
+                            ))
+                    else:
+                        print(f"Warning: Unknown test '{test_name}' in --series_tests")
+            
+            # Process parallel tests
+            if args.parallel_tests:
+                ordered_parallel_tests = args.parallel_tests.split(',')
+                #phase 1
+                if args.dowebgui:
+                    gen_order = ["ping_test","qos_test","ftp_test","http_test","mcast_test","vs_test","thput_test","yt_test","rb_test","zoom_test","teams_test"]
+                    temp_ord_list = []
+                    for test_name in gen_order:
+                        if test_name in ordered_parallel_tests:
+                            temp_ord_list.append(test_name)
+                    ordered_parallel_tests = temp_ord_list.copy()
+                if args.device_list or (args.file_name and args.group_name and args.profile_name):
+                    args = update_device_list(args,ordered_parallel_tests,self)
+                    # print("Args",args)
+                    # exit(0)
+                for idx, test_name in enumerate(ordered_parallel_tests):
+                    test_name = test_name.strip().lower()
+                    if test_name in self.test_map:
+                        func, label = self.test_map[test_name]
+                        args.current = "parallel"
+                        if test_name in ['rb_test','zoom_test','yt_test','teams_test', 'vlc_test']:
+                            # if test_name == "rb_test":
+                                # self.rb_pipe_dict["parallel"][len(self.rb_pipe_dict["parallel"])] = {}
+                                # self.rb_pipe_dict["parallel"][len(self.rb_pipe_dict["parallel"])]["parent"],self.rb_pipe_dict["parallel"][len(self.rb_pipe_dict["parallel"])]["child"] = multiprocessing.Pipe()
+                            # parent_conn, child_conn = multiprocessing.Pipe()
+                            # self.parallel_connect[idx] = [test_name,parent_conn,child_conn]
+                            if test_name == "rb_test":
+                                self.rb_obj_dict["parallel"]["rb_test"] = manager.dict({"obj": None, "data": None})
+                            elif test_name == "yt_test":
+                                self.yt_obj_dict["parallel"]["yt_test"] = manager.dict({"obj": None, "data": None})
+                            elif test_name == "zoom_test":
+                                self.zoom_obj_dict["parallel"]["zoom_test"] = manager.dict({"obj": None, "data": None})
+                            elif test_name == "teams_test":
+                                self.teams_obj_dict["parallel"]["teams_test"] = manager.dict({"obj": None, "data": None})
+                            elif test_name == "vlc_test":
+                                self.vlc_obj_dict["parallel"]["vlc_test"] = manager.dict({"obj": None, "data": None})
+                            parallel_threads.append(multiprocessing.Process(target=run_test_safe(func, f"{label} [Parallel {idx+1}]", args, self,duration_dict[test_name])))
+                        else:                 
+                            parallel_threads.append(threading.Thread(
+                                target=run_test_safe(func, f"{label} [Parallel {idx+1}]", args, self,duration_dict[test_name])
+                            ))
+                    else:
+                        print(f"Warning: Unknown test '{test_name}' in --parallel_tests")
+        
+            logging.info(f"Series Threads: {series_threads}")
+            logging.info(f"Parallel Threads: {parallel_threads}")
+            logging.info(f"connections parallel {self.parallel_connect}")
+            logging.info(f"connections series{self.series_connect}")
+            # time.sleep(20)
+            if args.dowebgui:
+                # overall_path = os.path.join(args.result_dir, directory)
+                self.overall_status = {"ping": "notstarted", "qos": "notstarted", "ftp": "notstarted", "http": "notstarted",
+                                "mc": "notstarted", "vs": "notstarted", "thput": "notstarted","rb": "notstarted","vs": "notstarted","zoom": "notstarted","yt": "notstarted","teams": "notstarted", "time": datetime.datetime.now().strftime("%Y %d %H:%M:%S"), "status": "running", "current_mode":"tbd" , "current_test_name": "tbd"}
+                self.overall_csv.append(self.overall_status.copy())
+                df1 = pd.DataFrame(self.overall_csv)
+                df1.to_csv('{}/overall_status.csv'.format(args.result_dir), index=False)
+            if args.iot_test:
+                iot_ip = args.iot_ip
+                iot_port = args.iot_port
+                iot_iterations = args.iot_iterations
+                iot_delay = args.iot_delay
+                iot_device_list = args.iot_device_list
+                iot_testname = args.iot_testname
+                iot_increment = args.iot_increment
+                if args.iot_iterations > 1:
+                    thread = threading.Thread(target=trigger_iot, args=(iot_ip, iot_port, iot_iterations, iot_delay, iot_device_list, iot_testname, iot_increment))
+                    thread.start()
+                else:
+                    total_secs = 9999
+                    iot_iterations = max(1, total_secs // args.iot_delay)
+                    iot_thread = threading.Thread(
+                        target=trigger_iot,
+                        args=(
+                            args.iot_ip,
+                            args.iot_port,
+                            iot_iterations,
+                            args.iot_delay,
+                            args.iot_device_list,
+                            args.iot_testname,
+                            args.iot_increment
+                        ),
+                        daemon=True
+                    )
+                    iot_thread.start()
+            if args.do_mix_exec:
+                series_runner = threading.Thread(target=self.run_series, args=(series_threads,))
+                parallel_runner = threading.Thread(target=self.run_parallel, args=(parallel_threads,))
+
+                series_runner.start()
+                parallel_runner.start()
+
+                series_runner.join()
+                parallel_runner.join()      
+            elif args.order_priority == 'series':
+                self.current_exec="series"
+                for t in series_threads:
+                    t.start()
+                    t.join()
+                    self.series_index += 1
+                # Then run parallel tests
+                if len(parallel_threads) != 0:
+                    # self.misc_clean_up(layer3=False,layer4=False,generic=True)
+                    self.misc_clean_up(layer3=True,layer4=True,generic=True,port_5000=iszoom,port_5002=isyt,port_5003=isrb,port_5005=isteams)
+                    print('starting parallel tests.......')
+                    time.sleep(10)
+                self.current_exec = "parallel"
+                for t in parallel_threads:
+                    t.start()
+
+                self.parallel_index = 0
+                for t in parallel_threads:
+                    t.join()
+                    self.parallel_index += 1
+            
+            else:
+                self.current_exec="parallel"
+                for t in parallel_threads:
+                    t.start()
+                # for p in parallel_processes:
+                #     p.start()
+
+                for t in parallel_threads:
+                    t.join()
+
+                if len(series_threads) != 0:
+                    rb_test = 'rb_test' in tests_to_run_parallel
+                    yt_test = 'yt_test' in tests_to_run_parallel
+                    self.misc_clean_up(layer3=True,layer4=True,generic=True,port_5000=iszoom,port_5002=isyt,port_5003=isrb,port_5005=isteams)
+                    print('starting Series tests.......')
+                    time.sleep(5)
+                self.current_exec="series"
+                for t in series_threads:
+                    t.start()
+                    t.join()
+        else:
+            logger.error("provide either --paralell_tests or --series_tests")
+            exit(1)
+        rb_test = 'rb_test' in tests_to_run_parallel
+        yt_test = 'yt_test' in tests_to_run_parallel
+        self.misc_clean_up(layer3=True,layer4=True,generic=True,port_5000=iszoom,port_5002=isyt,port_5003=isrb,port_5005=isteams)
+        log_file = save_logs()
+        print(f"Logs saved to: {log_file}")
+        test_results_df = pd.DataFrame(list(test_results_list))
+        iot_summary = None
+        if args.iot_test and args.iot_testname:
+            base = path.join("results", args.iot_testname)
+            p = path.join(base, "iot_summary.json")
+            if path.exists(p):
+                with open(p) as f:
+                    iot_summary = json.load(f)
+        args_dict = vars(args)
+        self.generate_overall_report(test_results_df=test_results_df,args_dict=args_dict,iot_summary=iot_summary)
+        if self.dowebgui:
+            try:
+                self.overall_status["status"] = "completed"
+                self.overall_status["time"] = datetime.datetime.now().strftime("%Y %d %H:%M:%S")
+                self.overall_csv.append(self.overall_status.copy())
+                df1 = pd.DataFrame(self.overall_csv)
+                df1.to_csv('{}/overall_status.csv'.format(self.result_dir), index=False)
+            except Exception as e:
+                logging.info("Error while wrinting status file for webui", e)
+
+        print("\nTest Results Summary:")
+        print(test_results_df)
+    def create_duration_dict_and_validate(self):
+        args=self.args
+        duration_flag = False
+        duration_dict = {}
+        args_dict = vars(args)
+        if args.series_tests:
+            for test in args.series_tests.split(','):
+                if test == "thput_test":
+                    duration_dict[test] = validate_time(args_dict[f"{test}_duration"])
+                elif test == "mcast_test":
+                    duration_dict[test] = validate_time(args_dict[f"{test.split('_')[0]}_test_duration"])
+                elif test == "ping_test" or test == "zoom_test" or test == "teams_test":
+                    duration_dict[test] = "{} mins".format(args_dict["{}_duration".format(test.split('_')[0])])
+                else:
+                    duration_dict[test] = validate_time(args_dict[f"{test.split('_')[0]}_duration"])
+        if args.parallel_tests:
+            for test in args.parallel_tests.split(','):
+                if test == "thput_test":
+                    duration_dict[test] = validate_time(args_dict[f"{test}_duration"])
+                elif test == "mcast_test":
+                    duration_dict[test] = validate_time(args_dict[f"{test.split('_')[0]}_test_duration"])
+                elif test == "ping_test" or test == "zoom_test" or test == "teams_test":
+                    duration_dict[test] = "{} mins".format(args_dict["{}_duration".format(test.split('_')[0])])
+                else:
+                    duration_dict[test] = validate_time(args_dict[f"{test.split('_')[0]}_duration"])
+        for test_name,duration in duration_dict.items():
+            if duration == "wrong type":
+                duration_flag = True
+                print(f"wrong duration type for {test_name}")
+        if duration_flag:
+            exit(1)
+        return duration_dict
 
     def get_device_info(self):
         """
@@ -9728,8 +10124,9 @@ class Candela(Realm):
     
 
     def configure_devices(self):
+        device_list = []
         if self.config:
-            self.device_list = self.query_devices()
+            device_list = self.query_devices()
         config_devices = {}
         config_dict = {
             'ssid': self.ssid,
@@ -9755,7 +10152,7 @@ class Candela(Realm):
             'server_ip': self.upstream_ip,
         }
         print(config_dict)
-        if self.group_name and self.file_name and self.device_list == [] and self.profile_name:
+        if self.group_name and self.file_name and device_list == [] and self.profile_name:
             selected_groups = self.group_name.split(',')
             selected_profiles = self.profile_name.split(',')
             for i in range(len(selected_groups)):
@@ -9764,18 +10161,19 @@ class Candela(Realm):
             self.group_device_map = self.resource_stats.get_groups_devices(data=selected_groups, groupdevmap=True)
 
             # Configure devices in the selected group with the selected profile
-            self.device_list = asyncio.run(self.resource_stats.connectivity(config=config_devices, upstream=self.upstream_ip))
+            device_list = asyncio.run(self.resource_stats.connectivity(config=config_devices, upstream=self.upstream_ip))
         # Case 2: Device list is already provided
-        elif self.device_list != []:
+        elif device_list != []:
             all_devices = self.resource_stats.get_all_devices()
             # self.device_list = self.device_list.split(',')
             # If config is false, the test will exclude all inactive devices
             if self.config:
                 # If config is True, attempt to bring up all devices in the list and perform tests on those that become active
                 # Configure devices in the device list with the provided SSID, Password and Security
-                self.device_list = asyncio.run(self.resource_stats.connectivity(device_list=self.device_list, wifi_config=config_dict))
+                device_list = asyncio.run(self.resource_stats.connectivity(device_list=self.device_list, wifi_config=config_dict))
         else:
             logger.error("give correct set of configurations")
+        return device_list
 
     def generate_overall_report(self,test_results_df='',args_dict={},iot_summary=None):
         self.overall_report = lf_report.lf_report(_results_dir_name="Base_Class_Test_Overall_report", _output_html="base_class_overall.html",
@@ -10175,11 +10573,9 @@ def ensure_path(path_str, create_if_missing=False):
 
     logger.error("Path does not exist, add arg --auto_create to create if doesn't exists")
     return False
-
-def main():
-
+def parse_the_args():
     parser = argparse.ArgumentParser(
-    prog="lf_interop_throughput.py",
+    prog="candela_base_class.py",
     formatter_class=argparse.RawTextHelpFormatter,
     )
     parser = argparse.ArgumentParser(description="Run Candela API Tests")
@@ -10821,8 +11217,9 @@ def main():
     parser.add_argument('--vs_groups', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2',default="all")
     parser.add_argument('--vlc_groups', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2',default="all")
 
-    args = parser.parse_args()
+    return parser
 
+def validation_args_before_obj(args):
     if args.vlc_duration.endswith('s') or args.vlc_duration.endswith('S'):
         args.vlc_duration = int(args.vlc_duration[0:-1])
 
@@ -10842,8 +11239,6 @@ def main():
         iot_device_list = args.iot_device_list
         iot_testname = args.iot_testname
         iot_increment = args.iot_increment
-    args_dict = vars(args)
-    duration_dict = {}
     print(args)
     if args.result_path:
         if not ensure_path(args.result_path,args.auto_create):
@@ -10855,7 +11250,6 @@ def main():
         logger.error("please give proper set of arguments for device selection, either provide --device_list or provide --file_name, --group_name and --profile_name for device selection")
         exit(0)
     if args.query_devices:
-        print("hiii")
         # resource_stats = DeviceConfig.DeviceConfig(args.mgr,args.mgr_port,args.config_wait_time,file_name=args.file_name)
         resource_stats = DeviceConfig.DeviceConfig(lanforge_ip=args.mgr,port=args.mgr_port,wait_time=args.config_wait_time,file_name="grp61")
         all_devices = resource_stats.get_all_devices()
@@ -10876,10 +11270,17 @@ def main():
             print("name to res",name_to_res)
             print("res to name",res_to_name)
             filtered_dev_list,remarks_df = resource_stats.filter_device_list(dev_list, name_to_res, res_to_name)
-            print("Entered device list:", dev_list)
-            print("fil list",filtered_dev_list)
             print(tabulate(remarks_df, headers='keys', tablefmt='fancy_grid'))
         exit(0)
+    return args
+
+
+
+def main():
+    parser = parse_the_args()
+    args = parser.parse_args()
+    args = validation_args_before_obj(args)
+    
     
     candela_apis = Candela(ip=args.mgr, port=args.mgr_port,order_priority=args.order_priority,test_name=args.test_name,result_dir=args.result_dir,dowebgui=args.dowebgui,no_cleanup=args.no_cleanup,do_mix_exec=args.do_mix_exec,config_wait_time=args.config_wait_time,device_list=args.device_list.split(',') if args.device_list else [],
                             group_name=args.group_name,
@@ -10910,336 +11311,26 @@ def main():
                             ssid=args.ssid,
                             passwd=args.passwd,
                             security=args.security,
-                            result_path=args.result_path)
+                            result_path=args.result_path,
+                            args=args)
 
     if (args.config and args.device_list) or (args.file_name and args.group_name and args.profile_name):
-        candela_apis.configure_devices()
-        logger.info("Devices configured are {}".format(candela_apis.device_list))
+        device_list = candela_apis.configure_devices()
+        logger.info("Devices configured are {}".format(device_list))
         if not args.series_tests and not args.parallel_tests:
             exit(0)
+        else:
+            candela_apis.use_device_list(device_list)
 
-    test_map = {
-    "ping_test":   (run_ping_test, "PING TEST"),
-    "http_test":   (run_http_test, "HTTP TEST"),
-    "ftp_test":    (run_ftp_test, "FTP TEST"),
-    "qos_test":    (run_qos_test, "QoS TEST"),
-    "vs_test":     (run_vs_test, "VIDEO STREAMING TEST"),
-    "thput_test":  (run_thput_test, "THROUGHPUT TEST"),
-    "mcast_test":  (run_mcast_test, "MULTICAST TEST"),
-    "yt_test":     (run_yt_test, "YOUTUBE TEST"),
-    "rb_test":     (run_rb_test, "REAL BROWSER TEST"),
-    "zoom_test":   (run_zoom_test, "ZOOM TEST"),
-    "teams_test":  (run_teams_test, "TEAMS TEST"),
-    "vlc_test":     (run_vlc_test, "VLC TEST")
-    }
+    test_map = candela_apis.test_map.copy()
+    tests_to_run_series,tests_to_run_parallel = candela_apis.filter_tests()
 
-
-    if not args.series_tests and not args.parallel_tests:
-        logger.error("Please provide tests cases --parallel_tests or --series_tests")
-        logger.info(f"availbe tests are {test_map.keys()}")
-        exit(0)
-    if args.do_mix_exec:
-        if "ping_test" not in args.parallel_tests:
-            logger.error("With --do_mix_exec true, ping_test should be in parallel_tests")
-            exit(0)
-    flag=1
-    tests_to_run_series = []
-    tests_to_run_parallel = []
-    if args.series_tests:
-        tests_to_run_series = args.series_tests.split(',')
-        for test in tests_to_run_series:
-            if test not in test_map:
-                logger.error(f"{test} is not availble in test suite")
-                flag = 0
-    if args.parallel_tests:
-        tests_to_run_parallel = args.parallel_tests.split(',')
-        for test in tests_to_run_parallel:
-            if test not in test_map:
-                logger.error(f"{test} is not availble in test suite")
-                flag = 0
-
-
-    if not flag:
-        logger.info(f"availble tests are {test_map.keys()}")
-        exit(0)
-    if args.parallel_tests and (len(tests_to_run_parallel) != len(set(tests_to_run_parallel))):
-        logger.error("in --parallel dont specify duplicate tests")
-        exit(0)
-    duration_flag = False
-    if args.series_tests:
-        for test in args.series_tests.split(','):
-            if test == "thput_test":
-                duration_dict[test] = validate_time(args_dict[f"{test}_duration"])
-            elif test == "mcast_test":
-                duration_dict[test] = validate_time(args_dict[f"{test.split('_')[0]}_test_duration"])
-            elif test == "ping_test" or test == "zoom_test" or test == "teams_test":
-                duration_dict[test] = "{} mins".format(args_dict["{}_duration".format(test.split('_')[0])])
-            else:
-                duration_dict[test] = validate_time(args_dict[f"{test.split('_')[0]}_duration"])
-    if args.parallel_tests:
-        for test in args.parallel_tests.split(','):
-            if test == "thput_test":
-                duration_dict[test] = validate_time(args_dict[f"{test}_duration"])
-            elif test == "mcast_test":
-                duration_dict[test] = validate_time(args_dict[f"{test.split('_')[0]}_test_duration"])
-            elif test == "ping_test" or test == "zoom_test" or test == "teams_test":
-                duration_dict[test] = "{} mins".format(args_dict["{}_duration".format(test.split('_')[0])])
-            else:
-                duration_dict[test] = validate_time(args_dict[f"{test.split('_')[0]}_duration"])
-    for test_name,duration in duration_dict.items():
-        if duration == "wrong type":
-            duration_flag = True
-            print(f"wrong duration type for {test_name}")
-    if duration_flag:
-        exit(1)
-    # candela_apis.query_devices()
-    # eid ="1.119.wlan0"
-    # candela_apis.admin_down(port_eid=eid)
-    # print("down dappa")
-    # time.sleep(10)
-    # candela_apis.admin_up(port_eid=eid)
-    # candela_apis.configure_devices()
-    # candela_apis.disconnect_devices()
-    # asyncio.run(candela_apis.disconnect_devices(query=True))
-    # print(candela_apis.device_list)
-    # exit(0)
+    duration_dict = candela_apis.create_duration_dict_and_validate()
+    
 
     candela_apis.duration_dict = duration_dict.copy()
     # args.current = "series"
-    iszoom = 'zoom_test' in tests_to_run_parallel or 'zoom_test' in tests_to_run_series
-    isrb = 'rb_test' in tests_to_run_parallel or 'rb_test' in tests_to_run_series
-    isyt = 'yt_test' in tests_to_run_parallel or 'yt_test' in tests_to_run_series
-    isteams = 'teams_test' in tests_to_run_parallel or 'teams_test' in tests_to_run_series
-    candela_apis.series_tests = tests_to_run_series
-    candela_apis.parallel_tests = tests_to_run_parallel
-    candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True,port_5000=iszoom,port_5002=isyt,port_5003=isrb,port_5005=isteams)
-    if args.series_tests or args.parallel_tests:
-        series_threads = []
-        parallel_threads = []
-        parallel_connect = []
-        series_connect = []
-        rb_test = 'rb_test' in tests_to_run_parallel
-        yt_test = 'yt_test' in tests_to_run_parallel
-        zoom_test = 'zoom_test' in tests_to_run_parallel
-        # Process series tests
-        if args.series_tests:
-            ordered_series_tests = args.series_tests.split(',')
-            if args.device_list or (args.file_name and args.group_name and args.profile_name):
-                args = update_device_list(args,ordered_series_tests,candela_apis)
-                # print("Args",args)
-                # exit(0)
-            # ordered_parallel_tests = args.parallel_tests.split(',')
-            # phase 1
-            if args.dowebgui:
-                gen_order = ["ping_test","qos_test","ftp_test","http_test","mcast_test","vs_test","thput_test","yt_test","rb_test","zoom_test","teams_test"]
-                temp_ord_list = []
-                for test_name in gen_order:
-                    if test_name in ordered_series_tests:
-                        temp_ord_list.append(test_name)
-                ordered_series_tests = temp_ord_list.copy()
-            for idx, test_name in enumerate(ordered_series_tests):
-                test_name = test_name.strip().lower()
-                if test_name in test_map:
-                    func, label = test_map[test_name]
-                    args.current = "series"
-                    if test_name in ['rb_test','zoom_test','yt_test','teams_test', 'vlc_test']:
-                        if test_name == "rb_test":
-                            obj_no = 1
-                            while f"rb_test_{obj_no}" in candela_apis.rb_obj_dict["series"]:
-                                obj_no+=1
-                            obj_name = f"rb_test_{obj_no}"
-                            candela_apis.rb_obj_dict["series"][obj_name] = manager.dict({"obj":None,"data":None})
-                            print('hiii data',candela_apis.rb_obj_dict)
-                        elif test_name == "yt_test":
-                            obj_no = 1
-                            while f"yt_test_{obj_no}" in candela_apis.yt_obj_dict["series"]:
-                                obj_no+=1
-                            obj_name = f"yt_test_{obj_no}"
-                            candela_apis.yt_obj_dict["series"][obj_name] = manager.dict({"obj":None,"data":None})
-                        elif test_name == "zoom_test":
-                            obj_no = 1
-                            while f"zoom_test_{obj_no}" in candela_apis.zoom_obj_dict["series"]:
-                                obj_no+=1
-                            obj_name = f"zoom_test_{obj_no}"
-                            candela_apis.zoom_obj_dict["series"][obj_name] = manager.dict({"obj":None,"data":None})
-                            print('hiii data',candela_apis.zoom_obj_dict)
-                        elif test_name == "teams_test":
-                            obj_no = 1
-                            while f"teams_test_{obj_no}" in candela_apis.teams_obj_dict["series"]:
-                                obj_no+=1
-                            obj_name = f"teams_test_{obj_no}"
-                            candela_apis.teams_obj_dict["series"][obj_name] = manager.dict({"obj":None,"data":None})
-                        elif test_name == "vlc_test":
-                            obj_no = 1
-                            while f"vlc_test_{obj_no}" in candela_apis.vlc_obj_dict["series"]:
-                                obj_no+=1
-                            obj_name = f"vlc_test_{obj_no}"
-                            candela_apis.vlc_obj_dict["series"][obj_name] = manager.dict({"obj":None,"data":None})
-                            print('hiii data',candela_apis.vlc_obj_dict)
-                        series_threads.append(multiprocessing.Process(target=run_test_safe(func, f"{label} [Series {idx+1}]", args, candela_apis,duration_dict[test_name])))
-                    else:                 
-                        series_threads.append(threading.Thread(
-                            target=run_test_safe(func, f"{label} [Series {idx+1}]", args, candela_apis,duration_dict[test_name])
-                        ))
-                else:
-                    print(f"Warning: Unknown test '{test_name}' in --series_tests")
-        
-        # Process parallel tests
-        if args.parallel_tests:
-            ordered_parallel_tests = args.parallel_tests.split(',')
-            #phase 1
-            if args.dowebgui:
-                gen_order = ["ping_test","qos_test","ftp_test","http_test","mcast_test","vs_test","thput_test","yt_test","rb_test","zoom_test","teams_test"]
-                temp_ord_list = []
-                for test_name in gen_order:
-                    if test_name in ordered_parallel_tests:
-                        temp_ord_list.append(test_name)
-                ordered_parallel_tests = temp_ord_list.copy()
-            if args.device_list or (args.file_name and args.group_name and args.profile_name):
-                args = update_device_list(args,ordered_parallel_tests,candela_apis)
-                # print("Args",args)
-                # exit(0)
-            for idx, test_name in enumerate(ordered_parallel_tests):
-                test_name = test_name.strip().lower()
-                if test_name in test_map:
-                    func, label = test_map[test_name]
-                    args.current = "parallel"
-                    if test_name in ['rb_test','zoom_test','yt_test','teams_test', 'vlc_test']:
-                        # if test_name == "rb_test":
-                            # candela_apis.rb_pipe_dict["parallel"][len(candela_apis.rb_pipe_dict["parallel"])] = {}
-                            # candela_apis.rb_pipe_dict["parallel"][len(candela_apis.rb_pipe_dict["parallel"])]["parent"],candela_apis.rb_pipe_dict["parallel"][len(candela_apis.rb_pipe_dict["parallel"])]["child"] = multiprocessing.Pipe()
-                        # parent_conn, child_conn = multiprocessing.Pipe()
-                        # candela_apis.parallel_connect[idx] = [test_name,parent_conn,child_conn]
-                        if test_name == "rb_test":
-                            candela_apis.rb_obj_dict["parallel"]["rb_test"] = manager.dict({"obj": None, "data": None})
-                        elif test_name == "yt_test":
-                            candela_apis.yt_obj_dict["parallel"]["yt_test"] = manager.dict({"obj": None, "data": None})
-                        elif test_name == "zoom_test":
-                            candela_apis.zoom_obj_dict["parallel"]["zoom_test"] = manager.dict({"obj": None, "data": None})
-                        elif test_name == "teams_test":
-                            candela_apis.teams_obj_dict["parallel"]["teams_test"] = manager.dict({"obj": None, "data": None})
-                        elif test_name == "vlc_test":
-                            candela_apis.vlc_obj_dict["parallel"]["vlc_test"] = manager.dict({"obj": None, "data": None})
-                        parallel_threads.append(multiprocessing.Process(target=run_test_safe(func, f"{label} [Parallel {idx+1}]", args, candela_apis,duration_dict[test_name])))
-                    else:                 
-                        parallel_threads.append(threading.Thread(
-                            target=run_test_safe(func, f"{label} [Parallel {idx+1}]", args, candela_apis,duration_dict[test_name])
-                        ))
-                else:
-                    print(f"Warning: Unknown test '{test_name}' in --parallel_tests")
-       
-        logging.info(f"Series Threads: {series_threads}")
-        logging.info(f"Parallel Threads: {parallel_threads}")
-        logging.info(f"connections parallel {candela_apis.parallel_connect}")
-        logging.info(f"connections series{candela_apis.series_connect}")
-        # time.sleep(20)
-        if args.dowebgui:
-            # overall_path = os.path.join(args.result_dir, directory)
-            candela_apis.overall_status = {"ping": "notstarted", "qos": "notstarted", "ftp": "notstarted", "http": "notstarted",
-                            "mc": "notstarted", "vs": "notstarted", "thput": "notstarted","rb": "notstarted","vs": "notstarted","zoom": "notstarted","yt": "notstarted","teams": "notstarted", "time": datetime.datetime.now().strftime("%Y %d %H:%M:%S"), "status": "running", "current_mode":"tbd" , "current_test_name": "tbd"}
-            candela_apis.overall_csv.append(candela_apis.overall_status.copy())
-            df1 = pd.DataFrame(candela_apis.overall_csv)
-            df1.to_csv('{}/overall_status.csv'.format(args.result_dir), index=False)
-        if args.iot_test:
-            if args.iot_iterations > 1:
-                thread = threading.Thread(target=trigger_iot, args=(iot_ip, iot_port, iot_iterations, iot_delay, iot_device_list, iot_testname, iot_increment))
-                thread.start()
-            else:
-                total_secs = 9999
-                iot_iterations = max(1, total_secs // args.iot_delay)
-                iot_thread = threading.Thread(
-                    target=trigger_iot,
-                    args=(
-                        args.iot_ip,
-                        args.iot_port,
-                        iot_iterations,
-                        args.iot_delay,
-                        args.iot_device_list,
-                        args.iot_testname,
-                        args.iot_increment
-                    ),
-                    daemon=True
-                )
-                iot_thread.start()
-        if args.do_mix_exec:
-            series_runner = threading.Thread(target=candela_apis.run_series, args=(series_threads,))
-            parallel_runner = threading.Thread(target=candela_apis.run_parallel, args=(parallel_threads,))
-
-            series_runner.start()
-            parallel_runner.start()
-
-            series_runner.join()
-            parallel_runner.join()      
-        elif args.order_priority == 'series':
-            candela_apis.current_exec="series"
-            for t in series_threads:
-                t.start()
-                t.join()
-                candela_apis.series_index += 1
-            # Then run parallel tests
-            if len(parallel_threads) != 0:
-                # candela_apis.misc_clean_up(layer3=False,layer4=False,generic=True)
-                candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True,port_5000=iszoom,port_5002=isyt,port_5003=isrb,port_5005=isteams)
-                print('starting parallel tests.......')
-                time.sleep(10)
-            candela_apis.current_exec = "parallel"
-            for t in parallel_threads:
-                t.start()
-
-            candela_apis.parallel_index = 0
-            for t in parallel_threads:
-                t.join()
-                candela_apis.parallel_index += 1
-        
-        else:
-            candela_apis.current_exec="parallel"
-            for t in parallel_threads:
-                t.start()
-            # for p in parallel_processes:
-            #     p.start()
-
-            for t in parallel_threads:
-                t.join()
-
-            if len(series_threads) != 0:
-                rb_test = 'rb_test' in tests_to_run_parallel
-                yt_test = 'yt_test' in tests_to_run_parallel
-                candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True,port_5000=iszoom,port_5002=isyt,port_5003=isrb,port_5005=isteams)
-                print('starting Series tests.......')
-                time.sleep(5)
-            candela_apis.current_exec="series"
-            for t in series_threads:
-                t.start()
-                t.join()
-    else:
-        logger.error("provide either --paralell_tests or --series_tests")
-        exit(1)
-    rb_test = 'rb_test' in tests_to_run_parallel
-    yt_test = 'yt_test' in tests_to_run_parallel
-    candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True,port_5000=iszoom,port_5002=isyt,port_5003=isrb,port_5005=isteams)
-    log_file = save_logs()
-    print(f"Logs saved to: {log_file}")
-    test_results_df = pd.DataFrame(list(test_results_list))
-    iot_summary = None
-    if args.iot_test and args.iot_testname:
-        base = path.join("results", args.iot_testname)
-        p = path.join(base, "iot_summary.json")
-        if path.exists(p):
-            with open(p) as f:
-                iot_summary = json.load(f)
-    candela_apis.generate_overall_report(test_results_df=test_results_df,args_dict=args_dict,iot_summary=iot_summary)
-    if candela_apis.dowebgui:
-        try:
-            candela_apis.overall_status["status"] = "completed"
-            candela_apis.overall_status["time"] = datetime.datetime.now().strftime("%Y %d %H:%M:%S")
-            candela_apis.overall_csv.append(candela_apis.overall_status.copy())
-            df1 = pd.DataFrame(candela_apis.overall_csv)
-            df1.to_csv('{}/overall_status.csv'.format(candela_apis.result_dir), index=False)
-        except Exception as e:
-            logging.info("Error while wrinting status file for webui", e)
-
-    print("\nTest Results Summary:")
-    print(test_results_df)
+    candela_apis.start_tests(tests_to_run_parallel, tests_to_run_series,duration_dict)
 
 def initialize_sniffer_obj(mgr="localhost",port="8080",sniff_radio='1.1.wiphy0',sniff_channel='AUTO',moni_name=None,pcap_name=None):
     print("CREATING sniffer object")
@@ -11249,6 +11340,72 @@ def initialize_sniffer_obj(mgr="localhost",port="8080",sniff_radio='1.1.wiphy0',
     sniffer_obj = Candela(ip=mgr,port=port,sniff_radio=sniff_radio,sniff_channel=sniff_channel,
                           moni_name=moni_name,pcap_name=pcap_name)
     return sniffer_obj
+
+def convert_kwargs_to_cli_list(kwargs):
+    cli_list = []
+    for key,value in kwargs.items():
+        if type(value) == bool:
+            if value:
+                cli_list.append("--{}".format(str(key)))
+        else:
+            cli_list.append("--{}".format(key))
+            cli_list.append(str(value))
+    return cli_list
+    
+
+
+def intialize_base_class_obj(**kwargs):
+    cli_list = None
+    cli = False
+    print("kwargs",kwargs)
+    if "cli" in kwargs:
+        cli = kwargs["cli"]
+    if "cli_list" in kwargs:
+        cli_list = kwargs["cli_list"]
+    if cli and cli_list:
+        #TODO directly placing cli_list and validation
+        pass
+    else:
+        cli_list = convert_kwargs_to_cli_list(kwargs)
+    print("cli list",cli_list)
+    parser = parse_the_args()
+    args = parser.parse_args(cli_list)
+    args = validation_args_before_obj(args)
+    candela_apis = Candela(ip=args.mgr, port=args.mgr_port,order_priority=args.order_priority,test_name=args.test_name,result_dir=args.result_dir,dowebgui=args.dowebgui,no_cleanup=args.no_cleanup,do_mix_exec=args.do_mix_exec,config_wait_time=args.config_wait_time,device_list=args.device_list.split(',') if args.device_list else [],
+                            group_name=args.group_name,
+                            profile_name=args.profile_name,
+                            file_name=args.file_name,
+                            eap_method=args.eap_method,
+                            eap_identity=args.eap_identity,
+                            ieee80211=args.ieee8021x,
+                            ieee80211u=args.ieee80211u,
+                            ieee80211w=args.ieee80211w,
+                            enable_pkc=args.enable_pkc,
+                            bss_transition=args.bss_transition,
+                            power_save=args.power_save,
+                            disable_ofdma=args.disable_ofdma,
+                            roam_ft_ds=args.roam_ft_ds,
+                            key_management=args.key_management,
+                            pairwise=args.pairwise,
+                            private_key=args.private_key,
+                            ca_cert=args.ca_cert,
+                            client_cert=args.client_cert,
+                            pk_passwd=args.pk_passwd,
+                            pac_file=args.pac_file,
+                            expected_passfail_val=args.expected_passfail_value,
+                            csv_name=args.device_csv_name,
+                            wait_time=args.wait_time,
+                            config=args.config,
+                            upstream_port=args.upstream_port,
+                            ssid=args.ssid,
+                            passwd=args.passwd,
+                            security=args.security,
+                            result_path=args.result_path,
+                            args=args)
+    return candela_apis
+    
+    
+
 
 
 def run_test_safe(test_func, test_name, args, candela_apis,duration):
