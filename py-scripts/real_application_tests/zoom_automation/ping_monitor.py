@@ -1,6 +1,5 @@
 import threading
 import subprocess
-import signal
 import os
 import logging
 
@@ -36,13 +35,20 @@ class PingMonitor:
 
         return logger
 
-    def start_ping(self):
+    def start_ping(self, device_serial, target_host="8.8.8.8"):
         """Start ping subprocess in background"""
+        if not device_serial:
+            self.ping_logger.error(
+                "Failed to start ping subprocess: missing device serial"
+            )
+            return
+
         try:
+            self.stop_event.clear()
             self.process = subprocess.Popen(
-                ["ping", "-D", "8.8.8.8"],
+                ["adb", "-s", device_serial, "shell", "ping", target_host],
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,  # Line buffered
                 universal_newlines=True,
@@ -53,7 +59,9 @@ class PingMonitor:
                 target=self._read_ping_output, daemon=True
             )
             self.reader_thread.start()
-            self.ping_logger.info("Ping monitor started")
+            self.ping_logger.info(
+                f"Ping monitor started on device {device_serial} for {target_host}"
+            )
         except Exception as e:
             self.ping_logger.error(f"Failed to start ping subprocess: {e}")
 
@@ -81,4 +89,8 @@ class PingMonitor:
                 self.process.kill()
                 self.process.wait()
 
+            if self.reader_thread and self.reader_thread.is_alive():
+                self.reader_thread.join(timeout=1)
+
+            self.process = None
             self.ping_logger.info("Ping monitor stopped")

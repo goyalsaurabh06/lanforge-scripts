@@ -337,7 +337,7 @@ class ZoomAutomator:
         except Exception as e:
             raise RuntimeError(f"Invalid end_time received from server: {e}")
 
-        self.ping_monitor.start_ping()
+        self.ping_monitor.start_ping(self.device_serial)
         while datetime.now(self.tz) < meeting_end_dt:
             if self.check_stop_signal():
                 self.logger.info(
