@@ -119,7 +119,8 @@ from collections import Counter , OrderedDict
 # Importing DeviceConfig to apply device configurations for ADB devices and laptops
 DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
 from LANforge import LFUtils  # noqa: E402
-
+from candela_base_class import initialize_sniffer_obj, RemoteSniffer
+from post_roam_analysis import RoamAnalyzer
 logger = logging.getLogger(__name__)
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 
@@ -158,7 +159,7 @@ class Ping(Realm):
                  wait_time=60,
                  floors=None,
                  get_live_view=None,robo_ip=None,angle_list=None,coordinate_list = [],rotation_enabled=None,local_lf_report_dir=None,do_bandsteering=False,total_cycles=1,bssids=None,
-                 duration_to_skip=None):
+                 duration_to_skip=None,do_roaming=False):
         super().__init__(lfclient_host=host,
                          lfclient_port=port)
         self.host = host
@@ -225,8 +226,25 @@ class Ping(Realm):
         self.local_lf_report_dir=local_lf_report_dir
         self.pingduration=None
         self.do_bandsteering=do_bandsteering
+        self.do_roaming=do_roaming
+        self.sniffer_obj = None
         self.total_cycles = total_cycles
         self.bssids = bssids if bssids else []
+        if self.do_roaming:
+            self.sniffer_obj = initialize_sniffer_obj(
+                mgr=self.host,
+                port=self.port,
+                sniff_radio="1.2.wiphy1",
+                sniff_channel="44",
+                moni_name="moni11w0"
+            )
+            monitor_created = self.sniffer_obj.create_monitor()
+
+            if not monitor_created:
+                print("FAILED TO create Monitor")
+                exit()
+
+            print("Monitor created")
 
     def change_target_to_ip(self):
 
@@ -1522,13 +1540,18 @@ class Ping(Realm):
                                     except BaseException:
                                         continue
                                     t_result = t_result.split()
-                                    if 'icmp_seq=' not in result and 'time=' not in result:
+                                    seq_number=None
+                                    rtt =None
+                                    if 'icmp_seq=' not in result or 'time=' not in result:
                                         continue
                                     for t_data in t_result:
                                         if 'icmp_seq=' in t_data:
                                             seq_number = int(t_data.strip('icmp_seq='))
                                         if 'time=' in t_data:
                                             rtt = float(t_data.strip('time='))
+                                    if seq_number is None or rtt is None:
+                                        logger.error(f"missing  keys | t_result: {t_result} | full result: {result}")
+                                        continue
                                     rtts[station][seq_number] = rtt
                                     rtts_list.append(rtt)
 
@@ -1642,6 +1665,8 @@ class Ping(Realm):
                                             except BaseException:
                                                 continue
                                             t_result = t_result.split()
+                                            seq_number=None
+                                            rtt=None
                                             if 'icmp_seq=' not in result and 'time=' not in result:
                                                 continue
                                             for t_data in t_result:
@@ -1649,6 +1674,9 @@ class Ping(Realm):
                                                     seq_number = int(t_data.strip('icmp_seq='))
                                                 if 'time=' in t_data:
                                                     rtt = float(t_data.strip('time='))
+                                            if seq_number is None or rtt is None:
+                                                logger.error(f"missing variables | t_result: {t_result} | full result: {result}")
+                                                continue
                                             rtts[station][seq_number] = rtt
                                             rtts_list.append(rtt)
 
@@ -1840,6 +1868,129 @@ class Ping(Realm):
         stop_test=False
         # print(self.do_bandsteering)
         # print(self.total_cycles)
+        if self.do_roaming:
+            monitor_created = self.sniffer_obj.create_monitor()
+            if not monitor_created:
+                print("FAILED TO create Monitor")
+                exit()
+            sniffer = RemoteSniffer(
+                "10.17.1.43",
+                "lanforge",
+                password="lanforge",
+                moni_name="moni11w0",
+                pcap_name="roaming.pcap"
+            )
+            try:
+                sniffer.connect()
+                remote_pcap_path = sniffer.start_sniff("/home/lanforge")
+
+                print("Sniffing started")
+                print("Remote pcap path:", remote_pcap_path)
+                if self.do_bandsteering:
+                    reached=False
+                    # reached,abort=self.robot.move_to_coordinate(self.coordinate_list[0])
+                    coordinate_list_with_robo=self.robot.get_coordinates_list()
+                    if(len(coordinate_list_with_robo) == 0):
+                        logging.config("Coordinate list is empty")
+                    # coordinate_list_with_robo = [self.coordinate_list[(1 + i) % len(self.coordinate_list)] for i in range(int(self.total_cycles) * len(self.coordinate_list))]
+                    self.robot.do_bandsteering = True
+                    columns = []
+                    self.start_generic()
+
+                    # print("realstationlistt",self.real_sta_list)
+                    for sta in self.real_sta_list:
+                        client=sta.split('.')[0]+'.'+sta.split('.')[1]
+                        columns.extend([f'BSSID {client}', f'Channel {client}'])
+                    
+                    columns.extend(['TIMESTAMP','Robot X','Robot Y','To Coordinate','From Coordinate'])
+                    individual_df = pd.DataFrame(columns=columns)
+
+                    # print("df",individual_df)
+                    # print("coordlist",coordinate_list_with_robo)
+                    for coord in coordinate_list_with_robo:
+                        pause, stopped = self.robot.wait_for_battery(lambda: self.monitor(individual_df))
+                        
+                        if stopped:
+                            break
+                        
+                        matched, abort, all_dataframes = self.robot.move_to_coordinate(
+                            coord,
+                            monitor_function=lambda: self.monitor(individual_df))
+
+                        if not matched:
+                            logging.info("Skipped moving to point".format(coord))
+                        if abort:
+                            break
+
+
+
+                self.stop_generic()
+                # print("self.result_json",self.result_json)
+                sniffer.stop_sniff()
+                sniffer.fetch_pcap(remote_pcap_path, "./roaming.pcap")
+                sniffer.close()
+                
+                    # self.generate_report()
+                    # if self.do_webUI:
+                    #     self.copy_reports_to_home_dir()               
+                    #     self.set_webUI_stop()
+                    # self.cleanup()
+                    # exit(1)
+
+
+
+            except Exception as e:
+                sniffer.stop_sniff()
+                sniffer.fetch_pcap(remote_pcap_path, "./roaming.pcap")
+                sniffer.close()
+                print("Error:", e)
+                # sniffer.stop_sniff()
+                # sniffer.fetch_pcap(remote_pcap_path, "./10_iterations_5devices_2.pcap")
+                # sniffer.close()
+
+            finally:
+                sniffer.stop_sniff()
+                sniffer.fetch_pcap(remote_pcap_path, "./roaming.pcap")
+                sniffer.close()
+                path = "./roaming.pcap"
+                if os.path.isfile(path):
+                    print("File exists")
+                else:
+                    print("File does not exist")
+                    exit()
+                
+            
+                BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+                CONFIG_PATH = os.path.join(BASE_DIR, "../..", "candela_roaming_client_ap.json")
+                CONFIG_PATH = os.path.abspath(CONFIG_PATH)
+                PCAP_PATH = os.path.join(BASE_DIR, "roaming.pcap")
+
+                def load_config(path):
+                    with open(path, "r") as f:
+                        return json.load(f)
+                        
+                config = load_config(CONFIG_PATH)
+
+                clients = config["clients"]
+                ap_bssids = config["ap_bssids"]
+
+                analyzer = RoamAnalyzer(
+                    pcap_file=PCAP_PATH,
+                    clients=clients,
+                    ap_bssids=ap_bssids
+                )
+
+                analyzer.analyze()
+                analyzer._write_csv()
+                self.generate_report()
+                # self.generate_report()
+                if self.do_webUI:
+                    self.copy_reports_to_home_dir()               
+                    self.set_webUI_stop()
+                self.cleanup()
+                exit()
+
         if self.do_bandsteering:
             reached=False
             # reached,abort=self.robot.move_to_coordinate(self.coordinate_list[0])
@@ -3038,6 +3189,7 @@ connectivity problems.
     optional.add_argument('--coordinate',help="The coordinate dictionary consists points and their respective x and y values")
     optional.add_argument('--rotation',help="The set of angles to rotate at a particular point")
     optional.add_argument('--do_bandsteering', help='Enable bandsteering', action='store_true')
+    optional.add_argument('--do_roaming', help='Enable roaming', action='store_true')
     optional.add_argument('--total_cycles', help='Iterations', default="1")
     optional.add_argument('--bssids', type=str, help='Comma separated list of BSSIDs to be used for the test', default="")
     optional.add_argument("--duration_to_skip", type=int, help='Specify the maximum time in seconds to skip a point if there is an obstacle', default=60)
@@ -3169,7 +3321,7 @@ connectivity problems.
                 lanforge_password=mgr_password, target=target, interval=interval, sta_list=[], virtual=args.virtual, real=args.real, duration=report_duration, do_webUI=do_webUI, debug=debug,
                 ui_report_dir=ui_report_dir, csv_name=args.device_csv_name, expected_passfail_val=args.expected_passfail_value, wait_time=args.wait_time, group_name=group_name,
                 floors=args.floors, get_live_view=args.get_live_view,robo_ip=robo_ip,rotation_enabled=rotation_enabled,coordinate_list=coord_list,angle_list=angle_list,local_lf_report_dir=args.local_lf_report_dir,
-                do_bandsteering=args.do_bandsteering,total_cycles=args.total_cycles,bssids=args.bssids.split(",") if args.bssids else [],duration_to_skip=args.duration_to_skip)
+                do_bandsteering=args.do_bandsteering,total_cycles=args.total_cycles,bssids=args.bssids.split(",") if args.bssids else [],duration_to_skip=args.duration_to_skip,do_roaming=args.do_roaming)
     ping.pingduration=duration
     # creating virtual stations if --virtual flag is specified
     if args.virtual:
