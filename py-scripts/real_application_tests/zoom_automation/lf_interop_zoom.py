@@ -1331,7 +1331,7 @@ class ZoomAutomation(Realm):
 
             finally:
                 self.sniffer.stop_sniff()
-                self.sniffer.fetch_pcap(remote_pcap_path, "./roaming.pcap")
+                self.sniffer.fetch_pcap(remote_pcap_path, f"{self.path}/roaming.pcap")
                 self.sniffer.close()
                 count = 0
                 while not self.is_csv_available:
@@ -1347,7 +1347,7 @@ class ZoomAutomation(Realm):
                         "Waiting for CSV data from Zoom dashboard to be available before proceeding with the Report generation and cleanup"
                     )
                     time.sleep(5)
-                path = "./roaming.pcap"
+                path = f"{self.path}/roaming.pcap"
                 if os.path.isfile(path):
                     logger.info(
                         "Roaming Pcap File is available at the expected location. Proceeding with report generation..."
@@ -1364,7 +1364,7 @@ class ZoomAutomation(Realm):
                 )
                 logger.info(f"Configuration file path: {CONFIG_PATH}")
                 CONFIG_PATH = os.path.abspath(CONFIG_PATH)
-                PCAP_PATH = os.path.join(BASE_DIR, "roaming.pcap")
+                PCAP_PATH = os.path.join(self.path, "roaming.pcap")
 
                 with open(CONFIG_PATH, "r") as f:
                     config = json.load(f)
