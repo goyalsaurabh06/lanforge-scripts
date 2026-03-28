@@ -93,6 +93,9 @@ DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
 lf_base_interop_profile = importlib.import_module("py-scripts.lf_base_interop_profile")
 RealDevice = lf_base_interop_profile.RealDevice
 
+from candela_base_class import initialize_sniffer_obj, RemoteSniffer
+from post_roam_analysis import RoamAnalyzer
+
 # Set up logging
 flask_server_logger = logging.getLogger(__name__)
 flask_server_log = logging.getLogger("werkzeug")
@@ -266,6 +269,24 @@ class ZoomAutomation(Realm):
         self.successful_coords = []
         self.failed_coords = []
         self.is_csv_available = False
+
+        if self.do_roam:
+            self.sniffer_obj = initialize_sniffer_obj(
+                mgr=self.mgr_ip,
+                port="8080",
+                sniff_radio="1.2.wiphy1",
+                sniff_channel="44",
+                moni_name="moni11w0",
+            )
+            self.monitor_created = self.sniffer_obj.create_monitor()
+
+            if not self.monitor_created:
+                logger.error(
+                    "Failed to create monitor for roaming analysis. Roaming test cannot proceed."
+                )
+                sys.exit(1)
+
+            logger.info("Monitor created")
 
     def stop_previous_flask_server(self):
         """
@@ -1256,52 +1277,107 @@ class ZoomAutomation(Realm):
 
         if self.do_bs or self.do_roam:
             time.sleep(60)
-            logger.info(
-                f"Band-Steering Test coordinates to be visited: {self.bs_coord_result}"
+            self.sniffer = RemoteSniffer(
+                "10.17.1.43",
+                "lanforge",
+                password="lanforge",
+                moni_name="moni11w0",
+                pcap_name="roaming.pcap",
             )
-            for coordinate in self.bs_coord_result:
-                logger.info(f"Moving robot to coordinate: {coordinate}")
-                if not self.to_cord:
-                    self.to_cord = coordinate
-                else:
-                    self.from_cord = self.to_cord
-                    self.to_cord = coordinate
+            try:
+                self.sniffer.connect()
+                remote_pcap_path = self.sniffer.start_sniff("/home/lanforge")
 
-                # Battery safety
-                self.robo_obj.wait_for_battery()
+                logger.info("Sniffing started")
+                logger.info("Remote pcap path: %s", remote_pcap_path)
 
-                matched, aborted = self.robo_obj.move_to_coordinate(coord=coordinate)
-                if matched:
-                    self.current_cord = coordinate
-                    self.successful_coords.append(coordinate)
-                else:
-                    self.failed_coords.append(coordinate)
-                if aborted:
-                    logger.error(f"Failed to reach the {coordinate}")
-                    self.failed_coords.append(coordinate)
-                    sys.exit()
-                # time.sleep(10)
-            if self.do_bs:
-                logger.info("All coordinates completed — stopping Band-Steering Test")
-            elif self.do_roam:
-                logger.info("All coordinates completed — stopping Roaming Test")
-            self.stop_signal = True
-            time.sleep(5)
-
-            count = 0
-            while not self.is_csv_available:
-                count += 1
-                if (
-                    count > 60
-                ):  # Wait for a maximum of 5 minutes for the CSV to be available
-                    logger.warning(
-                        "CSV data from Zoom dashboard is not available after waiting for 5 minutes. Proceeding with report generation without CSV data."
-                    )
-                    break
                 logger.info(
-                    "Waiting for CSV data from Zoom dashboard to be available before proceeding with the Report generation and cleanup"
+                    f"Band-Steering Test coordinates to be visited: {self.bs_coord_result}"
                 )
+                for coordinate in self.bs_coord_result:
+                    logger.info(f"Moving robot to coordinate: {coordinate}")
+                    if not self.to_cord:
+                        self.to_cord = coordinate
+                    else:
+                        self.from_cord = self.to_cord
+                        self.to_cord = coordinate
+
+                    # Battery safety
+                    self.robo_obj.wait_for_battery()
+
+                    matched, aborted = self.robo_obj.move_to_coordinate(
+                        coord=coordinate
+                    )
+                    if matched:
+                        self.current_cord = coordinate
+                        self.successful_coords.append(coordinate)
+                    else:
+                        self.failed_coords.append(coordinate)
+                    if aborted:
+                        logger.error(f"Failed to reach the {coordinate}")
+                        self.failed_coords.append(coordinate)
+                        sys.exit()
+                    # time.sleep(10)
+                if self.do_bs:
+                    logger.info(
+                        "All coordinates completed — stopping Band-Steering Test"
+                    )
+                elif self.do_roam:
+                    logger.info("All coordinates completed — stopping Roaming Test")
+                self.stop_signal = True
                 time.sleep(5)
+            except Exception as e:
+                logger.error(f"Error during sniffer operation: {e}", exc_info=True)
+
+            finally:
+                self.sniffer.stop_sniff()
+                self.sniffer.fetch_pcap(remote_pcap_path, "./roaming.pcap")
+                self.sniffer.close()
+                count = 0
+                while not self.is_csv_available:
+                    count += 1
+                    if (
+                        count > 60
+                    ):  # Wait for a maximum of 5 minutes for the CSV to be available
+                        logger.warning(
+                            "CSV data from Zoom dashboard is not available after waiting for 5 minutes. Proceeding with report generation without CSV data."
+                        )
+                        break
+                    logger.info(
+                        "Waiting for CSV data from Zoom dashboard to be available before proceeding with the Report generation and cleanup"
+                    )
+                    time.sleep(5)
+                path = "./roaming.pcap"
+                if os.path.isfile(path):
+                    logger.info(
+                        "Roaming Pcap File is available at the expected location. Proceeding with report generation..."
+                    )
+                else:
+                    logger.error(
+                        "Roaming Pcap File doesn't exits. Please check the sniffer connection and configuration"
+                    )
+
+                BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+                CONFIG_PATH = os.path.join(
+                    BASE_DIR, "../../../../", "candela_roaming_client_ap.json"
+                )
+                logger.info(f"Configuration file path: {CONFIG_PATH}")
+                CONFIG_PATH = os.path.abspath(CONFIG_PATH)
+                PCAP_PATH = os.path.join(BASE_DIR, "roaming.pcap")
+
+                with open(CONFIG_PATH, "r") as f:
+                    config = json.load(f)
+
+                clients = config["clients"]
+                ap_bssids = config["ap_bssids"]
+
+                analyzer = RoamAnalyzer(
+                    pcap_file=PCAP_PATH, clients=clients, ap_bssids=ap_bssids
+                )
+
+                analyzer.analyze()
+                analyzer._write_csv(path=self.path)
 
         else:
             while datetime.now(self.tz) < self.end_time or not self.check_gen_cx():
@@ -5068,3 +5144,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

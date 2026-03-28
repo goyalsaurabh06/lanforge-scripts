@@ -18,13 +18,13 @@ from lf_base_interop_profile import RealDevice
 from lf_ftp import FtpTest
 import lf_webpage as http_test
 import multiprocessing
-import lf_interop_qos as qos_test
-import lf_interop_ping as ping_test
-from lf_interop_throughput import Throughput
-from lf_interop_video_streaming import VideoStreamingTest
+# import lf_interop_qos as qos_test
+# import lf_interop_ping as ping_test
+# from lf_interop_throughput import Throughput
+# from lf_interop_video_streaming import VideoStreamingTest
 # from lf_interop_vlc import VLCStream
 # from lf_interop_real_browser_test import RealBrowserTest
-from test_l3 import L3VariableTime,change_port_to_ip,configure_reporting,query_real_clients,valid_endp_types
+# from test_l3 import L3VariableTime,change_port_to_ip,configure_reporting,query_real_clients,valid_endp_types
 from lf_kpi_csv import lf_kpi_csv
 import lf_cleanup
 import os
@@ -52,23 +52,23 @@ print('base path',base_path)
 sys.path.insert(0, os.path.join(base_path, 'py-json'))     # for interop_connectivity, LANforge
 sys.path.insert(0, os.path.join(base_path, 'py-json', 'LANforge'))  # for LFUtils
 sys.path.insert(0, os.path.join(base_path, 'py-scripts'))  # for lf_logger_config
-througput_test=importlib.import_module("py-scripts.lf_interop_throughput")
-video_streaming_test=importlib.import_module("py-scripts.lf_interop_video_streaming")
-web_browser_test=importlib.import_module("py-scripts.real_application_tests.real_browser.lf_interop_real_browser_test")
-zoom_test=importlib.import_module("py-scripts.real_application_tests.zoom_automation.lf_interop_zoom")
-yt_test=importlib.import_module("py-scripts.real_application_tests.youtube.lf_interop_youtube")
-teams_test=importlib.import_module("py-scripts.real_application_tests.teams_automation.lf_interop_teams")
+# througput_test=importlib.import_module("py-scripts.lf_interop_throughput")
+# video_streaming_test=importlib.import_module("py-scripts.lf_interop_video_streaming")
+# web_browser_test=importlib.import_module("py-scripts.real_application_tests.real_browser.lf_interop_real_browser_test")
+# zoom_test=importlib.import_module("py-scripts.real_application_tests.zoom_automation.lf_interop_zoom")
+# yt_test=importlib.import_module("py-scripts.real_application_tests.youtube.lf_interop_youtube")
+# teams_test=importlib.import_module("py-scripts.real_application_tests.teams_automation.lf_interop_teams")
 lf_report_pdf = importlib.import_module("py-scripts.lf_report")
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 logger = logging.getLogger(__name__)
-RealBrowserTest = getattr(web_browser_test, "RealBrowserTest")
-Youtube = getattr(yt_test, "Youtube")
-ZoomAutomation = getattr(zoom_test, "ZoomAutomation")
-TeamsAutomation = getattr(teams_test, "TeamsAutomation")
+# RealBrowserTest = getattr(web_browser_test, "RealBrowserTest")
+# Youtube = getattr(yt_test, "Youtube")
+# ZoomAutomation = getattr(zoom_test, "ZoomAutomation")
+# TeamsAutomation = getattr(teams_test, "TeamsAutomation")
 DeviceConfig=importlib.import_module("py-scripts.DeviceConfig")
 # from py_scripts import lf_logger_config, interop_connectivity
 # Saved working directory and index state WIP on test_base_class: 3f3a21f5 minor change
-from lf_interop_ping import Ping
+# from lf_interop_ping import Ping
 # from LANforge.LFUtils import LFUtils
 import sys
 import os
@@ -93,14 +93,14 @@ if 'py-json' not in sys.path:
 if 'py-scripts' not in sys.path:
     sys.path.append('/home/lanforge/lanforge-scripts/py-scripts')
 lf_report = importlib.import_module("py-scripts.lf_report")
-from station_profile import StationProfile
-import interop_connectivity
-from LANforge import LFUtils
+# from station_profile import StationProfile
+# import interop_connectivity
+# from LANforge import LFUtils
 
-iot_scripts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../local/interop-webGUI/IoT/scripts/"))
-if os.path.exists(iot_scripts_path):
-    sys.path.insert(0, iot_scripts_path)
-    from test_automation import Automation 
+# iot_scripts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../local/interop-webGUI/IoT/scripts/"))
+# if os.path.exists(iot_scripts_path):
+#     sys.path.insert(0, iot_scripts_path)
+#     from test_automation import Automation 
 
 class RemoteSniffer:
     def __init__(self, hostname, username, password=None, key_filename=None, moni_name='eth0', pcap_name='capture.pcap'):

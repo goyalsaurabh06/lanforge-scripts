@@ -17,7 +17,7 @@ class RoamAnalyzer:
             print(f"\nProcessing {name}: {mac}")
             self._process_client(name, mac)
 
-        self._write_csv()
+        # self._write_csv()
 
     def _process_client(self, name, mac):
 
@@ -149,8 +149,16 @@ class RoamAnalyzer:
 
     def _write_csv(self, path=""):
 
+        # If path is provided, create subfolder
+        if path:
+            output_dir = os.path.join(path, "client_roaming_csvs")
+        else:
+            output_dir = "client_roaming_csvs"
+
+        os.makedirs(output_dir, exist_ok=True)
+
         for name in self.results:
-            filename = os.path.join(path, f"{name}_roam_times.csv")
+            filename = os.path.join(output_dir, f"{name}_roam_times.csv")
 
             with open(filename, "w", newline="") as f:
                 writer = csv.DictWriter(
@@ -161,11 +169,6 @@ class RoamAnalyzer:
                         "start_time",
                         "end_time",
                         "roam_time_sec",
-                        # "start_tsf",
-                        # "end_tsf",
-                        # "roam_time_tsf_us",
-                        # "roam_time_tsf_ms",
-                        # "start_type"
                     ]
                 )
 
@@ -198,4 +201,4 @@ if __name__ == "__main__":
     )
 
     analyzer.analyze()
-    # analyzer._write_csv()
+    analyzer._write_csv(path = "/home/lanforge/local/interop-webGUI/results/dukwdh")

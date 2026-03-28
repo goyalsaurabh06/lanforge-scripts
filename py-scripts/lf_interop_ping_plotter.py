@@ -1982,7 +1982,7 @@ class Ping(Realm):
                 )
 
                 analyzer.analyze()
-                analyzer._write_csv()
+                analyzer._write_csv(self.ui_report_dir)
                 self.generate_report()
                 # self.generate_report()
                 if self.do_webUI:
