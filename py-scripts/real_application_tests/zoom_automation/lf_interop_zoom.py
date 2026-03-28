@@ -227,10 +227,9 @@ class ZoomAutomation(Realm):
         self.selected_groups = list(selected_groups or [])
         self.selected_profiles = list(selected_profiles or [])
         self.duration = duration
-        # api live data response store
-        self.participants_qos_last = None
+        # Single container for raw Zoom QoS and summarized report data.
+        self.zoom_stats_data = {"raw_qos": [], "summary": {}}
         self.env_file = env_file
-        self.live_data = {}
 
         self.do_robo = do_robo
         self.do_bs = do_bs
@@ -404,11 +403,11 @@ class ZoomAutomation(Realm):
         def upload_stats():
             if self.do_robo or self.do_bs or self.api_stats_collection or self.do_roam:
                 self.get_live_data()
-                # logger.info(f"Live data: {self.live_data}")
-                if self.live_data:
+                summary_data = self._get_summary_zoom_stats()
+                if summary_data:
                     if self.do_bs or self.do_roam:
                         lf_wifi_data = self.get_signal_and_channel_data_dict()
-                    for hostname, stats in self.live_data.items():
+                    for hostname, stats in summary_data.items():
 
                         final_filename = hostname
                         # Generates: 2026-02-02 15:41:40
@@ -534,7 +533,7 @@ class ZoomAutomation(Realm):
         @self.app.route("/get_latest_stats", methods=["GET"])
         def get_latest_stats():
             # Return the latest data for all hostnames
-            return jsonify(self.live_data), 200
+            return jsonify(self._get_summary_zoom_stats()), 200
 
         @self.app.route("/stop_zoom", methods=["GET"])
         def stop_zoom():
@@ -1243,6 +1242,7 @@ class ZoomAutomation(Realm):
 
             logger.info("All coordinates completed — stopping Band-Steering Test")
             self.stop_signal = True
+            time.sleep(5)
             while not self.check_gen_cx():
                 logger.info(
                     "Waiting for all the Gen Cx to be Stopped/NO-CX/WAITING before proceeding with the Report generation and cleanup"
@@ -2496,12 +2496,10 @@ class ZoomAutomation(Realm):
 
         try:
             logger.info("Attempting to fetch 'past' meeting data...")
-            self.participants_qos_last = self.get_participants_qos(
-                meeting_id, token, "past"
-            )
+            past_qos_data = self.get_participants_qos(meeting_id, token, "past")
 
             # If past data is empty, raise error to trigger fallback
-            if not self.participants_qos_last:
+            if not past_qos_data:
                 raise ValueError("Zoom API returned empty data for past meeting.")
 
         except Exception as e:
@@ -2509,15 +2507,14 @@ class ZoomAutomation(Realm):
                 f"Could not fetch 'past' data ({e}). Falling back to 'live' meeting data..."
             )
             try:
-                self.participants_qos_last = self.get_participants_qos(
-                    meeting_id, token, "live"
-                )
+                self.get_participants_qos(meeting_id, token, "live")
             except Exception as e_live:
                 logger.error(f"Failed to fetch both past and live data: {e_live}")
                 # Continue to allow empty JSON/CSV generation if strict failure isn't desired
 
         # 4. Summarize and Save JSON
-        self.live_data = self.summarize_audio_video(self.participants_qos_last)
+        raw_qos_data = self._get_raw_zoom_stats()
+        summary_data = self.summarize_audio_video(raw_qos_data)
 
         # Construct JSON filename
         if self.do_robo:
@@ -2527,11 +2524,11 @@ class ZoomAutomation(Realm):
         else:
             json_name = f"{meeting_id}_qos.json"
 
-        self.save_json(self.participants_qos_last, json_name)
+        self.save_json(raw_qos_data, json_name)
 
         # 5. Write to CSV (Integrated Logic)
         if self.do_robo or self.do_bs or self.api_stats_collection:
-            if self.live_data:
+            if summary_data:
                 logger.info("Writing final QoS data to CSV...")
 
                 # Fetch Wifi Data if needed
@@ -2542,7 +2539,7 @@ class ZoomAutomation(Realm):
                     except Exception as e:
                         logger.warning(f"Could not fetch WiFi data for CSV: {e}")
 
-                for hostname, stats in self.live_data.items():
+                for hostname, stats in summary_data.items():
                     final_filename = hostname
                     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     stats["timestamp"] = timestamp
@@ -2710,10 +2707,10 @@ class ZoomAutomation(Realm):
         self.report.set_table_dataframe(test_parameters)
         self.report.build_table()
 
+        device_data = self._get_report_device_data()
+
         if not self.download_csv:
             # we will use api response to generate report
-
-            device_data = self.summarize_audio_video(self.participants_qos_last)
             # print("========================================================")
             # print("device_data", device_data)
             self.report.set_table_title("Test Devices:")
@@ -2733,11 +2730,11 @@ class ZoomAutomation(Realm):
                 }
             )
         else:
+            csv_device_data = {}
             try:
                 # check if csv file is present
                 if not os.path.exists(os.path.join(os.getcwd(), self.csv_file_name)):
                     logger.error(f"File not found: {self.csv_file_name}")
-                    device_data = self.summarize_audio_video(self.participants_qos_last)
                     self.report.set_table_title("Test Devices:")
                     self.report.build_table_title()
                     device_details = pd.DataFrame(
@@ -2755,7 +2752,7 @@ class ZoomAutomation(Realm):
                         }
                     )
                 else:
-                    device_data = self.summarize_csv_audio_video(self.csv_file_name)
+                    csv_device_data = self.summarize_csv_audio_video(self.csv_file_name)
                     self.report.set_table_title("Test Devices:")
                     self.report.build_table_title()
                     device_details = pd.DataFrame(
@@ -2771,18 +2768,20 @@ class ZoomAutomation(Realm):
                                 for index, hostname in enumerate(self.real_sta_hostname)
                             ],
                             "Overall Audio MOS": [
-                                device_data.get(client, {}).get("audio_mos_avg") or 0
+                                csv_device_data.get(client, {}).get("audio_mos_avg")
+                                or 0
                                 for client in self.real_sta_hostname
                             ],
                             "Overall Video MOS": [
-                                device_data.get(client, {}).get("video_mos_avg") or 0
+                                csv_device_data.get(client, {}).get("video_mos_avg")
+                                or 0
                                 for client in self.real_sta_hostname
                             ],
                         }
                     )
             except Exception as e:
-                logger.error(f"Error while getting/reading: {self.csv_file_name}", e)
-                device_data = self.summarize_audio_video(self.participants_qos_last)
+                logger.error(f"Error while getting/reading: {self.csv_file_name}: {e}")
+                device_data = self._get_report_device_data()
                 self.report.set_table_title("Test Devices:")
                 self.report.build_table_title()
                 device_details = pd.DataFrame(
@@ -3359,6 +3358,40 @@ class ZoomAutomation(Realm):
 
         return str(participant_name).replace("(Guest)", "").strip()
 
+    def _get_raw_zoom_stats(self):
+        raw_qos = self.zoom_stats_data.get("raw_qos", [])
+        return raw_qos if isinstance(raw_qos, list) else []
+
+    def _set_raw_zoom_stats(self, raw_qos):
+        self.zoom_stats_data["raw_qos"] = list(raw_qos) if raw_qos else []
+        return self.zoom_stats_data["raw_qos"]
+
+    def _get_summary_zoom_stats(self):
+        summary = self.zoom_stats_data.get("summary", {})
+        return summary if isinstance(summary, dict) else {}
+
+    def _set_summary_zoom_stats(self, summary):
+        self.zoom_stats_data["summary"] = summary if isinstance(summary, dict) else {}
+        return self.zoom_stats_data["summary"]
+
+    def _get_report_device_data(self, source_data=None):
+        if source_data is not None:
+            if isinstance(source_data, dict):
+                return source_data
+            if isinstance(source_data, list):
+                return self.summarize_audio_video(source_data) if source_data else {}
+            return {}
+
+        summary_data = self._get_summary_zoom_stats()
+        if summary_data:
+            return summary_data
+
+        raw_qos_data = self._get_raw_zoom_stats()
+        if raw_qos_data:
+            return self.summarize_audio_video(raw_qos_data)
+
+        return {}
+
     def _match_summary_data_to_hostnames(self, summary, host_key=None):
         if not summary or not self.real_sta_hostname:
             return summary
@@ -3420,14 +3453,16 @@ class ZoomAutomation(Realm):
         for source_key, stats in summary.items():
             if source_key not in used_source_keys:
                 normalized_summary[source_key] = dict(stats)
-        self.live_data = normalized_summary
+        self._set_summary_zoom_stats(normalized_summary)
         if self.do_robo:
             self.save_json(
-                self.live_data,
+                self._get_summary_zoom_stats(),
                 f"{self.remote_login_url}_{self.current_cord}_{self.current_angle}_qos.json",
             )
         else:
-            self.save_json(self.live_data, f"{self.remote_login_url}_qos.json")
+            self.save_json(
+                self._get_summary_zoom_stats(), f"{self.remote_login_url}_qos.json"
+            )
         return normalized_summary
 
     def summarize_csv_audio_video(self, csv_path):
@@ -3536,6 +3571,10 @@ class ZoomAutomation(Realm):
         Returns:
             dict: {device_name: {metric_field_avg/max: value, ...}}
         """
+        if not json_data:
+            summary_data = self._get_summary_zoom_stats()
+            return summary_data if summary_data else {}
+
         metrics = ["audio_input", "audio_output", "video_input", "video_output"]
         fields = ["bitrate", "latency", "jitter", "avg_loss", "frame_rate"]
 
@@ -3725,30 +3764,53 @@ class ZoomAutomation(Realm):
         all_participants = []
         next_page_token = None
 
-        while True:
-            if next_page_token:
-                params["next_page_token"] = next_page_token
+        try:
+            while True:
+                if next_page_token:
+                    params["next_page_token"] = next_page_token
 
-            response = requests.get(url, headers=headers, params=params)
-            if response.status_code == 200:
-                data = response.json()
-                participants = data.get("participants", [])
-                all_participants.extend(participants)
-                next_page_token = data.get("next_page_token")
-                if not next_page_token:
-                    break
-            else:
-                raise Exception(
-                    f"Failed to get participants QoS: {response.status_code} {response.text}"
+                response = requests.get(url, headers=headers, params=params)
+                if response.status_code == 200:
+                    data = response.json()
+                    participants = data.get("participants", [])
+                    all_participants.extend(participants)
+                    next_page_token = data.get("next_page_token")
+                    if not next_page_token:
+                        break
+                else:
+                    raise Exception(
+                        f"Failed to get participants QoS: {response.status_code} {response.text}"
+                    )
+        except Exception as e:
+            cached_qos = self._get_raw_zoom_stats()
+            if cached_qos:
+                logger.warning(
+                    f"Failed to get participants QoS for {test_type}. Using last cached participant QoS data: {e}"
                 )
-        return all_participants
+                return cached_qos
+            raise
+
+        if all_participants:
+            return self._set_raw_zoom_stats(all_participants)
+
+        cached_qos = self._get_raw_zoom_stats()
+        if cached_qos:
+            logger.warning(
+                f"Zoom API returned no participant QoS data for {test_type}. Using last cached participant QoS data."
+            )
+            return cached_qos
+
+        logger.warning(
+            f"Zoom API returned no participant QoS data for {test_type} and no cached data is available."
+        )
+        return []
 
     def save_json(self, data, filename):
         os.makedirs("zoom_api_responses", exist_ok=True)
         path = os.path.join("zoom_api_responses", filename)
         with open(path, "w") as f:
             json.dump(data, f, indent=2)
-        # logger.info(f"Saved data to {path}")
+        logger.info(f"Saved data to {path}")
 
     def run_robo_test(self):
         for coordinate in self.coordinates_list:
@@ -4093,8 +4155,7 @@ class ZoomAutomation(Realm):
                     try:
                         with open(found_files[0], "r") as f:
                             raw_data = json.load(f)
-                        # Parse data to get per-device averages
-                        device_data = self.summarize_audio_video(raw_data)
+                        device_data = self._get_report_device_data(raw_data)
                     except Exception as e:
                         logger.error(f"Error reading {found_files[0]}: {e}")
                         self.report.set_text(f"Error loading data for {coord}/{angle}")
@@ -4293,10 +4354,10 @@ class ZoomAutomation(Realm):
             token = self.get_access_token(
                 self.account_id, self.client_id, self.client_secret
             )
-            self.participants_qos_last = self.get_participants_qos(
-                self.remote_login_url, token, "live"
+            self._set_raw_zoom_stats(
+                self.get_participants_qos(self.remote_login_url, token, "live")
             )
-            self.summarize_audio_video(self.participants_qos_last)
+            self.summarize_audio_video(self._get_raw_zoom_stats())
 
         except Exception as e:
             logger.info(
