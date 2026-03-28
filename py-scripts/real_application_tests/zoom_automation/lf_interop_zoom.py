@@ -4026,6 +4026,16 @@ class ZoomAutomation(Realm):
 
         self.meet_link = f"https://us04web.zoom.us/j/{self.remote_login_url}?pwd={self.remote_login_passwd}"
         logger.info(f"Meet link for android devices: {self.meet_link}")
+
+        # Save meet link in a text file under self.path
+        try:
+            meet_link_file = os.path.join(self.path, "meet_link.txt")
+            with open(meet_link_file, "w") as f:
+                f.write(self.meet_link + "\n")
+            logger.info(f"Meet link saved to: {meet_link_file}")
+        except Exception as e:
+            logger.error(f"Failed to save meet link file: {e}")
+
         self.login_completed = False
 
     def create_participants(self):
@@ -5144,4 +5154,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
