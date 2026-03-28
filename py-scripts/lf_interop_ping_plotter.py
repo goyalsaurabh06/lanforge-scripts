@@ -238,13 +238,13 @@ class Ping(Realm):
                 sniff_channel="44",
                 moni_name="moni11w0"
             )
-            monitor_created = self.sniffer_obj.create_monitor()
+            # monitor_created = self.sniffer_obj.create_monitor()
 
-            if not monitor_created:
-                print("FAILED TO create Monitor")
-                exit()
+            # if not monitor_created:
+            #     print("FAILED TO create Monitor")
+            #     exit()
 
-            print("Monitor created")
+            # print("Monitor created")
 
     def change_target_to_ip(self):
 
@@ -1949,9 +1949,9 @@ class Ping(Realm):
                 # sniffer.close()
 
             finally:
-                sniffer.stop_sniff()
-                sniffer.fetch_pcap(remote_pcap_path, "./roaming.pcap")
-                sniffer.close()
+                # sniffer.stop_sniff()
+                # sniffer.fetch_pcap(remote_pcap_path, "./roaming.pcap")
+                # sniffer.close()
                 path = "./roaming.pcap"
                 if os.path.isfile(path):
                     print("File exists")
