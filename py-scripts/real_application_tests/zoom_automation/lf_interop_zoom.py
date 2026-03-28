@@ -67,6 +67,8 @@ import re
 import glob
 from collections import Counter
 import signal
+import platform
+import subprocess
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
@@ -263,6 +265,43 @@ class ZoomAutomation(Realm):
             logger.info(f"Robo coordinates list: {self.robo_obj.coordinate_list}")
         self.successful_coords = []
         self.failed_coords = []
+        self.is_csv_available = False
+
+    def stop_previous_flask_server(self):
+        """
+        Forcefully kills any process currently listening on port 5000 (Linux/Darwin only).
+        """
+        port = 5000
+        logger.info(
+            f"Checking for processes using port {port} to forcefully kill them..."
+        )
+
+        current_os = platform.system()
+
+        try:
+            if current_os in ["Linux", "Darwin"]:
+                # Find PID on Linux/Mac using lsof
+                command = f"lsof -t -i:{port}"
+                try:
+                    output = subprocess.check_output(command, shell=True, text=True)
+                    pids = output.strip().split("\n")
+                    for pid in pids:
+                        if pid.strip():
+                            logger.info(
+                                f"Killing process {pid} on port {port} ({current_os})..."
+                            )
+                            os.kill(int(pid.strip()), signal.SIGKILL)
+                except subprocess.CalledProcessError:
+                    logger.info(f"No process found using port {port} on {current_os}.")
+                    logger.info(f"Port {port} is clear, ready to start Flask server.")
+                    pass
+            else:
+                logger.warning(
+                    f"Unsupported OS: {current_os}. Expected Linux or Darwin. Cannot automatically clear port {port}."
+                )
+
+        except Exception as e:
+            logger.warning(f"Error while trying to clear port {port}: {e}")
 
     def move_ping_logs(self):
         source_dir = os.path.join(self.path, "ping_logs")
@@ -584,6 +623,7 @@ class ZoomAutomation(Realm):
                     writer = csv.writer(f)
                     if rows:
                         writer.writerows(rows)
+                self.is_csv_available = True
 
                 return (
                     jsonify(
@@ -792,6 +832,8 @@ class ZoomAutomation(Realm):
         return True, created_cx, created_endp
 
     def handle_flask_server(self):
+        self.stop_previous_flask_server()
+        time.sleep(5)  # Ensure the port is released before starting the server
         flask_thread = threading.Thread(target=self.start_flask_server)
         flask_thread.daemon = True
         flask_thread.start()
@@ -1238,14 +1280,26 @@ class ZoomAutomation(Realm):
                     logger.error(f"Failed to reach the {coordinate}")
                     self.failed_coords.append(coordinate)
                     sys.exit()
-                time.sleep(10)
-
-            logger.info("All coordinates completed — stopping Band-Steering Test")
+                # time.sleep(10)
+            if self.do_bs:
+                logger.info("All coordinates completed — stopping Band-Steering Test")
+            elif self.do_roam:
+                logger.info("All coordinates completed — stopping Roaming Test")
             self.stop_signal = True
             time.sleep(5)
-            while not self.check_gen_cx():
+
+            count = 0
+            while not self.is_csv_available:
+                count += 1
+                if (
+                    count > 60
+                ):  # Wait for a maximum of 5 minutes for the CSV to be available
+                    logger.warning(
+                        "CSV data from Zoom dashboard is not available after waiting for 5 minutes. Proceeding with report generation without CSV data."
+                    )
+                    break
                 logger.info(
-                    "Waiting for all the Gen Cx to be Stopped/NO-CX/WAITING before proceeding with the Report generation and cleanup"
+                    "Waiting for CSV data from Zoom dashboard to be available before proceeding with the Report generation and cleanup"
                 )
                 time.sleep(5)
 
