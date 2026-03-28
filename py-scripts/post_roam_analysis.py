@@ -2,6 +2,7 @@ import pyshark
 import csv
 import json
 import os
+import shutil
 
 class RoamAnalyzer:
 
@@ -10,7 +11,7 @@ class RoamAnalyzer:
         self.clients = clients
         self.ap_bssids = set([b.lower() for b in ap_bssids])
         self.tshark_path = tshark_path
-        self.results = {name: [] for name in clients}
+        self.client_names = {name: [] for name in clients}
 
     def analyze(self):
         for name, mac in self.clients.items():
@@ -119,7 +120,7 @@ class RoamAnalyzer:
                         roam_time_tsf_us = tsf - start_tsf
                         roam_time_tsf_ms = roam_time_tsf_us / 1000
                     #  appending data results dict
-                    self.results[name].append({
+                    self.client_names[name].append({
                         "from_bssid": from_bssid,
                         "to_bssid": to_bssid,
                         "start_time": start_time,
@@ -156,8 +157,8 @@ class RoamAnalyzer:
             output_dir = "client_roaming_csvs"
 
         os.makedirs(output_dir, exist_ok=True)
-
-        for name in self.results:
+        print(self.client_names)
+        for name in self.client_names:
             filename = os.path.join(output_dir, f"{name}_roam_times.csv")
 
             with open(filename, "w", newline="") as f:
@@ -173,9 +174,20 @@ class RoamAnalyzer:
                 )
 
                 writer.writeheader()
-                writer.writerows(self.results[name])
+                writer.writerows(self.client_names[name])
 
             print(f"Saved {filename}")
+
+
+    def save_pcap_to_dir(self, pcap_path, path):
+
+        filename = os.path.basename(pcap_path)
+
+        dest_path = os.path.join(path, filename)
+
+        shutil.copy2(pcap_path, dest_path)
+
+        print(f"PCAP saved to {dest_path}")
 
 if __name__ == "__main__":
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -202,3 +214,4 @@ if __name__ == "__main__":
 
     analyzer.analyze()
     analyzer._write_csv(path = "/home/lanforge/local/interop-webGUI/results/dukwdh")
+    analyzer.save_pcap_to_dir(PCAP_PATH, "/home/lanforge/local/interop-webGUI/results/ping123")

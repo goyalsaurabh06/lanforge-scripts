@@ -1163,7 +1163,7 @@ class Ping(Realm):
             report.set_table_dataframe(individual_report_df)
             report.build_table()
 
-        if self.do_bandsteering:
+        if self.do_bandsteering and not self.do_roaming:
             self.get_bandsteering_stats(report)
 
         # packets sent vs received vs dropped
@@ -1983,6 +1983,7 @@ class Ping(Realm):
 
                 analyzer.analyze()
                 analyzer._write_csv(self.ui_report_dir)
+                analyzer.save_pcap_to_dir(PCAP_PATH, self.ui_report_dir)
                 self.generate_report()
                 # self.generate_report()
                 if self.do_webUI:
