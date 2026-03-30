@@ -1845,7 +1845,49 @@ class Ping(Realm):
 
 
 
+    def generate_roam_report(self, path, report_obj):
+        roam_dir = os.path.join(path, "client_roaming_csvs")
 
+        if not os.path.isdir(roam_dir):
+            logger.info(
+                f"Roaming CSV directory not found: {roam_dir}. Skipping roam report section."
+            )
+            return
+
+        csv_files = sorted(
+            f
+            for f in os.listdir(roam_dir)
+            if f.lower().endswith(".csv") and f.lower() != "all_clients_disconnect.csv"
+        )
+
+        if not csv_files:
+            logger.info(
+                f"No roaming CSV files found in: {roam_dir}. Skipping roam report section."
+            )
+            return
+
+        report_obj.set_table_title("Client Roaming Details")
+        report_obj.build_table_title()
+
+        for csv_file in csv_files:
+            csv_path = os.path.join(roam_dir, csv_file)
+            try:
+                df = pd.read_csv(csv_path)
+            except Exception as e:
+                logger.error(f"Failed to read roaming CSV '{csv_path}': {e}")
+                continue
+
+            # Extract client name: "vivox5_roam_times.csv" -> "vivox5"
+            client_name = os.path.splitext(csv_file)[0].split("_")[0]
+
+            # report_obj.set_custom_html("<div style='page-break-before: always;'></div>")
+            # report_obj.build_custom()
+
+            report_obj.set_table_title(f"{client_name} - Roaming Data")
+            report_obj.build_table_title()
+
+            report_obj.set_table_dataframe(df)
+            report_obj.build_table()
 
     def perform_robo(self,Devices,config_devices,group_device_map):
         logging.info("Performing test using robo")
@@ -1983,6 +2025,7 @@ class Ping(Realm):
 
                 analyzer.analyze()
                 analyzer._write_csv(self.ui_report_dir)
+                analyzer._write_disconnect_csv(self.ui_report_dir)
                 analyzer.save_pcap_to_dir(PCAP_PATH, self.ui_report_dir)
                 self.generate_report()
                 # self.generate_report()

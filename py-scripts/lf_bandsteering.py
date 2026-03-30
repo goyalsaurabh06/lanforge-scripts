@@ -17,6 +17,8 @@ import threading
 from lf_report import lf_report
 from lf_graph import lf_bar_graph
 from collections import Counter
+from candela_base_class import initialize_sniffer_obj, RemoteSniffer
+from post_roam_analysis import RoamAnalyzer
 througput_test=importlib.import_module("py-scripts.lf_interop_throughput")
 realm = importlib.import_module("py-json.realm")
 logger = logging.getLogger(__name__)
@@ -27,7 +29,7 @@ class ROAMThroughput(RobotClass):
     def __init__(self, robo_ip="", coordinates="", total_cycles=-1,
                  ssid="", security="", mgr_ip="", port="8080",
                  duration=60, test_name="", upstream_port="eth1",
-                 upload="2560", download="2560", traffic_type=None, packet_size="-1", device_list=None, dowebgui=False, result_dir=None, bssids="",duration_to_skip="1"):
+                 upload="2560", download="2560", traffic_type=None, packet_size="-1", device_list=None, dowebgui=False, result_dir=None, bssids="",duration_to_skip="1",do_roaming=False):
         super().__init__()
         self.robo_ip = robo_ip
         self.coordinates = coordinates
@@ -57,12 +59,23 @@ class ROAMThroughput(RobotClass):
         self.dowebgui = dowebgui
         self.test_name = test_name
         self.bssids = [b.strip() for b in bssids.split(",")] if bssids else []
+        self.do_roaming = do_roaming
         # open("robot_x_y.csv", "w").write("timestamp,x,y\n")
         self.perform_throughput_test()
         logger.info("Moving robot to first coordinate to start the test")
         self.move_to_coordinate(self.coordinates_list[0])
+        self.sniffer_obj = None
+        print(self.mgr_ip, self.port)
+        self.sniffer_obj = initialize_sniffer_obj(
+            mgr=self.mgr_ip,
+            port=self.port,
+            sniff_radio="1.2.wiphy1",
+            sniff_channel="44",
+            moni_name="moni11w0"
+            )
         self.perform_roam_robot()
         self.time_to_reach=int(duration_to_skip)*60
+
 
     def get_bandsteering_stats(self, report=None, df=None, device_name=None):
         """
@@ -228,29 +241,97 @@ class ROAMThroughput(RobotClass):
             with open(file_path, "w") as f:
                 f.write("Sequence No.,Timestamp,MAC,Channel,BSSID,Signal,Robot x,Robot y,From Coordinate,To Coordinate\n")
 
+    # def perform_roam_robot(self):
+    #     try:
+    #         self.create_testname_folder()
+    #         self.roam_count = 0
+    #         first_coordinate = self.coordinates_list[0]
+    #         test_stopped_by_user = False
+    #         # skipped_list = []
+    #         # for coordinate in self.coordinates_list:
+    #         #     matched,abort = self.move_to_coordinate(coordinate)
+    #         #     if matched:
+    #         #         break
+    #         #     skipped_list.append(coordinate)
+    #         # if(len(self.coordinates_list) == len(skipped_list)):
+    #         #     logging.info("It couldnt reach any point so ending the test")
+    #         #     return 0
+    #         # coordinate_list_with_robo = [self.coordinates_list[(i) % len(self.coordinates_list)] for i in range(int(self.total_cycles) * len(self.coordinates_list))]
+    #         # coordinate_list_with_robo = [x for x in coordinate_list_with_robo if not (x in skipped_list and not skipped_list.remove(x))]
+    #         self.total_cycles=self.total_cycles
+    #         self.coordinate_list = self.coordinates_list
+    #         coordinate_list_with_robo = self.get_coordinates_list()
+    #         # coordinate_list_with_robo = [self.coordinates_list[(i) % len(self.coordinates_list)] for i in range(int(self.total_cycles) * len(self.coordinates_list))]
+    #         curr_cycle = 1
+    #         logger.info("Starting cycle %s", curr_cycle)
+    #         for coordinate in coordinate_list_with_robo:
+    #             pause, stopped, all_df = self.wait_for_battery(monitor_function=self.monitor_ap_bssid)
+    #             # print("Battery pause:", pause, "stopped:", stopped)
+    #             if stopped:
+    #                 break
+    #             # if pause:
+    #             #     self.throughput_tester.start_specific(self.created_cx_lists_keys)
+    #             matched, abort =self.move_to_coordinate(coordinate, monitor_function=self.monitor_ap_bssid)
+    #             if not matched:
+    #                 continue
+    #             if coordinate==self.coordinates_list[0]:
+    #                 curr_cycle += 1
+    #                 if curr_cycle > self.total_cycles:
+    #                     logger.info("Completed all {} cycles".format(self.total_cycles))
+    #                 else:
+    #                     logger.info("current cycle {}".format(curr_cycle))
+    #             if abort:
+    #                 logger.info("Testing stopped by user")
+    #                 test_stopped_by_user = True
+    #                 break
+    #         # pause, stopped = self.wait_for_battery()
+    #         # if pause:
+    #         #     self.throughput_tester.start_specific(self.created_cx_lists_keys)
+    #         # matched, abort = self.move_to_coordinate(first_coordinate, monitor_function=self.monitor_ap_bssid)
+
+
+    #         self.roam_count += 1
+    #         # logger.info("Completed roam cycle %s", self.roam_count)
+    #         self.monitor_ap_bssid(test_status="STOPPED")
+
+    #     except KeyboardInterrupt:
+    #         logger.info("Test interrupted by user")
+    #     finally:
+    #         self.generate_report()
+    #         logger.info("Test completed")
+
+
+
     def perform_roam_robot(self):
+        sniffer = None
+        remote_pcap_path = None
         try:
             self.create_testname_folder()
             self.roam_count = 0
             first_coordinate = self.coordinates_list[0]
             test_stopped_by_user = False
-            # skipped_list = []
-            # for coordinate in self.coordinates_list:
-            #     matched,abort = self.move_to_coordinate(coordinate)
-            #     if matched:
-            #         break
-            #     skipped_list.append(coordinate)
-            # if(len(self.coordinates_list) == len(skipped_list)):
-            #     logging.info("It couldnt reach any point so ending the test")
-            #     return 0
-            # coordinate_list_with_robo = [self.coordinates_list[(i) % len(self.coordinates_list)] for i in range(int(self.total_cycles) * len(self.coordinates_list))]
-            # coordinate_list_with_robo = [x for x in coordinate_list_with_robo if not (x in skipped_list and not skipped_list.remove(x))]
             self.total_cycles=self.total_cycles
             self.coordinate_list = self.coordinates_list
             coordinate_list_with_robo = self.get_coordinates_list()
-            # coordinate_list_with_robo = [self.coordinates_list[(i) % len(self.coordinates_list)] for i in range(int(self.total_cycles) * len(self.coordinates_list))]
             curr_cycle = 1
             logger.info("Starting cycle %s", curr_cycle)
+            
+            monitor_created = self.sniffer_obj.create_monitor()
+            if not monitor_created:
+                print("FAILED TO create Monitor")
+                exit()
+            sniffer = RemoteSniffer(
+                "10.17.1.43",
+                "lanforge",
+                password="lanforge",
+                moni_name="moni11w0",
+                pcap_name="roaming.pcap"
+            )
+            sniffer.connect()
+            remote_pcap_path = sniffer.start_sniff("/home/lanforge")
+
+            print("Sniffing started")
+            print("Remote pcap path:", remote_pcap_path)
             for coordinate in coordinate_list_with_robo:
                 pause, stopped, all_df = self.wait_for_battery(monitor_function=self.monitor_ap_bssid)
                 # print("Battery pause:", pause, "stopped:", stopped)
@@ -271,10 +352,6 @@ class ROAMThroughput(RobotClass):
                     logger.info("Testing stopped by user")
                     test_stopped_by_user = True
                     break
-            # pause, stopped = self.wait_for_battery()
-            # if pause:
-            #     self.throughput_tester.start_specific(self.created_cx_lists_keys)
-            # matched, abort = self.move_to_coordinate(first_coordinate, monitor_function=self.monitor_ap_bssid)
 
 
             self.roam_count += 1
@@ -284,6 +361,9 @@ class ROAMThroughput(RobotClass):
         except KeyboardInterrupt:
             logger.info("Test interrupted by user")
         finally:
+            sniffer.stop_sniff()
+            sniffer.fetch_pcap(remote_pcap_path, "./roaming.pcap")
+            sniffer.close()
             self.generate_report()
             logger.info("Test completed")
 
@@ -541,8 +621,7 @@ def main():
     parser.add_argument('--result_dir', help='Specify the result dir to store the runtime logs', default='')
     parser.add_argument('--bssids', type=str, help='Comma separated list of BSSIDs to be used for the test', default="")
     parser.add_argument('--duration_to_skip', help='Robot wait duration in seconds at obstacle', default="1")
-
-
+    parser.add_argument('--do_roaming', help="If true will execute roaming test", action='store_true')
     args = parser.parse_args(remaining_args)
 
     ROAMThroughput(
@@ -563,7 +642,8 @@ def main():
         dowebgui=args.dowebgui,
         result_dir=args.result_dir,
         bssids=args.bssids,
-        duration_to_skip=args.duration_to_skip
+        duration_to_skip=args.duration_to_skip,
+        do_roaming=args.do_roaming
     )
 
 

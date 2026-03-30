@@ -1290,10 +1290,15 @@ class ZoomAutomation(Realm):
 
                 logger.info("Sniffing started")
                 logger.info("Remote pcap path: %s", remote_pcap_path)
+                if self.do_bs:
+                    logger.info(
+                        f"Band-Steering Test coordinates to be visited: {self.bs_coord_result}"
+                    )
+                elif self.do_roam:
+                    logger.info(
+                        f"Roaming Test coordinates to be visited: {self.bs_coord_result}"
+                    )
 
-                logger.info(
-                    f"Band-Steering Test coordinates to be visited: {self.bs_coord_result}"
-                )
                 for coordinate in self.bs_coord_result:
                     logger.info(f"Moving robot to coordinate: {coordinate}")
                     if not self.to_cord:
@@ -1378,6 +1383,7 @@ class ZoomAutomation(Realm):
 
                 analyzer.analyze()
                 analyzer._write_csv(path=self.path)
+                analyzer._write_disconnect_csv(path=self.path)
 
         else:
             while datetime.now(self.tz) < self.end_time or not self.check_gen_cx():
@@ -2826,7 +2832,7 @@ class ZoomAutomation(Realm):
                         "Date": time.strftime("%d-%m-%Y", time.localtime()),
                         "Devices Used": f"W({self.windows}),L({self.linux}),M({self.mac}),A({self.android})",
                         # "Zoom Meeting ID": self.remote_login_url,
-                        "Test Duration": to_hms(self.duration),
+                        # "Test Duration": to_hms(self.duration),
                         "EMAIL ID": self.signin_email,
                         "PASSWORD": self.signin_passwd,
                         "HOST": self.real_sta_list[0],
@@ -2883,6 +2889,7 @@ class ZoomAutomation(Realm):
                     )
                 else:
                     csv_device_data = self.summarize_csv_audio_video(self.csv_file_name)
+                    device_data = csv_device_data
                     self.report.set_table_title("Test Devices:")
                     self.report.build_table_title()
                     device_details = pd.DataFrame(
@@ -3418,6 +3425,11 @@ class ZoomAutomation(Realm):
             self.report.html += self.report.dataframe_html
         if self.do_bs:
             self.add_bandsteering_report_section(report=self.report)
+        try:
+            if self.do_roam:
+                self.generate_roam_report(path=self.path, report_obj=self.report)
+        except Exception as e:
+            logger.error(f"Error generating roam report: {e}")
         self.report.write_html()
         self.report.write_pdf(_page_size="Legal", _orientation="Landscape")
         for client in self.real_sta_hostname:
@@ -3434,6 +3446,50 @@ class ZoomAutomation(Realm):
             ),
             self.report_path_date_time,
         )
+
+    def generate_roam_report(self, path, report_obj):
+        roam_dir = os.path.join(path, "client_roaming_csvs")
+
+        if not os.path.isdir(roam_dir):
+            logger.info(
+                f"Roaming CSV directory not found: {roam_dir}. Skipping roam report section."
+            )
+            return
+
+        csv_files = sorted(
+            f
+            for f in os.listdir(roam_dir)
+            if f.lower().endswith(".csv") and f.lower() != "all_clients_disconnect.csv"
+        )
+
+        if not csv_files:
+            logger.info(
+                f"No roaming CSV files found in: {roam_dir}. Skipping roam report section."
+            )
+            return
+
+        report_obj.set_table_title("Client Roaming Details")
+        report_obj.build_table_title()
+
+        for csv_file in csv_files:
+            csv_path = os.path.join(roam_dir, csv_file)
+            try:
+                df = pd.read_csv(csv_path)
+            except Exception as e:
+                logger.error(f"Failed to read roaming CSV '{csv_path}': {e}")
+                continue
+
+            # Extract client name: "vivox5_roam_times.csv" -> "vivox5"
+            client_name = os.path.splitext(csv_file)[0].split("_")[0]
+
+            # report_obj.set_custom_html("<div style='page-break-before: always;'></div>")
+            # report_obj.build_custom()
+
+            report_obj.set_table_title(f"{client_name} - Roaming Data")
+            report_obj.build_table_title()
+
+            report_obj.set_table_dataframe(df)
+            report_obj.build_table()
 
     def parse_value(self, value):
         """Convert Zoom string values to float. Handles kbps, ms, and %."""
