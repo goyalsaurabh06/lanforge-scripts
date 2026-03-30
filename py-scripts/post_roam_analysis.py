@@ -3,7 +3,7 @@ import csv
 import json
 import os
 import shutil
-
+from datetime import datetime
 class RoamAnalyzer:
 
     def __init__(self, pcap_file, clients, ap_bssids, tshark_path="/usr/bin/tshark"):
@@ -13,18 +13,19 @@ class RoamAnalyzer:
         self.tshark_path = tshark_path
         self.client_names = {name: [] for name in clients}
 
+        # ✅ store disconnect events (deauth + disassoc)
+        self.disconnect_events = {name: [] for name in clients}
+
     def analyze(self):
         for name, mac in self.clients.items():
             print(f"\nProcessing {name}: {mac}")
             self._process_client(name, mac)
 
-        # self._write_csv()
-
     def _process_client(self, name, mac):
 
         cap = pyshark.FileCapture(
             self.pcap_file,
-            display_filter=f"wlan.addr == {mac} && (wlan.fc.type_subtype == 0 or  wlan.fc.type_subtype ==1 or  wlan.fc.type_subtype ==2 or  wlan.fc.type_subtype ==3 or  wlan.fc.type_subtype == 11 or wlan.fc.type_subtype == 10 or eapol)",
+            display_filter=f"wlan.addr == {mac} && (wlan.fc.type_subtype == 0 or wlan.fc.type_subtype == 1 or wlan.fc.type_subtype == 2 or wlan.fc.type_subtype == 3 or wlan.fc.type_subtype == 11 or wlan.fc.type_subtype == 10 or wlan.fc.type_subtype == 12 or wlan.fc.type_subtype == 10 or eapol)",
             tshark_path=self.tshark_path
         )
 
@@ -36,12 +37,13 @@ class RoamAnalyzer:
         to_bssid = None
         auth_seen = False
 
+        roam_count = 1
+
         for pkt in cap:
             try:
-                # for management frame
                 if not hasattr(pkt, 'wlan'):
                     continue
-                # 
+
                 ts = float(pkt.sniff_timestamp)
 
                 tsf = None
@@ -59,7 +61,6 @@ class RoamAnalyzer:
                 if last_bssid is None:
                     last_bssid = current_bssid
 
-                # to check if it is valid roam, to check whther it is in current ap list 
                 is_valid_roam = (
                     current_bssid in self.ap_bssids and
                     (
@@ -70,75 +71,75 @@ class RoamAnalyzer:
 
                 if hasattr(pkt.wlan, 'fc_type_subtype'):
                     subtype = pkt.wlan.fc_type_subtype
-                    #  to check if it is auth request
-                    if subtype == '0x000b' and is_valid_roam:
 
+                    # ✅ DEAUTH
+                    if subtype == '0x000c':
+                        self.disconnect_events[name].append({
+                            "event_type": "deauth",
+                            "bssid": current_bssid,
+                            "timestamp": ts
+                        })
+
+                    # ✅ DISASSOC
+                    elif subtype == '0x000a':
+                        self.disconnect_events[name].append({
+                            "event_type": "disassoc",
+                            "bssid": current_bssid,
+                            "timestamp": ts
+                        })
+
+                    # AUTH
+                    if subtype == '0x000b' and is_valid_roam:
                         from_bssid = last_bssid
                         to_bssid = current_bssid
-
-                        # print(f"\n{name} ROAM (AUTH)")
-                        # print(f"{from_bssid} → {to_bssid}")
 
                         if state is None:
                             state = "STARTED"
                             start_time = ts
                             start_tsf = tsf
                             auth_seen = True
-                            # print(f"{name} AUTH START at {ts}")
-                    # to check if it is ressoc request
-                    elif subtype == '0x0002' and is_valid_roam:
 
+                    # REASSOC
+                    elif subtype == '0x0002' and is_valid_roam:
                         from_bssid = last_bssid
                         to_bssid = current_bssid
-
-                        # print(f"\n{name} ROAM (REASSOC)")
-                        # print(f"{from_bssid} → {to_bssid}")
 
                         if state is None and not auth_seen:
                             state = "STARTED"
                             start_time = ts
                             start_tsf = tsf
-                            # print(f"{name} REASSOC START at {ts}")
 
-                # to get the eapol message whether it is 4
+                # EAPOL message 4 → roam end
                 if (
                     hasattr(pkt, 'eapol') and
                     hasattr(pkt.eapol, 'wlan_rsna_keydes_msgnr') and
                     str(pkt.eapol.wlan_rsna_keydes_msgnr) == '4' and
                     state == "STARTED" and
-                    current_bssid in self.ap_bssids   
+                    current_bssid in self.ap_bssids
                 ):
-
-                    # print(f"{name} END at {ts}")
-
+                    dest_addr = None
+                    if hasattr(pkt.wlan, 'da'):
+                        dest_addr = pkt.wlan.da.lower()
                     roam_time = ts - start_time
-
-                    roam_time_tsf_us = None
-                    roam_time_tsf_ms = None
-
-                    if start_tsf and tsf:
-                        roam_time_tsf_us = tsf - start_tsf
-                        roam_time_tsf_ms = roam_time_tsf_us / 1000
-                    #  appending data results dict
+                    start_time_hr = datetime.fromtimestamp(start_time).strftime('%Y-%m-%d %H:%M:%S.%f')
+                    end_time_hr = datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S.%f')
                     self.client_names[name].append({
+                        "roam_no": roam_count,
                         "from_bssid": from_bssid,
                         "to_bssid": to_bssid,
-                        "start_time": start_time,
-                        "end_time": ts,
+                        "start_time": start_time_hr,
+                        "end_time": end_time_hr,
                         "roam_time_sec": roam_time,
-                        # "start_tsf": start_tsf,
-                        # "end_tsf": tsf,
-                        # "roam_time_tsf_us": roam_time_tsf_us,
-                        # "roam_time_tsf_ms": roam_time_tsf_ms,
-                        # "start_type": "auth" if auth_seen else "reassoc"
+                        "MLD bssid": dest_addr if dest_addr not in self.ap_bssids else "",
                     })
-                    #  setting the these times to be none to capture new roam times.
+
+                    roam_count += 1
+
                     state = None
                     start_time = None
                     start_tsf = None
                     auth_seen = False
 
-                # Always update last BSSID
                 last_bssid = current_bssid
 
             except Exception as e:
@@ -146,18 +147,15 @@ class RoamAnalyzer:
 
         cap.close()
 
-
-
     def _write_csv(self, path=""):
 
-        # If path is provided, create subfolder
         if path:
             output_dir = os.path.join(path, "client_roaming_csvs")
         else:
             output_dir = "client_roaming_csvs"
 
         os.makedirs(output_dir, exist_ok=True)
-        print(self.client_names)
+
         for name in self.client_names:
             filename = os.path.join(output_dir, f"{name}_roam_times.csv")
 
@@ -165,11 +163,13 @@ class RoamAnalyzer:
                 writer = csv.DictWriter(
                     f,
                     fieldnames=[
+                        "roam_no",
                         "from_bssid",
                         "to_bssid",
                         "start_time",
                         "end_time",
                         "roam_time_sec",
+                        "MLD bssid"
                     ]
                 )
 
@@ -178,29 +178,60 @@ class RoamAnalyzer:
 
             print(f"Saved {filename}")
 
+    # ✅ Combined disconnect CSV (deauth + disassoc)
+    def _write_disconnect_csv(self, path=""):
 
-    def save_pcap_to_dir(self, pcap_path, path):
+        if path:
+            output_dir = os.path.join(path, "client_roaming_csvs")
+        else:
+            output_dir = "client_roaming_csvs"
 
-        filename = os.path.basename(pcap_path)
+        os.makedirs(output_dir, exist_ok=True)
 
-        dest_path = os.path.join(path, filename)
+        filename = os.path.join(output_dir, "all_clients_disconnect.csv")
 
-        shutil.copy2(pcap_path, dest_path)
+        with open(filename, "w", newline="") as f:
+            writer = csv.DictWriter(
+                f,
+                fieldnames=[
+                    "client_name",
+                    "event_type",
+                    "bssid",
+                    "timestamp"
+                ]
+            )
 
-        print(f"PCAP saved to {dest_path}")
+            writer.writeheader()
+
+            all_events = []
+            for name in self.disconnect_events:
+                for event in self.disconnect_events[name]:
+                    all_events.append({
+                        "client_name": name,
+                        "event_type": event["event_type"],
+                        "bssid": event["bssid"],
+                        "timestamp": event["timestamp"]
+                    })
+
+            all_events.sort(key=lambda x: x["timestamp"])
+
+            writer.writerows(all_events)
+
+        print(f"Saved {filename}")
+
 
 if __name__ == "__main__":
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
     CONFIG_PATH = os.path.join(BASE_DIR, "../..", "candela_roaming_client_ap.json")
     CONFIG_PATH = os.path.abspath(CONFIG_PATH)
-    PCAP_PATH = os.path.join(BASE_DIR,"../..", "10_iterations_5devices_2.pcap")
-    print(PCAP_PATH)
+    # PCAP_PATH = os.path.join(BASE_DIR, "Day2_trail1_issue.pcapng")
+    PCAP_PATH = os.path.join(BASE_DIR, "10_iterations_5devices_2.pcap")
 
     def load_config(path):
         with open(path, "r") as f:
             return json.load(f)
-            
+
     config = load_config(CONFIG_PATH)
 
     clients = config["clients"]
@@ -213,5 +244,5 @@ if __name__ == "__main__":
     )
 
     analyzer.analyze()
-    analyzer._write_csv(path = "/home/lanforge/local/interop-webGUI/results/dukwdh")
-    analyzer.save_pcap_to_dir(PCAP_PATH, "/home/lanforge/local/interop-webGUI/results/ping123")
+    analyzer._write_csv()
+    analyzer._write_disconnect_csv()
