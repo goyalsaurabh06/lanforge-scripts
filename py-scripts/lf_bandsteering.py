@@ -300,6 +300,49 @@ class ROAMThroughput(RobotClass):
     #         self.generate_report()
     #         logger.info("Test completed")
 
+    def generate_roam_report(self, path, report_obj):
+        roam_dir = os.path.join(path, "client_roaming_csvs")
+
+        if not os.path.isdir(roam_dir):
+            logger.info(
+                f"Roaming CSV directory not found: {roam_dir}. Skipping roam report section."
+            )
+            return
+
+        csv_files = sorted(
+            f
+            for f in os.listdir(roam_dir)
+            if f.lower().endswith(".csv") and f.lower() != "all_clients_disconnect.csv"
+        )
+
+        if not csv_files:
+            logger.info(
+                f"No roaming CSV files found in: {roam_dir}. Skipping roam report section."
+            )
+            return
+
+        report_obj.set_table_title("Client Roaming Details")
+        report_obj.build_table_title()
+
+        for csv_file in csv_files:
+            csv_path = os.path.join(roam_dir, csv_file)
+            try:
+                df = pd.read_csv(csv_path)
+            except Exception as e:
+                logger.error(f"Failed to read roaming CSV '{csv_path}': {e}")
+                continue
+
+            # Extract client name: "vivox5_roam_times.csv" -> "vivox5"
+            client_name = os.path.splitext(csv_file)[0].split("_")[0]
+
+            # report_obj.set_custom_html("<div style='page-break-before: always;'></div>")
+            # report_obj.build_custom()
+
+            report_obj.set_table_title(f"{client_name} - Roaming Data")
+            report_obj.build_table_title()
+
+            report_obj.set_table_dataframe(df)
+            report_obj.build_table()
 
 
     def perform_roam_robot(self):
@@ -364,8 +407,32 @@ class ROAMThroughput(RobotClass):
             sniffer.stop_sniff()
             sniffer.fetch_pcap(remote_pcap_path, "./roaming.pcap")
             sniffer.close()
+            BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+            CONFIG_PATH = os.path.join(BASE_DIR, "../..", "candela_roaming_client_ap.json")
+            CONFIG_PATH = os.path.abspath(CONFIG_PATH)
+            PCAP_PATH = os.path.join(BASE_DIR, "roaming.pcap")
+
+            def load_config(path):
+                with open(path, "r") as f:
+                    return json.load(f)
+                    
+            config = load_config(CONFIG_PATH)
+
+            clients = config["clients"]
+            ap_bssids = config["ap_bssids"]
+
+            analyzer = RoamAnalyzer(
+                pcap_file=PCAP_PATH,
+                clients=clients,
+                ap_bssids=ap_bssids
+            )
+
+            analyzer.analyze()
+            analyzer._write_csv(self.result_dir)
+            analyzer._write_disconnect_csv(self.result_dir)
+            analyzer.save_pcap_to_dir(PCAP_PATH, self.result_dir)
             # self.generate_report()
-            sniffer.generate_report_from_csv(path=self.result_dir)
             logger.info("Test completed")
 
     def perform_throughput_test(self):
@@ -383,10 +450,6 @@ class ROAMThroughput(RobotClass):
                 loads_data = loads["download"]
             else:
                 if self.upload:
-                    loads = {'upload': str(self.upload).split(","), 'download': []}
-                    for _ in range(len(self.upload)):
-                        loads['download'].append(2560)
-                    loads_data = loads["upload"]
             for index in range(len(loads_data)):
                 self.throughput_tester = througput_test.Throughput(
                     host=self.mgr_ip,
@@ -413,7 +476,6 @@ class ROAMThroughput(RobotClass):
                 # to_run_cxs, to_run_cxs_len, self.created_cx_lists_keys, incremental_capacity_list = self.throughput_tester.get_incremental_capacity_list()
                 # print("Starting Throughput Test",created_cx_lists_keys)
                 # self.throughput_tester.start_specific(self.created_cx_lists_keys)
-                # time.sleep(10)
                 # open("roam_throughput.csv","w").write("Timestamp,MAC,Channel,BSSID,Signal,Download (Mbps),Upload (Mbps)\n")
 
 
