@@ -4,6 +4,12 @@ import json
 import os
 import shutil
 from datetime import datetime
+import glob
+import importlib
+import pandas as pd
+
+lf_report = importlib.import_module("lf_report")
+lf_report = lf_report.lf_report
 class RoamAnalyzer:
 
     def __init__(self, pcap_file, clients, ap_bssids, tshark_path="/usr/bin/tshark"):
@@ -205,11 +211,155 @@ class RoamAnalyzer:
             print(f"Saved {filename}")
     
 
-    def generate_report_from_csv(self):
-        # This function can be implemented to read the generated CSVs and create a consolidated report (e.g., HTML or PDF)
-        pass
+    def generate_report_from_csv(self, path=""):
+        if path:
+            csv_dir = os.path.join(path, "client_roaming_csvs")
+            report_base_path = path
+        else:
+            csv_dir = "client_roaming_csvs"
+            report_base_path = os.getcwd()
+
+        if not os.path.isdir(csv_dir):
+            print(f"CSV directory not found: {csv_dir}")
+            return None
+
+        report = lf_report(
+            _output_pdf="roaming_analysis_report.pdf",
+            _output_html="roaming_analysis_report.html",
+            _results_dir_name="roaming_analysis_report",
+            _path=report_base_path
+        )
+        report_path_date_time = report.get_path_date_time()
+
+        report.set_title("Wi-Fi Roaming Analysis Report")
+        report.build_banner()
+
+        report.set_table_title("Objective:")
+        report.build_table_title()
+        report.set_text(
+            "The objective is to analyze roaming performance per client from generated roam CSV files, "
+            "including roam duration, PASS/FAIL counts, and disconnect events."
+        )
+        report.build_text_simple()
+
+        report.set_table_title("Test Parameters:")
+        report.build_table_title()
+        test_parameters = pd.DataFrame(
+            [{
+                "PCAP File": self.pcap_file,
+                "No of Clients": len(self.clients),
+                "Configured AP BSSIDs": len(self.ap_bssids),
+                "Roam PASS Threshold (sec)": 0.15
+            }]
+        )
+        report.set_table_dataframe(test_parameters)
+        report.build_table()
+
+        roam_csv_files = sorted(glob.glob(os.path.join(csv_dir, "*_roam_times.csv")))
+        summary_rows = []
+        client_dfs = []
+
+        for csv_file in roam_csv_files:
+            try:
+                client_name = os.path.basename(csv_file).replace("_roam_times.csv", "")
+                df = pd.read_csv(csv_file)
+
+                if df.empty:
+                    summary_rows.append(
+                        {
+                            "Client": client_name,
+                            "Total Roams": 0,
+                            "PASS": 0,
+                            "FAIL": 0,
+                            "Avg Roam Time (sec)": 0.0,
+                            "Max Roam Time (sec)": 0.0,
+                            "Min Roam Time (sec)": 0.0
+                        }
+                    )
+                    client_dfs.append((client_name, df))
+                    shutil.copy2(csv_file, os.path.join(report_path_date_time, os.path.basename(csv_file)))
+                    continue
+
+                df["roam_time_sec"] = pd.to_numeric(df["roam_time_sec"], errors="coerce")
+                pass_count = int((df["Status"] == "PASS").sum()) if "Status" in df.columns else 0
+                fail_count = int((df["Status"] == "FAIL").sum()) if "Status" in df.columns else 0
+
+                summary_rows.append(
+                    {
+                        "Client": client_name,
+                        "Total Roams": int(len(df)),
+                        "PASS": pass_count,
+                        "FAIL": fail_count,
+                        "Avg Roam Time (sec)": round(float(df["roam_time_sec"].mean()), 6),
+                        "Max Roam Time (sec)": round(float(df["roam_time_sec"].max()), 6),
+                        "Min Roam Time (sec)": round(float(df["roam_time_sec"].min()), 6)
+                    }
+                )
+                client_dfs.append((client_name, df))
+                shutil.copy2(csv_file, os.path.join(report_path_date_time, os.path.basename(csv_file)))
+            except Exception as e:
+                print(f"Skipping CSV {csv_file}, reason: {e}")
+
+        report.set_table_title("Roam Summary:")
+        report.build_table_title()
+        if summary_rows:
+            summary_df = pd.DataFrame(summary_rows)
+            report.set_table_dataframe(summary_df)
+            report.build_table()
+        else:
+            report.set_obj_html(
+                _obj_title="Roam Summary",
+                _obj="No per-client roam CSV files were found."
+            )
+            report.build_objective()
+
+        for client_name, df in client_dfs:
+            report.set_obj_html(
+                _obj_title=f"Client Roam Events: {client_name}",
+                _obj="Detailed per-roam entries for this client."
+            )
+            report.build_objective()
+            report.set_table_dataframe(df)
+            report.build_table()
+
+        disconnect_csv = os.path.join(csv_dir, "all_clients_disconnect.csv")
+        if os.path.isfile(disconnect_csv):
+            try:
+                disconnect_df = pd.read_csv(disconnect_csv)
+                if not disconnect_df.empty and "timestamp" in disconnect_df.columns:
+                    disconnect_df["timestamp"] = pd.to_datetime(
+                        disconnect_df["timestamp"], unit="s", errors="coerce"
+                    ).astype(str)
+
+                report.set_obj_html(
+                    _obj_title="Disconnect Events (Deauth + Disassoc)",
+                    _obj="Combined disconnect timeline for all clients."
+                )
+                report.build_objective()
+                report.set_table_dataframe(disconnect_df)
+                report.build_table()
+
+                shutil.copy2(disconnect_csv, os.path.join(report_path_date_time, os.path.basename(disconnect_csv)))
+            except Exception as e:
+                report.set_obj_html(
+                    _obj_title="Disconnect Events (Deauth + Disassoc)",
+                    _obj=f"Disconnect CSV exists but could not be parsed: {e}"
+                )
+                report.build_objective()
+
+        report.build_footer()
+        report.write_html()
+        try:
+            report.write_pdf(_page_size="A4", _orientation="Portrait")
+        except Exception as e:
+            print(f"PDF generation skipped/failed: {e}")
+
+        print(f"Report generated at: {report_path_date_time}")
+        return report_path_date_time
+
 
     # ✅ Combined disconnect CSV (deauth + disassoc)
+
     def _write_disconnect_csv(self, path=""):
 
         if path:
@@ -266,7 +416,8 @@ if __name__ == "__main__":
     CONFIG_PATH = os.path.join(BASE_DIR, "../..", "candela_roaming_client_ap.json")
     CONFIG_PATH = os.path.abspath(CONFIG_PATH)
     # PCAP_PATH = os.path.join(BASE_DIR, "Day2_trail1_issue.pcapng")
-    PCAP_PATH = os.path.join(BASE_DIR, "../../","local/interop-webGUI/results/roaming_with_ocean_view/roaming.pcap")
+    # PCAP_PATH = os.path.join(BASE_DIR, "../../","local/interop-webGUI/results/roaming_with_ocean_view/roaming.pcap")
+    PCAP_PATH = os.path.join(os.getcwd(), "roaming.pcap")
 
     def load_config(path):
         with open(path, "r") as f:
@@ -286,6 +437,7 @@ if __name__ == "__main__":
     analyzer.analyze()
     analyzer._write_csv()
     analyzer._write_disconnect_csv()
+    # analyzer.generate_report_from_csv()
 
 
 
