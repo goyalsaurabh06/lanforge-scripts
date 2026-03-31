@@ -172,52 +172,52 @@ class ROAMThroughput(RobotClass):
             report.set_table_dataframe(table_df)
             report.build_table()
  
-    def generate_report(self):
-        self.report.set_title("Automated Band Steering Test")
-        self.report.build_banner()
-        self.report.set_obj_html(_obj_title="Objective",
-                    _obj="The Automated Band Steering Test uses selected real client devices mounted on CanBEE to evaluate band-steering behavior " 
-                    " during movement. The test continuously monitors each device’s connected BSSID while the robot moves through user-defined" 
-                    " points. Whenever a BSSID change occurs, the system records the exact robot position and path segment between which the"
-                    " change happened, enabling clear identification of where band-steering decisions were made.")
-        self.report.build_objective()
-        self.report.set_obj_html(_obj_title="Input Parameters",
-                            _obj="The below tables provides the input parameters for the test")
-        self.report.build_objective()
-        test_setup_info = {
-                    "Test name": self.testname,
-                    "Robot IP": self.robo_ip,
-                    "No of Devices": len(self.throughput_tester.input_devices_list),
-                    "Total Cycles": self.total_cycles,
-                }
-        self.report.test_setup_table(test_setup_data=test_setup_info, value="Test Configuration")
-        usernames = []
-        for j in range(len(self.throughput_tester.real_client_list)):
-            usernames.append(self.throughput_tester.real_client_list[j].split(" ")[-1])
-        for i in range(len(self.throughput_tester.input_devices_list)):
-            file_path = os.path.join(self.report_folder_path, f"{self.throughput_tester.input_devices_list[i]}.csv")
-            df = pd.read_csv(file_path)
-            self.get_bandsteering_stats(report=self.report, df=df,device_name=usernames[i])
-            self.report.set_obj_html(_obj_title=f"Band Steering Stats: {usernames[i]}({self.throughput_tester.input_devices_list[i]})",
-                    _obj="")
-            self.report.build_objective()
-            dataframe = {
-                "Sequence No.": df["Sequence No."],
-                "MAC":df["MAC"],
-                "Channel":df["Channel"],
-                "BSSID":df["BSSID"],
-                "Signal":df["Signal"],
-                "From Coordinate":df["From Coordinate"],
-                "To Coordinate":df["To Coordinate"],
-                "Timestamp":df["Timestamp"]
-            }
-            self.report.set_table_dataframe(pd.DataFrame(dataframe))
-            self.report.build_table()
+    # def generate_report(self):
+    #     self.report.set_title("Automated Band Steering Test")
+    #     self.report.build_banner()
+    #     self.report.set_obj_html(_obj_title="Objective",
+    #                 _obj="The Automated Band Steering Test uses selected real client devices mounted on CanBEE to evaluate band-steering behavior " 
+    #                 " during movement. The test continuously monitors each device’s connected BSSID while the robot moves through user-defined" 
+    #                 " points. Whenever a BSSID change occurs, the system records the exact robot position and path segment between which the"
+    #                 " change happened, enabling clear identification of where band-steering decisions were made.")
+    #     self.report.build_objective()
+    #     self.report.set_obj_html(_obj_title="Input Parameters",
+    #                         _obj="The below tables provides the input parameters for the test")
+    #     self.report.build_objective()
+    #     test_setup_info = {
+    #                 "Test name": self.testname,
+    #                 "Robot IP": self.robo_ip,
+    #                 "No of Devices": len(self.throughput_tester.input_devices_list),
+    #                 "Total Cycles": self.total_cycles,
+    #             }
+    #     self.report.test_setup_table(test_setup_data=test_setup_info, value="Test Configuration")
+    #     usernames = []
+    #     for j in range(len(self.throughput_tester.real_client_list)):
+    #         usernames.append(self.throughput_tester.real_client_list[j].split(" ")[-1])
+    #     for i in range(len(self.throughput_tester.input_devices_list)):
+    #         file_path = os.path.join(self.report_folder_path, f"{self.throughput_tester.input_devices_list[i]}.csv")
+    #         df = pd.read_csv(file_path)
+    #         self.get_bandsteering_stats(report=self.report, df=df,device_name=usernames[i])
+    #         self.report.set_obj_html(_obj_title=f"Band Steering Stats: {usernames[i]}({self.throughput_tester.input_devices_list[i]})",
+    #                 _obj="")
+    #         self.report.build_objective()
+    #         dataframe = {
+    #             "Sequence No.": df["Sequence No."],
+    #             "MAC":df["MAC"],
+    #             "Channel":df["Channel"],
+    #             "BSSID":df["BSSID"],
+    #             "Signal":df["Signal"],
+    #             "From Coordinate":df["From Coordinate"],
+    #             "To Coordinate":df["To Coordinate"],
+    #             "Timestamp":df["Timestamp"]
+    #         }
+    #         self.report.set_table_dataframe(pd.DataFrame(dataframe))
+    #         self.report.build_table()
             
 
-        self.report.build_footer()
-        self.report.write_html()
-        self.report.write_pdf(_orientation="Landscape")
+    #     self.report.build_footer()
+    #     self.report.write_html()
+    #     self.report.write_pdf(_orientation="Landscape")
     
     def create_testname_folder(self):
         self.report = lf_report(
@@ -364,7 +364,8 @@ class ROAMThroughput(RobotClass):
             sniffer.stop_sniff()
             sniffer.fetch_pcap(remote_pcap_path, "./roaming.pcap")
             sniffer.close()
-            self.generate_report()
+            # self.generate_report()
+            sniffer.generate_report_from_csv(path=self.result_dir)
             logger.info("Test completed")
 
     def perform_throughput_test(self):
