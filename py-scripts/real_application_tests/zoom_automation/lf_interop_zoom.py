@@ -1377,13 +1377,13 @@ class ZoomAutomation(Realm):
                 clients = config["clients"]
                 ap_bssids = config["ap_bssids"]
 
-                analyzer = RoamAnalyzer(
+                self.analyzer = RoamAnalyzer(
                     pcap_file=PCAP_PATH, clients=clients, ap_bssids=ap_bssids
                 )
 
-                analyzer.analyze()
-                analyzer._write_csv(path=self.path)
-                analyzer._write_disconnect_csv(path=self.path)
+                self.analyzer.analyze()
+                self.analyzer._write_csv(path=self.path)
+                self.analyzer._write_disconnect_csv(path=self.path)
 
         else:
             while datetime.now(self.tz) < self.end_time or not self.check_gen_cx():
@@ -3430,6 +3430,12 @@ class ZoomAutomation(Realm):
                 self.generate_roam_report(path=self.path, report_obj=self.report)
         except Exception as e:
             logger.error(f"Error generating roam report: {e}")
+
+        try:
+            if self.do_roam:
+                self.analyzer.generate_report_from_csvs(path=self.path)
+        except Exception as e:
+            logger.error(f"Error generating roam report from CSVs: {e}")
         self.report.write_html()
         self.report.write_pdf(_page_size="Legal", _orientation="Landscape")
         for client in self.real_sta_hostname:

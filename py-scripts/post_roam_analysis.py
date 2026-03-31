@@ -437,7 +437,7 @@ if __name__ == "__main__":
     analyzer.analyze()
     analyzer._write_csv()
     analyzer._write_disconnect_csv()
-    # analyzer.generate_report_from_csv()
+    analyzer.generate_report_from_csv()
 
 
 
