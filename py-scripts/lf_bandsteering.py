@@ -433,6 +433,8 @@ class ROAMThroughput(RobotClass):
             analyzer._write_disconnect_csv(self.result_dir)
             analyzer.save_pcap_to_dir(PCAP_PATH, self.result_dir)
             # self.generate_report()
+            analyzer.generate_report_from_csv(self.result_dir)
+
             logger.info("Test completed")
 
     def perform_throughput_test(self):
@@ -448,8 +450,8 @@ class ROAMThroughput(RobotClass):
                 for _ in range(len(self.download)):
                     loads['upload'].append(2560)
                 loads_data = loads["download"]
-            else:
-                if self.upload:
+            # else:
+            #     if self.upload:
             for index in range(len(loads_data)):
                 self.throughput_tester = througput_test.Throughput(
                     host=self.mgr_ip,

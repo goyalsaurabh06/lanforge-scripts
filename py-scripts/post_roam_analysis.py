@@ -246,7 +246,7 @@ class RoamAnalyzer:
         report.build_table_title()
         test_parameters = pd.DataFrame(
             [{
-                "PCAP File": self.pcap_file,
+                # "PCAP File": self.pcap_file,
                 "No of Clients": len(self.clients),
                 "Configured AP BSSIDs": len(self.ap_bssids),
                 "Roam PASS Threshold (sec)": 0.15
@@ -417,7 +417,8 @@ if __name__ == "__main__":
     CONFIG_PATH = os.path.abspath(CONFIG_PATH)
     # PCAP_PATH = os.path.join(BASE_DIR, "Day2_trail1_issue.pcapng")
     # PCAP_PATH = os.path.join(BASE_DIR, "../../","local/interop-webGUI/results/roaming_with_ocean_view/roaming.pcap")
-    PCAP_PATH = os.path.join(os.getcwd(), "roaming.pcap")
+    # PCAP_PATH = os.path.join(os.getcwd(), "roaming.pcap")
+    PCAP_PATH = "/home/lanforge/local/interop-webGUI/results/roaming_qcom_test_2/roaming.pcap"
 
     def load_config(path):
         with open(path, "r") as f:
