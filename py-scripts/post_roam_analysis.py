@@ -12,15 +12,18 @@ lf_report = importlib.import_module("lf_report")
 lf_report = lf_report.lf_report
 class RoamAnalyzer:
 
-    def __init__(self, pcap_file, clients, ap_bssids, tshark_path="/usr/bin/tshark"):
+    def __init__(self, pcap_file, clients, ap_bssids, tshark_path="/usr/bin/tshark", clients_macs = []):
         self.pcap_file = pcap_file
         self.clients = clients
         self.ap_bssids = set([b.lower() for b in ap_bssids])
         self.tshark_path = tshark_path
         self.client_names = {name: [] for name in clients}
+        self.clients_macs = clients_macs
 
         # ✅ store disconnect events (deauth + disassoc)
         self.disconnect_events = {name: [] for name in clients}
+        self.ap_bssid_map = {bssid.lower(): mld.lower() for bssid, mld in ap_bssids.items()}
+        self.ap_bssids = set(self.ap_bssid_map.keys())
 
     def analyze(self):
         for name, mac in self.clients.items():
@@ -120,6 +123,9 @@ class RoamAnalyzer:
 
                     # AUTH
                     if subtype == '0x000b' and is_valid_roam:
+                        if(pkt.wlan.sa.lower() not in self.clients_macs):
+                            is_valid_roam = False
+                            continue
                         from_bssid = last_bssid
                         to_bssid = current_bssid
 
@@ -129,15 +135,15 @@ class RoamAnalyzer:
                             start_tsf = tsf
                             auth_seen = True
 
-                    # REASSOC
-                    elif subtype == '0x0002' and is_valid_roam:
-                        from_bssid = last_bssid
-                        to_bssid = current_bssid
+                    # # REASSOC
+                    # elif subtype == '0x0002' and is_valid_roam:
+                    #     from_bssid = last_bssid
+                    #     to_bssid = current_bssid
 
-                        if state is None and not auth_seen:
-                            state = "STARTED"
-                            start_time = ts
-                            start_tsf = tsf
+                    #     if state is None and not auth_seen:
+                    #         state = "STARTED"
+                    #         start_time = ts
+                    #         start_tsf = tsf
 
                 # EAPOL message 4 → roam end
                 if (
@@ -237,22 +243,46 @@ class RoamAnalyzer:
         report.set_table_title("Objective:")
         report.build_table_title()
         report.set_text(
-            "The objective is to analyze roaming performance per client from generated roam CSV files, "
-            "including roam duration, PASS/FAIL counts, and disconnect events."
+            "The objective of this roaming test is to measure and validate the Wi-Fi roaming performance "
+            "of real client devices while moving through different locations in the lab using a robot. "
+            "The test aims to accurately capture roam events, calculate roam times, and verify the stability "
+            "of user-experience scenarios (such as Zoom calls) during AP transitions. By using automated "
+            "robot paths, parallel sniffing, and multiple device types (Android and iOS), the goal is to "
+            "generate consistent, repeatable, and data-driven roaming performance reports for analysis and benchmarking."
         )
         report.build_text_simple()
 
-        report.set_table_title("Test Parameters:")
+        report.set_table_title("Test Setup Information:")
         report.build_table_title()
-        test_parameters = pd.DataFrame(
-            [{
-                # "PCAP File": self.pcap_file,
-                "No of Clients": len(self.clients),
-                "Configured AP BSSIDs": len(self.ap_bssids),
-                "Roam PASS Threshold (sec)": 0.15
-            }]
-        )
-        report.set_table_dataframe(test_parameters)
+
+        ap_items = list(self.ap_bssid_map.items())
+        root_bssid, root_mld = ("-", "-")
+        node_bssid, node_mld = ("-", "-")
+
+        if len(ap_items) >= 1:
+            root_bssid, root_mld = ap_items[0]
+        if len(ap_items) >= 2:
+            node_bssid, node_mld = ap_items[1]
+
+        setup_rows = [
+            {"Parameter": "Test Name", "Value": "2 Node Roaming test"},
+            {"Parameter": "Root BSSID", "Value": root_bssid},
+            {"Parameter": "Root MLD", "Value": root_mld},
+            {"Parameter": "Node BSSID", "Value": node_bssid},
+            {"Parameter": "Node MLD", "Value": node_mld},
+            {"Parameter": "No of clients", "Value": str(len(self.clients))},
+        ]
+
+        for idx, (client_name, client_mac) in enumerate(self.clients.items(), start=1):
+            setup_rows.append({
+                "Parameter": f"Client {idx} Name & Mac Address",
+                "Value": f"{client_name} and {client_mac}"
+            })
+
+        # setup_rows.append({"Parameter": "No of iterations", "Value": "4"})
+
+        test_setup_info = pd.DataFrame(setup_rows)
+        report.set_table_dataframe(test_setup_info)
         report.build_table()
 
         roam_csv_files = sorted(glob.glob(os.path.join(csv_dir, "*_roam_times.csv")))
@@ -418,8 +448,8 @@ if __name__ == "__main__":
     # PCAP_PATH = os.path.join(BASE_DIR, "Day2_trail1_issue.pcapng")
     # PCAP_PATH = os.path.join(BASE_DIR, "../../","local/interop-webGUI/results/roaming_with_ocean_view/roaming.pcap")
     # PCAP_PATH = os.path.join(os.getcwd(), "roaming.pcap")
-    PCAP_PATH = "/home/lanforge/local/interop-webGUI/results/roaming_qcom_test_2/roaming.pcap"
-
+    # PCAP_PATH = "/home/lanforge/local/interop-webGUI/results/roam_with_qalcomm_dut/roaming.pcap"
+    PCAP_PATH = "/home/litin/Document/local/interop-webGUI/results/iterations_30_zoom_roaming/roaming.pcap"
     def load_config(path):
         with open(path, "r") as f:
             return json.load(f)
@@ -432,7 +462,8 @@ if __name__ == "__main__":
     analyzer = RoamAnalyzer(
         pcap_file=PCAP_PATH,
         clients=clients,
-        ap_bssids=ap_bssids
+        ap_bssids=ap_bssids,
+        clients_macs = list(clients.values())
     )
 
     analyzer.analyze()
