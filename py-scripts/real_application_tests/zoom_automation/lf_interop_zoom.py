@@ -257,6 +257,8 @@ class ZoomAutomation(Realm):
         self.api_stats_collection = api_stats_collection
         self.do_webui = do_webui
         self.cycles = cycles
+        if self.do_roam:
+            logger.info("Roaming test configured for %s iteration(s)", self.cycles)
         self.from_cord = None
         self.to_cord = None
         self.bssids = bssids or []
@@ -1299,7 +1301,33 @@ class ZoomAutomation(Realm):
                         f"Roaming Test coordinates to be visited: {self.bs_coord_result}"
                     )
 
+                total_iterations = max(int(self.cycles or 1), 1)
+                current_iteration = 1
+                first_coordinate = (
+                    self.coordinates_list[0] if self.coordinates_list else None
+                )
+
+                if self.do_roam:
+                    logger.info(
+                        "Starting Roaming iteration %s/%s",
+                        current_iteration,
+                        total_iterations,
+                    )
+
                 for coordinate in self.bs_coord_result:
+                    if (
+                        self.do_roam
+                        and first_coordinate
+                        and coordinate == first_coordinate
+                        and current_iteration < total_iterations
+                    ):
+                        current_iteration += 1
+                        logger.info(
+                            "Starting Roaming iteration %s/%s",
+                            current_iteration,
+                            total_iterations,
+                        )
+
                     logger.info(f"Moving robot to coordinate: {coordinate}")
                     if not self.to_cord:
                         self.to_cord = coordinate
@@ -2820,6 +2848,7 @@ class ZoomAutomation(Realm):
                         "PASSWORD": self.signin_passwd,
                         "HOST": self.real_sta_list[0],
                         "TEST TYPE": testtype,
+                        "Iterations": self.cycles,
                     }
                 ]
             )
@@ -2837,6 +2866,8 @@ class ZoomAutomation(Realm):
                         "PASSWORD": self.signin_passwd,
                         "HOST": self.real_sta_list[0],
                         "TEST TYPE": testtype,
+                        "Coordinates": self.coordinates_list,
+                        "Iterations": self.cycles,
                     }
                 ]
             )
@@ -2878,8 +2909,8 @@ class ZoomAutomation(Realm):
                             "Hostname": self.real_sta_hostname,
                             "OS Type": self.real_sta_os_type,
                             "MAC": self.mac_list,
-                            "RSSI": self.rssi_list,
-                            "Link Rate": self.link_rate_list,
+                            # "RSSI": self.rssi_list,
+                            # "Link Rate": self.link_rate_list,
                             "SSID": self.ssid_list,
                             "Role in call": [
                                 "Host" if index == 0 else "Participant"
@@ -2897,8 +2928,8 @@ class ZoomAutomation(Realm):
                             "Hostname": self.real_sta_hostname,
                             "OS Type": self.real_sta_os_type,
                             "MAC": self.mac_list,
-                            "RSSI": self.rssi_list,
-                            "Link Rate": self.link_rate_list,
+                            # "RSSI": self.rssi_list,
+                            # "Link Rate": self.link_rate_list,
                             "SSID": self.ssid_list,
                             "Role in call": [
                                 "Host" if index == 0 else "Participant"
@@ -2926,8 +2957,8 @@ class ZoomAutomation(Realm):
                         "Hostname": self.real_sta_hostname,
                         "OS Type": self.real_sta_os_type,
                         "MAC": self.mac_list,
-                        "RSSI": self.rssi_list,
-                        "Link Rate": self.link_rate_list,
+                        # "RSSI": self.rssi_list,
+                        # "Link Rate": self.link_rate_list,
                         "SSID": self.ssid_list,
                         "Role in call": [
                             "Host" if index == 0 else "Participant"
@@ -3433,7 +3464,7 @@ class ZoomAutomation(Realm):
 
         try:
             if self.do_roam:
-                self.analyzer.generate_report_from_csvs(path=self.path)
+                self.analyzer.generate_report_from_csv(path=self.path)
         except Exception as e:
             logger.error(f"Error generating roam report from CSVs: {e}")
         self.report.write_html()

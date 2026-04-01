@@ -12,14 +12,13 @@ lf_report = importlib.import_module("lf_report")
 lf_report = lf_report.lf_report
 class RoamAnalyzer:
 
-    def __init__(self, pcap_file, clients, ap_bssids, tshark_path="/usr/bin/tshark", clients_macs = []):
+    def __init__(self, pcap_file, clients, ap_bssids, tshark_path="/usr/bin/tshark", clients_macs=[]):
         self.pcap_file = pcap_file
         self.clients = clients
         self.ap_bssids = set([b.lower() for b in ap_bssids])
         self.tshark_path = tshark_path
         self.client_names = {name: [] for name in clients}
-        self.clients_macs = clients_macs
-
+        # self.clients_macs = set([mac.lower() for mac in clients.values()])
         # ✅ store disconnect events (deauth + disassoc)
         self.disconnect_events = {name: [] for name in clients}
         self.ap_bssid_map = {bssid.lower(): mld.lower() for bssid, mld in ap_bssids.items()}
@@ -123,9 +122,9 @@ class RoamAnalyzer:
 
                     # AUTH
                     if subtype == '0x000b' and is_valid_roam:
-                        if(pkt.wlan.sa.lower() not in self.clients_macs):
-                            is_valid_roam = False
-                            continue
+                        # if(pkt.wlan.sa.lower() not in self.clients_macs):
+                        #     is_valid_roam = False
+                        #     continue
                         from_bssid = last_bssid
                         to_bssid = current_bssid
 
@@ -135,7 +134,7 @@ class RoamAnalyzer:
                             start_tsf = tsf
                             auth_seen = True
 
-                    # # REASSOC
+                    # REASSOC
                     # elif subtype == '0x0002' and is_valid_roam:
                     #     from_bssid = last_bssid
                     #     to_bssid = current_bssid
@@ -448,8 +447,8 @@ if __name__ == "__main__":
     # PCAP_PATH = os.path.join(BASE_DIR, "Day2_trail1_issue.pcapng")
     # PCAP_PATH = os.path.join(BASE_DIR, "../../","local/interop-webGUI/results/roaming_with_ocean_view/roaming.pcap")
     # PCAP_PATH = os.path.join(os.getcwd(), "roaming.pcap")
-    # PCAP_PATH = "/home/lanforge/local/interop-webGUI/results/roam_with_qalcomm_dut/roaming.pcap"
-    PCAP_PATH = "/home/litin/Document/local/interop-webGUI/results/iterations_30_zoom_roaming/roaming.pcap"
+    PCAP_PATH = "/home/lanforge/local/interop-webGUI/results/test123/roaming.pcap"
+
     def load_config(path):
         with open(path, "r") as f:
             return json.load(f)
@@ -463,7 +462,7 @@ if __name__ == "__main__":
         pcap_file=PCAP_PATH,
         clients=clients,
         ap_bssids=ap_bssids,
-        clients_macs = list(clients.values())
+        # clients_macs = list(clients.values())
     )
 
     analyzer.analyze()
