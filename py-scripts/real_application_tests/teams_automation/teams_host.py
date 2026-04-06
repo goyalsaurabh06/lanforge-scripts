@@ -69,20 +69,6 @@ class TeamsHost:
             print(f"Element not found: {xpathvalue}. Error: {e}")
             return None
 
-    def get_required_participants(self):
-        endpoint_url = f"http://{self.server_ip}:5005/get_participants_req"
-        try:
-            response = requests.get(endpoint_url)
-            if response.status_code == 200:
-                return response.json().get("participants", None)
-            else:
-                print(
-                    f"Failed to fetch required participants. Status code: {response.status_code}"
-                )
-        except requests.RequestException as e:
-            print(f"Request error: {e}")
-            return None
-        return None
 
     def login(
         self,
@@ -153,23 +139,18 @@ class TeamsHost:
 
         try:
 
-            self.driver.execute_script("window.open('');")
+           
+            
+            calendar_button = WebDriverWait(self.driver, 120).until(
+                    EC.element_to_be_clickable((By.XPATH, "//button[contains(@aria-label, 'Calendar')]"))
+                )
 
-            windows = self.driver.window_handles
-            original_window = self.driver.current_window_handle
-            new_window = windows[1]
+            print("Calendar button found! App is fully loaded.")
 
-            self.driver.switch_to.window(windows[1])
-            self.driver.get("https://teams.microsoft.com/_#/calendarv2")
+            self.driver.execute_script("arguments[0].click();", calendar_button)
+            print("Calendar button clicked via JavaScript.")
 
-            # Close the original window
-            self.driver.switch_to.window(original_window)
-            self.driver.close()
-
-            # Switch back to the new window
-            self.driver.switch_to.window(new_window)
-
-            meet_now = WebDriverWait(self.driver, 60).until(
+            meet_now = WebDriverWait(self.driver, 180).until(
                 EC.element_to_be_clickable(
                     (
                         By.CSS_SELECTOR,
@@ -218,31 +199,6 @@ class TeamsHost:
             camera_button.click()
 
             time.sleep(3)
-
-            # show_more=self.wait_for_element('//button[@id="callingButtons-showMoreBtn"]')
-
-            # show_more.click()
-
-            # time.sleep(3)
-
-            # settings=self.wait_for_element('//div[@id="SettingsMenuControl-id"]')
-
-            # settings.click()
-
-            # meeting_options=self.wait_for_element('//div[@role="menuitemcheckbox" and @aria-label="Meeting options" and @id="meeting-options-ubar"]')
-            # meeting_options.click()
-
-            # bypass_option=self.wait_for_element("//button[@id='AutoAdmittedUsers']")
-            # bypass_option.click()
-
-            # everyone=self.wait_for_element("//div[@id='option1' and @role='option' and @data-tid='Everyone']")
-
-            # everyone.click()
-
-            # apply_button = WebDriverWait(self.driver, 60).until(
-            #     EC.element_to_be_clickable((By.CSS_SELECTOR, "button[title='Apply']"))
-            # )
-            # apply_button.click()
 
         except Exception as e:
             self.driver.quit()
@@ -546,48 +502,6 @@ class TeamsHost:
             traceback.print_exc()
             sys.exit(1)
 
-    def open_roster_button(
-        self,
-    ):
-        try:
-            users = self.wait_for_element('//*[@id="roster-button"]')
-            users.click()
-        except Exception as e:
-            self.driver.quit()
-            logging.error(f"An error occurred: {e}")
-            traceback.print_exc()
-            sys.exit(1)
-
-    def wait_for_clients_to_join(
-        self,
-    ):
-        start_time = time.time()
-        max_duration = 2 * 60
-
-        while True:
-            no_of_client_element = self.wait_for_element(
-                '//*[@id="roster-title-section-2"]/span'
-            ).text
-            match = re.search(r"\((\d+)\)", no_of_client_element)
-
-            if match:
-                num_participants = int(match.group(1))
-                logging.info(
-                    f"Number of participants in the meeting: {num_participants}"
-                )
-
-                if num_participants == self.participants_req:
-                    logging.info(
-                        "Staring the Test with the clients joined in the meeting"
-                    )
-                    break
-
-            # Check if the time limit has been reached
-            elapsed_time = time.time() - start_time
-            if elapsed_time > max_duration:
-                break
-            time.sleep(5)
-        self.update_start_test()
 
     def open_call_health(
         self,
@@ -650,17 +564,16 @@ class TeamsHost:
             print(f"Request error: {e}")
         return None
 
-    def update_start_test(self):
+    def update_participation(self):
 
-        endpoint_url = f"{self.base_url}/test_started"
-        data = {"test_started": True}
+        endpoint_url = f"{self.base_url}/set_participants_joined"
         try:
-            response = requests.post(endpoint_url, json=data)
+            response = requests.get(endpoint_url)
             if response.status_code == 200:
-                print("test started status updated successfully.")
+                print("Device participation status updated successfully.")
             else:
                 print(
-                    f"Failed to update test started status. Status code: {response.status_code}"
+                    f"Failed to update device participation status. Status code: {response.status_code}"
                 )
         except requests.RequestException as e:
             print(f"Request error: {e}")
@@ -755,12 +668,8 @@ def main():
         team.start_meeting()
         team.send_meeting_link()
         time.sleep(3)
-        time.sleep(2)
-        team.participants_req = team.get_required_participants()
-        team.open_roster_button()
         team.update_login_completed()
-        team.wait_for_clients_to_join()
-        team.open_roster_button()
+        team.update_participation()
         team.open_call_health()
         while team.start_time is None or team.end_time is None:
             team.get_start_and_end_time()
