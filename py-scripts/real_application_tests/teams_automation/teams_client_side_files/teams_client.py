@@ -15,23 +15,9 @@ import logging
 import traceback
 import pyautogui
 
-pyautogui.FAILSAFE = False
-
-# 1. Configure the logging system
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(
-            "teams_client.log",
-            mode="w",
-        ),  # Writes to file
-        logging.StreamHandler(sys.stdout),  # Writes to terminal
-    ],
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
-
-# 2. Create the logger instance
-logger = logging.getLogger(__name__)
 
 
 class TeamsClient:
@@ -83,6 +69,8 @@ class TeamsClient:
             nextButton = self.wait_for_element('//*[@id="idSIButton9"]')
             nextButton.click()
 
+            # print(self.passwd)
+
             # wait for password field
             passElement = WebDriverWait(self.driver, 60).until(
                 EC.visibility_of_element_located((By.ID, "i0118"))
@@ -103,7 +91,7 @@ class TeamsClient:
 
         except Exception as e:
             self.driver.quit()
-            logger.error(f"An error occurred while log in: {e}")
+            logging.error(f"An error occurred: {e}")
             traceback.print_exc()
             sys.exit(1)
 
@@ -120,15 +108,13 @@ class TeamsClient:
                 # Only update if the server's stop signal is True
                 if stop_signal_from_server:
                     self.stop_signal = True
-                    logger.info(
-                        "Stop signal received from the server. Exiting the loop."
-                    )
+                    print("Stop signal received from the server. Exiting the loop.")
                 else:
 
-                    logger.info("No stop signal received from the server. Continuing.")
+                    print("No stop signal received from the server. Continuing.")
             return self.stop_signal
         except Exception as e:
-            logger.error(f"Error checking stop signal from server: {e}")
+            print(f"Error checking stop signal: {e}")
 
     def wait_for_element(self, xpathvalue):
         try:
@@ -136,7 +122,7 @@ class TeamsClient:
                 EC.visibility_of_element_located((By.XPATH, xpathvalue))
             )
         except Exception as e:
-            logger.error(f"Element not found: {xpathvalue}. Error: {e}")
+            print(f"Element not found: {xpathvalue}. Error: {e}")
             return None
 
     def get_meeting_link(self):
@@ -146,17 +132,15 @@ class TeamsClient:
                 data = response.json()
                 self.meeting_link = data.get("meet_link")
                 if not self.meeting_link:
-                    logger.error(
-                        "Meeting link not found in the response. Error fetching meet link"
-                    )
+                    logging.error("Meeting link not found in the response.")
                     sys.exit(1)
             else:
-                logger.error(
+                logging.error(
                     f"Failed to fetch meeting link. Status code: {response.status_code}"
                 )
                 sys.exit(1)
         except requests.RequestException as e:
-            logger.error(f"Request error while getting meet link: {e}")
+            logging.error(f"Request error: {e}")
             sys.exit(1)
 
     def wait_for_element_with_time(self, xpathvalue, timeout=60):
@@ -165,7 +149,7 @@ class TeamsClient:
                 EC.visibility_of_element_located((By.XPATH, xpathvalue))
             )
         except Exception as e:
-            logger.error(f"Element not found: {xpathvalue}. Error: {e}")
+            print(f"Element not found: {xpathvalue}. Error: {e}")
             return None
 
     def enterMetting(
@@ -216,7 +200,7 @@ class TeamsClient:
 
         except Exception as e:
             self.driver.quit()
-            logger.error(f"An error occurred while entering the meeting: {e}")
+            logging.error(f"An error occurred: {e}")
             traceback.print_exc()
             sys.exit(1)
 
@@ -233,6 +217,9 @@ class TeamsClient:
             self.nw_send_limit = self.wait_for_element(
                 "//span[@data-tid='network-sent-bw-estimate']"
             ).text
+
+            # print("=====================")
+            # print(Teams_send_limit_value)
 
             self.nw_recevie_limit = self.wait_for_element(
                 "//span[@data-tid='network-received-bw-estimate']"
@@ -258,13 +245,13 @@ class TeamsClient:
                 self.nw_rtt,
                 self.nw_recevied_pkt_loss,
             ]
-            logger.debug(f"len of netstats data: {len(self.netstat_data)}")
+            # print("len of netstats data",len(self.netstat_data))
 
             return self.netstat_data
 
         except Exception as e:
             self.driver.quit()
-            logger.error(f"An error occurred while fetching network stats: {e}")
+            logging.error(f"An error occurred: {e}")
             traceback.print_exc()
             sys.exit(1)
 
@@ -273,6 +260,7 @@ class TeamsClient:
     ):
 
         try:
+            # print("audio")
             view_more = self.wait_for_element(
                 "//button[@data-tid='call-health-category-Audio']"
             )
@@ -371,11 +359,14 @@ class TeamsClient:
                 "au_recv_codec": self.au_recv_codec,
             }
 
+            # print(audio_stats_data)
+            print("checking au_recevied jitter")
+            print(self.au_recv_jitter)
             return audio_stats_data
 
         except Exception as e:
             self.driver.quit()
-            logger.error(f"An error occurred while fetching audio stats: {e}")
+            logging.error(f"An error occurred: {e}")
             traceback.print_exc()
             sys.exit(1)
 
@@ -481,6 +472,8 @@ class TeamsClient:
                 self.vi_sent_codec,
                 self.vi_processing,
             ]
+            print("video stats data")
+            print(video_stats_data)
 
             video_stats_data = {
                 "vi_sent_bitrate": self.vi_sent_bitrate,
@@ -496,7 +489,7 @@ class TeamsClient:
 
         except Exception as e:
             self.driver.quit()
-            logger.error(f"An error occurred while fetching video stats: {e}")
+            logging.error(f"An error occurred: {e}")
             traceback.print_exc()
             sys.exit(1)
 
@@ -509,11 +502,11 @@ class TeamsClient:
                 self.audio = data.get("audio_stats")
                 self.video = data.get("video_stats")
             else:
-                logger.error(
+                print(
                     f"Failed to fetch stats flag. Status code: {response.status_code}"
                 )
         except requests.RequestException as e:
-            logger.error(f"Request error while fetching stats flag: {e}")
+            print(f"Request error: {e}")
         return None
 
     def get_credentials(self):
@@ -526,11 +519,13 @@ class TeamsClient:
                 self.email = data["email"].strip()
                 self.passwd = data["password"].strip()
             else:
-                logger.error(f"❌ Failed to get credentials: {response.status_code}")
+                logging.error(
+                    f"❌ Failed to get credentials: {response.json().get('log')}"
+                )
                 self.email = None
                 self.passwd = None
         except requests.exceptions.RequestException as e:
-            logger.error(f"❌ Error during credential request: {e}")
+            logging.error(f"❌ Error during credential request: {e}")
             self.email = None
             self.passwd = None
 
@@ -543,11 +538,11 @@ class TeamsClient:
                 self.start_time = data.get("start_time")
                 self.end_time = data.get("end_time")
             else:
-                logger.error(
-                    f"Failed to fetch Start and End time. Status code: {response.status_code}"
+                print(
+                    f"Failed to fetch new login URL. Status code: {response.status_code}"
                 )
         except requests.RequestException as e:
-            logger.error(f"Request error while fetching Start and End time: {e}")
+            print(f"Request error: {e}")
         return None
 
     def send_stats_to_server(self, hostname, audio_stats, video_stats):
@@ -577,35 +572,38 @@ class TeamsClient:
         try:
             response = requests.post(f"{self.base_url}/upload_stats", json=payload)
             if response.status_code == 200:
-                logger.debug(f"Stats uploaded for {hostname}")
+                print(f"Stats uploaded for {hostname}")
             else:
-                logger.error(
+                print(
                     f"Failed to upload stats: {response.status_code} - {response.text}"
                 )
         except Exception as e:
-            logger.error(f"Exception during upload stats: {e}")
-
+            print(f"Exception during upload: {e}")
+    
     def update_participation(self):
 
         endpoint_url = f"{self.base_url}/set_participants_joined"
         try:
             response = requests.get(endpoint_url)
             if response.status_code == 200:
-                logger.info("Device participation status updated successfully.")
+                print("Device participation status updated successfully.")
             else:
-                logger.error(
+                print(
                     f"Failed to update device participation status. Status code: {response.status_code}"
                 )
         except requests.RequestException as e:
-            logger.error(f"Request error while updating participation: {e}")
+            print(f"Request error: {e}")
 
 
 def main():
-    team = None
 
     try:
 
         hostname = socket.gethostname()
+
+        # netstats_header=['Teams Network Send Limit(Mbps)','Teams Network Receive Limit(Mbps)','Network Received Round Trip Time(ms)','Network Received Packet Loss(%)']
+        # print("leng of netstat header",len(netstats_header))
+
         parser = argparse.ArgumentParser(description="Teams Automation")
         parser.add_argument("--ip", required=True, help="Server endpoint ip")
         parser.add_argument("--env", action="extend", nargs="+", default=[])
@@ -614,6 +612,7 @@ def main():
         for argument in args.env:
             arg = argument.split("=")
             os.environ[arg[0]] = arg[1]
+        print(os.environ)
 
         team = TeamsClient(server_ip=args.ip)
         team.get_meeting_link()
@@ -628,13 +627,13 @@ def main():
             time.sleep(2)
         while team.start_time > datetime.now(team.tz).isoformat():
             time.sleep(2)
-            logger.info("waiting for the start time of the test")
+            print("waiting for the start time")
 
         while team.end_time > datetime.now(team.tz).isoformat():
-            logger.info("monitoring the test")
+            print("monitoring the test")
             team.check_stop_signal()
             if team.stop_signal:
-                logger.info("Stop signal received from server. Exiting the loop.")
+                print("Stop signal received. Exiting the loop.")
                 break
             if team.audio:
                 audio_stats = team.audio_stats()
@@ -648,13 +647,13 @@ def main():
                 team.send_stats_to_server(hostname, None, video_stats)
             time.sleep(1)
 
+        team.driver.quit()
+
     except Exception as e:
-        logger.error(f"An error occurred: {e}")
+        team.driver.quit()
+        logging.error(f"An error occurred: {e}")
         traceback.print_exc()
         sys.exit(1)
-    finally:
-        if team and team.driver:
-            team.driver.quit()
 
 
 if __name__ == "__main__":
