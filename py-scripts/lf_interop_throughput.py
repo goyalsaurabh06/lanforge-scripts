@@ -177,8 +177,7 @@ import matplotlib.pyplot as plt
 import re
 import threading
 from collections import OrderedDict
-# from lf_base_robo import RobotClass # REAL
-from lf_robo_base_class import RobotClass # Fake Server Testing
+from lf_base_robo import RobotClass
 logger = logging.getLogger(__name__)
 
 if sys.version_info[0] != 3:
@@ -378,13 +377,16 @@ class Throughput(Realm):
         self.config_dict = {}
         self.configured_devices_check = {}
         self.interopability_config = interopability_config
-
+        #Variables for base class to generate report
+        self.base_class_iterations_data = []
+        self.base_class_incremental_capacity_list = []
+        self.base_class_all_dataframes = None
+        self.base_class_to_run_cxs_len = []
         # Variables related to Robo
         self.robo_ip = robo_ip
         self.angle_list = angle_list if angle_list else [0]
         if self.robo_ip:
-            # self.robot = RobotClass(robo_ip=self.robo_ip, angle_list=self.angle_list)
-            self.robot = RobotClass() # Fake Server Testing
+            self.robot = RobotClass(robo_ip=self.robo_ip, angle_list=self.angle_list)
             self.robot.robo_ip = f"{self.robo_ip}" # Fake Server Testing
             self.rotation_enabled = rotation_enabled
             self.coordinate_list = coordinate_list if coordinate_list else [0]
@@ -423,7 +425,7 @@ class Throughput(Realm):
         # Loop through the coordinate list when coordinates are specified.
         for coord in self.coordinate_list:
             # checking the battery status of robot before moving to a point
-            pause_coord, test_stopped_by_user = self.robot.wait_for_battery(battery=90)
+            pause_coord, test_stopped_by_user = self.robot.wait_for_battery()
             if test_stopped_by_user:
                 break
 
@@ -523,8 +525,13 @@ class Throughput(Realm):
                 navdata['status'] = ''
                 navdata['Canbee_location'] = ''
                 navdata['Canbee_angle'] = ''
+                navdata['Test_status'] = 'Completed'
             with open(nav_data, 'w') as x:
                 json.dump(navdata, x, indent=4)
+        self.base_class_iterations_data=iterations_before_test_stopped_by_user
+        self.base_class_incremental_capacity_list=incremental_capacity_list
+        self.base_class_all_dataframes=all_dataframes
+        self.base_class_to_run_cxs_len=to_run_cxs_len
         self.generate_report_robo(list(set(iterations_before_test_stopped_by_user)), incremental_capacity_list, data=all_dataframes, data1=to_run_cxs_len, report_path=self.result_dir)
         if self.dowebgui:
             # copying to home directory i.e home/user_name
@@ -1532,7 +1539,7 @@ class Throughput(Realm):
         for j in range(len(self.angle_list)):
 
             # Check robot battery status before proceeding to monitor
-            pause_angle, test_stopped_by_user = self.robot.wait_for_battery(battery=90,stop=self.stop)
+            pause_angle, test_stopped_by_user = self.robot.wait_for_battery(stop=self.stop)
 
             if test_stopped_by_user:
                 break
@@ -1551,7 +1558,7 @@ class Throughput(Realm):
 
             # Perform rotation only when rotation is enabled
             if self.rotation_enabled:
-                rotation = self.robot.rotate_angle(1,2,self.angle_list[j])
+                rotation = self.robot.rotate_angle(self.angle_list[j])
                 if not rotation:
                     break
                 end_time = datetime.now() + timedelta(seconds=int(self.test_duration))
@@ -1578,7 +1585,7 @@ class Throughput(Realm):
                     pause_start = datetime.now()
                     pause = False
                     timestamp = datetime.now().strftime("%d/%m %I:%M:%S %p")
-                    pause, test_stopped_by_user = self.robot.wait_for_battery(battery=90,stop=self.stop)
+                    pause, test_stopped_by_user = self.robot.wait_for_battery(stop=self.stop)
 
                     if test_stopped_by_user:
                         break
@@ -1591,7 +1598,7 @@ class Throughput(Realm):
                         if self.rotation_enabled:
                             self.battery_log[self.current_coordinate] = {}
                             self.battery_log[self.current_coordinate][float(self.angle_list[j])] = timestamp
-                            rotation_moni = self.robot.rotate_angle(1,2,self.angle_list[j])
+                            rotation_moni = self.robot.rotate_angle(self.angle_list[j])
                             if not rotation_moni:
                                 test_stopped_by_user = True
                                 break
@@ -1932,6 +1939,7 @@ class Throughput(Realm):
                 if self.current_coordinate not in coordinate_list:
                     coordinate_list.append(self.current_coordinate)
                 data['current_coordinate'] = coordinate_list
+                data['test_values']['current_coordinate'] = coordinate_list
             with open(runtime_dir + "/../../Running_instances/{}_{}_running.json".format(self.ip, self.test_name), 'w') as file:
                 json.dump(data, file, indent=4)
 
@@ -3504,7 +3512,7 @@ class Throughput(Realm):
                             else:
                                 upload_values_list = data['Overall Upload'][data['Iteration'] == i + 1].values.tolist()
                             data_set_in_graph.append(upload_values_list)
-                            data_set_in_graph.append(upload_values_list)
+                            # data_set_in_graph.append(upload_values_list)
                             devices_data_to_create_bar_graph.append(upload_data)
                             label_data = ['Upload']
                             if not self.rotation_enabled:

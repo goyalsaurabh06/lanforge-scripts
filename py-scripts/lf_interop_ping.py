@@ -88,6 +88,7 @@ import traceback
 import asyncio
 import csv
 import json
+import shutil
 
 if 'py-json' not in sys.path:
     sys.path.append(os.path.join(os.path.abspath('..'), 'py-json'))
@@ -101,6 +102,7 @@ from lf_report import lf_report
 from station_profile import StationProfile
 from typing import List, Optional
 from LANforge import LFUtils
+from datetime import datetime, timedelta
 # Importing DeviceConfig to apply device configurations for ADB devices and laptops
 DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
 
@@ -113,8 +115,8 @@ if sys.version_info[0] != 3:
 
 realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
-# from lf_base_robo import RobotClass
-from lf_robo_base_class import RobotClass
+from lf_base_robo import RobotClass
+# from lf_robo_base_class import RobotClass
 
 class Ping(Realm):
     def __init__(self,
@@ -232,8 +234,10 @@ class Ping(Realm):
         self.currentangle=None
         self.currentcoordinate=None
         if robo_ip is not None:
-            self.robot=RobotClass()
+            self.robot=RobotClass(robo_ip=robo_ip, angle_list=self.angle_list)
             self.robot.robo_ip=robo_ip
+            self.webgui = False
+            self.start_time = None
         self.coordinate_json={}
         self.angle_json={}
         self.coordinates_completed=[]
@@ -907,6 +911,18 @@ class Ping(Realm):
         self.robot.ip=self.host
         # self.robot.testname=self.result_dir.split("/")[-1]
         abort=False
+        if self.webgui:
+            # To generate nav_data.json in webui folder
+            print("ggggggg",self.local_lf_report_dir)
+            base_dir = os.path.dirname(os.path.dirname(self.local_lf_report_dir))
+            nav_data = os.path.join(base_dir, 'nav_data.json')
+            #Empty the json before test is initiated
+            with open(nav_data, "w") as file:
+                json.dump({}, file)
+
+            self.robot.nav_data_path=nav_data
+            self.robot.runtime_dir=self.local_lf_report_dir
+            self.robot.testname=self.local_lf_report_dir.split("/")[-1]
         print("Proceeding with robot test execution")
         ports_data_dict = self.json_get('/ports/all/')['interfaces']
         ports_data = {}
@@ -915,7 +931,10 @@ class Ping(Realm):
             ports_data[port] = port_data
         
         for coord in self.coordinate_list:
-            pause,stop_test=self.robot.wait_for_battery(battery=80)
+            if self.webgui:
+                if self.check_stop_status():
+                    break
+            pause,stop_test=self.robot.wait_for_battery()
             matched,abort=self.robot.move_to_coordinate(coord)
             if abort:
                 break
@@ -926,7 +945,7 @@ class Ping(Realm):
             pause_angle=False
             for j in range(len(self.angle_list)):
                 if rotation_enabled:
-                    pause_angle,stop_test= self.robot.wait_for_battery(battery=80)
+                    pause_angle,stop_test= self.robot.wait_for_battery()
                 if stop_test:
                     break
                 if pause_angle:
@@ -935,7 +954,7 @@ class Ping(Realm):
                         continue
                 if rotation_enabled:
                     angle=self.angle_list[j]
-                    rotation = self.robot.rotate_angle(1,2,angle)
+                    rotation = self.robot.rotate_angle(angle)
                     if not rotation:
                         break
                     
@@ -1013,6 +1032,548 @@ class Ping(Realm):
                         self.coordinate_json[self.currentcoordinate][self.currentangle]=self.result_json                        
                 else:
                     self.coordinate_json[self.currentcoordinate]=self.result_json
+        
+        print("coordinatejson",self.coordinate_json)
+        if self.local_lf_report_dir == "":
+            self.generate_report_robo()
+        else:
+            self.generate_report_robo(report_path=self.local_lf_report_dir)
+
+    def copy_reports_to_home_dir(self):
+        curr_path = self.result_dir
+        home_dir = os.path.expanduser("~")
+        out_folder_name = "WebGui_Reports"
+        new_path = os.path.join(home_dir, out_folder_name)
+        # webgui directory creation
+        if not os.path.exists(new_path):
+            os.makedirs(new_path)
+        test_name = self.result_dir.split("/")[-1]
+        test_name_dir = os.path.join(new_path, test_name)
+        # in webgui-reports DIR creating a directory with test name
+        if not os.path.exists(test_name_dir):
+            os.makedirs(test_name_dir)
+        shutil.copytree(curr_path, test_name_dir, dirs_exist_ok=True)
+    
+    def track_resultjson(self):
+        if self.currentcoordinate not in self.coordinate_json:
+            self.coordinate_json[self.currentcoordinate]={}
+            self.starttime_track[self.currentcoordinate]={}
+        if self.rotation_enabled:
+            if self.currentangle not in self.coordinate_json[self.currentcoordinate]:
+                self.coordinate_json[self.currentcoordinate][self.currentangle]={}
+                self.starttime_track[self.currentcoordinate][self.currentangle]={}
+            self.coordinate_json[self.currentcoordinate][self.currentangle]=self.result_json
+            if 'starttime' not in self.starttime_track[self.currentcoordinate][self.currentangle]:
+                self.starttime_track[self.currentcoordinate][self.currentangle]['starttime']=self.start_time
+        else:
+            if 'starttime' not in self.starttime_track[self.currentcoordinate]:
+                self.starttime_track[self.currentcoordinate]['starttime']=self.start_time
+            self.coordinate_json[self.currentcoordinate]=self.result_json
+
+    def store_csv(self, data=None):
+        if data is None:
+            data = self.result_json
+
+        if 'status' in data.keys() and data['status'] == 'Aborted':
+            return False
+        else:
+            data['status'] = 'Running'
+            interval = timedelta(seconds=int(self.interval))
+            for device, device_data in data.items():
+                if device == 'status':
+                    continue
+                new_dict = {}
+                sequence_numbers = {}
+                for seq in device_data['rtts'].keys():
+                    sequence_numbers[int(seq)] = ((int(seq) - 1) * interval + self.start_time).strftime("%d/%m/%Y %H:%M:%S")
+                for seq in sorted(list(sequence_numbers.keys())):
+                    new_dict[sequence_numbers[seq]] = device_data['rtts'][seq]
+                # for seq,rtt in device_data['rtts'].items():
+                #     new_dict[((int(seq) -1) * interval + self.start_time).strftime("%d/%m/%Y %H:%M:%S")] = rtt
+                data[device]['webui_rtts'] = new_dict
+        
+        filename='{}_runtime_ping_data.json'.format(self.currentcoordinate)
+        filepath=os.path.join(self.result_dir,filename)
+        data=self.coordinate_json[self.currentcoordinate]
+        with open(filepath, 'w') as f:
+            json.dump(data, f, indent=4)       
+        
+        test_name = self.result_dir.split("/")[-1]
+        with open(self.result_dir + '/../../Running_instances/{}_{}_running.json'.format(self.host, test_name), 'r') as f:
+            run_status = json.load(f)
+            if run_status["status"] != "Running":
+                logging.info('Test is stopped by the user')
+                return False
+        return True
+
+    def set_webUI_stop(self):
+        if self.robo_ip is None:
+            filename = "runtime_ping_data.json"
+        else:
+            filename = "{}_runtime_ping_data.json".format(self.currentcoordinate)
+        
+        filepath=os.path.join(self.result_dir, filename)
+        with open(filepath, 'r') as f:
+            data = json.load(f)
+
+        if self.rotation_enabled:
+            data_for_lastangle=data[self.currentangle]
+            if 'status' in data_for_lastangle.keys() and data_for_lastangle['status'] != 'Aborted':
+
+                data_for_lastangle['status'] = 'Completed'
+                data[self.currentangle]=data_for_lastangle
+                
+                with open(filepath, 'w') as f:
+                    json.dump(data, f, indent=4)
+        elif 'status' in data.keys() and data['status'] != 'Aborted':
+            data['status'] = 'Completed'
+
+            with open(filepath, 'w') as f:
+                json.dump(data, f, indent=4)
+
+    def perform_robo_webui(self,args,Devices):
+        self.result_dir = self.local_lf_report_dir
+        rotation_enabled=bool(self.rotation_enabled)
+        self.robot.ip=self.host
+        # self.robot.testname=self.result_dir.split("/")[-1]
+        abort=False
+        if self.webgui:
+            # To generate nav_data.json in webui folder
+            base_dir = os.path.dirname(os.path.dirname(self.local_lf_report_dir))
+            nav_data = os.path.join(base_dir, 'nav_data.json')
+            #Empty the json before test is initiated
+            with open(nav_data, "w") as file:
+                json.dump({}, file)
+
+            self.robot.nav_data_path=nav_data
+            self.robot.runtime_dir=self.local_lf_report_dir
+            self.robot.testname=self.local_lf_report_dir.split("/")[-1]
+        print("Proceeding with robot test execution")
+        stop_test=False
+        
+        for coord in self.coordinate_list:
+            if self.webgui:
+                if self.check_stop_status():
+                    break
+            pause,stop_test=self.robot.wait_for_battery()
+            matched,abort=self.robot.move_to_coordinate(coord)
+            if abort:
+                break
+            self.coordinates_completed.append(coord)
+            self.currentcoordinate=coord
+
+            ports_data_dict = self.json_get('/ports/all/')['interfaces']
+            ports_data = {}
+            for ports in ports_data_dict:
+                port, port_data = list(ports.keys())[0], list(ports.values())[0]
+                ports_data[port] = port_data
+
+            logging.info("rotationlist {}".format(self.angle_list))
+            self.result_json={}
+            pause_angle=False
+            for j in range(len(self.angle_list)):
+                rtts = {}
+                rtts_list = []
+                ping_stats = {}
+                for station in self.sta_list:
+                    rtts[station] = {}
+                    ping_stats[station] = {
+                        'sent': [],
+                        'received': [],
+                        'dropped': [],
+                    }
+
+                self.result_json={}
+                loop_timer = 0
+                if rotation_enabled:
+                    if self.webgui:
+                        if self.check_stop_status():
+                            break
+                    pause_angle,stop_test= self.robot.wait_for_battery()
+                    if stop_test:
+                        break
+                    if pause_angle:
+                        reached=self.robot.move_to_coordinate(coord)
+                        if not reached:
+                            continue
+                        self.start_generic()
+                
+                if rotation_enabled:
+                    angle=self.angle_list[j]
+                    rotation = self.robot.rotate_angle(angle)
+                    if not rotation:
+                        break
+                    
+                    self.currentangle=self.angle_list[j]
+                self.start_time = datetime.now()
+                self.start_generic()
+                monitor_charge_time = datetime.now()
+                duration=self.duration * 60
+                # time.sleep(duration)
+                # logging.info('Stopping the cx')
+                while (loop_timer <= duration):
+                    t_init = datetime.now()
+                    
+                    try:
+                        result_data = self.get_results()
+                        if isinstance(result_data, dict):
+                            if 'UNKNOWN' in result_data['name']:
+                                raise ValueError("There are no valid generic endpoints to run the test")
+                        else:
+                            keys = [list(d.keys())[0] for d in result_data]
+                            keys = [key for key in keys if 'UNKNOWN' not in key]
+                            if len(keys) == 0:
+                                raise ValueError("There are no valid generic endpoints to run the test")
+                    except ValueError as e:
+                        logger.info(result_data)
+                        logger.error(e)
+                        exit(0)
+
+                    if ((datetime.now() - monitor_charge_time).total_seconds() >= 300):
+
+                        pause_monitor,stop_test= self.robot.wait_for_battery(stop=self.stop_generic)
+                        if stop_test:
+                            break
+                        if pause_monitor:
+                            reached=self.robot.move_to_coordinate(coord)
+                            if not reached:
+                                continue
+                            self.start_generic()
+                            if self.rotation_enabled:
+                                rotation = self.robot.rotate_angle(angle)
+                                if not rotation:
+                                    break
+                        monitor_charge_time=datetime.now()
+
+                    if isinstance(result_data, dict):
+                    
+                        for station in self.real_sta_list:
+                            current_device_data = Devices.devices_data[station]
+                            # logging.info(current_device_data)
+                            if station in result_data['name']:
+                                # logging.info(result_data['last results'].split('\n'))
+                                if len(result_data['last results']) != 0:
+                                    result = result_data['last results'].split('\n')
+                                    if len(result) > 1:
+                                        last_result = result[-2]
+                                    else:
+                                        last_result = result[-1]
+                                else:
+                                    last_result = ""
+
+                                hw_version = current_device_data['hw version']
+                                if "Win" in hw_version:
+                                    ostype = "Windows"
+                                elif "Linux" in hw_version:
+                                    ostype = "Linux"
+                                elif "Apple" in hw_version:
+                                    ostype = "Mac"
+                                else:
+                                    ostype = "Android"
+
+                            
+                                self.result_json[station] = {
+                                    'command': result_data['command'],
+                                    'sent': result_data['tx pkts'],
+                                    'recv': result_data['rx pkts'],
+                                    'dropped': result_data['dropped'],
+                                    'mac': current_device_data['mac'],
+                                    'ip': current_device_data['ip'],
+                                    'bssid': current_device_data['ap'],
+                                    'ssid': current_device_data['ssid'],
+                                    'channel': current_device_data['channel'],
+                                    'mode': current_device_data['mode'],
+                                    'name': [current_device_data['user'] if current_device_data['user'] != '' else current_device_data['hostname']][0],
+                                    'os': ostype,
+                                    'remarks': [],
+                                    'last_result': [last_result][0],
+                                    # **({'Coordinate': coord} if args.coordinate is not None else {}),
+                                    
+                                }
+                                
+
+                                ping_stats[station]['sent'].append(result_data['tx pkts'])
+                                ping_stats[station]['received'].append(result_data['rx pkts'])
+                                ping_stats[station]['dropped'].append(result_data['dropped'])
+                                # if rotation_enabled:
+                                #     ping_stats[station]['Angle'].append(angle_list[j])
+                                self.result_json[station]['ping_stats'] = ping_stats[station]
+                                if len(result_data['last results']) != 0:
+                                    temp_last_results = result_data['last results'].split('\n')[0: len(result_data['last results']) - 1]
+                                    drop_count = 0  # let dropped = 0 initially
+                                    dropped_packets = []
+                                    # sample result - 64 bytes from 192.168.1.61: icmp_seq=28 time=3.66 ms *** drop: 0 (0, 0.000)  rx: 28  fail: 0  bytes: 1792 min/avg/max: 2.160/3.422/5.190
+                                    for result in temp_last_results:
+                                        try:
+                                            # fetching the first part of the last result e.g., 64 bytes from 192.168.1.61: icmp_seq=28 time=3.66 ms into t_result and the remaining part into t_fail
+                                            t_result, t_fail = result.split('***')
+                                        except BaseException:
+                                            continue
+                                        t_result = t_result.split()
+                                        if 'icmp_seq=' not in result and 'time=' not in result:
+                                            continue
+                                        for t_data in t_result:
+                                            if 'icmp_seq=' in t_data:
+                                                seq_number = int(t_data.strip('icmp_seq='))
+                                            if 'time=' in t_data:
+                                                rtt = float(t_data.strip('time='))
+                                        rtts[station][seq_number] = rtt
+                                        rtts_list.append(rtt)
+                                        # print("angle",ping.currentangle)
+                                        # print("rtts_list",rtts)
+                                        # finding dropped packets
+                                        t_fail = t_fail.split()  # [' drop:', '0', '(0, 0.000)', 'rx:', '28', 'fail:', '0', 'bytes:', '1792', 'min/avg/max:', '2.160/3.422/5.190']
+                                        t_drop_val = t_fail[1]  # t_drop_val = '0'
+                                        t_drop_val = int(t_drop_val)  # type cast string to int
+                                        if t_drop_val != drop_count:
+                                            current_drop_packets = t_drop_val - drop_count
+                                            drop_count = t_drop_val
+                                            for drop_packet in range(1, current_drop_packets + 1):
+                                                dropped_packets.append(seq_number - drop_packet)
+
+                                if rtts_list == []:
+                                    rtts_list = [0]
+                                min_rtt = str(min(rtts_list))
+                                avg_rtt = str(sum(rtts_list) / len(rtts_list))
+                                max_rtt = str(max(rtts_list))
+                                self.result_json[station]['min_rtt'] = min_rtt
+                                self.result_json[station]['avg_rtt'] = avg_rtt
+                                self.result_json[station]['max_rtt'] = max_rtt
+                                if self.result_json[station]['os'] == 'Android' and isinstance(rtts, dict) and rtts != {}:
+                                    if list(rtts[station].keys()) == []:
+                                        self.result_json[station]['sent'] = str(0)
+                                        self.result_json[station]['recv'] = str(0)
+                                        self.result_json[station]['dropped'] = str(0)
+                                    else:
+                                        self.result_json[station]['sent'] = str(max(list(rtts[station].keys())))
+                                        self.result_json[station]['recv'] = str(len(rtts[station].keys()))
+                                        self.result_json[station]['dropped'] = str(int(self.result_json[station]['sent']) - int(self.result_json[station]['recv']))
+                                if len(rtts[station].keys()) != 0:
+                                    required_sequence_numbers = list(range(1, max(rtts[station].keys())))
+                                    for seq in required_sequence_numbers:
+                                        if seq not in rtts[station].keys():
+                                            if seq in dropped_packets:
+                                                rtts[station][seq] = 0
+                                            else:
+                                                rtts[station][seq] = 0.11
+                                self.result_json[station]['rtts'] = rtts[station]
+                                self.result_json[station]['remarks'] = self.generate_remarks(self.result_json[station])
+                        
+                        self.track_resultjson()
+                    else:
+                        for station in self.real_sta_list:
+                            current_device_data = Devices.devices_data[station]
+                            # print('<<<<<<<<<<<<<<<<<<<', current_device_data)
+                            for ping_device in result_data:
+                                ping_endp, ping_data = list(ping_device.keys())[
+                                    0], list(ping_device.values())[0]
+                                eid = str(ping_data['eid'])
+                                self.sta_list = list(self.sta_list)
+                                # Removing devices with UNKNOWN CX
+                                if 'UNKNOWN' in ping_endp:
+                                    device_id = eid.split('.')[0] + '.' + eid.split('.')[1]
+                                    if device_id == station.split('.')[0] + '.' + station.split('.')[1]:
+                                        self.sta_list.remove(station)
+                                        self.real_sta_list.remove(station)
+                                    logger.info(result_data)
+                                    logger.info("Excluding {} from report as there is no valid generic endpoint creation during the test(UNKNOWN CX)".format(device_id))
+                                    continue
+                                if station in ping_endp:
+                                    if len(ping_data['last results']) != 0:
+                                        result = ping_data['last results'].split('\n')
+                                        if len(result) > 1:
+                                            last_result = result[-2]
+                                        else:
+                                            last_result = result[-1]
+                                    else:
+                                        last_result = ""
+
+                                    hw_version = current_device_data['hw version']
+                                    if "Win" in hw_version:
+                                        ostype = "Windows"
+                                    elif "Linux" in hw_version:
+                                        ostype = "Linux"
+                                    elif "Apple" in hw_version:
+                                        ostype = "Mac"
+                                    else:
+                                        ostype = "Android"
+                                    
+                                    self.result_json[station] = {
+                                        'command': ping_data['command'],
+                                        'sent': ping_data['tx pkts'],
+                                        'recv': ping_data['rx pkts'],
+                                        'dropped': ping_data['dropped'],
+                                        'mac': current_device_data['mac'],
+                                        'ip': current_device_data['ip'],
+                                        'bssid': current_device_data['ap'],
+                                        'ssid': current_device_data['ssid'],
+                                        'channel': current_device_data['channel'],
+                                        'mode': current_device_data['mode'],
+                                        'name': [current_device_data['user'] if current_device_data['user'] != '' else current_device_data['hostname']][0],
+                                        'os': ostype,
+                                        'remarks': [],
+                                        'last_result': [last_result][0],
+                                        # **({'Coordinate': coord} if self.coordinate is not None else {}),
+                                        
+                                    }
+                                    ping_stats[station]['sent'].append(ping_data['tx pkts'])
+                                    ping_stats[station]['received'].append(ping_data['rx pkts'])
+                                    ping_stats[station]['dropped'].append(ping_data['dropped'])
+                                    # if rotation_enabled:
+                                    #     ping_stats[station]['Angle'].append(angle_list[j])
+                                    self.result_json[station]['ping_stats'] = ping_stats[station]
+                                    if len(ping_data['last results']) != 0:
+                                        temp_last_results = ping_data['last results'].split('\n')[0: len(ping_data['last results']) - 1]
+                                        drop_count = 0  # let dropped = 0 initially
+                                        dropped_packets = []
+                                        for result in temp_last_results:
+                                            # sample result - 64 bytes from 192.168.1.61: icmp_seq=28 time=3.66 ms *** drop: 0 (0, 0.000)  rx: 28  fail: 0  bytes: 1792 min/avg/max: 2.160/3.422/5.190
+                                            if 'time=' in result:
+                                                try:
+                                                    # fetching the first part of the last result e.g., 64 bytes from 192.168.1.61: icmp_seq=28 time=3.66 ms into t_result and the remaining part into t_fail
+                                                    t_result, t_fail = result.split('***')
+                                                except BaseException:
+                                                    continue
+                                                t_result = t_result.split()
+                                                if 'icmp_seq=' not in result and 'time=' not in result:
+                                                    continue
+                                                for t_data in t_result:
+                                                    if 'icmp_seq=' in t_data:
+                                                        seq_number = int(t_data.strip('icmp_seq='))
+                                                    if 'time=' in t_data:
+                                                        rtt = float(t_data.strip('time='))
+                                                rtts[station][seq_number] = rtt
+                                                rtts_list.append(rtt)
+                                                # print("angle",ping.currentangle)
+                                                # print("rtts_list",rtts)
+                                                # finding dropped packets
+                                                t_fail = t_fail.split()  # [' drop:', '0', '(0, 0.000)', 'rx:', '28', 'fail:', '0', 'bytes:', '1792', 'min/avg/max:', '2.160/3.422/5.190']
+                                                t_drop_val = t_fail[1]  # t_drop_val = '0'
+                                                t_drop_val = int(t_drop_val)  # type cast string to int
+                                                if t_drop_val != drop_count:
+                                                    current_drop_packets = t_drop_val - drop_count
+                                                    drop_count = t_drop_val
+                                                    for drop_packet in range(1, current_drop_packets + 1):
+                                                        dropped_packets.append(seq_number - drop_packet)
+
+                                    if rtts_list == []:
+                                        rtts_list = [0]
+                                    min_rtt = str(min(rtts_list))
+                                    avg_rtt = str(sum(rtts_list) / len(rtts_list))
+                                    max_rtt = str(max(rtts_list))
+                                    self.result_json[station]['min_rtt'] = min_rtt
+                                    self.result_json[station]['avg_rtt'] = avg_rtt
+                                    self.result_json[station]['max_rtt'] = max_rtt
+                                    if self.result_json[station]['os'] == 'Android' and isinstance(rtts, dict) and rtts != {}:
+                                        if list(rtts[station].keys()) == []:
+                                            self.result_json[station]['sent'] = str(0)
+                                            self.result_json[station]['recv'] = str(0)
+                                            self.result_json[station]['dropped'] = str(0)
+                                        else:
+                                            self.result_json[station]['sent'] = str(max(list(rtts[station].keys())))
+                                            self.result_json[station]['recv'] = str(len(rtts[station].keys()))
+                                            self.result_json[station]['dropped'] = str(int(self.result_json[station]['sent']) - int(self.result_json[station]['recv']))
+                                    if len(rtts[station].keys()) != 0:
+                                        required_sequence_numbers = list(range(1, max(rtts[station].keys())))
+                                        for seq in required_sequence_numbers:
+                                            if seq not in rtts[station].keys():
+                                                if seq in dropped_packets:
+                                                    rtts[station][seq] = 0
+                                                else:
+                                                    rtts[station][seq] = 0.11
+                                            # print(station, rtts[station])
+                                    self.result_json[station]['rtts'] = rtts[station]
+                                    self.result_json[station]['remarks'] = self.generate_remarks(self.result_json[station])
+                                    # ping.result_json[station]['dropped_packets'] = dropped_packets
+
+                        self.track_resultjson()
+    
+            
+                    if self.webgui:
+                        if not self.store_csv():
+                            logging.info('Aborted test from webUI')
+                            break
+
+                    time.sleep(1)
+                    # loop_timer += 1
+                    # print(loop_timer)
+                    t_end = datetime.now()
+                    # print(t_end, abs(t_init - t_end).total_seconds())
+                    loop_timer += abs(t_init - t_end).total_seconds()
+                # time.sleep(duration * 60)
+                logging.info('Stopping the cx')
+                self.stop_generic()
+            if self.webgui:
+                self.copy_reports_to_home_dir()               
+                self.set_webUI_stop()
+
+                # result_data = self.get_results()
+                # if (args.real):
+                #     if (isinstance(result_data, dict)):
+                #         for station in self.real_sta_list:
+                #             current_device_data = Devices.devices_data[station]
+                #             # logging.info(current_device_data)
+                #             if (station in result_data['name']):
+                #                 try:
+                #                     # logging.info(result_data['last results'].split('\n'))
+                #                     self.result_json[station] = {
+                #                         'command': result_data['command'],
+                #                         'sent': result_data['tx pkts'],
+                #                         'recv': result_data['rx pkts'],
+                #                         'dropped': result_data['dropped'],
+                #                         'min_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[0] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                #                         'avg_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[1] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                #                         'max_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[2] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                #                         'mac': current_device_data['mac'],
+                #                         'ssid': current_device_data['ssid'],
+                #                         'channel': current_device_data['channel'],
+                #                         'mode': current_device_data['mode'],
+                #                         'name': [current_device_data['user'] if current_device_data['user'] != '' else current_device_data['hostname']][0],
+                #                         'os': ['Windows' if 'Win' in current_device_data['hw version'] else 'Linux' if 'Linux' in current_device_data['hw version'] else 'Mac' if 'Apple' in current_device_data['hw version'] else 'Android'][0],  # noqa E501
+                #                         'remarks': [],
+                #                         'last_result': [result_data['last results'].split('\n')[-2] if len(result_data['last results']) != 0 else ""][0]
+                #                     }
+                #                     self.result_json[station]['remarks'] = self.generate_remarks(self.result_json[station])
+                #                 except Exception:
+                #                     logging.error('Failed parsing the result for the station {}'.format(station))
+                #     else:
+                #         for station in self.real_sta_list:
+                #             current_device_data = Devices.devices_data[station]
+                #             for ping_device in result_data:
+                #                 ping_endp, ping_data = list(ping_device.keys())[
+                #                     0], list(ping_device.values())[0]
+                #                 if (station in ping_endp):
+                #                     try:
+                #                         self.result_json[station] = {
+                #                             'command': ping_data['command'],
+                #                             'sent': ping_data['tx pkts'],
+                #                             'recv': ping_data['rx pkts'],
+                #                             'dropped': ping_data['dropped'],
+                #                             'min_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[0] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                #                             'avg_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[1] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                #                             'max_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[2] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                #                             'mac': current_device_data['mac'],
+                #                             'ssid': current_device_data['ssid'],
+                #                             'channel': current_device_data['channel'],
+                #                             'mode': current_device_data['mode'],
+                #                             'name': [current_device_data['user'] if current_device_data['user'] != '' else current_device_data['hostname']][0],
+                #                             'os': ['Windows' if 'Win' in current_device_data['hw version'] else 'Linux' if 'Linux' in current_device_data['hw version'] else 'Mac' if 'Apple' in current_device_data['hw version'] else 'Android'][0],  # noqa E501
+                #                             'remarks': [],
+                #                             'last_result': [ping_data['last results'].split('\n')[-2] if len(ping_data['last results']) != 0 else ""][0]
+                #                         }
+                #                         self.result_json[station]['remarks'] = self.generate_remarks(self.result_json[station])
+                #                     except Exception:
+                #                         logging.error('Failed parsing the result for the station {}'.format(station))
+
+                # if self.currentcoordinate not in self.coordinate_json:
+
+                #     self.coordinate_json[self.currentcoordinate]={}
+                # if self.rotation_enabled:
+                #         if self.currentangle not in self.coordinate_json[self.currentcoordinate]:
+                #             self.coordinate_json[self.currentcoordinate][self.currentangle]={}
+                #         self.coordinate_json[self.currentcoordinate][self.currentangle]=self.result_json                        
+                # else:
+                #     self.coordinate_json[self.currentcoordinate]=self.result_json
         
         print("coordinatejson",self.coordinate_json)
         if self.local_lf_report_dir == "":
@@ -1167,6 +1728,8 @@ class Ping(Realm):
                 # packet_count_data = {}
                 os_type = []
                 for device, device_data in self.result_json.items():
+                    if not isinstance(device_data, dict):
+                        continue
                     logging.info('Device data: {} {}'.format(device, device_data))
                     os_type.append(device_data['os'])
                     self.packets_sent.append(int(device_data['sent']))

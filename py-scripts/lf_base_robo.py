@@ -219,10 +219,12 @@ class RobotClass:
                 navdata['status'] = "Stopped"
                 navdata['Canbee_location'] = ''
                 navdata['Canbee_angle'] = ''
+                navdata['Test_status'] = ''
             else:
                 navdata['status'] = "Running"
                 navdata['Canbee_location'] = coord
                 navdata['Canbee_angle'] = ''
+                navdata['Test_status'] = ''
             with open(self.nav_data_path, 'w') as x:
                 json.dump(navdata, x, indent=4)
 

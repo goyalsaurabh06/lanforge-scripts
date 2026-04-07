@@ -18,6 +18,8 @@ import lf_interop_qos as qos_test
 import lf_interop_ping as ping_test
 from lf_interop_throughput import Throughput
 from lf_interop_video_streaming import VideoStreamingTest
+from multiprocessing import Event, Value, Lock
+from lf_robo_base_class import RobotClass
 # from lf_interop_real_browser_test import RealBrowserTest
 from test_l3 import L3VariableTime,change_port_to_ip,configure_reporting,query_real_clients,valid_endp_types
 from lf_kpi_csv import lf_kpi_csv
@@ -35,6 +37,8 @@ import matplotlib
 import csv
 import matplotlib.pyplot as plt
 from pathlib import Path
+from dotenv import load_dotenv
+
 realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
 error_logs = ""
@@ -170,6 +174,45 @@ class Candela(Realm):
         self.coordinate_list = coordinate.split(',')
         self.rotation_list = rotation.split(',')
         self.rotation_enabled  = True if rotation != '' else False
+        self.ftp_done_event = Event()
+        self.qos_done_event = Event()
+        self.http_done_event = Event()
+        self.thput_done_event = Event()
+        self.vs_done_event = Event()
+        self.ping_done_event = Event()
+        self.mcast_done_event = Event()
+        self.yt_done_event = Event()
+        self.rb_done_event = Event()
+        self.zoom_done_event = Event()
+        self.robot_move_event = Event()
+        self.ftp_rotate = Event()
+        self.qos_rotate = Event()
+        self.http_rotate = Event()
+        self.thput_rotate = Event()
+        self.vs_rotate = Event()
+        self.ping_rotate = Event()
+        self.mcast_rotate = Event()
+        self.yt_rotate = Event()
+        self.rb_rotate = Event()
+        self.zoom_rotate = Event()
+        self.ftp_rotate_done_event = Event()
+        self.qos_rotate_done_event = Event()
+        self.http_rotate_done_event = Event()
+        self.thput_rotate_done_event = Event()
+        self.vs_rotate_done_event = Event()
+        self.ping_rotate_done_event = Event()
+        self.mcast_rotate_done_event = Event()
+        self.yt_rotate_done_event = Event()
+        self.rb_rotate_done_event = Event()
+        self.zoom_rotate_done_event = Event()
+        self.robot_rotate_move_event = Event()
+        self.test_stopped_event = Event()
+        self.abort_event = Event()
+        self.robo_moved = Value('b', False)
+        self.robo_rotated = Value('b', False)
+        self.robot_lock = Lock()
+        self.robot_rotate_call_counter = Value('i', 0)
+        self.robot_call_counter = Value('i', 0)
 
     def api_get(self, endp: str):
         """
@@ -519,6 +562,165 @@ class Candela(Realm):
             if test_name not in self.test_count_dict:
                 self.test_count_dict[test_name] = 1
 
+    def check_all_tests(self):
+        print("checking for all tests to finish rotation",self.qos_rotate.is_set(),self.ftp_rotate.is_set(),self.http_rotate.is_set(),self.ping_rotate.is_set(),self.thput_rotate.is_set(),self.vs_rotate.is_set(),self.mcast_rotate.is_set(),self.yt_rotate.is_set(),self.rb_rotate.is_set(),self.zoom_rotate.is_set())
+        if "qos_test" in self.parallel_tests:
+            self.qos_rotate.wait()
+        if "ftp_test" in self.parallel_tests:
+            self.ftp_rotate.wait()
+        if "http_test" in self.parallel_tests:
+            self.http_rotate.wait()
+        if "ping_test" in self.parallel_tests:
+            self.ping_rotate.wait()
+        if "thput_test" in self.parallel_tests:
+            self.thput_rotate.wait()
+        if "vs_test" in self.parallel_tests:
+            self.vs_rotate.wait()
+        if "mcast_test" in self.parallel_tests:
+            self.mcast_rotate.wait()
+        if "yt_test" in self.parallel_tests:
+            self.yt_rotate.wait()
+        if "rb_test" in self.parallel_tests:
+            self.rb_rotate.wait()
+        if "zoom_test" in self.parallel_tests:
+            self.zoom_rotate.wait()
+        print("all tests finished rotation")
+
+    def wait_for_all_tests_to_finish_rotation(self, coordinate=None, angle=None):
+        # print(self.qos_done_event.is_set(),"---",self.ftp_done_event.is_set(),"---",self.http_done_event.is_set())
+        print("parallel tests running",self.qos_rotate_done_event.is_set(),self.ftp_rotate_done_event.is_set(),self.ping_rotate_done_event.is_set())
+        if "qos_test" in self.parallel_tests:
+            self.qos_rotate_done_event.wait()
+        if "ftp_test" in self.parallel_tests:
+            self.ftp_rotate_done_event.wait()
+        if "http_test" in self.parallel_tests:
+            self.http_rotate_done_event.wait()
+        if "ping_test" in self.parallel_tests:
+            self.ping_rotate_done_event.wait()
+        if "thput_test" in self.parallel_tests:
+            self.thput_rotate_done_event.wait()
+        if "vs_test" in self.parallel_tests:
+            self.vs_rotate_done_event.wait()
+        if "mcast_test" in self.parallel_tests:
+            self.mcast_rotate_done_event.wait()
+        if "yt_test" in self.parallel_tests:
+            self.yt_rotate_done_event.wait()
+        if "rb_test" in self.parallel_tests:
+            self.rb_rotate_done_event.wait()
+        if "zoom_test" in self.parallel_tests:
+            self.zoom_rotate_done_event.wait()
+        # print("222",self.robot_move_event.is_set(),"---",self.ftp_done_event.is_set(),"---",self.http_done_event.is_set())
+        with self.robot_lock:
+            if not self.robot_rotate_move_event.is_set():
+                self.robot_rotate_move_event.set()
+                self.robo_controller(coord=coordinate, angle=angle)
+        
+            self.robot_rotate_call_counter.value += 1
+            if self.robot_rotate_call_counter.value == len(self.parallel_tests):
+                self.robot_rotate_move_event.clear()
+                print("clearing the robot_rotate_move_event")
+                self.robot_rotate_call_counter.value = 0
+            return (
+                self.test_stopped_event.is_set(),
+                self.robo_moved.value,
+                self.abort_event.is_set(),
+                self.robo_rotated.value
+            )
+
+    def wait_for_all_tests_to_finish(self, coordinate=None, angle=None):
+        # print(self.qos_done_event.is_set(),"---",self.ftp_done_event.is_set(),"---",self.http_done_event.is_set())
+        print("parallel tests running",self.parallel_tests)
+        if "qos_test" in self.parallel_tests:
+            self.qos_done_event.wait()
+        if "ftp_test" in self.parallel_tests:
+            self.ftp_done_event.wait()
+        if "http_test" in self.parallel_tests:
+            self.http_done_event.wait()
+        if "ping_test" in self.parallel_tests:
+            self.ping_done_event.wait()
+        if "thput_test" in self.parallel_tests:
+            self.thput_done_event.wait()
+        if "vs_test" in self.parallel_tests:
+            self.vs_done_event.wait()
+        if "mcast_test" in self.parallel_tests:
+            self.mcast_done_event.wait()
+        if "yt_test" in self.parallel_tests:
+            self.yt_done_event.wait()
+        if "rb_test" in self.parallel_tests:
+            self.rb_done_event.wait()
+        if "zoom_test" in self.parallel_tests:
+            self.zoom_done_event.wait()
+        # print("222",self.robot_move_event.is_set(),"---",self.ftp_done_event.is_set(),"---",self.http_done_event.is_set())
+        with self.robot_lock:
+            if not self.robot_move_event.is_set():
+                self.robot_move_event.set()
+                self.robo_controller(coord=coordinate, angle=angle)
+        
+            self.robot_call_counter.value += 1
+            if self.robot_call_counter.value == len(self.parallel_tests):
+                self.robot_move_event.clear()
+                print("clearing the robot_move_event")
+                self.robot_call_counter.value = 0
+            return (
+                self.test_stopped_event.is_set(),
+                self.robo_moved.value,
+                self.abort_event.is_set(),
+                self.robo_rotated.value
+            )
+    
+    def init_robot(self):
+        self.robot_obj = RobotClass()
+        self.robot_obj.robo_ip = self.robot_ip
+        self.robot_obj.ip = self.lanforge_ip
+        # self.robot_obj.testname = self.test_name
+        # self.robot_obj.runtime_dir = self.result_dir
+
+        base_dir = os.path.dirname(os.path.dirname(self.result_dir))
+        self.robot_obj.nav_data_path = os.path.join(base_dir, 'nav_data.json')
+
+        print("Robot IP:", self.robot_obj.robo_ip)
+    
+    def robo_controller(self,coord,angle=None):
+
+        print("controller called",angle)
+
+        if not hasattr(self, "robot_obj"):
+            raise RuntimeError("Robot not initialized in this process")
+
+        self.robo_moved.value = False
+        self.abort_event.clear()
+        self.test_stopped_event.clear()
+        print("-------",self.test_stopped_event.is_set())
+        
+        if angle is None:
+
+            if self.test_stopped_event.is_set():
+                return
+                    
+            _, stopped = self.robot_obj.wait_for_battery(battery=40)
+
+            if stopped:
+                self.test_stopped_event.set()
+                return
+                
+            moved, abort = self.robot_obj.move_to_coordinate(coord)
+            self.robo_moved.value = moved
+
+            if abort:
+                self.abort_event.set()
+                return
+        
+        else:
+            if self.rotation_enabled:
+                print("Rotating to angle:", angle)
+                self.robo_rotated.value = False
+                _, stopped = self.robot_obj.wait_for_battery(battery=40)
+                if stopped:
+                    self.test_stopped_event.set()
+                    return
+
+                rotated = self.robot_obj.rotate_angle(1, 2, angle)
+                self.robo_rotated.value = rotated
 
 
     def run_ping_test(
@@ -747,12 +949,173 @@ class Candela(Realm):
         self.ping_obj_dict[ce][obj_name]["obj"].create_generic_endp()
 
         logging.info(self.ping_obj_dict[ce][obj_name]["obj"].generic_endps_profile.created_cx)
+        self.ping_done_event.set()
+        self.ping_rotate_done_event.set()
 
         if self.robot_test :
+            if self.dowebgui:
+                self.ping_obj_dict[ce][obj_name]["obj"].webgui = True
+                
             if self.current_exec != "parallel":
+                if self.dowebgui:
+                    try:
+                        with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.lanforge_ip, self.test_name), 'r') as file:
+                            data = json.load(file)
+                            if data["status"] != "Running":
+                                logging.info('Test is stopped by the user')
+                                self.test_stopped = True
+                        if not self.test_stopped:
+                            self.overall_status['ping'] = "started"
+                            self.overall_status["time"] = datetime.datetime.now().strftime("%Y %d %H:%M:%S")
+                            self.overall_status["current_mode"] = self.current_exec
+                            self.overall_status["current_test_name"] = "ping"
+                            self.overall_csv.append(self.overall_status.copy())
+                            df1 = pd.DataFrame(self.overall_csv)
+                            df1.to_csv('{}/overall_status.csv'.format(self.result_dir), index=False)
+                    except BaseException:
+                        logger.info("Error while running for webui during ping execution")
+                    if self.test_stopped:
+                        logger.info("test has been stopped by the user")
+                        return False
                 self.ping_obj_dict[ce][obj_name]["obj"].local_lf_report_dir = local_lf_report_dir
-                print("lllllllllllllllll",local_lf_report_dir)
-                self.ping_obj_dict[ce][obj_name]["obj"].perform_robo(self.ping_obj_dict[ce][obj_name]["obj"],Devices)
+                self.ping_obj_dict[ce][obj_name]["obj"].perform_robo_webui(self.ping_obj_dict[ce][obj_name]["obj"],Devices)
+                params = {
+                "result_json": None,
+                "result_dir": "Ping_Test_Report",
+                "report_path": "",
+                "config_devices": "",
+                "group_device_map": {}
+                }
+            
+                if local_lf_report_dir != "":
+                    params["report_path"] = local_lf_report_dir
+
+                if group_name:
+                    params["config_devices"] = config_devices
+                    params["group_device_map"] = group_device_map
+                self.ping_obj_dict[ce][obj_name]["data"] = params.copy()
+                if self.dowebgui:
+                    self.webgui_test_done("ping")
+                return True
+            else:
+                self.ping_obj_dict[ce][obj_name]["obj"].local_lf_report_dir = local_lf_report_dir
+                rotation_enabled=bool(self.ping_obj_dict[ce][obj_name]["obj"].rotation_enabled)
+                abort=False
+                ports_data_dict = self.json_get('/ports/all/')['interfaces']
+                ports_data = {}
+                for ports in ports_data_dict:
+                    port, port_data = list(ports.keys())[0], list(ports.values())[0]
+                    ports_data[port] = port_data
+                
+                for coord in self.ping_obj_dict[ce][obj_name]["obj"].coordinate_list:
+                    test_stopped_by_user,robo_moved, abort, robo_rotated = self.wait_for_all_tests_to_finish(coordinate=coord)
+                    if test_stopped_by_user:
+                        break
+                    if abort or not robo_moved:
+                        break
+                    self.ping_obj_dict[ce][obj_name]["obj"].coordinates_completed.append(coord)
+                    self.ping_obj_dict[ce][obj_name]["obj"].currentcoordinate=coord
+                    logging.info("rotationlist {}".format(self.ping_obj_dict[ce][obj_name]["obj"].angle_list))
+                    self.ping_obj_dict[ce][obj_name]["obj"].result_json={}
+                    pause_angle=False
+                    for j in range(len(self.ping_obj_dict[ce][obj_name]["obj"].angle_list)):
+                        if rotation_enabled:
+                            # self.ping_done_event.clear()
+                            test_stopped_by_user,robo_moved, abort, robo_rotated = self.wait_for_all_tests_to_finish_rotation(coordinate=coord,angle=self.rotation_list[j])
+                            # self.ping_done_event.set()
+                            if test_stopped_by_user:
+                                break
+                            if not robo_rotated:
+                                break    
+                        self.ping_obj_dict[ce][obj_name]["obj"].currentangle=self.ping_obj_dict[ce][obj_name]["obj"].angle_list[j]
+                        self.ping_done_event.clear()
+                        if rotation_enabled:
+                            self.ping_rotate_done_event.clear()
+                            self.ping_rotate.set()
+                            self.check_all_tests()
+                        self.ping_obj_dict[ce][obj_name]["obj"].start_generic()
+                        duration=self.ping_obj_dict[ce][obj_name]["obj"].duration * 60
+                        time.sleep(duration)
+                        logging.info('Stopping the cx')
+                        self.ping_obj_dict[ce][obj_name]["obj"].stop_generic()
+                        self.ping_done_event.set()
+                        if rotation_enabled:
+                            self.ping_rotate.clear()
+                            self.ping_rotate_done_event.set()
+                        result_data = self.ping_obj_dict[ce][obj_name]["obj"].get_results()
+                        if (self.ping_obj_dict[ce][obj_name]["obj"].real):
+                            if (isinstance(result_data, dict)):
+                                for station in self.ping_obj_dict[ce][obj_name]["obj"].real_sta_list:
+                                    current_device_data = Devices.devices_data[station]
+                                    # logging.info(current_device_data)
+                                    if (station in result_data['name']):
+                                        try:
+                                            # logging.info(result_data['last results'].split('\n'))
+                                            self.ping_obj_dict[ce][obj_name]["obj"].result_json[station] = {
+                                                'command': result_data['command'],
+                                                'sent': result_data['tx pkts'],
+                                                'recv': result_data['rx pkts'],
+                                                'dropped': result_data['dropped'],
+                                                'min_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[0] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                                'avg_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[1] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                                'max_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[2] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                                'mac': current_device_data['mac'],
+                                                'ssid': current_device_data['ssid'],
+                                                'channel': current_device_data['channel'],
+                                                'mode': current_device_data['mode'],
+                                                'name': [current_device_data['user'] if current_device_data['user'] != '' else current_device_data['hostname']][0],
+                                                'os': ['Windows' if 'Win' in current_device_data['hw version'] else 'Linux' if 'Linux' in current_device_data['hw version'] else 'Mac' if 'Apple' in current_device_data['hw version'] else 'Android'][0],  # noqa E501
+                                                'remarks': [],
+                                                'last_result': [result_data['last results'].split('\n')[-2] if len(result_data['last results']) != 0 else ""][0]
+                                            }
+                                            self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['remarks'] = self.ping_obj_dict[ce][obj_name]["obj"].generate_remarks(self.ping_obj_dict[ce][obj_name]["obj"].result_json[station])
+                                        except Exception:
+                                            logging.error('Failed parsing the result for the station {}'.format(station))
+                            else:
+                                for station in self.ping_obj_dict[ce][obj_name]["obj"].real_sta_list:
+                                    current_device_data = Devices.devices_data[station]
+                                    for ping_device in result_data:
+                                        ping_endp, ping_data = list(ping_device.keys())[
+                                            0], list(ping_device.values())[0]
+                                        if (station in ping_endp):
+                                            try:
+                                                self.ping_obj_dict[ce][obj_name]["obj"].result_json[station] = {
+                                                    'command': ping_data['command'],
+                                                    'sent': ping_data['tx pkts'],
+                                                    'recv': ping_data['rx pkts'],
+                                                    'dropped': ping_data['dropped'],
+                                                    'min_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[0] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                                    'avg_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[1] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                                    'max_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[2] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                                    'mac': current_device_data['mac'],
+                                                    'ssid': current_device_data['ssid'],
+                                                    'channel': current_device_data['channel'],
+                                                    'mode': current_device_data['mode'],
+                                                    'name': [current_device_data['user'] if current_device_data['user'] != '' else current_device_data['hostname']][0],
+                                                    'os': ['Windows' if 'Win' in current_device_data['hw version'] else 'Linux' if 'Linux' in current_device_data['hw version'] else 'Mac' if 'Apple' in current_device_data['hw version'] else 'Android'][0],  # noqa E501
+                                                    'remarks': [],
+                                                    'last_result': [ping_data['last results'].split('\n')[-2] if len(ping_data['last results']) != 0 else ""][0]
+                                                }
+                                                self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['remarks'] = self.ping_obj_dict[ce][obj_name]["obj"].generate_remarks(self.ping_obj_dict[ce][obj_name]["obj"].result_json[station])
+                                            except Exception:
+                                                logging.error('Failed parsing the result for the station {}'.format(station))
+
+                        if self.ping_obj_dict[ce][obj_name]["obj"].currentcoordinate not in self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json:
+
+                            self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json[self.ping_obj_dict[ce][obj_name]["obj"].currentcoordinate]={}
+                        if self.ping_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                if self.ping_obj_dict[ce][obj_name]["obj"].currentangle not in self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json[self.ping_obj_dict[ce][obj_name]["obj"].currentcoordinate]:
+                                    self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json[self.ping_obj_dict[ce][obj_name]["obj"].currentcoordinate][self.ping_obj_dict[ce][obj_name]["obj"].currentangle]={}
+                                self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json[self.ping_obj_dict[ce][obj_name]["obj"].currentcoordinate][self.ping_obj_dict[ce][obj_name]["obj"].currentangle]=self.ping_obj_dict[ce][obj_name]["obj"].result_json                        
+                        else:
+                            self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json[self.ping_obj_dict[ce][obj_name]["obj"].currentcoordinate]=self.ping_obj_dict[ce][obj_name]["obj"].result_json
+                
+                if self.ping_obj_dict[ce][obj_name]["obj"].local_lf_report_dir == "":
+                    self.ping_obj_dict[ce][obj_name]["obj"].generate_report_robo()
+                else:
+                    self.ping_obj_dict[ce][obj_name]["obj"].generate_report_robo(report_path=self.ping_obj_dict[ce][obj_name]["obj"].local_lf_report_dir)
+
+
                 params = {
                 "result_json": None,
                 "result_dir": "Ping_Test_Report",
@@ -769,6 +1132,7 @@ class Candela(Realm):
                     params["group_device_map"] = group_device_map
                 self.ping_obj_dict[ce][obj_name]["data"] = params.copy()
                 return True
+
 
         # run the test for the given duration
         logging.info('Running the ping test for {} minutes'.format(duration))
@@ -1278,14 +1642,75 @@ class Candela(Realm):
                 self.http_obj_dict[ce][obj_name]["obj"].build()
                 if client_type == 'Real':
                     self.http_obj_dict[ce][obj_name]["obj"].monitor_cx()
+                    self.http_done_event.set()
+                    self.http_rotate_done_event.set()
                     logger.info(f'Test started on the devices : {self.http_obj_dict[ce][obj_name]["obj"].port_list}')
                 test_time = datetime.datetime.now()
                 # Solution For Leap Year conflict changed it to %Y
                 test_time = test_time.strftime("%Y %d %H:%M:%S")
                 print("Test started at ", test_time)
-                if self.robot_test:
+                if self.http_obj_dict[ce][obj_name]["obj"].robot_test:
                     if self.current_exec != "parallel":
                         self.http_obj_dict[ce][obj_name]["obj"].perform_robo()
+                    else:
+                        if self.http_obj_dict[ce][obj_name]["obj"].rotation_list[0] != "":
+                            self.http_obj_dict[ce][obj_name]["obj"].rotation_enabled = True
+
+                        test_stopped_by_user = False
+                        for coordinate in range(len(self.http_obj_dict[ce][obj_name]["obj"].coordinate_list)):
+                            # print("Moving to coordinate:", coordinate)
+                            # self.robot_move_event.clear()
+                            if test_stopped_by_user:
+                                break
+                            print("At coord level HTTP")
+                            test_stopped_by_user,robo_moved, abort, robo_rotated = self.wait_for_all_tests_to_finish(coordinate=self.http_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate])
+                            print("After coord level HTTP", test_stopped_by_user,robo_moved, abort, robo_rotated)
+                            if test_stopped_by_user:
+                                break
+                            
+                            if abort or not robo_moved:
+                                break
+                            # If robot reached the coordinate
+                            if robo_moved:
+                                self.http_obj_dict[ce][obj_name]["obj"].current_coordinate = self.http_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate]
+                                # if no rotation mode
+                                if not self.http_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                    # Start the test
+                                    self.http_done_event.clear()
+                                    self.http_obj_dict[ce][obj_name]["obj"].start()
+                                    test_stopped_by_user_http = self.http_obj_dict[ce][obj_name]["obj"].monitor_for_runtime_csv(self.http_obj_dict[ce][obj_name]["obj"].duration)
+                                    self.http_obj_dict[ce][obj_name]["obj"].stop()
+                                    self.http_done_event.set()
+                                    print("HTTP after the test is stopped",self.http_done_event.is_set())
+                                    self.http_obj_dict[ce][obj_name]["obj"].update_stop_status_robot()
+                                    if test_stopped_by_user_http:
+                                        break
+
+                                # if rotation mode
+                                else:
+                                    for angle in range(len(self.http_obj_dict[ce][obj_name]["obj"].rotation_list)):
+                                        print("HTTP ROBOT triggered")
+                                        test_stopped_by_user,robo_moved, abort, robo_rotated = self.wait_for_all_tests_to_finish_rotation(coordinate=self.http_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate],angle=self.http_obj_dict[ce][obj_name]["obj"].rotation_list[angle])
+                                        if test_stopped_by_user:
+                                            break
+                                        if robo_rotated:
+                                            self.http_obj_dict[ce][obj_name]["obj"].current_angle = self.http_obj_dict[ce][obj_name]["obj"].rotation_list[angle]
+                                            # self.http_monitor = True
+                                            self.http_done_event.clear()
+                                            self.http_rotate_done_event.clear()
+                                            self.http_rotate.set()
+                                            self.check_all_tests()
+                                            self.http_obj_dict[ce][obj_name]["obj"].start()
+                                            test_stopped_by_user_http = self.http_obj_dict[ce][obj_name]["obj"].monitor_for_runtime_csv(self.http_obj_dict[ce][obj_name]["obj"].duration)
+                                            self.http_obj_dict[ce][obj_name]["obj"].stop()
+                                            self.http_done_event.set()
+                                            self.http_rotate_done_event.set()
+                                            self.http_rotate.clear()
+                                            # self.http_monitor = False
+                                            self.http_obj_dict[ce][obj_name]["obj"].update_stop_status_robot()
+                                            # If test is stopped by user
+                                            if test_stopped_by_user_http:
+                                                break  
                 else:
                     self.http_obj_dict[ce][obj_name]["obj"].start()
                     if dowebgui:
@@ -1791,12 +2216,72 @@ class Candela(Realm):
                     if self.ftp_obj_dict[ce][obj_name]["obj"].clients_type == 'Real':
                         self.ftp_obj_dict[ce][obj_name]["obj"].monitor_cx()
                         logger.info(f'Test started on the devices : {self.ftp_obj_dict[ce][obj_name]["obj"].input_devices_list}')
+                    self.ftp_done_event.set()
+                    self.ftp_rotate_done_event.set()
                     # First time stamp
                     time1 = datetime.datetime.now()
                     logger.info("Traffic started running at %s", time1)
-                    if self.robot_test:
+                    if self.ftp_obj_dict[ce][obj_name]["obj"].robot_test:
                         if self.current_exec != "parallel":
                             self.ftp_obj_dict[ce][obj_name]["obj"].perform_robo()
+                        else:
+                            if self.ftp_obj_dict[ce][obj_name]["obj"].rotation_list[0] != "":
+                                self.ftp_obj_dict[ce][obj_name]["obj"].rotation_enabled = True
+                            for coordinate in range(len(self.ftp_obj_dict[ce][obj_name]["obj"].coordinate_list)):
+                                # self.robot_move_event.clear()
+                                # test_stopped_by_user,robo_moved, abort, robo_rotated = self.robo_controller(coord=coordinate)
+                                test_stopped_by_user,robo_moved, abort, robo_rotated = self.wait_for_all_tests_to_finish(coordinate=self.ftp_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate])
+                                if test_stopped_by_user:
+                                    break
+                                if abort or not robo_moved:
+                                    break
+                                # If robot reached the coordinate
+                                if robo_moved:
+                                    # if no rotation mode
+                                    self.ftp_obj_dict[ce][obj_name]["obj"].current_coordinate = self.ftp_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate]
+                                    if not self.ftp_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                        # Start the test
+                                        # self.ftp_monitor = True
+                                        self.ftp_done_event.clear()
+                                        self.ftp_obj_dict[ce][obj_name]["obj"].start(False, False)
+                                        test_stopped_by_user_ftp = self.ftp_obj_dict[ce][obj_name]["obj"].monitor_for_runtime_csv()
+                                        self.ftp_obj_dict[ce][obj_name]["obj"].my_monitor_for_real_devices()
+                                        self.ftp_obj_dict[ce][obj_name]["obj"].stop()
+                                        self.ftp_done_event.set()
+                                        print("FTP after the test is stopped",self.ftp_done_event.is_set())
+                                        # self.ftp_monitor = False
+                                        self.ftp_obj_dict[ce][obj_name]["obj"].update_stop_status_robot()
+                                        if test_stopped_by_user_ftp:
+                                            break
+                                    # if rotation mode
+                                    else:
+                                        for angle in range(len(self.ftp_obj_dict[ce][obj_name]["obj"].rotation_list)):
+                                            print("ftpp is triggering to rotate angle")
+                                            test_stopped_by_user,robo_moved, abort, robo_rotated = self.wait_for_all_tests_to_finish_rotation(coordinate=self.ftp_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate],angle=self.ftp_obj_dict[ce][obj_name]["obj"].rotation_list[angle])
+                                            print("fftp rotaate angle done",angle,test_stopped_by_user,robo_moved, abort, robo_rotated,self.ftp_obj_dict[ce][obj_name]["obj"].rotation_list[angle])
+                                            # If test is stopped by user during battery wait
+                                            if test_stopped_by_user:
+                                                break
+                                            if robo_rotated:
+                                                self.ftp_obj_dict[ce][obj_name]["obj"].current_angle = self.ftp_obj_dict[ce][obj_name]["obj"].rotation_list[angle]
+                                                # self.ftp_monitor = True
+                                                self.ftp_done_event.clear() 
+                                                self.ftp_rotate_done_event.clear()
+                                                self.ftp_rotate.set()
+                                                self.check_all_tests()
+                                                self.ftp_obj_dict[ce][obj_name]["obj"].start(False, False)
+                                                test_stopped_by_user_ftp = self.ftp_obj_dict[ce][obj_name]["obj"].monitor_for_runtime_csv()
+                                                self.ftp_obj_dict[ce][obj_name]["obj"].my_monitor_for_real_devices()
+                                                self.ftp_obj_dict[ce][obj_name]["obj"].stop()
+                                                self.ftp_done_event.set()
+                                                self.ftp_rotate.clear()
+                                                self.ftp_rotate_done_event.set()
+                                                # self.ftp_monitor = False
+                                                self.ftp_obj_dict[ce][obj_name]["obj"].update_stop_status_robot()
+                                                # If test is stopped by user
+                                                if test_stopped_by_user_ftp:
+                                                    break
+            
                     else:
                         self.ftp_obj_dict[ce][obj_name]["obj"].start(False, False)
                         # to fetch runtime values during the execution and fill the csv.
@@ -1881,307 +2366,6 @@ class Candela(Realm):
             params["config_devices"] = configuration
         self.ftp_obj_dict[ce][obj_name]["data"] = params.copy()
 
-        # if args.group_name:
-        #     config_devices = configuration
-        # else:
-        #     config_devices = ""
-
-        # ftp_data = ftp_data
-        # date = date
-        # input_setup_info = input_setup_info
-        # test_rig = args.test_rig
-        # test_tag = args.test_tag
-        # dut_hw_version = args.dut_hw_version
-        # dut_sw_version = args.dut_sw_version
-        # dut_model_num = args.dut_model_num
-        # dut_serial_num = args.dut_serial_num
-        # test_id = args.test_id
-        # bands = args.bands
-        # csv_outfile = args.csv_outfile
-        # local_lf_report_dir = args.local_lf_report_dir
-        # report_path = self.result_path
-
-        # no_of_stations = ""
-        # duration = ""
-        # x_fig_size = 18
-        # y_fig_size = len(obj.real_client_list1) * .5 + 4
-
-        # if int(obj.traffic_duration) < 60:
-        #     duration = str(obj.traffic_duration) + "s"
-        # elif int(obj.traffic_duration == 60) or (int(obj.traffic_duration) > 60 and int(obj.traffic_duration) < 3600):
-        #     duration = str(obj.traffic_duration / 60) + "m"
-        # else:
-        #     if int(obj.traffic_duration == 3600) or (int(obj.traffic_duration) > 3600):
-        #         duration = str(obj.traffic_duration / 3600) + "h"
-
-        # client_list = []
-        # if obj.clients_type == "Real":
-        #     client_list = obj.real_client_list1
-        #     android_devices, windows_devices, linux_devices, mac_devices = 0, 0, 0, 0
-        #     all_devices_names = []
-        #     device_type = []
-        #     total_devices = ""
-        #     for i in obj.real_client_list:
-        #         split_device_name = i.split(" ")
-        #         if 'android' in split_device_name:
-        #             all_devices_names.append(split_device_name[2] + ("(Android)"))
-        #             device_type.append("Android")
-        #             android_devices += 1
-        #         elif 'Win' in split_device_name:
-        #             all_devices_names.append(split_device_name[2] + ("(Windows)"))
-        #             device_type.append("Windows")
-        #             windows_devices += 1
-        #         elif 'Lin' in split_device_name:
-        #             all_devices_names.append(split_device_name[2] + ("(Linux)"))
-        #             device_type.append("Linux")
-        #             linux_devices += 1
-        #         elif 'Mac' in split_device_name:
-        #             all_devices_names.append(split_device_name[2] + ("(Mac)"))
-        #             device_type.append("Mac")
-        #             mac_devices += 1
-
-        #     if android_devices > 0:
-        #         total_devices += f" Android({android_devices})"
-        #     if windows_devices > 0:
-        #         total_devices += f" Windows({windows_devices})"
-        #     if linux_devices > 0:
-        #         total_devices += f" Linux({linux_devices})"
-        #     if mac_devices > 0:
-        #         total_devices += f" Mac({mac_devices})"
-        # else:
-        #     if obj.clients_type == "Virtual":
-        #         client_list = obj.station_list
-        # if 'ftp_test' not in self.test_count_dict:
-        #     self.test_count_dict['ftp_test']=0
-        # self.test_count_dict['ftp_test']+=1
-        # self.overall_report.set_obj_html(_obj_title=f'FTP Test ', _obj="")
-        # self.overall_report.build_objective()
-        # self.overall_report.set_table_title("Test Setup Information")
-        # self.overall_report.build_table_title()
-
-        # if obj.clients_type == "Virtual":
-        #     no_of_stations = str(len(obj.station_list))
-        # else:
-        #     no_of_stations = str(len(obj.input_devices_list))
-
-        # if obj.clients_type == "Real":
-        #     if config_devices == "":
-        #         test_setup_info = {
-        #             "AP Name": obj.ap_name,
-        #             "SSID": obj.ssid,
-        #             "Security": obj.security,
-        #             "Device List": ", ".join(all_devices_names),
-        #             "No of Devices": "Total" + f"({no_of_stations})" + total_devices,
-        #             "Failed CXs": obj.failed_cx if obj.failed_cx else "NONE",
-        #             "File size": obj.file_size,
-        #             "File location": "/home/lanforge",
-        #             "Traffic Direction": obj.direction,
-        #             "Traffic Duration ": duration
-        #         }
-        #     else:
-        #         group_names = ', '.join(config_devices.keys())
-        #         profile_names = ', '.join(config_devices.values())
-        #         configmap = "Groups:" + group_names + " -> Profiles:" + profile_names
-        #         test_setup_info = {
-        #             "AP Name": obj.ap_name,
-        #             'Configuration': configmap,
-        #             "No of Devices": "Total" + f"({no_of_stations})" + total_devices,
-        #             "File size": obj.file_size,
-        #             "File location": "/home/lanforge",
-        #             "Traffic Direction": obj.direction,
-        #             "Traffic Duration ": duration
-        #         }
-        # else:
-        #     test_setup_info = {
-        #         "AP Name": obj.ap_name,
-        #         "SSID": obj.ssid,
-        #         "Security": obj.security,
-        #         "No of Devices": no_of_stations,
-        #         "File size": obj.file_size,
-        #         "File location": "/home/lanforge",
-        #         "Traffic Direction": obj.direction,
-        #         "Traffic Duration ": duration
-        #     }
-
-        # self.overall_report.test_setup_table(value="Test Setup Information", test_setup_data=test_setup_info)
-
-        # self.overall_report.set_obj_html(
-        #     _obj_title=f"No of times file {obj.direction}",
-        #     _obj=f"The below graph represents number of times a file {obj.direction} for each client"
-        #     f"(WiFi) traffic.  X- axis shows “No of times file {obj.direction}” and Y-axis shows "
-        #     f"Client names.")
-
-        # self.overall_report.build_objective()
-        # graph = lf_bar_graph_horizontal(_data_set=[obj.url_data], _xaxis_name=f"No of times file {obj.direction}",
-        #                                 _yaxis_name="Client names",
-        #                                 _yaxis_categories=[i for i in client_list],
-        #                                 _yaxis_label=[i for i in client_list],
-        #                                 _yaxis_step=1,
-        #                                 _yticks_font=8,
-        #                                 _yticks_rotation=None,
-        #                                 _graph_title=f"No of times file {obj.direction} (Count)",
-        #                                 _title_size=16,
-        #                                 _figsize=(x_fig_size, y_fig_size),
-        #                                 _legend_loc="best",
-        #                                 _legend_box=(1.0, 1.0),
-        #                                 _color_name=['orange'],
-        #                                 _show_bar_value=True,
-        #                                 _enable_csv=True,
-        #                                 _graph_image_name="Total-url_ftp", _color_edge=['black'],
-        #                                 _color=['orange'],
-        #                                 _label=[obj.direction])
-        # graph_png = graph.build_bar_graph_horizontal()
-        # print("graph name {}".format(graph_png))
-        # self.overall_report.set_graph_image(graph_png)
-        # # need to move the graph image to the results
-        # self.overall_report.move_graph_image()
-        # self.overall_report.set_csv_filename(graph_png)
-        # self.overall_report.move_csv_file()
-        # self.overall_report.build_graph()
-        # self.overall_report.set_obj_html(
-        #     _obj_title=f"Average time taken to {obj.direction} file ",
-        #     _obj=f"The below graph represents average time taken to {obj.direction} for each client  "
-        #     f"(WiFi) traffic.  X- axis shows “Average time taken to {obj.direction} a file ” and Y-axis shows "
-        #     f"Client names.")
-
-        # self.overall_report.build_objective()
-        # graph = lf_bar_graph_horizontal(_data_set=[obj.uc_avg], _xaxis_name=f"Average time taken to {obj.direction} file in ms",
-        #                                 _yaxis_name="Client names",
-        #                                 _yaxis_categories=[i for i in client_list],
-        #                                 _yaxis_label=[i for i in client_list],
-        #                                 _yaxis_step=1,
-        #                                 _yticks_font=8,
-        #                                 _yticks_rotation=None,
-        #                                 _graph_title=f"Average time taken to {obj.direction} file",
-        #                                 _title_size=16,
-        #                                 _figsize=(x_fig_size, y_fig_size),
-        #                                 _legend_loc="best",
-        #                                 _legend_box=(1.0, 1.0),
-        #                                 _color_name=['steelblue'],
-        #                                 _show_bar_value=True,
-        #                                 _enable_csv=True,
-        #                                 _graph_image_name="ucg-avg_ftp", _color_edge=['black'],
-        #                                 _color=['steelblue'],
-        #                                 _label=[obj.direction])
-        # graph_png = graph.build_bar_graph_horizontal()
-        # print("graph name {}".format(graph_png))
-        # self.overall_report.set_graph_image(graph_png)
-        # self.overall_report.move_graph_image()
-        # # need to move the graph image to the results
-        # self.overall_report.set_csv_filename(graph_png)
-        # self.overall_report.move_csv_file()
-        # self.overall_report.build_graph()
-        # if(obj.dowebgui and obj.get_live_view):
-        #     for floor in range(0,int(obj.total_floors)):
-        #         script_dir = os.path.dirname(os.path.abspath(__file__))
-        #         throughput_image_path = os.path.join(script_dir, "heatmap_images", f"ftp_{obj.test_name}_{floor+1}.png")
-        #         # rssi_image_path = os.path.join(script_dir, "heatmap_images", f"{self.test_name}_rssi_{floor+1}.png")
-        #         timeout = 60  # seconds
-        #         start_time = time.time()
-
-        #         while not (os.path.exists(throughput_image_path)):
-        #             if time.time() - start_time > timeout:
-        #                 print("Timeout: Images not found within 60 seconds.")
-        #                 break
-        #             time.sleep(1)
-        #         while not os.path.exists(throughput_image_path):
-        #             if os.path.exists(throughput_image_path):
-        #                 break
-        #             # time.sleep(10)
-        #         if os.path.exists(throughput_image_path):
-        #             self.overall_report.set_custom_html('<div style="page-break-before: always;"></div>')
-        #             self.overall_report.build_custom()
-        #             # self.overall_report.set_custom_html("<h2>Average Throughput Heatmap: </h2>")
-        #             # self.overall_report.build_custom()
-        #             self.overall_report.set_custom_html(f'<img src="file://{throughput_image_path}"></img>')
-        #             self.overall_report.build_custom()
-        #             # os.remove(throughput_image_path)
-        # self.overall_report.set_obj_html("File Download Time (sec)", "The below table will provide information of "
-        #                          "minimum, maximum and the average time taken by clients to download a file in seconds")
-        # self.overall_report.build_objective()
-        # dataframe2 = {
-        #     "Minimum": [str(round(min(obj.uc_min) / 1000, 1))],
-        #     "Maximum": [str(round(max(obj.uc_max) / 1000, 1))],
-        #     "Average": [str(round((sum(obj.uc_avg) / len(client_list)) / 1000, 1))]
-        # }
-        # dataframe3 = pd.DataFrame(dataframe2)
-        # self.overall_report.set_table_dataframe(dataframe3)
-        # self.overall_report.build_table()
-        # self.overall_report.set_table_title("Overall Results")
-        # self.overall_report.build_table_title()
-        # if obj.clients_type == 'Real':
-        #     # Calculating the pass/fail criteria when either expected_passfail_val or csv_name is provided
-        #     if obj.expected_passfail_val or obj.csv_name:
-        #         obj.get_pass_fail_list(client_list)
-        #     # When groups are provided a seperate table will be generated for each group using generate_dataframe
-        #     if obj.group_name:
-        #         for key, val in obj.group_device_map.items():
-        #             if obj.expected_passfail_val or obj.csv_name:
-        #                 dataframe = obj.generate_dataframe(val, client_list, obj.mac_id_list, obj.channel_list, obj.ssid_list, obj.mode_list,
-        #                                                     obj.url_data, obj.test_input_list, obj.uc_avg, obj.bytes_rd, obj.rx_rate, obj.pass_fail_list)
-        #             else:
-        #                 dataframe = obj.generate_dataframe(val, client_list, obj.mac_id_list, obj.channel_list, obj.ssid_list,
-        #                                                     obj.mode_list, obj.url_data, [], obj.uc_avg, obj.bytes_rd, obj.rx_rate, [])
-
-        #             if dataframe:
-        #                 self.overall_report.set_obj_html("", "Group: {}".format(key))
-        #                 self.overall_report.build_objective()
-        #                 dataframe1 = pd.DataFrame(dataframe)
-        #                 self.overall_report.set_table_dataframe(dataframe1)
-        #                 self.overall_report.build_table()
-        #     else:
-        #         dataframe = {
-        #             " Clients": client_list,
-        #             " MAC ": obj.mac_id_list,
-        #             " Channel": obj.channel_list,
-        #             " SSID ": obj.ssid_list,
-        #             " Mode": obj.mode_list,
-        #             " No of times File downloaded ": obj.url_data,
-        #             " Time Taken to Download file (ms)": obj.uc_avg,
-        #             " Bytes-rd (Mega Bytes)": obj.bytes_rd,
-        #             " RX RATE (Mbps) ": obj.rx_rate,
-        #             "Failed Urls": obj.total_err
-        #         }
-        #         if obj.expected_passfail_val or obj.csv_name:
-        #             dataframe[" Expected output "] = obj.test_input_list
-        #             dataframe[" Status "] = obj.pass_fail_list
-
-        #         dataframe1 = pd.DataFrame(dataframe)
-        #         self.overall_report.set_table_dataframe(dataframe1)
-        #         self.overall_report.build_table()
-
-        # else:
-        #     dataframe = {
-        #         " Clients": client_list,
-        #         " MAC ": obj.mac_id_list,
-        #         " Channel": obj.channel_list,
-        #         " SSID ": obj.ssid_list,
-        #         " Mode": obj.mode_list,
-        #         " No of times File downloaded ": obj.url_data,
-        #         " Time Taken to Download file (ms)": obj.uc_avg,
-        #         " Bytes-rd (Mega Bytes)": obj.bytes_rd,
-        #     }
-        #     dataframe1 = pd.DataFrame(dataframe)
-        #     self.overall_report.set_table_dataframe(dataframe1)
-        #     self.overall_report.build_table()
-        # # self.overall_report.build_footer()
-        # # html_file = self.overall_report.write_html()
-        # # logger.info("returned file {}".format(html_file))
-        # # logger.info(html_file)
-        # # self.overall_report.write_pdf()
-
-        # if csv_outfile is not None:
-        #     current_time = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
-        #     csv_outfile = "{}_{}-test_l4_ftp.csv".format(
-        #         csv_outfile, current_time)
-        #     csv_outfile = self.overall_report.file_add_path(csv_outfile)
-        #     logger.info("csv output file : {}".format(csv_outfile))
-
-
-
-
-        # if args.dowebgui:
-        #     obj.copy_reports_to_home_dir()
         if self.dowebgui:
             self.webgui_test_done("ftp")
         return True
@@ -2231,7 +2415,8 @@ class Candela(Realm):
         config=False,
         get_live_view=False,
         total_floors="0"
-    ):
+    ):  
+        dowebgui= True if dowebgui == "True" else False 
         if self.dowebgui:
             if not self.webgui_stop_check("qos"):
                 return False
@@ -2371,41 +2556,162 @@ class Candela(Realm):
                     raise ValueError("Aborting the test....")
             self.qos_obj_dict[ce][obj_name]["obj"].build()
             self.qos_obj_dict[ce][obj_name]["obj"].monitor_cx()
+            self.qos_done_event.set()
             if self.robot_test:
                 if self.current_exec != "parallel":
                     self.qos_obj_dict[ce][obj_name]["obj"].qos_data["configuration"] = {}
-                    self.qos_obj_dict[ce][obj_name]["obj"].dowebgui = True if self.dowebgui == "True" else False
+                    self.qos_obj_dict[ce][obj_name]["obj"].dowebgui = True if self.dowebgui else False
                     # self.qos_obj_dict[ce][obj_name]["obj"].result_dir=self.report_path
                     self.qos_obj_dict[ce][obj_name]["obj"].perform_robo()
-                    # params = {
-                    #     "data": None,
-                    #     "input_setup_info": None,
-                    #     "connections_download_avg": None,
-                    #     "connections_upload_avg": None,
-                    #     "avg_drop_a": None,
-                    #     "avg_drop_b": None,
-                    #     "report_path": "",
-                    #     "result_dir_name": "Qos_Test_report",
-                    #     "selected_real_clients_names": None,
-                    #     "config_devices": ""
-                    # }
+                else:
+                    self.qos_obj_dict[ce][obj_name]["obj"].qos_data["configuration"] = {}
+                    self.qos_obj_dict[ce][obj_name]["obj"].dowebgui = True if self.dowebgui else False
+                    # self.qos_obj_dict[ce][obj_name]["obj"].result_dir=self.qos_obj_dict[ce][obj_name]["obj"].report_path
 
-                    # params.update({
-                    #     "data": data,
-                    #     "input_setup_info": input_setup_info,
-                    #     "report_path": (
-                    #         self.qos_obj_dict[ce][obj_name]["obj"].result_dir
-                    #         if self.qos_obj_dict[ce][obj_name]["obj"].dowebgui else self.result_path
-                    #     ),
-                    #     "connections_upload_avg": connections_upload_avg,
-                    #     "connections_download_avg": connections_download_avg,
-                    #     "avg_drop_a": avg_drop_a,
-                    #     "avg_drop_b": avg_drop_b
-                    # })
+                    if (self.qos_obj_dict[ce][obj_name]["obj"].rotation_list[0] != ""):
+                        self.qos_obj_dict[ce][obj_name]["obj"].rotation_enabled = True
+                    coord_list = []
+                    test_stopped_by_user = False
+                    if self.qos_obj_dict[ce][obj_name]["obj"].coordinate:
+                        coord_list = self.qos_obj_dict[ce][obj_name]["obj"].coordinate_list
+                        passed_coord_list = []
+                        abort = False
+                    for coordinate in coord_list:
+                        if self.qos_obj_dict[ce][obj_name]["obj"].robot_ip:
+                            if self.qos_obj_dict[ce][obj_name]["obj"].test_stopped_by_user:
+                                break
+                            test_stopped_by_user,robo_moved, abort, robo_rotated = self.wait_for_all_tests_to_finish(coordinate=coordinate)
+                            if test_stopped_by_user:
+                                break
+                            if abort or not robo_moved:
+                                break
+                            passed_coord_list.append(coordinate)
 
-                    # if group_name:
-                    #     params["config_devices"] = configuration
-                    # self.qos_obj_dict[ce][obj_name]["data"] = params.copy()
+                            if robo_moved:
+                                self.qos_obj_dict[ce][obj_name]["obj"].overall = []
+                                self.qos_obj_dict[ce][obj_name]["obj"].df_for_webui = []
+                                # If rotations are not allowed
+                                if not self.rotation_enabled:
+                                    test_results = {'test_results': []}
+                                    data = {}
+                                    input_setup_info = {
+                                        "contact": "support@candelatech.com"
+                                    }
+                                    self.qos_obj_dict[ce][obj_name]["obj"].current_coordinate = coordinate
+                                    self.qos_done_event.clear()
+                                    self.qos_obj_dict[ce][obj_name]["obj"].start(False, False)
+                                    time.sleep(10)
+                                    connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b = self.qos_obj_dict[ce][obj_name]["obj"].monitor(
+                                        curr_coordinate=coordinate)
+                                    logger.info("connections download {}".format(connections_download))
+                                    logger.info("connections upload {}".format(connections_upload))
+                                    self.qos_obj_dict[ce][obj_name]["obj"].stop()
+                                    self.qos_done_event.set()
+                                    time.sleep(5)
+                                    test_results['test_results'].append(self.qos_obj_dict[ce][obj_name]["obj"].evaluate_qos(connections_download, connections_upload, drop_a_per, drop_b_per))
+                                    data.update(test_results)
+                                    params = {
+                                        "data": None,
+                                        "input_setup_info": None,
+                                        "connections_download_avg": None,
+                                        "connections_upload_avg": None,
+                                        "avg_drop_a": None,
+                                        "avg_drop_b": None,
+                                        "report_path": "",
+                                        "result_dir_name": "Qos_Test_report",
+                                        "selected_real_clients_names": None,
+                                        "config_devices": ""
+                                    }
+
+                                    params.update({
+                                        "data": data,
+                                        "input_setup_info": input_setup_info,
+                                        "report_path": (
+                                            self.qos_obj_dict[ce][obj_name]["obj"].result_dir
+                                            if self.dowebgui else ""
+                                        ),
+                                        "connections_upload_avg": connections_upload_avg,
+                                        "connections_download_avg": connections_download_avg,
+                                        "avg_drop_a": avg_drop_a,
+                                        "avg_drop_b": avg_drop_b
+                                    })
+                                    self.qos_obj_dict[ce][obj_name]["obj"].qos_data[coordinate] = params
+
+                                # If rotations are enabled
+                                else:
+                                    self.qos_rotate_done_event.set()
+                                    exit_from_monitor = False
+                                    for angle in range(len(self.qos_obj_dict[ce][obj_name]["obj"].rotation_list)):
+                                        print("for angle----",angle)
+                                        test_results = {'test_results': []}
+                                        data = {}
+                                        input_setup_info = {
+                                            "contact": "support@candelatech.com"
+                                        }
+                                        self.qos_obj_dict[ce][obj_name]["obj"].last_rotated_angles = []
+                                        self.qos_obj_dict[ce][obj_name]["obj"].current_coordinate = coordinate
+                                        self.qos_obj_dict[ce][obj_name]["obj"].current_angle = self.qos_obj_dict[ce][obj_name]["obj"].angle_list[angle]
+                                        # pause_angle, test_stopped_by_user = self.robot.wait_for_battery(battery=40,stop=self.stop)
+                                        print("qos is trriggering rotate angle")
+                                        test_stopped_by_user,robo_moved, abort, robo_rotated = self.wait_for_all_tests_to_finish_rotation(coordinate=coordinate,angle=self.rotation_list[angle])
+                                        print("qos rotate angle doone")
+                                        print("+++++++++++++++++",test_stopped_by_user,robo_moved,abort,robo_rotated)
+                                        if test_stopped_by_user:
+                                            break
+
+                                        final_angle = self.qos_obj_dict[ce][obj_name]["obj"].angle_list[angle]
+                                        if robo_rotated:
+                                            if final_angle not in self.qos_obj_dict[ce][obj_name]["obj"].last_rotated_angles:
+                                                self.qos_obj_dict[ce][obj_name]["obj"].last_rotated_angles.append(final_angle)
+                                            self.qos_done_event.clear()
+                                            self.qos_rotate_done_event.clear()
+                                            self.qos_rotate.set()
+                                            self.check_all_tests()
+                                            self.qos_obj_dict[ce][obj_name]["obj"].start(False, False)
+                                            monitor_charge_time = datetime.datetime.now()
+                                            connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b = self.qos_obj_dict[ce][obj_name]["obj"].monitor(
+                                                curr_coordinate=coordinate, curr_rotation=self.qos_obj_dict[ce][obj_name]["obj"].current_angle, monitor_charge_time=monitor_charge_time)
+                                            logger.info("connections download {}".format(connections_download))
+                                            logger.info("connections upload {}".format(connections_upload))
+                                            self.qos_obj_dict[ce][obj_name]["obj"].stop()
+                                            self.qos_done_event.set()
+                                            self.qos_rotate.clear()
+                                            self.qos_rotate_done_event.set()
+                                            time.sleep(5)
+                                            test_results['test_results'].append(self.qos_obj_dict[ce][obj_name]["obj"].evaluate_qos(connections_download, connections_upload, drop_a_per, drop_b_per))
+                                            data.update(test_results)
+                                            params = {
+                                                "data": None,
+                                                "input_setup_info": None,
+                                                "connections_download_avg": None,
+                                                "connections_upload_avg": None,
+                                                "avg_drop_a": None,
+                                                "avg_drop_b": None,
+                                                "report_path": "",
+                                                "result_dir_name": "Qos_Test_report",
+                                                "selected_real_clients_names": None,
+                                                "config_devices": ""
+                                            }
+
+                                            params.update({
+                                                "data": data,
+                                                "input_setup_info": input_setup_info,
+                                                "report_path": (
+                                                    self.result_dir
+                                                    if self.dowebgui else ""
+                                                ),
+                                                "connections_upload_avg": connections_upload_avg,
+                                                "connections_download_avg": connections_download_avg,
+                                                "avg_drop_a": avg_drop_a,
+                                                "avg_drop_b": avg_drop_b
+                                            })
+                                            if coordinate not in self.qos_obj_dict[ce][obj_name]["obj"].qos_data:
+                                                self.qos_obj_dict[ce][obj_name]["obj"].qos_data[coordinate] = {}
+                                            self.qos_obj_dict[ce][obj_name]["obj"].qos_data[coordinate][self.rotation_list[angle]] = params
+
+                    self.qos_obj_dict[ce][obj_name]["obj"].generate_report_for_robo(coordinate_list=coord_list, angle_list=self.rotation_list, passed_coordinates=passed_coord_list)  
+                    if self.dowebgui:
+                        self.webgui_test_done("qos")
                 return True
             self.qos_obj_dict[ce][obj_name]["obj"].start(False, False)
             time.sleep(10)
@@ -3282,7 +3588,19 @@ class Candela(Realm):
             # To execute the throughput test using ROBO
             if self.robot_test:
                 self.thput_obj_dict[ce][obj_name]["obj"].postcleanup = True
+                self.thput_obj_dict[ce][obj_name]["obj"].coordinate = self.thput_obj_dict[ce][obj_name]["obj"].coordinate_list
+                self.thput_obj_dict[ce][obj_name]["obj"].mgr = self.thput_obj_dict[ce][obj_name]["obj"].ip
                 self.thput_obj_dict[ce][obj_name]["obj"].perform_robo(self.thput_obj_dict[ce][obj_name]["obj"], clients_to_run)
+                params = {
+                    "iterations_before_test_stopped_by_user": list(set(self.thput_obj_dict[ce][obj_name]["obj"].base_class_iterations_data)),
+                    "incremental_capacity_list": self.thput_obj_dict[ce][obj_name]["obj"].base_class_incremental_capacity_list,
+                    "data": self.thput_obj_dict[ce][obj_name]["obj"].base_class_all_dataframes,
+                    "data1": self.thput_obj_dict[ce][obj_name]["obj"].base_class_to_run_cxs_len,
+                    "report_path": self.result_path if not self.thput_obj_dict[ce][obj_name]["obj"].dowebgui else self.thput_obj_dict[ce][obj_name]["obj"].result_dir
+                }
+                self.thput_obj_dict[ce][obj_name]["data"] = params.copy()
+                if self.dowebgui:
+                    self.webgui_test_done("thput")
                 return True
             
             
@@ -4523,40 +4841,40 @@ class Candela(Realm):
                     logging.info(f"yt_test_obj: {self.yt_test_obj}")
                     logging.info(f"generic_endps_profile: {getattr(self.yt_test_obj, 'generic_endps_profile', None)}")
                     logging.info(f"device_names: {getattr(self.yt_test_obj, 'device_names', None)}")
-                    logging.info(f"stats_api_response: {getattr(self.yt_test_obj, 'stats_api_response', None)}")
+                    # logging.info(f"stats_api_response: {getattr(self.yt_test_obj, 'stats_api_response', None)}")
 
                     # duration = duration
-                    end_time = datetime.datetime.now() + datetime.timedelta(minutes=duration)
-                    initial_data = self.yt_test_obj.get_data_from_api()
+                    # end_time = datetime.datetime.now() + datetime.timedelta(minutes=duration)
+                   
 
-                    while not initial_data or len(initial_data) == 0:
-                        initial_data = self.yt_test_obj.get_data_from_api()
-                        time.sleep(1)
-                    if initial_data:
-                        end_time_webgui = []
-                        for i in range(len(self.yt_test_obj.device_names)):
-                            end_time_webgui.append(initial_data['result'].get(self.yt_test_obj.device_names[i], {}).get('stop', False))
-                    else:
-                        for i in range(len(self.yt_test_obj.device_names)):
-                            end_time_webgui.append("")
+                    # while datetime.datetime.now() < end_time or not self.yt_test_obj.check_gen_cx():
+                        
+                    #     time.sleep(5)
+                    # if initial_data:
+                    #     end_time_webgui = []
+                    #     for i in range(len(self.yt_test_obj.device_names)):
+                    #         end_time_webgui.append(initial_data['result'].get(self.yt_test_obj.device_names[i], {}).get('stop', False))
+                    # else:
+                    #     for i in range(len(self.yt_test_obj.device_names)):
+                    #         end_time_webgui.append("")
 
                     end_time = datetime.datetime.now() + datetime.timedelta(minutes=duration)
 
                     while datetime.datetime.now() < end_time or not self.yt_test_obj.check_gen_cx():
-                        self.yt_test_obj.get_data_from_api()
-                        time.sleep(1)
-
-                    if getattr(self.yt_test_obj, "generic_endps_profile", None):
-                        logger.info("Stopping all the endpoints")
-                        self.yt_test_obj.generic_endps_profile.stop_cx()
-                    else:
-                        logging.warning("⚠️ generic_endps_profile is None — skipping stop_cx()")
+                        # self.yt_test_obj.get_data_from_api()
+                        time.sleep(5)
+                    self.yt_test_obj.generic_endps_profile.stop_cx()
                     logging.info("Duration ended")
 
                     logging.info('Stopping the test')
+
+                    # if getattr(self.yt_test_obj, "generic_endps_profile", None):
+                    #     logger.info("Stopping all the endpoints")
+                    # else:
+                    #     logging.warning("⚠️ generic_endps_profile is None — skipping stop_cx()")
                 if do_webUI:
-                    print("hii here data",self.yt_test_obj.stats_api_response)
-                    self.yt_test_obj.create_report(self.yt_test_obj.stats_api_response, self.yt_test_obj.ui_report_dir)
+                    # print("hii here data",self.yt_test_obj.stats_api_response)
+                    self.yt_test_obj.create_report()
                 else:
                     if self.robot_test:
                         # self.yt_obj_dict[ce][obj_name]["obj"].report_path_date_time = self.report_path_date_time
@@ -4566,7 +4884,7 @@ class Candela(Realm):
                         print("current_directory", os.getcwd())
                         self.yt_test_obj.create_robo_report()
                     else:
-                        self.yt_test_obj.create_report(self.yt_test_obj.stats_api_response, '')
+                        self.yt_test_obj.create_report()
 
                 # Perform post-test cleanup if not skipped
                 # if not no_post_cleanup:
@@ -4587,7 +4905,7 @@ class Candela(Realm):
                             break
                 # Stopping the Youtube test
                 if do_webUI:
-                    self.yt_test_obj.stop_test_yt()
+                    self.yt_test_obj.stop()
                 if self.dowebgui:
                     self.webgui_test_done("yt")
                 logging.info("Waiting for Cleanup of Browsers in Devices")
@@ -4877,8 +5195,10 @@ class Candela(Realm):
                             "Missing Zoom API credentials. Please provide ACCOUNT_ID, CLIENT_ID, and CLIENT_SECRET as environment variables or through function arguments."
                         )
                 if self.robot_test:
+                    self.zoom_test_obj.report_path_date_time = os.path.join(os.getcwd() , "zoom_test_results")
                     self.zoom_test_obj.run_robo_test()
                 else:
+                    # self.zoom_test_obj.report_path_date_time = os.path.join(os.getcwd() , "zoom_test_results")
                     self.zoom_test_obj.run()
                     # self.zoom_test_obj.run(duration, upstream_port, signin_email, signin_passwd, participants)
 
@@ -5792,7 +6112,7 @@ class Candela(Realm):
                             self.thput_obj_dict[ce][obj_name]["obj"].num_stations = selected_real_clients_names
 
                         # Initialize the report object
-                        if self.thput_obj_dict[ce][obj_name]["obj"].do_interopability == False:
+                        if self.thput_obj_dict[ce][obj_name]["obj"].do_interopability == False and not self.robot_test:
                             # df.to_csv(os.path.join(report_path_date_time, 'throughput_data.csv'))
                             # For groups and profiles configuration through webgui
 
@@ -6270,6 +6590,533 @@ class Candela(Realm):
                                 self.overall_report.set_custom_html('<hr>')
                                 self.overall_report.build_custom()
 
+                        elif self.thput_obj_dict[ce][obj_name]["obj"].do_interopability == False and self.robot_test:
+                            if self.thput_obj_dict[ce][obj_name]["obj"].do_interopability is False:
+                                self.overall_report.set_obj_html(_obj_title="Input Parameters",
+                                                    _obj="The below tables provides the input parameters for the test")
+                                self.overall_report.build_objective()
+
+                                # Initialize counts and lists for device types
+                                android_devices, windows_devices, linux_devices, mac_devices, ios_devices = 0, 0, 0, 0, 0
+                                all_devices_names = []
+                                device_type = []
+                                packet_size_text = ''
+                                total_devices = ""
+                                if self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu == -1:
+                                    packet_size_text = 'AUTO'
+                                else:
+                                    packet_size_text = str(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu) + ' Bytes'
+                                # Determine load type name based on self.thput_obj_dict[ce][obj_name]["obj"].load_type
+                                if self.thput_obj_dict[ce][obj_name]["obj"].load_type == "wc_intended_load":
+                                    load_type_name = "Intended Load"
+                                else:
+                                    load_type_name = "Per Client Load"
+                                for i in self.thput_obj_dict[ce][obj_name]["obj"].real_client_list:
+                                    split_device_name = i.split(" ")
+                                    if 'android' in split_device_name:
+                                        all_devices_names.append(split_device_name[2] + ("(Android)"))
+                                        device_type.append("Android")
+                                        android_devices += 1
+                                    elif 'Win' in split_device_name:
+                                        all_devices_names.append(split_device_name[2] + ("(Windows)"))
+                                        device_type.append("Windows")
+                                        windows_devices += 1
+                                    elif 'Lin' in split_device_name:
+                                        all_devices_names.append(split_device_name[2] + ("(Linux)"))
+                                        device_type.append("Linux")
+                                        linux_devices += 1
+                                    elif 'Mac' in split_device_name:
+                                        all_devices_names.append(split_device_name[2] + ("(Mac)"))
+                                        device_type.append("Mac")
+                                        mac_devices += 1
+                                    elif 'iOS' in split_device_name:
+                                        all_devices_names.append(split_device_name[2] + ("(iOS)"))
+                                        device_type.append("iOS")
+                                        ios_devices += 1
+
+                                # Build total_devices string based on counts
+                                if android_devices > 0:
+                                    total_devices += f" Android({android_devices})"
+                                if windows_devices > 0:
+                                    total_devices += f" Windows({windows_devices})"
+                                if linux_devices > 0:
+                                    total_devices += f" Linux({linux_devices})"
+                                if mac_devices > 0:
+                                    total_devices += f" Mac({mac_devices})"
+                                if ios_devices > 0:
+                                    total_devices += f" iOS({ios_devices})"
+
+                                # Determine incremental_capacity_data based on self.thput_obj_dict[ce][obj_name]["obj"].incremental_capacity
+                                if self.thput_obj_dict[ce][obj_name]["obj"].gave_incremental:
+                                    incremental_capacity_data = "No Incremental values provided"
+                                elif len(self.thput_obj_dict[ce][obj_name]["obj"].incremental_capacity) == 1:
+                                    if len(incremental_capacity_list) == 1:
+                                        incremental_capacity_data = str(self.thput_obj_dict[ce][obj_name]["obj"].incremental_capacity[0])
+                                    else:
+                                        incremental_capacity_data = ','.join(map(str, incremental_capacity_list))
+                                elif (len(self.thput_obj_dict[ce][obj_name]["obj"].incremental_capacity) > 1):
+                                    self.thput_obj_dict[ce][obj_name]["obj"].incremental_capacity = self.thput_obj_dict[ce][obj_name]["obj"].incremental_capacity.split(',')
+                                    incremental_capacity_data = ', '.join(self.thput_obj_dict[ce][obj_name]["obj"].incremental_capacity)
+                                else:
+                                    incremental_capacity_data = "None"
+
+                                # Construct test_setup_info dictionary for test setup table
+                                if self.thput_obj_dict[ce][obj_name]["obj"].group_name:
+                                    group_names = ', '.join(self.thput_obj_dict[ce][obj_name]["obj"].configdevices.keys())
+                                    profile_names = ', '.join(self.thput_obj_dict[ce][obj_name]["obj"].configdevices.values())
+                                    configmap = "Groups:" + group_names + " -> Profiles:" + profile_names
+                                    test_setup_info = {
+                                        "Test name": self.thput_obj_dict[ce][obj_name]["obj"].test_name,
+                                        "Configuration": configmap,
+                                        "Configured Devices": ", ".join(all_devices_names),
+                                        # "No of Devices": "Total" + f"({str(self.thput_obj_dict[ce][obj_name]["obj"].num_stations)})" + total_devices,
+                                        "No of Devices": f"Total ({self.thput_obj_dict[ce][obj_name]['obj'].num_stations}) {total_devices}",
+                                        "Increment": incremental_capacity_data,
+                                        "Traffic Duration in minutes": round(int(self.thput_obj_dict[ce][obj_name]["obj"].test_duration) * len(incremental_capacity_list) / 60, 2),
+                                        "Traffic Type": (self.thput_obj_dict[ce][obj_name]["obj"].traffic_type.strip("lf_")).upper(),
+                                        "Traffic Direction": self.thput_obj_dict[ce][obj_name]["obj"].direction,
+                                        "Upload Rate(Mbps)": str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000, 2)) + "Mbps",
+                                        "Download Rate(Mbps)": str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000, 2)) + "Mbps",
+                                        "Load Type": load_type_name,
+                                        "Packet Size": packet_size_text
+                                    }
+                                else:
+                                    test_setup_info = {
+                                        "Test name": self.thput_obj_dict[ce][obj_name]["obj"].test_name,
+                                        "Device List": ", ".join(all_devices_names),
+                                        # "No of Devices": "Total" + f"({str(self.thput_obj_dict[ce][obj_name]["obj"].num_stations)})" + total_devices,
+                                        "No of Devices": f"Total ({self.thput_obj_dict[ce][obj_name]['obj'].num_stations}) {total_devices}",
+                                        "Increment": incremental_capacity_data,
+                                        "Traffic Duration in minutes": round(int(self.thput_obj_dict[ce][obj_name]["obj"].test_duration) * len(incremental_capacity_list) / 60, 2),
+                                        "Traffic Type": (self.thput_obj_dict[ce][obj_name]["obj"].traffic_type.strip("lf_")).upper(),
+                                        "Traffic Direction": self.thput_obj_dict[ce][obj_name]["obj"].direction,
+                                        "Upload Rate(Mbps)": str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000, 2)) + "Mbps",
+                                        "Download Rate(Mbps)": str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000, 2)) + "Mbps",
+                                        "Load Type": load_type_name,
+                                        "Packet Size": packet_size_text
+                                    }
+                                # Add robot IP, completed coordinates, and selected angles to the test summary
+                                test_setup_info["ROBOT IP"] = self.thput_obj_dict[ce][obj_name]["obj"].robo_ip
+                                test_setup_info["Selected Coordinates"] = ",".join(self.thput_obj_dict[ce][obj_name]["obj"].coordinates_completed)
+                                if self.thput_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                    test_setup_info["Selected Angles"] = ",".join(self.thput_obj_dict[ce][obj_name]["obj"].angle_list)
+
+                                self.overall_report.test_setup_table(test_setup_data=test_setup_info, value="Test Configuration")
+
+                                # Add live view images in case of robot testing from webui
+                                if self.thput_obj_dict[ce][obj_name]["obj"].dowebgui:
+
+                                    throughput_image_path = os.path.join(self.thput_obj_dict[ce][obj_name]["obj"].result_dir, "live_view_images", f'{self.thput_obj_dict[ce][obj_name]["obj"].test_name}_throughput.png')
+                                    rssi_image_path = os.path.join(self.thput_obj_dict[ce][obj_name]["obj"].result_dir, "live_view_images", f'{self.thput_obj_dict[ce][obj_name]["obj"].test_name}_rssi.png')
+                                    timeout = 300  # seconds
+                                    start_time = time.time()
+
+                                    while not (os.path.exists(throughput_image_path) and os.path.exists(rssi_image_path)):
+                                        if time.time() - start_time > timeout:
+                                            print("Timeout: Images not found within 300 seconds.")
+                                            break
+                                        time.sleep(1)
+
+                                    if os.path.exists(throughput_image_path):
+                                        self.overall_report.set_custom_html('<div style="page-break-before: always;"></div>')
+                                        self.overall_report.build_custom()
+                                        self.overall_report.set_custom_html("<h2>Average Throughput Heatmap: </h2>")
+                                        self.overall_report.build_custom()
+                                        self.overall_report.set_custom_html(f'<img src="file://{throughput_image_path}" style="width:1500px; height:900px;"></img>')
+                                        self.overall_report.build_custom()
+                                        # os.remove(throughput_image_path)
+
+                                    if os.path.exists(rssi_image_path):
+                                        self.overall_report.set_custom_html('<div style="page-break-before: always;"></div>')
+                                        self.overall_report.build_custom()
+                                        self.overall_report.set_custom_html("<h2>Average RSSI Heatmap: </h2>")
+                                        self.overall_report.build_custom()
+                                        self.overall_report.set_custom_html(f'<img src="file://{rssi_image_path}" style="width:1500px; height:900px;"></img>')
+                                        self.overall_report.build_custom()
+                                # Loop through each coordinate
+                                for i, coordinate in enumerate(self.thput_obj_dict[ce][obj_name]["obj"].coordinates_completed):
+
+                                    self.overall_report.set_obj_html(
+                                        _obj_title=f"<h3 style='text-decoration: underline;'>Throughput Test Details – Robot Position: Point {coordinate}</h3>",
+                                        _obj=" ")
+                                    self.overall_report.build_objective()
+                                    print("sssss",os.getcwd(),self.thput_obj_dict[ce][obj_name]["obj"].result_dir)
+                                    coordinate_csv = f"{coordinate}_throughput_data.csv"
+                                    file_path = os.path.join(self.thput_obj_dict[ce][obj_name]["obj"].result_dir, coordinate_csv)
+                                    data = pd.read_csv(file_path)
+
+                                    # if self.thput_obj_dict[ce][obj_name]["obj"].dowebgui is True and self.thput_obj_dict[ce][obj_name]["obj"].group_name:
+                                    #     shutil.move('{}_overall_throughput.csv', report_path_date_time)
+                                    # else:
+                                    #     shutil.move('{}_throughput_data.csv'.format(coordinate), report_path_date_time)
+
+                                    for angle in self.thput_obj_dict[ce][obj_name]["obj"].angle_list:
+                                        # Loop through iterations and build graphs, tables for each iteration
+                                        for i in range(len(iterations_before_test_stopped_by_user)):
+                                            # rssi_signal_data=[]
+                                            devices_on_running = []
+                                            download_data = []
+                                            upload_data = []
+                                            upload_drop = []
+                                            download_drop = []
+                                            devices_data_to_create_bar_graph = []
+                                            # signal_data=[]
+                                            direction_in_table = []
+                                            packet_size_in_table = []
+                                            upload_list, download_list = [], []
+                                            rssi_data = []
+                                            data_iter = data[data['Iteration'] == i + 1]
+                                            avg_rtt_data = []
+
+                                            # for sig in self.thput_obj_dict[ce][obj_name]["obj"].signal_list[0:int(incremental_capacity_list[i])]:
+                                            #     signal_data.append(int(sig)*(-1))
+                                            # rssi_signal_data.append(signal_data)
+
+                                            # Fetch devices_on_running from real_client_list
+                                            for j in range(data1[i][-1]):
+                                                devices_on_running.append(self.thput_obj_dict[ce][obj_name]["obj"].real_client_list[j].split(" ")[-1])
+
+                                            # Fetch download_data and upload_data based on load_type and direction
+                                            for k in devices_on_running:
+                                                # individual_device_data=[]
+
+                                                # Checking individual device download and upload rate by searching device name in dataframe
+                                                columns_with_substring = [col for col in data_iter.columns if k in col]
+                                                if self.thput_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                                    angle = float(angle)
+                                                    filtered_df = data_iter.loc[data_iter["Angle"] == angle, columns_with_substring]
+                                                else:
+                                                    filtered_df = data_iter[columns_with_substring]
+                                                download_col = filtered_df[[col for col in filtered_df.columns if "Download" in col][0]].values.tolist()
+                                                upload_col = filtered_df[[col for col in filtered_df.columns if "Upload" in col][0]].values.tolist()
+                                                upload_drop_col = filtered_df[[col for col in filtered_df.columns if "Tx % Drop" in col][0]].values.tolist()
+                                                download_drop_col = filtered_df[[col for col in filtered_df.columns if "Rx % Drop " in col][0]].values.tolist()
+                                                rssi_col = filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()
+                                                if self.thput_obj_dict[ce][obj_name]["obj"].load_type == "wc_intended_load":
+                                                    if self.thput_obj_dict[ce][obj_name]["obj"].direction == "Bi-direction":
+
+                                                        # Append average download and upload data from filtered dataframe
+                                                        download_data.append(round(sum(download_col) / len(download_col), 2))
+                                                        upload_data.append(round(sum(upload_col) / len(upload_col), 2))
+                                                        # Append average upload and download drop from filtered dataframe
+                                                        upload_drop.append(round(sum(upload_drop_col) / len(upload_drop_col), 2))
+                                                        download_drop.append(round(sum(download_drop_col) / len(download_drop_col), 2))
+                                                        rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
+                                                        avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
+                                                        # Calculate and append upload and download throughput to lists
+                                                        upload_list.append(str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
+                                                        download_list.append(str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
+                                                        if self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu == -1:
+                                                            packet_size_in_table.append('AUTO')
+                                                        else:
+                                                            packet_size_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu)
+                                                        direction_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].direction)
+
+                                                    elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Download':
+
+                                                        # Append average download data from filtered dataframe
+                                                        download_data.append(round(sum(download_col) / len(download_col), 2))
+
+                                                        # Append 0 for upload data
+                                                        upload_data.append(0)
+
+                                                        rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
+
+                                                        # Calculate and append upload and download throughput to lists
+                                                        upload_list.append(str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
+                                                        download_list.append(str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
+                                                        avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
+                                                        # Append average download drop data from filtered dataframe
+
+                                                        download_drop.append(round(sum(download_drop_col) / len(download_drop_col), 2))
+                                                        if self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu == -1:
+                                                            packet_size_in_table.append('AUTO')
+                                                        else:
+                                                            packet_size_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu)
+                                                        direction_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].direction)
+
+                                                    elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Upload':
+
+                                                        # Calculate and append upload and download throughput to lists
+                                                        upload_list.append(str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
+                                                        download_list.append(str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
+
+                                                        rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
+
+                                                        # Append Average upload data from filtered dataframe
+                                                        upload_data.append(round(sum(upload_col) / len(upload_col), 2))
+                                                        # Append 0 for download data
+                                                        download_data.append(0)
+                                                        # Append average upload drop data from filtered dataframe
+                                                        upload_drop.append(round(sum(upload_drop_col) / len(upload_drop_col), 2))
+                                                        avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
+
+                                                        if self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu == -1:
+                                                            packet_size_in_table.append('AUTO')
+                                                        else:
+                                                            packet_size_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu)
+                                                        direction_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].direction)
+
+                                                else:
+
+                                                    if self.thput_obj_dict[ce][obj_name]["obj"].direction == "Bi-direction":
+                                                        # Append average download and upload data from filtered dataframe
+                                                        download_data.append(round(sum(download_col) / len(download_col), 2))
+                                                        upload_data.append(round(sum(upload_col) / len(upload_col), 2))
+                                                        # Append average download and upload drop data from filtered dataframe
+                                                        upload_drop.append(round(sum(upload_drop_col) / len(upload_drop_col), 2))
+                                                        download_drop.append(round(sum(download_drop_col) / len(download_drop_col), 2))
+                                                        # upload_data.append(filtered_df[[col for col in  filtered_df.columns if "Upload" in col][0]].values.tolist()[-1])
+                                                        rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
+                                                        avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
+
+                                                        # Calculate and append upload and download throughput to lists
+                                                        upload_list.append(str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000, 2)))
+                                                        download_list.append(str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000, 2)))
+
+                                                        if self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu == -1:
+                                                            packet_size_in_table.append('AUTO')
+                                                        else:
+                                                            packet_size_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu)
+                                                        direction_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].direction)
+                                                    elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Download':
+
+                                                        # Append average download data from filtered dataframe
+                                                        download_data.append(round(sum(download_col) / len(download_col), 2))
+                                                        # Append 0 for upload data
+                                                        upload_data.append(0)
+                                                        rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
+                                                        avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
+
+                                                        # Calculate and append upload and download throughput to lists
+                                                        upload_list.append(str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000, 2)))
+                                                        download_list.append(str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000, 2)))
+                                                        # Append average download drop data from filtered dataframe
+                                                        download_drop.append(round(sum(download_drop_col) / len(download_drop_col), 2))
+                                                        if self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu == -1:
+                                                            packet_size_in_table.append('AUTO')
+                                                        else:
+                                                            packet_size_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu)
+                                                        direction_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].direction)
+                                                    elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Upload':
+
+                                                        # Calculate and append upload and download throughput to lists
+                                                        upload_list.append(str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000, 2)) + "Mbps")
+                                                        download_list.append(str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000, 2)) + "Mbps")
+                                                        rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
+                                                        avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
+
+                                                        # Append average upload data from filtered dataframe
+                                                        upload_data.append(round(sum(upload_col) / len(upload_col), 2))
+                                                        # Append average upload drop data from filtered dataframe
+                                                        upload_drop.append(round(sum(upload_drop_col) / len(upload_drop_col), 2))
+
+                                                        # Append 0 for download data
+                                                        download_data.append(0)
+
+                                                        if self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu == -1:
+                                                            packet_size_in_table.append('AUTO')
+                                                        else:
+                                                            packet_size_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu)
+                                                        direction_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].direction)
+
+                                            data_set_in_graph = []
+                                            data_for_angle = []
+                                            if self.thput_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                                angle = float(angle)
+                                                data_for_angle = data[data["Angle"] == angle]
+                                            # Depending on the test direction, retrieve corresponding throughput data,
+                                            # organize it into datasets for graphing, and calculate real-time average throughput values accordingly.
+                                            if self.thput_obj_dict[ce][obj_name]["obj"].direction == "Bi-direction":
+                                                if self.thput_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                                    download_values_list = data_for_angle['Overall Download'][data_for_angle['Iteration'] == i + 1].values.tolist()
+                                                    upload_values_list = data_for_angle['Overall Upload'][data_for_angle['Iteration'] == i + 1].values.tolist()
+                                                else:
+                                                    download_values_list = data['Overall Download'][data['Iteration'] == i + 1].values.tolist()
+                                                    upload_values_list = data['Overall Upload'][data['Iteration'] == i + 1].values.tolist()
+                                                data_set_in_graph.append(download_values_list)
+                                                data_set_in_graph.append(upload_values_list)
+                                                devices_data_to_create_bar_graph.append(download_data)
+                                                devices_data_to_create_bar_graph.append(upload_data)
+                                                label_data = ['Download', 'Upload']
+                                                if not self.thput_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                                    real_time_data = (
+                                                        f"Real Time Throughput: Achieved Throughput: Download:{round(sum(download_data[0:int(incremental_capacity_list[i])]), 2)} Mbps, "
+                                                        f"Upload: {round(sum(upload_data[0:int(incremental_capacity_list[i])]), 2)} Mbps"
+                                                    )
+                                                else:
+                                                    real_time_data = (
+                                                        f"Real Time Throughput: Achieved Throughput At Angle {angle}: Download: {round(sum(download_data[0:int(incremental_capacity_list[i])]), 2)} Mbps, "
+                                                        f"Upload: {round(sum(upload_data[0:int(incremental_capacity_list[i])]), 2)} Mbps"
+                                                    )
+
+                                            elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Download':
+                                                if self.thput_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                                    download_values_list = data_for_angle['Overall Download'][data_for_angle['Iteration'] == i + 1].values.tolist()
+                                                else:
+                                                    download_values_list = data['Overall Download'][data['Iteration'] == i + 1].values.tolist()
+                                                data_set_in_graph.append(download_values_list)
+                                                devices_data_to_create_bar_graph.append(download_data)
+                                                label_data = ['Download']
+                                                if not self.thput_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                                    real_time_data = f"Real Time Throughput: Achieved Throughput: Download : {round(((sum(download_data[0:int(incremental_capacity_list[i])]))), 2)} Mbps"
+                                                else:
+                                                    real_time_data = f"Real Time Throughput: Achieved Throughput At Angle {angle}: Download : {round(((sum(download_data[0:int(incremental_capacity_list[i])]))), 2)} Mbps"
+
+                                            elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Upload':
+                                                if self.thput_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                                    upload_values_list = data_for_angle['Overall Upload'][data_for_angle['Iteration'] == i + 1].values.tolist()
+                                                else:
+                                                    upload_values_list = data['Overall Upload'][data['Iteration'] == i + 1].values.tolist()
+                                                data_set_in_graph.append(upload_values_list)
+                                                devices_data_to_create_bar_graph.append(upload_data)
+                                                label_data = ['Upload']
+                                                if not self.thput_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                                    real_time_data = f"Real Time Throughput: Achieved Throughput: Upload : {round((sum(upload_data[0:int(incremental_capacity_list[i])])), 2)} Mbps"
+                                                else:
+                                                    real_time_data = f"Real Time Throughput: Achieved Throughput At Angle {angle}: Upload : {round((sum(upload_data[0:int(incremental_capacity_list[i])])), 2)} Mbps"
+
+                                            if len(incremental_capacity_list) > 1:
+                                                self.overall_report.set_custom_html(f"<h2><u>Iteration-{i + 1}: Number of Devices Running : {len(devices_on_running)}</u></h2>")
+                                                self.overall_report.build_custom()
+
+                                            self.overall_report.set_obj_html(
+                                                _obj_title=f"{real_time_data}",
+                                                _obj=" ")
+                                            self.overall_report.build_objective()
+                                            if self.thput_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                                xaxis_categories = data_for_angle['TIMESTAMP'][data_for_angle['Iteration'] == i + 1].values.tolist()
+                                                graph_image_name = "line_graph{}_{}_{}".format(coordinate, angle, i)
+                                            else:
+                                                xaxis_categories = data['TIMESTAMP'][data['Iteration'] == i + 1].values.tolist()
+                                                graph_image_name = "line_graph{}_{}".format(coordinate, i)
+                                            graph_png = self.thput_obj_dict[ce][obj_name]["obj"].build_line_graph(
+                                                data_set=data_set_in_graph,
+                                                xaxis_name="Time",
+                                                yaxis_name="Throughput (Mbps)",
+                                                xaxis_categories=xaxis_categories,
+                                                label=label_data,
+                                                graph_image_name=graph_image_name
+                                            )
+                                            logger.info("graph name {}".format(graph_png))
+                                            self.overall_report.set_graph_image(graph_png)
+                                            self.overall_report.move_graph_image()
+
+                                            self.overall_report.build_graph()
+
+                                            if self.thput_obj_dict[ce][obj_name]["obj"].group_name:
+                                                self.overall_report.set_obj_html(
+                                                    _obj_title="Detailed Result Table For Groups ",
+                                                    _obj="The below tables provides detailed information for the throughput test on each group.")
+                                            else:
+
+                                                self.overall_report.set_obj_html(
+                                                    _obj_title="Detailed Result Table ",
+                                                    _obj="The below tables provides detailed information for the throughput test on each device.")
+                                            self.overall_report.build_objective()
+                                            self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list = [item.split()[-1] if ' ' in item else item for item in self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list]
+                                            if self.thput_obj_dict[ce][obj_name]["obj"].expected_passfail_value or self.thput_obj_dict[ce][obj_name]["obj"].device_csv_name:
+                                                test_input_list, pass_fail_list = self.thput_obj_dict[ce][obj_name]["obj"].get_pass_fail_list(device_type, incremental_capacity_list[i], devices_on_running, download_data, upload_data)
+                                            if self.thput_obj_dict[ce][obj_name]["obj"].group_name:
+                                                for key, val in self.thput_obj_dict[ce][obj_name]["obj"].group_device_map.items():
+                                                    if self.thput_obj_dict[ce][obj_name]["obj"].expected_passfail_value or self.thput_obj_dict[ce][obj_name]["obj"].device_csv_name:
+                                                        # Generating Dataframe when Groups with their profiles and pass_fail case is specified
+                                                        dataframe = self.thput_obj_dict[ce][obj_name]["obj"].generate_dataframe(val,
+                                                                                            device_type[0:int(incremental_capacity_list[i])],
+                                                                                            devices_on_running[0:int(incremental_capacity_list[i])],
+                                                                                            self.thput_obj_dict[ce][obj_name]["obj"].ssid_list[0:int(incremental_capacity_list[i])],
+                                                                                            self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list[0:int(incremental_capacity_list[i])],
+                                                                                            self.thput_obj_dict[ce][obj_name]["obj"].channel_list[0:int(incremental_capacity_list[i])],
+                                                                                            self.thput_obj_dict[ce][obj_name]["obj"].mode_list[0:int(incremental_capacity_list[i])],
+                                                                                            direction_in_table[0:int(incremental_capacity_list[i])],
+                                                                                            download_list[0:int(incremental_capacity_list[i])],
+                                                                                            [str(n) for n in avg_rtt_data[0:int(incremental_capacity_list[i])]],
+                                                                                            [str(n) + " Mbps" for n in download_data[0:int(incremental_capacity_list[i])]],
+                                                                                            upload_list[0:int(incremental_capacity_list[i])],
+                                                                                            [str(n) + " Mbps" for n in upload_data[0:int(incremental_capacity_list[i])]],
+                                                                                            ['' if n == 0 else '-' + str(n) + " dbm" for n in rssi_data[0:int(incremental_capacity_list[i])]],
+                                                                                            test_input_list,
+                                                                                            self.thput_obj_dict[ce][obj_name]["obj"].link_speed_list[0:int(incremental_capacity_list[i])],
+                                                                                            [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
+                                                                                            pass_fail_list,
+                                                                                            upload_drop,
+                                                                                            download_drop)
+                                                    # Generating Dataframe for groups when pass_fail case is not specified
+                                                    else:
+                                                        dataframe = self.thput_obj_dict[ce][obj_name]["obj"].generate_dataframe(val,
+                                                                                            device_type[0:int(incremental_capacity_list[i])],
+                                                                                            devices_on_running[0:int(incremental_capacity_list[i])],
+                                                                                            self.thput_obj_dict[ce][obj_name]["obj"].ssid_list[0:int(incremental_capacity_list[i])],
+                                                                                            self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list[0:int(incremental_capacity_list[i])],
+                                                                                            self.thput_obj_dict[ce][obj_name]["obj"].channel_list[0:int(incremental_capacity_list[i])],
+                                                                                            self.thput_obj_dict[ce][obj_name]["obj"].mode_list[0:int(incremental_capacity_list[i])],
+                                                                                            direction_in_table[0:int(incremental_capacity_list[i])],
+                                                                                            download_list[0:int(incremental_capacity_list[i])],
+                                                                                            [str(n) for n in avg_rtt_data[0:int(incremental_capacity_list[i])]],
+                                                                                            [str(n) + " Mbps" for n in download_data[0:int(incremental_capacity_list[i])]],
+                                                                                            upload_list[0:int(incremental_capacity_list[i])],
+                                                                                            [str(n) + " Mbps" for n in upload_data[0:int(incremental_capacity_list[i])]],
+                                                                                            ['' if n == 0 else '-' + str(n) + " dbm" for n in rssi_data[0:int(incremental_capacity_list[i])]],
+                                                                                            [],
+                                                                                            self.thput_obj_dict[ce][obj_name]["obj"].link_speed_list[0:int(incremental_capacity_list[i])],
+                                                                                            [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
+                                                                                            [],
+                                                                                            upload_drop,
+                                                                                            download_drop)
+                                                    if dataframe:
+                                                        self.overall_report.set_obj_html("", "Group: {}".format(key))
+                                                        self.overall_report.build_objective()
+                                                        dataframe1 = pd.DataFrame(dataframe)
+                                                        self.overall_report.set_table_dataframe(dataframe1)
+                                                        self.overall_report.build_table()
+                                            else:
+                                                bk_dataframe = {
+                                                    " Device Type ": device_type[0:int(incremental_capacity_list[i])],
+                                                    " Username": devices_on_running[0:int(incremental_capacity_list[i])],
+                                                    " SSID ": self.thput_obj_dict[ce][obj_name]["obj"].ssid_list[0:int(incremental_capacity_list[i])],
+                                                    " MAC ": self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list[0:int(incremental_capacity_list[i])],
+                                                    " Channel ": self.thput_obj_dict[ce][obj_name]["obj"].channel_list[0:int(incremental_capacity_list[i])],
+                                                    " Mode": self.thput_obj_dict[ce][obj_name]["obj"].mode_list[0:int(incremental_capacity_list[i])],
+                                                    # " Direction":direction_in_table[0:int(incremental_capacity_list[i])],
+                                                    " Offered download rate (Mbps) ": download_list[0:int(incremental_capacity_list[i])],
+                                                    " Observed Average download rate (Mbps) ": [str(n) for n in download_data[0:int(incremental_capacity_list[i])]],
+                                                    " Offered upload rate (Mbps) ": upload_list[0:int(incremental_capacity_list[i])],
+                                                    " Observed Average upload rate (Mbps) ": [str(n) for n in upload_data[0:int(incremental_capacity_list[i])]],
+                                                    " RSSI (dBm) ": ['' if n == 0 else '-' + str(n) for n in rssi_data[0:int(incremental_capacity_list[i])]],
+                                                    # " Link Speed ":self.link_speed_list[0:int(incremental_capacity_list[i])],
+                                                    " Average RTT (ms)": avg_rtt_data[0:int(incremental_capacity_list[i])],
+                                                    " Packet Size(Bytes) ": [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
+                                                }
+                                                if self.thput_obj_dict[ce][obj_name]["obj"].direction == "Bi-direction":
+                                                    bk_dataframe[" Average Tx Drop % "] = upload_drop
+                                                    bk_dataframe[" Average Rx Drop % "] = download_drop
+                                                elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Download':
+                                                    bk_dataframe[" Average Rx Drop % "] = download_drop
+                                                    # adding rx drop while uploading as 0
+                                                    bk_dataframe[" Average Tx Drop % "] = [0.0] * len(download_drop)
+
+                                                else:
+                                                    bk_dataframe[" Average Tx Drop % "] = upload_drop
+                                                    # adding rx drop while downloading as 0
+                                                    bk_dataframe[" Average Rx Drop % "] = [0.0] * len(upload_drop)
+                                                if self.thput_obj_dict[ce][obj_name]["obj"].expected_passfail_value or self.thput_obj_dict[ce][obj_name]["obj"].device_csv_name:
+                                                    bk_dataframe[" Expected " + self.thput_obj_dict[ce][obj_name]["obj"].direction + " rate "] = [str(n) + " Mbps" for n in test_input_list]
+                                                    bk_dataframe[" Status "] = pass_fail_list
+                                                dataframe1 = pd.DataFrame(bk_dataframe)
+                                                self.overall_report.set_table_dataframe(dataframe1)
+                                                self.overall_report.build_table()
+
+                                                if coordinate in self.thput_obj_dict[ce][obj_name]["obj"].battery_log:
+                                                    if self.thput_obj_dict[ce][obj_name]["obj"].rotation_enabled and (angle in self.thput_obj_dict[ce][obj_name]["obj"].battery_log[coordinate]):
+                                                        self.overall_report.set_custom_html(f'<h2>Robot went to charging Dock at {self.thput_obj_dict[ce][obj_name]["obj"].battery_log[coordinate][angle]}</h2>')
+                                                        self.overall_report.build_custom()
+                                                    else:
+                                                        self.overall_report.set_custom_html(f'<h2>Robot went to charging Dock at {self.thput_obj_dict[ce][obj_name]["obj"].battery_log[coordinate]}</h2>')
+                                                        self.overall_report.build_custom()
+
+                                            self.overall_report.set_custom_html('<hr>')
+                                            self.overall_report.build_custom()
+
                         elif self.thput_obj_dict[ce][obj_name]["obj"].do_interopability:
 
                             self.overall_report.set_obj_html(_obj_title="Input Parameters",
@@ -6593,7 +7440,7 @@ class Candela(Realm):
                                 self.thput_obj_dict[ce][obj_name]["obj"].add_live_view_images_to_report(self.overall_report)
                         if ce == "series":
                             obj_no += 1
-                            obj_name = f"ftp_test_{obj_no}"
+                            obj_name = f"thput_test_{obj_no}"
                         else:
                             break
                 
@@ -6714,6 +7561,8 @@ class Candela(Realm):
                                     # packet_count_data = {}
                                     os_type = []
                                     for device, device_data in self.result_json.items():
+                                        if not isinstance(device_data, dict):
+                                            continue
                                         logging.info('Device data: {} {}'.format(device, device_data))
                                         os_type.append(device_data['os'])
                                         self.packets_sent.append(int(device_data['sent']))
@@ -7214,12 +8063,25 @@ class Candela(Realm):
                         self.overall_report.set_obj_html(_obj_title=f'QOS Test {obj_no}', _obj="")
                         self.overall_report.build_objective()
                         self.overall_report.test_setup_table(test_setup_data=test_setup_info, value="Test Configuration")
-                        self.overall_report.set_table_title(
-                            f"Overall {self.qos_obj_dict[ce][obj_name]['obj'].direction} Throughput for all TOS i.e BK | BE | Video (VI) | Voice (VO)")
-                        self.overall_report.build_table_title()
+                        
                         
                         
                         if self.robot_test:
+                            if self.dowebgui:
+                                tos_for_report = self.qos_obj_dict[ce][obj_name]["obj"].tos
+                                tos_images, rssi_images = self.qos_obj_dict[ce][obj_name]["obj"].get_live_view_images()
+                                for tos_val in tos_for_report:
+                                    for image_path in tos_images[tos_val]:
+                                        self.overall_report.set_custom_html('<div style="page-break-before: always;"></div>')
+                                        self.overall_report.build_custom()
+                                        self.overall_report.set_custom_html(f'<img src="file://{image_path}" style="width: 1200px; height: 800px;"></img>')
+                                        self.overall_report.build_custom()
+                                for _floor, rssi_image_path in rssi_images.items():
+                                    if os.path.exists(rssi_image_path):
+                                        self.overall_report.set_custom_html('<div style="page-break-before: always;"></div>')
+                                        self.overall_report.build_custom()
+                                        self.overall_report.set_custom_html(f'<img src="file://{rssi_image_path}" style="width: 1000px; height: 800px;"></img>')
+                                        self.overall_report.build_custom()
                             for coordinate in range(len(self.qos_obj_dict[ce][obj_name]["obj"].coordinate_list)):
                                 if self.qos_obj_dict[ce][obj_name]["obj"].rotation_enabled:
                                     for angle in range(len(self.qos_obj_dict[ce][obj_name]["obj"].rotation_list)):
@@ -7244,6 +8106,9 @@ class Candela(Realm):
                                     avg_drop_b = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate]]["avg_drop_b"]
                                     self.qos_obj_dict[ce][obj_name]["obj"].generate_individual_coordinate(self.overall_report, data, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, coordinate, None)
                         else:
+                            self.overall_report.set_table_title(
+                                f"Overall {self.qos_obj_dict[ce][obj_name]['obj'].direction} Throughput for all TOS i.e BK | BE | Video (VI) | Voice (VO)")
+                            self.overall_report.build_table_title()
                             df_throughput = pd.DataFrame(res["throughput_table_df"])
                             self.overall_report.set_table_dataframe(df_throughput)
                             self.overall_report.build_table()
@@ -8591,9 +9456,9 @@ class Candela(Realm):
                                             self.overall_report.move_graph_image()
                                             self.overall_report.build_graph()
                                             if self.rb_obj_dict[ce][obj_name]["obj"].rotations_enabled:
-                                                self.overall_report.set_graph_title(f"Time Taken Vs Device For Completing {self.rb_obj_dict[ce][obj_name]["obj"].count} RealTime URLs at coordinate {coordinate} and angle {angle}")
+                                                self.overall_report.set_graph_title(f'Time Taken Vs Device For Completing {self.rb_obj_dict[ce][obj_name]["obj"].count} RealTime URLs at coordinate {coordinate} and angle {angle}')
                                             else:
-                                                self.overall_report.set_graph_title(f"Time Taken Vs Device For Completing {self.rb_obj_dict[ce][obj_name]["obj"].count} RealTime URLs at coordinate {coordinate}")
+                                                self.overall_report.set_graph_title(f'Time Taken Vs Device For Completing {self.rb_obj_dict[ce][obj_name]["obj"].count} RealTime URLs at coordinate {coordinate}')
                                             self.overall_report.build_graph_title()
 
                                             # Extract device names from CSV
@@ -8737,9 +9602,9 @@ class Candela(Realm):
                                         self.overall_report.move_graph_image()
                                         self.overall_report.build_graph()
                                         if self.rb_obj_dict[ce][obj_name]["obj"].rotations_enabled:
-                                            self.overall_report.set_graph_title(f"Time Taken Vs Device For Completing {self.rb_obj_dict[ce][obj_name]["obj"].count} RealTime URLs at coordinate {coordinate} and angle {angle}")
+                                            self.overall_report.set_graph_title(f'Time Taken Vs Device For Completing {self.rb_obj_dict[ce][obj_name]["obj"].count} RealTime URLs at coordinate {coordinate} and angle {angle}')
                                         else:
-                                            self.overall_report.set_graph_title(f"Time Taken Vs Device For Completing {self.rb_obj_dict[ce][obj_name]["obj"].count} RealTime URLs at coordinate {coordinate}")
+                                            self.overall_report.set_graph_title(f'Time Taken Vs Device For Completing {self.rb_obj_dict[ce][obj_name]["obj"].count} RealTime URLs at coordinate {coordinate}')
                                         self.overall_report.build_graph_title()
 
                                         # Extract device names from CSV
@@ -9412,488 +10277,725 @@ class Candela(Realm):
                         self.overall_report.set_table_dataframe(test_parameters)
                         self.overall_report.build_table()
 
-                        client_array = []
-                        accepted_clients = []
-                        no_csv_client = []
-                        rejected_clients = []
-                        final_dataset = []
-                        accepted_ostypes = []
-                        max_audio_jitter_s, min_audio_jitter_s = [], []
-                        max_audio_jitter_r, min_audio_jitter_r = [], []
-                        max_audio_latency_s, min_audio_latency_s = [], []
-                        max_audio_latency_r, min_audio_latency_r = [], []
-                        max_audio_pktloss_s, min_audio_pktloss_s = [], []
-                        max_audio_pktloss_r, min_audio_pktloss_r = [], []
+                        if not self.robot_test:
+                            client_array = []
+                            accepted_clients = []
+                            no_csv_client = []
+                            rejected_clients = []
+                            final_dataset = []
+                            accepted_ostypes = []
+                            max_audio_jitter_s, min_audio_jitter_s = [], []
+                            max_audio_jitter_r, min_audio_jitter_r = [], []
+                            max_audio_latency_s, min_audio_latency_s = [], []
+                            max_audio_latency_r, min_audio_latency_r = [], []
+                            max_audio_pktloss_s, min_audio_pktloss_s = [], []
+                            max_audio_pktloss_r, min_audio_pktloss_r = [], []
 
-                        max_video_jitter_s, min_video_jitter_s = [], []
-                        max_video_jitter_r, min_video_jitter_r = [], []
-                        max_video_latency_s, min_video_latency_s = [], []
-                        max_video_latency_r, min_video_latency_r = [], []
-                        max_video_pktloss_s, min_video_pktloss_s = [], []
-                        max_video_pktloss_r, min_video_pktloss_r = [], []
-                        for i in range(0, len(self.zoom_obj_dict[ce][obj_name]["obj"].device_names)):
-                            temp_max_audio_jitter_s, temp_min_audio_jitter_s = 0.0, 0.0
-                            temp_max_audio_jitter_r, temp_min_audio_jitter_r = 0.0, 0.0
-                            temp_max_audio_latency_s, temp_min_audio_latency_s = 0.0, 0.0
-                            temp_max_audio_latency_r, temp_min_audio_latency_r = 0.0, 0.0
-                            temp_max_audio_pktloss_s, temp_min_audio_pktloss_s = 0.0, 0.0
-                            temp_max_audio_pktloss_r, temp_min_audio_pktloss_r = 0.0, 0.0
+                            max_video_jitter_s, min_video_jitter_s = [], []
+                            max_video_jitter_r, min_video_jitter_r = [], []
+                            max_video_latency_s, min_video_latency_s = [], []
+                            max_video_latency_r, min_video_latency_r = [], []
+                            max_video_pktloss_s, min_video_pktloss_s = [], []
+                            max_video_pktloss_r, min_video_pktloss_r = [], []
+                            for i in range(0, len(self.zoom_obj_dict[ce][obj_name]["obj"].device_names)):
+                                temp_max_audio_jitter_s, temp_min_audio_jitter_s = 0.0, 0.0
+                                temp_max_audio_jitter_r, temp_min_audio_jitter_r = 0.0, 0.0
+                                temp_max_audio_latency_s, temp_min_audio_latency_s = 0.0, 0.0
+                                temp_max_audio_latency_r, temp_min_audio_latency_r = 0.0, 0.0
+                                temp_max_audio_pktloss_s, temp_min_audio_pktloss_s = 0.0, 0.0
+                                temp_max_audio_pktloss_r, temp_min_audio_pktloss_r = 0.0, 0.0
 
-                            temp_max_video_jitter_s, temp_min_video_jitter_s = 0.0, 0.0
-                            temp_max_video_jitter_r, temp_min_video_jitter_r = 0.0, 0.0
-                            temp_max_video_latency_s, temp_min_video_latency_s = 0.0, 0.0
-                            temp_max_video_latency_r, temp_min_video_latency_r = 0.0, 0.0
-                            temp_max_video_pktloss_s, temp_min_video_pktloss_s = 0.0, 0.0
-                            temp_max_video_pktloss_r, temp_min_video_pktloss_r = 0.0, 0.0
-                            per_client_data = {
-                                "audio_jitter_s": [],
-                                "audio_jitter_r": [],
-                                "audio_latency_s": [],
-                                "audio_latency_r": [],
-                                "audio_pktloss_s": [],
-                                "audio_pktloss_r": [],
-                                "video_jitter_s": [],
-                                "video_jitter_r": [],
-                                "video_latency_s": [],
-                                "video_latency_r": [],
-                                "video_pktloss_s": [],
-                                "video_pktloss_r": [],
-                            }
-                            try:
-                                file_path = os.path.join(self.zoom_obj_dict[ce][obj_name]["obj"].report_path_date_time, f'{self.zoom_obj_dict[ce][obj_name]["obj"].device_names[i]}.csv')
-                                with open(file_path, mode='r', encoding='utf-8', errors='ignore') as file:
-                                    csv_reader = csv.DictReader(file)
-                                    for row in csv_reader:
+                                temp_max_video_jitter_s, temp_min_video_jitter_s = 0.0, 0.0
+                                temp_max_video_jitter_r, temp_min_video_jitter_r = 0.0, 0.0
+                                temp_max_video_latency_s, temp_min_video_latency_s = 0.0, 0.0
+                                temp_max_video_latency_r, temp_min_video_latency_r = 0.0, 0.0
+                                temp_max_video_pktloss_s, temp_min_video_pktloss_s = 0.0, 0.0
+                                temp_max_video_pktloss_r, temp_min_video_pktloss_r = 0.0, 0.0
+                                per_client_data = {
+                                    "audio_jitter_s": [],
+                                    "audio_jitter_r": [],
+                                    "audio_latency_s": [],
+                                    "audio_latency_r": [],
+                                    "audio_pktloss_s": [],
+                                    "audio_pktloss_r": [],
+                                    "video_jitter_s": [],
+                                    "video_jitter_r": [],
+                                    "video_latency_s": [],
+                                    "video_latency_r": [],
+                                    "video_pktloss_s": [],
+                                    "video_pktloss_r": [],
+                                }
+                                try:
+                                    file_path = os.path.join(self.zoom_obj_dict[ce][obj_name]["obj"].report.path_date_time, f'{self.zoom_obj_dict[ce][obj_name]["obj"].device_names[i]}.csv')
+                                    with open(file_path, mode='r', encoding='utf-8', errors='ignore') as file:
+                                        csv_reader = csv.DictReader(file)
+                                        for row in csv_reader:
 
-                                        per_client_data["audio_jitter_s"].append(float(row["Sent Audio Jitter (ms)"]))
-                                        per_client_data["audio_jitter_r"].append(float(row["Receive Audio Jitter (ms)"]))
-                                        per_client_data["audio_latency_s"].append(float(row["Sent Audio Latency (ms)"]))
-                                        per_client_data["audio_latency_r"].append(float(row["Receive Audio Latency (ms)"]))
-                                        per_client_data["audio_pktloss_s"].append(float((row["Sent Audio Packet loss (%)"]).split(" ")[0].replace("%", "")))
-                                        per_client_data["audio_pktloss_r"].append(float((row["Receive Audio Packet loss (%)"]).split(" ")[0].replace("%", "")))
-                                        per_client_data["video_jitter_s"].append(float(row["Sent Video Jitter (ms)"]))
-                                        per_client_data["video_jitter_r"].append(float(row["Receive Video Jitter (ms)"]))
-                                        per_client_data["video_latency_s"].append(float(row["Sent Video Latency (ms)"]))
-                                        per_client_data["video_latency_r"].append(float(row["Receive Video Latency (ms)"]))
-                                        per_client_data["video_pktloss_s"].append(float((row["Sent Video Packet loss (%)"]).split(" ")[0].replace("%", "")))
-                                        per_client_data["video_pktloss_r"].append(float((row["Receive Video Packet loss (%)"]).split(" ")[0].replace("%", "")))
+                                            per_client_data["audio_jitter_s"].append(float(row["Sent Audio Jitter (ms)"]))
+                                            per_client_data["audio_jitter_r"].append(float(row["Receive Audio Jitter (ms)"]))
+                                            per_client_data["audio_latency_s"].append(float(row["Sent Audio Latency (ms)"]))
+                                            per_client_data["audio_latency_r"].append(float(row["Receive Audio Latency (ms)"]))
+                                            per_client_data["audio_pktloss_s"].append(float((row["Sent Audio Packet loss (%)"]).split(" ")[0].replace("%", "")))
+                                            per_client_data["audio_pktloss_r"].append(float((row["Receive Audio Packet loss (%)"]).split(" ")[0].replace("%", "")))
+                                            per_client_data["video_jitter_s"].append(float(row["Sent Video Jitter (ms)"]))
+                                            per_client_data["video_jitter_r"].append(float(row["Receive Video Jitter (ms)"]))
+                                            per_client_data["video_latency_s"].append(float(row["Sent Video Latency (ms)"]))
+                                            per_client_data["video_latency_r"].append(float(row["Receive Video Latency (ms)"]))
+                                            per_client_data["video_pktloss_s"].append(float((row["Sent Video Packet loss (%)"]).split(" ")[0].replace("%", "")))
+                                            per_client_data["video_pktloss_r"].append(float((row["Receive Video Packet loss (%)"]).split(" ")[0].replace("%", "")))
 
-                                        temp_max_audio_jitter_s = max(temp_max_audio_jitter_s, float(row["Sent Audio Jitter (ms)"]))
-                                        temp_max_audio_jitter_r = max(temp_max_audio_jitter_r, float(row["Receive Audio Jitter (ms)"]))
-                                        temp_max_audio_latency_s = max(temp_max_audio_latency_s, float(row["Sent Audio Latency (ms)"]))
-                                        temp_max_audio_latency_r = max(temp_max_audio_latency_r, float(row["Receive Audio Latency (ms)"]))
-                                        temp_max_audio_pktloss_s = max(temp_max_audio_pktloss_s, float((row["Sent Audio Packet loss (%)"]).split(" ")[0].replace("%", "")))
-                                        temp_max_audio_pktloss_r = max(temp_max_audio_pktloss_r, float((row["Receive Audio Packet loss (%)"]).split(" ")[0].replace("%", "")))
+                                            temp_max_audio_jitter_s = max(temp_max_audio_jitter_s, float(row["Sent Audio Jitter (ms)"]))
+                                            temp_max_audio_jitter_r = max(temp_max_audio_jitter_r, float(row["Receive Audio Jitter (ms)"]))
+                                            temp_max_audio_latency_s = max(temp_max_audio_latency_s, float(row["Sent Audio Latency (ms)"]))
+                                            temp_max_audio_latency_r = max(temp_max_audio_latency_r, float(row["Receive Audio Latency (ms)"]))
+                                            temp_max_audio_pktloss_s = max(temp_max_audio_pktloss_s, float((row["Sent Audio Packet loss (%)"]).split(" ")[0].replace("%", "")))
+                                            temp_max_audio_pktloss_r = max(temp_max_audio_pktloss_r, float((row["Receive Audio Packet loss (%)"]).split(" ")[0].replace("%", "")))
 
-                                        temp_max_video_jitter_s = max(temp_max_video_jitter_s, float(row["Sent Video Jitter (ms)"]))
-                                        temp_max_video_jitter_r = max(temp_max_video_jitter_r, float(row["Receive Video Jitter (ms)"]))
-                                        temp_max_video_latency_s = max(temp_max_video_latency_s, float(row["Sent Video Latency (ms)"]))
-                                        temp_max_video_latency_r = max(temp_max_video_latency_r, float(row["Receive Video Latency (ms)"]))
-                                        temp_max_video_pktloss_s = max(temp_max_video_pktloss_s, float((row["Sent Video Packet loss (%)"]).split(" ")[0].replace("%", "")))
-                                        temp_max_video_pktloss_r = max(temp_max_video_pktloss_r, float((row["Receive Video Packet loss (%)"]).split(" ")[0].replace("%", "")))
+                                            temp_max_video_jitter_s = max(temp_max_video_jitter_s, float(row["Sent Video Jitter (ms)"]))
+                                            temp_max_video_jitter_r = max(temp_max_video_jitter_r, float(row["Receive Video Jitter (ms)"]))
+                                            temp_max_video_latency_s = max(temp_max_video_latency_s, float(row["Sent Video Latency (ms)"]))
+                                            temp_max_video_latency_r = max(temp_max_video_latency_r, float(row["Receive Video Latency (ms)"]))
+                                            temp_max_video_pktloss_s = max(temp_max_video_pktloss_s, float((row["Sent Video Packet loss (%)"]).split(" ")[0].replace("%", "")))
+                                            temp_max_video_pktloss_r = max(temp_max_video_pktloss_r, float((row["Receive Video Packet loss (%)"]).split(" ")[0].replace("%", "")))
 
-                                        temp_min_audio_jitter_s = min(
-                                            temp_min_audio_jitter_s,
-                                            float(
-                                                row["Sent Audio Jitter (ms)"])) if temp_min_audio_jitter_s > 0 and float(
-                                            row["Sent Audio Jitter (ms)"]) > 0 else (
-                                            float(
-                                                row["Sent Audio Jitter (ms)"]) if float(
-                                                row["Sent Audio Jitter (ms)"]) > 0 else temp_min_audio_jitter_s)
-                                        temp_min_audio_jitter_r = min(
-                                            temp_min_audio_jitter_r, float(
-                                                row["Receive Audio Jitter (ms)"])) if temp_min_audio_jitter_r > 0 and float(
-                                            row["Receive Audio Jitter (ms)"]) > 0 else (
-                                            float(
-                                                row["Receive Audio Jitter (ms)"]) if float(
-                                                row["Receive Audio Jitter (ms)"]) > 0 else temp_min_audio_jitter_r)
-                                        temp_min_audio_latency_s = min(
-                                            temp_min_audio_latency_s, float(
-                                                row["Sent Audio Latency (ms)"])) if temp_min_audio_latency_s > 0 and float(
-                                            row["Sent Audio Latency (ms)"]) > 0 else (
-                                            float(
-                                                row["Sent Audio Latency (ms)"]) if float(
-                                                row["Sent Audio Latency (ms)"]) > 0 else temp_min_audio_jitter_s)
-                                        temp_min_audio_latency_r = min(
-                                            temp_min_audio_latency_r, float(
-                                                row["Receive Audio Latency (ms)"])) if temp_min_audio_latency_r > 0 and float(
-                                            row["Receive Audio Latency (ms)"]) > 0 else (
-                                            float(
-                                                row["Receive Audio Latency (ms)"]) if float(
-                                                row["Receive Audio Latency (ms)"]) > 0 else temp_min_audio_jitter_r)
+                                            temp_min_audio_jitter_s = min(
+                                                temp_min_audio_jitter_s,
+                                                float(
+                                                    row["Sent Audio Jitter (ms)"])) if temp_min_audio_jitter_s > 0 and float(
+                                                row["Sent Audio Jitter (ms)"]) > 0 else (
+                                                float(
+                                                    row["Sent Audio Jitter (ms)"]) if float(
+                                                    row["Sent Audio Jitter (ms)"]) > 0 else temp_min_audio_jitter_s)
+                                            temp_min_audio_jitter_r = min(
+                                                temp_min_audio_jitter_r, float(
+                                                    row["Receive Audio Jitter (ms)"])) if temp_min_audio_jitter_r > 0 and float(
+                                                row["Receive Audio Jitter (ms)"]) > 0 else (
+                                                float(
+                                                    row["Receive Audio Jitter (ms)"]) if float(
+                                                    row["Receive Audio Jitter (ms)"]) > 0 else temp_min_audio_jitter_r)
+                                            temp_min_audio_latency_s = min(
+                                                temp_min_audio_latency_s, float(
+                                                    row["Sent Audio Latency (ms)"])) if temp_min_audio_latency_s > 0 and float(
+                                                row["Sent Audio Latency (ms)"]) > 0 else (
+                                                float(
+                                                    row["Sent Audio Latency (ms)"]) if float(
+                                                    row["Sent Audio Latency (ms)"]) > 0 else temp_min_audio_jitter_s)
+                                            temp_min_audio_latency_r = min(
+                                                temp_min_audio_latency_r, float(
+                                                    row["Receive Audio Latency (ms)"])) if temp_min_audio_latency_r > 0 and float(
+                                                row["Receive Audio Latency (ms)"]) > 0 else (
+                                                float(
+                                                    row["Receive Audio Latency (ms)"]) if float(
+                                                    row["Receive Audio Latency (ms)"]) > 0 else temp_min_audio_jitter_r)
 
-                                        temp_min_audio_pktloss_s = min(
-                                            temp_min_audio_pktloss_s, float(
+                                            temp_min_audio_pktloss_s = min(
+                                                temp_min_audio_pktloss_s, float(
+                                                    (row["Sent Audio Packet loss (%)"]).split(" ")[0].replace(
+                                                        "%", ""))) if temp_min_audio_pktloss_s > 0 and float(
                                                 (row["Sent Audio Packet loss (%)"]).split(" ")[0].replace(
-                                                    "%", ""))) if temp_min_audio_pktloss_s > 0 and float(
-                                            (row["Sent Audio Packet loss (%)"]).split(" ")[0].replace(
-                                                "%", "")) > 0 else (
-                                            float(
+                                                    "%", "")) > 0 else (
+                                                float(
+                                                    (row["Sent Audio Packet loss (%)"]).split(" ")[0].replace(
+                                                        "%", "")) if float(
+                                                    (row["Sent Audio Packet loss (%)"]).split(" ")[0].replace(
+                                                        "%", "")) > 0 else temp_min_audio_pktloss_s)
+                                            temp_min_audio_pktloss_r = min(
+                                                temp_min_audio_pktloss_r, float(
+                                                    (row["Sent Audio Packet loss (%)"]).split(" ")[0].replace(
+                                                        "%", ""))) if temp_min_audio_pktloss_r > 0 and float(
                                                 (row["Sent Audio Packet loss (%)"]).split(" ")[0].replace(
-                                                    "%", "")) if float(
-                                                (row["Sent Audio Packet loss (%)"]).split(" ")[0].replace(
-                                                    "%", "")) > 0 else temp_min_audio_pktloss_s)
-                                        temp_min_audio_pktloss_r = min(
-                                            temp_min_audio_pktloss_r, float(
-                                                (row["Sent Audio Packet loss (%)"]).split(" ")[0].replace(
-                                                    "%", ""))) if temp_min_audio_pktloss_r > 0 and float(
-                                            (row["Sent Audio Packet loss (%)"]).split(" ")[0].replace(
-                                                "%", "")) > 0 else (
-                                            float(
-                                                (row["Sent Audio Packet loss (%)"]).split(" ")[0].replace(
-                                                    "%", "")) if float(
-                                                (row["Sent Audio Packet loss (%)"]).split(" ")[0].replace(
-                                                    "%", "")) > 0 else temp_min_audio_pktloss_r)
+                                                    "%", "")) > 0 else (
+                                                float(
+                                                    (row["Sent Audio Packet loss (%)"]).split(" ")[0].replace(
+                                                        "%", "")) if float(
+                                                    (row["Sent Audio Packet loss (%)"]).split(" ")[0].replace(
+                                                        "%", "")) > 0 else temp_min_audio_pktloss_r)
 
-                                        temp_min_video_jitter_s = min(
-                                            temp_min_video_jitter_s,
-                                            float(
-                                                row["Sent Video Jitter (ms)"])) if temp_min_video_jitter_s > 0 and float(
-                                            row["Sent Video Jitter (ms)"]) > 0 else (
-                                            float(
-                                                row["Sent Video Jitter (ms)"]) if float(
-                                                row["Sent Video Jitter (ms)"]) > 0 else temp_min_video_jitter_s)
-                                        temp_min_video_jitter_r = min(
-                                            temp_min_video_jitter_r, float(
-                                                row["Receive Video Jitter (ms)"])) if temp_min_video_jitter_r > 0 and float(
-                                            row["Receive Video Jitter (ms)"]) > 0 else (
-                                            float(
-                                                row["Receive Video Jitter (ms)"]) if float(
-                                                row["Receive Video Jitter (ms)"]) > 0 else temp_min_video_jitter_r)
-                                        temp_min_video_latency_s = min(
-                                            temp_min_video_latency_s, float(
-                                                row["Sent Video Latency (ms)"])) if temp_min_video_latency_s > 0 and float(
-                                            row["Sent Video Latency (ms)"]) > 0 else (
-                                            float(
-                                                row["Sent Video Latency (ms)"]) if float(
-                                                row["Sent Video Latency (ms)"]) > 0 else temp_min_video_latency_s)
-                                        temp_min_video_latency_r = min(
-                                            temp_min_video_latency_r, float(
-                                                row["Receive Video Latency (ms)"])) if temp_min_video_latency_r > 0 and float(
-                                            row["Receive Video Latency (ms)"]) > 0 else (
-                                            float(
-                                                row["Receive Video Latency (ms)"]) if float(
-                                                row["Receive Video Latency (ms)"]) > 0 else temp_min_video_latency_r)
+                                            temp_min_video_jitter_s = min(
+                                                temp_min_video_jitter_s,
+                                                float(
+                                                    row["Sent Video Jitter (ms)"])) if temp_min_video_jitter_s > 0 and float(
+                                                row["Sent Video Jitter (ms)"]) > 0 else (
+                                                float(
+                                                    row["Sent Video Jitter (ms)"]) if float(
+                                                    row["Sent Video Jitter (ms)"]) > 0 else temp_min_video_jitter_s)
+                                            temp_min_video_jitter_r = min(
+                                                temp_min_video_jitter_r, float(
+                                                    row["Receive Video Jitter (ms)"])) if temp_min_video_jitter_r > 0 and float(
+                                                row["Receive Video Jitter (ms)"]) > 0 else (
+                                                float(
+                                                    row["Receive Video Jitter (ms)"]) if float(
+                                                    row["Receive Video Jitter (ms)"]) > 0 else temp_min_video_jitter_r)
+                                            temp_min_video_latency_s = min(
+                                                temp_min_video_latency_s, float(
+                                                    row["Sent Video Latency (ms)"])) if temp_min_video_latency_s > 0 and float(
+                                                row["Sent Video Latency (ms)"]) > 0 else (
+                                                float(
+                                                    row["Sent Video Latency (ms)"]) if float(
+                                                    row["Sent Video Latency (ms)"]) > 0 else temp_min_video_latency_s)
+                                            temp_min_video_latency_r = min(
+                                                temp_min_video_latency_r, float(
+                                                    row["Receive Video Latency (ms)"])) if temp_min_video_latency_r > 0 and float(
+                                                row["Receive Video Latency (ms)"]) > 0 else (
+                                                float(
+                                                    row["Receive Video Latency (ms)"]) if float(
+                                                    row["Receive Video Latency (ms)"]) > 0 else temp_min_video_latency_r)
 
-                                        temp_min_video_pktloss_s = min(
-                                            temp_min_video_pktloss_s, float(
+                                            temp_min_video_pktloss_s = min(
+                                                temp_min_video_pktloss_s, float(
+                                                    (row["Sent Video Packet loss (%)"]).split(" ")[0].replace(
+                                                        "%", ""))) if temp_min_video_pktloss_s > 0 and float(
                                                 (row["Sent Video Packet loss (%)"]).split(" ")[0].replace(
-                                                    "%", ""))) if temp_min_video_pktloss_s > 0 and float(
-                                            (row["Sent Video Packet loss (%)"]).split(" ")[0].replace(
-                                                "%", "")) > 0 else (
-                                            float(
+                                                    "%", "")) > 0 else (
+                                                float(
+                                                    (row["Sent Video Packet loss (%)"]).split(" ")[0].replace(
+                                                        "%", "")) if float(
+                                                    (row["Sent Video Packet loss (%)"]).split(" ")[0].replace(
+                                                        "%", "")) > 0 else temp_min_video_pktloss_s)
+                                            temp_min_video_pktloss_r = min(
+                                                temp_min_video_pktloss_r, float(
+                                                    (row["Sent Video Packet loss (%)"]).split(" ")[0].replace(
+                                                        "%", ""))) if temp_min_video_pktloss_r > 0 and float(
                                                 (row["Sent Video Packet loss (%)"]).split(" ")[0].replace(
-                                                    "%", "")) if float(
-                                                (row["Sent Video Packet loss (%)"]).split(" ")[0].replace(
-                                                    "%", "")) > 0 else temp_min_video_pktloss_s)
-                                        temp_min_video_pktloss_r = min(
-                                            temp_min_video_pktloss_r, float(
-                                                (row["Sent Video Packet loss (%)"]).split(" ")[0].replace(
-                                                    "%", ""))) if temp_min_video_pktloss_r > 0 and float(
-                                            (row["Sent Video Packet loss (%)"]).split(" ")[0].replace(
-                                                "%", "")) > 0 else (
-                                            float(
-                                                (row["Sent Video Packet loss (%)"]).split(" ")[0].replace(
-                                                    "%", "")) if float(
-                                                (row["Sent Video Packet loss (%)"]).split(" ")[0].replace(
-                                                    "%", "")) > 0 else temp_min_video_pktloss_r)
+                                                    "%", "")) > 0 else (
+                                                float(
+                                                    (row["Sent Video Packet loss (%)"]).split(" ")[0].replace(
+                                                        "%", "")) if float(
+                                                    (row["Sent Video Packet loss (%)"]).split(" ")[0].replace(
+                                                        "%", "")) > 0 else temp_min_video_pktloss_r)
 
-                            except Exception as e:
-                                logging.error(f"Error in reading data in client {self.zoom_obj_dict[ce][obj_name]['obj'].device_names[i]}", e)
-                                no_csv_client.append(self.zoom_obj_dict[ce][obj_name]["obj"].device_names[i])
-                                rejected_clients.append(self.zoom_obj_dict[ce][obj_name]["obj"].device_names[i])
-                            if self.zoom_obj_dict[ce][obj_name]["obj"].device_names[i] not in no_csv_client:
-                                client_array.append(self.zoom_obj_dict[ce][obj_name]["obj"].device_names[i])
-                                accepted_clients.append(self.zoom_obj_dict[ce][obj_name]["obj"].device_names[i])
-                                accepted_ostypes.append(self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_os_type[i])
-                                max_audio_jitter_s.append(temp_max_audio_jitter_s)
-                                min_audio_jitter_s.append(temp_min_audio_jitter_s)
-                                max_audio_jitter_r.append(temp_max_audio_jitter_r)
-                                min_audio_jitter_r.append(temp_min_audio_jitter_r)
-                                max_audio_latency_s.append(temp_max_audio_latency_s)
-                                min_audio_latency_s.append(temp_min_audio_latency_s)
-                                max_audio_latency_r.append(temp_max_audio_latency_r)
-                                min_audio_latency_r.append(temp_min_audio_latency_r)
-                                max_video_jitter_s.append(temp_max_video_jitter_s)
-                                min_video_jitter_s.append(temp_min_video_jitter_s)
-                                max_video_jitter_r.append(temp_max_video_jitter_r)
-                                min_video_jitter_r.append(temp_min_video_jitter_r)
-                                max_video_latency_s.append(temp_max_video_latency_s)
-                                min_video_latency_s.append(temp_min_video_latency_s)
-                                max_video_latency_r.append(temp_max_video_latency_r)
-                                min_video_latency_r.append(temp_min_video_latency_r)
+                                except Exception as e:
+                                    logging.error(f"Error in reading data in client {self.zoom_obj_dict[ce][obj_name]['obj'].device_names[i]}", e)
+                                    no_csv_client.append(self.zoom_obj_dict[ce][obj_name]["obj"].device_names[i])
+                                    rejected_clients.append(self.zoom_obj_dict[ce][obj_name]["obj"].device_names[i])
+                                if self.zoom_obj_dict[ce][obj_name]["obj"].device_names[i] not in no_csv_client:
+                                    client_array.append(self.zoom_obj_dict[ce][obj_name]["obj"].device_names[i])
+                                    accepted_clients.append(self.zoom_obj_dict[ce][obj_name]["obj"].device_names[i])
+                                    accepted_ostypes.append(self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_os_type[i])
+                                    max_audio_jitter_s.append(temp_max_audio_jitter_s)
+                                    min_audio_jitter_s.append(temp_min_audio_jitter_s)
+                                    max_audio_jitter_r.append(temp_max_audio_jitter_r)
+                                    min_audio_jitter_r.append(temp_min_audio_jitter_r)
+                                    max_audio_latency_s.append(temp_max_audio_latency_s)
+                                    min_audio_latency_s.append(temp_min_audio_latency_s)
+                                    max_audio_latency_r.append(temp_max_audio_latency_r)
+                                    min_audio_latency_r.append(temp_min_audio_latency_r)
+                                    max_video_jitter_s.append(temp_max_video_jitter_s)
+                                    min_video_jitter_s.append(temp_min_video_jitter_s)
+                                    max_video_jitter_r.append(temp_max_video_jitter_r)
+                                    min_video_jitter_r.append(temp_min_video_jitter_r)
+                                    max_video_latency_s.append(temp_max_video_latency_s)
+                                    min_video_latency_s.append(temp_min_video_latency_s)
+                                    max_video_latency_r.append(temp_max_video_latency_r)
+                                    min_video_latency_r.append(temp_min_video_latency_r)
 
-                                max_audio_pktloss_s.append(temp_max_audio_pktloss_s)
-                                min_audio_pktloss_s.append(temp_min_audio_pktloss_s)
-                                max_audio_pktloss_r.append(temp_max_audio_pktloss_r)
-                                min_audio_pktloss_r.append(temp_min_audio_pktloss_r)
-                                max_video_pktloss_s.append(temp_max_video_pktloss_s)
-                                min_video_pktloss_s.append(temp_min_video_pktloss_s)
-                                max_video_pktloss_r.append(temp_max_video_pktloss_r)
-                                min_video_pktloss_r.append(temp_min_video_pktloss_r)
+                                    max_audio_pktloss_s.append(temp_max_audio_pktloss_s)
+                                    min_audio_pktloss_s.append(temp_min_audio_pktloss_s)
+                                    max_audio_pktloss_r.append(temp_max_audio_pktloss_r)
+                                    min_audio_pktloss_r.append(temp_min_audio_pktloss_r)
+                                    max_video_pktloss_s.append(temp_max_video_pktloss_s)
+                                    min_video_pktloss_s.append(temp_min_video_pktloss_s)
+                                    max_video_pktloss_r.append(temp_max_video_pktloss_r)
+                                    min_video_pktloss_r.append(temp_min_video_pktloss_r)
 
-                                final_dataset.append(per_client_data.copy())
+                                    final_dataset.append(per_client_data.copy())
 
-                        self.overall_report.set_table_title("Test Devices:")
-                        self.overall_report.build_table_title()
-
-                        device_details = pd.DataFrame({
-                            'Hostname': self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_hostname,
-                            'OS Type': self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_os_type,
-                            "MAC": self.zoom_obj_dict[ce][obj_name]["obj"].mac_list,
-                            "RSSI": self.zoom_obj_dict[ce][obj_name]["obj"].rssi_list,
-                            "Link Rate": self.zoom_obj_dict[ce][obj_name]["obj"].link_rate_list,
-                            "SSID": self.zoom_obj_dict[ce][obj_name]["obj"].ssid_list,
-
-                        })
-                        self.overall_report.set_table_dataframe(device_details)
-                        self.overall_report.build_table()
-
-                        if self.zoom_obj_dict[ce][obj_name]["obj"].audio:
-                            self.overall_report.set_graph_title("Audio Latency (Sent/Received)")
-                            self.overall_report.build_graph_title()
-                            x_data_set = [max_audio_latency_s.copy(), min_audio_latency_s.copy(), max_audio_latency_r.copy(), min_audio_latency_r.copy()]
-                            y_data_set = client_array
-
-                            x_fig_size = 18
-                            y_fig_size = len(client_array) * 1 + 4
-                            bar_graph_horizontal = lf_bar_graph_horizontal(
-                                _data_set=x_data_set,
-                                _xaxis_name="Latency (ms)",
-                                _yaxis_name="Devices",
-                                _yaxis_label=y_data_set,
-                                _yaxis_categories=y_data_set,
-                                _yaxis_step=1,
-                                _yticks_font=8,
-                                _bar_height=.20,
-                                _color_name=["yellow", "blue", "orange", "grey"],
-                                _show_bar_value=True,
-                                _figsize=(x_fig_size, y_fig_size),
-                                _graph_title="Audio Latency(sent/received)",
-                                _graph_image_name=f"Audio Latency(sent and received){obj_no}",
-                                _label=["Max Sent", "Min Sent", "Max Recv", "Min Recv"]
-                            )
-                            graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
-                            self.overall_report.set_graph_image(graph_image)
-                            self.overall_report.move_graph_image()
-                            self.overall_report.build_graph()
-
-                            self.overall_report.set_graph_title("Audio Jitter (Sent/Received)")
-                            self.overall_report.build_graph_title()
-                            x_data_set = [max_audio_jitter_s.copy(), min_audio_jitter_s.copy(), max_audio_jitter_r.copy(), min_audio_jitter_r.copy()]
-                            y_data_set = client_array
-
-                            x_fig_size = 18
-                            y_fig_size = len(client_array) * 1 + 4
-                            bar_graph_horizontal = lf_bar_graph_horizontal(
-                                _data_set=x_data_set,
-                                _xaxis_name="Jitter (ms)",
-                                _yaxis_name="Devices",
-                                _yaxis_label=y_data_set,
-                                _yaxis_categories=y_data_set,
-                                _yaxis_step=1,
-                                _yticks_font=8,
-                                _bar_height=.20,
-                                _color_name=["yellow", "blue", "orange", "grey"],
-                                _show_bar_value=True,
-                                _figsize=(x_fig_size, y_fig_size),
-                                _graph_title="Audio Jitter(sent/received)",
-                                _graph_image_name=f"Audio Jitter(sent and received) {obj_no}",
-                                _label=["Max Sent", "Min Sent", "Max Recv", "Min Recv"]
-                            )
-                            graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
-                            self.overall_report.set_graph_image(graph_image)
-                            self.overall_report.move_graph_image()
-                            self.overall_report.build_graph()
-
-                            self.overall_report.set_graph_title("Audio Packet Loss (Sent/Received)")
-                            self.overall_report.build_graph_title()
-                            x_data_set = [max_audio_pktloss_s.copy(), min_audio_pktloss_s.copy(), max_audio_pktloss_r.copy(), min_audio_pktloss_r.copy()]
-                            y_data_set = client_array
-
-                            x_fig_size = 18
-                            y_fig_size = len(client_array) * 1 + 4
-                            bar_graph_horizontal = lf_bar_graph_horizontal(
-                                _data_set=x_data_set,
-                                _xaxis_name="Packet Loss (%)",
-                                _yaxis_name="Devices",
-                                _yaxis_label=y_data_set,
-                                _yaxis_categories=y_data_set,
-                                _yaxis_step=1,
-                                _yticks_font=8,
-                                _bar_height=.20,
-                                _color_name=["yellow", "blue", "orange", "grey"],
-                                _show_bar_value=True,
-                                _figsize=(x_fig_size, y_fig_size),
-                                _graph_title="Audio Packet Loss(sent/received)",
-                                _graph_image_name=f"Audio Packet Loss(sent and received){obj_no}",
-                                _label=["Max Sent", "Min Sent", "Max Recv", "Min Recv"]
-                            )
-                            graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
-                            self.overall_report.set_graph_image(graph_image)
-                            self.overall_report.move_graph_image()
-                            self.overall_report.build_graph()
-
-                            self.overall_report.set_table_title("Test Audio Results Table:")
+                            self.overall_report.set_table_title("Test Devices:")
                             self.overall_report.build_table_title()
-                            audio_test_results_dict = {
+
+                            device_details = pd.DataFrame({
+                                'Hostname': self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_hostname,
+                                'OS Type': self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_os_type,
+                                "MAC": self.zoom_obj_dict[ce][obj_name]["obj"].mac_list,
+                                "RSSI": self.zoom_obj_dict[ce][obj_name]["obj"].rssi_list,
+                                "Link Rate": self.zoom_obj_dict[ce][obj_name]["obj"].link_rate_list,
+                                "SSID": self.zoom_obj_dict[ce][obj_name]["obj"].ssid_list,
+
+                            })
+                            self.overall_report.set_table_dataframe(device_details)
+                            self.overall_report.build_table()
+
+                            if self.zoom_obj_dict[ce][obj_name]["obj"].audio:
+                                self.overall_report.set_graph_title("Audio Latency (Sent/Received)")
+                                self.overall_report.build_graph_title()
+                                x_data_set = [max_audio_latency_s.copy(), min_audio_latency_s.copy(), max_audio_latency_r.copy(), min_audio_latency_r.copy()]
+                                y_data_set = client_array
+
+                                x_fig_size = 18
+                                y_fig_size = len(client_array) * 1 + 4
+                                bar_graph_horizontal = lf_bar_graph_horizontal(
+                                    _data_set=x_data_set,
+                                    _xaxis_name="Latency (ms)",
+                                    _yaxis_name="Devices",
+                                    _yaxis_label=y_data_set,
+                                    _yaxis_categories=y_data_set,
+                                    _yaxis_step=1,
+                                    _yticks_font=8,
+                                    _bar_height=.20,
+                                    _color_name=["yellow", "blue", "orange", "grey"],
+                                    _show_bar_value=True,
+                                    _figsize=(x_fig_size, y_fig_size),
+                                    _graph_title="Audio Latency(sent/received)",
+                                    _graph_image_name=f"Audio Latency(sent and received){obj_no}",
+                                    _label=["Max Sent", "Min Sent", "Max Recv", "Min Recv"]
+                                )
+                                graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
+                                self.overall_report.set_graph_image(graph_image)
+                                self.overall_report.move_graph_image()
+                                self.overall_report.build_graph()
+
+                                self.overall_report.set_graph_title("Audio Jitter (Sent/Received)")
+                                self.overall_report.build_graph_title()
+                                x_data_set = [max_audio_jitter_s.copy(), min_audio_jitter_s.copy(), max_audio_jitter_r.copy(), min_audio_jitter_r.copy()]
+                                y_data_set = client_array
+
+                                x_fig_size = 18
+                                y_fig_size = len(client_array) * 1 + 4
+                                bar_graph_horizontal = lf_bar_graph_horizontal(
+                                    _data_set=x_data_set,
+                                    _xaxis_name="Jitter (ms)",
+                                    _yaxis_name="Devices",
+                                    _yaxis_label=y_data_set,
+                                    _yaxis_categories=y_data_set,
+                                    _yaxis_step=1,
+                                    _yticks_font=8,
+                                    _bar_height=.20,
+                                    _color_name=["yellow", "blue", "orange", "grey"],
+                                    _show_bar_value=True,
+                                    _figsize=(x_fig_size, y_fig_size),
+                                    _graph_title="Audio Jitter(sent/received)",
+                                    _graph_image_name=f"Audio Jitter(sent and received) {obj_no}",
+                                    _label=["Max Sent", "Min Sent", "Max Recv", "Min Recv"]
+                                )
+                                graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
+                                self.overall_report.set_graph_image(graph_image)
+                                self.overall_report.move_graph_image()
+                                self.overall_report.build_graph()
+
+                                self.overall_report.set_graph_title("Audio Packet Loss (Sent/Received)")
+                                self.overall_report.build_graph_title()
+                                x_data_set = [max_audio_pktloss_s.copy(), min_audio_pktloss_s.copy(), max_audio_pktloss_r.copy(), min_audio_pktloss_r.copy()]
+                                y_data_set = client_array
+
+                                x_fig_size = 18
+                                y_fig_size = len(client_array) * 1 + 4
+                                bar_graph_horizontal = lf_bar_graph_horizontal(
+                                    _data_set=x_data_set,
+                                    _xaxis_name="Packet Loss (%)",
+                                    _yaxis_name="Devices",
+                                    _yaxis_label=y_data_set,
+                                    _yaxis_categories=y_data_set,
+                                    _yaxis_step=1,
+                                    _yticks_font=8,
+                                    _bar_height=.20,
+                                    _color_name=["yellow", "blue", "orange", "grey"],
+                                    _show_bar_value=True,
+                                    _figsize=(x_fig_size, y_fig_size),
+                                    _graph_title="Audio Packet Loss(sent/received)",
+                                    _graph_image_name=f"Audio Packet Loss(sent and received){obj_no}",
+                                    _label=["Max Sent", "Min Sent", "Max Recv", "Min Recv"]
+                                )
+                                graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
+                                self.overall_report.set_graph_image(graph_image)
+                                self.overall_report.move_graph_image()
+                                self.overall_report.build_graph()
+
+                                self.overall_report.set_table_title("Test Audio Results Table:")
+                                self.overall_report.build_table_title()
+                                audio_test_results_dict = pd.DataFrame({
+                                    'Device Name': [client for client in accepted_clients],
+                                    'Avg Latency Sent (ms)': [
+                                        round(sum(data["audio_latency_s"]) / len(data["audio_latency_s"]), 2) if len(data["audio_latency_s"]) != 0 else 0
+                                        for data in final_dataset
+                                    ],
+                                    'Avg Latency Recv (ms)': [
+                                        round(sum(data["audio_latency_r"]) / len(data["audio_latency_r"]), 2) if len(data["audio_latency_r"]) != 0 else 0
+                                        for data in final_dataset
+                                    ],
+                                    'Avg Jitter Sent (ms)': [
+                                        round(sum(data["audio_jitter_s"]) / len(data["audio_jitter_s"]), 2) if len(data["audio_jitter_s"]) != 0 else 0
+                                        for data in final_dataset
+                                    ],
+                                    'Avg Jitter Recv (ms)': [
+                                        round(sum(data["audio_jitter_r"]) / len(data["audio_jitter_r"]), 2) if len(data["audio_jitter_r"]) != 0 else 0
+                                        for data in final_dataset
+                                    ],
+                                    'Avg Pkt Loss Sent': [
+                                        round(sum(data["audio_pktloss_s"]) / len(data["audio_pktloss_s"]), 2) if len(data["audio_pktloss_s"]) != 0 else 0
+                                        for data in final_dataset
+                                    ],
+                                    'Avg Pkt Loss Recv': [
+                                        round(sum(data["audio_pktloss_r"]) / len(data["audio_pktloss_r"]), 2) if len(data["audio_pktloss_r"]) != 0 else 0
+                                        for data in final_dataset
+                                    ],
+                                    'CSV link': [
+                                        '<a href="{}.csv" target="_blank">csv data</a>'.format(client)
+                                        for client in accepted_clients
+                                    ]
+                                })
+                                self.overall_report.set_table_dataframe(audio_test_results_dict)
+                                self.overall_report.dataframe_html = self.overall_report.dataframe.to_html(index=False,
+                                                                                justify='center', render_links=True, escape=False)  # have the index be able to be passed in.
+                                self.overall_report.html += self.overall_report.dataframe_html
+                            if self.zoom_obj_dict[ce][obj_name]["obj"].video:
+                                self.overall_report.set_graph_title("Video Latency (Sent/Received)")
+                                self.overall_report.build_graph_title()
+                                x_data_set = [max_video_latency_s.copy(), min_video_latency_s.copy(), max_video_latency_r.copy(), min_video_latency_r.copy()]
+                                y_data_set = client_array
+                                x_fig_size = 18
+                                y_fig_size = len(client_array) * 1 + 4
+                                bar_graph_horizontal = lf_bar_graph_horizontal(
+                                    _data_set=x_data_set,
+                                    _xaxis_name="Latency (ms)",
+                                    _yaxis_name="Devices",
+                                    _yaxis_label=y_data_set,
+                                    _yaxis_categories=y_data_set,
+                                    _yaxis_step=1,
+                                    _yticks_font=8,
+                                    _bar_height=.20,
+                                    _color_name=["yellow", "blue", "orange", "grey"],
+                                    _show_bar_value=True,
+                                    _figsize=(x_fig_size, y_fig_size),
+                                    _graph_title="Video Latency(sent/received)",
+                                    _graph_image_name=f"Video Latency(sent and received){obj_no}",
+                                    _label=["Max Sent", "Min Sent", "Max Recv", "Min Recv"]
+                                )
+                                graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
+                                self.overall_report.set_graph_image(graph_image)
+                                self.overall_report.move_graph_image()
+                                self.overall_report.build_graph()
+
+                                self.overall_report.set_graph_title("Video Jitter (Sent/Received)")
+                                self.overall_report.build_graph_title()
+                                x_data_set = [max_video_jitter_s.copy(), min_video_jitter_s.copy(), max_video_jitter_r.copy(), min_video_jitter_r.copy()]
+                                y_data_set = client_array
+                                x_fig_size = 18
+                                y_fig_size = len(client_array) * 1 + 4
+                                bar_graph_horizontal = lf_bar_graph_horizontal(
+                                    _data_set=x_data_set,
+                                    _xaxis_name="Jitter (ms)",
+                                    _yaxis_name="Devices",
+                                    _yaxis_label=y_data_set,
+                                    _yaxis_categories=y_data_set,
+                                    _yaxis_step=1,
+                                    _yticks_font=8,
+                                    _bar_height=.20,
+                                    _color_name=["yellow", "blue", "orange", "grey"],
+                                    _show_bar_value=True,
+                                    _figsize=(x_fig_size, y_fig_size),
+                                    _graph_title="Video Jitter(sent/received)",
+                                    _graph_image_name=f"Video Jitter(sent and received){obj_no}",
+                                    _label=["Max Sent", "Min Sent", "Max Recv", "Min Recv"]
+                                )
+                                graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
+                                self.overall_report.set_graph_image(graph_image)
+                                self.overall_report.move_graph_image()
+                                self.overall_report.build_graph()
+
+                                self.overall_report.set_graph_title("Video Packet Loss (Sent/Received)")
+                                self.overall_report.build_graph_title()
+                                x_data_set = [max_video_pktloss_s.copy(), min_video_pktloss_s.copy(), max_video_pktloss_r.copy(), min_video_pktloss_r.copy()]
+                                y_data_set = client_array
+                                x_fig_size = 18
+                                y_fig_size = len(client_array) * 1 + 4
+                                bar_graph_horizontal = lf_bar_graph_horizontal(
+                                    _data_set=x_data_set,
+                                    _xaxis_name="Packet Loss (%)",
+                                    _yaxis_name="Devices",
+                                    _yaxis_label=y_data_set,
+                                    _yaxis_categories=y_data_set,
+                                    _yaxis_step=1,
+                                    _yticks_font=8,
+                                    _bar_height=.20,
+                                    _color_name=["yellow", "blue", "orange", "grey"],
+                                    _show_bar_value=True,
+                                    _figsize=(x_fig_size, y_fig_size),
+                                    _graph_title="Video Packet Loss(sent/received)",
+                                    _graph_image_name=f"Video Packet Loss(sent and received){obj_no}",
+                                    _label=["Max Sent", "Min Sent", "Max Recv", "Min Recv"]
+                                )
+                                graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
+                                self.overall_report.set_graph_image(graph_image)
+                                self.overall_report.move_graph_image()
+                                self.overall_report.build_graph()
+
+                                self.overall_report.set_table_title("Test Video Results Table:")
+                                self.overall_report.build_table_title()
+                                video_test_results_dict = pd.DataFrame({
                                 'Device Name': [client for client in accepted_clients],
                                 'Avg Latency Sent (ms)': [
-                                    round(sum(data["audio_latency_s"]) / len(data["audio_latency_s"]), 2) if len(data["audio_latency_s"]) != 0 else 0
+                                    round(sum(data["video_latency_s"]) / len(data["video_latency_s"]), 2) if len(data["video_latency_s"]) != 0 else 0
                                     for data in final_dataset
                                 ],
                                 'Avg Latency Recv (ms)': [
-                                    round(sum(data["audio_latency_r"]) / len(data["audio_latency_r"]), 2) if len(data["audio_latency_r"]) != 0 else 0
+                                    round(sum(data["video_latency_r"]) / len(data["video_latency_r"]), 2) if len(data["video_latency_r"]) != 0 else 0
                                     for data in final_dataset
                                 ],
                                 'Avg Jitter Sent (ms)': [
-                                    round(sum(data["audio_jitter_s"]) / len(data["audio_jitter_s"]), 2) if len(data["audio_jitter_s"]) != 0 else 0
+                                    round(sum(data["video_jitter_s"]) / len(data["video_jitter_s"]), 2) if len(data["video_jitter_s"]) != 0 else 0
                                     for data in final_dataset
                                 ],
                                 'Avg Jitter Recv (ms)': [
-                                    round(sum(data["audio_jitter_r"]) / len(data["audio_jitter_r"]), 2) if len(data["audio_jitter_r"]) != 0 else 0
+                                    round(sum(data["video_jitter_r"]) / len(data["video_jitter_r"]), 2) if len(data["video_jitter_r"]) != 0 else 0
                                     for data in final_dataset
                                 ],
                                 'Avg Pkt Loss Sent': [
-                                    round(sum(data["audio_pktloss_s"]) / len(data["audio_pktloss_s"]), 2) if len(data["audio_pktloss_s"]) != 0 else 0
+                                    round(sum(data["video_pktloss_s"]) / len(data["video_pktloss_s"]), 2) if len(data["video_pktloss_s"]) != 0 else 0
                                     for data in final_dataset
                                 ],
                                 'Avg Pkt Loss Recv': [
-                                    round(sum(data["audio_pktloss_r"]) / len(data["audio_pktloss_r"]), 2) if len(data["audio_pktloss_r"]) != 0 else 0
+                                    round(sum(data["video_pktloss_r"]) / len(data["video_pktloss_r"]), 2) if len(data["video_pktloss_r"]) != 0 else 0
                                     for data in final_dataset
                                 ],
                                 'CSV link': [
                                     '<a href="{}.csv" target="_blank">csv data</a>'.format(client)
                                     for client in accepted_clients
                                 ]
-                            }
-                            self.overall_report.set_table_dataframe(audio_test_results_dict)
-                            self.overall_report.dataframe_html = self.overall_report.dataframe.to_html(index=False,
-                                                                            justify='center', render_links=True, escape=False)  # have the index be able to be passed in.
-                            self.overall_report.html += self.overall_report.dataframe_html
-                        if self.zoom_obj_dict[ce][obj_name]["obj"].video:
-                            self.overall_report.set_graph_title("Video Latency (Sent/Received)")
-                            self.overall_report.build_graph_title()
-                            x_data_set = [max_video_latency_s.copy(), min_video_latency_s.copy(), max_video_latency_r.copy(), min_video_latency_r.copy()]
-                            y_data_set = client_array
-                            x_fig_size = 18
-                            y_fig_size = len(client_array) * 1 + 4
-                            bar_graph_horizontal = lf_bar_graph_horizontal(
-                                _data_set=x_data_set,
-                                _xaxis_name="Latency (ms)",
-                                _yaxis_name="Devices",
-                                _yaxis_label=y_data_set,
-                                _yaxis_categories=y_data_set,
-                                _yaxis_step=1,
-                                _yticks_font=8,
-                                _bar_height=.20,
-                                _color_name=["yellow", "blue", "orange", "grey"],
-                                _show_bar_value=True,
-                                _figsize=(x_fig_size, y_fig_size),
-                                _graph_title="Video Latency(sent/received)",
-                                _graph_image_name=f"Video Latency(sent and received){obj_no}",
-                                _label=["Max Sent", "Min Sent", "Max Recv", "Min Recv"]
-                            )
-                            graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
-                            self.overall_report.set_graph_image(graph_image)
-                            self.overall_report.move_graph_image()
-                            self.overall_report.build_graph()
+                            })
+                                self.overall_report.set_table_dataframe(video_test_results_dict)
 
-                            self.overall_report.set_graph_title("Video Jitter (Sent/Received)")
-                            self.overall_report.build_graph_title()
-                            x_data_set = [max_video_jitter_s.copy(), min_video_jitter_s.copy(), max_video_jitter_r.copy(), min_video_jitter_r.copy()]
-                            y_data_set = client_array
-                            x_fig_size = 18
-                            y_fig_size = len(client_array) * 1 + 4
-                            bar_graph_horizontal = lf_bar_graph_horizontal(
-                                _data_set=x_data_set,
-                                _xaxis_name="Jitter (ms)",
-                                _yaxis_name="Devices",
-                                _yaxis_label=y_data_set,
-                                _yaxis_categories=y_data_set,
-                                _yaxis_step=1,
-                                _yticks_font=8,
-                                _bar_height=.20,
-                                _color_name=["yellow", "blue", "orange", "grey"],
-                                _show_bar_value=True,
-                                _figsize=(x_fig_size, y_fig_size),
-                                _graph_title="Video Jitter(sent/received)",
-                                _graph_image_name=f"Video Jitter(sent and received){obj_no}",
-                                _label=["Max Sent", "Min Sent", "Max Recv", "Min Recv"]
-                            )
-                            graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
-                            self.overall_report.set_graph_image(graph_image)
-                            self.overall_report.move_graph_image()
-                            self.overall_report.build_graph()
+                                self.overall_report.dataframe_html = self.overall_report.dataframe.to_html(index=False,
+                                                                                justify='center', render_links=True, escape=False)  # have the index be able to be passed in.
+                                self.overall_report.html += self.overall_report.dataframe_html
+                            self.overall_report.set_custom_html("<br/><hr/>")
+                            self.overall_report.build_custom()
+                        else:
+                            def _build_metric_graph( media_type, metric_name, unit, data, input_key, output_key, suffix=""):
+                                """
+                                Helper to build standard horizontal bar graphs with Device Names on Y-Axis.
+                                suffix: used for Robo graphs to ensure unique image names per coordinate.
+                                """
+                                self.overall_report.set_graph_title(f"{media_type} {metric_name} (Sent/Received)")
+                                self.overall_report.build_graph_title()
 
-                            self.overall_report.set_graph_title("Video Packet Loss (Sent/Received)")
-                            self.overall_report.build_graph_title()
-                            x_data_set = [max_video_pktloss_s.copy(), min_video_pktloss_s.copy(), max_video_pktloss_r.copy(), min_video_pktloss_r.copy()]
-                            y_data_set = client_array
-                            x_fig_size = 18
-                            y_fig_size = len(client_array) * 1 + 4
-                            bar_graph_horizontal = lf_bar_graph_horizontal(
-                                _data_set=x_data_set,
-                                _xaxis_name="Packet Loss (%)",
-                                _yaxis_name="Devices",
-                                _yaxis_label=y_data_set,
-                                _yaxis_categories=y_data_set,
-                                _yaxis_step=1,
-                                _yticks_font=8,
-                                _bar_height=.20,
-                                _color_name=["yellow", "blue", "orange", "grey"],
-                                _show_bar_value=True,
-                                _figsize=(x_fig_size, y_fig_size),
-                                _graph_title="Video Packet Loss(sent/received)",
-                                _graph_image_name=f"Video Packet Loss(sent and received){obj_no}",
-                                _label=["Max Sent", "Min Sent", "Max Recv", "Min Recv"]
-                            )
-                            graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
-                            self.overall_report.set_graph_image(graph_image)
-                            self.overall_report.move_graph_image()
-                            self.overall_report.build_graph()
+                                sent_vals = []
+                                recv_vals = []
 
-                            self.overall_report.set_table_title("Test Video Results Table:")
-                            self.overall_report.build_table_title()
-                            video_test_results_dict = {
-                            'Device Name': [client for client in accepted_clients],
-                            'Avg Latency Sent (ms)': [
-                                round(sum(data["video_latency_s"]) / len(data["video_latency_s"]), 2) if len(data["video_latency_s"]) != 0 else 0
-                                for data in final_dataset
-                            ],
-                            'Avg Latency Recv (ms)': [
-                                round(sum(data["video_latency_r"]) / len(data["video_latency_r"]), 2) if len(data["video_latency_r"]) != 0 else 0
-                                for data in final_dataset
-                            ],
-                            'Avg Jitter Sent (ms)': [
-                                round(sum(data["video_jitter_s"]) / len(data["video_jitter_s"]), 2) if len(data["video_jitter_s"]) != 0 else 0
-                                for data in final_dataset
-                            ],
-                            'Avg Jitter Recv (ms)': [
-                                round(sum(data["video_jitter_r"]) / len(data["video_jitter_r"]), 2) if len(data["video_jitter_r"]) != 0 else 0
-                                for data in final_dataset
-                            ],
-                            'Avg Pkt Loss Sent': [
-                                round(sum(data["video_pktloss_s"]) / len(data["video_pktloss_s"]), 2) if len(data["video_pktloss_s"]) != 0 else 0
-                                for data in final_dataset
-                            ],
-                            'Avg Pkt Loss Recv': [
-                                round(sum(data["video_pktloss_r"]) / len(data["video_pktloss_r"]), 2) if len(data["video_pktloss_r"]) != 0 else 0
-                                for data in final_dataset
-                            ],
-                            'CSV link': [
-                                '<a href="{}.csv" target="_blank">csv data</a>'.format(client)
-                                for client in accepted_clients
-                            ]
-                        }
-                            self.overall_report.set_table_dataframe(video_test_results_dict)
+                                # Iterate directly through hostnames
+                                for client in self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_hostname:
+                                    # Use the hostname directly as the key to fetch data
+                                    device_key = client
 
-                            self.overall_report.dataframe_html = self.overall_report.dataframe.to_html(index=False,
-                                                                            justify='center', render_links=True, escape=False)  # have the index be able to be passed in.
-                            self.overall_report.html += self.overall_report.dataframe_html
-                        self.overall_report.set_custom_html("<br/><hr/>")
-                        self.overall_report.build_custom()
+                                    # Safe Get
+                                    def get_val(key):
+                                        val = data.get(device_key, {}).get(key)
+                                        return val if val is not None else 0
 
+                                    sent_vals.append(get_val(output_key))
+                                    recv_vals.append(get_val(input_key))
+
+                                # Generate Graph
+                                bar_graph = lf_bar_graph_horizontal(
+                                    _data_set=[sent_vals, recv_vals],
+                                    _xaxis_name=f"{metric_name} ({unit})",
+                                    _yaxis_name="Devices",
+                                    _yaxis_categories=self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_hostname,  # Device Names on Y-Axis
+                                    _graph_title=f"{media_type} {metric_name}",
+                                    _graph_image_name=f"{media_type}_{metric_name}{suffix}",
+                                    _label=["Avg Sent", "Avg Recv"],
+                                    _figsize=(18, len(self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_hostname) * 1 + 4),
+                                    _color_name=["blue", "orange"],
+                                )
+                                self.overall_report.set_graph_image(bar_graph.build_bar_graph_horizontal())
+                                self.overall_report.move_graph_image()
+                                print("hellopop",self.overall_report.path_date_time)
+                                self.overall_report.build_graph()
+
+                            def _build_results_table(data, media_type):
+                                """Helper for Summary Table"""
+
+                                def fmt_val(client, key):
+                                    val = data.get(client, {}).get(key)
+                                    return val if val is not None else 0
+
+                                p = media_type
+                                
+                                details = pd.DataFrame(
+                                    {
+                                        "Device Name": self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_hostname,
+                                        # FIXED: Sent uses 'output', Received uses 'input'
+                                        "Avg Bitrate (kbps) [S/R]": [
+                                            f"{fmt_val(c, f'{p}_output_bitrate_avg')}/{fmt_val(c, f'{p}_input_bitrate_avg')}"
+                                            for c in self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_hostname
+                                        ],
+                                        "Avg Latency (ms) [S/R]": [
+                                            f"{fmt_val(c, f'{p}_output_latency_avg')}/{fmt_val(c, f'{p}_input_latency_avg')}"
+                                            for c in self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_hostname
+                                        ],
+                                        "Avg Jitter (ms) [S/R]": [
+                                            f"{fmt_val(c, f'{p}_output_jitter_avg')}/{fmt_val(c, f'{p}_input_jitter_avg')}"
+                                            for c in self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_hostname
+                                        ],
+                                        "Avg Pkt Loss (%) [S/R]": [
+                                            f"{fmt_val(c, f'{p}_output_avg_loss_avg')}/{fmt_val(c, f'{p}_input_avg_loss_avg')}"
+                                            for c in self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_hostname
+                                        ],
+                                    }
+                                )
+                                self.overall_report.set_table_dataframe(details)
+                                self.overall_report.dataframe_html = self.overall_report.dataframe.to_html(
+                                    index=False, justify="center", render_links=True, escape=False
+                                )
+                                self.overall_report.html += self.overall_report.dataframe_html
+
+                            report_1=self.zoom_obj_dict[ce][obj_name]["obj"].report
+                            # self.zoom_obj_dict[ce][obj_name]["obj"].report=self.overall_report
+                            # self.zoom_obj_dict[ce][obj_name]["obj"]._generate_robo_per_location_report()
+                            coords = self.zoom_obj_dict[ce][obj_name]["obj"].coordinates_list if self.zoom_obj_dict[ce][obj_name]["obj"].coordinates_list else ["0,0,0"]
+
+                            for coord in coords:
+                                # Determine angles loop
+                                if self.zoom_obj_dict[ce][obj_name]["obj"].rotations_enabled and self.zoom_obj_dict[ce][obj_name]["obj"].angles_list:
+                                    angles_loop = self.zoom_obj_dict[ce][obj_name]["obj"].angles_list
+                                else:
+                                    angles_loop = [self.zoom_obj_dict[ce][obj_name]["obj"].current_angle]
+
+                                for angle in angles_loop:
+                                    # 1. Heading for this Location
+                                    if self.zoom_obj_dict[ce][obj_name]["obj"].rotations_enabled:
+                                        heading = f"Audio and Video graphs at coordinate {coord} and angle {angle}"
+                                    else:
+                                        heading = f"Audio and Video graphs at coordinate {coord}"
+                                    self.overall_report.set_table_title(heading)
+                                    self.overall_report.build_table_title()
+
+                                    # 2. Load Data
+                                    json_pattern = f"*_{coord}_{angle}_qos.json"
+                                    file_path = os.path.join("zoom_api_responses", json_pattern)
+                                    file_path_1 = os.path.join(self.zoom_obj_dict[ce][obj_name]["obj"].report.path_date_time, json_pattern)
+                                    found_files = glob.glob(file_path_1)
+                                    print("checking found files", found_files)
+
+                                    device_data = {}
+                                    if found_files:
+                                        try:
+                                            with open(found_files[0], "r") as f:
+                                                raw_data = json.load(f)
+                                            # Parse data to get per-device averages
+                                            device_data = self.zoom_obj_dict[ce][obj_name]["obj"].summarize_audio_video(raw_data)
+                                            print("checking device data in robo report")
+                                            print(device_data)
+                                        except Exception as e:
+                                            logger.error(f"Error reading {found_files[0]}: {e}")
+                                            self.overall_report.set_text(f"Error loading data for {coord}/{angle}")
+                                            self.overall_report.build_text_simple()
+                                            continue
+                                    else:
+                                        self.overall_report.set_text(f"No data found for {coord}/{angle}")
+                                        self.overall_report.build_text_simple()
+                                        continue
+
+                                    # 3. Generate Audio Graphs (Device on Y-Axis)
+                                    if self.zoom_obj_dict[ce][obj_name]["obj"].audio:
+                                        # if self.rotations_enabled:
+                                        #     self.report.set_text(
+                                        #         f"Audio Performance at {coord} coordinate - {angle} degrees angle"
+                                        #     )
+                                        # else:
+                                        #     self.report.set_text(f"Audio Performance at {coord} coordinate")
+                                        # self.report.build_text_simple()
+
+                                        suffix = f"_{coord}_{angle}"  # Unique suffix for image names
+                                        _build_metric_graph(
+                                            "Audio",
+                                            "Bitrate",
+                                            "Kbps",
+                                            device_data,
+                                            "audio_input_bitrate_avg",
+                                            "audio_output_bitrate_avg",
+                                            suffix,
+                                        )
+                                        _build_metric_graph(
+                                            "Audio",
+                                            "Latency",
+                                            "ms",
+                                            device_data,
+                                            "audio_input_latency_avg",
+                                            "audio_output_latency_avg",
+                                            suffix,
+                                        )
+                                        _build_metric_graph(
+                                            "Audio",
+                                            "Jitter",
+                                            "ms",
+                                            device_data,
+                                            "audio_input_jitter_avg",
+                                            "audio_output_jitter_avg",
+                                            suffix,
+                                        )
+                                        _build_metric_graph(
+                                            "Audio",
+                                            "Packet Loss",
+                                            "%",
+                                            device_data,
+                                            "audio_input_avg_loss_avg_avg",
+                                            "audio_output_avg_loss_avg_avg",
+                                            suffix,
+                                        )
+
+                                        _build_results_table(device_data, "audio")
+
+                                    # 4. Generate Video Graphs (Device on Y-Axis)
+                                    if self.zoom_obj_dict[ce][obj_name]["obj"].video:
+                                        # if self.rotations_enabled:
+                                        #     self.report.set_text(
+                                        #         f"Video Performance at {coord} coordinate - {angle} degrees angle"
+                                        #     )
+                                        # else:
+                                        #     self.report.set_text(f"Video Performance at {coord} coordinate")
+                                        # self.report.build_text_simple()
+
+                                        suffix = f"_{coord}_{angle}"
+                                        _build_metric_graph(
+                                            "Video",
+                                            "Bitrate",
+                                            "Kbps",
+                                            device_data,
+                                            "video_input_bitrate_avg",
+                                            "video_output_bitrate_avg",
+                                            suffix,
+                                        )
+                                        _build_metric_graph(
+                                            "Video",
+                                            "Latency",
+                                            "ms",
+                                            device_data,
+                                            "video_input_latency_avg",
+                                            "video_output_latency_avg",
+                                            suffix,
+                                        )
+                                        _build_metric_graph(
+                                            "Video",
+                                            "Jitter",
+                                            "ms",
+                                            device_data,
+                                            "video_input_jitter_avg",
+                                            "video_output_jitter_avg",
+                                            suffix,
+                                        )
+                                        _build_metric_graph(
+                                            "Video",
+                                            "Packet Loss",
+                                            "%",
+                                            device_data,
+                                            "video_input_avg_loss_avg",
+                                            "video_output_avg_loss_avg",
+                                            suffix,
+                                        )
+                                        _build_results_table(device_data, "video")
+
+                                    # Add a separator between coordinates
+                                    self.overall_report.set_custom_html("<hr>")
+                                    self.overall_report.build_custom()
+
+                            if self.zoom_obj_dict[ce][obj_name]["obj"].do_webui:
+                                self.zoom_obj_dict[ce][obj_name]["obj"].add_live_view_images_to_report()
+
+                            # --- Finalize Report ---
+                            # self.overall_report.build_custom()
+                            # self.overall_report.write_html()
+                            # self.overall_report.write_pdf(_page_size="Legal", _orientation="Landscape")
+                            # self.zoom_obj_dict[ce][obj_name]["obj"]._move_report_files(report_1.get_path_date_time())
                         if ce == "series":
                             obj_no += 1
                             obj_name = f"zoom_test_{obj_no}"
@@ -10633,6 +11735,8 @@ def main():
     duration_dict = {}
     candela_apis = Candela(ip=args.mgr, port=args.mgr_port,order_priority=args.order_priority,test_name=args.test_name,result_dir=args.result_dir,dowebgui=args.dowebgui,no_cleanup=args.no_cleanup,robot_test=args.robot_test,robot_ip=args.robot_ip,coordinate=args.coordinate,rotation=args.rotation)
     print(args)
+    if args.robot_test:
+        candela_apis.init_robot()
     test_map = {
     "ping_test":   (run_ping_test, "PING TEST"),
     "http_test":   (run_http_test, "HTTP TEST"),

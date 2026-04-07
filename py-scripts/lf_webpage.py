@@ -116,8 +116,7 @@ from collections import OrderedDict
 import asyncio
 from typing import List, Optional
 import csv
-# from lf_base_robo import RobotClass
-from lf_robo_base_class import RobotClass
+from lf_base_robo import RobotClass
 
 
 sys.path.append(os.path.join(os.path.abspath(__file__ + "../../../")))
@@ -784,8 +783,7 @@ class HttpDownload(Realm):
                 if (datetime.now() - monitor_charge_time).total_seconds() >= 300:
                     pause_start = datetime.now()
                     # Wait for the robot to charge. Returns whether we paused and whether user aborted.
-                    #pause, test_stopped_by_user = self.robot_obj.wait_for_battery(stop=self.stop)
-                    pause, test_stopped_by_user = self.robot_obj.wait_for_battery(battery=90,stop=self.stop)
+                    pause, test_stopped_by_user = self.robot_obj.wait_for_battery(stop=self.stop)
                     
                     if test_stopped_by_user:
                         break
@@ -801,8 +799,7 @@ class HttpDownload(Realm):
                             break
                         # Restore orientation if rotation is enabled
                         if self.rotation_enabled:
-                            # rotation_moni = self.robot_obj.rotate_angle(self.current_angle)
-                            rotation_moni = self.robot_obj.rotate_angle(1,2,self.current_angle)
+                            rotation_moni = self.robot_obj.rotate_angle(self.current_angle)
                             if not rotation_moni:
                                 test_stopped_by_user = True
                                 break
@@ -2020,7 +2017,7 @@ class HttpDownload(Realm):
         if self.rotation_list[0] != "":
             self.rotation_enabled = True
 
-        self.robot_obj = RobotClass()
+        self.robot_obj = RobotClass(robo_ip=self.robot_ip, angle_list=self.rotation_list)
         self.robot_obj.robo_ip = self.robot_ip
         base_dir = os.path.dirname(os.path.dirname(self.result_dir))
         nav_data = os.path.join(base_dir, 'nav_data.json')  # To generate nav_data.json in webgui folder
@@ -2035,8 +2032,7 @@ class HttpDownload(Realm):
             # Check for battery status before moving to next coordinate
             if test_stopped_by_user:
                 break
-            # if_paused, test_stopped_by_user = self.robot_obj.wait_for_battery()
-            if_paused, test_stopped_by_user = self.robot_obj.wait_for_battery(battery=90)
+            if_paused, test_stopped_by_user = self.robot_obj.wait_for_battery()
             # If test is stopped by user during battery wait
             if test_stopped_by_user:
                 break
@@ -2059,12 +2055,10 @@ class HttpDownload(Realm):
                 else:
                     for angle in range(len(self.rotation_list)):
                         # Check for battery status before rotating to next angle
-                        is_paused, test_stopped_by_user = self.robot_obj.wait_for_battery(battery=90)
-                        #is_paused, test_stopped_by_user = self.robot_obj.wait_for_battery()
+                        is_paused, test_stopped_by_user = self.robot_obj.wait_for_battery()
                         if test_stopped_by_user:
                             break
-                        robo_rotated = self.robot_obj.rotate_angle(1,2,self.rotation_list[angle])
-                        #robo_rotated = self.robot_obj.rotate_angle(self.rotation_list[angle])
+                        robo_rotated = self.robot_obj.rotate_angle(self.rotation_list[angle])
                         if robo_rotated:
                             self.current_angle = self.rotation_list[angle]
                             self.start()

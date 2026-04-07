@@ -110,8 +110,7 @@
 
 
 """
-# from lf_base_robo import RobotClass  # REAL
-from lf_robo_base_class import RobotClass # Fake Server Testing
+from lf_base_robo import RobotClass  # REAL
 import sys
 import os
 import importlib
@@ -253,8 +252,7 @@ class VideoStreamingTest(Realm):
             self.current_angle = None
             self.angle_list = angle_list
             self.rotation_enabled = rotation_enabled
-            # self.robot = RobotClass(robo_ip=self.robot_ip, angle_list=self.angle_list)
-            self.robot = RobotClass() # Fake Server Testing
+            self.robot = RobotClass(robo_ip=self.robot_ip, angle_list=self.angle_list)
             self.robot.robo_ip = f"{self.robot_ip}"
             self.last_rotated_angles = []
             self.charge_point_name = None
@@ -946,7 +944,7 @@ class VideoStreamingTest(Realm):
                             pause_start = datetime.now()
                             pause = False
                             # Check battery level: if below 20% robot charges fully before resuming
-                            pause, test_stopped_by_user = self.robot.wait_for_battery(battery=90,stop=self.stop)
+                            pause, test_stopped_by_user = self.robot.wait_for_battery(stop=self.stop)
                             if test_stopped_by_user:
                                 break
                             if pause:
@@ -957,7 +955,7 @@ class VideoStreamingTest(Realm):
                                     break
                                 if self.rotation_enabled:
                                     # Restore robot's previous orientation before resuming the test
-                                    rotation_moni = self.robot.rotate_angle(1,2,curr_rotation)
+                                    rotation_moni = self.robot.rotate_angle(curr_rotation)
                                     if not rotation_moni:
                                         test_stopped_by_user = True
                                         break
@@ -2071,6 +2069,9 @@ class VideoStreamingTest(Realm):
                 self.data = self.vs_data[self.coordinate_list[coordinate]]["self_data"]
                 shutil.move('video_streaming_realtime_data{}.csv'.format(csv_suffix), report_path_date_time)
                 self.generate_individual_coordinate(report, device_type, username, ssid, mac, channel, mode, rssi, tx_rate, created_incremental_values, keys)
+        report.build_footer()
+        report.write_html()
+        report.write_pdf()
 
     def generate_individual_coordinate(self, report, device_type, username, ssid, mac, channel, mode, rssi, tx_rate, created_incremental_values, keys, report_path=""):
         """
@@ -2313,9 +2314,6 @@ class VideoStreamingTest(Realm):
             dataframe3 = pd.DataFrame(dataframe2)
             report.set_table_dataframe(dataframe3)
             report.build_table()
-        report.build_footer()
-        report.write_html()
-        report.write_pdf()
 
     def perform_robo(self, args, individual_dataframe_columns, cx_order_list, i, actual_start_time, iterations_before_test_stopped_by_user):
         """
@@ -2345,7 +2343,7 @@ class VideoStreamingTest(Realm):
                 break
             if self.robot_ip:
                 # Check battery level: if below 20% robot charges fully before resuming
-                pause_coord, test_stopped_by_user = self.robot.wait_for_battery(battery=90)
+                pause_coord, test_stopped_by_user = self.robot.wait_for_battery()
                 if test_stopped_by_user:
                     break
                 # Move the robot to the selected coordinate
@@ -2410,7 +2408,7 @@ class VideoStreamingTest(Realm):
                         for angle in range(len(self.rotation_list)):
                             final_angle = 0
                             # Check battery level: if below 20% robot charges fully before resuming
-                            pause_angle, test_stopped_by_user = self.robot.wait_for_battery(battery=90,stop=self.stop)
+                            pause_angle, test_stopped_by_user = self.robot.wait_for_battery(stop=self.stop)
                             if test_stopped_by_user:
                                 break
                             if pause_angle:
@@ -2421,7 +2419,7 @@ class VideoStreamingTest(Realm):
                                     break
                             final_angle = angle
                             # Rotate the robot to the given rotation
-                            rotation = self.robot.rotate_angle(1,2,self.rotation_list[angle])
+                            rotation = self.robot.rotate_angle(self.rotation_list[angle])
                             if not rotation:
                                 exit_from_monitor = True
                             if exit_from_monitor:

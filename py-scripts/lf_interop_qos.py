@@ -99,8 +99,7 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
             Copyright 2025 Candela Technologies Inc
 """
 
-#from lf_base_robo import RobotClass
-from lf_robo_base_class import RobotClass
+from lf_base_robo import RobotClass
 import time
 import argparse
 import sys
@@ -324,8 +323,7 @@ class ThroughputQOS(Realm):
             self.current_angle = None
             self.angle_list = angle_list
             self.rotation_enabled = rotation_enabled
-            #self.robot = RobotClass(robo_ip=self.robot_ip, angle_list=self.angle_list)
-            self.robot = RobotClass()
+            self.robot = RobotClass(robo_ip=self.robot_ip, angle_list=self.angle_list)
             self.robot.robo_ip = self.robot_ip
             self.last_rotated_angles = []
             self.charge_point_name = None
@@ -792,7 +790,7 @@ class ThroughputQOS(Realm):
                         pause = False
                         # Check battery level: if below 20% robot charges fully before resuming
                         #pause, test_stopped_by_user = self.robot.wait_for_battery(stop=self.stop)
-                        pause, test_stopped_by_user = self.robot.wait_for_battery(battery=40,stop=self.stop)
+                        pause, test_stopped_by_user = self.robot.wait_for_battery(stop=self.stop)
                         if test_stopped_by_user:
                             break
                         if pause:
@@ -1567,7 +1565,6 @@ class ThroughputQOS(Realm):
         for floor in range(int(self.total_floors)):
             for tos in self.tos:
                 timeout = 200  # seconds
-
                 throughput_image_path = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_throughput_{tos}_{floor + 1}.png")
 
                 if not multicast_exists:
@@ -2570,7 +2567,7 @@ class ThroughputQOS(Realm):
                     break
                 # Before moving to next coordinate, check if battery is sufficient
                 # pause_coord, test_stopped_by_user = self.robot.wait_for_battery()
-                pause_coord, test_stopped_by_user = self.robot.wait_for_battery(battery=40)
+                pause_coord, test_stopped_by_user = self.robot.wait_for_battery()
                 if test_stopped_by_user:
                     break
                 matched, abort = self.robot.move_to_coordinate(coordinate)
@@ -2642,7 +2639,7 @@ class ThroughputQOS(Realm):
                             self.current_coordinate = coordinate
                             self.current_angle = self.angle_list[angle]
                             # pause_angle, test_stopped_by_user = self.robot.wait_for_battery(stop=self.stop)
-                            pause_angle, test_stopped_by_user = self.robot.wait_for_battery(battery=40,stop=self.stop)
+                            pause_angle, test_stopped_by_user = self.robot.wait_for_battery(stop=self.stop)
                             if test_stopped_by_user:
                                 break
                             if pause_angle:
@@ -2652,7 +2649,7 @@ class ThroughputQOS(Realm):
                                     break
                             # final_angle = self.robot.angle_list[angle]
                             final_angle = self.angle_list[angle]
-                            rotation = self.robot.rotate_angle(1,2,self.current_angle)
+                            rotation = self.robot.rotate_angle(self.current_angle)
                             # rotation = self.robot.rotate_angle(self.current_angle)
                             if not rotation:
                                 exit_from_monitor = True
