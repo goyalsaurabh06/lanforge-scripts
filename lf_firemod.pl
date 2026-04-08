@@ -253,10 +253,10 @@ if ($show_help) {
 
 # Convert some TOS values that the server likely doesn't understand.
 if ($tos eq "BK") {
-  $tos = 64;
+  $tos = 32;
 }
 elsif ($tos eq "BE") {
-  $tos = 96;
+  $tos = 100;
 }
 elsif ($tos eq "VI") {
   $tos = 128;
@@ -745,6 +745,14 @@ sub create_endp {
 
     $cmd = "set_endp_report_timer $::endp_name $::report_timer";
     $::utils->doCmd($cmd);
+
+    if ($::tos ne "") {
+       my($service, $priority) = split(',', $::tos);
+       if (!$priority) {
+         $priority = "NA";
+       }
+       $::utils->doCmd("set_endp_tos $my_endp_name $service $priority");
+    }
   }
   elsif (grep { $_ eq $my_endp_type} split(/,/, "lf_udp,lf_tcp,lf_udp6,lf_tcp6,NA")) {
      if ($::use_ports_str ne "NA") {

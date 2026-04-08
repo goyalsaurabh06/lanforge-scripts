@@ -42,7 +42,7 @@ SCRIPT_CATEGORIES:   installation
 
 LICENSE:
     Free to distribute and modify. LANforge systems must be licensed.
-    Copyright 2025 Candela Technologies Inc
+    Copyright (C) 2020-2026 Candela Technologies Inc
 
 
 INCLUDE_IN_README
@@ -406,8 +406,17 @@ class create_lanforge_object:
         # Done.
 
         # command = "curl -o lf_kinstall.pl www.candelatech.com/lf_kinstall.txt" # leave in for testing
+
+        # The following command only needs to be done once and only on the green systems
+        # command = f"curl -o lf_kinstall.pl www.candelatech.com/lf_kinstall.txt; chmod +x lf_kinstall.pl; ./lf_kinstall.pl --lfver {self.lfver} --kver {self.kver} --do_noaer 1 --do_upgrade --do_watchdog --do_kdump --do_pci_bus" # noqa:
+
+        # disable the pci safe mode
+        # command = f"curl -o lf_kinstall.pl www.candelatech.com/lf_kinstall.txt; chmod +x lf_kinstall.pl; ./lf_kinstall.pl --lfver {self.lfver} --kver {self.kver} --do_noaer 1 --do_upgrade --do_pci_bus=0" # noqa:
+
         command = f"curl -o lf_kinstall.pl www.candelatech.com/lf_kinstall.txt; chmod +x lf_kinstall.pl; ./lf_kinstall.pl --lfver {self.lfver} --kver {self.kver} --do_noaer 1 --do_upgrade"
+        # command = f"curl -o lf_kinstall.pl www.candelatech.com/lf_kinstall.txt; chmod +x lf_kinstall.pl; ./lf_kinstall.pl --lfver {self.lfver} --kver {self.kver} --do_noaer 1 --do_all_ct"
         # command = f"curl -o lf_kinstall.pl www.candelatech.com/lf_kinstall.txt; chmod +x lf_kinstall.pl; ./lf_kinstall.pl --lfver {self.lfver} --kver {self.kver} --do_noaer 1 --do_upgrade --from http://fs4.candelatech.com"  # noqa:
+        # command = f"curl -o lf_kinstall.pl www.candelatech.com/lf_kinstall.txt; chmod +x lf_kinstall.pl; ./lf_kinstall.pl --lfver {self.lfver} --kver {self.kver} --do_noaer 1 --do_upgrade --from http://192.168.100.11"  # noqa:
         r = self.send_lf_command(command)
         if r.failed:
             raise Exception(r.result)
@@ -694,7 +703,7 @@ SCRIPT_CATEGORIES:   installation
 
 LICENSE:
     Free to distribute and modify. LANforge systems must be licensed.
-    Copyright 2025 Candela Technologies Inc
+    Copyright (C) 2020-2026 Candela Technologies Inc
 
 
 INCLUDE_IN_README

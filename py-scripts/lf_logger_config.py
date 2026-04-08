@@ -59,7 +59,7 @@ EXAMPLE:
 
 LICENSE:
     Free to distribute and modify. LANforge systems must be licensed.
-    Copyright 2021 Candela Technologies Inc
+    Copyright (C) 2020-2026 Candela Technologies Inc
 
 
 INCLUDE_IN_README
@@ -109,15 +109,15 @@ class lf_logger_config:
         if not level:
             return  # no change from defaults
 
-        if level == "debug":
+        if level.lower() == "debug":
             self.set_level_debug()
-        elif level == "info":
+        elif level.lower() == "info":
             self.set_level_info()
-        elif level == "warning":
+        elif level.lower() == "warning":
             self.set_level_warning()
-        elif level == "error":
+        elif level.lower() == "error":
             self.set_level_error()
-        elif level == "critical":
+        elif level.lower() == "critical":
             self.set_level_warning()
         else:
             print("ERROR:  Invalid log level requested: %s" % (level))

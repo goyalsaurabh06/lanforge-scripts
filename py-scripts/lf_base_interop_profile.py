@@ -55,7 +55,7 @@ Build version   - 5.4.7
 kernel version  - 6.2.16+
 
 License: Free to distribute and modify. LANforge systems must be licensed.
-Copyright 2023 Candela Technologies Inc.
+Copyright (C) 2020-2026 Candela Technologies Inc.
 
 """
 
@@ -1161,15 +1161,16 @@ class RealDevice(Realm):
                 await self.laptops_obj.reboot_laptop(port_list=selected_laptops)
                 time.sleep(5)
         if self.disconnect_devices:
-            if (selected_androids != []):
-                await self.androids_obj.forget_all_networks(port_list=selected_androids)
-                time.sleep(10)
             if (selected_laptops != []):
                 await self.laptops_obj.disconnect_wifi(port_list=selected_laptops)
                 time.sleep(10)
         # if self.reboot==False and self.disconnect_devices==False:
         if (selected_androids != []):
             await self.androids_obj.stop_app(port_list=selected_androids)
+            # Added forget_all_networks after stop app because in build 5.5.2 we have issue with clearing profiles, so the app is still running with the existing ssid.
+            if (self.disconnect_devices):
+                await self.androids_obj.forget_all_networks(port_list=selected_androids)
+                time.sleep(10)
             # await self.androids_obj.forget_all_networks(port_list=selected_androids)
             await self.androids_obj.configure_wifi(port_list=selected_androids)
 
@@ -1876,7 +1877,7 @@ This script is a standard library which support different functionality of inter
         kernel version  - 6.2.16+
 
         License: Free to distribute and modify. LANforge systems must be licensed.
-        Copyright 2023 Candela Technologies Inc.
+        Copyright (C) 2020-2026 Candela Technologies Inc.
         """
 
     parser = argparse.ArgumentParser(
