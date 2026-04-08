@@ -8332,7 +8332,7 @@ class Candela(Realm):
                         
                         if self.robot_test:
                             logger.info("Building per-coordinate/rotation graphs and tables for robot test (from memory dict)")
-                            if self.mcast_obj_dict[ce][obj_name]["obj"].dowebgui and self.mcast_obj_dict[ce][obj_name]["obj"].get_live_view:
+                            if self.mcast_obj_dict[ce][obj_name]["obj"].dowebgui:
                                 self.mcast_obj_dict[ce][obj_name]["obj"].add_live_view_images_to_report()
                             if not hasattr(self.mcast_obj_dict[ce][obj_name]["obj"], "multicast_robot_results") or not self.mcast_obj_dict[ce][obj_name]["obj"].multicast_robot_results:
                                 self.overall_report.set_custom_html("<p><i>No robot test results found.</i></p>")
@@ -9217,6 +9217,7 @@ class Candela(Realm):
                                             rssi.append(alias[i]['signal'])
                                             channel.append(alias[i]['channel'])
                                             tx_rate.append(alias[i]['tx-rate'])
+                            self.vs_obj_dict[ce][obj_name]["obj"].get_live_view = True
                             self.vs_obj_dict[ce][obj_name]["obj"].add_buffer_and_wait_time_images(report=self.overall_report)
                             for coordinate in range(len(self.coordinate_list)):
                                 self.vs_obj_dict[ce][obj_name]["obj"].current_coordinate = self.vs_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate]
