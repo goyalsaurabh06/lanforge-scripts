@@ -17,9 +17,21 @@ import socket
 import pytz
 import pyautogui
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+_log_fmt = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+
+_console_handler = logging.StreamHandler()
+_console_handler.setFormatter(_log_fmt)
+logger.addHandler(_console_handler)
+
+_file_handler = logging.FileHandler(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "teams_host.log"),
+    mode="w",
 )
+_file_handler.setFormatter(_log_fmt)
+logger.addHandler(_file_handler)
 
 
 class TeamsHost:
@@ -66,9 +78,8 @@ class TeamsHost:
                 EC.visibility_of_element_located((By.XPATH, xpathvalue))
             )
         except Exception as e:
-            print(f"Element not found: {xpathvalue}. Error: {e}")
+            logger.warning(f"Element not found: {xpathvalue}. Error: {e}")
             return None
-
 
     def login(
         self,
@@ -82,8 +93,6 @@ class TeamsHost:
 
             nextButton = self.wait_for_element('//*[@id="idSIButton9"]')
             nextButton.click()
-
-            # print(self.passwd)
 
             # wait for password field
             passElement = WebDriverWait(self.driver, 60).until(
@@ -108,7 +117,7 @@ class TeamsHost:
 
         except Exception as e:
             self.driver.quit()
-            logging.error(f"An error occurred: {e}")
+            logger.error(f"An error occurred: {e}")
             traceback.print_exc()
             sys.exit(1)
 
@@ -125,13 +134,15 @@ class TeamsHost:
                 # Only update if the server's stop signal is True
                 if stop_signal_from_server:
                     self.stop_signal = True
-                    print("Stop signal received from the server. Exiting the loop.")
+                    logger.info(
+                        "Stop signal received from the server. Exiting the loop."
+                    )
                 else:
 
-                    print("No stop signal received from the server. Continuing.")
+                    logger.info("No stop signal received from the server. Continuing.")
             return self.stop_signal
         except Exception as e:
-            print(f"Error checking stop signal: {e}")
+            logger.error(f"Error checking stop signal: {e}")
 
     def start_meeting(
         self,
@@ -139,16 +150,16 @@ class TeamsHost:
 
         try:
 
-           
-            
             calendar_button = WebDriverWait(self.driver, 120).until(
-                    EC.element_to_be_clickable((By.XPATH, "//button[contains(@aria-label, 'Calendar')]"))
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//button[contains(@aria-label, 'Calendar')]")
                 )
+            )
 
-            print("Calendar button found! App is fully loaded.")
+            logger.info("Calendar button found! App is fully loaded.")
 
             self.driver.execute_script("arguments[0].click();", calendar_button)
-            print("Calendar button clicked via JavaScript.")
+            logger.info("Calendar button clicked via JavaScript.")
 
             meet_now = WebDriverWait(self.driver, 180).until(
                 EC.element_to_be_clickable(
@@ -202,7 +213,7 @@ class TeamsHost:
 
         except Exception as e:
             self.driver.quit()
-            logging.error(f"An error occurred: {e}")
+            logger.error(f"An error occurred: {e}")
             traceback.print_exc()
             sys.exit(1)
 
@@ -249,7 +260,7 @@ class TeamsHost:
 
         except Exception as e:
             self.driver.quit()
-            logging.error(f"An error occurred: {e}")
+            logger.error(f"An error occurred: {e}")
             traceback.print_exc()
             sys.exit(1)
 
@@ -262,12 +273,11 @@ class TeamsHost:
                 self.audio = data.get("audio_stats")
                 self.video = data.get("video_stats")
             else:
-                print(
+                logger.warning(
                     f"Failed to fetch stats flag. Status code: {response.status_code}"
                 )
         except requests.RequestException as e:
-            print(f"Request error: {e}")
-        return None
+            logger.error(f"Request error: {e}")
 
     def audio_stats(
         self,
@@ -376,7 +386,7 @@ class TeamsHost:
 
         except Exception as e:
             self.driver.quit()
-            logging.error(f"An error occurred: {e}")
+            logger.error(f"An error occurred: {e}")
             traceback.print_exc()
             sys.exit(1)
 
@@ -498,10 +508,9 @@ class TeamsHost:
 
         except Exception as e:
             self.driver.quit()
-            logging.error(f"An error occurred: {e}")
+            logger.error(f"An error occurred: {e}")
             traceback.print_exc()
             sys.exit(1)
-
 
     def open_call_health(
         self,
@@ -524,7 +533,7 @@ class TeamsHost:
 
         except Exception as e:
             self.driver.quit()
-            logging.error(f"An error occurred: {e}")
+            logger.error(f"An error occurred: {e}")
             traceback.print_exc()
             sys.exit(1)
 
@@ -538,13 +547,11 @@ class TeamsHost:
                 self.email = data["email"].strip()
                 self.passwd = data["password"].strip()
             else:
-                logging.error(
-                    f"❌ Failed to get credentials: {response.json().get('log')}"
-                )
+                logger.error(f"Failed to get credentials: {response.json().get('log')}")
                 self.email = None
                 self.passwd = None
         except requests.exceptions.RequestException as e:
-            logging.error(f"❌ Error during credential request: {e}")
+            logger.error(f"Error during credential request: {e}")
             self.email = None
             self.passwd = None
 
@@ -557,11 +564,11 @@ class TeamsHost:
                 self.start_time = data.get("start_time")
                 self.end_time = data.get("end_time")
             else:
-                print(
+                logger.warning(
                     f"Failed to fetch new login URL. Status code: {response.status_code}"
                 )
         except requests.RequestException as e:
-            print(f"Request error: {e}")
+            logger.error(f"Request error: {e}")
         return None
 
     def update_participation(self):
@@ -570,13 +577,13 @@ class TeamsHost:
         try:
             response = requests.get(endpoint_url)
             if response.status_code == 200:
-                print("Device participation status updated successfully.")
+                logger.info("Device participation status updated successfully.")
             else:
-                print(
+                logger.warning(
                     f"Failed to update device participation status. Status code: {response.status_code}"
                 )
         except requests.RequestException as e:
-            print(f"Request error: {e}")
+            logger.error(f"Request error: {e}")
 
     def update_login_completed(self):
         endpoint_url = f"{self.base_url}/login_completed"
@@ -585,13 +592,13 @@ class TeamsHost:
         try:
             response = requests.post(endpoint_url, json=data)
             if response.status_code == 200:
-                print("Login completed status updated successfully.")
+                logger.info("Login completed status updated successfully.")
             else:
-                print(
+                logger.warning(
                     f"Failed to update login completed status. Status code: {response.status_code}"
                 )
         except requests.RequestException as e:
-            print(f"Request error: {e}")
+            logger.error(f"Request error: {e}")
 
     def send_stats_to_server(self, hostname, audio_stats, video_stats):
         if self.audio:
@@ -620,13 +627,13 @@ class TeamsHost:
         try:
             response = requests.post(f"{self.base_url}/upload_stats", json=payload)
             if response.status_code == 200:
-                print(f"Stats uploaded for {hostname}")
+                logger.info(f"Stats uploaded for {hostname}")
             else:
-                print(
+                logger.warning(
                     f"Failed to upload stats: {response.status_code} - {response.text}"
                 )
         except Exception as e:
-            print(f"Exception during upload: {e}")
+            logger.error(f"Exception during upload: {e}")
 
     def send_meeting_link(self):
         payload = {"meet_link": self.meeting_link}
@@ -634,11 +641,11 @@ class TeamsHost:
         try:
             response = requests.post(f"{self.base_url}/meeting_link", json=payload)
             if response.status_code == 200:
-                print("Meeting link updated successfully")
+                logger.info("Meeting link updated successfully")
             else:
-                print("Failed to update meeting link:", response.text)
+                logger.warning(f"Failed to update meeting link: {response.text}")
         except Exception as e:
-            print("Error sending meeting link:", e)
+            logger.error(f"Error sending meeting link: {e}")
 
 
 def main():
@@ -657,7 +664,6 @@ def main():
         for argument in args.env:
             arg = argument.split("=")
             os.environ[arg[0]] = arg[1]
-        # print(os.environ)
 
         team = TeamsHost(
             server_ip=args.ip,
@@ -677,13 +683,13 @@ def main():
 
         while team.start_time > datetime.now(team.tz).isoformat():
             time.sleep(2)
-            print("waiting for the start time")
+            logger.info("waiting for the start time")
 
         while team.end_time > datetime.now(team.tz).isoformat():
-            print("monitoring the test")
+            logger.info("monitoring the test")
             team.check_stop_signal()
             if team.stop_signal:
-                print("Stop signal received. Exiting the loop.")
+                logger.info("Stop signal received. Exiting the loop.")
                 break
             if team.audio:
                 audio_stats = team.audio_stats()
@@ -702,7 +708,7 @@ def main():
             team.driver.quit()
     except Exception as e:
         team.driver.quit()
-        logging.error(f"An error occurred: {e}")
+        logger.error(f"An error occurred: {e}")
         traceback.print_exc()
         sys.exit(1)
 
