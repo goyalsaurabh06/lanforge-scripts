@@ -16,6 +16,7 @@ from datetime import datetime
 import socket
 import pytz
 import pyautogui
+pyautogui.FAILSAFE = False
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
