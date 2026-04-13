@@ -2089,7 +2089,12 @@ class Candela(Realm):
         get_live_view=False,
         total_floors="0",
         lf_logger_config_json=None,
-        help_summary=False
+        help_summary=False,
+        do_bandsteering=False,
+        cycles=None,
+        bssids=None,
+        duration_to_skip=None
+
     ):
         args = SimpleNamespace(**locals())
         args.mgr = self.lanforge_ip
@@ -2184,7 +2189,11 @@ class Candela(Realm):
                                 robot_test=self.robot_test,
                                 robot_ip=self.robot_ip,
                                 coordinate=self.coordinate,
-                                rotation=self.rotation
+                                rotation=self.rotation,
+                                do_bandsteering=args.do_bandsteering,
+                                cycles=args.cycles,
+                                bssids=args.bssids,
+                                duration_to_skip=args.duration_to_skip
                                 )
 
                     interation_num = interation_num + 1
@@ -2330,8 +2339,11 @@ class Candela(Realm):
         if self.robot_test:
             input_setup_info["Robot IP"] = self.robot_ip
             input_setup_info["Coordinate"] = self.coordinate
-            input_setup_info["Rotation"] = self.rotation
-        if args.dowebgui:
+            if not self.ftp_obj_dict[ce][obj_name]["obj"].do_bandsteering:
+                input_setup_info["Rotation"] = args.rotation
+            else:
+                input_setup_info["Band Steering Cycles"] = args.cycles
+        if args.dowebgui and (not args.robot_test or args.do_bandsteering):
             self.ftp_obj_dict[ce][obj_name]["obj"].data_for_webui["status"] = ["STOPPED"] * len(self.ftp_obj_dict[ce][obj_name]["obj"].url_data)
 
             df1 = pd.DataFrame(self.ftp_obj_dict[ce][obj_name]["obj"].data_for_webui)
@@ -5918,10 +5930,20 @@ class Candela(Realm):
                                 "Traffic Direction": self.ftp_obj_dict[ce][obj_name]["obj"].direction,
                                 "Traffic Duration ": duration
                             }
-
+                        if self.ftp_obj_dict[ce][obj_name]["obj"].robot_test:
+                            # Added Robot details in Test setup information table
+                            test_setup_info["Robot IP"] = self.ftp_obj_dict[ce][obj_name]["obj"].robot_ip
+                            test_setup_info["Coordinates"] = self.ftp_obj_dict[ce][obj_name]["obj"].coordinate
+                            if not self.ftp_obj_dict[ce][obj_name]["obj"].do_bandsteering:
+                                if self.ftp_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                    test_setup_info["Rotations"] = self.ftp_obj_dict[ce][obj_name]["obj"].rotation
+                            else:
+                                if "Traffic Duration " in test_setup_info:
+                                    del test_setup_info["Traffic Duration "]
+                                test_setup_info["Total Cycles"] = self.ftp_obj_dict[ce][obj_name]["obj"].cycles
                         self.overall_report.test_setup_table(value="Test Setup Information", test_setup_data=test_setup_info)
 
-                        if self.robot_test:
+                        if not self.ftp_obj_dict[ce][obj_name]["obj"].do_bandsteering and self.ftp_obj_dict[ce][obj_name]["obj"].robot_test:
                             self.ftp_obj_dict[ce][obj_name]["obj"].report = self.overall_report
                             if self.dowebgui and self.ftp_obj_dict[ce][obj_name]["obj"].get_live_view:
                                 self.ftp_obj_dict[ce][obj_name]["obj"].add_live_view_images_to_report() 
@@ -5934,6 +5956,9 @@ class Candela(Realm):
                                 for coord, robot_info in self.ftp_obj_dict[ce][obj_name]["obj"].robot_data.items():
                                     self.ftp_obj_dict[ce][obj_name]["obj"].build_graphs_and_table(coord, None, robot_info, self.ftp_obj_dict[ce][obj_name]["obj"].real_client_list1)
                         else:
+                            if self.ftp_obj_dict[ce][obj_name]["obj"].do_bandsteering:
+                                self.ftp_obj_dict[ce][obj_name]["obj"].report = self.overall_report
+                                self.ftp_obj_dict[ce][obj_name]["obj"].get_bandsteering_stats()
                             self.overall_report.set_obj_html(
                                 _obj_title=f"No of times file {self.ftp_obj_dict[ce][obj_name]['obj'].direction}",
                                 _obj=f"The below graph represents number of times a file {self.ftp_obj_dict[ce][obj_name]['obj'].direction} for each client"
@@ -12195,6 +12220,10 @@ def run_ftp_test(args, candela_apis):
         test_name=args.test_name,
         result_dir=args.result_dir,
         upstream_port=args.upstream_port,
+        do_bandsteering=args.do_bandsteering,
+        cycles=args.cycles,
+        bssids=args.bssids,
+        duration_to_skip=args.duration_to_skip
     )
 
 def run_qos_test(args, candela_apis):
