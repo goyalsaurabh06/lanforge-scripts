@@ -102,52 +102,163 @@ lf_report = importlib.import_module("py-scripts.lf_report")
 #     sys.path.insert(0, iot_scripts_path)
 #     from test_automation import Automation 
 
+# class RemoteSniffer:
+#     def __init__(self, hostname, username, password=None, key_filename=None, moni_name='eth0', pcap_name='capture.pcap', test_name = "sample"):
+#         self.hostname = hostname
+#         self.username = username
+#         self.password = password
+#         self.key_filename = key_filename
+#         self.moni_name = moni_name
+#         self.pcap_name = pcap_name
+#         self.ssh_client = None
+#         self.sftp = None
+#         self.remote_process_pid = None
+#         self.testname = test_name
+#     def create_remote_test_folder(self, remote_base="/home/lanforge"):
+#         try:
+#             remote_path = f"{remote_base}/{self.testname}"
+
+#             # Check if folder exists
+#             try:
+#                 self.sftp.stat(remote_path)
+#             except FileNotFoundError:
+#                 self.sftp.mkdir(remote_path)
+
+#             return remote_path
+
+#         except Exception as e:
+#             print(f"Failed to create remote folder: {e}")
+#             return None
+#     def connect(self):
+#         self.ssh_client = paramiko.SSHClient()
+#         self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+#         self.ssh_client.connect(
+#             self.hostname,
+#             username=self.username,
+#             password=self.password,
+#             key_filename=self.key_filename
+#         )
+#         self.sftp = self.ssh_client.open_sftp()
+#     def start_sniff(self, remote_dir="/tmp"):
+#         """Start remote tshark capture in background on remote system."""
+#         remote_pcap_path = os.path.join(remote_dir, self.pcap_name)
+#         cmd = f'nohup tshark -i {self.moni_name} -w {remote_pcap_path} -f "(type mgt and not subtype beacon and not subtype probe-req and not subtype probe-resp) or ether proto 0x888e" > /dev/null 2>&1 & echo $!'        
+#         print(f"Starting remote sniffing: {cmd}")
+#         stdin, stdout, stderr = self.ssh_client.exec_command(cmd)
+#         pid = stdout.read().decode().strip()
+#         self.remote_process_pid = pid
+#         print(f"tshark started with PID {pid} on remote host")
+#         return remote_pcap_path
+
+#     def start_sniff_for_triband(self, remote_dir="/tmp",moni2g="",moni5g="",moni6g=""):
+#         """Start remote tshark capture in background on remote system."""
+#         remote_pcap_path = os.path.join(remote_dir, self.pcap_name)
+#         cmd = f'nohup tshark -i {moni2g} -i {moni5g} -i {moni6g} -w {remote_pcap_path} -f "" > /dev/null 2>&1 & echo $!'        
+#         print(f"Starting remote sniffing: {cmd}")
+#         stdin, stdout, stderr = self.ssh_client.exec_command(cmd)
+#         pid = stdout.read().decode().strip()
+#         self.remote_process_pid = pid
+#         print(f"tshark started with PID {pid} on remote host")
+#         return remote_pcap_path
+
+
+#     def stop_sniff(self):
+#         """Stop remote tshark capture using stored PID."""
+#         if not self.remote_process_pid:
+#             print("No remote process PID available — sniff not started or already stopped.")
+#             return
+#         cmd = f"kill -2 {self.remote_process_pid}"
+#         print(f"Stopping remote sniffing with: {cmd}")
+#         self.ssh_client.exec_command(cmd)
+#         time.sleep(1)
+#         print("Sniffing stopped.")
+#     def fetch_pcap(self, remote_path, local_path):
+#         """Download the pcap file from remote system."""
+#         print(f"Fetching PCAP from {remote_path} -> {local_path}")
+#         self.sftp.get(remote_path, local_path)
+#         print("Download complete:", local_path)
+#     def close(self):
+#         if self.sftp:
+#             self.sftp.close()
+#         if self.ssh_client:
+#             self.ssh_client.close()
+
+import paramiko
+import time
+
 class RemoteSniffer:
-    def __init__(self, hostname, username, password=None, key_filename=None, moni_name='eth0', pcap_name='capture.pcap'):
+    def __init__(self, hostname, username, password=None,
+                 key_filename=None, pcap_name='capture.pcap',
+                 test_name="sample"):
+
         self.hostname = hostname
         self.username = username
         self.password = password
         self.key_filename = key_filename
-        self.moni_name = moni_name
         self.pcap_name = pcap_name
+        self.testname = test_name
+
         self.ssh_client = None
         self.sftp = None
         self.remote_process_pid = None
+
     def connect(self):
         self.ssh_client = paramiko.SSHClient()
         self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
         self.ssh_client.connect(
             self.hostname,
             username=self.username,
             password=self.password,
             key_filename=self.key_filename
         )
+
         self.sftp = self.ssh_client.open_sftp()
-    def start_sniff(self, remote_dir="/tmp"):
-        """Start remote tshark capture in background on remote system."""
-        remote_pcap_path = os.path.join(remote_dir, self.pcap_name)
-        cmd = f'nohup tshark -i {self.moni_name} -w {remote_pcap_path} -f "(type mgt and not subtype beacon and not subtype probe-req and not subtype probe-resp) or ether proto 0x888e" > /dev/null 2>&1 & echo $!'        
-        print(f"Starting remote sniffing: {cmd}")
+
+    def create_remote_test_folder(self, remote_base="/home/lanforge"):
+        remote_path = f"{remote_base}/{self.testname}"
+
+        try:
+            self.sftp.stat(remote_path)
+        except FileNotFoundError:
+            self.sftp.mkdir(remote_path)
+
+        print(f"Remote folder ready: {remote_path}")
+        return remote_path
+
+    def start_sniff_for_triband(self, remote_dir, moni2g, moni5g, moni6g):
+        remote_pcap_path = f"{remote_dir}/{self.pcap_name}"
+
+        filter_str = '(type mgt and not subtype beacon and not subtype probe-req) or ether proto 0x888e'
+
+        cmd = (
+            f'nohup tshark -i {moni2g} -i {moni5g} -i {moni6g} '
+            f'-w {remote_pcap_path} '
+            f'> /dev/null 2>&1 & echo $!'
+        )
+
         stdin, stdout, stderr = self.ssh_client.exec_command(cmd)
         pid = stdout.read().decode().strip()
+
+        if not pid:
+            raise Exception("Failed to start tshark")
+
         self.remote_process_pid = pid
-        print(f"tshark started with PID {pid} on remote host")
+        print(f"Started sniffing PID: {pid}")
+
         return remote_pcap_path
+
     def stop_sniff(self):
-        """Stop remote tshark capture using stored PID."""
         if not self.remote_process_pid:
-            print("No remote process PID available — sniff not started or already stopped.")
             return
-        cmd = f"kill -2 {self.remote_process_pid}"
-        print(f"Stopping remote sniffing with: {cmd}")
-        self.ssh_client.exec_command(cmd)
-        time.sleep(1)
-        print("Sniffing stopped.")
+
+        self.ssh_client.exec_command(f"kill -2 {self.remote_process_pid}")
+        time.sleep(2)
+
     def fetch_pcap(self, remote_path, local_path):
-        """Download the pcap file from remote system."""
-        print(f"Fetching PCAP from {remote_path} -> {local_path}")
         self.sftp.get(remote_path, local_path)
-        print("Download complete:", local_path)
+        print(f"Downloaded: {local_path}")
+
     def close(self):
         if self.sftp:
             self.sftp.close()
@@ -406,8 +517,12 @@ class Candela(Realm):
             logger.info(f"[LANforge EXCEPTION] {e}", "ERROR")
             return False
 
-    def create_monitor(self):
+    def clear_monitor_interfaces(self):
         self.cleanup.sta_clean()
+
+
+    def create_monitor(self):
+        
         # to switch channel in wiphy radio
         channel_switched = self.channel_switch(radio=self.sniff_radio,channel=self.sniff_channel)
         if not channel_switched:

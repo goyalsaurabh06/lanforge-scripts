@@ -402,7 +402,6 @@ class RobotClass:
 
             x = data_pose.get("x", 0)
             y = data_pose.get("y", 0)
-
             return x, y, self.from_coordinate, self.to_coordinate
 
         except Exception as e:
@@ -436,9 +435,10 @@ class RobotClass:
         cycles = int(self.total_cycles)
 
         # Build full cycle path
-        full_path = self.coordinate_list * cycles
-        full_path.append(self.coordinate_list[0])  # close the cycle
-
+        # full_path = self.coordinate_list * cycles
+        # full_path.append(self.coordinate_list[0])  # close the cycle
+        full_path = self.build_zigzag_path(self.coordinate_list, cycles)
+        # print("fff",full_path)
         skip_count = len(skipped_list)
 
         # Remove skipped points + matched point
@@ -447,3 +447,22 @@ class RobotClass:
         print("Final coordinate list:", final_coordinate_list)
 
         return final_coordinate_list
+
+    def build_zigzag_path(self,coordinate_list, cycles):
+        if not coordinate_list:
+            return []
+
+        forward = coordinate_list
+        backward = coordinate_list[-2::-1]
+
+        one_cycle = forward + backward
+
+        full_path = []
+
+        for i in range(cycles):
+            if i == 0:
+                full_path.extend(one_cycle)
+            else:
+                full_path.extend(one_cycle[1:])  # skip duplicate start
+
+        return full_path
