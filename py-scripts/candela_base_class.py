@@ -1467,7 +1467,11 @@ class Candela(Realm):
         wait_time=60,
         config=False,
         get_live_view=False,
-        total_floors="0"
+        total_floors="0",
+        do_bandsteering=False,
+        cycles=None,
+        bssids=None,
+        duration_to_skip=None
     ):
             if self.dowebgui:
                 if not self.webgui_stop_check("http"):
@@ -1606,7 +1610,11 @@ class Candela(Realm):
                                     robot_ip=self.robot_ip,
                                     coordinate=self.coordinate,
                                     rotation=self.rotation,
-                                    duration=duration
+                                    duration=duration,
+                                    do_bandsteering=do_bandsteering,
+                                    cycles=cycles,
+                                    bssids=bssids,
+                                    duration_to_skip=duration_to_skip
                                     )
                 if client_type == "Real":
                     if not isinstance(device_list, list):
@@ -5573,10 +5581,20 @@ class Candela(Realm):
                         self.overall_report.build_objective()
                         self.overall_report.set_table_title("Test Setup Information")
                         self.overall_report.build_table_title()
+                        if self.http_obj_dict[ce][obj_name]["obj"].robot_test:
+                            # If robot test, add robot specific info to test setup
+                            http_data["test_setup_info"]["Robot IP"] = self.http_obj_dict[ce][obj_name]["obj"].robot_ip
+                            http_data["test_setup_info"]["Coordinates"] = self.http_obj_dict[ce][obj_name]["obj"].coordinate
+                            if not self.http_obj_dict[ce][obj_name]["obj"].do_bandsteering:
+                                http_data["test_setup_info"]["Rotation"] = self.http_obj_dict[ce][obj_name]["obj"].rotation
+                            else:
+                                if "Traffic Duration " in http_data["test_setup_info"]:
+                                    del http_data["test_setup_info"]["Traffic Duration "]
+                                http_data["test_setup_info"]["No of Cycles"] = self.http_obj_dict[ce][obj_name]["obj"].cycles
                         self.overall_report.test_setup_table(value="Test Setup Information", test_setup_data=http_data["test_setup_info"])
 
                         
-                        if self.robot_test:
+                        if not self.http_obj_dict[ce][obj_name]["obj"].do_bandsteering and self.robot_test:
                             if self.dowebgui and self.http_obj_dict[ce][obj_name]["obj"].get_live_view:
                                 self.http_obj_dict[ce][obj_name]["obj"].add_live_view_images_to_report(self.overall_report) 
                             if self.http_obj_dict[ce][obj_name]["obj"].rotation_enabled:
@@ -5587,6 +5605,12 @@ class Candela(Realm):
                                 for coord, robot_info in self.http_obj_dict[ce][obj_name]["obj"].robot_data.items():
                                     self.http_obj_dict[ce][obj_name]["obj"].build_graphs_and_table(coord, "", self.overall_report, self.lis, [self.http_obj_dict[ce][obj_name]["obj"].bands])
                         else:
+                            if self.http_obj_dict[ce][obj_name]["obj"].do_bandsteering:
+                                self.http_obj_dict[ce][obj_name]["obj"].get_bandsteering_stats(self.overall_report)
+                            self.overall_report.set_obj_html("No of times file Downloads", "The below graph represents number of times a file downloads for each client"
+                                                ". X- axis shows “No of times file downloads and Y-axis shows "
+                                                "Client names.")
+                            self.overall_report.build_objective()
                             graph2 = self.http_obj_dict[ce][obj_name]["obj"].graph_2(http_data["dataset2"], lis=http_data["lis"], bands=http_data["bands"],graph_name=obj_no)
                             print("graph name {}".format(graph2))
                             self.overall_report.set_graph_image(graph2)
@@ -11335,6 +11359,8 @@ def main():
     # parser.add_argument('--http_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
     parser.add_argument("--http_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
 
+    
+
     #ftp
     parser.add_argument('--ftp_test',
                           action="store_true",
@@ -11729,6 +11755,10 @@ def main():
     parser.add_argument('--robot_ip', type=str, default='', help='hostname for where Robot server is running')
     parser.add_argument('--coordinate', type=str, default='', help="The coordinate contains list of coordinates to be ")
     parser.add_argument('--rotation', type=str, default='', help="The set of angles to rotate at a particular point")
+    parser.add_argument('--do_bandsteering', help='Enable bandsteering', action='store_true')
+    parser.add_argument('--cycles', type=int, default=1, help='No of cycles to perform band steering')
+    parser.add_argument('--bssids', type=str, default='', help='hostname for where Robot server is running')
+    parser.add_argument("--duration_to_skip", type=int, help='Specify the maximum time in seconds to skip a point if there is an obstacle', default=60)
     #
 
     args = parser.parse_args()
@@ -12121,7 +12151,11 @@ def run_http_test(args, candela_apis):
         wait_time=args.http_wait_time,
         dowebgui=args.dowebgui,
         test_name=args.test_name,
-        result_dir=args.result_dir
+        result_dir=args.result_dir,
+        do_bandsteering=args.do_bandsteering,
+        cycles=args.cycles,
+        bssids=args.bssids,
+        duration_to_skip=args.duration_to_skip
     )
 
 def run_ftp_test(args, candela_apis):
