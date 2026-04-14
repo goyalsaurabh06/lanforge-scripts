@@ -89,6 +89,11 @@
     python3 lf_interop_video_streaming.py --mgr 192.168.207.78 --url "http://192.168.204.63/kalki/kalki.mpd" --media_source dash    --media_quality 1080P --duration 1m  --debug
     --test_name video_streaming_test --robot_test --robot_ip 192.168.204.101 --coordinate 3,4
 
+    Example-17:
+    Command Line Interface to run Video Streaming test with Robot at specified coordinates with bandsteering
+    python3 lf_interop_video_streaming.py --mgr 192.168.207.78 --url "https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps.mpd" --media_source dash  --media_quality 1080P --duration 1m  --debug
+    --test_name video_streaming_test --robot_test --robot_ip 192.168.204.76 --coordinate 3,4 --total_cycles 1 --do_bandsteering
+
     SCRIPT CLASSIFICATION: Test
 
     SCRIPT_CATEGORIES:   Performance,  Functional, Report Generation
@@ -124,9 +129,9 @@ import asyncio
 import csv
 from datetime import datetime, timedelta
 from lf_graph import lf_bar_graph_horizontal
-from lf_graph import lf_line_graph
+from lf_graph import lf_line_graph, lf_bar_graph
 import threading
-from collections import OrderedDict
+from collections import OrderedDict, Counter
 
 
 if sys.version_info[0] != 3:
@@ -152,7 +157,6 @@ lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 port_utils = importlib.import_module("py-json.port_utils")
 PortUtils = port_utils.PortUtils
 DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
-
 iot_scripts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../local/interop-webGUI/IoT/scripts/"))
 if os.path.exists(iot_scripts_path):
     sys.path.insert(0, iot_scripts_path)
@@ -172,7 +176,7 @@ class VideoStreamingTest(Realm):
                  coordinate=None,
                  rotation=None,
                  rotation_enabled=None,
-                 angle_list=None):
+                 angle_list=None, do_bandsteering=False, total_cycles=1, bssids=None, duration_to_skip=None):
         super().__init__(lfclient_host=host, lfclient_port=8080)
         self.adb_device_list = None
         self.host = host
@@ -241,8 +245,12 @@ class VideoStreamingTest(Realm):
         self.robot_test = robot_test
         self.vs_data = {}
         self.test_stopped = False
+        self.do_bandsteering = do_bandsteering
         if robot_test:
             self.robot_ip = robot_ip
+            if self.do_bandsteering:
+                self.total_cycles = total_cycles
+                self.bssids = bssids if bssids else []
             self.coordinate = coordinate
             self.rotation = rotation
             self.rotation_enabled = False
@@ -256,6 +264,7 @@ class VideoStreamingTest(Realm):
             self.robot.robo_ip = f"{self.robot_ip}"
             self.last_rotated_angles = []
             self.charge_point_name = None
+            self.robot.time_to_reach = int(duration_to_skip) * 60
 
     @property
     def run(self):
@@ -725,7 +734,6 @@ class VideoStreamingTest(Realm):
             rx_rate = []
             frame_rate = []
             video_quality = []
-
             if len(self.created_cx.keys()) > 1:
                 data = data['endpoint']
                 for endpoint in data:
@@ -756,7 +764,6 @@ class VideoStreamingTest(Realm):
                 rx_rate.append(endpoint.get('rx rate', 0))
                 frame_rate.append(endpoint.get('frame-rate', 0))
                 video_quality.append(endpoint.get('video-quality', 0))
-
             self.data['status'] = statuses
             self.data["total_urls"] = total_urls
             self.data["urls_per_sec"] = urls_per_sec
@@ -857,9 +864,11 @@ class VideoStreamingTest(Realm):
         rssi = []
         tx_rate = []
         rx_rate = []
+        bssid = []
+        channel = []
 
         try:
-            eid_data = self.json_get("ports?fields=alias,rx-rate,tx-rate,ssid,signal")
+            eid_data = self.json_get("ports?fields=alias,rx-rate,tx-rate,ssid,signal,ap,channel")
         except KeyError:
             logger.error("Error: 'interfaces' key not found in port data")
             exit(1)
@@ -878,9 +887,11 @@ class VideoStreamingTest(Realm):
 
                         tx_rate.append(alias[i]['tx-rate'])
                         rx_rate.append(alias[i]['rx-rate'])
+                        bssid.append(alias[i]['ap'])
+                        channel.append(alias[i]['channel'])
 
         rssi = [0 if i.strip() == "" else int(i) for i in rssi]
-        return rssi, tx_rate
+        return rssi, tx_rate, bssid, channel
 
     def monitor_for_runtime_csv(self, duration, file_path, individual_df, iteration, actual_start_time, cx_list=None, curr_coordinate=None, curr_rotation=None, monitor_charge_time=None):
         try:
@@ -908,9 +919,10 @@ class VideoStreamingTest(Realm):
             channel = []
             tx_rate = []
             rx_rate = []
+            bssid = []
 
             resource_ids = list(map(int, self.resource_ids.split(',')))
-            eid_data = self.json_get("ports?fields=alias,mac,mode,Parent Dev,rx-rate,tx-rate,ssid,signal,channel")
+            eid_data = self.json_get("ports?fields=alias,mac,mode,Parent Dev,rx-rate,tx-rate,ssid,signal,channel,ap")
             if "interfaces" not in eid_data.keys():
                 logger.error("Error: 'interfaces' key not found in port data")
                 exit(1)
@@ -930,6 +942,7 @@ class VideoStreamingTest(Realm):
                             channel.append(alias[i]['channel'])
                             tx_rate.append(alias[i]['tx-rate'])
                             rx_rate.append(alias[i]['rx-rate'])
+                            bssid.append(alias[i]['ap'])
 
             incremental_capacity_list = self.get_incremental_capacity_list()
             video_rate_dict = {i: [] for i in range(len(device_type))}
@@ -966,7 +979,7 @@ class VideoStreamingTest(Realm):
                             monitor_charge_time = datetime.now()
 
                 # Get signal data for RSSI and link speed
-                rssi_data, link_speed_data = self.get_signal_data()
+                rssi_data, link_speed_data, bssid_data, channel_data = self.get_signal_data()
 
                 individual_df_data = []
 
@@ -986,7 +999,8 @@ class VideoStreamingTest(Realm):
                     self.data['remaining_time_webGUI'] = ["< 1 min"]
                 else:
                     self.data['remaining_time_webGUI'] = [str(datetime.strptime(self.data['end_time_webGUI'][0], "%Y-%m-%d %H:%M:%S") - datetime.strptime(curr_time, "%Y-%m-%d %H:%M:%S"))]
-
+                if self.do_bandsteering:
+                    self.data['remaining_time_webGUI'] = [""]
                 # Get the present time
                 present_time = datetime.now().strftime("%H:%M:%S")
                 self.my_monitor_runtime()
@@ -1002,7 +1016,7 @@ class VideoStreamingTest(Realm):
                         min_value_video_rate = self.process_list(video_rate_dict[i])
                         individual_df_data.extend([0, 0, self.data["total_urls"][i], rssi_data[i], link_speed_data[i], self.data["total_buffer"][i], self.data["total_err"][i],
                                                    min_value_video_rate, max(video_rate_dict[i]), sum(video_rate_dict[i]) / len(video_rate_dict[i]), self.data["bytes_rd"][i],
-                                                   self.data["rx_rate"][i], self.data['frame_rate'][i], self.data['video_quality'][i]])
+                                                   self.data["rx_rate"][i], self.data['frame_rate'][i], self.data['video_quality'][i], bssid_data[i], channel_data[i]])
 
                     # If the status is not 'Stopped', append the calculated video rate to the video rate dictionary and overall video rate
                     else:
@@ -1025,17 +1039,23 @@ class VideoStreamingTest(Realm):
                                                    self.data["bytes_rd"][i],
                                                    self.data["rx_rate"][i],
                                                    self.data['frame_rate'][i],
-                                                   self.data['video_quality'][i]])
+                                                   self.data['video_quality'][i],
+                                                   bssid_data[i], channel_data[i]])
 
                 individual_df_data.extend([sum(overall_video_rate), present_time, iteration + 1, actual_start_time.strftime('%Y-%m-%d %H:%M:%S'),
                                            self.data['end_time_webGUI'][0], self.data['remaining_time_webGUI'][0], "Running"])
+                if self.robot_test and self.do_bandsteering:
+                    robot_x, robot_y, from_coordinate, to_coordinate = self.robot.get_robot_pose()
+                    if from_coordinate == to_coordinate:
+                        return test_stopped_by_user
+                    individual_df_data.extend([robot_x, robot_y, from_coordinate, to_coordinate])
                 if self.robot_test and self.rotation_enabled:
                     individual_df_data.append(self.current_angle)
                 individual_df.loc[len(individual_df)] = individual_df_data
                 new_row_df = individual_df.tail(1)
 
                 # Use a separate CSV file per coordinate for robot test
-                if self.robot_test:
+                if self.robot_test and not self.do_bandsteering:
                     csv_filename = f'video_streaming_realtime_data_{self.current_coordinate}.csv'
                 else:
                     csv_filename = 'video_streaming_realtime_data.csv'
@@ -1051,11 +1071,13 @@ class VideoStreamingTest(Realm):
                             logging.info('Test is stopped by the user')
                             self.test_stopped = True
                             test_stopped_by_user = True
+                            if self.do_bandsteering:
+                                return test_stopped_by_user
                             break
 
                 if self.dowebgui:
                     # Use a separate CSV file per coordinate for robot test
-                    if self.robot_test:
+                    if self.robot_test and not self.do_bandsteering:
                         webgui_csv = '{}/video_streaming_realtime_data_{}.csv'.format(self.result_dir, self.current_coordinate)
                     else:
                         webgui_csv = '{}/video_streaming_realtime_data.csv'.format(self.result_dir)
@@ -1073,6 +1095,8 @@ class VideoStreamingTest(Realm):
                     break
                 if not self.background_run and self.background_run is not None:
                     break
+                if self.do_bandsteering:
+                    return test_stopped_by_user
             present_time = datetime.now().strftime("%H:%M:%S")
             individual_df_data = []
             overall_video_rate = []
@@ -1085,7 +1109,7 @@ class VideoStreamingTest(Realm):
                     min_value_video_rate = self.process_list(video_rate_dict[i])
                     individual_df_data.extend([0, 0, self.data["total_urls"][i], rssi_data[i], link_speed_data[i], self.data["total_buffer"][i], self.data["total_err"][i], min_value_video_rate,
                                                max(video_rate_dict[i]), sum(video_rate_dict[i]) / len(video_rate_dict[i]), self.data["bytes_rd"][i], self.data["rx_rate"][i],
-                                               self.data['frame_rate'][i], self.data['video_quality'][i]])
+                                               self.data['frame_rate'][i], self.data['video_quality'][i], bssid_data[i], channel_data[i]])
                 else:
                     overall_video_rate.append(round(self.data["video_format_bitrate"][i] / 1000000, 2))
                     video_rate_dict[i].append(round(self.data["video_format_bitrate"][i] / 1000000, 2))
@@ -1105,7 +1129,8 @@ class VideoStreamingTest(Realm):
                                                self.data["bytes_rd"][i],
                                                self.data["rx_rate"][i],
                                                self.data['frame_rate'][i],
-                                               self.data['video_quality'][i]])
+                                               self.data['video_quality'][i],
+                                               bssid_data[i], channel_data[i]])
 
             if iteration + 1 == len(incremental_capacity_list):
                 individual_df_data.extend([sum(overall_video_rate), present_time, iteration + 1, actual_start_time.strftime('%Y-%m-%d %H:%M:%S'), self.data['end_time_webGUI'][0], 0, "Stopped"])
@@ -1593,7 +1618,8 @@ class VideoStreamingTest(Realm):
             report.set_graph_image(graph_png)
             report.move_graph_image()
             report.build_graph()
-            self.add_buffer_and_wait_time_images(report=report)
+            if self.dowebgui and self.get_live_view and not self.do_bandsteering:
+                self.add_buffer_and_wait_time_images(report=report)
 
             # Table 1
             report.set_obj_html("Overall - Detailed Result Table", "The below tables provides detailed information for the Video Streaming test.")
@@ -1636,6 +1662,13 @@ class VideoStreamingTest(Realm):
             dataframe3 = pd.DataFrame(dataframe2)
             report.set_table_dataframe(dataframe3)
             report.build_table()
+        if self.do_bandsteering:
+            devices_on_running_state = []
+            device_names_on_running = []
+            for j in range(created_incremental_values[iter]):
+                devices_on_running_state.append(keys[j])
+                device_names_on_running.append(username[j])
+            self.get_bandsteering_stats(report, realtime_dataset, devices_on_running_state, device_names_on_running)
         if iot_summary:
             self.build_iot_report_section(report, iot_summary)
         report.build_footer()
@@ -1656,6 +1689,96 @@ class VideoStreamingTest(Realm):
         if not os.path.exists(test_name_dir):
             os.makedirs(test_name_dir)
         shutil.copytree(curr_path, test_name_dir, dirs_exist_ok=True)
+
+    def get_bandsteering_stats(self, report=None, df=None, data1=None, data2=None):
+        """
+        Retrieves and adds bandsteering statistics to the report.
+
+        """
+        bssid_cols = [c for c in df.columns if c.startswith("BSSID")]
+        channel_cols = [c for c in df.columns if c.startswith("Channel")]
+
+        bssid_to_channel = {
+            bssid_col: next(
+                ch for ch in channel_cols
+                if ch.replace("Channel", "").strip() ==
+                bssid_col.replace("BSSID", "").strip()
+            )
+            for bssid_col in bssid_cols
+        }
+        for idx, col in enumerate(bssid_cols):
+
+            channel_col = bssid_to_channel[col]
+
+            # Detect BSSID changes
+            mask = df[col] != df[col].shift()
+            filtered_df = df.loc[mask]
+            if self.bssids:
+                filtered_df = df.loc[mask & df[col].isin(self.bssids)]
+
+            bssid_list = filtered_df[col].tolist()
+            channel_list = filtered_df[channel_col].tolist()
+            timestamp_list = filtered_df['timestamp'].tolist()
+            from_coordinate_list = filtered_df['From Coordinate'].tolist()
+            to_coordinate_list = filtered_df['To Coordinate'].tolist()
+            bssid_counts = Counter(bssid_list)
+
+            x_axis = list(bssid_counts.keys())      # BSSID values
+            y_axis = [[float(i)] for i in list(bssid_counts.values())]
+            if len(self.bssids) > 0:
+                x_axis = self.bssids
+                y_axis = [[float(bssid_counts.get(bssid, 0))] for bssid in self.bssids]
+            device_name = data2[idx]
+            report.set_obj_html(
+                _obj_title=f"BSSID change count of the {device_name}",
+                _obj=" ")
+            report.build_objective()
+            graph = lf_bar_graph(_data_set=y_axis,
+                                 _xaxis_name="BSSID",
+                                 _yaxis_name="Number of Changes",
+                                 # _xaxis_categories = [", ".join(x_axis)],
+                                 _xaxis_categories=[""],
+                                 _xaxis_label=x_axis,
+                                 _graph_image_name=f"bssid_change_count_{device_name}",
+                                 _label=x_axis,
+                                 _xaxis_step=1,
+                                 _graph_title=f"BSSID change count – {device_name}",
+                                 _title_size=16,
+                                 _color_edge='black',
+                                 _bar_width=0.15,
+                                 _figsize=(18, 6),
+                                 _legend_loc="best",
+                                 _legend_box=(1.0, 1.0),
+                                 _dpi=96,
+                                 _show_bar_value=True,
+                                 _enable_csv=True,
+                                 _color=['orange', 'lightcoral', 'steelblue', 'lightgrey'],
+                                 _color_name=['orange', 'lightcoral', 'steelblue', 'lightgrey'],
+
+                                 )
+
+            graph_png = graph.build_bar_graph()
+            report.set_graph_image(graph_png)
+            # need to move the graph image to the results directory
+            report.move_graph_image()
+            report.set_csv_filename(graph_png)
+            report.move_csv_file()
+            report.build_graph()
+
+            report.set_obj_html(
+                _obj_title=f"Band Steering Results for {device_name}",
+                _obj=" ")
+            report.build_objective()
+            table_df = {
+                "Timestamp": timestamp_list,
+                "BSSID": bssid_list,
+                "Channel": channel_list,
+                "From Coordinate": from_coordinate_list,
+                "To Coordinate": to_coordinate_list
+            }
+            table_df = pd.DataFrame(table_df)
+            report.set_table_dataframe(table_df)
+            report.build_table()
 
     def filter_ios_devices(self, device_list):
         """
@@ -1910,6 +2033,11 @@ class VideoStreamingTest(Realm):
                 "Media Source": media_source,
                 "Media Quality": media_quality
             }
+            if self.robot_test:
+                test_setup_info["Robot Ip"] = self.robot_ip
+                test_setup_info["Coordinates"] = self.coordinate
+                if self.do_bandsteering:
+                    test_setup_info["Total Cycles"] = self.total_cycles
             test_setup_info['Incremental Values'] = self.test_setup_info_incremental_values
             # test_setup_info['Total Duration (min)'] = str(self.test_setup_info_total_duration)
             return test_setup_info
@@ -2055,7 +2183,11 @@ class VideoStreamingTest(Realm):
                         tx_rate.append(alias[i]['tx-rate'])
 
         self.add_buffer_and_wait_time_images(report=report)
-        for coordinate in range(len(passed_coordinates)):
+        for coordinate in range(len(self.coordinate_list)):
+            if (not self.rotation_enabled and self.coordinate_list[coordinate] not in self.vs_data):
+                continue
+            elif (self.rotation_enabled and int(self.coordinate_list[coordinate]) not in self.vs_data):
+                continue
             self.current_coordinate = self.coordinate_list[coordinate]
             csv_suffix = "_{}".format(self.current_coordinate)
             if self.rotation_enabled:
@@ -2338,6 +2470,63 @@ class VideoStreamingTest(Realm):
                 self.robot.testname = self.test_name
             passed_coord_list = []
             abort = False
+        if self.do_bandsteering:
+            curr_cycle = 1
+            pause_coord, test_stopped_by_user = self.robot.wait_for_battery()
+            self.robot.total_cycles = self.total_cycles
+            self.robot.coordinate_list = self.coordinate_list
+            # To get the coordinates list of the robot  for number of cycles specified by user in bandsteering mode
+            coordinate_list_with_robo = self.robot.get_coordinates_list()
+            self.robot.do_bandsteering = True
+            self.data = {}
+            self.data["start_time_webGUI"] = [datetime.now().strftime('%Y-%m-%d %H:%M:%S')]
+            end_time_webGUI = (datetime.now() + timedelta(minutes=int(args.duration))).strftime('%Y-%m-%d %H:%M:%S')
+            self.data['end_time_webGUI'] = [end_time_webGUI]
+            file_path = "video_streaming_realtime_data.csv"
+            if cx_order_list[i]:
+                logging.info("Test started on Devices with resource Ids : {selected}".format(selected=cx_order_list[i]))
+            else:
+                logging.info("Test started on Devices with resource Ids : {selected}".format(selected=cx_order_list[i]))
+            self.start_specific(cx_order_list[i])
+            individual_df = pd.DataFrame(columns=individual_dataframe_columns)
+            for coord in coordinate_list_with_robo:
+                #  To check for battery level before moving to next coordinate and also monitor cx while moving to next coordinate in bandsteering mode
+                pause, stopped, all_data_frames = self.robot.wait_for_battery(
+                    monitor_function=lambda: self.monitor_for_runtime_csv(
+                        args.duration, file_path, individual_df, i, actual_start_time, cx_order_list[i]))
+                if stopped:
+                    break
+                # Moving to next coordinate and also monitor cx while moving to next coordinate in bandsteering mode
+                matched, abort, all_data_frames = self.robot.move_to_coordinate(
+                    coord, monitor_function=lambda: self.monitor_for_runtime_csv(
+                        args.duration, file_path, individual_df, i, actual_start_time, cx_order_list[i]))
+                if coord == self.coordinate_list[0]:
+                    curr_cycle += 1
+                    if curr_cycle > int(self.total_cycles):
+                        logger.info("Completed all {} cycles".format(self.total_cycles))
+                    else:
+                        logger.info("current cycle {}".format(curr_cycle))
+                if abort:
+                    break
+            # To get add last entry in the csv
+            last_idx = individual_df.index[-1]
+            individual_df.loc[last_idx, "status"] = "Stopped"
+            last_row_df = individual_df.loc[[last_idx]]
+            if self.dowebgui:
+                last_row_df.to_csv(f"{args.result_dir}/video_streaming_realtime_data.csv", mode="a", header=False, index=False)
+            else:
+                last_row_df.to_csv("video_streaming_realtime_data.csv", mode="a", header=False, index=False)
+            #  stop cx's after completing all cycles in bandsteering mode or if test is stopped by user in between the test
+            self.stop()
+            test_setup_info = self.create_test_setup_info(media_source=self.media_source, media_quality=self.media_quality)
+            date = str(datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
+            self.generate_report(date, [0], test_setup_info=test_setup_info, realtime_dataset=individual_df, iot_summary=None)
+            if self.postcleanup:
+                self.postcleanup()
+
+            if args.dowebgui:
+                self.copy_reports_to_home_dir()
+            exit()
         for coordinate in coord_list:
             if self.test_stopped:
                 break
@@ -2353,6 +2542,9 @@ class VideoStreamingTest(Realm):
                     logger.info("Reached the coordinate {}".format(coordinate))
                 if abort:
                     break
+                # If the robot fails to reach the coordinate, skip to the next coordinate instead of stopping the entire test
+                if not matched:
+                    continue
                 passed_coord_list.append(coordinate)
                 coordinate_df = pd.DataFrame(columns=individual_dataframe_columns)
                 if matched:
@@ -2491,6 +2683,16 @@ class VideoStreamingTest(Realm):
                                 self.vs_data[int(coordinate)] = {}
                             self.vs_data[int(coordinate)][self.rotation_list[angle]] = params
         test_setup_info = self.create_test_setup_info(media_source=args.media_source, media_quality=args.media_quality)
+        if self.dowebgui:
+            self.copy_reports_to_home_dir()
+            with open(nav_data, 'r') as x:
+                navdata = json.load(x)
+                navdata['status'] = ''
+                navdata['Canbee_location'] = ''
+                navdata['Canbee_angle'] = ''
+                navdata['Test_status'] = 'Completed'
+            with open(nav_data, 'w') as x:
+                json.dump(navdata, x, indent=4)
         self.generate_report_for_robo(test_setup_info, passed_coordinates=passed_coord_list)
 
     def build_iot_report_section(self, report, iot_summary):
@@ -2813,6 +3015,11 @@ def main():
         python3 lf_interop_video_streaming.py --mgr 192.168.207.78 --url "http://192.168.204.63/kalki/kalki.mpd" --media_source dash    --media_quality 1080P --duration 1m  --debug
         --test_name video_streaming_test --robot_test --robot_ip 192.168.204.101 --coordinate 3,4
 
+        Example-15:
+        Command Line Interface to run Video Streaming test with Robot at specified coordinates with bandsteering
+        python3 lf_interop_video_streaming.py --mgr 192.168.207.78 --url "https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps.mpd" --media_source dash  --media_quality 1080P --duration 1m  --debug
+        --test_name video_streaming_test --robot_test --robot_ip 192.168.204.76 --coordinate 3,4 --total_cycles 1 --do_bandsteering
+
         SCRIPT CLASSIFICATION: Test
 
         SCRIPT_CATEGORIES:   Performance,  Functional, Report Generation
@@ -2892,6 +3099,7 @@ def main():
     parser.add_argument('--config', action='store_true', help='specify this flag whether to config devices or not')
     parser.add_argument("--device_csv_name", type=str, help="Specify the device csv name for pass/fail", default=None)
     # Args for robot testing
+    parser.add_argument('--duration_to_skip', help='Robot wait duration in seconds at obstacle', default="1")
     parser.add_argument("--robot_test", help='to trigger robot test', action='store_true')
     parser.add_argument('--robot_ip', type=str, default='localhost', help='hostname for where Robot server is running')
     parser.add_argument('--coordinate', type=str, default='', help="The coordinate contains list of coordinates to be ")
@@ -2937,7 +3145,9 @@ def main():
                           type=str,
                           default='',
                           help='Comma-separated list of device counts to incrementally test (e.g., "1,3,5")')
-
+    optional.add_argument('--do_bandsteering', help='Enable bandsteering', action='store_true')
+    optional.add_argument('--bssids', type=str, help='Comma separated list of BSSIDs to be used for the test', default="")
+    optional.add_argument('--total_cycles', help='Enable bandsteering', default="1")
     args = parser.parse_args()
 
     if args.help_summary:
@@ -3037,7 +3247,11 @@ def main():
                              coordinate=args.coordinate,
                              rotation=args.rotation,
                              rotation_enabled=rotation_enabled,
-                             angle_list=angle_list
+                             angle_list=angle_list,
+                             do_bandsteering=args.do_bandsteering,
+                             total_cycles=args.total_cycles,
+                             bssids=args.bssids.split(",") if args.bssids else [],
+                             duration_to_skip=args.duration_to_skip
                              )
     args.upstream_port = obj.change_port_to_ip(args.upstream_port)
     obj.upstream_port = args.upstream_port
@@ -3234,11 +3448,16 @@ def main():
             f'bytes_rd_{keys[i]}',
             f'rx rate_{keys[i]} bps',
             f'frame_rate_{keys[i]}',
-            f'Video Quality_{keys[i]}'
+            f'Video Quality_{keys[i]}',
+            f'BSSID_{keys[i]}',
+            f'Channel_{keys[i]}',
         ])
 
     individual_dataframe_columns.extend(['overall_video_format_bitrate', 'timestamp', 'iteration', 'start_time', 'end_time', 'remaining_Time', 'status'])
-    if args.robot_test and args.rotation:
+    # Add Robot related columns if robot testing is enabled
+    if args.robot_test and args.do_bandsteering:
+        individual_dataframe_columns.extend(['Robot X', 'Robot Y', 'From Coordinate', 'To Coordinate'])
+    elif args.robot_test and args.rotation:
         individual_dataframe_columns.append('angle')
     individual_df = pd.DataFrame(columns=individual_dataframe_columns)
 

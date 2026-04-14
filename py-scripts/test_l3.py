@@ -726,9 +726,11 @@ import json
 import shutil
 import threading
 from collections import OrderedDict
-
+from collections import Counter
 import asyncio
 import copy
+from lf_graph import lf_bar_graph
+from lf_base_robo import RobotClass
 if sys.version_info[0] != 3:
     print("This script requires Python 3")
     exit(1)
@@ -886,7 +888,11 @@ class L3VariableTime(Realm):
                  robot_test=False,
                  robot_ip=None,
                  coordinate=None,
-                 rotation=None):
+                 rotation=None,
+                 do_bandsteering=False,
+                 cycles=None,
+                 bssids=None,
+                 duration_to_skip=None):
 
         self.eth_endps = []
         self.cx_names = []
@@ -1387,6 +1393,12 @@ class L3VariableTime(Realm):
         self.endp_input_list = endp_input_list
         self.graph_input_list = graph_input_list
         self.real = real
+        # Initialize variables to store aggregated throughput metrics
+        self.total_dl_bps = None
+        self.total_ul_bps = None
+        self.total_dl_ll_bps = None
+        self.total_ul_ll_bps = None
+        self.individual_device_data = {}
 
         # AP information import the module
         if self.ap_read and self.ap_module is not None:
@@ -1434,7 +1446,10 @@ class L3VariableTime(Realm):
         else:
             self.rotation_list = None
         self.robo_test = robot_test
-
+        # Band steering parameters
+        self.do_bandsteering = do_bandsteering
+        self.cycles = cycles
+        self.bssids = bssids.split(",") if bssids else []
         if self.robo_test:
             self.coordinate_list = coordinate.split(',')
             self.robo_ip = robot_ip
@@ -1443,12 +1458,16 @@ class L3VariableTime(Realm):
             nav_data = os.path.join(base_dir, 'nav_data.json')
             with open(nav_data, "w") as file:
                 json.dump({}, file)
-            self.robot_obj.robo_ip = f"{self.robo_ip}" # Fake Server Testing
-            self.robot_obj.nav_data_path=nav_data
+
+            # self.robot_obj.robo_ip = f"{self.robo_ip}" # Fake Server Testing
+            self.robot_obj.nav_data_path = nav_data
+            self.robot_obj.result_directory = os.path.dirname(nav_data)
             self.robot_obj.result_directory=os.path.dirname(nav_data)
-            self.robot_obj.runtime_dir=self.result_dir
-            # self.robot_obj.ip=self.robo_ip
-            self.robot_obj.testname=self.test_name
+            self.robot_obj.runtime_dir = self.result_dir
+            self.robot_obj.testname = self.test_name
+            self.robot_obj.coordinate_list = self.coordinate_list
+            self.robot_obj.time_to_reach = duration_to_skip
+            self.robot_obj.total_cycles = self.cycles
 
             self.robot_test_data = {}
             self.multicast_robot_results = {}
@@ -2270,13 +2289,13 @@ class L3VariableTime(Realm):
                     "coordinate,rotation,total_tx_rate_bps,total_rx_rate_bps,throughput_mbps,average_drop_percent,endpoint_count,timestamp\n"
                 )
             f.write(
-                f"{coordinate},{rotation},{total_tx_rate},{total_rx_rate},{total_rx_rate/1e6:.2f},{avg_drop:.2f},{len(stations_data)},{summary['timestamp']}\n"
+                f"{coordinate},{rotation},{total_tx_rate},{total_rx_rate},{total_rx_rate / 1e6:.2f},{avg_drop:.2f},{len(stations_data)},{summary['timestamp']}\n"
             )
 
         self._write_robot_station_csv(stations_data, summary["timestamp"])
 
         logger.info(
-            f"[RobotTest] Coord={coordinate}, Rot={rotation}, Stations={len(stations_data)}, Avg Throughput={total_rx_rate/1e6:.2f} Mbps"
+            f"[RobotTest] Coord={coordinate}, Rot={rotation}, Stations={len(stations_data)}, Avg Throughput={total_rx_rate / 1e6:.2f} Mbps"
         )
 
     def _write_robot_station_csv(self, stations_data, timestamp):
@@ -2375,6 +2394,53 @@ class L3VariableTime(Realm):
                 })
 
         logger.info(f"Robot test report generated: {csv_filename}")
+
+    def perform_bandsteering(self):
+        """
+        Execute the band steering test workflow.
+
+        This method is invoked when band steering is enabled on the robot system.
+        It retrieves a list of predefined coordinates and iteratively moves the robot
+        through each coordinate while continuously monitoring network performance
+        metrics (uplink/downlink throughput, PDU stats, attenuation, etc.).
+
+        Returns:
+            int: Returns 0 upon completion of the band steering workflow.
+
+        Notes:
+            - The test can be interrupted by the user at any stage.
+            - Monitoring is continuously performed during battery wait and movement.
+            - If the robot fails to move to a coordinate, it skips to the next one.
+        """
+        test_stopped_by_user = False
+
+        cycle_coords = self.robot_obj.get_coordinates_list()
+        if (len(cycle_coords) == 0):
+            logger.info("Exiting test")
+            exit(1)
+        self.robot_obj.do_bandsteering = True
+        ul, dl, ul_pdu_str, dl_pdu_str, atten_val, ul_pdu, dl_pdu, passes, expected_passes, coordinate, rotation = self.start()
+        logger.info("Starting CXs")
+        for coordinate in cycle_coords:
+            if test_stopped_by_user:
+                break
+            # Check for battery status before moving to next coordinate
+            if_paused, test_stopped_by_user, test_data = self.robot_obj.wait_for_battery(monitor_function=lambda: self.monitor(ul, dl, ul_pdu_str, dl_pdu_str, atten_val, coordinate, rotation))
+            # If test is stopped by user during battery wait
+            if test_stopped_by_user:
+                break
+            robo_moved, abort, test_data = self.robot_obj.move_to_coordinate(coordinate, monitor_function=lambda: self.monitor(ul, dl, ul_pdu_str, dl_pdu_str, atten_val, coordinate, rotation))
+            # If robot failed to reach the coordinate
+            if abort:
+                break
+            if not robo_moved:
+                continue
+            if robo_moved:
+                logger.info("Reached the coordinate {}".format(coordinate))
+        self.process_port_interval_statistics(self.total_dl_bps, self.total_ul_bps, self.total_dl_ll_bps, self.total_ul_ll_bps,
+                                              ul, dl, ul_pdu_str, dl_pdu_str, ul_pdu, dl_pdu, atten_val, passes, expected_passes)
+        # total_dl_bps,total_ul_bps,total_dl_ll
+        return 0
 
     def l3_endp_port_data(self, tos):
         """
@@ -2506,6 +2572,238 @@ class L3VariableTime(Realm):
 
         return client_dict_A
 
+    def process_port_interval_statistics(self, total_dl_bps, total_ul_bps, total_dl_ll_bps, total_ul_ll_bps, ul, dl, ul_pdu_str,
+                                         dl_pdu_str, ul_pdu, dl_pdu, atten_val, passes, expected_passes, print_pass=False):
+        """
+        Aggregate, process, and store per-interval port statistics for download and upload traffic.
+
+        This method consolidates CSV data collected from multiple ports (EIDs), computes
+        aggregated metrics per time interval, derives delta values between intervals,
+        and generates summary CSV reports. It also records KPI and result summaries,
+        and determines pass/fail status of the test.
+
+        Args:
+            total_dl_bps (float): Total download throughput (bps).
+            total_ul_bps (float): Total upload throughput (bps).
+            total_dl_ll_bps (float): Total download low-latency throughput.
+            total_ul_ll_bps (float): Total upload low-latency throughput.
+            ul (str/int): Configured uplink rate.
+            dl (str/int): Configured downlink rate.
+            ul_pdu_str (str): Uplink PDU size (string format).
+            dl_pdu_str (str): Downlink PDU size (string format).
+            ul_pdu (int): Uplink PDU size.
+            dl_pdu (int): Downlink PDU size.
+            atten_val (float): Attenuation value used during testing.
+            passes (int): Number of successful test passes.
+            expected_passes (int): Expected number of passes.
+            print_pass (bool, optional): Whether to print pass message.
+
+        Returns:
+            None
+
+        """
+        # Write out download totals for each station
+        # port_eids= self.gather_port_eids()
+        # for port_eid in port_eids
+        # Collecting Totals of all stations for all intervals for each collection period
+        # TODO make all port csv files into one concatinated csv files
+        # Create empty dataframe
+        all_dl_ports_df = pd.DataFrame()
+        port_eids = self.gather_port_eids()
+        warnings = 0
+        # if self.use_existing_station_lists:
+        #    port_eids.extend(self.existing_station_lists.copy())
+
+        for port_eid in port_eids:
+            logger.debug("port files: {port_file}".format(
+                port_file=self.dl_port_csv_files[port_eid]))
+            name = self.dl_port_csv_files[port_eid].name
+            logger.debug("name : {name}".format(name=name))
+            df_dl_tmp = pd.read_csv(name)
+            all_dl_ports_df = pd.concat(
+                [all_dl_ports_df, df_dl_tmp], axis=0)
+
+        all_dl_ports_file_name = self.outfile[:-4]
+        all_dl_port_file_name = all_dl_ports_file_name + "-dl-all-eids.csv"
+        all_dl_ports_df.to_csv(all_dl_port_file_name)
+
+        # process "-dl-all-eids.csv to have per iteration loops deltas"
+        all_dl_ports_df.to_csv(all_dl_port_file_name)
+
+        # copy the above pandas dataframe (all_dl_ports_df)
+        all_dl_ports_stations_df = all_dl_ports_df.copy(deep=True)
+        # drop rows that have eth
+        all_dl_ports_stations_df = all_dl_ports_stations_df[~all_dl_ports_stations_df['Name'].str.contains(
+            'eth')]
+        # logger.info(pformat(all_dl_ports_stations_df))
+
+        # save to csv file
+        all_dl_ports_stations_file_name = self.outfile[:-4]
+        all_dl_port_stations_file_name = all_dl_ports_stations_file_name + \
+            "-dl-all-eids-stations.csv"
+        all_dl_ports_stations_df.to_csv(
+            all_dl_port_stations_file_name)
+
+        # we should be able to add the values for each eid
+        # FutureWarning: Indexing with multiple keys need to make single [] to double [[]]
+        # https://stackoverflow.com/questions/60999753/pandas-future-warning-indexing-with-multiple-keys
+        all_dl_ports_stations_sum_df = all_dl_ports_stations_df.groupby(['Time epoch'])[['Rx-Bps', 'Tx-Bps', 'Rx-Latency', 'Rx-Jitter',
+                                                                                         'Ul-Rx-Goodput-bps', 'Ul-Rx-Rate-ll', 'Ul-Rx-Pkts-ll',
+                                                                                         'Dl-Rx-Goodput-bps', 'Dl-Rx-Rate-ll', 'Dl-Rx-Pkts-ll']].sum()
+        all_dl_ports_stations_sum_file_name = self.outfile[:-4]
+        all_dl_port_stations_sum_file_name = all_dl_ports_stations_sum_file_name + \
+            "-dl-all-eids-sum-per-interval.csv"
+
+        # add some calculations, will need some selectable graphs
+        logger.info("all_dl_ports_stations_sum_df : {df}".format(
+            df=all_dl_ports_stations_sum_df))
+
+        if all_dl_ports_stations_sum_df.empty:
+            logger.warning(
+                "The dl (download) has no data check the AP connection or configuration")
+            warnings += 1
+
+        else:
+            all_dl_ports_stations_sum_df['Rx-Bps-Diff'] = all_dl_ports_stations_sum_df['Rx-Bps'].diff()
+            all_dl_ports_stations_sum_df['Tx-Bps-Diff'] = all_dl_ports_stations_sum_df['Tx-Bps'].diff()
+            all_dl_ports_stations_sum_df['Rx-Latency-Diff'] = all_dl_ports_stations_sum_df['Rx-Latency'].diff()
+            all_dl_ports_stations_sum_df['Rx-Jitter-Diff'] = all_dl_ports_stations_sum_df['Rx-Jitter'].diff()
+            all_dl_ports_stations_sum_df['Ul-Rx-Goodput-bps-Diff'] = all_dl_ports_stations_sum_df['Ul-Rx-Goodput-bps'].diff()
+            all_dl_ports_stations_sum_df['Ul-Rx-Rate-ll-Diff'] = all_dl_ports_stations_sum_df['Ul-Rx-Rate-ll'].diff()
+            all_dl_ports_stations_sum_df['Ul-Rx-Pkts-ll-Diff'] = all_dl_ports_stations_sum_df['Ul-Rx-Pkts-ll'].diff()
+            all_dl_ports_stations_sum_df['Dl-Rx-Goodput-bps-Diff'] = all_dl_ports_stations_sum_df['Dl-Rx-Goodput-bps'].diff()
+            all_dl_ports_stations_sum_df['Dl-Rx-Rate-ll-Diff'] = all_dl_ports_stations_sum_df['Dl-Rx-Rate-ll'].diff()
+            all_dl_ports_stations_sum_df['Dl-Rx-Pkts-ll-Diff'] = all_dl_ports_stations_sum_df['Dl-Rx-Pkts-ll'].diff()
+
+        # write out the data
+        all_dl_ports_stations_sum_df.to_csv(
+            all_dl_port_stations_sum_file_name)
+
+        # if there are multiple loops then delete the df
+        del all_dl_ports_df
+
+        if self.ap_read:
+            # Consolidate all the ul ports into one file
+            # Create empty dataframe
+            all_ul_ports_df = pd.DataFrame()
+            port_eids = self.gather_port_eids()
+
+            for port_eid in port_eids:
+                logger.debug("ul port files: {port_file}".format(
+                    port_file=self.ul_port_csv_files[port_eid]))
+                name = self.ul_port_csv_files[port_eid].name
+                logger.debug("name : {name}".format(name=name))
+                df_ul_tmp = pd.read_csv(name)
+                all_ul_ports_df = pd.concat(
+                    [all_ul_ports_df, df_ul_tmp], axis=0)
+
+            all_ul_ports_file_name = self.outfile[:-4]
+            all_ul_port_file_name = all_ul_ports_file_name + "-ul-all-eids.csv"
+            all_ul_ports_df.to_csv(all_ul_port_file_name)
+
+            # copy over all_ul_ports_df so as create a dataframe summ of the data for each iteration
+            all_ul_ports_stations_df = all_ul_ports_df.copy(
+                deep=True)
+            # drop rows that have eth
+            all_ul_ports_stations_df = all_ul_ports_stations_df[~all_ul_ports_stations_df['Name'].str.contains(
+                'eth')]
+            logger.info(pformat(all_ul_ports_stations_df))
+
+            # save to csv
+            all_ul_ports_stations_file_name = self.outfile[:-4]
+            all_ul_ports_stations_file_name = all_ul_ports_stations_file_name + \
+                "-ul-all-eids-stations.csv"
+            all_ul_ports_stations_df.to_csv(
+                all_ul_ports_stations_file_name)
+
+            # we add all the values based on the epoch time
+            # FutureWarning: Indexing with multiple keys need to make single [] to double [[]]
+            # https://stackoverflow.com/questions/60999753/pandas-future-warning-indexing-with-multiple-keys
+            all_ul_ports_stations_sum_df = all_dl_ports_stations_df.groupby(['Time epoch'])[['Rx-Bps', 'Tx-Bps', 'Rx-Latency', 'Rx-Jitter',
+                                                                                             'Ul-Rx-Goodput-bps', 'Ul-Rx-Rate-ll', 'Ul-Rx-Pkts-ll',
+                                                                                             'Dl-Rx-Goodput-bps', 'Dl-Rx-Rate-ll', 'Dl-Rx-Pkts-ll']].sum()
+            all_ul_ports_stations_sum_file_name = self.outfile[:-4]
+            all_ul_port_stations_sum_file_name = all_ul_ports_stations_sum_file_name + \
+                "-ul-all-eids-sum-per-interval.csv"
+
+            # add some calculations, will need some selectable graphs
+            if all_ul_ports_stations_sum_df.empty:
+                logger.warning(
+                    "The ul (upload) has no data check the AP connection or configuration")
+                warnings += 1
+            else:
+                all_ul_ports_stations_sum_df['Rx-Bps-Diff'] = all_ul_ports_stations_sum_df['Rx-Bps'].diff(
+                )
+                all_ul_ports_stations_sum_df['Tx-Bps-Diff'] = all_ul_ports_stations_sum_df['Tx-Bps'].diff(
+                )
+                all_ul_ports_stations_sum_df['Rx-Latency-Diff'] = all_ul_ports_stations_sum_df['Rx-Latency'].diff(
+                )
+                all_ul_ports_stations_sum_df['Rx-Jitter-Diff'] = all_ul_ports_stations_sum_df['Rx-Jitter'].diff(
+                )
+                all_ul_ports_stations_sum_df['Ul-Rx-Goodput-bps-Diff'] = all_ul_ports_stations_sum_df['Ul-Rx-Goodput-bps'].diff(
+                )
+                all_ul_ports_stations_sum_df['Ul-Rx-Rate-ll-Diff'] = all_ul_ports_stations_sum_df['Ul-Rx-Rate-ll'].diff(
+                )
+                all_ul_ports_stations_sum_df['Ul-Rx-Pkts-ll-Diff'] = all_ul_ports_stations_sum_df['Ul-Rx-Pkts-ll'].diff(
+                )
+                all_ul_ports_stations_sum_df['Dl-Rx-Goodput-bps-Diff'] = all_ul_ports_stations_sum_df['Dl-Rx-Goodput-bps'].diff(
+                )
+                all_ul_ports_stations_sum_df['Dl-Rx-Rate-ll-Diff'] = all_ul_ports_stations_sum_df['Dl-Rx-Rate-ll'].diff(
+                )
+                all_ul_ports_stations_sum_df['Dl-Rx-Pkts-ll-Diff'] = all_ul_ports_stations_sum_df['Dl-Rx-Pkts-ll'].diff(
+                )
+
+            # write out the data
+            all_ul_ports_stations_sum_df.to_csv(
+                all_ul_port_stations_sum_file_name)
+
+            # if there are multiple loops then delete the df
+            del all_ul_ports_df
+
+        # At end of test step, record KPI into kpi.csv
+        self.record_kpi_csv(
+            len(self.station_names_list),
+            ul,
+            dl,
+            ul_pdu_str,
+            dl_pdu_str,
+            atten_val,
+            total_dl_bps,
+            total_ul_bps,
+            total_dl_ll_bps,
+            total_ul_ll_bps)
+
+        # At end of test step, record results information. This is
+        self.record_results_total(
+            len(self.station_names_list),
+            ul,
+            dl,
+            ul_pdu_str,
+            dl_pdu_str,
+            atten_val,
+            total_dl_bps,
+            total_ul_bps,
+            total_dl_ll_bps,
+            total_ul_ll_bps)
+
+        # At end of test if requested store upload and download
+        # stats  TODO add for AP
+        # there is a specifi stop() method
+        # Stop connections.
+        # There is a specific stop
+        # self.cx_profile.stop_cx()
+        # self.multicast_profile.stop_mc()
+        # TODO the passes and expected_passes are not checking anything
+        if warnings > 0:
+            self._fail(" Total warnings:  {warnings}.   Check logs for warnings,  check AP connection ".format(
+                warnings=str(warnings)))
+
+        if passes == expected_passes:
+            # Sets the pass indication
+            self._pass(
+                "PASS: Requested-Rate: %s <-> %s  PDU: %s <-> %s   All tests passed" %
+                (ul, dl, ul_pdu, dl_pdu), print_pass)
+
     def start(self, print_pass=False, coordinate=None, rotation=None) -> int:
         """Run configured Layer-3 variable time test.
 
@@ -2618,518 +2916,375 @@ class L3VariableTime(Realm):
                     logger.info("Starting layer-3 traffic (if any configured)")
                     self.cx_profile.start_cx()
                     self.cx_profile.refresh_cx()
-
-                    cur_time = datetime.datetime.now()
-                    logger.info("Getting initial values.")
-                    self.__get_rx_values()
-
-                    end_time = self.parse_time(self.test_duration) + cur_time
-                    start_time = cur_time
-                    logger.info(
-                        "Monitoring throughput for duration: %s" %
-                        self.test_duration)
-
-                    # Monitor test for the interval duration.
                     passes = 0
                     expected_passes = 0
-                    warnings = 0
-                    total_dl_bps = 0
-                    total_ul_bps = 0
-                    total_dl_ll_bps = 0
-                    total_ul_ll_bps = 0
-                    reset_timer = 0
+                    logger.info("Getting initial values.")
+                    self.__get_rx_values()
                     self.overall = []
-                    individual_device_data = {}
-                    # Monitor loop
-                    while cur_time < end_time:
-                        # interval_time = cur_time + datetime.timedelta(seconds=5)
-                        interval_time = cur_time + \
-                            datetime.timedelta(
-                                seconds=self.polling_interval_seconds)
-                        # logger.info("polling_interval_seconds {}".format(self.polling_interval_seconds))
-
-                        # Gather interop data
-
-                        # Holds off for the interval and allows for port reset
-                        while cur_time < interval_time:
-                            cur_time = datetime.datetime.now()
-                            time.sleep(.2)
-                            reset_timer += 1
-                            if reset_timer % 5 == 0:
-                                self.reset_port_check()
-
-                        self.epoch_time = int(time.time())
-                        endp_rx_map, endp_rx_drop_map, endps, total_dl_bps, total_ul_bps, total_dl_ll_bps, total_ul_ll_bps = self.__get_rx_values()
-
-                        log_msg = "main loop, total-dl: {total_dl_bps} total-ul: {total_ul_bps} total-dl-ll: {total_dl_ll_bps}".format(
-                            total_dl_bps=total_dl_bps, total_ul_bps=total_ul_bps, total_dl_ll_bps=total_dl_ll_bps)
-                        # Added logic creating a csv file for webGUI to get runtime data
-                        if self.dowebgui:
-                            # Fetch L3 endpoint and port data for the given ToS
-                            real_client_endpoint_data = self.l3_endp_port_data(self.tos[0])
-                            l3_port_data = real_client_endpoint_data[self.tos[0]]
-                            # Initialize empty DataFrames for each device (based on resource alias)
-                            for name in l3_port_data['resource_alias_A']:
-                                # Extract device/resource ID from alias
-                                r_id = name.split('_')[0]
-                                if r_id not in individual_device_data:
-                                    # Create a DataFrame with columns for download rate, upload rate, and RSSI
-                                    columns = ['download_rate_A', 'upload_rate_A', 'RSSI']
-                                    individual_device_data[r_id] = pd.DataFrame(columns=columns)
-
-                            # Calculate average RSSI
-                            rssi_values = []
-
-                            for i in range(len(l3_port_data['resource_alias_A'])):
-                                port_signal = l3_port_data['port_signal_A'][i]
-
-                                row_data = [l3_port_data['dl_A'][i], l3_port_data['ul_A'][i], port_signal]
-                                r_id = l3_port_data['resource_alias_A'][i].split('_')[0]
-                                # Append new row to the device-specific DataFrame
-                                individual_device_data[r_id].loc[len(individual_device_data[r_id])] = row_data
-                                # for each resource individual csv will be created here
-                                individual_device_data[r_id].to_csv(f'{self.result_dir}/individual_device_data_{r_id}.csv', index=False)
-                                # Collect RSSI for average calculation
-                                try:
-                                    rssi_val = float(port_signal)
-                                    rssi_values.append(rssi_val)
-                                except (ValueError, TypeError):
-                                    continue
-
-                            time_difference = abs(end_time - datetime.datetime.now())
-                            total_hours = time_difference.total_seconds() / 3600
-                            remaining_minutes = (total_hours % 1) * 60
-                            remaining_time = [
-                                str(int(total_hours)) + " hr and " + str(int(remaining_minutes)) + " min" if int(
-                                    total_hours) != 0 or int(remaining_minutes) != 0 else '<1 min'][0]
-                            total = 0
-                            for k, v in endp_rx_map.items():
-                                if 'MLT-' in k:
-                                    total += v
-
-                            if rssi_values:
-                                avg_rssi = sum(rssi_values) / len(rssi_values)
-                            else:
-                                avg_rssi = 0
-
-                            self.overall.append(
-                                {
-                                    self.tos[0]: total,
-                                    "timestamp": self.get_time_stamp_local(),
-                                    "status": "Running",
-                                    "start_time": start_time.strftime('%Y-%m-%d-%H-%M-%S'),
-                                    "end_time": end_time.strftime('%Y-%m-%d-%H-%M-%S'),
-                                    "remaining_time": remaining_time,
-                                    "RSSI": avg_rssi
-                                })
-
-                            df1 = pd.DataFrame(self.overall)
-                            if coordinate is not None:
-                                df1['coordinate'] = coordinate
-                                if rotation is not None:
-                                    df1['rotation'] = rotation
-                                else:
-                                    rotation = None
-                                df1.to_csv('{}/overall_multicast_throughput_coord_{}_rot_{}.csv'.format(
-                                    self.result_dir, coordinate, rotation), index=False)
-                            else:
-                                df1.to_csv('{}/overall_multicast_throughput.csv'.format(self.result_dir), index=False)
-                            running_file = f"{self.result_dir}/../../Running_instances/{self.ip}_{self.test_name}_running.json"
-                            try:
-                                with open(running_file, "r") as file:
-                                    data = json.load(file)
-                                    # If file exists but test is stopped
-                                    if data.get("status") != "Running":
-                                        logging.warning("Test is stopped by the user")
-                                        self.test_stopped_user = True
-                                        self.overall[-1]["end_time"] = self.get_time_stamp_local()
-                                        break
-
-                            except FileNotFoundError:
-                                logging.warning(f"Running instance file not found: {running_file}")
-                                self.overall[-1]["end_time"] = self.get_time_stamp_local()
-                                break
-
-                            except json.JSONDecodeError:
-                                logging.warning(f"Running instance file corrupted or empty: {running_file}")
-                                self.overall[-1]["end_time"] = self.get_time_stamp_local()
-                                break
-
-                            except Exception as e:
-                                logging.error(f"Unexpected error reading running.json: {e}")
-                                self.overall[-1]["end_time"] = self.get_time_stamp_local()
-                                break
-
-                        if not self.dowebgui:
-                            logger.debug(log_msg)
-
-                        # AP OUTPUT
-                        # call to AP to return values
-                        # Query all of our ports
-                        # Note: the endp eid is the
-                        # shelf.resource.port.endp-id
-                        if self.ap_read:
-                            for band in self.ap_band_list:
-                                # request the data to be read
-                                self.ap.read_tx_dl_stats(band)
-                                self.ap.read_rx_ul_stats(band)
-                                self.ap.read_chanim_stats(band)
-
-                            # Query all of ports
-                            # Note: the endp eid is : shelf.resource.port.endp-id
-                            port_eids = self.gather_port_eids()
-
-                            for port_eid in port_eids:
-                                eid = self.name_to_eid(port_eid)
-                                url = "/port/%s/%s/%s" % (eid[0],
-                                                          eid[1], eid[2])
-
-                                # read LANforge to get the mac
-                                response = self.json_get(url)
-                                if (response is None) or ("interface" not in response):
-                                    logger.info(
-                                        "query-port: %s: incomplete response:" % url)
-                                    logger.info(pformat(response))
-                                else:
-                                    if not self.dowebgui:
-                                        # print("response".format(response))
-                                        logger.info(pformat(response))
-                                    port_data = response['interface']
-                                    logger.info(
-                                        "From LANforge: port_data, response['insterface']:{}".format(port_data))
-                                    mac = port_data['mac']
-                                    if not self.dowebgui:
-                                        logger.info(
-                                            "From LANforge: port_data, response['insterface']:{}".format(port_data))
-                                    mac = port_data['mac']
-                                    logger.debug("mac : {mac}".format(mac=mac))
-
-                                    # search for data fro the port mac
-                                    tx_dl_mac_found, ap_row_tx_dl = self.ap.tx_dl_stats(
-                                        mac)
-                                    rx_ul_mac_found, ap_row_rx_ul = self.ap.rx_ul_stats(
-                                        mac)
-                                    xtop_reported, ap_row_chanim = self.ap.chanim_stats(
-                                        mac)
-
-                                    self.get_endp_stats_for_port(
-                                        port_data["port"], endps)
-
-                                if tx_dl_mac_found:
-                                    if not self.dowebgui:
-                                        logger.info("mac {mac} ap_row_tx_dl {ap_row_tx_dl}".format(
-                                            mac=mac, ap_row_tx_dl=ap_row_tx_dl))
-                                    # Find latency, jitter for connections
-                                    # using this port.
-                                    (latency, jitter, total_dl_rate, total_dl_rate_ll, total_dl_pkts_ll,
-                                     dl_rx_drop_percent, total_ul_rate, total_ul_rate_ll,
-                                     total_ul_pkts_ll, ul_rx_drop_percent) = self.get_endp_stats_for_port(
-                                        port_data["port"], endps)
-
-                                    ap_row_tx_dl.append(ap_row_chanim)
-
-                                    self.write_dl_port_csv(
-                                        len(self.station_names_list),
-                                        ul,
-                                        dl,
-                                        ul_pdu_str,
-                                        dl_pdu_str,
-                                        atten_val,
-                                        port_eid,
-                                        port_data,
-                                        latency,
-                                        jitter,
-                                        total_ul_rate,
-                                        total_ul_rate_ll,
-                                        total_ul_pkts_ll,
-                                        ul_rx_drop_percent,
-                                        total_dl_rate,
-                                        total_dl_rate_ll,
-                                        total_dl_pkts_ll,
-                                        dl_rx_drop_percent,
-                                        ap_row_tx_dl)  # this is where the AP data is added
-
-                                    # now report the ap_chanim_stats
-
-                                if rx_ul_mac_found:
-                                    # Find latency, jitter for connections
-                                    # using this port.
-                                    # latency, jitter, total_dl_rate, total_dl_rate_ll, total_dl_pkts_ll, dl_rx_drop_percent, total_ul_rate,
-                                    # total_ul_rate_ll, total_ul_pkts_ll, ul_tx_drop_percent = self.get_endp_stats_for_port(
-                                    #    port_data["port"], endps)
-                                    self.write_ul_port_csv(
-                                        len(self.station_names_list),
-                                        ul,
-                                        dl,
-                                        ul_pdu_str,
-                                        dl_pdu_str,
-                                        atten_val,
-                                        port_eid,
-                                        port_data,
-                                        latency,
-                                        jitter,
-                                        total_ul_rate,
-                                        total_ul_rate_ll,
-                                        total_ul_pkts_ll,
-                                        ul_rx_drop_percent,
-                                        total_dl_rate,
-                                        total_dl_rate_ll,
-                                        total_dl_pkts_ll,
-                                        dl_rx_drop_percent,
-                                        ap_row_rx_ul)  # ap_ul_row added
-                                if not self.dowebgui:
-                                    logger.info("ap_row_rx_ul {ap_row_rx_ul}".format(
-                                        ap_row_rx_ul=ap_row_rx_ul))
-
-                        ####################################
-                        else:
-                            # NOT Reading the AP
-                            port_eids = self.gather_port_eids()
-                            if self.use_existing_station_lists:
-                                port_eids.extend(
-                                    self.existing_station_lists.copy())
-                                # for existing_station in self.existing_station_lists:
-                                #    port_eids.append(self.existing_station)
-                            for port_eid in port_eids:
-                                eid = self.name_to_eid(port_eid)
-                                url = "/port/%s/%s/%s" % (eid[0],
-                                                          eid[1], eid[2])
-                                response = self.json_get(url)
-                                if (response is None) or (
-                                        "interface" not in response):
-                                    logger.info(
-                                        "query-port: %s: incomplete response:" % url)
-                                    logger.debug(pformat(response))
-                                else:
-                                    port_data = response['interface']
-                                    (latency, jitter, total_dl_rate, total_dl_rate_ll,
-                                     total_dl_pkts_ll, dl_rx_drop_percent, total_ul_rate,
-                                     total_ul_rate_ll, total_ul_pkts_ll, ul_rx_drop_percent) = self.get_endp_stats_for_port(
-                                        port_data["port"], endps)
-                                    self.write_dl_port_csv(
-                                        len(self.station_names_list),
-                                        ul,
-                                        dl,
-                                        ul_pdu_str,
-                                        dl_pdu_str,
-                                        atten_val,
-                                        port_eid,
-                                        port_data,
-                                        latency,
-                                        jitter,
-                                        total_ul_rate,
-                                        total_ul_rate_ll,
-                                        total_ul_pkts_ll,
-                                        ul_rx_drop_percent,
-                                        total_dl_rate,
-                                        total_dl_rate_ll,
-                                        total_dl_pkts_ll,
-                                        dl_rx_drop_percent)
-
-                            # TODO add collect layer 3 data
-
-                    # Write out download totals for each station
-                    # port_eids= self.gather_port_eids()
-                    # for port_eid in port_eids
-                    # Collecting Totals of all stations for all intervals for each collection period
-                    # TODO make all port csv files into one concatinated csv files
-                    # Create empty dataframe
-                    all_dl_ports_df = pd.DataFrame()
-                    port_eids = self.gather_port_eids()
-                    # if self.use_existing_station_lists:
-                    #    port_eids.extend(self.existing_station_lists.copy())
-
-                    for port_eid in port_eids:
-                        logger.debug("port files: {port_file}".format(
-                            port_file=self.dl_port_csv_files[port_eid]))
-                        name = self.dl_port_csv_files[port_eid].name
-                        logger.debug("name : {name}".format(name=name))
-                        df_dl_tmp = pd.read_csv(name)
-                        all_dl_ports_df = pd.concat(
-                            [all_dl_ports_df, df_dl_tmp], axis=0)
-
-                    all_dl_ports_file_name = self.outfile[:-4]
-                    all_dl_port_file_name = all_dl_ports_file_name + "-dl-all-eids.csv"
-                    all_dl_ports_df.to_csv(all_dl_port_file_name)
-
-                    # process "-dl-all-eids.csv to have per iteration loops deltas"
-                    all_dl_ports_df.to_csv(all_dl_port_file_name)
-
-                    # copy the above pandas dataframe (all_dl_ports_df)
-                    all_dl_ports_stations_df = all_dl_ports_df.copy(deep=True)
-                    # drop rows that have eth
-                    all_dl_ports_stations_df = all_dl_ports_stations_df[~all_dl_ports_stations_df['Name'].str.contains(
-                        'eth')]
-                    # logger.info(pformat(all_dl_ports_stations_df))
-
-                    # save to csv file
-                    all_dl_ports_stations_file_name = self.outfile[:-4]
-                    all_dl_port_stations_file_name = all_dl_ports_stations_file_name + \
-                        "-dl-all-eids-stations.csv"
-                    all_dl_ports_stations_df.to_csv(
-                        all_dl_port_stations_file_name)
-
-                    # we should be able to add the values for each eid
-                    # FutureWarning: Indexing with multiple keys need to make single [] to double [[]]
-                    # https://stackoverflow.com/questions/60999753/pandas-future-warning-indexing-with-multiple-keys
-                    all_dl_ports_stations_sum_df = all_dl_ports_stations_df.groupby(['Time epoch'])[['Rx-Bps', 'Tx-Bps', 'Rx-Latency', 'Rx-Jitter',
-                                                                                                     'Ul-Rx-Goodput-bps', 'Ul-Rx-Rate-ll', 'Ul-Rx-Pkts-ll',
-                                                                                                     'Dl-Rx-Goodput-bps', 'Dl-Rx-Rate-ll', 'Dl-Rx-Pkts-ll']].sum()
-                    all_dl_ports_stations_sum_file_name = self.outfile[:-4]
-                    all_dl_port_stations_sum_file_name = all_dl_ports_stations_sum_file_name + \
-                        "-dl-all-eids-sum-per-interval.csv"
-
-                    # add some calculations, will need some selectable graphs
-                    logger.info("all_dl_ports_stations_sum_df : {df}".format(
-                        df=all_dl_ports_stations_sum_df))
-
-                    if all_dl_ports_stations_sum_df.empty:
-                        logger.warning(
-                            "The dl (download) has no data check the AP connection or configuration")
-                        warnings += 1
-
-                    else:
-                        all_dl_ports_stations_sum_df['Rx-Bps-Diff'] = all_dl_ports_stations_sum_df['Rx-Bps'].diff()
-                        all_dl_ports_stations_sum_df['Tx-Bps-Diff'] = all_dl_ports_stations_sum_df['Tx-Bps'].diff()
-                        all_dl_ports_stations_sum_df['Rx-Latency-Diff'] = all_dl_ports_stations_sum_df['Rx-Latency'].diff()
-                        all_dl_ports_stations_sum_df['Rx-Jitter-Diff'] = all_dl_ports_stations_sum_df['Rx-Jitter'].diff()
-                        all_dl_ports_stations_sum_df['Ul-Rx-Goodput-bps-Diff'] = all_dl_ports_stations_sum_df['Ul-Rx-Goodput-bps'].diff()
-                        all_dl_ports_stations_sum_df['Ul-Rx-Rate-ll-Diff'] = all_dl_ports_stations_sum_df['Ul-Rx-Rate-ll'].diff()
-                        all_dl_ports_stations_sum_df['Ul-Rx-Pkts-ll-Diff'] = all_dl_ports_stations_sum_df['Ul-Rx-Pkts-ll'].diff()
-                        all_dl_ports_stations_sum_df['Dl-Rx-Goodput-bps-Diff'] = all_dl_ports_stations_sum_df['Dl-Rx-Goodput-bps'].diff()
-                        all_dl_ports_stations_sum_df['Dl-Rx-Rate-ll-Diff'] = all_dl_ports_stations_sum_df['Dl-Rx-Rate-ll'].diff()
-                        all_dl_ports_stations_sum_df['Dl-Rx-Pkts-ll-Diff'] = all_dl_ports_stations_sum_df['Dl-Rx-Pkts-ll'].diff()
-
-                    # write out the data
-                    all_dl_ports_stations_sum_df.to_csv(
-                        all_dl_port_stations_sum_file_name)
-
-                    # if there are multiple loops then delete the df
-                    del all_dl_ports_df
-
-                    if self.ap_read:
-                        # Consolidate all the ul ports into one file
-                        # Create empty dataframe
-                        all_ul_ports_df = pd.DataFrame()
-                        port_eids = self.gather_port_eids()
-
-                        for port_eid in port_eids:
-                            logger.debug("ul port files: {port_file}".format(
-                                port_file=self.ul_port_csv_files[port_eid]))
-                            name = self.ul_port_csv_files[port_eid].name
-                            logger.debug("name : {name}".format(name=name))
-                            df_ul_tmp = pd.read_csv(name)
-                            all_ul_ports_df = pd.concat(
-                                [all_ul_ports_df, df_ul_tmp], axis=0)
-
-                        all_ul_ports_file_name = self.outfile[:-4]
-                        all_ul_port_file_name = all_ul_ports_file_name + "-ul-all-eids.csv"
-                        all_ul_ports_df.to_csv(all_ul_port_file_name)
-
-                        # copy over all_ul_ports_df so as create a dataframe summ of the data for each iteration
-                        all_ul_ports_stations_df = all_ul_ports_df.copy(
-                            deep=True)
-                        # drop rows that have eth
-                        all_ul_ports_stations_df = all_ul_ports_stations_df[~all_ul_ports_stations_df['Name'].str.contains(
-                            'eth')]
-                        logger.info(pformat(all_ul_ports_stations_df))
-
-                        # save to csv
-                        all_ul_ports_stations_file_name = self.outfile[:-4]
-                        all_ul_ports_stations_file_name = all_ul_ports_stations_file_name + \
-                            "-ul-all-eids-stations.csv"
-                        all_ul_ports_stations_df.to_csv(
-                            all_ul_ports_stations_file_name)
-
-                        # we add all the values based on the epoch time
-                        # FutureWarning: Indexing with multiple keys need to make single [] to double [[]]
-                        # https://stackoverflow.com/questions/60999753/pandas-future-warning-indexing-with-multiple-keys
-                        all_ul_ports_stations_sum_df = all_dl_ports_stations_df.groupby(['Time epoch'])[['Rx-Bps', 'Tx-Bps', 'Rx-Latency', 'Rx-Jitter',
-                                                                                                         'Ul-Rx-Goodput-bps', 'Ul-Rx-Rate-ll', 'Ul-Rx-Pkts-ll',
-                                                                                                         'Dl-Rx-Goodput-bps', 'Dl-Rx-Rate-ll', 'Dl-Rx-Pkts-ll']].sum()
-                        all_ul_ports_stations_sum_file_name = self.outfile[:-4]
-                        all_ul_port_stations_sum_file_name = all_ul_ports_stations_sum_file_name + \
-                            "-ul-all-eids-sum-per-interval.csv"
-
-                        # add some calculations, will need some selectable graphs
-                        if all_ul_ports_stations_sum_df.empty:
-                            logger.warning(
-                                "The ul (upload) has no data check the AP connection or configuration")
-                            warnings += 1
-                        else:
-                            all_ul_ports_stations_sum_df['Rx-Bps-Diff'] = all_ul_ports_stations_sum_df['Rx-Bps'].diff(
-                            )
-                            all_ul_ports_stations_sum_df['Tx-Bps-Diff'] = all_ul_ports_stations_sum_df['Tx-Bps'].diff(
-                            )
-                            all_ul_ports_stations_sum_df['Rx-Latency-Diff'] = all_ul_ports_stations_sum_df['Rx-Latency'].diff(
-                            )
-                            all_ul_ports_stations_sum_df['Rx-Jitter-Diff'] = all_ul_ports_stations_sum_df['Rx-Jitter'].diff(
-                            )
-                            all_ul_ports_stations_sum_df['Ul-Rx-Goodput-bps-Diff'] = all_ul_ports_stations_sum_df['Ul-Rx-Goodput-bps'].diff(
-                            )
-                            all_ul_ports_stations_sum_df['Ul-Rx-Rate-ll-Diff'] = all_ul_ports_stations_sum_df['Ul-Rx-Rate-ll'].diff(
-                            )
-                            all_ul_ports_stations_sum_df['Ul-Rx-Pkts-ll-Diff'] = all_ul_ports_stations_sum_df['Ul-Rx-Pkts-ll'].diff(
-                            )
-                            all_ul_ports_stations_sum_df['Dl-Rx-Goodput-bps-Diff'] = all_ul_ports_stations_sum_df['Dl-Rx-Goodput-bps'].diff(
-                            )
-                            all_ul_ports_stations_sum_df['Dl-Rx-Rate-ll-Diff'] = all_ul_ports_stations_sum_df['Dl-Rx-Rate-ll'].diff(
-                            )
-                            all_ul_ports_stations_sum_df['Dl-Rx-Pkts-ll-Diff'] = all_ul_ports_stations_sum_df['Dl-Rx-Pkts-ll'].diff(
-                            )
-
-                        # write out the data
-                        all_ul_ports_stations_sum_df.to_csv(
-                            all_ul_port_stations_sum_file_name)
-
-                        # if there are multiple loops then delete the df
-                        del all_ul_ports_df
-
-                    # At end of test step, record KPI into kpi.csv
-                    self.record_kpi_csv(
-                        len(self.station_names_list),
-                        ul,
-                        dl,
-                        ul_pdu_str,
-                        dl_pdu_str,
-                        atten_val,
-                        total_dl_bps,
-                        total_ul_bps,
-                        total_dl_ll_bps,
-                        total_ul_ll_bps)
-
-                    # At end of test step, record results information. This is
-                    self.record_results_total(
-                        len(self.station_names_list),
-                        ul,
-                        dl,
-                        ul_pdu_str,
-                        dl_pdu_str,
-                        atten_val,
-                        total_dl_bps,
-                        total_ul_bps,
-                        total_dl_ll_bps,
-                        total_ul_ll_bps)
-
-                    # At end of test if requested store upload and download
-                    # stats  TODO add for AP
-                    # there is a specifi stop() method
-                    # Stop connections.
-                    # There is a specific stop
-                    # self.cx_profile.stop_cx()
-                    # self.multicast_profile.stop_mc()
-                    # TODO the passes and expected_passes are not checking anything
-                    if warnings > 0:
-                        self._fail(" Total warnings:  {warnings}.   Check logs for warnings,  check AP connection ".format(
-                            warnings=str(warnings)))
-
-                    if passes == expected_passes:
-                        # Sets the pass indication
-                        self._pass(
-                            "PASS: Requested-Rate: %s <-> %s  PDU: %s <-> %s   All tests passed" %
-                            (ul, dl, ul_pdu, dl_pdu), print_pass)
+                    # monitor stats
+                    if self.do_bandsteering:
+                        return ul, dl, ul_pdu_str, dl_pdu_str, atten_val, ul_pdu, dl_pdu, passes, expected_passes, coordinate, rotation
+                    total_dl_bps, total_ul_bps, total_dl_ll_bps, total_ul_ll_bps = self.monitor(ul, dl, ul_pdu_str, dl_pdu_str, atten_val, coordinate, rotation)
+                    self.process_port_interval_statistics(total_dl_bps, total_ul_bps, total_dl_ll_bps, total_ul_ll_bps, ul, dl,
+                                                          ul_pdu_str, dl_pdu_str, ul_pdu, dl_pdu, atten_val, passes, expected_passes)
 
         return 0
+
+    def monitor(self, ul, dl, ul_pdu_str, dl_pdu_str, atten_val, coordinate, rotation):
+        """
+        Monitor network performance metrics during test execution.
+
+        This method continuously collects throughput, latency, jitter, and device-level
+        statistics over a specified test duration. It operates in a polling loop,
+        periodically gathering data from endpoints and optionally from the Access Point (AP),
+        while also supporting real-time reporting for a web GUI.
+
+        Args:
+            ul (str/int): Configured uplink rate.
+            dl (str/int): Configured downlink rate.
+            ul_pdu_str (str): Uplink PDU size (string format).
+            dl_pdu_str (str): Downlink PDU size (string format).
+            atten_val (float): Attenuation value applied during the test.
+            coordinate (tuple/list): Current robot coordinate (if applicable).
+            rotation (float/int): Current robot rotation (if applicable).
+
+        Returns:
+            dict or tuple:
+                - If band steering is enabled (`self.do_bandsteering`):
+                    Returns a dictionary containing total DL/UL and low-latency throughput.
+                - Otherwise:
+                    Returns a tuple:
+                    (total_dl_bps, total_ul_bps, total_dl_ll_bps, total_ul_ll_bps)
+
+        """
+        cur_time = datetime.datetime.now()
+
+        end_time = self.parse_time(self.test_duration) + cur_time
+        start_time = cur_time
+        logger.info(
+            "Monitoring throughput for duration: %s" %
+            self.test_duration)
+
+        # passes = 0
+        # expected_passes = 0
+        # warnings = 0
+
+        total_dl_bps = self.total_dl_bps if self.total_dl_bps is not None else 0
+        total_ul_bps = self.total_ul_bps if self.total_ul_bps is not None else 0
+        total_dl_ll_bps = self.total_dl_ll_bps if self.total_dl_ll_bps is not None else 0
+        total_ul_ll_bps = self.total_ul_ll_bps if self.total_ul_ll_bps is not None else 0
+        reset_timer = 0
+        # individual_device_data = {}
+        # Monitor loop
+        bandsteering_data = None
+        while cur_time < end_time:
+            # interval_time = cur_time + datetime.timedelta(seconds=5)
+            interval_time = cur_time + \
+                datetime.timedelta(
+                    seconds=self.polling_interval_seconds)
+            # logger.info("polling_interval_seconds {}".format(self.polling_interval_seconds))
+
+            # Gather interop data
+
+            # Holds off for the interval and allows for port reset
+            while cur_time < interval_time:
+                cur_time = datetime.datetime.now()
+                time.sleep(.2)
+                reset_timer += 1
+                if reset_timer % 5 == 0:
+                    self.reset_port_check()
+
+            self.epoch_time = int(time.time())
+            endp_rx_map, endp_rx_drop_map, endps, total_dl_bps, total_ul_bps, total_dl_ll_bps, total_ul_ll_bps = self.__get_rx_values()
+
+            log_msg = "main loop, total-dl: {total_dl_bps} total-ul: {total_ul_bps} total-dl-ll: {total_dl_ll_bps}".format(
+                total_dl_bps=total_dl_bps, total_ul_bps=total_ul_bps, total_dl_ll_bps=total_dl_ll_bps)
+            # Added logic creating a csv file for webGUI to get runtime data
+            if self.dowebgui:
+                # Fetch L3 endpoint and port data for the given ToS
+                real_client_endpoint_data = self.l3_endp_port_data(self.tos[0])
+                l3_port_data = real_client_endpoint_data[self.tos[0]]
+                # Initialize empty DataFrames for each device (based on resource alias)
+                for name in l3_port_data['resource_alias_A']:
+                    # Extract device/resource ID from alias
+                    r_id = name.split('_')[0]
+                    if r_id not in self.individual_device_data:
+                        # Create a DataFrame with columns for download rate, upload rate, and RSSI
+                        columns = ['download_rate_A', 'upload_rate_A', 'RSSI']
+                        self.individual_device_data[r_id] = pd.DataFrame(columns=columns)
+
+                # Calculate average RSSI
+                rssi_values = []
+
+                for i in range(len(l3_port_data['resource_alias_A'])):
+                    port_signal = l3_port_data['port_signal_A'][i]
+
+                    row_data = [l3_port_data['dl_A'][i], l3_port_data['ul_A'][i], port_signal]
+                    r_id = l3_port_data['resource_alias_A'][i].split('_')[0]
+                    # Append new row to the device-specific DataFrame
+                    self.individual_device_data[r_id].loc[len(self.individual_device_data[r_id])] = row_data
+                    # for each resource individual csv will be created here
+                    self.individual_device_data[r_id].to_csv(f'{self.result_dir}/individual_device_data_{r_id}.csv', index=False)
+                    # Collect RSSI for average calculation
+                    try:
+                        rssi_val = float(port_signal)
+                        rssi_values.append(rssi_val)
+                    except (ValueError, TypeError):
+                        continue
+
+                time_difference = abs(end_time - datetime.datetime.now())
+                total_hours = time_difference.total_seconds() / 3600
+                remaining_minutes = (total_hours % 1) * 60
+                remaining_time = [
+                    str(int(total_hours)) + " hr and " + str(int(remaining_minutes)) + " min" if int(
+                        total_hours) != 0 or int(remaining_minutes) != 0 else '<1 min'][0]
+                total = 0
+                for k, v in endp_rx_map.items():
+                    if 'MLT-' in k:
+                        total += v
+
+                if rssi_values:
+                    avg_rssi = sum(rssi_values) / len(rssi_values)
+                else:
+                    avg_rssi = 0
+
+                self.overall.append(
+                    {
+                        self.tos[0]: total,
+                        "timestamp": self.get_time_stamp_local(),
+                        "status": "Running",
+                        "start_time": start_time.strftime('%Y-%m-%d-%H-%M-%S'),
+                        "end_time": end_time.strftime('%Y-%m-%d-%H-%M-%S'),
+                        "remaining_time": remaining_time,
+                        "RSSI": avg_rssi
+                    })
+
+                df1 = pd.DataFrame(self.overall)
+                if coordinate is not None and not self.do_bandsteering:
+                    df1['coordinate'] = coordinate
+                    if rotation is not None:
+                        df1['rotation'] = rotation
+                    else:
+                        rotation = None
+                    df1.to_csv('{}/overall_multicast_throughput_coord_{}_rot_{}.csv'.format(
+                        self.result_dir, coordinate, rotation), index=False)
+                else:
+                    df1.to_csv('{}/overall_multicast_throughput.csv'.format(self.result_dir), index=False)
+                running_file = f"{self.result_dir}/../../Running_instances/{self.ip}_{self.test_name}_running.json"
+                try:
+                    with open(running_file, "r") as file:
+                        data = json.load(file)
+                        # If file exists but test is stopped
+                        if data.get("status") != "Running":
+                            logging.warning("Test is stopped by the user")
+                            self.test_stopped_user = True
+                            self.overall[-1]["end_time"] = self.get_time_stamp_local()
+                            break
+
+                except FileNotFoundError:
+                    logging.warning(f"Running instance file not found: {running_file}")
+                    self.overall[-1]["end_time"] = self.get_time_stamp_local()
+                    break
+
+                except json.JSONDecodeError:
+                    logging.warning(f"Running instance file corrupted or empty: {running_file}")
+                    self.overall[-1]["end_time"] = self.get_time_stamp_local()
+                    break
+
+                except Exception as e:
+                    logging.error(f"Unexpected error reading running.json: {e}")
+                    self.overall[-1]["end_time"] = self.get_time_stamp_local()
+                    break
+
+            if not self.dowebgui:
+                logger.debug(log_msg)
+
+            # AP OUTPUT
+            # call to AP to return values
+            # Query all of our ports
+            # Note: the endp eid is the
+            # shelf.resource.port.endp-id
+            if self.ap_read:
+                for band in self.ap_band_list:
+                    # request the data to be read
+                    self.ap.read_tx_dl_stats(band)
+                    self.ap.read_rx_ul_stats(band)
+                    self.ap.read_chanim_stats(band)
+
+                # Query all of ports
+                # Note: the endp eid is : shelf.resource.port.endp-id
+                port_eids = self.gather_port_eids()
+
+                for port_eid in port_eids:
+                    eid = self.name_to_eid(port_eid)
+                    url = "/port/%s/%s/%s" % (eid[0],
+                                              eid[1], eid[2])
+
+                    # read LANforge to get the mac
+                    response = self.json_get(url)
+                    if (response is None) or ("interface" not in response):
+                        logger.info(
+                            "query-port: %s: incomplete response:" % url)
+                        logger.info(pformat(response))
+                    else:
+                        if not self.dowebgui:
+                            # print("response".format(response))
+                            logger.info(pformat(response))
+                        port_data = response['interface']
+                        logger.info(
+                            "From LANforge: port_data, response['insterface']:{}".format(port_data))
+                        mac = port_data['mac']
+                        if not self.dowebgui:
+                            logger.info(
+                                "From LANforge: port_data, response['insterface']:{}".format(port_data))
+                        mac = port_data['mac']
+                        logger.debug("mac : {mac}".format(mac=mac))
+
+                        # search for data fro the port mac
+                        tx_dl_mac_found, ap_row_tx_dl = self.ap.tx_dl_stats(
+                            mac)
+                        rx_ul_mac_found, ap_row_rx_ul = self.ap.rx_ul_stats(
+                            mac)
+                        xtop_reported, ap_row_chanim = self.ap.chanim_stats(
+                            mac)
+
+                        self.get_endp_stats_for_port(
+                            port_data["port"], endps)
+
+                    if tx_dl_mac_found:
+                        if not self.dowebgui:
+                            logger.info("mac {mac} ap_row_tx_dl {ap_row_tx_dl}".format(
+                                mac=mac, ap_row_tx_dl=ap_row_tx_dl))
+                        # Find latency, jitter for connections
+                        # using this port.
+                        (latency, jitter, total_dl_rate, total_dl_rate_ll, total_dl_pkts_ll,
+                            dl_rx_drop_percent, total_ul_rate, total_ul_rate_ll,
+                            total_ul_pkts_ll, ul_rx_drop_percent) = self.get_endp_stats_for_port(
+                            port_data["port"], endps)
+
+                        ap_row_tx_dl.append(ap_row_chanim)
+
+                        if self.do_bandsteering:
+                            robot_x, robot_y, from_coordinate, to_coordinate = self.robot_obj.get_robot_pose()
+                            bandsteering_data = [robot_x, robot_y, from_coordinate, to_coordinate]
+
+                        self.write_dl_port_csv(
+                            len(self.station_names_list),
+                            ul,
+                            dl,
+                            ul_pdu_str,
+                            dl_pdu_str,
+                            atten_val,
+                            port_eid,
+                            port_data,
+                            latency,
+                            jitter,
+                            total_ul_rate,
+                            total_ul_rate_ll,
+                            total_ul_pkts_ll,
+                            ul_rx_drop_percent,
+                            total_dl_rate,
+                            total_dl_rate_ll,
+                            total_dl_pkts_ll,
+                            dl_rx_drop_percent,
+                            ap_row_tx_dl,
+                            bandsteering_data=bandsteering_data)  # this is where the AP data is added
+
+                        # now report the ap_chanim_stats
+
+                    if rx_ul_mac_found:
+                        # Find latency, jitter for connections
+                        # using this port.
+                        # latency, jitter, total_dl_rate, total_dl_rate_ll, total_dl_pkts_ll, dl_rx_drop_percent, total_ul_rate,
+                        # total_ul_rate_ll, total_ul_pkts_ll, ul_tx_drop_percent = self.get_endp_stats_for_port(
+                        #    port_data["port"], endps)
+                        self.write_ul_port_csv(
+                            len(self.station_names_list),
+                            ul,
+                            dl,
+                            ul_pdu_str,
+                            dl_pdu_str,
+                            atten_val,
+                            port_eid,
+                            port_data,
+                            latency,
+                            jitter,
+                            total_ul_rate,
+                            total_ul_rate_ll,
+                            total_ul_pkts_ll,
+                            ul_rx_drop_percent,
+                            total_dl_rate,
+                            total_dl_rate_ll,
+                            total_dl_pkts_ll,
+                            dl_rx_drop_percent,
+                            ap_row_rx_ul)  # ap_ul_row added
+                    if not self.dowebgui:
+                        logger.info("ap_row_rx_ul {ap_row_rx_ul}".format(
+                            ap_row_rx_ul=ap_row_rx_ul))
+
+            ####################################
+            else:
+                # NOT Reading the AP
+                port_eids = self.gather_port_eids()
+                if self.use_existing_station_lists:
+                    port_eids.extend(
+                        self.existing_station_lists.copy())
+                    # for existing_station in self.existing_station_lists:
+                    #    port_eids.append(self.existing_station)
+                for port_eid in port_eids:
+                    eid = self.name_to_eid(port_eid)
+                    url = "/port/%s/%s/%s" % (eid[0],
+                                              eid[1], eid[2])
+                    response = self.json_get(url)
+                    if (response is None) or (
+                            "interface" not in response):
+                        logger.info(
+                            "query-port: %s: incomplete response:" % url)
+                        logger.debug(pformat(response))
+                    else:
+                        port_data = response['interface']
+                        (latency, jitter, total_dl_rate, total_dl_rate_ll,
+                            total_dl_pkts_ll, dl_rx_drop_percent, total_ul_rate,
+                            total_ul_rate_ll, total_ul_pkts_ll, ul_rx_drop_percent) = self.get_endp_stats_for_port(
+                            port_data["port"], endps)
+
+                        if self.do_bandsteering:
+                            robot_x, robot_y, from_coordinate, to_coordinate = self.robot_obj.get_robot_pose()
+                            bandsteering_data = [robot_x, robot_y, from_coordinate, to_coordinate]
+
+                        self.write_dl_port_csv(
+                            len(self.station_names_list),
+                            ul,
+                            dl,
+                            ul_pdu_str,
+                            dl_pdu_str,
+                            atten_val,
+                            port_eid,
+                            port_data,
+                            latency,
+                            jitter,
+                            total_ul_rate,
+                            total_ul_rate_ll,
+                            total_ul_pkts_ll,
+                            ul_rx_drop_percent,
+                            total_dl_rate,
+                            total_dl_rate_ll,
+                            total_dl_pkts_ll,
+                            dl_rx_drop_percent,
+                            bandsteering_data=bandsteering_data)
+            if self.do_bandsteering:
+                self.total_dl_bps = total_dl_bps
+                self.total_ul_bps = total_ul_bps
+                self.total_dl_ll_bps = total_dl_ll_bps
+                self.total_ul_ll_bps = total_ul_ll_bps
+                data = {
+                    "total_dl_bps": total_dl_bps,
+                    "total_ul_bps": total_ul_bps,
+                    "total_dl_ll_bps": total_dl_ll_bps,
+                    "total_ul_ll_bps": total_ul_ll_bps
+                }
+                return data
+        return total_dl_bps, total_ul_bps, total_dl_ll_bps, total_ul_ll_bps
 
     def write_dl_port_csv(
             self,
@@ -3151,7 +3306,8 @@ class L3VariableTime(Realm):
             total_dl_rate_ll,
             total_dl_pkts_ll,
             dl_rx_drop_percent,
-            ap_row_tx_dl=''):
+            ap_row_tx_dl='',
+            bandsteering_data=None):
         row = [self.epoch_time, self.time_stamp(), sta_count,
                ul, ul, dl, dl, dl_pdu, dl_pdu, ul_pdu, ul_pdu,
                atten, port_eid
@@ -3176,6 +3332,10 @@ class L3VariableTime(Realm):
                      total_dl_rate_ll,
                      total_dl_pkts_ll,
                      dl_rx_drop_percent]
+
+        # Append band steering (robot movement/position) data when enabled
+        if self.do_bandsteering:
+            row.extend(bandsteering_data)
 
         # Add in info queried from AP.
         if self.ap_read:
@@ -6085,6 +6245,16 @@ class L3VariableTime(Realm):
             'Dl-Rx-Pkts-ll',
             'DL-Rx-Drop-Percent']
 
+        # If band steering feature is enabled, include additional fields
+        # related to robot positioning and movement in the CSV headers
+        if self.do_bandsteering:
+            csv_rx_headers.extend([
+                'Robot X',
+                'Robot Y',
+                'From Coordinate',
+                'To Coordinate'
+            ])
+
         # Add in columns we are going to query from the AP
         if self.ap_read:
             self.ap_stats_dl_col_titles = self.ap.get_dl_col_titles()
@@ -6394,6 +6564,138 @@ class L3VariableTime(Realm):
                 self.report.set_custom_html(f'<img src="file://{rssi_image_path}"></img>')
                 self.report.build_custom()
 
+    def get_bandsteering_stats(self):
+        """
+        Analyze band steering statistics from downloaded CSV files and generate reports.
+
+        Args:
+            self:
+                dl_port_csv_files (dict): Dictionary mapping device names to CSV file objects.
+                existing_station_lists (list): List of device names to include for processing.
+                bssids (list): Optional list of BSSIDs to filter results.
+                report (object): Report object used for generating graphs, tables, and HTML output.
+
+        Returns:
+            None
+        """
+        merged_df = None
+        df = None
+        if bool(self.dl_port_csv_files):
+            for key, value in self.dl_port_csv_files.items():
+                if key in self.existing_station_lists:
+                    device_name = key
+                    file_path = value.name
+                    print("fileeepath", file_path)
+                    df = pd.read_csv(file_path)
+                    print(df.columns)
+                    df = df[['Time', 'AP', 'Channel', 'Robot X', 'Robot Y', 'From Coordinate', 'To Coordinate']]
+                    df.rename(columns={
+                        'Time': 'TIMESTAMP',
+                        'AP': f'BSSID {device_name}',
+                        'Channel': f'Channel {device_name}'
+                    }, inplace=True)
+
+                    if merged_df is None:
+                        merged_df = df
+                    else:
+                        # merged_df["From Coordinate"] = df["From Coordinate"]
+                        # merged_df["To Coordinate"] = df["To Coordinate"]
+                        # merged_df["Robot X"] = df["Robot X"]
+                        # merged_df["Robot Y"] = df["Robot Y"]
+                        merged_df = pd.merge(
+                            merged_df,
+                            df,
+                            on=['TIMESTAMP', 'Robot X', 'Robot Y', 'From Coordinate', 'To Coordinate'],
+                            how='outer'
+                        )
+
+        bssid_cols = [c for c in merged_df.columns if c.startswith("BSSID")]
+        channel_cols = [c for c in merged_df.columns if c.startswith("Channel")]
+
+        bssid_to_channel = {
+            bssid_col: next(
+                ch for ch in channel_cols
+                if ch.replace("Channel", "").strip() ==
+                bssid_col.replace("BSSID", "").strip()
+            )
+            for bssid_col in bssid_cols
+        }
+
+        for col in bssid_cols:
+
+            channel_col = bssid_to_channel[col]
+
+            # Detect BSSID changes
+            mask = merged_df[col] != merged_df[col].shift()
+            filtered_df = merged_df.loc[mask]
+            if self.bssids:
+                filtered_df = df.loc[mask & df[col].isin(self.bssids)]
+
+            bssid_list = filtered_df[col].tolist()
+            channel_list = filtered_df[channel_col].tolist()
+            timestamp_list = filtered_df['TIMESTAMP'].tolist()
+            from_coordinate_list = filtered_df['From Coordinate'].tolist()
+            to_coordinate_list = filtered_df['To Coordinate'].tolist()
+            bssid_counts = Counter(bssid_list)
+
+            x_axis = list(bssid_counts.keys())      # BSSID values
+            y_axis = [[float(i)] for i in list(bssid_counts.values())]
+            if len(self.bssids) > 0:
+                x_axis = self.bssids
+                y_axis = [[float(bssid_counts.get(bssid, 0))] for bssid in self.bssids]
+            device_name = col.replace('BSSID ', '')
+            device_name = col.split()[-1]
+            self.report.set_obj_html(
+                _obj_title=f"BSSID change count of the {device_name}",
+                _obj=" ")
+            self.report.build_objective()
+            graph = lf_bar_graph(_data_set=y_axis,
+                                 _xaxis_name="BSSID",
+                                 _yaxis_name="Number of Changes",
+                                 # _xaxis_categories = [", ".join(x_axis)],
+                                 _xaxis_categories=[""],
+                                 _xaxis_label=x_axis,
+                                 _graph_image_name=f"bssid_change_count_{device_name}",
+                                 _label=x_axis,
+                                 _xaxis_step=1,
+                                 _graph_title=f"BSSID change count – {device_name}",
+                                 _title_size=16,
+                                 _color_edge='black',
+                                 _bar_width=0.15,
+                                 _figsize=(18, 6),
+                                 _legend_loc="best",
+                                 _legend_box=(1.0, 1.0),
+                                 _dpi=96,
+                                 _show_bar_value=True,
+                                 _enable_csv=True,
+                                 _color=['orange', 'lightcoral', 'steelblue', 'lightgrey'],
+                                 _color_name=['orange', 'lightcoral', 'steelblue', 'lightgrey'],
+
+                                 )
+
+            graph_png = graph.build_bar_graph()
+            self.report.set_graph_image(graph_png)
+            # need to move the graph image to the results directory
+            self.report.move_graph_image()
+            self.report.set_csv_filename(graph_png)
+            self.report.move_csv_file()
+            self.report.build_graph()
+
+            self.report.set_obj_html(
+                _obj_title=f"Band Steering Results for {device_name}",
+                _obj=" ")
+            self.report.build_objective()
+            table_df = {
+                "Timestamp": timestamp_list,
+                "BSSID": bssid_list,
+                "Channel": channel_list,
+                "From Coordinate": from_coordinate_list,
+                "To Coordinate": to_coordinate_list
+            }
+            table_df = pd.DataFrame(table_df)
+            self.report.set_table_dataframe(table_df)
+            self.report.build_table()
+
     def generate_report(self, config_devices=None, group_device_map=None, iot_summary=None):
         if iot_summary:
             self.report.set_obj_html(
@@ -6651,7 +6953,7 @@ class L3VariableTime(Realm):
                         avg_rx = df_stations["rx_rate_bps"].mean()
                         avg_drop = df_stations["drop_percent"].mean()
                         self.report.set_custom_html(
-                            f"<p style='font-size:12px;'>Average RX Throughput: <b>{avg_rx/1e6:.2f} Mbps</b><br>"
+                            f"<p style='font-size:12px;'>Average RX Throughput: <b>{avg_rx / 1e6:.2f} Mbps</b><br>"
                             f"Average Drop Rate: <b>{avg_drop:.2f}%</b><br>"
                             f"Total Stations: <b>{len(df_stations)}</b></p>"
                         )
@@ -6990,6 +7292,11 @@ class L3VariableTime(Realm):
             # self.report.build_table()
 
             # empty dictionarys evaluate to false , placing tables in output
+            # If running a robot-based test with band steering enabled,
+            # collect additional band steering performance statistics
+            if self.robo_test and self.do_bandsteering:
+                self.get_bandsteering_stats()
+
             if bool(self.dl_port_csv_files):
                 for key, value in self.dl_port_csv_files.items():
                     if self.csv_data_to_report:
@@ -8082,6 +8389,10 @@ wifi_settings==wifi_settings,wifi_mode==0,enable_flags==8021x_radius&&80211r_pms
              --coordinate 21,29
              --robot_ip 192.168.200.179
 
+        # Example : Command Line Interface to run Multicast robo test for bandsteering
+        python3 test_l3.py  --lfmgr 192.168.207.78 --test_duration 1m --polling_interval 1s --upstream_port eth1 --endp_type mc_udp --rates_are_totals --side_b_min_bps=10000000 --test_tag test_l3 --cleanup_cx --tos BE --real
+        --robot_test --coordinate 10,29 --robot_ip 192.168.200.179 --do_bandsteering --cycles 3 --bssids 94:A6:7E:74:26:33,94:A6:7E:74:26:22
+
 SCRIPT_CLASSIFICATION:  Creation & Runs Traffic
 
 SCRIPT_CATEGORIES:  Performance, Functional,  KPI Generation,  Report Generation
@@ -8725,6 +9036,10 @@ INCLUDE_IN_README: False
     test_l3_parser.add_argument('--robot_ip', type=str, help='IP where Robot server is running')
     test_l3_parser.add_argument('--coordinate', type=str, default=None, help="Provide the coordinates to be placed on heatmap")
     test_l3_parser.add_argument('--rotation', type=str, default=None, help="Provide the rotations involved for each coordinate")
+    test_l3_parser.add_argument('--do_bandsteering', help='Enable bandsteering', action='store_true')
+    test_l3_parser.add_argument('--cycles', type=int, default=1, help='No of cycles to perform band steering')
+    test_l3_parser.add_argument('--bssids', type=str, default='', help='hostname for where Robot server is running')
+    test_l3_parser.add_argument("--duration_to_skip", type=int, help='Specify the maximum time in seconds to skip a point if there is an obstacle', default=60)
 
     parser.add_argument('--help_summary',
                         default=None,
@@ -9571,9 +9886,15 @@ and generate a report.
 
     # Run test
     logger.info("Starting test")
+    # Check if this is a robot-based test AND involves multicast traffic types
     if (args.robot_test and any(etype in args.endp_type for etype in ["mc_udp", "mc_udp6"])):
-        logger.info("Multicast robot test detected")
-        ip_var_test.perform_robo()
+        # If band steering is enabled
+        if ip_var_test.do_bandsteering:
+            ip_var_test.perform_bandsteering()
+        else:
+            # Otherwise, run standard multicast robot test
+            logger.info("Multicast robot test detected")
+            ip_var_test.perform_robo()
     else:
         ip_var_test.start(False)
 

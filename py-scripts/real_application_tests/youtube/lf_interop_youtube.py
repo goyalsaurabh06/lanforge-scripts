@@ -6,7 +6,12 @@
 
     EXAMPLE-1:
     Command Line Interface to run YouTube with the specified URL and duration:
-    python3 lf_interop_youtube.py --mgr 192.168.214.219 --url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" --duration 1 --res 1080p --upstream_port 1.1.eth1
+    python3 lf_interop_youtube.py \
+    --mgr 192.168.214.219 \
+    --url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" \
+    --duration 1 \
+    --res 1080p \
+    --upstream_port 1.1.eth1
 
         CASE-1:
         If the given duration is longer than the actual video duration, the video will loop.
@@ -16,13 +21,25 @@
 
     EXAMPLE-2:
     Command Line Interface to run YouTube on multiple devices:
-    python3 lf_interop_youtube.py --mgr 192.168.214.219 --url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" --duration 2 --res 1080p --upstream_port 1.1.eth1 --resources 1.13,1.14...
+    python3 lf_interop_youtube.py \
+    --mgr 192.168.214.219 \
+    --url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" \
+    --duration 2 \
+    --res 1080p \
+    --upstream_port 1.1.eth1 \
+    --resources 1.13,1.14...
 
 
     EXAMPLE-3:
     Command Line Interface to run YouTube without post-cleanup of cross-connections:
-    python3 lf_interop_youtube.py --mgr 192.168.214.219 --url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" --duration 2 --res 1080p
-    --upstream_port 1.1.eth1 --resources 1.13,1.14... --no_post_cleanup
+    python3 lf_interop_youtube.py \
+    --mgr 192.168.214.219 \
+    --url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" \
+    --duration 2 \
+    --res 1080p \
+    --upstream_port 1.1.eth1 \
+    --resources 1.13,1.14... \
+    --no_post_cleanup
 
     EXAMPLE-4:
     Command Line Interface to run YouTube with multiple groups and profiles:
@@ -43,6 +60,42 @@
     Command Line Interface to run the Test along with IOT with device list
     python3 lf_interop_youtube.py --mgr 192.168.207.78 --url https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1 --duration 1
     --test_name Youtube --res 144p --upstream_port 192.168.200.191 --iot_test --iot_testname "youtubeIot" --iot_device_list "switch.smart_plug_1_socket_1"
+
+    Example-8:
+    Command Line Interface to run the new Test at each coordinate with Robo
+
+    python3 lf_interop_youtube.py \
+    --mgr 192.168.214.219 \
+    --upstream_port 1.1.eth1 \
+    --url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" \
+    --duration 1 \
+    --res 1080p \
+    --resources 1.13,1.14 \
+    --do_robo \
+    --robo_ip 192.168.50.10 \
+    --coordinates c1,c2,c3
+
+
+    Example-9:
+    Command Line Interface to run the new Test with Robo and rotating to user specified angles at each coordinate
+
+    python3 py-scripts/real_application_tests/youtube/lf_interop_youtube.py \
+    --mgr 192.168.214.219 \
+    --upstream_port 1.1.eth1 \
+    --url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" \
+    --duration 1 \
+    --res 1080p \
+    --resources 1.13,1.14 \
+    --do_robo \
+    --robo_ip 192.168.50.10 \
+    --coordinates c1,c2,c3 \
+    --rotations 0,90,180,270
+
+    Example-9:
+    Command Line Interface to run the Test with Robo bandsteering
+    python3 lf_interop_youtube.py --mgr 192.168.207.78 --url "https://youtu.be/BHACKCNDMW8?si=mjPduPJ5a7KmCUAS" --duration 1  --upstream_port 192.168.204.90 --res 144p
+    --do_robo --robo_ip 192.168.200.101 --coordinates 3,2,1 --rotations "" --robot_wait_duration 1 --do_bandsteering --cycles 2
+    --bssids 94:A6:7E:74:26:22,94:A6:7E:74:26:31
 
 
 
@@ -68,15 +121,12 @@ import csv
 import asyncio
 import json
 import shutil
-import requests
+import glob
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
 from threading import Thread
 import traceback
 import threading
-import glob
-import pandas as pd
-from collections import Counter
 
 logger = logging.getLogger(__name__)
 log = logging.getLogger('werkzeug')
@@ -111,9 +161,11 @@ lf_report = importlib.import_module("py-scripts.lf_report")
 lf_graph = importlib.import_module("py-scripts.lf_graph")
 from lf_graph import lf_bar_graph,lf_bar_graph_horizontal
 lf_base_interop_profile = importlib.import_module("py-scripts.lf_base_interop_profile")
+robo_base_class = importlib.import_module("py-scripts.lf_base_robo")
 
 # Accessing specific classes
 lf_report = lf_report.lf_report
+lf_bar_graph = lf_graph.lf_bar_graph
 lf_bar_graph_horizontal = lf_graph.lf_bar_graph_horizontal
 RealDevice = lf_base_interop_profile.RealDevice
 
@@ -151,17 +203,7 @@ class Youtube(Realm):
                  config=None,
                  selected_groups=None,
                  selected_profiles=None,
-                 config_obj=None,
-                 robo_ip="127.0.0.1",
-                 coordinates_list = None,
-                 angles_list = None,
-                 do_robo = False,
-                 cycles = None,
-                 bssids = None,
-                 do_bandsteering = False,
-                 current_cord = "",
-                 current_angle = "NA",
-                 rotations_enabled = False,
+                 config_obj=None
 
 
                  ):
@@ -209,19 +251,15 @@ class Youtube(Realm):
         self.devices = base_RealDevice(manager_ip=self.host, selected_bands=[])
         self.device_names = []
         self.resolution = resolution
-        self.do_bandsteering=do_bandsteering
-        self.bssids=bssids or []
         self.ap_name = ap_name
         self.ssid = ssid
         self.security = security
         self.band = band
         self.start_time = None,
         self.est_end_time = None,
-        self.end_time_webgui = []
         self.all_stop = False
         self.keys = []
         self.hostname_os_combination = None
-        self.test_name=test_name
         if self.do_webUI:
             self.base_dir = os.path.abspath(os.path.join(ui_report_dir, "../../"))
             self.test_name = test_name
@@ -240,38 +278,6 @@ class Youtube(Realm):
         self.lanforge_port_list = set()
         self.lanforge_os_type = list()
         self.android = 0
-        self.wifi_interface_list = []
-        self.devices_list = []
-        self.csv_headers = ["Instance Name", "TimeStamp", "Viewport", "DroppedFrames", "TotalFrames", "CurrentRes", "OptimalRes", "BufferHealth", "VideoCodec", "AudioCodec", "ConnectionSpeedKbps", "NetworkActivityKB", "LiveLatency(sec)"]
-        # Add 'Angle' to headers if Robo test is enabled
-
-        # Add 'BSSID' to headers if Bandsteering is enabled
-        if do_robo and not do_bandsteering:
-            self.csv_headers.append("Angle")
-        if do_bandsteering:
-            self.csv_headers.append("BSSID")
-            self.csv_headers.append('Channel')
-            self.csv_headers.append("X")
-            self.csv_headers.append("Y")
-            self.csv_headers.append("From_Coord")
-            self.csv_headers.append("To_Coord")
-        
-        self.do_robo = do_robo
-        if self.do_robo:
-            self.do_bandsteering = do_bandsteering
-            self.robo_ip = robo_ip
-            self.robo_obj = robo_base_class.RobotClass()
-            self.robo_obj.robo_ip = self.robo_ip
-            # self.robo_obj = robo_base_class.RobotClass(robo_ip=self.robo_ip, angle_list=angles_list)
-            self.coordinates_list = coordinates_list
-            self.angles_list = angles_list
-            self.current_cord = current_cord
-            self.current_angle = current_angle
-            self.rotations_enabled = rotations_enabled
-            self.pause = False
-            self.cycles=cycles
-     
-
 
     def stop(self):
         self.stop_signal = True
@@ -340,7 +346,7 @@ class Youtube(Realm):
         - self.real_sta_os_types: Operating system type for each client
         - self.real_sta_hostname: Hostnames for real clients
         - self.generic_endps_profile: Generic endpoint profile object
-        - self.wifi_interface_list: Wifi interface list 
+        - self.new_port_list: Port identifiers for Linux clients
 
         Side Effects:
         - Creates generic endpoints via the profile
@@ -548,6 +554,9 @@ class Youtube(Realm):
             f"{hostname} ({os_type})"
             for hostname, os_type in zip(self.real_sta_hostname, self.real_sta_os_types)
         ]
+        self.hostname_to_station_map = dict(
+            zip(self.real_sta_hostname, self.real_sta_list)
+        )
 
         for i in range(0, len(self.real_sta_os_types)):
 
@@ -603,49 +612,58 @@ class Youtube(Realm):
 
     def get_youtube_lf_wifi_stats(self):
         """
-        Returns dict: { sta_name : { BSSID, RSSI, channel, mode, tx_rate, rx_rate } }
+        Retrieves YouTube streaming statistics from an API endpoint.
+        Returns:
+            dict or None: The fetched data if successful, None otherwise.
         """
-        lf_stats_map = {}
-        interfaces_dict = {}
-
-        try:
-            port_data = self.json_get("/ports/all/")["interfaces"]
-            for port in port_data:
-                interfaces_dict.update(port)
-        except Exception as e:
-            logger.error(f"Error fetching port data: {e}")
-            return lf_stats_map
-
-        for sta in self.real_sta_list:
-            lf_stats_map[sta] = {
-                "BSSID": "NA",
-                "RSSI": "NA",
-                "Channel": "NA",
-                "Mode": "NA",
-                "TxRate": "NA",
-                "RxRate": "NA",
-            }
-
-            if sta in interfaces_dict:
-                data = interfaces_dict[sta]
-
-                # RSSI
-                sig = data.get("signal", "NA")
-                if "dBm" in str(sig):
-                    lf_stats_map[sta]["RSSI"] = sig.split(" ")[0]
+        self.devices_list = []
+        url = "http://localhost:5002/youtube_stats"
+        response = requests.get(url)
+        if response.status_code == 200:
+            self.data = response.json()
+            result_data = self.data.get("result", {})
+            for device_name, device_data in result_data.items():
+                stats = {key: value for key, value in device_data.items() if key != "stop"}
+                timestamp = stats.get("Timestamp", {})
+                if device_name not in self.mydatajson:
+                    self.mydatajson[device_name] = {}
+                if "maxbufferhealth" not in self.mydatajson[device_name]:
+                    self.mydatajson[device_name]["maxbufferhealth"] = "0.0"
                 else:
-                    lf_stats_map[sta]["RSSI"] = sig
+                    if float(stats.get("BufferHealth", "0.0")) > float(self.mydatajson[device_name]["maxbufferhealth"]):
+                        self.mydatajson[device_name]["maxbufferhealth"] = stats.get("BufferHealth", "0.0")
 
-                # Other RF stats
-                lf_stats_map[sta]["Channel"] = data.get("channel", "NA")
-                lf_stats_map[sta]["Mode"] = data.get("mode", "NA")
-                lf_stats_map[sta]["TxRate"] = data.get("tx-rate", "NA")
-                lf_stats_map[sta]["RxRate"] = data.get("rx-rate", "NA")
+                if "minbufferhealth" not in self.mydatajson[device_name]:
+                    self.mydatajson[device_name]["minbufferhealth"] = "100000.0"
+                else:
+                    if float(stats.get("BufferHealth", "100000.0")) < float(self.mydatajson[device_name]["minbufferhealth"]):
+                        self.mydatajson[device_name]["minbufferhealth"] = stats.get("BufferHealth", "0.0")
 
-                # BSSID
-                lf_stats_map[sta]["BSSID"] = data.get("ap", "NA")
+                # Define CSV file path using the device name as the file name
+                if self.do_webUI:
+                    csv_file_path = os.path.join(self.ui_report_dir, f'{device_name}_youtube_stats_report.csv')
+                else:
+                    current_path = os.path.dirname(os.path.abspath(__file__))
+                    csv_file_path = os.path.join(current_path, f"{device_name}_youtube_stats_report.csv")
 
-        return lf_stats_map 
+                self.devices_list.append(csv_file_path)
+
+                file_exists = os.path.isfile(csv_file_path)
+                headers = ["Instance Name", "TimeStamp", "Viewport", "DroppedFrames", "TotalFrames", "CurrentRes", "OptimalRes", "BufferHealth"]
+
+                with open(csv_file_path, mode='a', newline='') as file:
+                    writer = csv.writer(file)
+                    if not file_exists:
+                        writer.writerow(headers)
+                    row = [device_name, timestamp]
+                    for header in headers[2:]:
+                        row.append(stats.get(header, "NA"))
+                    writer.writerow(row)
+
+            return self.data
+        else:
+            logging.error(f"Failed to fetch data from API. Status code: {response.status_code}")
+            return None
 
     def start_flask_server(self):
         """
@@ -763,6 +781,54 @@ class Youtube(Realm):
                     except Exception as e:
                         logger.error(f"Error writing to CSV for {device_name}: {e}")
 
+                    if self.do_robo:
+                        self.stats_api_response[device_name]["current_angle"] = self.current_angle
+                        self.stats_api_response[device_name]["current_cord"] = self.current_cord
+                        self.stats_api_response[device_name]["rotations_enabled"] = self.rotations_enabled
+                        stats["Angle"] = self.current_angle
+
+                    if self.do_robo and self.do_bandsteering:
+                        lf_wifi_map = self.get_youtube_lf_wifi_stats()
+                        sta_name = self.hostname_to_station_map.get(device_name)
+                        if sta_name in lf_wifi_map:
+                            stats["BSSID"] = lf_wifi_map[sta_name]["BSSID"]
+                            stats["Channel"] = lf_wifi_map[sta_name]["Channel"]
+                        else:
+                            stats["BSSID"] = "NA"
+                            stats["Channel"] = "NA"
+
+                        x, y, _fromc, _toc = self.robo_obj.get_robot_pose()
+                        stats["X"] = x
+                        stats["Y"] = y
+                        stats["From_Coord"] = self.from_coordinate
+                        stats["To_Coord"] = self.to_coordinate
+
+                    if self.do_robo and self.current_cord != "" and not self.do_bandsteering:
+                        csv_filename = f"{self.current_cord}_{device_name}_youtube_stats_report.csv"
+                    else:
+                        csv_filename = f"{device_name}_youtube_stats_report.csv"
+
+                    if self.do_webUI:
+                        csv_file_path = os.path.join(self.ui_report_dir, csv_filename)
+                    else:
+                        current_path = os.path.dirname(os.path.abspath(__file__))
+                        csv_file_path = os.path.join(current_path, csv_filename)
+
+                    if csv_file_path not in self.devices_list:
+                        self.devices_list.append(csv_file_path)
+
+                    file_exists = os.path.isfile(csv_file_path)
+                    timestamp = stats.get("Timestamp", "")
+
+                    with open(csv_file_path, mode='a', newline='') as file:
+                        writer = csv.writer(file)
+                        if not file_exists:
+                            writer.writerow(self.csv_headers)
+                        row = [device_name, timestamp]
+                        for header in self.csv_headers[2:]:
+                            row.append(stats.get(header, "NA"))
+                        writer.writerow(row)
+
                 return jsonify({"message": "Stats updated"}), 200
 
             elif request.method == 'GET':
@@ -785,18 +851,6 @@ class Youtube(Realm):
                     device_name = os.path.basename(csv_file_path).split('_youtube_stats_report')[0]
                     device_data[device_name] = last_row
             return jsonify({"result": device_data}), 200
-
-        # useful to simulate wait for battery charging
-        @app.route('/pause_true', methods=['GET'])
-        def pause_true():
-            self.pause = True
-            return jsonify({"pause": self.pause})
-        
-        # useful to simulate wait for battery charging
-        @app.route('/pause_false', methods=['GET'])
-        def pause_false():
-            self.pause = False
-            return jsonify({"pause": self.pause})
 
         def run_flask():
             app.run(host="0.0.0.0", port=5002, debug=False, use_reloader=False)
@@ -836,12 +890,6 @@ class Youtube(Realm):
         time.sleep(10)
         self.generic_endps_profile.cleanup()
         logging.info("Application Closed sucessfully")
-        if self.do_robo:
-            if self.do_bandsteering:
-                self.create_report()
-            else:
-                self.create_robo_report()
-            
         os._exit(0)
 
     def updating_webui_runningjson(self, obj):
@@ -861,318 +909,21 @@ class Youtube(Realm):
 
         with open(file_path, 'w') as file:
             json.dump(data, file, indent=4)
-    
-    def add_bandsteering_report_section(self, report=None):
-        """
-        Bandsteering reporting (Robo-style):
-        Reads all youtube stats CSVs from report directory and builds:
-        - BSSID change count graph per device
-        - Table of BSSID change events
-        """
-        if report is None:
-            logging.error("Bandsteering report: report object is None")
-            return
 
-        if not self.do_bandsteering:
-            logging.info("Bandsteering report skipped: do_bandsteering is False")
-            return
+    def create_report(self, data, ui_report_dir, iot_summary=None):
 
-        report_dir = self.report_path_date_time
-        if not report_dir or not os.path.isdir(report_dir):
-            logging.error(f"Bandsteering report: invalid report dir: {report_dir}")
-            return
-
-        logging.info(f"Bandsteering report dir: {report_dir}")
-
-        csv_files = glob.glob(os.path.join(report_dir, "*_youtube_stats_report.csv"))
-        logging.info(f"Bandsteering CSV files found: {csv_files}")
-
-        if not csv_files:
-            logging.warning("No youtube_stats_report CSVs found in report dir for bandsteering")
-            return
-
-        report.set_obj_html(
-            _obj_title="Band Steering Statistics",
-            _obj="This section summarizes BSSID changes observed while the robot moved between coordinates."
-        )
-        report.build_objective()
-
-        allowed_bssids = set(self.bssids)
-
-        for csv_file_path in csv_files:
-            try:
-                df = pd.read_csv(csv_file_path)
-            except Exception as e:
-                logging.error(f"Unable to read CSV {csv_file_path}: {e}", exc_info=True)
-                continue
-
-            required_cols = {"TimeStamp", "BSSID", "From_Coord", "To_Coord", "Channel"}
-            if not required_cols.issubset(df.columns):
-                logging.warning(f"Skipping {csv_file_path}: missing {required_cols - set(df.columns)}")
-                continue
-
-            device_name = os.path.basename(csv_file_path).split("_youtube_stats_report")[0]
-
-            # Clean columns
-            df["BSSID"] = df["BSSID"].fillna("NA").astype(str)
-            df["TimeStamp"] = df["TimeStamp"].fillna("NA").astype(str)
-            df["From_Coord"] = df["From_Coord"].fillna("NA").astype(str)
-            df["To_Coord"] = df["To_Coord"].fillna("NA").astype(str)
-            df["Channel"] = df["Channel"].fillna("NA").astype(str)
-
-            # Filter only configured BSSIDs (if provided)
-            if allowed_bssids:
-                df = df[df["BSSID"].isin(allowed_bssids)]
-
-            if df.empty:
-                logging.info(f"No matching BSSID rows for {device_name}")
-
-            # Detect change points
-            df["prev_bssid"] = df["BSSID"].shift()
-
-            mask = (
-                (df["BSSID"] != df["prev_bssid"]) &
-                (df["BSSID"] != "NA")
-            )
-
-            bssid_list = df.loc[mask, "BSSID"].tolist()
-            timestamp_list = df.loc[mask, "TimeStamp"].tolist()
-            from_coordinate_list = df.loc[mask, "From_Coord"].tolist()
-            to_coordinate_list = df.loc[mask, "To_Coord"].tolist()
-            channel_list = df.loc[mask, "Channel"].tolist()
-
-            skip_table = not mask.any()
-
-            # Count BSSID switches
-            if skip_table:
-                # Ensure all expected BSSIDs show zero
-                bssid_counts = {bssid: 0 for bssid in self.bssids}
-            else:
-                bssid_counts = Counter(bssid_list)
-
-            # Ensure consistent graph ordering
-            final_bssid_counts = {
-                bssid: bssid_counts.get(bssid, 0)
-                for bssid in self.bssids
-            }
-
-            x_axis = list(final_bssid_counts.keys())
-            y_axis = [[float(v)] for v in final_bssid_counts.values()]
-
-
-            report.set_obj_html(
-                _obj_title=f"BSSID Change Count Of The Client {device_name}",
-                _obj=" "
-            )
-            report.build_objective()
-
-            graph = lf_bar_graph(
-                _data_set=y_axis,
-                _xaxis_name="BSSID",
-                _yaxis_name="Number of Changes",
-                _xaxis_categories=[""],
-                _xaxis_label=x_axis,
-                _graph_image_name=f"youtube_bssid_change_count_{device_name}",
-                _label=x_axis,
-                _xaxis_step=1,
-                _graph_title=f"YouTube Bandsteering: BSSID change count for device : {device_name}",
-                _title_size=16,
-                _bar_width=0.15,
-                _figsize=(18, 6),
-                _dpi=96,
-                _show_bar_value=True,
-                _enable_csv=True,
-            )
-
-            graph_png = graph.build_bar_graph()
-            report.set_graph_image(graph_png)
-            report.move_graph_image()
-            report.set_csv_filename(graph_png)
-            report.move_csv_file()
-            report.build_graph()
-
-
-            if skip_table:
-                report.set_obj_html(
-                    _obj_title=f"Band Steering Results for {device_name}",
-                    _obj="No band steering events observed for the configured BSSID list."
-                )
-                report.build_objective()
-                continue
-
-            report.set_obj_html(
-                _obj_title=f"Band Steering Results for {device_name}",
-                _obj=" "
-            )
-            report.build_objective()
-
-            table_df = pd.DataFrame({
-                "TimeStamp": timestamp_list,
-                "BSSID": bssid_list,
-                "Channel": channel_list,
-                "From Coordinate": from_coordinate_list,
-                "To Coordinate": to_coordinate_list,
+        result_data = data
+        for device, stats in result_data.items():
+            self.mydatajson.setdefault(device, {}).update({
+                "Viewport": stats.get("Viewport", ""),
+                "DroppedFrames": stats.get("DroppedFrames", "0"),
+                "TotalFrames": stats.get("TotalFrames", "0"),
+                "CurrentRes": stats.get("CurrentRes", ""),
+                "OptimalRes": stats.get("OptimalRes", ""),
+                "BufferHealth": stats.get("BufferHealth", "0.0"),
+                "Timestamp": stats.get("Timestamp", ""),
             })
 
-            report.set_table_dataframe(table_df)
-            report.build_table()
-        if len(self.robo_obj.charging_timestamps) != 0:
-            report.set_obj_html(_obj_title="Charging Timestamps",
-                                _obj="")
-            report.build_objective()
-            df = pd.DataFrame(
-                self.robo_obj.charging_timestamps,
-                columns=[
-                    "charge_dock_arrival_timestamp",
-                    "charging_completion_timestamp"
-                ]
-            )
-            # Add S.No column
-            df.insert(0, "S.No", range(1, len(df) + 1))
-            report.set_table_dataframe(df)
-            report.build_table()
-        else:
-            report.set_obj_html(_obj_title="Charging Timestamps",
-                                _obj="Robot did not went to charge during this test")
-            report.build_objective()
-
-
-
-    # def add_bandsteering_report_section(self, report=None):
-    #     """
-    #     Bandsteering reporting (Robo-style):
-    #     Reads all youtube stats CSVs from report directory and builds:
-    #     - BSSID change count graph per device
-    #     - Table of BSSID change events
-    #     """
-    #     print(self.bssids,"bssids in report")
-    #     if report is None:
-    #         logging.error("Bandsteering report: report object is None")
-    #         return
-
-    #     if not self.do_bandsteering:
-    #         logging.info("Bandsteering report skipped: do_bandsteering is False")
-    #         return
-
-    #     report_dir = self.report_path_date_time
-    #     if not report_dir or not os.path.isdir(report_dir):
-    #         logging.error(f"Bandsteering report: invalid report dir: {report_dir}")
-    #         return
-
-    #     logging.info(f"Bandsteering report dir: {report_dir}")
-
-    #     # file discovery
-    #     csv_files = glob.glob(os.path.join(report_dir, "*_youtube_stats_report.csv"))
-    #     logging.info(f"Bandsteering CSV files found: {csv_files}")
-
-    #     if not csv_files:
-    #         logging.warning("No youtube_stats_report CSVs found in report dir for bandsteering")
-    #         return
-
-    #     # Section header
-    #     report.set_obj_html(
-    #         _obj_title="Band Steering Statistics",
-    #         _obj="This section summarizes BSSID changes observed while the robot moved between coordinates."
-    #     )
-    #     report.build_objective()
-
-    #     for csv_file_path in csv_files:
-    #         try:
-    #             df = pd.read_csv(csv_file_path)
-    #         except Exception as e:
-    #             logging.error(f"Unable to read CSV {csv_file_path}: {e}", exc_info=True)
-    #             continue
-
-    #         required_cols = {"TimeStamp", "BSSID", "From_Coord", "To_Coord","Channel"}
-    #         if not required_cols.issubset(df.columns):
-    #             logging.warning(f"Skipping {csv_file_path}: missing {required_cols - set(df.columns)}")
-    #             continue
-
-    #         device_name = os.path.basename(csv_file_path).split("_youtube_stats_report")[0]
-
-    #         # Clean columns
-    #         df["BSSID"] = df["BSSID"].fillna("NA").astype(str)
-    #         df["TimeStamp"] = df["TimeStamp"].fillna("NA").astype(str)
-    #         df["From_Coord"] = df["From_Coord"].fillna("NA").astype(str)
-    #         df["To_Coord"] = df["To_Coord"].fillna("NA").astype(str)
-    #         df["Channel"] = df["Channel"].fillna("NA").astype(str)
-
-    #         # Change detection
-    #         mask = df["BSSID"] != df["BSSID"].shift()
-
-    #         bssid_list = df.loc[mask, "BSSID"].tolist()
-    #         timestamp_list = df.loc[mask, "TimeStamp"].tolist()
-    #         from_coordinate_list = df.loc[mask, "From_Coord"].tolist()
-    #         to_coordinate_list = df.loc[mask, "To_Coord"].tolist()
-    #         Channel_list=df.loc[mask,"Channel"].tolist()
-
-    #         x_list = df.loc[mask, "X"].tolist() if "X" in df.columns else ["NA"] * len(bssid_list)
-    #         y_list = df.loc[mask, "Y"].tolist() if "Y" in df.columns else ["NA"] * len(bssid_list)
-
-    #         if not bssid_list:
-    #             logging.info(f"No BSSID events found for {device_name}")
-    #             continue
-
-    #         # Count BSSID occurrences
-    #         bssid_counts = Counter(bssid_list)
-    #         x_axis = list(bssid_counts.keys())
-    #         y_axis = [[float(v)] for v in bssid_counts.values()]
-
-    #         # Graph
-    #         report.set_obj_html(
-    #             _obj_title=f"BSSID Change Count Of The Client {device_name}",
-    #             _obj=" "
-    #         )
-    #         report.build_objective()
-
-    #         graph = lf_bar_graph(
-    #             _data_set=y_axis,
-    #             _xaxis_name="BSSID",
-    #             _yaxis_name="Number of Changes",
-    #             _xaxis_categories=[""],
-    #             _xaxis_label=x_axis,
-    #             _graph_image_name=f"youtube_bssid_change_count_{device_name}",
-    #             _label=x_axis,
-    #             _xaxis_step=1,
-    #             _graph_title=f"YouTube Bandsteering: BSSID change count for device : {device_name}",
-    #             _title_size=16,
-    #             _bar_width=0.15,
-    #             _figsize=(18, 6),
-    #             _dpi=96,
-    #             _show_bar_value=True,
-    #             _enable_csv=True,
-    #         )
-
-    #         graph_png = graph.build_bar_graph()
-    #         report.set_graph_image(graph_png)
-    #         report.move_graph_image()
-    #         report.set_csv_filename(graph_png)
-    #         report.move_csv_file()
-    #         report.build_graph()
-
-    #         # Table
-    #         report.set_obj_html(
-    #             _obj_title=f"Band Steering Results for {device_name}",
-    #             _obj=" "
-    #         )
-    #         report.build_objective()
-
-    #         table_df = pd.DataFrame({
-    #             "TimeStamp": timestamp_list,
-    #             "BSSID": bssid_list,
-    #             "Channel":Channel_list,
-    #             "From Coordinate": from_coordinate_list,
-    #             "To Coordinate": to_coordinate_list,
-
-    #             # "X": x_list,
-    #             # "Y": y_list
-    #         })
-
-    #         report.set_table_dataframe(table_df)
-    #         report.build_table()
-    
-    def create_report(self, iot_summary=None):
-        # Initialize the report object
         if self.do_webUI:
             self.report = lf_report(_output_pdf='youtube_streaming.pdf',
                                     _output_html='youtube_streaming.html',
@@ -1441,6 +1192,9 @@ class Youtube(Realm):
         if self.do_bandsteering:
             self.add_bandsteering_report_section(report=self.report)
 
+        if self.do_bandsteering:
+            self.add_bandsteering_report_section(report=self.report)
+
         # Closing
         self.report.build_custom()
         self.report.build_footer()
@@ -1459,7 +1213,7 @@ class Youtube(Realm):
 
                 endp_status = generic_endpoint["endpoint"].get("status", "")
 
-                if endp_status not in ["Stopped", "WAITING", "NO-CX"]:
+                if endp_status not in ["Stopped", "WAITING", "NO-CX", "PHANTOM", "FTM_WAIT"]:
                     return False
 
             return True
@@ -1659,6 +1413,7 @@ class Youtube(Realm):
         - Populates self.rssi_list with signal strength values
         - Populates self.link_rate_list with RX link rates
         - Populates self.ssid_list with SSID values
+        - Populates self.wifi_interface_list with wireless interface names for Linux endpoint commands
 
         Notes:
         - The method preserves the order of devices as specified in
@@ -1673,586 +1428,60 @@ class Youtube(Realm):
         """
 
         ports_list = []
-        user_resources = [".".join(item.split(".")[:2]) for item in self.real_sta_list]
+        eid = ""
+        resource_ip = ""
+        user_resources = ['.'.join(item.split('.')[:2]) for item in self.real_sta_list]
 
         # Step 1: Retrieve information about all resources
         response = self.json_get("/resource/all")
-
         resource_data_list = response.get("resources", [])
 
-        # Step 2. Loop through the user resources you want to find
-        for user_resource in user_resources:
-
-            # Look through the data to find that user
-            for element in resource_data_list:
-
-                # Check if the user_resource (e.g., "1.1") exists in this dictionary element
-                if user_resource in element:
-                    resource_values = element[user_resource]
-
-                    # Extract the data
-                    self.device_names.append(resource_values["hostname"])
-                    self.user_list.append(resource_values["user"])
-                    ports_list.append(
-                        {
-                            "eid": resource_values["eid"],
-                            "ctrl-ip": resource_values["ctrl-ip"],
-                        }
-                    )
-
-                    # Found it! Stop searching specifically for this user_resource
+        # Step 2: Match user-specified resources with available resources sequentially
+        if user_resources:
+            for user_resource in user_resources:
+                if not user_resources:
                     break
+
+                for key, value in response.items():
+                    if key == "resources":
+                        for element in value:
+                            for resource_key, resource_values in element.items():
+                                # Match the current user_resource
+                                if resource_key == user_resource:
+                                    eid = resource_values["eid"]
+                                    resource_ip = resource_values['ctrl-ip']
+                                    self.device_names.append(resource_values['hostname'])
+                                    ports_list.append({'eid': eid, 'ctrl-ip': resource_ip})
+                                    self.user_list.append(resource_values['user'])
+                                    break
+                            else:
+                                continue
+                            break
         self.mac_list = []
         self.rssi_list = []
         self.link_rate_list = []
         self.ssid_list = []
-
-        # Step 3: Retrieve all port information
-        all_ports_response = self.json_get("/port/all")
-        interfaces_list = all_ports_response.get("interfaces", [])
-
-        # Step 4: Find matching wifi ports for our target resources
-        for target_resource in ports_list:
-            target_eid = target_resource["eid"]
-
-            # Search through all available interfaces
-            for interface_entry in interfaces_list:
-                for port_name, port_details in interface_entry.items():
-
-                    # Logic: Extract EID from port name (e.g., "1.1.wlan0" -> "1.1")
-                    current_eid = ".".join(port_name.split(".")[:2])
-
-                    if (
-                        current_eid == target_eid
-                        and port_details.get("parent dev") == "wiphy0"
-                    ):
-                        self.mac_list.append(port_details.get("mac"))
-                        self.rssi_list.append(port_details.get("signal"))
-                        self.link_rate_list.append(port_details.get("rx-rate"))
-                        self.ssid_list.append(port_details.get("ssid"))
-
-        self.wifi_interface_list = [item.split('.')[2] for item in self.real_sta_list]
-    
-    def perform_robo_test(self):
-        for coordinate in self.coordinates_list:
-            self.robo_obj.wait_for_battery(battery=40)
-            # self.robo_obj.move_to_coordinate(coord=coordinate)
-            self.robo_obj.move_to_coordinate(coordinate=coordinate)
-            self.current_cord = coordinate
-            if self.rotations_enabled:
-                for angle in self.angles_list:
-                    pause = self.robo_obj.wait_for_battery(battery=40)
-                    # self.robo_obj.rotate_angle(angle_degree=angle)
-                    self.robo_obj.rotate_angle(1,2,angle=angle)
-                    self.current_angle = angle
-                    self.start_generic()
-                    duration = self.duration
-                    end_time = datetime.now() + timedelta(minutes=duration)
-                    logging.info("Starting data collection for coordinate: %s and angle: %s", coordinate, angle)
-                    while datetime.now() < end_time or not self.check_gen_cx():
-                        pause, _ = self.robo_obj.wait_for_battery(battery=40)
-                        if pause:
-                            self.delete_existing_csvs_for_current_point()
-                            self.generic_endps_profile.stop_cx()
-                            self.start_generic()
-                            end_time = datetime.now() + timedelta(minutes=self.duration)
-
-                        time.sleep(5)
-
-                    self.generic_endps_profile.stop_cx()
-            
-            else:
-                self.start_generic()
-                duration = self.duration
-                end_time = datetime.now() + timedelta(minutes=duration)
-                logging.info("Starting data collection for coordinate: %s", coordinate)
-
-                while datetime.now() < end_time or not self.check_gen_cx():
-                    pause, _ = self.robo_obj.wait_for_battery(battery=40)
-                    if pause:
-                        self.delete_existing_csvs_for_current_point()
-                        self.generic_endps_profile.stop_cx()
-                        self.start_generic()
-                        end_time = datetime.now() + timedelta(minutes=self.duration)
-
-                    time.sleep(5)
-
-                self.generic_endps_profile.stop_cx()
-   
-    def perform_robo_bandsteering_test(self):
-        logging.info("Starting Band-Steering Robo YouTube Test")
-
-        # Start YouTube ONCE
-        matched,aborted=self.robo_obj.move_to_coordinate(self.coordinates_list[0])
-        if matched:
-            self.from_coordinate = self.coordinates_list[0]
-        if aborted:
-            logger.info("test aborted")
-            exit(0)
-        time.sleep(5)
-        # print(self.cycles,"the cycles are")
-        print(self.coordinates_list,"the coordinate list")
-        cycles=self.cycles
-        result = [self.coordinates_list[(1 + i) % len(self.coordinates_list)] for i in range(cycles * len(self.coordinates_list))]
-        print(result,"the result coordinates")
-        for coordinate in result:
-            logging.info(f"Moving robot to coordinate: {coordinate}")
-            if self.to_coordinate == "":
-                self.to_coordinate = coordinate
-                self.start_generic()
-            else:
-                self.from_coordinate = self.to_coordinate
-                self.to_coordinate = coordinate
-
-
-            # Battery safety
-            self.robo_obj.wait_for_battery(battery=40)
-
-            matched, abort = self.robo_obj.move_to_coordinate(coordinate=coordinate)
-            # matched, abort = self.robo_obj.move_to_coordinate(coord=coordinate)
-            if matched:
-                logger.info("Reached the coordinate {}".format(coordinate))
-            if abort:
-                break
-            self.current_cord = coordinate
-            time.sleep(10)
-
-        logging.info("All coordinates completed — stopping Band-Steering Test")
-        self.generic_endps_profile.stop_cx()
-
-        self.stop_bandsteering_test()
-
-    
-    def stop_bandsteering_test(self):
-        logging.info("Stopping Band-Steering YouTube Test")
-
-        try:
-            self.generic_endps_profile.stop_cx()
-        except:
-            pass
-        try:
-            self.generic_endps_profile.cleanup()
-        except:
-            pass
-
-        self.stop_signal = True
-
-        logging.info("Band-Steering Test stopped")
-
-
-    def create_robo_report(self):
-        if self.do_webUI:
-            self.report = lf_report(_output_pdf='youtube_streaming.pdf',
-                                    _output_html='youtube_streaming.html',
-                                    _results_dir_name="youtube_streaming_report",
-                                    _path=self.ui_report_dir)
-        else:
-            self.report = lf_report(_output_pdf='youtube_streaming.pdf',
-                                    _output_html='youtube_streaming.html',
-                                    _results_dir_name="youtube_streaming_report",
-                                    _path='')
-        self.report_path = self.report.get_path()
-        self.report_path_date_time = self.report.get_path_date_time()
-
-        # setting report title
-        self.report.set_title('Youtube Streaming Report')
-        self.report.build_banner()
-
-        # objective and description
-        self.report.set_obj_html(_obj_title='Objective',
-                                 _obj='''The Objective is to conduct automated Youtube Video Streaming test across multiple laptops to gather statistics. The test
-                            will collect these statistics. Additionally,automated graphs will be generated using the collected data.
-                            ''')
-        self.report.build_objective()
-
-
-        if self.config:
-
-            # Test setup info
-            test_setup_info = {
-                'Test Name': 'YouTube Streaming Test',
-                'Duration (in Minutes)': self.duration if not self.do_bandsteering else "NA",
-                'Resolution': self.resolution,
-                'Configured Devices': self.hostname_os_combination,
-                'No of Devices :': f' Total({len(self.real_sta_os_types)}) : W({self.windows}),L({self.linux}),M({self.mac})',
-                "Video URL": self.url,
-                "SSID": self.ssid,
-                "Security": self.security,
-
-            }
-
-        elif len(self.selected_groups) > 0 and len(self.selected_profiles) > 0:
-            gp_pairs = zip(self.selected_groups, self.selected_profiles)
-            gp_map = ", ".join(f"{group} -> {profile}" for group, profile in gp_pairs)
-
-            # Test setup info
-            test_setup_info = {
-                'Test Name': 'YouTube Streaming Test',
-                'Duration (in Minutes)': self.duration if not self.do_bandsteering else "NA",
-                'Resolution': self.resolution,
-                "Configuration": gp_map,
-                'Configured Devices': self.hostname_os_combination,
-                'No of Devices :': f' Total({len(self.real_sta_os_types)}) : W({self.windows}),L({self.linux}),M({self.mac})',
-                "Video URL": self.url,
-
-            }
-        else:
-            # Test setup info
-            test_setup_info = {
-                'Test Name': 'YouTube Streaming Test',
-                'Duration (in Minutes)': self.duration if not self.do_bandsteering else "NA",
-                'Resolution': self.resolution,
-                'Configured Devices': self.hostname_os_combination,
-                'No of Devices :': f' Total({len(self.real_sta_os_types)}) : W({self.windows}),L({self.linux}),M({self.mac})',
-                "Video URL": self.url,
-
-            }
-
-        self.report.test_setup_table(
-            test_setup_data=test_setup_info, value='Test Parameters')
-        
-        # Move only CSV files from current directory to report directory
-        if self.do_webUI:
-            for file_name in os.listdir(self.ui_report_dir):
-                if file_name.endswith('.csv'):
-                    source_file = os.path.join(self.ui_report_dir, file_name)
-                    self.move_files(source_file, self.report_path_date_time)
-        else:
-            for file_name in os.listdir('.'):
-                if file_name.endswith('.csv'):
-                    self.move_files(file_name, self.report_path_date_time)
-
-        
-        original_dir = os.getcwd()
-        os.chdir(self.report_path_date_time)
-        
-        for coordinate in self.coordinates_list:
-            if self.rotations_enabled:
-                for angle in self.angles_list:
-                    self.add_frames_graphs_to_report(coordinate, angle)
-            else:
-                self.add_frames_graphs_to_report(coordinate, "NA")
-        
-    
-        for hostname in self.real_sta_hostname:
-            self.add_buffer_health_graphs_to_report(hostname)
-        if self.do_webUI:
-            self.add_live_view_images_to_report()
-
-        os.chdir(original_dir)
-        
-        # Closing
-        self.report.build_custom()
-        self.report.build_footer()
-        self.report.write_html()
-        self.report.write_pdf()
-    
-    def add_buffer_health_graphs_to_report(self, hostname):
-        all_csv_files = glob.glob("*.csv")
-        filtered_csv_files = [f for f in all_csv_files if f.endswith(f"{hostname}_youtube_stats_report.csv")]
-
-        if not filtered_csv_files:
-            logging.warning(f"No CSV files found for hostname: {hostname}")
-            return
-
-        combined_data = pd.DataFrame()
-
-        for coord in self.coordinates_list:
-            for file_name in filtered_csv_files:
-                if file_name.startswith(f"{coord}_"):
-                    try:
-                        df = pd.read_csv(file_name)
-                        df["SourceFile"] = file_name  # Track which file it came from
-                        combined_data = pd.concat([combined_data, df], ignore_index=True)
-                    except Exception as e:
-                        logging.error(f"Error reading {file_name}: {e}")
-                        continue
-
-        # Convert timestamps
-        try:
-            combined_data['TimeStamp'] = pd.to_datetime(combined_data['TimeStamp'], format="%H:%M:%S").dt.time
-        except Exception as e:
-            logging.error(f"Error converting timestamps: {e}")
-            return
-
-        combined_data = combined_data.drop_duplicates(subset='TimeStamp', keep='first')
-
-        # Extract plotting data
-        timestamps = combined_data['TimeStamp'].apply(lambda t: t.strftime('%H:%M:%S'))
-        buffer_health = combined_data['BufferHealth']
-
-        # Plot all combined data
-        fig, ax = plt.subplots(figsize=(20, 10))
-        plt.plot(timestamps, buffer_health, color='blue', linewidth=2)
-
-        plt.xlabel('Time', fontweight='bold', fontsize=15)
-        plt.ylabel('Buffer Health', fontweight='bold', fontsize=15)
-        plt.title(f'Buffer Health vs Time Graph for {hostname}', fontsize=18)
-
-        # Manage x-ticks for readability
-        if len(timestamps) > 30:
-            tick_interval = len(timestamps) // 30
-            selected_ticks = timestamps[::tick_interval]
-            ax.set_xticks(selected_ticks)
-        else:
-            ax.set_xticks(timestamps)
-
-        plt.xticks(rotation=45, ha='right')
-        plt.tight_layout()
-
-        output_file = f"{hostname}_combined_buffer_health_vs_time.png"
-        plt.savefig(output_file, dpi=96)
-        plt.close()
-
-        logging.info(f"Combined graph saved for {hostname}: {output_file}")
-
-        # Add to report
-        self.report.set_graph_title(f'Buffer Health vs Time Graph for {hostname}')
-        self.report.build_graph_title()
-        self.report.set_graph_image(output_file)
-        self.report.build_graph()
-
-    def add_frames_graphs_to_report(self, current_cord, current_angle):
-        """
-            Reads all CSV files in the current directory that start with '<current_cord>_',
-            filters rows up to current_angle, and collects stats:
-            - Instance Name
-            - Max Total Frames
-            - Max Dropped Frames
-            - Viewport
-            - Current Resolution
-            - Optimal Resolution
-            - Max Buffer Health
-            - Min Buffer Health
-        """
-        prefix = f"{current_cord}_"
-        all_csv_files = glob.glob("*.csv")
-        print("kkkk",all_csv_files)
-        print("jjjjj",prefix)
-        # Filter CSV files starting with the prefix
-        filtered_csv_files = [f for f in all_csv_files if f.startswith(prefix)]
-        if not filtered_csv_files:
-            logging.info(f"No CSV files found starting with '{prefix}'.")
-            return {}
-
-        result_dict = {}
-
-        for csv_file in filtered_csv_files:
-            try:
-                df = pd.read_csv(csv_file)
-
-                # Ensure necessary columns exist
-                required_cols = {
-                    "Angle", "Instance Name", "TotalFrames", "DroppedFrames",
-                    "Viewport", "CurrentRes", "OptimalRes", "BufferHealth"
-                }
-                missing = required_cols - set(df.columns)
-                if missing:
-                    logging.info(f"Skipping {csv_file}: missing columns {missing}")
-                    continue
-
-                df["Angle"] = pd.to_numeric(df["Angle"], errors="coerce")
-                if current_angle == "NA":
-                    df_filtered = df
-                else:
-                    df_filtered = df[df["Angle"] == float(current_angle)]
-
-                if df_filtered.empty:
-                    logging.info(f"No data <= {current_angle}° in {csv_file}.")
-                    continue
-
-                # Extract values
-                instance_name = df_filtered["Instance Name"].iloc[0]
-                viewport = df_filtered["Viewport"].iloc[-1]                # latest viewport seen
-                current_res = df_filtered["CurrentRes"].iloc[-1]          # latest current resolution
-                optimal_res = df_filtered["OptimalRes"].iloc[-1]          # latest optimal resolution
-                max_total_frames = df_filtered["TotalFrames"].max()
-                max_dropped_frames = df_filtered["DroppedFrames"].max()
-                max_buffer_health = df_filtered["BufferHealth"].max()
-                min_buffer_health = df_filtered["BufferHealth"].min()
-
-                # Store stats in dictionary
-                result_dict[instance_name] = {
-                    "Viewport": viewport,
-                    "Current Resolution": current_res,
-                    "Optimal Resolution": optimal_res,
-                    "Total Frames": int(max_total_frames),
-                    "Dropped Frames": int(max_dropped_frames),
-                    "Max Buffer Health": round(float(max_buffer_health), 2),
-                    "Min Buffer Health": round(float(min_buffer_health), 2),
-                }
-                logging.info(f"Processed {csv_file}: {instance_name}")
-
-            except Exception as e:
-                logging.info(f"Error reading {csv_file}: {e}")
-
-        # graph of frames dropped
-        if current_angle == "NA":
-            self.report.set_graph_title(f"Total Frames vs Dropped Frames at coordinate: {current_cord}")
-        else:
-            self.report.set_graph_title(f"Total Frames vs Dropped Frames at coordinate: {current_cord} and angle: {current_angle}°")
-        self.report.build_graph_title()
-        x_fig_size = 25
-        y_fig_size = len(result_dict) * .5 + 4
-
-        hostnames = list(result_dict.keys())
-        total_frames_list = [result_dict[host]["Total Frames"] for host in hostnames]
-        dropped_frames_list = [result_dict[host]["Dropped Frames"] for host in hostnames]
-        viewport_list = [result_dict[host]["Viewport"] for host in hostnames]
-        current_res_list = [result_dict[host]["Current Resolution"] for host in hostnames]
-        max_buffer_health_list = [result_dict[host]["Max Buffer Health"] for host in hostnames]
-        min_buffer_health_list = [result_dict[host]["Min Buffer Health"] for host in hostnames]
-
-        graph = lf_bar_graph_horizontal(_data_set=[dropped_frames_list, total_frames_list],
-                                        _xaxis_name="No of Frames",
-                                        _yaxis_name="Devices",
-                                        _yaxis_categories=hostnames,
-                                        _graph_image_name=f"Dropped Frames vs Total Frames_{current_cord}_{current_angle}",
-                                        _label=["dropped Frames", "Total Frames"],
-                                        _color=None,
-                                        _color_edge='red',
-                                        _figsize=(x_fig_size, y_fig_size),
-                                        _show_bar_value=True,
-                                        _text_font=6,
-                                        _text_rotation=True,
-                                        _enable_csv=True,
-                                        _legend_loc="upper right",
-                                        _legend_box=(1.1, 1),
-                                        )
-        graph_image = graph.build_bar_graph_horizontal()
-        self.report.set_graph_image(graph_image)
-        # self.report.move_graph_image()
-        self.report.build_graph()
-
-        self.report.set_table_title(f'Test Results for coordinate: {current_cord} and angle: {current_angle}°')
-        self.report.build_table_title()
-
-        test_results = {
-            "Hostname": hostnames,
-            # "OS Type": self.real_sta_os_types,
-            # "MAC": self.mac_list,
-            # "RSSI": self.rssi_list,
-            # "Link Rate": self.link_rate_list,
-            # "SSID": self.ssid_list,
-            "ViewPort": viewport_list,
-            "Video Resoultion": current_res_list,
-            "Max Buffer Health (Seconds)": max_buffer_health_list,
-            "Min Buffer health (Seconds)": min_buffer_health_list,
-            "Total Frames": total_frames_list,
-            "Dropped Frames": dropped_frames_list,
-
-        }
-
-        test_results_df = pd.DataFrame(test_results)
-        self.report.set_table_dataframe(test_results_df)
-        self.report.build_table()
-
-
-        logging.info("\n📊 Summary for all devices:")
-        for k, v in result_dict.items():
-            logging.info(f"{k}: {v}")
-    
-    def remove_angle_data_from_csv(self, csv_file_path):
-        if self.rotations_enabled:
-            if not os.path.exists(csv_file_path):
-                logging.info(f"CSV not found: {csv_file_path}")
-                return
-
-            try:
-                df = pd.read_csv(csv_file_path)
-            except Exception as e:
-                logging.info(f"Unable to read CSV {csv_file_path}: {e}")
-                return
-
-            if "Angle" not in df.columns:
-                logging.info(f"No Angle column in CSV: {csv_file_path}")
-                return
-
-            # Convert Angle column to numeric (to handle strings like "30.0")
-            df["Angle"] = pd.to_numeric(df["Angle"], errors="coerce")
-
-            # Keep only rows where Angle != self.current_angle
-            df_filtered = df[df["Angle"] != float(self.current_angle)]
-
-            # Rewrite entire file
-            df_filtered.to_csv(csv_file_path, index=False)
-
-            logging.info(f"Removed all rows for angle {self.current_angle} from {csv_file_path}.")
-    
-    def delete_existing_csvs_for_current_point(self):
-        """
-        Deletes existing CSV files for the current coordinate and angle.
-
-        This method constructs the expected CSV file names based on the current
-        coordinate and angle, checks if they exist in the appropriate directory,
-        and deletes them if found. It handles both web UI and non-web UI scenarios.
-
-        """
-        for device_name, _ in self.stats_api_response.items():
-            # Define CSV file path using the device name as the file name
-            if self.do_webUI:
-                csv_file_path = os.path.join(self.ui_report_dir, f"{self.current_cord}_{device_name}_youtube_stats_report.csv")
-                if self.rotations_enabled:
-                    self.remove_angle_data_from_csv(csv_file_path)
-                else:
-                    if os.path.isfile(csv_file_path):
-                        os.remove(csv_file_path)
-                        logging.info(f"Deleted existing CSV file: {csv_file_path}")
-                
-            else:
-                current_path = os.path.dirname(os.path.abspath(__file__))
-                csv_file_path = os.path.join(current_path, f"{self.current_cord}_{device_name}_youtube_stats_report.csv")
-                if self.rotations_enabled:
-                    self.remove_angle_data_from_csv(csv_file_path)
-                else:
-                    if os.path.isfile(csv_file_path):
-                        os.remove(csv_file_path)
-                        logging.info(f"Deleted existing CSV file: {csv_file_path}")
-    
-    def add_live_view_images_to_report(self):
-        """
-        This function looks for live view images for each floor
-        in the 'live_view_images' folder within `self.ui_report_dir`.
-        It waits up to **60 seconds** for each image. If an image is found,
-        it's added to the `report` on a new page; otherwise, it's skipped.
-        """
-        url_image_path = os.path.join(self.ui_report_dir, "live_view_images", f"yt_{self.test_name}_1.png")
-        timeout = 60  # seconds
-        start_time = time.time()
-
-        while not os.path.exists(url_image_path):
-            if time.time() - start_time > timeout:
-                logging.info("Timeout: Images not found within 60 seconds.")
-                break
-            time.sleep(1)
-        if os.path.exists(url_image_path):
-            # self.report.set_custom_html('<div style="page-break-before: always;"></div>')
-            # self.report.build_custom()
-            # self.report.set_custom_html(f'<img src="file://{url_image_path}"></img>')
-            # self.report.build_custom()
-
-            # Combine the HTML into a single string
-            html_content = (
-                '<div style="page-break-before: always;"></div>'
-                f'<img src="file://{url_image_path}" style="width:1200px; height:800px;"></img>'
-            )
-            
-            # Set and build only once
-            self.report.set_custom_html(html_content)
-    
-
-    def stop_webui_test(self):
-        try:
-            file = f"{self.ui_report_dir}/running_status.json"
-            with open(file, 'r') as f:
-                data = json.load(f)
-            data['status'] = "Completed"
-            with open(file, 'w') as f:
-                json.dump(data, f, indent=4)
-            logging.info("WebUI test status updated to Completed.")
-        except Exception as e:
-            logging.error(f"Error in stop_webui_test function {e}", exc_info=True)
-
+        # Step 3: Retrieve port information
+        response_port = self.json_get("/port/all")
+
+        # Step 4: Match ports associated with retrieved resources in the order of ports_list
+        for port_entry in ports_list:
+            expected_eid = port_entry['eid']
+            matched_ports = []
+
+            for interface in response_port['interfaces']:
+                for port, port_data in interface.items():
+                    if '.'.join(port.split('.')[:2]) == expected_eid:
+                        matched_ports.append((port, port_data))
+
+            for _port, port_data in matched_ports:
+                if port_data.get("parent dev") == 'wiphy0':
+                    self.mac_list.append(port_data.get("mac"))
+                    self.rssi_list.append(port_data.get("signal"))
+                    self.link_rate_list.append(port_data.get("rx-rate"))
+                    self.ssid_list.append(port_data.get("ssid"))
+
+        self.new_port_list = [item.split('.')[2] for item in self.real_sta_list]
 
 
 def main():
@@ -2300,6 +1529,36 @@ EXAMPLE-5:
 Command Line Interface to run YouTube with Device Configuration:
 python3 lf_interop_youtube.py --mgr 192.168.204.74 --url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" --duration 1
 --ssid NETGEAR_2g_wpa2 --passwd Password@123 --encryp wpa2 --upstream_port 1.1.eth1 --config
+
+Example-6:
+Command Line Interface to run the new Test at each coordinate with Robo
+
+python3 lf_interop_youtube.py \
+--mgr 192.168.214.219 \
+--upstream_port 1.1.eth1 \
+--url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" \
+--duration 1 \
+--res 1080p \
+--resources 1.13,1.14 \
+--do_robo \
+--robo_ip 192.168.50.10 \
+--coordinates c1,c2,c3
+
+
+Example-7:
+Command Line Interface to run the new Test with Robo and rotating to user specified angles at each coordinate
+
+python3 py-scripts/real_application_tests/youtube/lf_interop_youtube.py \
+--mgr 192.168.214.219 \
+--upstream_port 1.1.eth1 \
+--url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" \
+--duration 1 \
+--res 1080p \
+--resources 1.13,1.14 \
+--do_robo \
+--robo_ip 192.168.50.10 \
+--coordinates c1,c2,c3 \
+--rotations 0,90,180,270
 
 
 SCRIPT CLASSIFICATION: Test
@@ -2396,28 +1655,6 @@ NOTES:
 
         optional.add_argument('--iot_increment', type=str, default='', help='Comma-separated list of device counts to incrementally test (e.g., "1,3,5")')
 
-        robo.add_argument('--robo_ip', type=str, help='Specify the robo ip')
-        robo.add_argument(
-            '--coordinates',
-            help="Comma-separated list of coordinate point names (e.g. 1,2,3), each mapping to x and y values"
-        )
-
-        robo.add_argument(
-            '--rotations',
-            help="Comma-separated list of rotation angles (in degrees) to apply at respective points"
-        )
-        robo.add_argument(
-            '--do_robo',
-            help="Specify this flag to perform the test with robo", action='store_true'
-        )
-        robo.add_argument(
-            '--do_bandsteering',
-            help="Specify this flag to perform Bandsteering Scenario",action='store_true'
-        )
-        robo.add_argument('--bssids', type=str, help='Comma-separated list of BSSIDs for bandsteering test')
-        parser.add_argument("--cycles", type=int, default=1, help="Number of cycles to perform bandsteering")
-
-
         args = parser.parse_args()
 
         if args.help_summary:
@@ -2441,17 +1678,17 @@ NOTES:
             if args.rotations:
                 rotations_enabled = True
 
+        rotations_enabled = False
+        if args.do_robo:
+            args.coordinates = args.coordinates.split(',') if args.coordinates else []
+            args.rotations = [float(angle) for angle in args.rotations.split(',')] if args.rotations else []
+            if args.rotations:
+                rotations_enabled = True
+
         mgr_ip = args.mgr
         mgr_port = args.mgr_port
         url = args.url
-        duration = args.duration if args.duration is not None else 100
-        args.duration = duration
-        bssids=None
-        if args.do_bandsteering:
-            args.duration = 999999
-            bssids = args.bssids.split(",") if args.bssids else []
-        cycles=args.cycles
-        
+        duration = args.duration
 
         do_webUI = args.do_webUI
         debug = args.debug
@@ -2676,30 +1913,36 @@ NOTES:
                 youtube.update_webui()
 
             logging.info("TEST STARTED")
-            if args.do_bandsteering:
-                logging.info('Running the Youtube Streaming unitl robo finishes all the cycles')
-            else:
-                logging.info('Running the Youtube Streaming test for {} minutes'.format(duration))
+            logging.info('Running the Youtube Streaming test for {} minutes'.format(duration))
 
             time.sleep(10)
 
             youtube.start_time = datetime.now()
-            if args.do_robo:
-                if args.do_bandsteering:
-                    youtube.perform_robo_bandsteering_test()
-                else:
-                    youtube.perform_robo_test()
+            youtube.start_generic()
+
+            duration = args.duration
+            end_time = datetime.now() + timedelta(minutes=duration)
+            initial_data = youtube.get_data_from_api()
+
+            while len(initial_data) == 0:
+                initial_data = youtube.get_data_from_api()
+                time.sleep(1)
+            if initial_data:
+                end_time_webgui = []
+                for i in range(len(youtube.device_names)):
+                    end_time_webgui.append(initial_data['result'].get(youtube.device_names[i], {}).get('stop', False))
             else:
-                youtube.start_generic()
-                duration = args.duration
-                end_time = datetime.now() + timedelta(minutes=duration)
-                while datetime.now() < end_time or not youtube.check_gen_cx():
-                    time.sleep(5)
+                for _i in range(len(youtube.device_names)):
+                    end_time_webgui.append("")
 
-                youtube.generic_endps_profile.stop_cx()
-                logging.info("Duration ended")
+            end_time = datetime.now() + timedelta(minutes=duration)
 
-                logging.info('Stopping the test')
+            while datetime.now() < end_time or not youtube.check_gen_cx():
+                youtube.get_data_from_api()
+                time.sleep(1)
+
+            youtube.generic_endps_profile.stop_cx()
+            logging.info("Duration ended")
             iot_summary = None
             if args.iot_test and args.iot_testname:
                 base = os.path.join("results", args.iot_testname)
@@ -2709,7 +1952,10 @@ NOTES:
                         iot_summary = json.load(f)
 
             logging.info('Stopping the test')
-            
+            if do_webUI:
+                youtube.create_report(youtube.stats_api_response, youtube.ui_report_dir, iot_summary=iot_summary)
+            else:
+                youtube.create_report(youtube.stats_api_response, '', iot_summary=iot_summary)
 
             # Perform post-test cleanup if not skipped
             if not args.no_post_cleanup:
@@ -2720,18 +1966,13 @@ NOTES:
         logger.error("An exception occurred:\n%s", tb_str)
     finally:
         if not ('--help' in sys.argv or '-h' in sys.argv):
-            if args.do_webUI:
-                youtube.stop_webui_test()
+            youtube.stop()
             if args.do_robo and not args.do_bandsteering:
                 youtube.create_robo_report()
+            elif args.do_webUI:
+                youtube.create_report(youtube.stats_api_response, youtube.ui_report_dir, iot_summary=iot_summary)
             else:
-                if do_webUI:
-                    youtube.create_report(iot_summary=iot_summary)
-                else:
-                    youtube.create_report(iot_summary=iot_summary)
-
-
-            youtube.stop()
+                youtube.create_report(youtube.stats_api_response, '', iot_summary=iot_summary)
             logging.info("Waiting for Cleanup of Browsers in Devices")
             time.sleep(10)
 

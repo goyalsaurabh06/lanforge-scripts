@@ -1,23 +1,63 @@
 #!/usr/bin/env python3
 """
-    NAME: lf_interop_teams.py
+NAME: lf_interop_teams.py
 
-    PURPOSE: lf_interop_teams.py provides the available devices and allows the user to start Microsoft Teams call conference meeting for the user-specified duration
+PURPOSE: lf_interop_teams.py provides the available devices and allows the user to start Microsoft Teams call conference meeting for the user-specified duration
 
-    EXAMPLE-1:
-    Command Line Interface to run Teams:
-    python3 lf_interop_teams.py --mgr 192.168.204.75 --upstream_port 1.1.eth1 --participants 3 --duration 1 --audio --video
+EXAMPLE-1:
+Command Line Interface to run Teams:
+python3 lf_interop_teams.py --mgr 192.168.204.75 --upstream_port 1.1.eth1 --duration 1 --audio --video
 
-    EXAMPLE-2:
-    Command Line Interface to run Teams on Specified Resources:
-    python3 lf_interop_teams.py --mgr 192.168.204.75 --upstream_port 1.1.eth1 --participants 3 --duration 1 --audio --video --resources 1.95,1.400,1.300
+EXAMPLE-2:
+Command Line Interface to run Teams on Specified Resources:
+python3 lf_interop_teams.py --mgr 192.168.204.75 --upstream_port 1.1.eth1 --duration 1 --audio --video --resources 1.95,1.400,1.300
 
+EXAMPLE-3:
+Command Line Interface to run Teams on Specified Resources with Robo Functionality:
+python3 lf_interop_teams.py \
+--mgr 192.168.207.78 \
+--upstream_port 1.1.eth1 \
+--duration 1 \
+--audio \
+--video \
+--resources 1.95,1.400,1.300 \
+--do_robo \
+--robo_ip 192.168.200.186 \
+--coordinates 3,4,5
 
-    NOTES:
-    1. Use 'python3 lf_interop_teams.py --help' to see command line usage and options.
-    2. Always specify the duration in minutes (for example: --duration 3 indicates a duration of 3 minutes).
-    3. If --resources are not given after passing the CLI, a list of available devices will be displayed on the terminal.
-    4. Enter the resource numbers separated by commas (,) in the resource argument Eg: (1.95,1.200).
+EXAMPLE-4:
+Command Line Interface to run Teams on Specified Resources with Robo Functionality and Rotations Enabled:
+python3 lf_interop_teams.py \
+--mgr 192.168.207.78 \
+--upstream_port 1.1.eth1 \
+--duration 1 \
+--audio \
+--video \
+--resources 1.95,1.400,1.300 \
+--do_robo \
+--robo_ip 192.168.200.186 \
+--coordinates 3,4,5 \
+--rotations 30,40
+
+EXAMPLE-5:
+Command Line Interface to run Teams on Specified Resources with Band Steering Functionality:
+python3 lf_interop_teams.py \
+--mgr 192.168.207.78 \
+--resources 1.15,1.11 \
+--upstream_port 192.168.200.135 \
+--audio \
+--video \
+--coordinates 1,4 \
+--robo_ip 192.168.200.186 \
+--do_bs \
+--cycles 2 \
+--bssids 94:A6:7E:74:26:22,94:A6:7E:74:26:33
+
+NOTES:
+1. Use 'python3 lf_interop_teams.py --help' to see command line usage and options.
+2. Always specify the duration in minutes (for example: --duration 3 indicates a duration of 3 minutes).
+3. If --resources are not given after passing the CLI, a list of available devices will be displayed on the terminal.
+4. Enter the resource numbers separated by commas (,) in the resource argument Eg: (1.95,1.200).
 
 """
 import os
@@ -37,6 +77,7 @@ import json
 import sys
 import traceback
 import glob
+from collections import Counter
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
@@ -61,30 +102,58 @@ DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
 lf_base_interop_profile = importlib.import_module("py-scripts.lf_base_interop_profile")
 RealDevice = lf_base_interop_profile.RealDevice
 
+# robo_base_class = importlib.import_module("py-scripts.lf_robo_base_class")
+robo_base_class = importlib.import_module("py-scripts.lf_base_robo")
+
 # Set up logging
-logger = logging.getLogger(__name__)
-log = logging.getLogger('werkzeug')
+log = logging.getLogger("werkzeug")
 log.setLevel(logging.ERROR)
 
 # Import LF logger configuration module
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 
+os.makedirs("test_logs", exist_ok=True)
+
+# 1. Configure the logging system
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler(
+            f"test_logs/lf_interop_teams_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.log",
+            mode="w",
+        ),  # Writes to file
+        logging.StreamHandler(sys.stdout),  # Writes to terminal
+    ],
+)
+
+# 2. Create the logger instance
+logger = logging.getLogger(__name__)
+
 
 class TeamsAutomation(Realm):
-    def __init__(self,
-                 lanforge_ip=None,
-                 duration=None,
-                 upstream_port=None,
-                 no_pre_cleanup=None,
-                 no_post_cleanup=None,
-                 participants_req=None,
-                 audio=None,
-                 video=None,
-                 do_webui=None,
-                 test_name=None,
-                 report_dir=None
-
-                 ):
+    def __init__(
+        self,
+        lanforge_ip=None,
+        duration=None,
+        upstream_port=None,
+        no_pre_cleanup=None,
+        no_post_cleanup=None,
+        audio=None,
+        video=None,
+        do_webui=None,
+        test_name=None,
+        report_dir=None,
+        rotations_enabled=False,
+        robo_ip=None,
+        coordinates=None,
+        rotations=None,
+        do_robo=None,
+        do_bs=None,
+        cycles=None,
+        bssids=None,
+        enable_mobile_stats=False,
+    ):
         super().__init__(lfclient_host=lanforge_ip)
         self.app = Flask(__name__)
         self.lanforge_ip = lanforge_ip
@@ -98,14 +167,13 @@ class TeamsAutomation(Realm):
         self.real_sta_os_types = []
         self.real_sta_hostname = []
         self.hostname_os_combination = []
-        self.wifi_interfaces = []
+        self.wifi_interfaces_list = []
         self.windows = 0
         self.linux = 0
         self.mac = 0
+        self.android = 0
         self.meet_link = None
-        self.participants_joined = None
-        self.participants_req = participants_req
-        self.test_start = False
+        self.participants_joined = 0
         self.start_time = None
         self.end_time = None
         self.audio = None
@@ -115,30 +183,30 @@ class TeamsAutomation(Realm):
         self.cred_index = 0
         self.tz = pytz.timezone('Asia/Kolkata')
         self.generic_endps_profile = self.new_generic_endp_profile()
-        self.generic_endps_profile.name_prefix = "zoom"
-        self.generic_endps_profile.type = "zoom"
+        self.generic_endps_profile.name_prefix = "teams"
+        self.generic_endps_profile.type = "teams"
         self.audio = audio
         self.video = video
         self.audio_stats_header = [
-            'Sent Audio bitrate(Kbps)',
+            'Sent Audio Bitrate(Kbps)',
             'Sent Audio Packets',
             'Audio RTT(ms)',
-            'sent Audio codec',
+            'Sent Audio Codec',
             'Received Audio Jitter(ms)',
-            'Receievd Audio Packet Loss(%)',
+            'Received Audio Packet Loss(%)',
             'Received Audio Packets',
-            'Recevied Audio Codec'
+            'Received Audio Codec'
         ]
 
         self.video_stats_header = [
-            'Sent video bitrate(Mbps)',
-            'Received video bitrate(Mbps)',
-            'Sent video frame rate(fps)',
-            'Sent video resolution(px)',
-            'video RTT (ms)',
-            'sent video packets',
-            'sent video codec',
-            'video processing'
+            'Sent Video Bitrate(Mbps)',
+            'Received Video Bitrate(Mbps)',
+            'Sent Video Frame Rate(fps)',
+            'Sent Video Resolution(px)',
+            'Video RTT (ms)',
+            'Sent Video Packets',
+            'Sent Video Codec',
+            'Video Processing'
         ]
 
         if self.audio:
@@ -156,7 +224,47 @@ class TeamsAutomation(Realm):
         self.do_webui = do_webui
         self.test_name = test_name
         self.report_dir = report_dir
-        self.execute_finally = False
+        self.lanforge_port_list = []
+        self.serial_list = []
+        self.lanforge_os_type = []
+        self.device_names = []
+        self.user_list = []
+        self.avg_csv_files_list = []
+        self.do_robo = do_robo
+        self.do_bs = do_bs
+        self.hostname_to_station_map = {}
+        self.running_averages = {}
+        self.enable_mobile_stats = enable_mobile_stats
+
+        if self.do_robo or self.do_bs:
+            self.robo_ip = robo_ip
+            self.rotations = rotations
+            self.robo_obj = robo_base_class.RobotClass(
+                robo_ip=self.robo_ip,
+                angle_list=self.rotations,
+            )
+            self.rotations_enabled = rotations_enabled
+            self.coordinates = coordinates
+            self.cycles = cycles
+            self.bssids = bssids
+            self.current_coord = None
+            self.current_rotation = "NA"
+            self.header.append("current_coordinate")
+            if self.rotations_enabled:
+                self.header.append("current_rotation")
+            if self.do_bs:
+                self.from_coordinate = None
+                self.to_coordinate = None
+                self.header.extend([
+                    "x", "y", "signal", "channel", "mode",
+                    "tx_rate", "rx_rate", "bssid",
+                    "from_coordinate", "to_coordinate",
+                ])
+                self.bs_coord_result = []
+                self.robo_obj.coordinate_list = self.coordinates
+                self.robo_obj.total_cycles = self.cycles
+            self.successful_coords = []
+            self.failed_coords = []
 
     def updating_webui_runningjson(self, obj):
         data = {}
@@ -189,7 +297,7 @@ class TeamsAutomation(Realm):
             obj = {
                 "configured_devices": self.real_sta_hostname,
                 "configuration_status": "configured",
-                "no_of_devices": f' Total({len(self.real_sta_os_types)}) : W({self.windows}),L({self.linux}),M({self.mac})',
+                "no_of_devices": f' Total({len(self.real_sta_os_types)}) : W({self.windows}),L({self.linux}),M({self.mac}),A({self.android})',
                 "device_list": self.hostname_os_combination,
             }
             self.updating_webui_runningjson(obj)
@@ -208,12 +316,42 @@ class TeamsAutomation(Realm):
         logging.error("Flask server did not start within 10 seconds. Exiting.")
         sys.exit(1)
 
-    def run(self):
-        flask_thread = threading.Thread(target=self.start_flask_server)
-        flask_thread.daemon = True
-        flask_thread.start()
-        self.wait_for_flask()
+    def change_port_to_ip(self, upstream_port):
+        """
+        Convert a given port name to its corresponding IP address if it's not already an IP.
 
+        This function checks whether the provided `upstream_port` is a valid IPv4 address.
+        If it's not, it attempts to extract the IP address of the port by resolving it
+        via the internal `name_to_eid()` method and then querying the IP using `json_get()`.
+
+        Args:
+            upstream_port (str): The name or IP of the upstream port. This could be a
+                                 LANforge port name like '1.1.eth1' or an IP address.
+
+        Returns:
+            str: The resolved IP address if the port name was converted successfully,
+                otherwise returns the original input if it was already an IP or
+                if resolution fails.
+        """
+        if upstream_port.count(".") != 3:
+            target_port_list = self.name_to_eid(upstream_port)
+            shelf, resource, port, _ = target_port_list
+            try:
+                target_port_ip = self.json_get(
+                    f"/port/{shelf}/{resource}/{port}?fields=ip"
+                )["interface"]["ip"]
+                upstream_port = target_port_ip
+            except Exception as e:
+                logging.warning(
+                    f"The upstream port is not an ethernet port. Proceeding with the given upstream_port {upstream_port}. Exception: {e}"
+                )
+            logging.info(f"Upstream port IP {upstream_port}")
+        else:
+            logging.info(f"Upstream port IP {upstream_port}")
+
+        return upstream_port
+
+    def create_host(self):
         if self.generic_endps_profile.create(ports=[self.real_sta_list[0]], real_client_os_types=[self.real_sta_os_types[0]]):
             logging.info('Real client generic endpoint creation completed.')
         else:
@@ -224,9 +362,7 @@ class TeamsAutomation(Realm):
             cmd = f"py teams_host.py --ip {self.upstream_port}"
             self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[0], cmd)
         elif self.real_sta_os_types[0] == 'linux':
-
-            cmd = "su -l lanforge ctteams.bash %s %s %s" % (self.wifi_interfaces[0], self.upstream_port, "host")
-
+            cmd = "su -l lanforge ctteams.bash %s %s %s" % (self.wifi_interfaces_list[0], self.upstream_port, "host")
             self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[0], cmd)
         elif self.real_sta_os_types[0] == 'macos':
             cmd = "sudo bash ctteams.bash %s %s" % (self.upstream_port, "host")
@@ -234,9 +370,9 @@ class TeamsAutomation(Realm):
         self.generic_endps_profile.start_cx()
         time.sleep(5)
 
+    def wait_for_login(self):
         while not self.login_completed:
             try:
-
                 generic_endpoint = self.json_get(f'/generic/{self.generic_endps_profile.created_endp[0]}')
                 endp_status = generic_endpoint["endpoint"]["status"]
                 if endp_status == "Stopped":
@@ -248,194 +384,881 @@ class TeamsAutomation(Realm):
                 logging.info(f"Error while checking login_completed status: {e}")
                 time.sleep(5)
 
-        if self.generic_endps_profile.create(ports=self.real_sta_list[1:], real_client_os_types=self.real_sta_os_types[1:]):
-            logging.info('Real client generic endpoint creation completed.')
-        else:
-            logging.error('Real client generic endpoint creation failed.')
-            exit(0)
-        for i in range(1, len(self.real_sta_os_types)):
+    def create_android(
+        self,
+        lanforge_res,
+        ports=None,
+        sleep_time=0.5,
+        debug_=False,
+        suppress_related_commands_=None,
+        real_client_os_types=None,
+    ):
+        if ports and real_client_os_types and len(real_client_os_types) == 0:
+            logger.error("Real client operating systems types is empty list")
+            raise ValueError("Real client operating systems types is empty list")
+        created_cx = []
+        created_endp = []
 
+        if not ports:
+            ports = []
+
+        if self.debug:
+            debug_ = True
+
+        post_data = []
+        endp_tpls = []
+        for port_name in ports:
+            port_info = self.name_to_eid(port_name)
+            resource = port_info[1]
+            shelf = port_info[0]
+            if real_client_os_types:
+                name = port_name
+            else:
+                name = port_info[2]
+
+            gen_name_a = "%s-%s" % ("teams", "_".join(port_name.split(".")))
+            endp_tpls.append((shelf, resource, name, gen_name_a))
+
+        for endp_tpl in endp_tpls:
+            shelf = endp_tpl[0]
+            resource = endp_tpl[1]
+            if real_client_os_types:
+                name = endp_tpl[2].split(".")[2]
+            else:
+                name = endp_tpl[2]
+            gen_name_a = endp_tpl[3]
+
+            data = {
+                "alias": gen_name_a,
+                "shelf": shelf,
+                "resource": lanforge_res.split(".")[1],
+                "port": "eth0",
+                "type": "gen_generic",
+            }
+            self.json_post("cli-json/add_gen_endp", data, debug_=self.debug)
+
+        self.json_post("/cli-json/nc_show_endpoints", {"endpoint": "all"})
+        if sleep_time:
+            time.sleep(sleep_time)
+
+        for endp_tpl in endp_tpls:
+            gen_name_a = endp_tpl[3]
+            self.generic_endps_profile.set_flags(gen_name_a, "ClearPortOnStart", 1)
+
+        for endp_tpl in endp_tpls:
+            name = endp_tpl[2]
+            gen_name_a = endp_tpl[3]
+            cx_name = "CX_%s-%s" % ("generic", gen_name_a)
+            data = {"alias": cx_name, "test_mgr": "default_tm", "tx_endp": gen_name_a}
+            post_data.append(data)
+            created_cx.append(cx_name)
+            created_endp.append(gen_name_a)
+
+        for data in post_data:
+            url = "/cli-json/add_cx"
+            self.json_post(
+                url,
+                data,
+                debug_=debug_,
+                suppress_related_commands_=suppress_related_commands_,
+            )
+        if sleep_time:
+            time.sleep(sleep_time)
+
+        for data in post_data:
+            self.json_post(
+                "/cli-json/show_cx",
+                {"test_mgr": "default_tm", "cross_connect": data["alias"]},
+            )
+        return True, created_cx, created_endp
+
+    def create_participants(self):
+        logger.debug(
+            "Creating participants and setting up the calls with the following details"
+        )
+        logger.debug(self.lanforge_port_list)
+        logger.debug(self.real_sta_hostname)
+        logger.debug(self.serial_list)
+        for i in range(1, len(self.real_sta_os_types)):
+            if self.real_sta_os_types[i] == "android":
+                status, created_cx, created_endp = self.create_android(
+                    lanforge_res=self.lanforge_port_list[i],
+                    ports=[self.real_sta_list[i]],
+                    real_client_os_types=["Linux"],
+                )
+                self.generic_endps_profile.created_endp.extend(created_endp)
+                self.generic_endps_profile.created_cx.extend(created_cx)
+                logger.debug(self.generic_endps_profile.created_cx)
+                if self.enable_mobile_stats:
+                    cmd = (
+                        f"python3 /home/lanforge/lanforge-scripts/py-scripts/real_application_tests/teams_automation/teams_android.py "
+                        f"--devices {self.serial_list[i]} "
+                        f"--meet_link '{self.meet_link}' "
+                        f"--participant_name '{self.real_sta_hostname[i]}' "
+                        f"--upstream_port {self.lanforge_ip} "
+                        f"--duration {self.duration} "
+                        "--audio "
+                        "--video "
+                    )
+                else:
+                    cmd = (
+                        f"python3 /home/lanforge/lanforge-scripts/py-scripts/real_application_tests/teams_automation/teams_android_app.py "
+                        f"--device {self.serial_list[i]} "
+                        f"--meet_link '{self.meet_link}' "
+                        f"--participant_name '{self.real_sta_hostname[i]}' "
+                        f"--upstream_port {self.lanforge_ip} "
+                        "--audio "
+                        "--video "
+                    )
+                self.generic_endps_profile.set_cmd(
+                    self.generic_endps_profile.created_endp[i], cmd
+                )
+            else:
+                self.generic_endps_profile.create(
+                    ports=[self.real_sta_list[i]],
+                    real_client_os_types=[self.real_sta_os_types[i]],
+                )
+
+        for i in range(1, len(self.real_sta_os_types)):
             if self.real_sta_os_types[i] == "windows":
                 cmd = f"py teams_client.py --ip {self.upstream_port}"
-                self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
+                self.generic_endps_profile.set_cmd(
+                    self.generic_endps_profile.created_endp[i], cmd
+                )
             elif self.real_sta_os_types[i] == 'linux':
-                cmd = "su -l lanforge ctteams.bash %s %s %s" % (self.wifi_interfaces[i], self.upstream_port, "client")
-                self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
+                cmd = "su -l lanforge ctteams.bash %s %s %s" % (
+                    self.wifi_interfaces_list[i], self.upstream_port, "client"
+                )
+                self.generic_endps_profile.set_cmd(
+                    self.generic_endps_profile.created_endp[i], cmd
+                )
             elif self.real_sta_os_types[i] == 'macos':
                 cmd = "sudo bash ctteams.bash %s %s" % (self.upstream_port, "client")
-                self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
+                self.generic_endps_profile.set_cmd(
+                    self.generic_endps_profile.created_endp[i], cmd
+                )
 
-        self.generic_endps_profile.start_cx()
+            cx_name = self.generic_endps_profile.created_cx[i]
+            self.json_post(
+                "/cli-json/set_cx_state",
+                {"test_mgr": "default_tm", "cx_name": cx_name, "cx_state": "RUNNING"},
+                debug_=True,
+            )
+            logger.info(f"sending running state to.. {cx_name}")
 
-        while not self.test_start:
-
-            logging.info("WAITING FOR THE TEST TO BE STARTED")
-            time.sleep(5)
-
-        self.set_start_time()
-        logging.info("TEST WILL BE STARTING")
-
+    def monitor_test(self):
         while datetime.now(self.tz) < self.end_time or not self.check_gen_cx():
             if self.stop_signal:
                 break
 
+            if self.do_robo:
+                pause, _ = self.robo_obj.wait_for_battery()
+                if pause:
+                    self.stop_signal = True
+                    time.sleep(10)
+                    logger.info("Waiting for browser cleanup at client Devices")
+                    if self.rotations_enabled:
+                        logger.info(
+                            f"Current run at coordinate {self.current_coord} with rotation {self.current_rotation} is Ignored due to low battery on Robo"
+                        )
+                        logger.info(
+                            f"Reinitializing the Run at coordinate {self.current_coord} with rotation {self.current_rotation}"
+                        )
+                    else:
+                        logger.info(
+                            f"Current run at coordinate {self.current_coord} is Ignored due to low battery on Robo"
+                        )
+                        logger.info(
+                            f"Reinitializing the Run at coordinate {self.current_coord}"
+                        )
+                    self.reset_variables_for_next_run()
+                    self.delete_current_csv_files()
+                    self.run()
+                    return
+
+            elif self.do_bs:
+                time.sleep(27)
+                logger.info(
+                    f"Robo will be moving through the following coordinates: {self.bs_coord_result}"
+                )
+                for coordinate in self.bs_coord_result:
+                    if not self.to_coordinate:
+                        self.to_coordinate = coordinate
+                    else:
+                        self.from_coordinate = self.to_coordinate
+                        self.to_coordinate = coordinate
+
+                    self.robo_obj.wait_for_battery()
+
+                    matched, aborted = self.robo_obj.move_to_coordinate(
+                        coord=coordinate
+                    )
+                    if matched:
+                        self.current_coord = coordinate
+                        self.successful_coords.append(coordinate)
+                    else:
+                        self.failed_coords.append(coordinate)
+
+                    if aborted:
+                        logger.error(f"Failed to reach the {coordinate}")
+                        self.failed_coords.append(coordinate)
+                        sys.exit()
+                    time.sleep(10)
+                return
+
             time.sleep(5)
 
-    def generate_report(self):
-        report = lf_report(_output_pdf='teams_call_report.pdf',
-                           _output_html='teams_call_report.html',
-                           _results_dir_name="teams_call_report",
-                           _path=self.path)
-        self.report_path_date_time = report.get_path_date_time()
+    def reset_variables_for_next_run(self):
+        self.participants_joined = 0
+        self.login_completed = False
+        self.meet_link = ""
+        self.data_store = {}
+        self.cred_index = 0
+        self.generic_endps_profile.cleanup()
+        self.start_time = None
+        self.end_time = None
+        self.stop_signal = False
+        self.generic_endps_profile.created_cx = []
+        self.generic_endps_profile.created_endp = []
 
-        report.set_title("Teams Call Automated Report")
-        report.build_banner()
+    def get_signal_and_channel_data(self):
+        """
+        Returns a dictionary of LANforge stats keyed by station name.
+        Example: {'sta001': {'signal': -55, 'channel': 36, ...}}
+        """
 
-        report.set_table_title("Objective:")
-        report.build_table_title()
-        report.set_text("The objective is to conduct automated Teams call tests across multiple laptops to gather statistics on sent audio, video, and received audio, video performance." +
-                        "The test will collect these statistics and store them in a CSV file. Additionally, automated graphs will be generated using the collected data.")
-        report.build_text_simple()
+        lf_stats_map = {}
+        interfaces_dict = dict()
 
-        report.set_table_title("Test Parameters:")
-        report.build_table_title()
-        testtype = ""
-        if self.audio and self.video:
-            testtype = "AUDIO & VIDEO"
-        elif self.audio:
-            testtype = "AUDIO"
-        elif self.video:
-            testtype = "VIDEO"
+        try:
+            # Get raw data from LANforge API
+            port_data = self.json_get("/ports/all/")["interfaces"]
+            for port in port_data:
+                interfaces_dict.update(port)
+        except Exception as e:
+            print(f"Error fetching port data: {e}")
+            return {}
 
-        test_parameters = pd.DataFrame([{
+        # Loop through your managed stations (e.g., sta001, sta002)
+        for sta in self.real_sta_list:
+            # Default values if station is missing
+            lf_stats_map[sta] = {
+                "signal": "-",
+                "channel": "-",
+                "mode": "-",
+                "tx_rate": "-",
+                "rx_rate": "-",
+                "bssid": "-",
+            }
 
-            'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac})',
-            'Test Duration(min)': self.duration,
-            "HOST": self.real_sta_list[0],
-            "TEST TYPE": testtype
+            if sta in interfaces_dict:
+                data = interfaces_dict[sta]
 
-        }])
-        report.set_table_dataframe(test_parameters)
-        report.build_table()
+                # --- Signal Parsing ---
+                sig = data.get("signal", "-")
+                if "dBm" in str(sig):
+                    lf_stats_map[sta]["signal"] = sig.split(" ")[0]
+                else:
+                    lf_stats_map[sta]["signal"] = sig
 
-        # Read per-device average metrics
-        df = pd.read_csv(os.path.join(self.path, "teams_call_avg_data.csv"))
-        df.columns = df.columns.str.strip()
+                # --- Other Fields ---
+                lf_stats_map[sta]["channel"] = data.get("channel", "-")
+                lf_stats_map[sta]["mode"] = data.get("mode", "-")
+                lf_stats_map[sta]["tx_rate"] = data.get("tx-rate", "-")
+                lf_stats_map[sta]["rx_rate"] = data.get("rx-rate", "-")
+                lf_stats_map[sta]["bssid"] = data.get(
+                    "ap", "-"
+                )  # 'ap' is usually BSSID
 
-        report.set_table_title("Test Devices:")
-        report.build_table_title()
+        print(lf_stats_map)
 
-        device_details = pd.DataFrame({
-            'Hostname': self.real_sta_hostname,
-            'OS Type': self.real_sta_os_types,
-        })
-        report.set_table_dataframe(device_details)
-        report.build_table()
+        return lf_stats_map
 
-        if self.audio:
-            metrics = [
-                ("Audio RTT(ms)", "Audio RTT (ms)"),
-                ("Received Audio Jitter(ms)", "Received Audio Jitter (ms)"),
-                ("Sent Audio bitrate(Kbps)", "Sent Audio Bitrate (Kbps)"),
-            ]
+    def handle_flask_server(self):
+        flask_thread = threading.Thread(target=self.start_flask_server)
+        flask_thread.daemon = True
+        flask_thread.start()
+        self.wait_for_flask()
 
-        if self.video:
-            # Create bar graphs for each metric
-            metrics = [
-                ("Sent video bitrate(Mbps)", "Sent Video Bitrate (Mbps)"),
-                ("Received video bitrate(Mbps)", "Received Video Bitrate (Mbps)"),
-                ("sent video packets", "Sent Video Packets"),
-            ]
-        if self.audio and self.video:
-            # Create bar graphs for each metric
-            metrics = [
-                ("Audio RTT(ms)", "Audio RTT (ms)"),
-                ("Received Audio Jitter(ms)", "Received Audio Jitter (ms)"),
-                ("Sent Audio bitrate(Kbps)", "Sent Audio Bitrate (Kbps)"),
-                ("Sent video bitrate(Mbps)", "Sent Video Bitrate (Mbps)"),
-                ("Received video bitrate(Mbps)", "Received Video Bitrate (Mbps)"),
-                ("sent video packets", "Sent Video Packets"),
-            ]
+    def run(self):
+        self.create_host()
+        self.wait_for_login()
+        self.create_participants()
 
-        for column, title in metrics:
-            report.set_graph_title(f"Average {title}")
-            report.build_graph_title()
+        self.wait_for_test_start()
+        self.monitor_test()
+        self.stop_signal = True
+        time.sleep(10)
+        if self.do_robo:
+            if self.rotations_enabled:
+                logger.info(
+                    f"Completed one cycle of test for coordinate {self.current_coord} with rotation {self.current_rotation}"
+                )
+            else:
+                logger.info(
+                    f"Completed one cycle of test for coordinate {self.current_coord}"
+                )
+            self.reset_variables_for_next_run()
 
-            bar_graph_horizontal = lf_bar_graph_horizontal(
-                _data_set=[df[column].tolist()],
-                _xaxis_name=f"AVG {title}",
-                _yaxis_name="Devices",
-                _yaxis_label=df["Device Name"].tolist(),
-                _yaxis_categories=df["Device Name"].tolist(),
-                _yaxis_step=1,
-                _yticks_font=8,
-                _bar_height=.25,
-                _color_name=["orange"],
-                _show_bar_value=True,
-                _figsize=(16, len(df) * 1 + 4),
-                _graph_title=f"AVG {title} Per Device",
-                _graph_image_name=title.replace(" ", "_"),
-                _label=[title]
+    def run_robo_test(self):
+        for coord in self.coordinates:
+            self.robo_obj.wait_for_battery()
+            matched, aborted = self.robo_obj.move_to_coordinate(coord=coord)
+            if matched:
+                self.current_coord = coord
+                self.successful_coords.append(coord)
+            else:
+                self.failed_coords.append(coord)
+
+            if aborted:
+                logger.error(f"Failed to Reach the coordinate {self.current_coord}")
+                self.failed_coords.append(coord)
+                sys.exit()
+
+            if self.rotations_enabled:
+                for rotation in self.rotations:
+                    self.robo_obj.wait_for_battery()
+                    rotated = self.robo_obj.rotate_angle(angle_degree=rotation)
+                    if rotated:
+                        self.current_rotation = rotation
+                    else:
+                        logger.error(
+                            f"Failed to Rotate the Angle {self.current_rotation}"
+                        )
+                        sys.exit()
+                    logger.info(
+                        f"Running Robo test for coordinate {coord} with rotation {rotation}"
+                    )
+                    self.run()
+                    self.create_avg_data()
+            else:
+                self.current_rotation = None  # Explicitly clear rotation state
+                logger.info(
+                    f"Running Robo test for coordinate {coord} with no rotation"
+                )
+                self.run()
+                self.create_avg_data()
+
+    def wait_for_test_start(self):
+        check_count = 0
+        while len(self.real_sta_list) != self.participants_joined:
+            logging.info(
+                f"Waiting for all participants to join the call. Joined: {self.participants_joined}, Expected: {len(self.real_sta_list)}"
             )
-            graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
-            report.set_graph_image(graph_image)
-            report.move_graph_image()
-            report.build_graph()
+            time.sleep(5)
+            check_count += 1
+            if check_count > 24:
+                logging.warning(
+                    f"Proceeding with the test with the participants that have joined. Joined: {self.participants_joined}, Expected: {len(self.real_sta_list)}"
+                )
+                break
 
-        if self.audio:
-            selected_columns = [
-                "Device Name",
-                "Sent Audio bitrate(Kbps)",
-                "Sent Audio Packets",
-                "Audio RTT(ms)",
-                "Received Audio Jitter(ms)",
-                "Receievd Audio Packet Loss(%)",
-            ]
+        if len(self.real_sta_list) == self.participants_joined:
+            logging.info("All participants have joined the call. Starting the test.")
+        if self.do_bs:
+            self.bs_coord_result = self.robo_obj.get_coordinates_list()
+            if self.bs_coord_result:
+                self.from_coordinate = self.coordinates[0]
+                self.successful_coords.append(self.from_coordinate)
+            else:
+                sys.exit(1)
+        self.set_start_time()
+        logging.info("TEST WILL BE STARTING")
 
-            column_headings = {
-                "Device Name": "Device Name",
-                "Sent Audio bitrate(Kbps)": "AVG Sent Audio Bitrate (Kbps)",
-                "Sent Audio Packets": "AVG Sent Audio Packets",
-                "Audio RTT(ms)": "AVG Audio RTT (ms)",
-                "Received Audio Jitter(ms)": "AVG Received Audio Jitter (ms)",
-                "Receievd Audio Packet Loss(%)": "AVG Received Audio Packet Loss (%)",
-            }
+    def add_bandsteering_report_section(self):
+        try:
 
-            filtered_df = df[selected_columns].rename(columns=column_headings)
+            """
+            Bandsteering reporting (Robo-style):
+            Reads all zoom stats CSVs from report directory (self.path) and builds:
+            - BSSID change count graph per device
+            - Table of BSSID change events
+            """
 
-            report.set_table_title("Test Audio Results Table")
-            report.build_table_title()
-            report.set_table_dataframe(filtered_df)
-            report.build_table()
+            report_dir = self.path
 
-        if self.video:
-            selected_columns = [
-                "Device Name",
-                "Sent video bitrate(Mbps)",
-                "Received video bitrate(Mbps)",
-                "Sent video frame rate(fps)",
-                "video RTT (ms)",
-                "sent video packets",
-            ]
+            if not report_dir or not os.path.isdir(report_dir):
+                logger.error(f"Bandsteering report: invalid report dir: {report_dir}")
+                return
 
-            column_headings = {
-                "Device Name": "Device Name",
-                "Sent video bitrate(Mbps)": "AVG Sent Video Bitrate (Mbps)",
-                "Received video bitrate(Mbps)": "AVG Received Video Bitrate (Mbps)",
-                "Sent video frame rate(fps)": "AVG Sent Video Frame Rate (fps)",
-                "video RTT (ms)": "AVG Video RTT (ms)",
-                "sent video packets": "AVG Sent Video Packets",
-            }
+            logging.info(f"Bandsteering report dir: {report_dir}")
 
-            filtered_df = df[selected_columns].rename(columns=column_headings)
+            # Search for CSV files in self.path
+            csv_files = []
+            for hostname in self.real_sta_hostname:
+                csv_pattern = os.path.join(report_dir, f"*{hostname}*.csv")
+                csv_files.extend(glob.glob(csv_pattern))
+            logging.info(f"Bandsteering CSV files found: {csv_files}")
 
-            report.set_table_title("Test Video Results Table")
-            report.build_table_title()
-            report.set_table_dataframe(filtered_df)
-            report.build_table()
+            if not csv_files:
+                logging.warning("No CSVs found in report dir for bandsteering")
+                return
 
-        report.write_html()
-        report.write_pdf()
+            self.report.set_obj_html(
+                _obj_title="Band Steering Statistics",
+                _obj="This section summarizes BSSID changes observed while the robot moved between coordinates.",
+            )
+            self.report.build_objective()
+
+            allowed_bssids = set(self.bssids) if self.bssids else set()
+
+            for csv_file_path in csv_files:
+                try:
+                    df = pd.read_csv(csv_file_path)
+                except Exception as e:
+                    logging.error(
+                        f"Unable to read CSV {csv_file_path}: {e}", exc_info=True
+                    )
+                    continue
+
+                # Rename columns to match the specific capitalization expected by this logic
+                df.rename(
+                    columns={
+                        "timestamp": "TimeStamp",
+                        "bssid": "BSSID",
+                        "channel": "Channel",
+                        "from_coordinate": "From_Coord",
+                        "to_coordinate": "To_Coord",
+                    },
+                    inplace=True,
+                )
+
+                required_cols = {
+                    "TimeStamp",
+                    "BSSID",
+                    "From_Coord",
+                    "To_Coord",
+                    "Channel",
+                }
+
+                # Check if this CSV actually contains bandsteering data (skip summary/other CSVs)
+                if not required_cols.issubset(df.columns):
+                    continue
+
+                device_name = os.path.basename(csv_file_path).replace(".csv", "")
+
+                # Clean columns
+                df["BSSID"] = df["BSSID"].fillna("NA").astype(str)
+                df["TimeStamp"] = df["TimeStamp"].fillna("NA").astype(str)
+                df["From_Coord"] = df["From_Coord"].fillna("NA").astype(str)
+                df["To_Coord"] = df["To_Coord"].fillna("NA").astype(str)
+                df["Channel"] = df["Channel"].fillna("NA").astype(str)
+
+                # Filter only configured BSSIDs (if provided)
+                if allowed_bssids:
+                    df = df[df["BSSID"].isin(allowed_bssids)]
+
+                if df.empty:
+                    logging.info(f"No matching BSSID rows for {device_name}")
+
+                # Detect change points
+                df["prev_bssid"] = df["BSSID"].shift()
+
+                mask = (
+                    (df["BSSID"] != df["prev_bssid"])
+                    & (df["BSSID"] != "NA")
+                    & (df["prev_bssid"] != "NA")
+                    & (df["prev_bssid"].notnull())
+                )
+
+                bssid_list = df.loc[mask, "BSSID"].tolist()
+                timestamp_list = df.loc[mask, "TimeStamp"].tolist()
+                from_coordinate_list = df.loc[mask, "From_Coord"].tolist()
+                to_coordinate_list = df.loc[mask, "To_Coord"].tolist()
+                channel_list = df.loc[mask, "Channel"].tolist()
+
+                skip_table = not mask.any()
+
+                # Count BSSID switches
+                if skip_table:
+                    # Ensure all expected BSSIDs show zero
+                    bssid_counts = {bssid: 0 for bssid in self.bssids}
+                else:
+                    bssid_counts = Counter(bssid_list)
+
+                # Ensure consistent graph ordering
+                if self.bssids:
+                    final_bssid_counts = {
+                        bssid: bssid_counts.get(bssid, 0) for bssid in self.bssids
+                    }
+                else:
+                    final_bssid_counts = bssid_counts
+
+                x_axis = list(final_bssid_counts.keys())
+                y_axis = [[float(v)] for v in final_bssid_counts.values()]
+
+                self.report.set_obj_html(
+                    _obj_title=f"BSSID Change Count Of The Client {device_name}",
+                    _obj=" ",
+                )
+                self.report.build_objective()
+
+                graph = lf_bar_graph(
+                    _data_set=y_axis,
+                    _xaxis_name="BSSID",
+                    _yaxis_name="Number of Changes",
+                    _xaxis_categories=[""],
+                    _xaxis_label=x_axis,
+                    _graph_image_name=f"teams_bssid_change_count_{device_name}",
+                    _label=x_axis,
+                    _xaxis_step=1,
+                    _graph_title=f"Teams Bandsteering: BSSID change count for device : {device_name}",
+                    _title_size=16,
+                    _bar_width=0.15,
+                    _figsize=(18, 6),
+                    _dpi=96,
+                    _show_bar_value=True,
+                )
+
+                graph_png = graph.build_bar_graph()
+                self.report.set_graph_image(graph_png)
+                self.report.move_graph_image()
+                self.report.build_graph()
+
+                if skip_table:
+                    self.report.set_obj_html(
+                        _obj_title=f"Teams Band Steering Results for {device_name}",
+                        _obj="No band steering events observed for the configured BSSID list.",
+                    )
+                    self.report.build_objective()
+                    continue
+
+                self.report.set_obj_html(
+                    _obj_title=f"Teams Band Steering Results for {device_name}",
+                    _obj=" ",
+                )
+                self.report.build_objective()
+
+                table_df = pd.DataFrame(
+                    {
+                        "TimeStamp": timestamp_list,
+                        "BSSID": bssid_list,
+                        "Channel": channel_list,
+                        "From Coordinate": from_coordinate_list,
+                        "To Coordinate": to_coordinate_list,
+                    }
+                )
+
+                self.report.set_table_dataframe(table_df)
+                self.report.build_table()
+
+            # Handle Charging Timestamps (Check if robo_obj exists first)
+            if (
+                hasattr(self, "robo_obj")
+                and hasattr(self.robo_obj, "charging_timestamps")
+                and len(self.robo_obj.charging_timestamps) != 0
+            ):
+                self.report.set_obj_html(_obj_title="Charging Timestamps", _obj="")
+                self.report.build_objective()
+                df = pd.DataFrame(
+                    self.robo_obj.charging_timestamps,
+                    columns=[
+                        "charge_dock_arrival_timestamp",
+                        "charging_completion_timestamp",
+                    ],
+                )
+                # Add S.No column
+                df.insert(0, "S.No", range(1, len(df) + 1))
+                self.report.set_table_dataframe(df)
+                self.report.build_table()
+            else:
+                self.report.set_obj_html(
+                    _obj_title="Charging Timestamps",
+                    _obj="Robot did not go to charge during this test",
+                )
+                self.report.build_objective()
+        except Exception as e:
+            logger.error(f"Exeception Occured {e}")
+            logger.error("Error Occured ", exc_info=True)
+
+    def generate_report(self):
+        try:
+
+            self.report = lf_report(
+                _output_pdf="teams_call_report.pdf",
+                _output_html="teams_call_report.html",
+                _results_dir_name="teams_call_report",
+                _path=self.path,
+            )
+            self.report_path_date_time = self.report.get_path_date_time()
+
+            self.report.set_title("Teams Call Automated Report")
+            self.report.build_banner()
+
+            self.report.set_table_title("Objective:")
+            self.report.build_table_title()
+            self.report.set_text(
+                "The objective is to conduct automated Teams call tests across multiple laptops to gather statistics on sent audio, video, and received audio, video performance."
+                + "The test will collect these statistics and store them in a CSV file. Additionally, automated graphs will be generated using the collected data."
+            )
+            self.report.build_text_simple()
+
+            self.report.set_table_title("Test Parameters:")
+            self.report.build_table_title()
+            testtype = ""
+            if self.audio and self.video:
+                testtype = "AUDIO & VIDEO"
+            elif self.audio:
+                testtype = "AUDIO"
+            elif self.video:
+                testtype = "VIDEO"
+
+            test_parameters = pd.DataFrame(
+                [
+                    {
+                        "No of Clients": f"W({self.windows}),L({self.linux}),M({self.mac}),A({self.android})",
+                        "Test Duration(min)": self.duration,
+                        "HOST": self.real_sta_list[0],
+                        "TEST TYPE": testtype,
+                    }
+                ]
+            )
+            self.report.set_table_dataframe(test_parameters)
+            self.report.build_table()
+
+            self.report.set_table_title("Test Devices:")
+            self.report.build_table_title()
+
+            device_details = pd.DataFrame(
+                {
+                    "Hostname": self.real_sta_hostname,
+                    "OS Type": self.real_sta_os_types,
+                }
+            )
+            self.report.set_table_dataframe(device_details)
+            self.report.build_table()
+
+            if self.audio:
+                metrics = [
+                    ("Audio RTT(ms)", "Audio RTT (ms)"),
+                    ("Received Audio Jitter(ms)", "Received Audio Jitter (ms)"),
+                    ("Sent Audio Bitrate(Kbps)", "Sent Audio Bitrate (Kbps)"),
+                ]
+
+            if self.video:
+                # Create bar graphs for each metric
+                metrics = [
+                    ("Sent Video Bitrate(Mbps)", "Sent Video Bitrate (Mbps)"),
+                    ("Received Video Bitrate(Mbps)", "Received Video Bitrate (Mbps)"),
+                    ("Sent Video Packets", "Sent Video Packets"),
+                ]
+            if self.audio and self.video:
+                # Create bar graphs for each metric
+                metrics = [
+                    ("Audio RTT(ms)", "Audio RTT (ms)"),
+                    ("Received Audio Jitter(ms)", "Received Audio Jitter (ms)"),
+                    ("Sent Audio Bitrate(Kbps)", "Sent Audio Bitrate (Kbps)"),
+                    ("Sent Video Bitrate(Mbps)", "Sent Video Bitrate (Mbps)"),
+                    ("Received Video Bitrate(Mbps)", "Received Video Bitrate (Mbps)"),
+                    ("Sent Video Packets", "Sent Video Packets"),
+                ]
+
+            # Read per-device average metrics
+            self.generate_graphs_and_tables(metrics)
+            if self.do_robo and self.do_webui:
+                self.add_live_view_images_to_report()
+            if self.do_bs:
+                self.add_bandsteering_report_section()
+            self.report.write_html()
+            self.report.write_pdf()
+        except Exception as e:
+            logging.error(f"Error in generate_report function: {e}", exc_info=True)
+        finally:
+            self.move_csv_files()
+
+    def add_live_view_images_to_report(self):
+        """
+        Waits for and adds the Video and Audio heatmap images for Floor 1.
+        """
+        live_view_dir = os.path.join(self.path, "live_view_images")
+
+        # Define the specific filenames for Floor 1
+        video_img_name = f"teams_video_{self.test_name}_floor1.png"
+        audio_img_name = f"teams_audio_{self.test_name}_floor1.png"
+
+        video_path = os.path.join(live_view_dir, video_img_name)
+        audio_path = os.path.join(live_view_dir, audio_img_name)
+
+        timeout = 90  # seconds
+        start_time = time.time()
+
+        # 1. Wait for the Video image (Primary trigger)
+        while not (os.path.exists(video_path) and os.path.exists(audio_path)):
+            if time.time() - start_time > timeout:
+                logger.error(f"Timeout: {video_img_name} not found within 60 seconds.")
+                break
+            time.sleep(1)
+
+        if os.path.exists(video_path):
+            logger.info(f"Found video heatmap image: {video_path}")
+        else:
+            logger.warning(f"Video heatmap image not found: {video_path}")
+
+        if os.path.exists(audio_path):
+            logger.info(f"Found audio heatmap image: {audio_path}")
+        else:
+            logger.warning(f"Audio heatmap image not found: {audio_path}")
+
+        # 2. Build the HTML Report Content
+        html_content = ""
+
+        # Add Video Map (if found)
+        if os.path.exists(video_path):
+            html_content += (
+                '<div style="page-break-before: always;"></div>'
+                '<h3 style="text-align:center;">Video Heatmap</h3>'
+                f'<div style="text-align:center;"><img src="file://{video_path}" style="width:1200px; height:800px;"></img></div>'
+            )
+
+        # Add Audio Map (if found)
+        if os.path.exists(audio_path):
+            html_content += (
+                '<div style="page-break-before: always;"></div>'
+                '<h3 style="text-align:center;">Audio Heatmap</h3>'
+                f'<div style="text-align:center;"><img src="file://{audio_path}" style="width:1200px; height:800px;"></img></div>'
+            )
+
+        # 3. Inject into Report
+        if html_content:
+            self.report.set_custom_html(html_content)
+            self.report.build_custom()
+
+    def generate_graphs_and_tables(self, metrics):
+        """
+        Generate graphs and tables for the report based on the collected metrics.
+
+        This method reads the average metrics from the generated CSV files, creates
+        visualizations (bar graphs) for each specified metric, and compiles a summary
+        table of average values for all devices. The generated graphs and tables are
+        then added to the report.
+
+        Args:
+            metrics (list of tuples): A list of tuples where each tuple contains the metric name and its corresponding data.
+
+        """
+        for item in self.avg_csv_files_list:
+            csv_file = item.get("file")
+            coord = item.get("coord")
+            rotation = item.get("rotation")
+            df = pd.read_csv(csv_file)
+            df.columns = df.columns.str.strip()
+
+            logger.info(
+                f"checking metrics {metrics} in dataframe columns {df.columns.tolist()}"
+            )
+            logger.info(f"checking metrics dict {metrics}")
+
+            for column, title in metrics:
+                image_name = title.replace(" ", "_")
+                if self.do_robo:
+                    if self.rotations_enabled:
+                        self.report.set_graph_title(
+                            f"Average {title} for Coordinate {coord} with rotation {rotation}"
+                        )
+                        image_name = f"{image_name}_{coord}_{rotation}"
+                    else:
+                        self.report.set_graph_title(
+                            f"Average {title} for Coordinate {coord}"
+                        )
+                        image_name = f"{image_name}_{coord}"
+                else:
+                    self.report.set_graph_title(f"Average {title}")
+                self.report.build_graph_title()
+
+                bar_graph_horizontal = lf_bar_graph_horizontal(
+                    _data_set=[df[column].tolist()],
+                    _xaxis_name=f"AVG {title}",
+                    _yaxis_name="Devices",
+                    _yaxis_label=df["Device Name"].tolist(),
+                    _yaxis_categories=df["Device Name"].tolist(),
+                    _yaxis_step=1,
+                    _yticks_font=8,
+                    _bar_height=0.25,
+                    _color_name=["orange"],
+                    _show_bar_value=True,
+                    _figsize=(16, len(df) * 1 + 4),
+                    _graph_title=f"AVG {title} Per Device",
+                    _graph_image_name=image_name,
+                    _label=[title],
+                )
+                graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
+                self.report.set_graph_image(graph_image)
+                self.report.move_graph_image()
+                self.report.build_graph()
+
+            if self.audio:
+                selected_columns = [
+                    "Device Name",
+                    "Sent Audio Bitrate(Kbps)",
+                    "Sent Audio Packets",
+                    "Audio RTT(ms)",
+                    "Received Audio Jitter(ms)",
+                    "Received Audio Packet Loss(%)",
+                ]
+
+                column_headings = {
+                    "Device Name": "Device Name",
+                    "Sent Audio Bitrate(Kbps)": "AVG Sent Audio Bitrate (Kbps)",
+                    "Sent Audio Packets": "AVG Sent Audio Packets",
+                    "Audio RTT(ms)": "AVG Audio RTT (ms)",
+                    "Received Audio Jitter(ms)": "AVG Received Audio Jitter (ms)",
+                    "Received Audio Packet Loss(%)": "AVG Received Audio Packet Loss (%)",
+                }
+
+                filtered_df = df[selected_columns].rename(columns=column_headings)
+
+                if self.do_robo:
+                    if self.rotations_enabled:
+                        self.report.set_table_title(
+                            f"Average Audio Metrics for {coord} with rotation {rotation}"
+                        )
+                    else:
+                        self.report.set_table_title(
+                            f"Average Audio Metrics for {coord}"
+                        )
+                else:
+                    self.report.set_table_title("Test Audio Results Table")
+
+                self.report.build_table_title()
+                self.report.set_table_dataframe(filtered_df)
+                self.report.build_table()
+
+            if self.video:
+                selected_columns = [
+                    "Device Name",
+                    "Sent Video Bitrate(Mbps)",
+                    "Received Video Bitrate(Mbps)",
+                    "Sent Video Frame Rate(fps)",
+                    "Video RTT (ms)",
+                    "Sent Video Packets",
+                ]
+
+                column_headings = {
+                    "Device Name": "Device Name",
+                    "Sent Video Bitrate(Mbps)": "AVG Sent Video Bitrate (Mbps)",
+                    "Received Video Bitrate(Mbps)": "AVG Received Video Bitrate (Mbps)",
+                    "Sent Video Frame Rate(fps)": "AVG Sent Video Frame Rate (fps)",
+                    "Video RTT (ms)": "AVG Video RTT (ms)",
+                    "Sent Video Packets": "AVG Sent Video Packets",
+                }
+
+                filtered_df = df[selected_columns].rename(columns=column_headings)
+
+                if self.do_robo:
+                    if self.rotations_enabled:
+                        self.report.set_table_title(
+                            f"Average Video Metrics for Coordinate {coord} with rotation {rotation}"
+                        )
+                    else:
+                        self.report.set_table_title(
+                            f"Average Video Metrics for Coordinate {coord}"
+                        )
+                else:
+                    self.report.set_table_title("Test Video Results Table")
+
+                self.report.build_table_title()
+                self.report.set_table_dataframe(filtered_df)
+                self.report.build_table()
 
     def check_gen_cx(self):
         try:
@@ -456,10 +1279,15 @@ class TeamsAutomation(Realm):
         except Exception as e:
             logging.error(f"Error in check_gen_cx function {e}", exc_info=True)
             logging.info(f"generic endpoint data {generic_endpoint}")
+            return False
 
     def set_start_time(self):
-        self.start_time = datetime.now(self.tz) + timedelta(seconds=30)
-        self.end_time = self.start_time + timedelta(minutes=self.duration)
+        if self.do_bs:
+            self.start_time = datetime.now(self.tz) + timedelta(seconds=30)
+            self.end_time = self.start_time + timedelta(days=24)
+        else:
+            self.start_time = datetime.now(self.tz) + timedelta(seconds=30)
+            self.end_time = self.start_time + timedelta(minutes=self.duration)
         return [self.start_time, self.end_time]
 
     def filter_ios_devices(self, device_list):
@@ -536,6 +1364,119 @@ class TeamsAutomation(Realm):
         self.device_list = filtered_list
         return filtered_list
 
+    def get_android_device_data(self):
+        """
+        Fetch and process Android device information from the ADB interop API.
+
+        This method queries the '/adb' endpoint to retrieve connected Android
+        device details, matches devices against the configured user list,
+        and extracts relevant metadata for test execution.
+
+        Behavior:
+        - Supports both dictionary and list response formats from the API
+        - Filters devices based on matching 'user-name' entries
+        - Extracts device serial numbers and LANforge resource IDs
+        - Builds LANforge port identifiers in the format: 1.<resource>.eth0
+        - Populates internal lists used for endpoint and test setup
+
+        Side Effects:
+        - Updates self.serial_list with Android device serial numbers
+        - Updates self.lanforge_port_list with LANforge port identifiers
+        - Sets self.lanforge_os_type to 'Linux' for all discovered devices
+
+        Returns:
+            None
+        """
+        interop_data = self.json_get('/adb')
+        interop_mobile_data = interop_data.get('devices', {})
+
+        if isinstance(interop_mobile_data, dict):
+            for user in self.user_list:
+                if user != '':
+                    if interop_mobile_data.get('user-name') == user:
+                        serial = interop_mobile_data.get('name', '')
+                        resource = serial.split('.')[1]
+                        serial_no = serial.split('.')[2]
+                        self.serial_list.append(serial_no)
+                        lanforge_port = f"1.{resource}.eth0"
+                        self.lanforge_port_list.append(lanforge_port)
+                else:
+                    self.serial_list.append("")
+                    self.lanforge_port_list.append("")
+        else:
+            for user in self.user_list:
+                if user != '':
+                    for mobile_device in interop_mobile_data:
+                        for serial, device_data in mobile_device.items():
+                            if device_data.get('user-name') == user:
+                                resource = serial.split('.')[1]
+                                serial_no = serial.split('.')[2]
+                                self.serial_list.append(serial_no)
+                                lanforge_port = f"1.{resource}.eth0"
+                                self.lanforge_port_list.append(lanforge_port)
+                                break
+                else:
+                    self.serial_list.append("")
+                    self.lanforge_port_list.append("")
+
+        self.lanforge_os_type = ["Linux"] * len(self.lanforge_port_list)
+
+    def delete_current_csv_files(self):
+        filename_pattern = (
+            f"*_{self.current_coord}_{self.current_rotation}.csv"
+            if self.rotations_enabled
+            else f"*_{self.current_coord}.csv"
+        )
+        csv_files_pattern = os.path.join(self.path, filename_pattern)
+        csv_files = glob.glob(csv_files_pattern)
+
+        for file_path in csv_files:
+            try:
+                os.remove(file_path)
+                logger.info(f"Deleted CSV file: {file_path}")
+            except Exception as e:
+                logger.error(f"Error deleting file {file_path}: {e}")
+
+    def get_device_data(self):
+        """
+        Collect and correlate device, resource, and port information for real stations.
+
+        This method gathers metadata for devices listed in `self.real_sta_list` by:
+        1. Extracting user-specified resource identifiers from real station entries.
+        2. Querying the '/resource/all' API to map resources to device names,
+           controller IPs, EIDs, and associated users.
+        3. Querying the '/port/all' API to locate ports belonging to the matched
+           resources, preserving the order defined by the real station list.
+        4. Extracting wireless-specific attributes for ports associated with
+           the 'wiphy0' parent device.
+
+        Side Effects:
+        - Populates self.device_names with matched device hostnames
+        - Populates self.user_list with users associated with each resource
+
+        Returns:
+            None
+        """
+        ports_list = []
+        user_resources = [".".join(item.split(".")[:2]) for item in self.real_sta_list]
+
+        response = self.json_get("/resource/all")
+        resource_data_list = response.get("resources", [])
+
+        for user_resource in user_resources:
+            for element in resource_data_list:
+                if user_resource in element:
+                    resource_values = element[user_resource]
+                    self.device_names.append(resource_values["hostname"])
+                    self.user_list.append(resource_values["user"])
+                    ports_list.append(
+                        {
+                            "eid": resource_values["eid"],
+                            "ctrl-ip": resource_values["ctrl-ip"],
+                        }
+                    )
+                    break
+
     def select_real_devices(self, real_sta_list=None):
         """
         Selects real devices for testing.
@@ -607,7 +1548,11 @@ class TeamsAutomation(Realm):
             f"{hostname} ({os_type})"
             for hostname, os_type in zip(self.real_sta_hostname, self.real_sta_os_types)
         ]
-        self.wifi_interfaces = [item.split('.')[2] for item in self.real_sta_list]
+        self.wifi_interfaces_list = [item.split('.')[2] for item in self.real_sta_list]
+
+        self.hostname_to_station_map = dict(
+            zip(self.real_sta_hostname, self.real_sta_list)
+        )
 
         # Count OS types
         for os_type in self.real_sta_os_types:
@@ -617,7 +1562,12 @@ class TeamsAutomation(Realm):
                 self.linux += 1
             elif os_type == 'macos':
                 self.mac += 1
+            elif os_type == 'android':
+                self.android += 1
         logger.info(f"Selected Real Devices: {self.real_sta_list}")
+
+        self.get_device_data()
+        self.get_android_device_data()
 
         return self.real_sta_list
 
@@ -642,6 +1592,10 @@ class TeamsAutomation(Realm):
 
         self.stop_signal = True
         time.sleep(10)
+        self.create_avg_data()
+        self.generate_report()
+        self.generic_endps_profile.cleanup()
+        self.stop_test_in_webui()
         logging.info("Exiting the application.")
         os._exit(0)
 
@@ -686,28 +1640,10 @@ class TeamsAutomation(Realm):
                 self.login_completed = bool(login_completed_status)
                 return jsonify({"message": f"Updated login_completed status to {bool(login_completed_status)}"})
 
-        @self.app.route('/get_participants_joined', methods=['GET'])
-        def get_participants_joined():
-            return jsonify({"participants": self.participants_joined})
-
-        @self.app.route('/set_participants_joined', methods=['POST'])
+        @self.app.route('/set_participants_joined', methods=['GET'])
         def set_participants_joined():
-            data = request.json
-            self.participants_joined = data.get('participants_joined', None)
-            return jsonify({"message": f"Updated participants jopind status to {self.participants_joined}"})
-
-        @self.app.route('/get_participants_req', methods=['GET'])
-        def get_participants_req():
-            return jsonify({"participants": self.participants_req})
-
-        @self.app.route('/test_started', methods=['GET', 'POST'])
-        def test_started():
-            if request.method == 'GET':
-                return jsonify({"test_started": self.test_start})
-            elif request.method == 'POST':
-                data = request.json
-                self.test_start = data.get('test_started', False)
-                return jsonify({"message": f"Updated test_start status to {self.test_start}"})
+            self.participants_joined += 1
+            return jsonify({"message": f"Updated participants joined status to {self.participants_joined}"})
 
         @self.app.route('/get_start_end_time', methods=['GET'])
         def get_start_end_time():
@@ -738,74 +1674,215 @@ class TeamsAutomation(Realm):
             shutdown_thread.start()
             return response
 
-        @self.app.route('/upload_stats', methods=['POST'])
+        @self.app.route("/upload_stats", methods=["POST", "GET"])
         def upload_stats():
-            data = request.json
 
-            for hostname, stats in data.items():
-                self.data_store[hostname] = stats
+            if request.method == "POST":
+                data = request.json
 
-                csv_file = os.path.join(self.path, f'{hostname}.csv')
-                with open(csv_file, mode='a', newline='') as file:
-                    writer = csv.writer(file)
+                for hostname, stats in data.items():
+                    if self.do_robo or self.do_bs:
+                        stats["current_coord"] = self.current_coord
+                        stats["current_rotation"] = self.current_rotation
+                        stats["rotations_enabled"] = self.rotations_enabled
+                    self.data_store[hostname] = stats
 
-                    if os.path.getsize(csv_file) == 0:
-                        writer.writerow(
-                            self.header
+                    if self.do_robo:
+                        csv_file = (
+                            os.path.join(
+                                self.path,
+                                f"{hostname}_{self.current_coord}_{self.current_rotation}.csv",
+                            )
+                            if self.rotations_enabled
+                            else os.path.join(
+                                self.path, f"{hostname}_{self.current_coord}.csv"
+                            )
                         )
-                    timestamp = stats.get('timestamp', '')
-                    if self.audio and self.video:
-                        audio = stats.get('audio_stats', {})
-                        video = stats.get('video_stats', {})
-                        row = [
-                            timestamp,
-                            audio.get("au_sent_bitrate", 0),
-                            audio.get("au_sent_pkts", 0),
-                            audio.get("au_rtt", 0),
-                            audio.get("au_sent_codec", "NA"),
-                            audio.get("au_recv_jitter", 0),
-                            audio.get("au_recv_pkt_loss", 0),
-                            audio.get("au_recv_pkts", 0),
-                            audio.get("au_recv_codec", "NA"),
-                            video.get("vi_sent_bitrate", 0),
-                            video.get("vi_recv_bitrate", 0),
-                            video.get("vi_sent_frame_rate", 0),
-                            video.get("vi_sent_res", "NA"),
-                            video.get("vi_rtt", 0),
-                            video.get("vi_sent_pkts", 0),
-                            video.get("vi_sent_codec", "NA"),
-                            video.get("vi_processing", "NA"),
-                        ]
-                    elif self.audio:
-                        audio = stats.get('audio_stats', {})
-                        row = [
-                            timestamp,
-                            audio.get("au_sent_bitrate", 0),
-                            audio.get("au_sent_pkts", 0),
-                            audio.get("au_rtt", 0),
-                            audio.get("au_sent_codec", "NA"),
-                            audio.get("au_recv_jitter", 0),
-                            audio.get("au_recv_pkt_loss", 0),
-                            audio.get("au_recv_pkts", 0),
-                            audio.get("au_recv_codec", "NA"),
-                        ]
+                    else:
+                        csv_file = os.path.join(self.path, f"{hostname}.csv")
+                    with open(csv_file, mode="a", newline="") as file:
+                        writer = csv.writer(file)
 
-                    elif self.video:
-                        video = stats.get('video_stats', {})
-                        row = [
-                            timestamp,
-                            video.get("vi_sent_bitrate", 0),
-                            video.get("vi_recv_bitrate", 0),
-                            video.get("vi_sent_frame_rate", 0),
-                            video.get("vi_sent_res", "NA"),
-                            video.get("vi_rtt", 0),
-                            video.get("vi_sent_pkts", 0),
-                            video.get("vi_sent_codec", "NA"),
-                            video.get("vi_processing", "NA"),
-                        ]
-                    writer.writerow(row)
+                        if os.path.getsize(csv_file) == 0:
+                            writer.writerow(self.header)
+                        timestamp = stats.get("timestamp", "")
+                        if self.audio and self.video:
+                            audio = stats.get("audio_stats", {})
+                            video = stats.get("video_stats", {})
+                            row = [
+                                timestamp,
+                                audio.get("au_sent_bitrate", 0),
+                                audio.get("au_sent_pkts", 0),
+                                audio.get("au_rtt", 0),
+                                audio.get("au_sent_codec", "NA"),
+                                audio.get("au_recv_jitter", 0),
+                                audio.get("au_recv_pkt_loss", 0),
+                                audio.get("au_recv_pkts", 0),
+                                audio.get("au_recv_codec", "NA"),
+                                video.get("vi_sent_bitrate", 0),
+                                video.get("vi_recv_bitrate", 0),
+                                video.get("vi_sent_frame_rate", 0),
+                                video.get("vi_sent_res", "NA"),
+                                video.get("vi_rtt", 0),
+                                video.get("vi_sent_pkts", 0),
+                                video.get("vi_sent_codec", "NA"),
+                                video.get("vi_processing", "NA"),
+                            ]
+                        elif self.audio:
+                            audio = stats.get("audio_stats", {})
+                            row = [
+                                timestamp,
+                                audio.get("au_sent_bitrate", 0),
+                                audio.get("au_sent_pkts", 0),
+                                audio.get("au_rtt", 0),
+                                audio.get("au_sent_codec", "NA"),
+                                audio.get("au_recv_jitter", 0),
+                                audio.get("au_recv_pkt_loss", 0),
+                                audio.get("au_recv_pkts", 0),
+                                audio.get("au_recv_codec", "NA"),
+                            ]
 
-            return jsonify({"status": "success"}), 200
+                        elif self.video:
+                            video = stats.get("video_stats", {})
+                            row = [
+                                timestamp,
+                                video.get("vi_sent_bitrate", 0),
+                                video.get("vi_recv_bitrate", 0),
+                                video.get("vi_sent_frame_rate", 0),
+                                video.get("vi_sent_res", "NA"),
+                                video.get("vi_rtt", 0),
+                                video.get("vi_sent_pkts", 0),
+                                video.get("vi_sent_codec", "NA"),
+                                video.get("vi_processing", "NA"),
+                            ]
+
+                        if self.do_robo or self.do_bs:
+                            row.append(self.current_coord)
+                            if self.rotations_enabled:
+                                row.append(self.current_rotation)
+                        if self.do_bs:
+                            # Pre-fill exactly 10 default values to ensure CSV alignment never breaks
+                            bs_data = [
+                                "NA",
+                                "NA",
+                                "NA",
+                                "NA",
+                                "NA",
+                                "NA",
+                                "NA",
+                                "NA",
+                                self.from_coordinate,
+                                self.to_coordinate,
+                            ]
+
+                            try:
+                                x, y, _, _ = self.robo_obj.get_robot_pose()
+                                bs_data[0] = x
+                                bs_data[1] = y
+
+                                lf_wifi_data = self.get_signal_and_channel_data()
+                                sta_id = self.hostname_to_station_map.get(
+                                    hostname, None
+                                )
+
+                                if sta_id and sta_id in lf_wifi_data:
+                                    bs_data[2] = lf_wifi_data[sta_id]["signal"]
+                                    bs_data[3] = lf_wifi_data[sta_id]["channel"]
+                                    bs_data[4] = lf_wifi_data[sta_id]["mode"]
+                                    bs_data[5] = lf_wifi_data[sta_id]["tx_rate"]
+                                    bs_data[6] = lf_wifi_data[sta_id]["rx_rate"]
+                                    bs_data[7] = lf_wifi_data[sta_id]["bssid"]
+
+                            except Exception as e:
+                                logger.error(
+                                    f"Error getting data related to BandSteering: {e}"
+                                )
+
+                            # Extend the main row with exactly 10 items, whether the API calls passed or failed
+                            row.extend(bs_data)
+
+                        writer.writerow(row)
+
+                return jsonify({"status": "success"}), 200
+
+            elif request.method == "GET":
+                result = {}
+
+                for hostname, stats in self.data_store.items():
+                    audio = stats.get("audio_stats", {})
+                    video = stats.get("video_stats", {})
+
+                    # Grab current timestamp to prevent double-counting during GET polling
+                    current_timestamp = stats.get("timestamp", "")
+
+                    # Grab current values
+                    au_bitrate = audio.get("au_sent_bitrate", 0)
+                    au_rtt = audio.get("au_rtt", 0)
+                    vi_bitrate = video.get("vi_sent_bitrate", 0)
+                    vi_rtt = video.get("vi_rtt", 0)
+
+                    # 2. If this is the first time seeing this device, initialize its averages
+                    if hostname not in self.running_averages:
+                        self.running_averages[hostname] = {
+                            "Sent Audio bitrate(Kbps)": au_bitrate,
+                            "Audio RTT(ms)": au_rtt,
+                            "Sent video bitrate(Mbps)": vi_bitrate,
+                            "video RTT (ms)": vi_rtt,
+                            "count": 1,
+                            "last_timestamp": current_timestamp,
+                        }
+                    else:
+                        prev = self.running_averages[hostname]
+
+                        # 3. Only calculate a new average if the data point is actually NEW
+                        if prev["last_timestamp"] != current_timestamp:
+                            count = prev["count"]
+                            new_count = count + 1
+
+                            # Update the true running average using the previous value
+                            prev["Sent Audio bitrate(Kbps)"] = (
+                                prev["Sent Audio bitrate(Kbps)"] * count + au_bitrate
+                            ) / new_count
+                            prev["Audio RTT(ms)"] = (
+                                prev["Audio RTT(ms)"] * count + au_rtt
+                            ) / new_count
+                            prev["Sent video bitrate(Mbps)"] = (
+                                prev["Sent video bitrate(Mbps)"] * count + vi_bitrate
+                            ) / new_count
+                            prev["video RTT (ms)"] = (
+                                prev["video RTT (ms)"] * count + vi_rtt
+                            ) / new_count
+
+                            prev["count"] = new_count
+                            prev["last_timestamp"] = current_timestamp
+
+                    # 4. Format the output (rounded to 2 decimals for clean UI)
+                    result[hostname] = {
+                        "Sent Audio Bitrate(Kbps)": round(
+                            self.running_averages[hostname]["Sent Audio bitrate(Kbps)"],
+                            2,
+                        ),
+                        "Audio RTT(ms)": round(
+                            self.running_averages[hostname]["Audio RTT(ms)"], 2
+                        ),
+                        "Sent Video Bitrate(Mbps)": round(
+                            self.running_averages[hostname]["Sent video bitrate(Mbps)"],
+                            2,
+                        ),
+                        "Video RTT (ms)": round(
+                            self.running_averages[hostname]["video RTT (ms)"], 2
+                        ),
+                    }
+
+                    # 5. Attach the robot state
+                    if self.do_robo or self.do_bs:
+                        result[hostname]["robot_state"] = {
+                            "current_coord": self.current_coord,
+                            "current_rotation": self.current_rotation,
+                            "rotations_enabled": self.rotations_enabled,
+                        }
+
+                return jsonify(result), 200
 
         try:
             self.app.run(host='0.0.0.0', port=5005, debug=True, threaded=True, use_reloader=False)
@@ -814,63 +1891,166 @@ class TeamsAutomation(Realm):
             sys.exit(0)
 
     def create_avg_data(self):
-        output_file = os.path.join(self.path, "teams_call_avg_data.csv")
+        exclude_cols = [
+            "timestamp",
+            "Sent Audio Codec",
+            "Received Audio Codec",
+            "Sent Video Resolution(px)",
+            "Sent Video Codec",
+            "Video Processing",
+            "current_coordinate",
+            "current_rotation",
+            "x",
+            "y",
+            "signal",
+            "channel",
+            "mode",
+            "tx_rate",
+            "rx_rate",
+            "bssid",
+            "from_coordinate",
+            "to_coordinate",
+        ]
+        if self.do_robo:
+            if self.rotations_enabled:
+                output_file = os.path.join(
+                    self.path,
+                    f"teams_call_avg_data_{self.current_coord}_{self.current_rotation}.csv",
+                )
+            else:
+                output_file = os.path.join(
+                    self.path, f"teams_call_avg_data_{self.current_coord}.csv"
+                )
+        else:
+            output_file = os.path.join(self.path, "teams_call_avg_data.csv")
         summary_rows = []
 
-        for csv_path in glob.glob(os.path.join(self.path, "*.csv")):
-            if csv_path.endswith("teams_cred.csv"):
-                continue
-            df = pd.read_csv(csv_path)
+        if self.do_robo:
+            if self.rotations_enabled:
+                logger.info(
+                    f"Creating average data for coordinate {self.current_coord} with rotation {self.current_rotation}"
+                )
+                for csv_path in glob.glob(
+                    os.path.join(
+                        self.path, f"*{self.current_coord}_{self.current_rotation}.csv"
+                    )
+                ):
+                    if csv_path.endswith("teams_cred.csv"):
+                        continue
+                    df = pd.read_csv(csv_path)
 
-            device_name = os.path.splitext(os.path.basename(csv_path))[0]
-            df = df.drop(columns=["timestamp"], errors="ignore")
+                    device_name = os.path.splitext(os.path.basename(csv_path))[0]
+                    df = df.drop(columns=exclude_cols, errors="ignore")
 
-            numeric_cols = df.select_dtypes(include="number").columns
-            averages = df[numeric_cols].mean().round(2)
+                    df = df.apply(pd.to_numeric, errors="coerce")
+                    averages = df.mean().round(2)
 
-            row = averages.to_dict()
-            row["Device Name"] = device_name
-            summary_rows.append(row)
+                    row = averages.to_dict()
+                    row["Device Name"] = device_name
+                    summary_rows.append(row)
+
+            else:
+                logger.info(
+                    f"Creating average data for coordinate {self.current_coord} with no rotation"
+                )
+
+                for csv_path in glob.glob(
+                    os.path.join(self.path, f"*{self.current_coord}.csv")
+                ):
+                    if csv_path.endswith("teams_cred.csv"):
+                        continue
+                    df = pd.read_csv(csv_path)
+
+                    device_name = os.path.splitext(os.path.basename(csv_path))[0]
+                    df = df.drop(columns=exclude_cols, errors="ignore")
+
+                    df = df.apply(pd.to_numeric, errors="coerce")
+                    averages = df.mean().round(2)
+
+                    row = averages.to_dict()
+                    row["Device Name"] = device_name
+                    summary_rows.append(row)
+        else:
+            logger.info("Creating average data for all devices")
+
+            for csv_path in glob.glob(os.path.join(self.path, "*.csv")):
+                if csv_path.endswith("teams_cred.csv") or csv_path.endswith(
+                    "teams_call_avg_data.csv"
+                ):
+                    continue
+                df = pd.read_csv(csv_path)
+
+                device_name = os.path.splitext(os.path.basename(csv_path))[0]
+                df = df.drop(columns=exclude_cols, errors="ignore")
+
+                df = df.apply(pd.to_numeric, errors="coerce")
+                averages = df.mean().round(2)
+
+                row = averages.to_dict()
+                row["Device Name"] = device_name
+                summary_rows.append(row)
 
         summary_df = pd.DataFrame(summary_rows)
 
-        cols = ["Device Name"] + [col for col in summary_df.columns if col != "Device Name"]
+        cols = ["Device Name"] + [
+            col for col in summary_df.columns if col != "Device Name"
+        ]
         summary_df = summary_df[cols]
 
         summary_df.to_csv(output_file, index=False)
         logger.info(f"Avg data saved to {output_file}")
+        self.avg_csv_files_list.append(
+            {
+                "file": output_file,
+                "coord": self.current_coord if self.do_robo else None,
+                "rotation": (
+                    self.current_rotation
+                    if self.do_robo and self.rotations_enabled
+                    else None
+                ),
+            }
+        )
 
     def stop_test_in_webui(self):
+        """
+        Updates the running_status.json file to mark the test as Completed.
+        """
         try:
-            url = f"http://{self.lanforge_ip}:5454/update_status_yt"
-            headers = {
-                'Content-Type': 'application/json',
-            }
+            json_path = os.path.join(self.path, "running_status.json")
 
-            data = {
-                'status': 'Completed',
-                'name': self.test_name
-            }
+            # 1. Load existing data or create new dict
+            data = {}
+            if os.path.exists(json_path):
+                with open(json_path, "r") as f:
+                    try:
+                        data = json.load(f)
+                    except json.JSONDecodeError:
+                        data = {}
 
-            response = requests.post(url, json=data, headers=headers)
+            # 2. Update status
+            data["status"] = "Completed"
 
-            if response.status_code == 200:
-                logging.info("Successfully updated STOP status to 'Completed'")
-                pass
-            else:
-                logging.error(f"Failed to update STOP status: {response.status_code} - {response.text}")
+            # 3. Write back to file
+            with open(json_path, "w") as f:
+                json.dump(data, f, indent=4)
+
+            logger.info(
+                f"Updated running_status.json with status Completed at {json_path}"
+            )
 
         except Exception as e:
-            logging.error(f"An error occurred while updating status: {e}")
+            logger.error(f"Error updating running_status.json: {e}")
 
 
 def main():
+    args = None
+    teams = None
     try:
 
         parser = argparse.ArgumentParser(
-            prog='lf_interop_teams.py',
+            prog="lf_interop_teams.py",
             formatter_class=argparse.RawTextHelpFormatter,
-            epilog=''' Allows user to run the Microsoft Teams Call test on a target resource for the given duration. ''',
+            epilog=""" Allows user to run the Microsoft Teams Call test on a target resource for the given duration. """,
             description="""
                 NAME: lf_interop_teams.py
 
@@ -878,11 +2058,52 @@ def main():
 
                 EXAMPLE-1:
                 Command Line Interface to run Teams:
-                python3 lf_interop_teams.py --mgr 192.168.204.75 --upstream_port 1.1.eth1 --participants 3 --duration 1 --audio --video
+                python3 lf_interop_teams.py --mgr 192.168.204.75 --upstream_port 1.1.eth1 --duration 1 --audio --video
 
                 EXAMPLE-2:
                 Command Line Interface to run Teams on Specified Resources:
-                python3 lf_interop_teams.py --mgr 192.168.204.75 --upstream_port 1.1.eth1 --participants 3 --duration 1 --audio --video --resources 1.95,1.400,1.300
+                python3 lf_interop_teams.py --mgr 192.168.204.75 --upstream_port 1.1.eth1 --duration 1 --audio --video --resources 1.95,1.400,1.300
+
+                EXAMPLE-3:
+                Command Line Interface to run Teams on Specified Resources with Robo Functionality:
+                python3 lf_interop_teams.py \
+                --mgr 192.168.207.78 \
+                --upstream_port 1.1.eth1 \
+                --duration 1 \
+                --audio \
+                --video \
+                --resources 1.95,1.400,1.300 \
+                --do_robo \
+                --robo_ip 192.168.200.186 \
+                --coordinates 3,4,5
+
+                EXAMPLE-4:
+                Command Line Interface to run Teams on Specified Resources with Robo Functionality and Rotations Enabled:
+                python3 lf_interop_teams.py \
+                --mgr 192.168.207.78 \
+                --upstream_port 1.1.eth1 \
+                --duration 1 \
+                --audio \
+                --video \
+                --resources 1.95,1.400,1.300 \
+                --do_robo \
+                --robo_ip 192.168.200.186 \
+                --coordinates 3,4,5 \
+                --rotations 30,40
+
+                EXAMPLE-5:
+                Command Line Interface to run Teams on Specified Resources with Band Steering Functionality:
+                python3 lf_interop_teams.py \
+                --mgr 192.168.207.78 \
+                --resources 1.15,1.11 \
+                --upstream_port 192.168.200.135 \
+                --audio \
+                --video \
+                --coordinates 1,4 \
+                --robo_ip 192.168.200.186 \
+                --do_bs \
+                --cycles 2 \
+                --bssids 94:A6:7E:74:26:22,94:A6:7E:74:26:33
 
 
                 NOTES:
@@ -892,29 +2113,98 @@ def main():
                 4. Enter the resource numbers separated by commas (,) in the resource argument Eg: (1.95,1.200).
 
 
-        """)
+        """,
+        )
 
         # Define required arguments group
-        required = parser.add_argument_group('Required arguments')
+        required = parser.add_argument_group("Required arguments")
         # Define optional arguments group
-        optional = parser.add_argument_group('Optional arguments')
+        optional = parser.add_argument_group("Optional arguments")
+        # Add robo related arguments
+        robo = parser.add_argument_group("Robo related arguments")
 
-        required.add_argument('--mgr', type=str, help="hostname where LANforge GUI is running", required=True)
-        required.add_argument('--duration', type=int, help='duration to run the test in min', required=True)
-        required.add_argument('--upstream_port', type=str, help='Specify The Upstream Port name or IP address', required=True)
-        required.add_argument('--participants', type=int, help='No of Devices in the test', required=True)
+        required.add_argument(
+            "--mgr",
+            type=str,
+            help="hostname where LANforge GUI is running",
+            required=True,
+        )
+        required.add_argument(
+            "--upstream_port",
+            type=str,
+            help="Specify The Upstream Port name or IP address",
+            required=True,
+        )
 
         # Add optional arguments
-        optional.add_argument('--resources', help='Specify the real device ports seperated by comma')
-        optional.add_argument('--no_pre_cleanup', action="store_true", help='specify this flag to stop cleaning up generic cxs before the test')
-        optional.add_argument('--no_post_cleanup', action="store_true", help='specify this flag to stop cleaning up generic cxs after the test')
-        optional.add_argument('--log_level', help='Level of the logs to be dispalyed', default='info')
-        optional.add_argument('--lf_logger_config_json', help='lf_logger config json')
-        optional.add_argument('--audio', action='store_true')
-        optional.add_argument('--video', action='store_true')
-        optional.add_argument('--do_webUI', action='store_true', help='useful to specify whether we are running through webui or cli')
-        optional.add_argument('--testname', help="report directory while running test through web ui")
-        optional.add_argument('--report_dir', help="report directory while running test through web ui")
+        optional.add_argument(
+            "--duration", type=int, help="duration to run the test in min"
+        )
+        optional.add_argument(
+            "--resources", help="Specify the real device ports seperated by comma"
+        )
+        optional.add_argument(
+            "--no_pre_cleanup",
+            action="store_true",
+            help="specify this flag to stop cleaning up generic cxs before the test",
+        )
+        optional.add_argument(
+            "--no_post_cleanup",
+            action="store_true",
+            help="specify this flag to stop cleaning up generic cxs after the test",
+        )
+        optional.add_argument(
+            "--log_level", help="Level of the logs to be dispalyed", default="info"
+        )
+        optional.add_argument("--lf_logger_config_json", help="lf_logger config json")
+        optional.add_argument("--audio", action="store_true")
+        optional.add_argument("--video", action="store_true")
+        optional.add_argument(
+            "--do_webUI",
+            action="store_true",
+            help="useful to specify whether we are running through webui or cli",
+        )
+        optional.add_argument(
+            "--testname", help="report directory while running test through web ui"
+        )
+        optional.add_argument(
+            "--report_dir", help="report directory while running test through web ui"
+        )
+        optional.add_argument(
+            "--enable_mobile_stats",
+            action="store_true",
+            help="Used to specify whether to collect mobile stats through chrome browser based UI automation or not",
+        )
+
+        robo.add_argument("--robo_ip", type=str, help="Specify the robo ip")
+        robo.add_argument(
+            "--coordinates",
+            help="Comma-separated list of coordinate point names (e.g. 1,2,3), each mapping to x and y values",
+        )
+
+        robo.add_argument(
+            "--rotations",
+            help="Comma-separated list of rotation angles (in degrees) to apply at respective points",
+        )
+        robo.add_argument(
+            "--do_robo",
+            help="Specify this flag to perform the test with robo",
+            action="store_true",
+        )
+        robo.add_argument(
+            "--do_bs",
+            help="Specify this flag to perform the test with robo for band steering",
+            action="store_true",
+        )
+        robo.add_argument(
+            "--cycles", type=int, default=1, help="Number of cycles to run the test"
+        )
+
+        robo.add_argument(
+            "--bssids",
+            type=str,
+            help="Comma-separated list of BSSIDs for bandsteering test",
+        )
 
         args = parser.parse_args()
 
@@ -928,56 +2218,82 @@ def main():
             logger_config.lf_logger_config_json = args.lf_logger_config_json
             logger_config.load_lf_logger_config()
 
+        rotations_enabled = False
+        if args.do_robo or args.do_bs:
+            args.coordinates = args.coordinates.split(",") if args.coordinates else []
+            args.rotations = (
+                [float(angle) for angle in args.rotations.split(",")]
+                if args.rotations
+                else []
+            )
+            if args.rotations:
+                rotations_enabled = True
+
+            if args.bssids:
+                args.bssids = args.bssids.split(",") if args.bssids else []
+
         teams = TeamsAutomation(
             lanforge_ip=args.mgr,
             duration=args.duration,
             upstream_port=args.upstream_port,
             no_pre_cleanup=args.no_pre_cleanup,
             no_post_cleanup=args.no_post_cleanup,
-            participants_req=args.participants,
             audio=args.audio,
             video=args.video,
             do_webui=args.do_webUI,
             test_name=args.testname,
-            report_dir=args.report_dir
-
+            report_dir=args.report_dir,
+            robo_ip=args.robo_ip,
+            coordinates=args.coordinates,
+            rotations=args.rotations,
+            do_robo=args.do_robo,
+            do_bs=args.do_bs,
+            cycles=args.cycles,
+            bssids=args.bssids,
+            rotations_enabled=rotations_enabled,
+            enable_mobile_stats=args.enable_mobile_stats,
         )
 
-        teams.realdevice = RealDevice(manager_ip=args.mgr,
-                                      server_ip="192.168.1.61",
-                                      ssid_2g='Test Configured',
-                                      passwd_2g='',
-                                      encryption_2g='',
-                                      ssid_5g='Test Configured',
-                                      passwd_5g='',
-                                      encryption_5g='',
-                                      ssid_6g='Test Configured',
-                                      passwd_6g='',
-                                      encryption_6g='',
-                                      selected_bands=['5G'])
+        teams.upstream_port = teams.change_port_to_ip(args.upstream_port)
+
+        teams.realdevice = RealDevice(
+            manager_ip=args.mgr,
+            server_ip="192.168.1.61",
+            ssid_2g="Test Configured",
+            passwd_2g="",
+            encryption_2g="",
+            ssid_5g="Test Configured",
+            passwd_5g="",
+            encryption_5g="",
+            ssid_6g="Test Configured",
+            passwd_6g="",
+            encryption_6g="",
+            selected_bands=["5G"],
+        )
 
         teams.select_real_devices(real_sta_list=args.resources)
         if args.do_webUI:
             teams.path = args.report_dir
             teams.update_webui_data()
         teams.load_credentials()
-        teams.run()
-        time.sleep(10)
-        teams.create_avg_data()
-        teams.execute_finally = True
-
+        teams.handle_flask_server()
+        if args.do_robo:
+            teams.run_robo_test()
+        else:
+            teams.run()
+            time.sleep(10)
+            teams.create_avg_data()
     except Exception as e:
-        logging.error(f"AN ERROR OCCURED WHILE RUNNING TEST {e}")
+        logger.error(f"AN ERROR OCCURED WHILE RUNNING TEST {e}")
         traceback.print_exc()
 
     finally:
-        if not ('--help' in sys.argv or '-h' in sys.argv):
-            if teams.execute_finally:
+        if args is not None and not ("--help" in sys.argv or "-h" in sys.argv):
+            if teams is not None:
                 teams.stop_signal = True
-                teams.generate_report()
-                teams.move_csv_files()
                 if args.do_webUI:
                     teams.stop_test_in_webui()
+                teams.generate_report()
                 logger.info("Waiting for Browser Cleanup at Client Side")
                 time.sleep(10)
                 logger.info("Browser Cleanup Completed")
