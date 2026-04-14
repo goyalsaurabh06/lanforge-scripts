@@ -19,7 +19,7 @@ import lf_interop_ping as ping_test
 from lf_interop_throughput import Throughput
 from lf_interop_video_streaming import VideoStreamingTest
 from multiprocessing import Event, Value, Lock
-from lf_robo_base_class import RobotClass
+from lf_base_robo import RobotClass
 # from lf_interop_real_browser_test import RealBrowserTest
 from test_l3 import L3VariableTime,change_port_to_ip,configure_reporting,query_real_clients,valid_endp_types
 from lf_kpi_csv import lf_kpi_csv
@@ -3424,7 +3424,11 @@ class Candela(Realm):
         config=False,
         default_config=True,
         tput_mbps=False,
-        help_summary=False
+        help_summary=False,
+        do_bandsteering=False, 
+        total_cycles=1, 
+        bssids=None, 
+        duration_to_skip=None
     ):
 
         if dowebgui:
@@ -3580,6 +3584,11 @@ class Candela(Realm):
                                     robo_ip=self.robot_ip,
                                     coordinate_list=self.coordinate.split(",") if self.coordinate else [],
                                     angle_list=self.rotation.split(",") if self.rotation else [],
+                                    # for bandsteering
+                                    do_bandsteering=do_bandsteering,
+                                    total_cycles= total_cycles if total_cycles else 1,
+                                    bssids= bssids if bssids else None,
+                                    duration_to_skip = duration_to_skip if duration_to_skip else None,
                                     )
 
             if gave_incremental:
@@ -3618,6 +3627,7 @@ class Candela(Realm):
                     "data1": self.thput_obj_dict[ce][obj_name]["obj"].base_class_to_run_cxs_len,
                     "report_path": self.result_path if not self.thput_obj_dict[ce][obj_name]["obj"].dowebgui else self.thput_obj_dict[ce][obj_name]["obj"].result_dir
                 }
+                print("params",params)
                 self.thput_obj_dict[ce][obj_name]["data"] = params.copy()
                 if self.dowebgui:
                     self.webgui_test_done("thput")
@@ -3632,7 +3642,7 @@ class Candela(Realm):
 
                 # Extend individual_dataframe_column with dynamically generated column names
                 individual_dataframe_column.extend([f'Download{clients_to_run[i]}', f'Upload{clients_to_run[i]}', f'Rx % Drop  {clients_to_run[i]}',
-                                                f'Tx % Drop{clients_to_run[i]}', f'Average RTT {clients_to_run[i]} ', f'RSSI {clients_to_run[i]} ', f'Tx-Rate {clients_to_run[i]} ', f'Rx-Rate {clients_to_run[i]} '])
+                                                f'Tx % Drop{clients_to_run[i]}', f'Average RTT {clients_to_run[i]} ', f'RSSI {clients_to_run[i]} ', f'Tx-Rate {clients_to_run[i]} ', f'Rx-Rate {clients_to_run[i]} ', f'BSSID {clients_to_run[i]}', f'Channel {clients_to_run[i]}'])
 
             individual_dataframe_column.extend(['Overall Download', 'Overall Upload', 'Overall Rx % Drop ', 'Overall Tx % Drop', 'Iteration',
                                             'TIMESTAMP', 'Start_time', 'End_time', 'Remaining_Time', 'Incremental_list', 'status'])
@@ -6155,13 +6165,13 @@ class Candela(Realm):
                         report_path = params["report_path"].copy() if isinstance(params["report_path"], (list, dict, set)) else params["report_path"]
 
                         self.thput_obj_dict[ce][obj_name]["obj"].ssid_list = self.thput_obj_dict[ce][obj_name]["obj"].get_ssid_list(self.thput_obj_dict[ce][obj_name]["obj"].input_devices_list)
-                        self.thput_obj_dict[ce][obj_name]["obj"].signal_list, self.thput_obj_dict[ce][obj_name]["obj"].channel_list, self.thput_obj_dict[ce][obj_name]["obj"].mode_list, self.thput_obj_dict[ce][obj_name]["obj"].link_speed_list, rx_rate_list = self.thput_obj_dict[ce][obj_name]["obj"].get_signal_and_channel_data(self.thput_obj_dict[ce][obj_name]["obj"].input_devices_list)
+                        self.thput_obj_dict[ce][obj_name]["obj"].signal_list, self.thput_obj_dict[ce][obj_name]["obj"].channel_list, self.thput_obj_dict[ce][obj_name]["obj"].mode_list, self.thput_obj_dict[ce][obj_name]["obj"].link_speed_list, rx_rate_list,bssid_list = self.thput_obj_dict[ce][obj_name]["obj"].get_signal_and_channel_data(self.thput_obj_dict[ce][obj_name]["obj"].input_devices_list)
                         selected_real_clients_names = params["selected_real_clients_names"] if "selected_real_clients_names" in params else None 
                         if selected_real_clients_names is not None:
                             self.thput_obj_dict[ce][obj_name]["obj"].num_stations = selected_real_clients_names
 
                         # Initialize the report object
-                        if self.thput_obj_dict[ce][obj_name]["obj"].do_interopability == False and not self.robot_test:
+                        if (self.thput_obj_dict[ce][obj_name]["obj"].do_interopability == False and not self.robot_test)or(self.thput_obj_dict[ce][obj_name]["obj"].do_interopability == False and self.robot_test and self.thput_obj_dict[ce][obj_name]["obj"].do_bandsteering):
                             # df.to_csv(os.path.join(report_path_date_time, 'throughput_data.csv'))
                             # For groups and profiles configuration through webgui
 
@@ -6531,6 +6541,8 @@ class Candela(Realm):
                                 self.overall_report.set_graph_image(graph_png)
                                 self.overall_report.move_graph_image()
                                 self.overall_report.build_graph()
+                                if(self.thput_obj_dict[ce][obj_name]["obj"].do_bandsteering):
+                                    self.thput_obj_dict[ce][obj_name]["obj"].get_bandsteering_stats(self.overall_report,data,devices_on_running_trimmed)
                                 if(self.thput_obj_dict[ce][obj_name]["obj"].dowebgui and self.thput_obj_dict[ce][obj_name]["obj"].get_live_view):
                                     self.thput_obj_dict[ce][obj_name]["obj"].add_live_view_images_to_report(self.overall_report)
                                     
@@ -11570,6 +11582,10 @@ def main():
     # parser.add_argument('--thput_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
     # parser.add_argument('--thput_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
     parser.add_argument("--thput_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
+    # parser.add_argument('--thput_bandsteering', help='Enable bandsteering', action='store_true')
+    # parser.add_argument('--thput_cycles', help='total no of iterations', default="1")
+    # parser.add_argument('--thput_duration_to_skip', help='Robot wait duration in seconds at obstacle', default="1")
+    # parser.add_argument('--thput_bssids', type=str, help='Comma separated list of BSSIDs to be used for the test', default="")
     #mcast
     parser.add_argument('--mcast_test',
                           action="store_true",
@@ -12354,7 +12370,11 @@ def run_thput_test(args, candela_apis):
         packet_size=args.thput_packet_size,
         dowebgui=args.dowebgui,
         test_name=args.test_name,
-        result_dir=args.result_dir
+        result_dir=args.result_dir,
+        do_bandsteering=args.do_bandsteering,
+        total_cycles=args.cycles,
+        duration_to_skip=args.duration_to_skip,
+        bssids=args.bssids.split(",") if args.bssids else []
     )
 
 def run_mcast_test(args, candela_apis):

@@ -430,6 +430,7 @@ class Throughput(Realm):
         test_stopped_by_user = False
 
         # if band steering is enabled
+        print("bandsterrringgg",self.do_bandsteering)
         if self.do_bandsteering:
             # checking the battery status of robot before moving to a point
             self.robot.wait_for_battery()
@@ -529,11 +530,15 @@ class Throughput(Realm):
             if args.postcleanup:
                 self.cleanup()
             iterations_before_test_stopped_by_user.append(0)
+            self.base_class_iterations_data=iterations_before_test_stopped_by_user
+            self.base_class_incremental_capacity_list=incremental_capacity_list
+            self.base_class_all_dataframes=all_dataframes
+            self.base_class_to_run_cxs_len=to_run_cxs_len
             self.generate_report(list(set(iterations_before_test_stopped_by_user)), incremental_capacity_list, data=all_dataframes, data1=to_run_cxs_len, report_path=self.result_dir)
             if self.dowebgui:
                 # copying to home directory i.e home/user_name
                 self.copy_reports_to_home_dir()
-            exit(1)
+            return
 
         # Loop through the coordinate list when coordinates are specified.
         for coord in self.coordinate_list:
@@ -947,7 +952,7 @@ class Throughput(Realm):
                 self.device_found = False
                 if self.device_list != "all":
                     logger.warning("Test can not be initiated on any selected devices")
-                    exit(1)
+                    return
 
         else:
             devices_list = ","
@@ -1279,7 +1284,7 @@ class Throughput(Realm):
             for j in l3_cx_data:
                 if (j == "handler" or j == "uri"):
                     continue
-                if cx == l3_cx_data[j]['name']:
+                if 'name' in l3_cx_data[j] and cx == l3_cx_data[j]['name']:
                     throughput[i][5] = l3_cx_data[j]['avg rtt']
             i += 1
         return throughput
@@ -3416,6 +3421,8 @@ class Throughput(Realm):
             report = lf_report(_output_pdf="throughput.pdf", _output_html="throughput.html", _path=report_path,
                                _results_dir_name=result_dir_name)
             report_path = report.get_path()
+            if not self.dowebgui:
+                self.result_dir=report_path
             report_path_date_time = report.get_path_date_time()
             # df.to_csv(os.path.join(report_path_date_time, 'throughput_data.csv'))
             # For groups and profiles configuration through webgui
@@ -4976,7 +4983,7 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
         if args.robot_ip:
             # Execute Robo test execution when robot IP is provided
             throughput.perform_robo(args, clients_to_run)
-            exit(1)
+            return
 
         individual_dataframe_column = []
 
