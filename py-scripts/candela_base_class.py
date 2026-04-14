@@ -72,6 +72,9 @@ DeviceConfig=importlib.import_module("py-scripts.DeviceConfig")
 # from LANforge.LFUtils import LFUtils
 import sys
 import os
+import posixpath
+import stat
+import ntpath
 from multiprocessing import Manager
 manager = Manager()
 test_results_list = manager.list()
@@ -201,6 +204,84 @@ class RemoteSniffer:
         self.ssh_client = None
         self.sftp = None
         self.remote_process_pid = None
+    
+
+    def fetch_combined_roaming_zip(self, remote_folder, local_folder=None):
+        """
+        Finds a subfolder starting with 'pcap_batch' inside remote_folder, then zips the 'combined_roaming_clients' folder inside it,
+        downloads the zip to the local system, and places it in a local folder named after remote_folder's basename.
+        """
+        if not hasattr(self, 'ssh_client') or self.ssh_client is None:
+            raise Exception("SSH connection not established.")
+        if not hasattr(self, 'sftp') or self.sftp is None:
+            self.sftp = self.ssh_client.open_sftp()
+
+        # 1. Find pcap_batch* subfolder
+        stdin, stdout, stderr = self.ssh_client.exec_command(f"ls -d {remote_folder}/pcap_batch* 2>/dev/null | head -n 1")
+        pcap_batch_dir = stdout.read().decode().strip()
+        if not pcap_batch_dir:
+            raise Exception(f"No pcap_batch* folder found in {remote_folder}")
+
+        # 2. Check for combined_roaming_clients inside pcap_batch_dir
+        combined_dir = posixpath.join(pcap_batch_dir, "combined_roaming_clients")
+        try:
+            self.sftp.stat(combined_dir)
+        except FileNotFoundError:
+            raise Exception(f"combined_roaming_clients folder not found in {pcap_batch_dir}")
+
+        # 3. Zip the combined_roaming_clients folder on remote
+        zip_name = "combined_roaming_clients.zip"
+        remote_zip_path = posixpath.join(pcap_batch_dir, zip_name)
+        zip_cmd = f"cd {pcap_batch_dir} && zip -r {zip_name} combined_roaming_clients >/dev/null"
+        stdin, stdout, stderr = self.ssh_client.exec_command(zip_cmd)
+        exit_status = stdout.channel.recv_exit_status()
+        if exit_status != 0:
+            error_msg = stderr.read().decode()
+            raise Exception(f"Failed to zip combined_roaming_clients: {error_msg}")
+
+        # 4. Prepare local folder
+        remote_folder_basename = os.path.basename(remote_folder.rstrip('/'))
+        if local_folder is None:
+            local_folder = remote_folder_basename
+        else:
+            local_folder = os.path.join(local_folder, remote_folder_basename)
+
+        os.makedirs(local_folder, exist_ok=True)
+        local_zip_path = os.path.join(local_folder, zip_name)
+
+        # 5. Download the zip file
+        self.sftp.get(remote_zip_path, local_zip_path)
+        print(f"Downloaded {zip_name} to {local_zip_path}")
+
+        # 6. (Optional) Remove the zip file from remote
+        self.ssh_client.exec_command(f"rm -f {remote_zip_path}")
+
+        return local_zip_path
+    
+
+    def run_command_and_fetch_folder(self, remote_folder, local_folder=None):
+        """
+        Runs a command on the remote server using the existing SSH connection.
+        If the command succeeds (exit status 0), fetches the specified remote folder to the local system.
+
+        :param remote_folder: Path to the remote folder to fetch (str)
+        :param local_folder: Path to the local folder where files will be saved (str)
+        """
+        if not hasattr(self, 'ssh_client') or self.ssh_client is None:
+            raise Exception("SSH connection not established.")
+        if not hasattr(self, 'sftp') or self.sftp is None:
+            self.sftp = self.ssh_client.open_sftp()
+        command = f"python3 ~/roaming_development/wifi_roaming_cli.py --pcap-dir {remote_folder}"
+        print(f"Running remote command: {command}")
+        stdin, stdout, stderr = self.ssh_client.exec_command(command)
+        exit_status = stdout.channel.recv_exit_status()
+        if exit_status == 0:
+            print("Command executed successfully. Fetching folder...")
+            self.fetch_combined_roaming_zip(remote_folder, local_folder)
+        else:
+            error_msg = stderr.read().decode()
+            print(f"Command failed with exit status {exit_status}: {error_msg}")
+            raise Exception(f"Remote command failed: {error_msg}")
 
     def connect(self):
         self.ssh_client = paramiko.SSHClient()
