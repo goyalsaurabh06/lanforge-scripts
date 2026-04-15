@@ -259,6 +259,58 @@ class RemoteSniffer:
         return local_zip_path
     
 
+    def sftp_get_dir(self, remote_dir, local_dir):
+        os.makedirs(local_dir, exist_ok=True)
+        for entry in self.sftp.listdir_attr(remote_dir):
+            remote_path = posixpath.join(remote_dir, entry.filename)
+            local_path = os.path.join(local_dir, entry.filename)
+            if stat.S_ISDIR(entry.st_mode):
+                self.sftp_get_dir(remote_path, local_path)
+            else:
+                self.sftp.get(remote_path, local_path)
+    
+
+    def fetch_combined_roaming_folder(self, remote_folder, local_folder=None):
+        """
+        Finds a subfolder starting with 'pcap_batch' inside remote_folder, then fetches the
+        'combined_roaming_clients' folder inside it, downloading it recursively to the local system,
+        and places it in a local folder named after remote_folder's basename.
+        """
+        if not hasattr(self, 'ssh_client') or self.ssh_client is None:
+            raise Exception("SSH connection not established.")
+        if not hasattr(self, 'sftp') or self.sftp is None:
+            self.sftp = self.ssh_client.open_sftp()
+
+        # 1. Find pcap_batch* subfolder
+        stdin, stdout, stderr = self.ssh_client.exec_command(
+            f"ls -d {remote_folder}/pcap_batch* 2>/dev/null | head -n 1")
+        pcap_batch_dir = stdout.read().decode().strip()
+        if not pcap_batch_dir:
+            raise Exception(f"No pcap_batch* folder found in {remote_folder}")
+
+        # 2. Check for combined_roaming_clients inside pcap_batch_dir
+        combined_dir = posixpath.join(pcap_batch_dir, "combined_roaming_clients")
+        try:
+            self.sftp.stat(combined_dir)
+        except FileNotFoundError:
+            raise Exception(f"combined_roaming_clients folder not found in {pcap_batch_dir}")
+
+        # 3. Prepare local folder
+        remote_folder_basename = os.path.basename(remote_folder.rstrip('/'))
+        if local_folder is None:
+            local_folder = remote_folder_basename
+        else:
+            local_folder = os.path.join(local_folder, remote_folder_basename)
+        os.makedirs(local_folder, exist_ok=True)
+
+        # 4. Download the combined_roaming_clients folder recursively
+        local_combined_dir = os.path.join(local_folder, "combined_roaming_clients")
+        self.sftp_get_dir(combined_dir, local_combined_dir)
+        print(f"Downloaded {combined_dir} to {local_combined_dir}")
+
+        return local_combined_dir
+    
+
     def run_command_and_fetch_folder(self, remote_folder, local_folder=None):
         """
         Runs a command on the remote server using the existing SSH connection.
@@ -274,14 +326,22 @@ class RemoteSniffer:
         command = f"python3 ~/roaming_development/wifi_roaming_cli.py --pcap-dir {remote_folder}"
         print(f"Running remote command: {command}")
         stdin, stdout, stderr = self.ssh_client.exec_command(command)
+        # Read all output and error
+        out = stdout.read().decode()
+        err = stderr.read().decode()
         exit_status = stdout.channel.recv_exit_status()
         if exit_status == 0:
-            print("Command executed successfully. Fetching folder...")
-            self.fetch_combined_roaming_zip(remote_folder, local_folder)
+            print("Remote command executed successfully. Fetching folder...")
+            if out:
+                print("--- STDOUT ---\n" + out)
+            if err:
+                print("--- STDERR ---\n" + err)
+            self.fetch_combined_roaming_folder(remote_folder, local_folder)
         else:
-            error_msg = stderr.read().decode()
-            print(f"Command failed with exit status {exit_status}: {error_msg}")
-            raise Exception(f"Remote command failed: {error_msg}")
+            print(f"Command failed with exit status {exit_status}.")
+            print("--- STDOUT ---\n" + out)
+            print("--- STDERR ---\n" + err)
+            raise Exception(f"Remote command failed with exit status {exit_status}. See output above.")
 
     def connect(self):
         self.ssh_client = paramiko.SSHClient()

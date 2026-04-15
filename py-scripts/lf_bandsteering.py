@@ -30,7 +30,7 @@ class ROAMThroughput(RobotClass):
                  ssid="", security="", mgr_ip="", port="8080",
                  duration=60, test_name="", upstream_port="eth1",
                  upload="2560", download="2560", traffic_type=None, packet_size="-1", device_list=None, dowebgui=False, result_dir=None, bssids="",duration_to_skip="1",do_roaming=False
-                 ,sniff_radio_2g="1.2.wiphy0", sniff_channel_2g=11, sniff_radio_5g="1.2.wiphy1", sniff_channel_5g=44, sniff_radio_6g="1.2.wiphy2", sniff_channel_6g=239, resource_ip="10.17.1.208", wait_at_point="10"):
+                 ,sniff_radio_2g="1.2.wiphy0", sniff_channel_2g=11, sniff_radio_5g="1.2.wiphy1", sniff_channel_5g=44, sniff_radio_6g="1.2.wiphy2", sniff_channel_6g=239, resource_ip="10.17.1.208", wait_at_point="10",ap_coordinates=""):
         super().__init__()
         self.robo_ip = robo_ip
         self.coordinates = coordinates
@@ -70,6 +70,9 @@ class ROAMThroughput(RobotClass):
             self.sniff_channel_5g = sniff_channel_5g
             self.sniff_radio_6g = sniff_radio_6g
             self.sniff_channel_6g = sniff_channel_6g
+            # self.ap_coordinates = [x.strip() for x in ap_coordinates.split(",")]
+            self.ap_coordinates = ap_coordinates
+            # print("self.ap_coordinates ",self.ap_coordinates)
         # open("robot_x_y.csv", "w").write("timestamp,x,y\n")
         self.perform_throughput_test()
         logger.info("Moving robot to first coordinate to start the test")
@@ -355,22 +358,28 @@ class ROAMThroughput(RobotClass):
             report_obj.build_table()
 
 
+
+
     # def perform_roam_robot(self):
     #     sniffer = None
     #     remote_pcap_path = None
+
     #     try:
     #         self.create_testname_folder()
     #         self.roam_count = 0
-    #         first_coordinate = self.coordinates_list[0]
     #         test_stopped_by_user = False
-    #         self.total_cycles=self.total_cycles
+
     #         self.coordinate_list = self.coordinates_list
     #         coordinate_list_with_robo = self.get_coordinates_list()
-    #         curr_cycle = 1
-    #         logger.info("Starting cycle %s", curr_cycle)
-            
-    #         # monitor_created = self.sniffer_obj.create_monitor()
+    #         total_points = len(self.coordinate_list)
+    #         points_per_cycle = (2 * total_points - 2) if total_points > 1 else 1
 
+
+    #         logger.info("Starting roam test")
+
+    #         # -----------------------------
+    #         # Create Sniffers (2G, 5G, 6G)
+    #         # -----------------------------
     #         sniffer_obj1 = initialize_sniffer_obj(
     #             mgr=self.mgr_ip,
     #             port=8080,
@@ -395,99 +404,141 @@ class ROAMThroughput(RobotClass):
     #             moni_name="moni6g"
     #         )
 
+    #         # Clear and create monitors
     #         sniffer_obj1.clear_monitor_interfaces()
 
-    #         monitor_created1 = sniffer_obj1.create_monitor()
-    #         monitor_created2 = sniffer_obj2.create_monitor()
-    #         monitor_created3 = sniffer_obj3.create_monitor()
-    #         if not monitor_created1:
-    #             print("FAILED to create 2.4GHz monitor")
-    #             exit()
+    #         if not sniffer_obj1.create_monitor():
+    #             raise Exception("Failed to create 2.4GHz monitor")
 
-    #         if not monitor_created2:
-    #             print("FAILED to create 5GHz monitor")
-    #             exit()
+    #         if not sniffer_obj2.create_monitor():
+    #             raise Exception("Failed to create 5GHz monitor")
 
-    #         if not monitor_created3:
-    #             print("FAILED to create 6GHz monitor")
-    #             exit()
-    #         sniffer = RemoteSniffer(
-    #             "10.17.1.43",
-    #             "lanforge",
-    #             password="lanforge",
-    #             moni_name="moni11w0",
-    #             pcap_name="roaming.pcap"
-    #         )
-    #         sniffer.connect()
-    #         # remote_pcap_path = sniffer.start_sniff("/home/lanforge")
-    #         remote_pcap_path = sniffer.start_sniff_for_triband("/home/lanforge", moni2g="moni2g", moni5g="moni5g", moni6g="moni6g")
+    #         if not sniffer_obj3.create_monitor():
+    #             raise Exception("Failed to create 6GHz monitor")
 
-    #         print("Sniffing started")
-    #         print("Remote pcap path:", remote_pcap_path)
-    #         for coordinate in coordinate_list_with_robo:
-    #             pause, stopped, all_df = self.wait_for_battery(monitor_function=self.monitor_ap_bssid)
-    #             # print("Battery pause:", pause, "stopped:", stopped)
+    #         logger.info("All monitors created successfully")
+
+    #         # -----------------------------
+    #         # Start Roaming Loop
+    #         # -----------------------------
+
+    #         test_folder_name = time.strftime("%Y-%m-%d_%H-%M-%S")+"_"+self.test_name
+    #         for idx, coordinate in enumerate(coordinate_list_with_robo):
+    #             curr_cycle = (idx // points_per_cycle) + 1
+    #             robot_x, robot_y, from_coordinate_real, to_coordinate_real = self.get_robot_pose()
+
+    #             if idx == 0:
+    #                 from_coordinate = from_coordinate_real
+    #             else:
+    #                 from_coordinate = coordinate_list_with_robo[idx - 1]
+    #             to_coordinate = coordinate
+    #             print("Going from ",from_coordinate," to ",to_coordinate)
+    #             pcap_name = f"{from_coordinate}-{to_coordinate}_{curr_cycle}.pcap"
+
+    #             # Create sniffer
+    #             sniffer = RemoteSniffer(
+    #                 self.resource_ip,
+    #                 "lanforge",
+    #                 password="lanforge",
+    #                 pcap_name=pcap_name,
+    #                 test_name=test_folder_name
+    #             )
+    #             sniffer.connect()
+    #             remote_folder = sniffer.create_remote_test_folder()
+
+    #             remote_pcap_path = sniffer.start_sniff_for_triband(
+    #                 remote_folder,
+    #                 moni2g="moni2g",
+    #                 moni5g="moni5g",
+    #                 moni6g="moni6g"
+    #             )
+
+    #             logger.info(f"Sniffing started: {pcap_name}")
+    #             time.sleep(self.wait_at_point)  # Initial wait before movement
+    #             # -----------------------------
+    #             # Battery Handling
+    #             # -----------------------------
+    #             result = self.wait_for_battery(monitor_function=self.monitor_ap_bssid)
+    #             pause, stopped = result[0], result[1]
+
     #             if stopped:
+    #                 logger.info("Test stopped during battery check")
+    #                 sniffer.stop_sniff()
+    #                 # sniffer.close()
     #                 break
-    #             # if pause:
-    #             #     self.throughput_tester.start_specific(self.created_cx_lists_keys)
-    #             matched, abort =self.move_to_coordinate(coordinate, monitor_function=self.monitor_ap_bssid)
+
+    #             # -----------------------------
+    #             # Move Robot
+    #             # -----------------------------
+    #             result = self.move_to_coordinate(
+    #                 coordinate,
+    #                 monitor_function=self.monitor_ap_bssid
+    #             )
+
+    #             matched, abort = result[0], result[1]
+
+    #             # -----------------------------
+    #             # Handle Movement Failure
+    #             # -----------------------------
     #             if not matched:
+    #                 logger.warning(f"Failed to reach {coordinate}, skipping")
+    #                 sniffer.stop_sniff()
+    #                 # sniffer.close()
     #                 continue
-    #             if coordinate==self.coordinates_list[0]:
-    #                 curr_cycle += 1
-    #                 if curr_cycle > self.total_cycles:
-    #                     logger.info("Completed all {} cycles".format(self.total_cycles))
-    #                 else:
-    #                     logger.info("current cycle {}".format(curr_cycle))
+
     #             if abort:
-    #                 logger.info("Testing stopped by user")
+    #                 logger.info("Test stopped by user")
+    #                 sniffer.stop_sniff()
+    #                 # sniffer.close()
     #                 test_stopped_by_user = True
     #                 break
-               
 
+    #             # -----------------------------
+    #             # Stop Sniff + Fetch PCAP
+    #             # -----------------------------
+    #             print("Waiting for {} seconds before stopping sniffer to collect data frames".format(self.wait_at_point))
+    #             time.sleep(self.wait_at_point)
+    #             print("Completed waiting")
+    #             sniffer.stop_sniff()
+    #             sniffer.fetch_pcap(remote_pcap_path, pcap_name)
+    #             # sniffer.close()
 
-    #         self.roam_count += 1
-    #         # logger.info("Completed roam cycle %s", self.roam_count)
+    #             logger.info(f"Captured: {pcap_name}")
+
+    #             self.roam_count += 1
+
+    #         # -----------------------------
+    #         # Final Monitoring Stop
+    #         # -----------------------------
     #         self.monitor_ap_bssid(test_status="STOPPED")
 
     #     except KeyboardInterrupt:
     #         logger.info("Test interrupted by user")
-    #         sniffer.stop_sniff()
-    #         sniffer.fetch_pcap(remote_pcap_path, "./roaming.pcap")
-    #         sniffer.close()
+
+    #         if sniffer:
+    #             try:
+    #                 sniffer.stop_sniff()
+    #                 if remote_pcap_path:
+    #                     sniffer.fetch_pcap(remote_pcap_path, pcap_name)
+    #                 # sniffer.close()
+    #             except Exception as e:
+    #                 logger.error(f"Error during cleanup: {e}")
+
+    #     except Exception as e:
+    #         logger.error(f"Error in perform_roam_robot: {e}")
+
     #     finally:
-    #         # =====================
-    #         exit()
-    #         BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-    #         CONFIG_PATH = os.path.join(BASE_DIR, "../..", "candela_roaming_client_ap.json")
-    #         CONFIG_PATH = os.path.abspath(CONFIG_PATH)
-    #         PCAP_PATH = os.path.join(BASE_DIR, "roaming.pcap")
-
-    #         def load_config(path):
-    #             with open(path, "r") as f:
-    #                 return json.load(f)
-                    
-    #         config = load_config(CONFIG_PATH)
-
-    #         clients = config["clients"]
-    #         ap_bssids = config["ap_bssids"]
-
-    #         analyzer = RoamAnalyzer(
-    #             pcap_file=PCAP_PATH,
-    #             clients=clients,
-    #             ap_bssids=ap_bssids
-    #         )
-
-    #         analyzer.analyze()
-    #         analyzer._write_csv(self.result_dir)
-    #         analyzer._write_disconnect_csv(self.result_dir)
-    #         analyzer.save_pcap_to_dir(PCAP_PATH, self.result_dir)
-    #         # self.generate_report()
-    #         analyzer.generate_report_from_csv(self.result_dir)
-
-    #         logger.info("Test completed")
+    #         # -----------------------------
+    #         # Cleanup monitors
+    #         # -----------------------------
+    #         try:
+    #             # sniffer_obj1.delete_monitor()
+    #             # sniffer_obj2.delete_monitor()
+    #             # sniffer_obj3.delete_monitor()
+    #             # sniffer.run_command_and_fetch_folder(test_folder_name,self.report_folder_path)
+    #             sniffer.close()
+    #         except Exception as e:
+    #             logger.warning(f"Monitor cleanup failed: {e}")
 
     def perform_roam_robot(self):
         sniffer = None
@@ -496,73 +547,85 @@ class ROAMThroughput(RobotClass):
         try:
             self.create_testname_folder()
             self.roam_count = 0
-            test_stopped_by_user = False
-
             self.coordinate_list = self.coordinates_list
             coordinate_list_with_robo = self.get_coordinates_list()
-            total_points = len(self.coordinate_list)
-            points_per_cycle = (2 * total_points - 2) if total_points > 1 else 1
 
+            # FIX AP coordinates
+            if isinstance(self.ap_coordinates, str):
+                self.ap_coordinates = [x.strip() for x in self.ap_coordinates.split(",")]
+
+            ap_coords = set(self.ap_coordinates)
+            logger.info(f"AP COORDINATES: {ap_coords}")
 
             logger.info("Starting roam test")
 
             # -----------------------------
-            # Create Sniffers (2G, 5G, 6G)
+            # Create monitors
             # -----------------------------
             sniffer_obj1 = initialize_sniffer_obj(
-                mgr=self.mgr_ip,
-                port=8080,
+                mgr=self.mgr_ip, port=8080,
                 sniff_radio=self.sniff_radio_2g,
                 sniff_channel=self.sniff_channel_2g,
                 moni_name="moni2g"
             )
 
             sniffer_obj2 = initialize_sniffer_obj(
-                mgr=self.mgr_ip,
-                port=8080,
+                mgr=self.mgr_ip, port=8080,
                 sniff_radio=self.sniff_radio_5g,
                 sniff_channel=self.sniff_channel_5g,
                 moni_name="moni5g"
             )
 
             sniffer_obj3 = initialize_sniffer_obj(
-                mgr=self.mgr_ip,
-                port=8080,
+                mgr=self.mgr_ip, port=8080,
                 sniff_radio=self.sniff_radio_6g,
                 sniff_channel=self.sniff_channel_6g,
                 moni_name="moni6g"
             )
 
-            # Clear and create monitors
             sniffer_obj1.clear_monitor_interfaces()
 
             if not sniffer_obj1.create_monitor():
                 raise Exception("Failed to create 2.4GHz monitor")
-
             if not sniffer_obj2.create_monitor():
                 raise Exception("Failed to create 5GHz monitor")
-
             if not sniffer_obj3.create_monitor():
                 raise Exception("Failed to create 6GHz monitor")
 
             logger.info("All monitors created successfully")
 
             # -----------------------------
-            # Start Roaming Loop
+            # STATE VARIABLES
             # -----------------------------
-            test_folder_name = time.strftime("%Y-%m-%d_%H-%M-%S")+"_"+self.test_name
-            for idx, coordinate in enumerate(coordinate_list_with_robo):
-                curr_cycle = (idx // points_per_cycle) + 1
-                robot_x, robot_y, from_coordinate_real, to_coordinate_real = self.get_robot_pose()
-                if idx == 0:
-                    from_coordinate = from_coordinate_real
-                else:
-                    from_coordinate = coordinate_list_with_robo[idx - 1]
-                to_coordinate = coordinate
-                print("Going from ",from_coordinate," to ",to_coordinate)
-                pcap_name = f"{from_coordinate}-{to_coordinate}_{curr_cycle}.pcap"
+            last_ap = None
+            is_sniffing = False
+            cycle_map = {}
 
-                # Create sniffer
+            test_folder_name = time.strftime("%Y-%m-%d_%H-%M-%S") + "_" + self.test_name
+
+            # -----------------------------
+            # INITIAL POSITION
+            # -----------------------------
+            _, _, start_ap, _ = self.get_robot_pose()
+
+            print(f"Robot starting at: {start_ap}")
+
+            if start_ap in ap_coords:
+                last_ap = start_ap
+
+                # 🔥 LOOK-AHEAD FOR FIRST SEGMENT
+                next_ap = None
+                for idx, future_coord in enumerate(coordinate_list_with_robo):
+                    if future_coord in ap_coords and future_coord != last_ap:
+                        next_ap = future_coord
+                        break
+
+                key = f"{last_ap}-{next_ap}"
+                cycle_map[key] = cycle_map.get(key, 0) + 1
+                pcap_name = f"{key}_{cycle_map[key]}.pcap"
+
+                print(f"[PCAP NAME] {pcap_name}")
+
                 sniffer = RemoteSniffer(
                     self.resource_ip,
                     "lanforge",
@@ -570,6 +633,7 @@ class ROAMThroughput(RobotClass):
                     pcap_name=pcap_name,
                     test_name=test_folder_name
                 )
+
                 sniffer.connect()
                 remote_folder = sniffer.create_remote_test_folder()
 
@@ -580,92 +644,116 @@ class ROAMThroughput(RobotClass):
                     moni6g="moni6g"
                 )
 
-                logger.info(f"Sniffing started: {pcap_name}")
-                time.sleep(self.wait_at_point)  # Initial wait before movement
-                # -----------------------------
-                # Battery Handling
-                # -----------------------------
-                result = self.wait_for_battery(monitor_function=self.monitor_ap_bssid)
-                pause, stopped = result[0], result[1]
+                is_sniffing = True
+
+            # -----------------------------
+            # MAIN LOOP
+            # -----------------------------
+            for idx, coordinate in enumerate(coordinate_list_with_robo):
+
+                print(f"\nMoving to: {coordinate}")
+
+                pause, stopped, *_ = self.wait_for_battery(
+                    monitor_function=self.monitor_ap_bssid
+                )
 
                 if stopped:
-                    logger.info("Test stopped during battery check")
-                    sniffer.stop_sniff()
-                    sniffer.close()
                     break
 
-                # -----------------------------
-                # Move Robot
-                # -----------------------------
-                result = self.move_to_coordinate(
+                matched, abort, *_ = self.move_to_coordinate(
                     coordinate,
                     monitor_function=self.monitor_ap_bssid
                 )
 
-                matched, abort = result[0], result[1]
-
-                # -----------------------------
-                # Handle Movement Failure
-                # -----------------------------
                 if not matched:
-                    logger.warning(f"Failed to reach {coordinate}, skipping")
-                    sniffer.stop_sniff()
-                    sniffer.close()
                     continue
 
                 if abort:
-                    logger.info("Test stopped by user")
-                    sniffer.stop_sniff()
-                    sniffer.close()
-                    test_stopped_by_user = True
                     break
 
+                is_ap = coordinate in ap_coords
+
+                print(f"[DEBUG] coord={coordinate}, is_ap={is_ap}, sniffing={is_sniffing}, last_ap={last_ap}")
+
                 # -----------------------------
-                # Stop Sniff + Fetch PCAP
+                # STOP at next AP
                 # -----------------------------
-                print("Waiting for {} seconds before stopping sniffer to collect data frames".format(self.wait_at_point))
-                time.sleep(self.wait_at_point)
-                print("Completed waiting")
-                sniffer.stop_sniff()
-                sniffer.fetch_pcap(remote_pcap_path, pcap_name)
-                sniffer.close()
+                if is_ap and is_sniffing and coordinate != last_ap:
 
-                logger.info(f"Captured: {pcap_name}")
+                    print(f"STOP sniff at {coordinate}")
+                    time.sleep(self.wait_at_point)
 
-                self.roam_count += 1
-
-            # -----------------------------
-            # Final Monitoring Stop
-            # -----------------------------
-            self.monitor_ap_bssid(test_status="STOPPED")
-
-        except KeyboardInterrupt:
-            logger.info("Test interrupted by user")
-
-            if sniffer:
-                try:
                     sniffer.stop_sniff()
-                    if remote_pcap_path:
-                        sniffer.fetch_pcap(remote_pcap_path, pcap_name)
-                    sniffer.close()
-                except Exception as e:
-                    logger.error(f"Error during cleanup: {e}")
+
+                    sniffer.fetch_pcap(remote_pcap_path, sniffer.pcap_name)
+
+                    logger.info(f"Captured: {sniffer.pcap_name}")
+
+                    self.roam_count += 1
+
+                    # prepare next segment
+                    last_ap = coordinate
+                    is_sniffing = False
+
+                    # -----------------------------
+                    # 🔥 LOOK-AHEAD FOR NEXT SEGMENT
+                    # -----------------------------
+                    next_ap = None
+                    for future_coord in coordinate_list_with_robo[idx:]:
+                        if future_coord in ap_coords and future_coord != last_ap:
+                            next_ap = future_coord
+                            break
+
+                    if not next_ap:
+                        continue
+
+                    key = f"{last_ap}-{next_ap}"
+                    cycle_map[key] = cycle_map.get(key, 0) + 1
+                    pcap_name = f"{key}_{cycle_map[key]}.pcap"
+
+                    print(f"[PCAP NAME] {pcap_name}")
+
+                    print(f"START sniff from {last_ap}")
+
+                    sniffer = RemoteSniffer(
+                        self.resource_ip,
+                        "lanforge",
+                        password="lanforge",
+                        pcap_name=pcap_name,
+                        test_name=test_folder_name
+                    )
+
+                    sniffer.connect()
+                    remote_folder = sniffer.create_remote_test_folder()
+
+                    remote_pcap_path = sniffer.start_sniff_for_triband(
+                        remote_folder,
+                        moni2g="moni2g",
+                        moni5g="moni5g",
+                        moni6g="moni6g"
+                    )
+
+                    is_sniffing = True
+
+            # -----------------------------
+            # FINAL CLEANUP
+            # -----------------------------
+            if is_sniffing and sniffer:
+                print("Stopping final sniff")
+                sniffer.stop_sniff()
+                sniffer.fetch_pcap(remote_pcap_path, sniffer.pcap_name)
+
+            self.monitor_ap_bssid(test_status="STOPPED")
 
         except Exception as e:
             logger.error(f"Error in perform_roam_robot: {e}")
 
         finally:
-            # -----------------------------
-            # Cleanup monitors
-            # -----------------------------
             try:
-                # sniffer_obj1.delete_monitor()
-                # sniffer_obj2.delete_monitor()
-                # sniffer_obj3.delete_monitor()
-                logger.info("Cleaned up monitor interfaces")
+                if sniffer:
+                    sniffer.close()
             except Exception as e:
-                logger.warning(f"Monitor cleanup failed: {e}")
-    
+                logger.warning(f"Cleanup failed: {e}")
     def perform_throughput_test(self):
         self.runtime_dir = self.result_dir
         self.ip = self.mgr_ip
@@ -916,8 +1004,9 @@ def main():
     parser.add_argument('--bssids', type=str, help='Comma separated list of BSSIDs to be used for the test', default="")
     parser.add_argument('--duration_to_skip', help='Robot wait duration in seconds at obstacle', default="1")
     parser.add_argument('--do_roaming', help="If true will execute roaming test", action='store_true')
-    parser.add_argument('--wait_at_point', help='Robot wait duration in seconds before sniffing starts and stops', default="30")
-    parser.add_argument('--resource_ip', help='Resource manager IP address', default="10.17.1.208")
+    parser.add_argument('--wait_at_point', help='Robot wait duration in seconds before sniffing starts and stops', default="5")
+    parser.add_argument('--resource_ip', help='Resource manager IP address', default="10.17.1.43")
+    parser.add_argument('--ap_coordinates', help='Coordinates of the ap', default="")
     parser.add_argument('--sniff_radio_2g',
                           help='Sniffer Radio',
                           default='1.2.wiphy0')
@@ -968,7 +1057,8 @@ def main():
         sniff_channel_5g=args.sniff_channel_5g,
         sniff_channel_6g=args.sniff_channel_6g,
         wait_at_point=args.wait_at_point,
-        resource_ip=args.resource_ip
+        resource_ip=args.resource_ip,
+        ap_coordinates=args.ap_coordinates
     )
 
 
