@@ -120,6 +120,167 @@ lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 robo_base_class = importlib.import_module("py-scripts.lf_base_robo")
 
 
+class SniffingManager:
+    """Manages packet capture (sniffing) across AP-to-AP roaming segments.
+
+    Handles the lifecycle of RemoteSniffer connections: starting triband captures
+    when the robot leaves one AP, stopping and fetching the pcap when it arrives
+    at the next AP, and reusing SSH connections across segments.
+
+    Typical usage inside the robot movement loop::
+
+        self.sniff_mgr = SniffingManager(resource_ip, output_path=self.path)
+        ...
+        if is_ap and coord != self.sniff_mgr.last_ap:
+            self.sniff_mgr.stop_segment()          # no-op if not sniffing
+            self.sniff_mgr.last_ap = coord
+            next_ap = self.sniff_mgr.find_next_ap(coords, idx, ap_set, coord)
+            if next_ap:
+                self.sniff_mgr.start_segment(coord, next_ap)
+        ...
+        self.sniff_mgr.stop_segment()              # final cleanup
+        self.sniff_mgr.close()
+    """
+
+    def __init__(
+        self,
+        resource_ip,
+        output_path,
+        username="lanforge",
+        password="lanforge",
+        test_folder_name=None,
+    ):
+        self._resource_ip = resource_ip
+        self._output_path = output_path
+        self._username = username
+        self._password = password
+        self._test_folder_name = (
+            test_folder_name or time.strftime("%Y-%m-%d_%H-%M-%S") + "_zoom_roaming"
+        )
+
+        # internal state
+        self._sniffer = None  # current RemoteSniffer instance
+        self._remote_pcap_path = None  # path to the in-progress pcap on the remote host
+        self._is_sniffing = False
+        self._last_ap = None
+        self._cycle_map = {}  # "AP1-AP2" -> count for pcap naming
+
+    # -- public properties ---------------------------------------------------
+
+    @property
+    def is_sniffing(self):
+        return self._is_sniffing
+
+    @property
+    def last_ap(self):
+        return self._last_ap
+
+    @last_ap.setter
+    def last_ap(self, value):
+        self._last_ap = value
+
+    def find_next_ap(self, coord_list, start_idx, ap_coords, exclude_ap):
+        """Look ahead in *coord_list* starting after *start_idx* and return the
+        first coordinate that is in *ap_coords* but is not *exclude_ap*.  Returns
+        ``None`` if no such coordinate exists."""
+        for future_coord in coord_list[start_idx + 1 :]:
+            if future_coord in ap_coords and future_coord != exclude_ap:
+                return future_coord
+        return None
+
+    # -- connection management ------------------------------------------------
+
+    def _ensure_connected(self):
+        """Create or reconnect the underlying RemoteSniffer SSH session."""
+        if self._sniffer is not None:
+            try:
+                transport = self._sniffer.ssh_client.get_transport()
+                if transport and transport.is_active():
+                    return  # existing connection is still alive
+            except Exception:
+                pass
+            # stale connection – tear it down
+            self._close_sniffer()
+
+        self._sniffer = RemoteSniffer(
+            self._resource_ip,
+            self._username,
+            password=self._password,
+            test_name=self._test_folder_name,
+        )
+        self._sniffer.connect()
+        logger.info("[SNIFF] SSH connection established to %s", self._resource_ip)
+
+    def _close_sniffer(self):
+        """Safely close the current RemoteSniffer (if any)."""
+        if self._sniffer is not None:
+            try:
+                self._sniffer.close()
+            except Exception as exc:
+                logger.warning("[SNIFF] Error closing sniffer connection: %s", exc)
+            self._sniffer = None
+
+    # -- segment start / stop -------------------------------------------------
+
+    def start_segment(self, from_ap, to_ap):
+        """Start a triband packet capture for the *from_ap* -> *to_ap* segment.
+
+        Returns ``True`` on success, ``False`` on failure (logged, not raised).
+        """
+        key = f"{from_ap}-{to_ap}"
+        self._cycle_map[key] = self._cycle_map.get(key, 0) + 1
+        pcap_name = f"{key}_{self._cycle_map[key]}.pcap"
+
+        try:
+            self._ensure_connected()
+            self._sniffer.pcap_name = pcap_name
+            remote_folder = self._sniffer.create_remote_test_folder()
+            self._remote_pcap_path = self._sniffer.start_sniff_for_triband(
+                remote_folder,
+                moni2g="moni2g",
+                moni5g="moni5g",
+                moni6g="moni6g",
+            )
+            self._is_sniffing = True
+            logger.info("[SNIFF START] %s  (pcap: %s)", key, pcap_name)
+            return True
+        except Exception as exc:
+            logger.error("[SNIFF START] Failed for %s: %s", key, exc, exc_info=True)
+            self._is_sniffing = False
+            self._close_sniffer()
+            return False
+
+    def stop_segment(self, wait_seconds=0):
+        """Stop the current capture, fetch the pcap, and reset state.
+
+        Safe to call when not sniffing (no-op).  Returns ``True`` on success,
+        ``False`` on failure or when there was nothing to stop.
+        """
+        if not self._is_sniffing or self._sniffer is None:
+            return False
+
+        if wait_seconds > 0:
+            time.sleep(wait_seconds)
+
+        try:
+            self._sniffer.stop_sniff()
+            # local_path = os.path.join(self._output_path, self._sniffer.pcap_name)
+            # self._sniffer.fetch_pcap(self._remote_pcap_path, local_path)
+            logger.info("[SNIFF STOP] Captured %s", self._sniffer.pcap_name)
+            return True
+        except Exception as exc:
+            logger.error("[SNIFF STOP] Failed: %s", exc, exc_info=True)
+            return False
+        finally:
+            self._is_sniffing = False
+            self._remote_pcap_path = None
+
+    def close(self):
+        """Stop any in-progress capture and tear down the SSH connection."""
+        self.stop_segment()
+        self._close_sniffer()
+
+
 class ZoomAutomation(Realm):
     def __init__(
         self,
@@ -155,6 +316,15 @@ class ZoomAutomation(Realm):
         cycles=1,
         bssids=None,
         do_roam=False,
+        sniff_radio_2g="",
+        sniff_radio_5g="",
+        sniff_radio_6g="",
+        sniff_channel_2g="",
+        sniff_channel_5g="",
+        sniff_channel_6g="",
+        wait_at_point=30,
+        resource_ip=None,
+        ap_coordinates="",
     ):
 
         super().__init__(lfclient_host=lanforge_ip)
@@ -264,31 +434,82 @@ class ZoomAutomation(Realm):
         self.bssids = bssids or []
         logger.info("Zoom Automation Initialized with the following parameters:")
         if self.do_bs or self.do_roam:
-            logger.info(f"checking coordinates list: {self.coordinates_list}")
             self.robo_obj.coordinate_list = self.coordinates_list
             self.robo_obj.total_cycles = self.cycles
-            logger.info(f"Robo coordinates list: {self.robo_obj.coordinate_list}")
+            logger.info(
+                f"User mentioned coordinates list: {self.robo_obj.coordinate_list}"
+            )
         self.successful_coords = []
         self.failed_coords = []
         self.is_csv_available = False
-
+        self.wait_at_point = int(wait_at_point)
+        self.resource_ip = resource_ip
         if self.do_roam:
-            self.sniffer_obj = initialize_sniffer_obj(
-                mgr=self.mgr_ip,
-                port="8080",
-                sniff_radio="1.2.wiphy1",
-                sniff_channel="44",
-                moni_name="moni11w0",
-            )
-            self.monitor_created = self.sniffer_obj.create_monitor()
-
-            if not self.monitor_created:
+            if not self.resource_ip:
                 logger.error(
-                    "Failed to create monitor for roaming analysis. Roaming test cannot proceed."
+                    "do_roam=True but resource_ip is not set. Cannot create sniffer."
                 )
                 sys.exit(1)
+            # Parse AP coordinates once (string → list + set) so run() doesn't mutate them
+            if isinstance(ap_coordinates, str):
+                self.ap_coordinates = [
+                    x.strip() for x in ap_coordinates.split(",") if x.strip()
+                ]
+            else:
+                self.ap_coordinates = list(ap_coordinates) if ap_coordinates else []
+            self.ap_coord_set = set(self.ap_coordinates)
+            self.sniff_radio_2g = sniff_radio_2g
+            self.sniff_radio_5g = sniff_radio_5g
+            self.sniff_radio_6g = sniff_radio_6g
+            self.sniff_channel_2g = sniff_channel_2g
+            self.sniff_channel_5g = sniff_channel_5g
+            self.sniff_channel_6g = sniff_channel_6g
 
-            logger.info("Monitor created")
+            self.sniffer_obj1 = initialize_sniffer_obj(
+                mgr=self.mgr_ip,
+                port="8080",
+                sniff_radio=self.sniff_radio_2g,
+                sniff_channel=self.sniff_channel_2g,
+                moni_name="moni2g",
+            )
+
+            self.sniffer_obj2 = initialize_sniffer_obj(
+                mgr=self.mgr_ip,
+                port="8080",
+                sniff_radio=self.sniff_radio_5g,
+                sniff_channel=self.sniff_channel_5g,
+                moni_name="moni5g",
+            )
+
+            self.sniffer_obj3 = initialize_sniffer_obj(
+                mgr=self.mgr_ip,
+                port="8080",
+                sniff_radio=self.sniff_radio_6g,
+                sniff_channel=self.sniff_channel_6g,
+                moni_name="moni6g",
+            )
+
+            self.sniffer_obj1.clear_monitor_interfaces()
+
+            if not self.sniffer_obj1.create_monitor():
+                logger.error("Failed to create 2.4GHz monitor for roaming analysis.")
+                sys.exit(1)
+            if not self.sniffer_obj2.create_monitor():
+                logger.error("Failed to create 5GHz monitor for roaming analysis.")
+                sys.exit(1)
+            if not self.sniffer_obj3.create_monitor():
+                logger.error("Failed to create 6GHz monitor for roaming analysis.")
+                sys.exit(1)
+
+            logger.info("All monitors (2.4GHz, 5GHz, 6GHz) created successfully")
+
+            # SniffingManager handles RemoteSniffer lifecycle during roaming
+            self.sniff_mgr = SniffingManager(
+                resource_ip=self.resource_ip,
+                output_path=self.path,
+                username="lanforge",
+                password="lanforge",
+            )
 
     def stop_previous_flask_server(self):
         """
@@ -1279,19 +1500,8 @@ class ZoomAutomation(Realm):
 
         if self.do_bs or self.do_roam:
             time.sleep(60)
-            self.sniffer = RemoteSniffer(
-                "10.17.1.43",
-                "lanforge",
-                password="lanforge",
-                moni_name="moni11w0",
-                pcap_name="roaming.pcap",
-            )
-            try:
-                self.sniffer.connect()
-                remote_pcap_path = self.sniffer.start_sniff("/home/lanforge")
 
-                logger.info("Sniffing started")
-                logger.info("Remote pcap path: %s", remote_pcap_path)
+            try:
                 if self.do_bs:
                     logger.info(
                         f"Band-Steering Test coordinates to be visited: {self.bs_coord_result}"
@@ -1301,6 +1511,15 @@ class ZoomAutomation(Realm):
                         f"Roaming Test coordinates to be visited: {self.bs_coord_result}"
                     )
 
+                if not self.bs_coord_result:
+                    logger.error(
+                        "No coordinates available (bs_coord_result is empty). Skipping roaming/BS test."
+                    )
+                    self.stop_signal = True
+                    return
+
+                logger.info(f"AP COORDINATES: {self.ap_coord_set}")
+
                 total_iterations = max(int(self.cycles or 1), 1)
                 current_iteration = 1
                 first_coordinate = (
@@ -1309,12 +1528,28 @@ class ZoomAutomation(Realm):
 
                 if self.do_roam:
                     logger.info(
+                        "==============================================================================="
+                    )
+                    logger.info(
                         "Starting Roaming iteration %s/%s",
                         current_iteration,
                         total_iterations,
                     )
 
-                for coordinate in self.bs_coord_result:
+                # If the robot's current position is an AP coordinate, begin the first capture segment
+                if (
+                    self.do_roam
+                    and self.from_cord
+                    and self.from_cord in self.ap_coord_set
+                ):
+                    self.sniff_mgr.last_ap = self.from_cord
+                    next_ap = self.sniff_mgr.find_next_ap(
+                        self.bs_coord_result, -1, self.ap_coord_set, self.from_cord
+                    )
+                    if next_ap:
+                        self.sniff_mgr.start_segment(self.from_cord, next_ap)
+
+                for idx, coordinate in enumerate(self.bs_coord_result):
                     if (
                         self.do_roam
                         and first_coordinate
@@ -1329,11 +1564,8 @@ class ZoomAutomation(Realm):
                         )
 
                     logger.info(f"Moving robot to coordinate: {coordinate}")
-                    if not self.to_cord:
-                        self.to_cord = coordinate
-                    else:
-                        self.from_cord = self.to_cord
-                        self.to_cord = coordinate
+                    self.from_cord = self.to_cord
+                    self.to_cord = coordinate
 
                     # Battery safety
                     self.robo_obj.wait_for_battery()
@@ -1350,7 +1582,27 @@ class ZoomAutomation(Realm):
                         logger.error(f"Failed to reach the {coordinate}")
                         self.failed_coords.append(coordinate)
                         sys.exit()
-                    # time.sleep(10)
+
+                    # --- AP-coordinate sniffing (roaming only) ---
+                    if (
+                        self.do_roam
+                        and coordinate in self.ap_coord_set
+                        and coordinate != self.sniff_mgr.last_ap
+                    ):
+                        # Arrived at a new AP: stop current capture, then start next segment
+                        self.sniff_mgr.stop_segment(wait_seconds=self.wait_at_point)
+                        self.sniff_mgr.last_ap = coordinate
+
+                        next_ap = self.sniff_mgr.find_next_ap(
+                            self.bs_coord_result, idx, self.ap_coord_set, coordinate
+                        )
+                        if next_ap:
+                            self.sniff_mgr.start_segment(coordinate, next_ap)
+
+                # Final cleanup — stop any in-progress capture
+                if self.do_roam:
+                    self.sniff_mgr.stop_segment()
+
                 if self.do_bs:
                     logger.info(
                         "All coordinates completed — stopping Band-Steering Test"
@@ -1363,55 +1615,65 @@ class ZoomAutomation(Realm):
                 logger.error(f"Error during sniffer operation: {e}", exc_info=True)
 
             finally:
-                self.sniffer.stop_sniff()
-                self.sniffer.fetch_pcap(remote_pcap_path, f"{self.path}/roaming.pcap")
-                self.sniffer.close()
+                if self.do_roam:
+                    try:
+                        self.sniff_mgr.close()
+                    except Exception as e:
+                        logger.warning(f"Sniffer cleanup failed: {e}")
+
                 count = 0
-                while not self.is_csv_available:
-                    count += 1
-                    if (
-                        count > 60
-                    ):  # Wait for a maximum of 5 minutes for the CSV to be available
-                        logger.warning(
-                            "CSV data from Zoom dashboard is not available after waiting for 5 minutes. Proceeding with report generation without CSV data."
+                if self.download_csv:
+                    while not self.is_csv_available:
+                        count += 1
+                        if (
+                            count > 60
+                        ):  # Wait for a maximum of 5 minutes for the CSV to be available
+                            logger.warning(
+                                "CSV data from Zoom dashboard is not available after waiting for 5 minutes. Proceeding with report generation without CSV data."
+                            )
+                            break
+                        logger.info(
+                            "Waiting for CSV data from Zoom dashboard to be available before proceeding with the Report generation and cleanup"
                         )
-                        break
-                    logger.info(
-                        "Waiting for CSV data from Zoom dashboard to be available before proceeding with the Report generation and cleanup"
-                    )
-                    time.sleep(5)
-                path = f"{self.path}/roaming.pcap"
-                if os.path.isfile(path):
-                    logger.info(
-                        "Roaming Pcap File is available at the expected location. Proceeding with report generation..."
-                    )
-                else:
-                    logger.error(
-                        "Roaming Pcap File doesn't exits. Please check the sniffer connection and configuration"
-                    )
+                        time.sleep(5)
 
-                BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+                # # Check for pcap files in the path
+                # pcap_files = [f for f in os.listdir(self.path) if f.endswith('.pcap')]
+                # if pcap_files:
+                #     logger.info(f"Roaming Pcap Files available: {pcap_files}")
+                # else:
+                #     logger.error(
+                #         "No Roaming Pcap Files found. Please check the sniffer connection and configuration"
+                #     )
 
-                CONFIG_PATH = os.path.join(
-                    BASE_DIR, "../../../../", "candela_roaming_client_ap.json"
-                )
-                logger.info(f"Configuration file path: {CONFIG_PATH}")
-                CONFIG_PATH = os.path.abspath(CONFIG_PATH)
-                PCAP_PATH = os.path.join(self.path, "roaming.pcap")
+                # BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-                with open(CONFIG_PATH, "r") as f:
-                    config = json.load(f)
+                # CONFIG_PATH = os.path.join(
+                #     BASE_DIR, "../../../../", "candela_roaming_client_ap.json"
+                # )
+                # logger.info(f"Configuration file path: {CONFIG_PATH}")
+                # CONFIG_PATH = os.path.abspath(CONFIG_PATH)
 
-                clients = config["clients"]
-                ap_bssids = config["ap_bssids"]
+                # # Analyze all pcap files
+                # for pcap_file in pcap_files:
+                #     PCAP_PATH = os.path.join(self.path, pcap_file)
 
-                self.analyzer = RoamAnalyzer(
-                    pcap_file=PCAP_PATH, clients=clients, ap_bssids=ap_bssids
-                )
+                #     with open(CONFIG_PATH, "r") as f:
+                #         config = json.load(f)
 
-                self.analyzer.analyze()
-                self.analyzer._write_csv(path=self.path)
-                self.analyzer._write_disconnect_csv(path=self.path)
+                #     clients = config["clients"]
+                #     ap_bssids = config["ap_bssids"]
+
+                #     self.analyzer = RoamAnalyzer(
+                #         pcap_file=PCAP_PATH, clients=clients, ap_bssids=ap_bssids
+                #     )
+
+                #     self.analyzer.analyze()
+                #     pcap_base_name = os.path.splitext(pcap_file)[0]
+                #     pcap_analysis_path = os.path.join(self.path, pcap_base_name)
+                #     os.makedirs(pcap_analysis_path, exist_ok=True)
+                #     self.analyzer._write_csv(path=pcap_analysis_path)
+                #     self.analyzer._write_disconnect_csv(path=pcap_analysis_path)
 
         else:
             while datetime.now(self.tz) < self.end_time or not self.check_gen_cx():
@@ -2853,24 +3115,32 @@ class ZoomAutomation(Realm):
                 ]
             )
         else:
-
-            test_parameters = pd.DataFrame(
-                [
+            test_params_list = [
+                {
+                    "Test Name": "Zoom Conference Call Test",
+                    "Date": time.strftime("%d-%m-%Y", time.localtime()),
+                    "Devices Used": f"W({self.windows}),L({self.linux}),M({self.mac}),A({self.android})",
+                    # "Zoom Meeting ID": self.remote_login_url,
+                    # "Test Duration": to_hms(self.duration),
+                    "EMAIL ID": self.signin_email,
+                    "PASSWORD": self.signin_passwd,
+                    "HOST": self.real_sta_list[0],
+                    "TEST TYPE": testtype,
+                }
+            ]
+            if self.do_robo or self.do_bs or self.do_roam:
+                test_params_list[0].update(
                     {
-                        "Test Name": "Zoom Conference Call Test",
-                        "Date": time.strftime("%d-%m-%Y", time.localtime()),
-                        "Devices Used": f"W({self.windows}),L({self.linux}),M({self.mac}),A({self.android})",
-                        # "Zoom Meeting ID": self.remote_login_url,
-                        # "Test Duration": to_hms(self.duration),
-                        "EMAIL ID": self.signin_email,
-                        "PASSWORD": self.signin_passwd,
-                        "HOST": self.real_sta_list[0],
-                        "TEST TYPE": testtype,
                         "Coordinates": self.coordinates_list,
-                        "Iterations": self.cycles,
                     }
-                ]
-            )
+                )
+                if self.do_bs or self.do_roam:
+                    test_params_list[0].update(
+                        {
+                            "Iterations": self.cycles,
+                        }
+                    )
+            test_parameters = pd.DataFrame(test_params_list)
         self.report.set_table_dataframe(test_parameters)
         self.report.build_table()
 
@@ -3456,17 +3726,17 @@ class ZoomAutomation(Realm):
             self.report.html += self.report.dataframe_html
         if self.do_bs:
             self.add_bandsteering_report_section(report=self.report)
-        try:
-            if self.do_roam:
-                self.generate_roam_report(path=self.path, report_obj=self.report)
-        except Exception as e:
-            logger.error(f"Error generating roam report: {e}")
+        # try:
+        #     if self.do_roam:
+        #         self.generate_roam_report(path=self.path, report_obj=self.report)
+        # except Exception as e:
+        #     logger.error(f"Error generating roam report: {e}")
 
-        try:
-            if self.do_roam:
-                self.analyzer.generate_report_from_csv(path=self.path)
-        except Exception as e:
-            logger.error(f"Error generating roam report from CSVs: {e}")
+        # try:
+        #     if self.do_roam:
+        #         self.analyzer.generate_report_from_csv(path=self.path)
+        # except Exception as e:
+        #     logger.error(f"Error generating roam report from CSVs: {e}")
         self.report.write_html()
         self.report.write_pdf(_page_size="Legal", _orientation="Landscape")
         for client in self.real_sta_hostname:
@@ -4033,7 +4303,7 @@ class ZoomAutomation(Realm):
         path = os.path.join("zoom_api_responses", filename)
         with open(path, "w") as f:
             json.dump(data, f, indent=2)
-        logger.info(f"Saved data to {path}")
+        # logger.info(f"Saved data to {path}")
 
     def run_robo_test(self):
         for coordinate in self.coordinates_list:
@@ -4132,11 +4402,6 @@ class ZoomAutomation(Realm):
         self.login_completed = False
 
     def create_participants(self):
-        # print("=============================")
-        # print("Creating Participants with the following details:")
-        # print(self.lanforge_port_list)
-        # print(self.real_sta_hostname)
-        # print(self.serial_list)
         for i in range(1, len(self.real_sta_os_type)):
             if self.real_sta_os_type[i] == "android":
                 status, created_cx, created_endp = self.create_android(
@@ -4146,7 +4411,7 @@ class ZoomAutomation(Realm):
                 )
                 self.generic_endps_profile.created_endp.extend(created_endp)
                 self.generic_endps_profile.created_cx.extend(created_cx)
-                print(self.generic_endps_profile.created_cx)
+                # print(self.generic_endps_profile.created_cx)
                 cmd = (
                     f"python3 /home/lanforge/lanforge-scripts/py-scripts/real_application_tests/zoom_automation/android_zoom.py "
                     f"--serial {self.serial_list[i]} "
@@ -4210,6 +4475,7 @@ class ZoomAutomation(Realm):
         self.test_start = False
         if self.do_bs or self.do_roam:
             self.bs_coord_result = self.robo_obj.get_coordinates_list()
+            logger.info(f"Total Coordinates to be Visited: {self.bs_coord_result}")
             if self.bs_coord_result:
                 self.from_cord = self.coordinates_list[0]
                 self.successful_coords.append(self.from_cord)
@@ -4854,6 +5120,49 @@ def main():
             help="Specify this flag to perform the test with robo for Roaming",
             action="store_true",
         )
+        parser.add_argument(
+            "--wait_at_point",
+            help="Robot wait duration in seconds before sniffing starts and stops",
+            default="30",
+        )
+        parser.add_argument(
+            "--res_lf_ip", help="Resource manager IP address", default="10.17.1.208"
+        )
+        parser.add_argument(
+            "--sniff_radio_2g", help="Sniffer Radio", default="1.2.wiphy0"
+        )
+
+        parser.add_argument(
+            "--sniff_radio_5g", help="Sniffer Radio", default="1.2.wiphy1"
+        )
+
+        parser.add_argument(
+            "--sniff_radio_6g", help="Sniffer Radio", default="1.2.wiphy2"
+        )
+
+        parser.add_argument(
+            "--sniff_channel_2g", help="Channel", type=str, default="11"
+        )
+
+        parser.add_argument(
+            "--sniff_channel_5g", help="Channel", type=str, default="44"
+        )
+
+        parser.add_argument(
+            "--sniff_channel_6g", help="Channel", type=str, default="239"
+        )
+
+        parser.add_argument(
+            "--resource_ip",
+            help="Resource manager IP address for sniffing",
+            default="10.17.1.208",
+        )
+
+        parser.add_argument(
+            "--ap_coordinates",
+            help="Comma-separated list of AP coordinates for start/stop sniffing",
+            default="",
+        )
 
         args = parser.parse_args()
 
@@ -4867,363 +5176,355 @@ def main():
             logger_config.lf_logger_config_json = args.lf_logger_config_json
             logger_config.load_lf_logger_config()
 
-        if True:
-            if (
-                args.expected_passfail_value is not None
-                and args.device_csv_name is not None
-            ):
-                logger.error(
-                    "Specify either expected_passfail_value or device_csv_name"
-                )
-                exit(1)
+        if (
+            args.expected_passfail_value is not None
+            and args.device_csv_name is not None
+        ):
+            logger.error("Specify either expected_passfail_value or device_csv_name")
+            exit(1)
 
-            if args.group_name is not None:
-                args.group_name = args.group_name.strip()
-                selected_groups = args.group_name.split(",")
-            else:
-                selected_groups = []
+        if args.group_name is not None:
+            args.group_name = args.group_name.strip()
+            selected_groups = args.group_name.split(",")
+        else:
+            selected_groups = []
 
-            if args.profile_name is not None:
-                args.profile_name = args.profile_name.strip()
-                selected_profiles = args.profile_name.split(",")
-            else:
-                selected_profiles = []
+        if args.profile_name is not None:
+            args.profile_name = args.profile_name.strip()
+            selected_profiles = args.profile_name.split(",")
+        else:
+            selected_profiles = []
 
-            if len(selected_groups) != len(selected_profiles):
-                logger.error("Number of groups should match number of profiles")
-                exit(0)
-            elif (
-                args.group_name is not None
-                and args.profile_name is not None
-                and args.file_name is not None
-                and args.resources is not None
-            ):
-                logger.error(
-                    "Either group name or device list should be entered not both"
-                )
-                exit(0)
-            elif args.ssid is not None and args.profile_name is not None:
-                logger.error("Either ssid or profile name should be given")
-                exit(0)
-            elif args.file_name is not None and (
-                args.group_name is None or args.profile_name is None
-            ):
-                logger.error("Please enter the correct set of arguments")
-                exit(0)
-            elif args.config and (
-                (
-                    args.ssid is None
-                    or args.encryp is None
-                    or (args.passwd is None and args.encryp.lower() != "open")
-                )
-            ):
-                logger.error(
-                    "Please provide ssid password and security for configuration of devices"
-                )
-                exit(0)
-
-            rotations_enabled = False
-            bssids = []
-            if args.do_robo or args.do_bs or args.do_roam:
-                args.coordinates = (
-                    args.coordinates.split(",") if args.coordinates else []
-                )
-                args.rotations = (
-                    [float(angle) for angle in args.rotations.split(",")]
-                    if args.rotations
-                    else []
-                )
-                if args.rotations:
-                    rotations_enabled = True
-
-                if args.bssids:
-                    bssids = args.bssids.split(",") if args.bssids else []
-
-            zoom_automation = ZoomAutomation(
-                audio=args.audio,
-                video=args.video,
-                lanforge_ip=args.lanforge_ip,
-                wait_time=args.wait_time,
-                testname=args.testname,
-                upstream_port=args.upstream_port,
-                config=args.config,
-                selected_groups=selected_groups,
-                selected_profiles=selected_profiles,
-                robo_ip=args.robo_ip,
-                coordinates_list=args.coordinates,
-                angles_list=args.rotations,
-                do_robo=args.do_robo,
-                rotations_enabled=rotations_enabled,
-                signin_email=args.signin_email,
-                signin_passwd=args.signin_passwd,
-                duration=args.duration,
-                participants_req=args.participants,
-                env_file=args.env_file,
-                do_bs=args.do_bs,
-                api_stats_collection=args.api_stats_collection,
-                do_webui=args.do_webUI,
-                cycles=args.cycles,
-                bssids=bssids,
-                do_roam=args.do_roam,
+        if len(selected_groups) != len(selected_profiles):
+            logger.error("Number of groups should match number of profiles")
+            exit(0)
+        elif (
+            args.group_name is not None
+            and args.profile_name is not None
+            and args.file_name is not None
+            and args.resources is not None
+        ):
+            logger.error("Either group name or device list should be entered not both")
+            exit(0)
+        elif args.ssid is not None and args.profile_name is not None:
+            logger.error("Either ssid or profile name should be given")
+            exit(0)
+        elif args.file_name is not None and (
+            args.group_name is None or args.profile_name is None
+        ):
+            logger.error("Please enter the correct set of arguments")
+            exit(0)
+        elif args.config and (
+            (
+                args.ssid is None
+                or args.encryp is None
+                or (args.passwd is None and args.encryp.lower() != "open")
             )
-            if args.download_csv:
-                zoom_automation.download_csv = True
-            args.upstream_port = zoom_automation.change_port_to_ip(args.upstream_port)
-            realdevice = RealDevice(
-                manager_ip=args.lanforge_ip,
-                server_ip="192.168.1.61",
-                ssid_2g="Test Configured",
-                passwd_2g="",
-                encryption_2g="",
-                ssid_5g="Test Configured",
-                passwd_5g="",
-                encryption_5g="",
-                ssid_6g="Test Configured",
-                passwd_6g="",
-                encryption_6g="",
-                selected_bands=["5G"],
+        ):
+            logger.error(
+                "Please provide ssid password and security for configuration of devices"
             )
-            laptops = realdevice.get_devices()
+            exit(0)
 
-            if args.file_name:
-                new_filename = args.file_name.removesuffix(".csv")
-            else:
-                new_filename = args.file_name
-            config_obj = DeviceConfig.DeviceConfig(
-                lanforge_ip=args.lanforge_ip, file_name=new_filename
+        rotations_enabled = False
+        bssids = []
+        if args.do_robo or args.do_bs or args.do_roam:
+            args.coordinates = args.coordinates.split(",") if args.coordinates else []
+            args.rotations = (
+                [float(angle) for angle in args.rotations.split(",")]
+                if args.rotations
+                else []
             )
+            if args.rotations:
+                rotations_enabled = True
 
-            if not args.expected_passfail_value and args.device_csv_name is None:
-                config_obj.device_csv_file(csv_name="device.csv")
-            if (
-                args.group_name is not None
-                and args.file_name is not None
-                and args.profile_name is not None
-            ):
-                selected_groups = args.group_name.split(",")
-                selected_profiles = args.profile_name.split(",")
-                config_devices = {}
-                for i in range(len(selected_groups)):
-                    config_devices[selected_groups[i]] = selected_profiles[i]
+            if args.bssids:
+                bssids = args.bssids.split(",") if args.bssids else []
 
-                config_obj.initiate_group()
-                asyncio.run(config_obj.connectivity(config_devices))
+        zoom_automation = ZoomAutomation(
+            audio=args.audio,
+            video=args.video,
+            lanforge_ip=args.lanforge_ip,
+            wait_time=args.wait_time,
+            testname=args.testname,
+            upstream_port=args.upstream_port,
+            config=args.config,
+            selected_groups=selected_groups,
+            selected_profiles=selected_profiles,
+            robo_ip=args.robo_ip,
+            coordinates_list=args.coordinates,
+            angles_list=args.rotations,
+            do_robo=args.do_robo,
+            rotations_enabled=rotations_enabled,
+            signin_email=args.signin_email,
+            signin_passwd=args.signin_passwd,
+            duration=args.duration,
+            participants_req=args.participants,
+            env_file=args.env_file,
+            do_bs=args.do_bs,
+            api_stats_collection=args.api_stats_collection,
+            do_webui=args.do_webUI,
+            cycles=args.cycles,
+            bssids=bssids,
+            do_roam=args.do_roam,
+            sniff_radio_2g=args.sniff_radio_2g,
+            sniff_radio_5g=args.sniff_radio_5g,
+            sniff_radio_6g=args.sniff_radio_6g,
+            sniff_channel_2g=args.sniff_channel_2g,
+            sniff_channel_5g=args.sniff_channel_5g,
+            sniff_channel_6g=args.sniff_channel_6g,
+            wait_at_point=args.wait_at_point,
+            resource_ip=args.resource_ip,
+            ap_coordinates=args.ap_coordinates,
+        )
+        if args.download_csv:
+            zoom_automation.download_csv = True
+        args.upstream_port = zoom_automation.change_port_to_ip(args.upstream_port)
+        realdevice = RealDevice(
+            manager_ip=args.lanforge_ip,
+            server_ip="192.168.1.61",
+            ssid_2g="Test Configured",
+            passwd_2g="",
+            encryption_2g="",
+            ssid_5g="Test Configured",
+            passwd_5g="",
+            encryption_5g="",
+            ssid_6g="Test Configured",
+            passwd_6g="",
+            encryption_6g="",
+            selected_bands=["5G"],
+        )
+        laptops = realdevice.get_devices()
 
-                adbresponse = config_obj.adb_obj.get_devices()
-                resource_manager = config_obj.laptop_obj.get_devices()
-                all_res = {}
-                df1 = config_obj.display_groups(config_obj.groups)
-                groups_list = df1.to_dict(orient="list")
-                group_devices = {}
+        if args.file_name:
+            new_filename = args.file_name.removesuffix(".csv")
+        else:
+            new_filename = args.file_name
+        config_obj = DeviceConfig.DeviceConfig(
+            lanforge_ip=args.lanforge_ip, file_name=new_filename
+        )
 
-                for adb in adbresponse:
-                    group_devices[adb["serial"]] = adb["eid"]
-                for res in resource_manager:
-                    all_res[res["hostname"]] = res["shelf"] + "." + res["resource"]
-                eid_list = []
-                for grp_name in groups_list.keys():
-                    for g_name in selected_groups:
-                        if grp_name == g_name:
-                            for j in groups_list[grp_name]:
-                                if j in group_devices.keys():
-                                    eid_list.append(group_devices[j])
-                                elif j in all_res.keys():
-                                    eid_list.append(all_res[j])
-                if args.zoom_host in eid_list:
-                    # Remove the existing instance of args.zoom_host from the list
-                    eid_list.remove(args.zoom_host)
-                    # Insert args.zoom_host at the beginning of the list
-                    eid_list.insert(0, args.zoom_host)
+        if not args.expected_passfail_value and args.device_csv_name is None:
+            config_obj.device_csv_file(csv_name="device.csv")
+        if (
+            args.group_name is not None
+            and args.file_name is not None
+            and args.profile_name is not None
+        ):
+            selected_groups = args.group_name.split(",")
+            selected_profiles = args.profile_name.split(",")
+            config_devices = {}
+            for i in range(len(selected_groups)):
+                config_devices[selected_groups[i]] = selected_profiles[i]
 
-                args.resources = ",".join(id for id in eid_list)
-            else:
-                config_dict = {
-                    "ssid": args.ssid,
-                    "passwd": args.passwd,
-                    "enc": args.encryp,
-                    "eap_method": args.eap_method,
-                    "eap_identity": args.eap_identity,
-                    "ieee80211": args.ieee8021x,
-                    "ieee80211u": args.ieee80211u,
-                    "ieee80211w": args.ieee80211w,
-                    "enable_pkc": args.enable_pkc,
-                    "bss_transition": args.bss_transition,
-                    "power_save": args.power_save,
-                    "disable_ofdma": args.disable_ofdma,
-                    "roam_ft_ds": args.roam_ft_ds,
-                    "key_management": args.key_management,
-                    "pairwise": args.pairwise,
-                    "private_key": args.private_key,
-                    "ca_cert": args.ca_cert,
-                    "client_cert": args.client_cert,
-                    "pk_passwd": args.pk_passwd,
-                    "pac_file": args.pac_file,
-                    "server_ip": args.upstream_port,
-                }
-                if args.resources:
-                    all_devices = config_obj.get_all_devices()
-                    if (
-                        args.group_name is None
-                        and args.file_name is None
-                        and args.profile_name is None
-                    ):
-                        dev_list = args.resources.split(",")
-                        if not args.do_webUI:
-                            args.zoom_host = args.zoom_host.strip()
-                            if args.zoom_host in dev_list:
-                                dev_list.remove(args.zoom_host)
-                            dev_list.insert(0, args.zoom_host)
-                        if args.config:
-                            asyncio.run(
-                                config_obj.connectivity(
-                                    device_list=dev_list, wifi_config=config_dict
-                                )
-                            )
-                        args.resources = ",".join(id for id in dev_list)
-                else:
-                    # If no resources provided, prompt user to select devices manually
+            config_obj.initiate_group()
+            asyncio.run(config_obj.connectivity(config_devices))
+
+            adbresponse = config_obj.adb_obj.get_devices()
+            resource_manager = config_obj.laptop_obj.get_devices()
+            all_res = {}
+            df1 = config_obj.display_groups(config_obj.groups)
+            groups_list = df1.to_dict(orient="list")
+            group_devices = {}
+
+            for adb in adbresponse:
+                group_devices[adb["serial"]] = adb["eid"]
+            for res in resource_manager:
+                all_res[res["hostname"]] = res["shelf"] + "." + res["resource"]
+            eid_list = []
+            for grp_name in groups_list.keys():
+                for g_name in selected_groups:
+                    if grp_name == g_name:
+                        for j in groups_list[grp_name]:
+                            if j in group_devices.keys():
+                                eid_list.append(group_devices[j])
+                            elif j in all_res.keys():
+                                eid_list.append(all_res[j])
+            if args.zoom_host in eid_list:
+                # Remove the existing instance of args.zoom_host from the list
+                eid_list.remove(args.zoom_host)
+                # Insert args.zoom_host at the beginning of the list
+                eid_list.insert(0, args.zoom_host)
+
+            args.resources = ",".join(id for id in eid_list)
+        else:
+            config_dict = {
+                "ssid": args.ssid,
+                "passwd": args.passwd,
+                "enc": args.encryp,
+                "eap_method": args.eap_method,
+                "eap_identity": args.eap_identity,
+                "ieee80211": args.ieee8021x,
+                "ieee80211u": args.ieee80211u,
+                "ieee80211w": args.ieee80211w,
+                "enable_pkc": args.enable_pkc,
+                "bss_transition": args.bss_transition,
+                "power_save": args.power_save,
+                "disable_ofdma": args.disable_ofdma,
+                "roam_ft_ds": args.roam_ft_ds,
+                "key_management": args.key_management,
+                "pairwise": args.pairwise,
+                "private_key": args.private_key,
+                "ca_cert": args.ca_cert,
+                "client_cert": args.client_cert,
+                "pk_passwd": args.pk_passwd,
+                "pac_file": args.pac_file,
+                "server_ip": args.upstream_port,
+            }
+            if args.resources:
+                all_devices = config_obj.get_all_devices()
+                if (
+                    args.group_name is None
+                    and args.file_name is None
+                    and args.profile_name is None
+                ):
+                    dev_list = args.resources.split(",")
+                    if not args.do_webUI:
+                        args.zoom_host = args.zoom_host.strip()
+                        if args.zoom_host in dev_list:
+                            dev_list.remove(args.zoom_host)
+                        dev_list.insert(0, args.zoom_host)
                     if args.config:
-                        all_devices = config_obj.get_all_devices()
-                        device_list = []
-                        for device in all_devices:
-                            if device["type"] != "laptop":
-                                device_list.append(
-                                    device["shelf"]
-                                    + "."
-                                    + device["resource"]
-                                    + " "
-                                    + device["serial"]
-                                )
-                            elif device["type"] == "laptop":
-                                device_list.append(
-                                    device["shelf"]
-                                    + "."
-                                    + device["resource"]
-                                    + " "
-                                    + device["hostname"]
-                                )
-                        print("Available Devices For Testing")
-                        for device in device_list:
-                            print(device)
-                        zm_host = input("Enter Host Resource for the Test : ")
-                        zm_host = zm_host.strip()
-                        args.resources = input(
-                            "Enter client Resources to run the test :"
-                        )
-                        args.resources = zm_host + "," + args.resources
-                        dev1_list = args.resources.split(",")
                         asyncio.run(
                             config_obj.connectivity(
-                                device_list=dev1_list, wifi_config=config_dict
+                                device_list=dev_list, wifi_config=config_dict
                             )
                         )
-
-            result_list = []
-            if not args.do_webUI:
-                if args.resources:
-                    resources = args.resources.split(",")
-                    resources = [r for r in resources if len(r.split(".")) > 1]
-                    # resources = sorted(resources, key=lambda x: int(x.split('.')[1]))
-                    get_data = zoom_automation.select_real_devices(
-                        real_device_obj=realdevice, real_sta_list=resources
-                    )
-                    for item in get_data:
-                        item = item.strip()
-                        # Find and append the matching lap to result_list
-                        matching_laps = [lap for lap in laptops if lap.startswith(item)]
-                        result_list.extend(matching_laps)
-                    if not result_list:
-                        logger.info("Resources donot exist hence Terminating the test.")
-                        return
-                    if len(result_list) != len(get_data):
-                        logger.info("Few Resources donot exist")
-                else:
-                    resources = zoom_automation.select_real_devices(
-                        real_device_obj=realdevice
-                    )
+                    args.resources = ",".join(id for id in dev_list)
             else:
-                if args.do_webUI:
-                    zoom_automation.path = args.report_dir
+                # If no resources provided, prompt user to select devices manually
+                if args.config:
+                    all_devices = config_obj.get_all_devices()
+                    device_list = []
+                    for device in all_devices:
+                        if device["type"] != "laptop":
+                            device_list.append(
+                                device["shelf"]
+                                + "."
+                                + device["resource"]
+                                + " "
+                                + device["serial"]
+                            )
+                        elif device["type"] == "laptop":
+                            device_list.append(
+                                device["shelf"]
+                                + "."
+                                + device["resource"]
+                                + " "
+                                + device["hostname"]
+                            )
+                    print("Available Devices For Testing")
+                    for device in device_list:
+                        print(device)
+                    zm_host = input("Enter Host Resource for the Test : ")
+                    zm_host = zm_host.strip()
+                    args.resources = input("Enter client Resources to run the test :")
+                    args.resources = zm_host + "," + args.resources
+                    dev1_list = args.resources.split(",")
+                    asyncio.run(
+                        config_obj.connectivity(
+                            device_list=dev1_list, wifi_config=config_dict
+                        )
+                    )
+
+        result_list = []
+        if not args.do_webUI:
+            if args.resources:
                 resources = args.resources.split(",")
-                extracted_parts = [res.split(".")[:2] for res in resources]
-                formatted_parts = [".".join(parts) for parts in extracted_parts]
-
-                zoom_automation.select_real_devices(
-                    real_device_obj=realdevice, real_sta_list=formatted_parts
+                resources = [r for r in resources if len(r.split(".")) > 1]
+                # resources = sorted(resources, key=lambda x: int(x.split('.')[1]))
+                get_data = zoom_automation.select_real_devices(
+                    real_device_obj=realdevice, real_sta_list=resources
                 )
-                if args.do_webUI:
-
-                    if len(zoom_automation.real_sta_hostname) == 0:
-                        logger.info("No device is available to run the test")
-                        obj = {
-                            "status": "Stopped",
-                            "configuration_status": "configured",
-                        }
-                        zoom_automation.updating_webui_runningjson(obj)
-                        return
-                    else:
-                        obj = {
-                            "configured_devices": zoom_automation.real_sta_hostname,
-                            "configuration_status": "configured",
-                            "no_of_devices": f" Total({len(zoom_automation.real_sta_os_type)}) : W({zoom_automation.windows}),L({zoom_automation.linux}),M({zoom_automation.mac})",
-                            "device_list": zoom_automation.hostname_os_combination,
-                            # "zoom_host":zoom_automation.zoom_host
-                        }
-                        zoom_automation.updating_webui_runningjson(obj)
-
-            if not zoom_automation.check_tab_exists():
-                logger.error("Generic Tab is not available.\nAborting the test.")
-                exit(0)
-
-            zoom_automation.handle_flask_server()
-            zoom_automation.get_resource_data()
-            zoom_automation.get_ports_data()
-            zoom_automation.get_interop_data()
-
-            if args.api_stats_collection:
-                # load envirnment file if specified
-                if args.env_file:
-                    if os.path.exists(args.env_file):
-                        load_dotenv(args.env_file)
-                        logger.info(
-                            f"Loaded environment variables from {args.env_file}"
-                        )
-                    else:
-                        raise FileNotFoundError(
-                            f".env file '{args.env_file}' not found"
-                        )
-
-                # Fetching zoom credentials for account
-                zoom_automation.account_id = args.account_id or os.environ.get(
-                    "ACCOUNT_ID"
-                )
-                zoom_automation.client_id = args.client_id or os.environ.get(
-                    "CLIENT_ID"
-                )
-                zoom_automation.client_secret = args.client_secret or os.environ.get(
-                    "CLIENT_SECRET"
-                )
-
-                if not all(
-                    [
-                        zoom_automation.account_id,
-                        zoom_automation.client_id,
-                        zoom_automation.client_secret,
-                    ]
-                ):
-                    logger.info("Exiting test.")
-                    raise ValueError(
-                        "Missing Zoom credentials (account_id, client_id, client_secret)"
-                    )
-
-            if args.do_robo:
-                zoom_automation.run_robo_test()
+                for item in get_data:
+                    item = item.strip()
+                    # Find and append the matching lap to result_list
+                    matching_laps = [lap for lap in laptops if lap.startswith(item)]
+                    result_list.extend(matching_laps)
+                if not result_list:
+                    logger.info("Resources donot exist hence Terminating the test.")
+                    return
+                if len(result_list) != len(get_data):
+                    logger.info("Few Resources donot exist")
             else:
-                zoom_automation.run()
-            zoom_automation.data_store.clear()
-            if not args.api_stats_collection:
-                zoom_automation.generate_report()
-            logger.info("Test Completed Sucessfully")
+                resources = zoom_automation.select_real_devices(
+                    real_device_obj=realdevice
+                )
+        else:
+            if args.do_webUI:
+                zoom_automation.path = args.report_dir
+            resources = args.resources.split(",")
+            extracted_parts = [res.split(".")[:2] for res in resources]
+            formatted_parts = [".".join(parts) for parts in extracted_parts]
+
+            zoom_automation.select_real_devices(
+                real_device_obj=realdevice, real_sta_list=formatted_parts
+            )
+            if args.do_webUI:
+
+                if len(zoom_automation.real_sta_hostname) == 0:
+                    logger.info("No device is available to run the test")
+                    obj = {
+                        "status": "Stopped",
+                        "configuration_status": "configured",
+                    }
+                    zoom_automation.updating_webui_runningjson(obj)
+                    return
+                else:
+                    obj = {
+                        "configured_devices": zoom_automation.real_sta_hostname,
+                        "configuration_status": "configured",
+                        "no_of_devices": f" Total({len(zoom_automation.real_sta_os_type)}) : W({zoom_automation.windows}),L({zoom_automation.linux}),M({zoom_automation.mac})",
+                        "device_list": zoom_automation.hostname_os_combination,
+                        # "zoom_host":zoom_automation.zoom_host
+                    }
+                    zoom_automation.updating_webui_runningjson(obj)
+
+        if not zoom_automation.check_tab_exists():
+            logger.error("Generic Tab is not available.\nAborting the test.")
+            exit(0)
+
+        zoom_automation.handle_flask_server()
+        zoom_automation.get_resource_data()
+        zoom_automation.get_ports_data()
+        zoom_automation.get_interop_data()
+
+        if args.api_stats_collection:
+            # load envirnment file if specified
+            if args.env_file:
+                if os.path.exists(args.env_file):
+                    load_dotenv(args.env_file)
+                    logger.info(f"Loaded environment variables from {args.env_file}")
+                else:
+                    raise FileNotFoundError(f".env file '{args.env_file}' not found")
+
+            # Fetching zoom credentials for account
+            zoom_automation.account_id = args.account_id or os.environ.get("ACCOUNT_ID")
+            zoom_automation.client_id = args.client_id or os.environ.get("CLIENT_ID")
+            zoom_automation.client_secret = args.client_secret or os.environ.get(
+                "CLIENT_SECRET"
+            )
+
+            if not all(
+                [
+                    zoom_automation.account_id,
+                    zoom_automation.client_id,
+                    zoom_automation.client_secret,
+                ]
+            ):
+                logger.info("Exiting test.")
+                raise ValueError(
+                    "Missing Zoom credentials (account_id, client_id, client_secret)"
+                )
+
+        if args.do_robo:
+            zoom_automation.run_robo_test()
+        else:
+            zoom_automation.run()
+        zoom_automation.data_store.clear()
+        if not args.api_stats_collection:
+            zoom_automation.generate_report()
+        logger.info("Test Completed Sucessfully")
     except Exception as e:
         logger.error(f"AN ERROR OCCURED WHILE RUNNING TEST {e}")
         traceback.print_exc()
