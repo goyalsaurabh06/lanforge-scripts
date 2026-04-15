@@ -553,7 +553,8 @@ class ROAMThroughput(RobotClass):
             # FIX AP coordinates
             if isinstance(self.ap_coordinates, str):
                 self.ap_coordinates = [x.strip() for x in self.ap_coordinates.split(",")]
-
+            if self.coordinates_list[0] not in self.ap_coordinates:
+                self.ap_coordinates.insert(0, self.coordinates_list[0])
             ap_coords = set(self.ap_coordinates)
             logger.info(f"AP COORDINATES: {ap_coords}")
 
@@ -665,11 +666,11 @@ class ROAMThroughput(RobotClass):
                     monitor_function=self.monitor_ap_bssid
                 )
 
+                if abort:
+                    break
                 if not matched:
                     continue
 
-                if abort:
-                    break
 
                 is_ap = coordinate in ap_coords
 
@@ -685,7 +686,7 @@ class ROAMThroughput(RobotClass):
 
                     sniffer.stop_sniff()
 
-                    sniffer.fetch_pcap(remote_pcap_path, sniffer.pcap_name)
+                    # sniffer.fetch_pcap(remote_pcap_path, sniffer.pcap_name)
 
                     logger.info(f"Captured: {sniffer.pcap_name}")
 
@@ -695,9 +696,6 @@ class ROAMThroughput(RobotClass):
                     last_ap = coordinate
                     is_sniffing = False
 
-                    # -----------------------------
-                    # 🔥 LOOK-AHEAD FOR NEXT SEGMENT
-                    # -----------------------------
                     next_ap = None
                     for future_coord in coordinate_list_with_robo[idx:]:
                         if future_coord in ap_coords and future_coord != last_ap:
@@ -741,17 +739,20 @@ class ROAMThroughput(RobotClass):
             if is_sniffing and sniffer:
                 print("Stopping final sniff")
                 sniffer.stop_sniff()
-                sniffer.fetch_pcap(remote_pcap_path, sniffer.pcap_name)
-
-            self.monitor_ap_bssid(test_status="STOPPED")
+                # sniffer.fetch_pcap(remote_pcap_path, sniffer.pcap_name)          
 
         except Exception as e:
             logger.error(f"Error in perform_roam_robot: {e}")
 
         finally:
             try:
+                if self.dowebgui:
+                    sniffer.run_command_and_fetch_folder(remote_folder, self.result_dir)
+                else:
+                    sniffer.run_command_and_fetch_folder(remote_folder, self.report_folder_path)
                 if sniffer:
                     sniffer.close()
+                self.monitor_ap_bssid(test_status="STOPPED")
             except Exception as e:
                 logger.warning(f"Cleanup failed: {e}")
     def perform_throughput_test(self):
@@ -973,6 +974,9 @@ def main():
     help_summary = """\
 
     EXAMPLE CLI: python3 lf_bandsteering.py --robot_ip 192.168.200.169 --coordinates 3,4 --mgr_ip 192.168.207.78 --port 8080 --total_cycles 3
+    
+    Roaming:
+    python3 lf_bandsteering.py --robot_ip 10.152.222.162 --coordinates EX,P10,LE,P1 --mgr_ip 10.17.1.208 --port 8080 --total_cycles 5 --do_roaming --sniff_radio_2g 1.2.wiphy0 --sniff_channel_2g 11 --sniff_radio_5g 1.2.wiphy1 --sniff_channel_5g 44 --sniff_radio_6g 1.2.wiphy2 --sniff_channel_6g 239 --test_name sample1 --resource_ip 10.17.1.43 --ap_coordinates EX,LE,P1
     """
     if early_args.help_summary:
         print(help_summary)
@@ -1004,7 +1008,7 @@ def main():
     parser.add_argument('--bssids', type=str, help='Comma separated list of BSSIDs to be used for the test', default="")
     parser.add_argument('--duration_to_skip', help='Robot wait duration in seconds at obstacle', default="1")
     parser.add_argument('--do_roaming', help="If true will execute roaming test", action='store_true')
-    parser.add_argument('--wait_at_point', help='Robot wait duration in seconds before sniffing starts and stops', default="5")
+    parser.add_argument('--wait_at_point', help='Robot wait duration in seconds before sniffing starts and stops', default="30")
     parser.add_argument('--resource_ip', help='Resource manager IP address', default="10.17.1.43")
     parser.add_argument('--ap_coordinates', help='Coordinates of the ap', default="")
     parser.add_argument('--sniff_radio_2g',

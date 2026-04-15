@@ -268,34 +268,19 @@ class RemoteSniffer:
                 self.sftp_get_dir(remote_path, local_path)
             else:
                 self.sftp.get(remote_path, local_path)
-    
 
     def fetch_combined_roaming_folder(self, remote_folder, local_folder=None):
-        """
-        Finds a subfolder starting with 'pcap_batch' inside remote_folder, then fetches the
-        'combined_roaming_clients' folder inside it, downloading it recursively to the local system,
-        and places it in a local folder named after remote_folder's basename.
-        """
         if not hasattr(self, 'ssh_client') or self.ssh_client is None:
             raise Exception("SSH connection not established.")
         if not hasattr(self, 'sftp') or self.sftp is None:
             self.sftp = self.ssh_client.open_sftp()
 
-        # 1. Find pcap_batch* subfolder
         stdin, stdout, stderr = self.ssh_client.exec_command(
             f"ls -d {remote_folder}/pcap_batch* 2>/dev/null | head -n 1")
         pcap_batch_dir = stdout.read().decode().strip()
         if not pcap_batch_dir:
             raise Exception(f"No pcap_batch* folder found in {remote_folder}")
 
-        # 2. Check for combined_roaming_clients inside pcap_batch_dir
-        combined_dir = posixpath.join(pcap_batch_dir, "combined_roaming_clients")
-        try:
-            self.sftp.stat(combined_dir)
-        except FileNotFoundError:
-            raise Exception(f"combined_roaming_clients folder not found in {pcap_batch_dir}")
-
-        # 3. Prepare local folder
         remote_folder_basename = os.path.basename(remote_folder.rstrip('/'))
         if local_folder is None:
             local_folder = remote_folder_basename
@@ -303,12 +288,54 @@ class RemoteSniffer:
             local_folder = os.path.join(local_folder, remote_folder_basename)
         os.makedirs(local_folder, exist_ok=True)
 
-        # 4. Download the combined_roaming_clients folder recursively
-        local_combined_dir = os.path.join(local_folder, "combined_roaming_clients")
-        self.sftp_get_dir(combined_dir, local_combined_dir)
-        print(f"Downloaded {combined_dir} to {local_combined_dir}")
+        # 3. Download entire pcap_batch folder
+        local_pcap_dir = os.path.join(local_folder, os.path.basename(pcap_batch_dir))
 
-        return local_combined_dir
+        self.sftp_get_dir(pcap_batch_dir, local_pcap_dir)
+
+        print(f"Downloaded {pcap_batch_dir} to {local_pcap_dir}")
+
+        return local_pcap_dir
+
+    # def fetch_combined_roaming_folder(self, remote_folder, local_folder=None):
+    #     """
+    #     Finds a subfolder starting with 'pcap_batch' inside remote_folder, then fetches the
+    #     'combined_roaming_clients' folder inside it, downloading it recursively to the local system,
+    #     and places it in a local folder named after remote_folder's basename.
+    #     """
+    #     if not hasattr(self, 'ssh_client') or self.ssh_client is None:
+    #         raise Exception("SSH connection not established.")
+    #     if not hasattr(self, 'sftp') or self.sftp is None:
+    #         self.sftp = self.ssh_client.open_sftp()
+
+    #     # 1. Find pcap_batch* subfolder
+    #     stdin, stdout, stderr = self.ssh_client.exec_command(
+    #         f"ls -d {remote_folder}/pcap_batch* 2>/dev/null | head -n 1")
+    #     pcap_batch_dir = stdout.read().decode().strip()
+    #     if not pcap_batch_dir:
+    #         raise Exception(f"No pcap_batch* folder found in {remote_folder}")
+
+    #     # 2. Check for combined_roaming_clients inside pcap_batch_dir
+    #     combined_dir = posixpath.join(pcap_batch_dir, "combined_roaming_clients")
+    #     try:
+    #         self.sftp.stat(combined_dir)
+    #     except FileNotFoundError:
+    #         raise Exception(f"combined_roaming_clients folder not found in {pcap_batch_dir}")
+
+    #     # 3. Prepare local folder
+    #     remote_folder_basename = os.path.basename(remote_folder.rstrip('/'))
+    #     if local_folder is None:
+    #         local_folder = remote_folder_basename
+    #     else:
+    #         local_folder = os.path.join(local_folder, remote_folder_basename)
+    #     os.makedirs(local_folder, exist_ok=True)
+
+    #     # 4. Download the combined_roaming_clients folder recursively
+    #     local_combined_dir = os.path.join(local_folder, "combined_roaming_clients")
+    #     self.sftp_get_dir(combined_dir, local_combined_dir)
+    #     print(f"Downloaded {combined_dir} to {local_combined_dir}")
+
+    #     return local_combined_dir
     
 
     def run_command_and_fetch_folder(self, remote_folder, local_folder=None):
@@ -323,7 +350,7 @@ class RemoteSniffer:
             raise Exception("SSH connection not established.")
         if not hasattr(self, 'sftp') or self.sftp is None:
             self.sftp = self.ssh_client.open_sftp()
-        command = f"python3 ~/roaming_development/wifi_roaming_cli.py --pcap-dir {remote_folder}"
+        command = f"python3 ~/roaming_development/wifi_roaming_cli.py --mode parallel --pcap-dir {remote_folder} --all_clients"
         print(f"Running remote command: {command}")
         stdin, stdout, stderr = self.ssh_client.exec_command(command)
         # Read all output and error
@@ -341,7 +368,7 @@ class RemoteSniffer:
             print(f"Command failed with exit status {exit_status}.")
             print("--- STDOUT ---\n" + out)
             print("--- STDERR ---\n" + err)
-            raise Exception(f"Remote command failed with exit status {exit_status}. See output above.")
+            # raise Exception(f"Remote command failed with exit status {exit_status}. See output above.")
 
     def connect(self):
         self.ssh_client = paramiko.SSHClient()

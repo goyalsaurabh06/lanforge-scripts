@@ -26,8 +26,8 @@ def test_run_command_and_fetch_folder():
     hostname = "10.17.1.43"
     username = "lanforge"
     password = "lanforge"
-    remote_folder = "/home/lanforge/2026-04-13_09-50-33_sample_test/"  # e.g., "/home/lanforge/results"
-    local_folder = "./2026-04-13_09-50-33_sample_test/"
+    remote_folder = "2026-04-15_16-09-37_rt5361"  # e.g., "/home/lanforge/results"
+    local_folder = ""
 
     sniffer = RemoteSniffer(hostname, username, password=password)
     sniffer.connect()
