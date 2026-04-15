@@ -97,7 +97,7 @@ class Candela(Realm):
     Candela Class file to invoke different scripts from py-scripts.
     """
 
-    def __init__(self, ip='localhost', port=8080,order_priority="series",result_dir="",dowebgui=False,test_name='',no_cleanup=False,robot_test=False,robot_ip=None,coordinate=[],rotation=[]):
+    def __init__(self, ip='localhost', port=8080,order_priority="series",result_dir="",dowebgui=False,test_name='',no_cleanup=False,robot_test=False,robot_ip=None,coordinate=[],rotation=[],do_bandsteering=False,bssids=None,cycles=1):
         """
         Constructor to initialize the LANforge IP and port
         Args:
@@ -171,6 +171,9 @@ class Candela(Realm):
         self.robot_ip = robot_ip
         self.coordinate = coordinate
         self.rotation = rotation
+        self.do_bandsteering = do_bandsteering
+        self.bssids = bssids
+        self.cycles = cycles
         self.coordinate_list = coordinate.split(',')
         self.rotation_list = rotation.split(',')
         self.rotation_enabled  = True if rotation != '' else False
@@ -4629,7 +4632,9 @@ class Candela(Realm):
             exec_type=None
     ):
         try:
-            print('duration',duration)
+            print('duration',duration) 
+            if self.do_bandsteering:
+                duration=999999
             if self.dowebgui:
                 if not self.webgui_stop_check("yt"):
                     return False
@@ -4725,7 +4730,11 @@ class Candela(Realm):
                     coordinates_list=self.coordinate_list,
                     angles_list=self.rotation_list,
                     do_robo=self.robot_test,
-                    rotations_enabled=self.rotation_enabled
+                    rotations_enabled=self.rotation_enabled,
+                    do_bandsteering=self.do_bandsteering,
+                    # bssids=self.bssids,
+                    bssids = [b.strip() for b in self.bssids.split(",")] if isinstance(self.bssids, str) else (self.bssids or []),
+                    cycles=self.cycles
                     )
 
                 print('CHECKING PORT AVAILBILITY for YT TEST')
@@ -4865,7 +4874,10 @@ class Candela(Realm):
 
                 self.yt_test_obj.start_time = datetime.datetime.now()
                 if self.robot_test:
-                    self.yt_test_obj.perform_robo_test()
+                    if self.do_bandsteering:
+                        self.yt_test_obj.perform_robo_bandsteering_test()
+                    else:
+                        self.yt_test_obj.perform_robo_test() 
                 else:
                     self.yt_test_obj.start_generic()
                     logging.info(f"yt_test_obj: {self.yt_test_obj}")
@@ -4906,7 +4918,7 @@ class Candela(Realm):
                     # print("hii here data",self.yt_test_obj.stats_api_response)
                     self.yt_test_obj.create_report()
                 else:
-                    if self.robot_test:
+                    if self.robot_test and not self.do_bandsteering:
                         # self.yt_obj_dict[ce][obj_name]["obj"].report_path_date_time = self.report_path_date_time
                         # os.chdir("../real_application_tests/youtube/")
                         os.chdir("real_application_tests/youtube")
@@ -9852,7 +9864,7 @@ class Candela(Realm):
                         self.overall_report.build_objective()
                         self.overall_report.test_setup_table(
                             test_setup_data=test_setup_info, value='Test Parameters')
-                        if self.robot_test:
+                        if self.robot_test and not self.do_bandsteering:
                             # self.yt_test_obj.report = self.overall_report
                             # self.yt_obj_dict[ce][obj_name]["obj"].report=self.overall_report
                             # os.chdir(self.yt_obj_dict[ce][obj_name]["obj"].report_path_date_time)
@@ -10256,6 +10268,10 @@ class Candela(Realm):
                                 self.overall_report.build_graph()
 
                         os.chdir(original_dir)
+                        yt_obj = self.yt_obj_dict[ce][obj_name]["obj"]
+                        if self.do_bandsteering:
+                            yt_obj.add_bandsteering_report_section(report=self.overall_report)
+
                         if ce == "series":
                             obj_no += 1
                             obj_name = f"yt_test_{obj_no}"
@@ -11805,7 +11821,7 @@ def main():
     args = parser.parse_args()
     args_dict = vars(args)
     duration_dict = {}
-    candela_apis = Candela(ip=args.mgr, port=args.mgr_port,order_priority=args.order_priority,test_name=args.test_name,result_dir=args.result_dir,dowebgui=args.dowebgui,no_cleanup=args.no_cleanup,robot_test=args.robot_test,robot_ip=args.robot_ip,coordinate=args.coordinate,rotation=args.rotation)
+    candela_apis = Candela(ip=args.mgr, port=args.mgr_port,order_priority=args.order_priority,test_name=args.test_name,result_dir=args.result_dir,dowebgui=args.dowebgui,no_cleanup=args.no_cleanup,robot_test=args.robot_test,robot_ip=args.robot_ip,coordinate=args.coordinate,rotation=args.rotation,do_bandsteering=args.do_bandsteering,bssids=args.bssids,cycles=args.cycles)
     print(args)
     if args.robot_test:
         candela_apis.init_robot()
