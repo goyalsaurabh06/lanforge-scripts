@@ -3952,9 +3952,16 @@ class ZoomAutomation(Realm):
                 self._get_summary_zoom_stats(),
                 f"{self.remote_login_url}_{self.current_cord}_{self.current_angle}_qos.json",
             )
+            self.save_json(
+                self._get_raw_zoom_stats(),
+                f"{self.remote_login_url}_{self.current_cord}_{self.current_angle}_raw_qos.json",
+            )
         else:
             self.save_json(
                 self._get_summary_zoom_stats(), f"{self.remote_login_url}_qos.json"
+            )
+            self.save_json(
+                self._get_raw_zoom_stats(), f"{self.remote_login_url}_raw_qos.json"
             )
         return normalized_summary
 
@@ -5086,79 +5093,79 @@ def main():
         )
 
         # Arguments related to robo feature
-        parser.add_argument("--robo_ip", type=str, help="Specify the robo ip")
-        parser.add_argument(
+        robo_group = parser.add_argument_group(
+            "Robo Arguments", "Arguments related to robot movement and coordinates"
+        )
+        robo_group.add_argument("--robo_ip", type=str, help="Specify the robo ip")
+        robo_group.add_argument(
             "--coordinates",
             help="Comma-separated list of coordinate point names (e.g. 1,2,3), each mapping to x and y values",
         )
-
-        parser.add_argument(
+        robo_group.add_argument(
             "--rotations",
             help="Comma-separated list of rotation angles (in degrees) to apply at respective points",
         )
-        parser.add_argument(
+        robo_group.add_argument(
             "--do_robo",
             help="Specify this flag to perform the test with robo",
             action="store_true",
         )
-        parser.add_argument(
-            "--do_bs",
-            help="Specify this flag to perform the test with robo for band steering",
-            action="store_true",
-        )
-        parser.add_argument(
-            "--cycles", type=int, default=1, help="Number of cycles to run the test"
-        )
 
-        parser.add_argument(
+        # Arguments related to band steering
+        bandsteering_group = parser.add_argument_group(
+            "Band Steering Arguments", "Arguments related to band steering tests"
+        )
+        bandsteering_group.add_argument(
             "--bssids",
             type=str,
             help="Comma-separated list of BSSIDs for bandsteering test",
         )
-        parser.add_argument(
+        bandsteering_group.add_argument(
+            "--do_bs",
+            help="Specify this flag to perform the test with robo for band steering",
+            action="store_true",
+        )
+
+        # Arguments related to roaming
+        roaming_group = parser.add_argument_group(
+            "Roaming Arguments",
+            "Arguments related to roaming, sniffing, and cycle configuration",
+        )
+        roaming_group.add_argument(
             "--do_roam",
             help="Specify this flag to perform the test with robo for Roaming",
             action="store_true",
         )
-        parser.add_argument(
+        roaming_group.add_argument(
+            "--cycles", type=int, default=1, help="Number of cycles to run the test"
+        )
+        roaming_group.add_argument(
             "--wait_at_point",
             help="Robot wait duration in seconds before sniffing starts and stops",
             default="30",
         )
-        parser.add_argument(
+        roaming_group.add_argument(
             "--res_lf_ip", help="Resource manager IP address", default="10.17.1.208"
         )
-        parser.add_argument(
+        roaming_group.add_argument(
             "--sniff_radio_2g", help="Sniffer Radio", default="1.2.wiphy0"
         )
-
-        parser.add_argument(
+        roaming_group.add_argument(
             "--sniff_radio_5g", help="Sniffer Radio", default="1.2.wiphy1"
         )
-
-        parser.add_argument(
+        roaming_group.add_argument(
             "--sniff_radio_6g", help="Sniffer Radio", default="1.2.wiphy2"
         )
-
-        parser.add_argument(
+        roaming_group.add_argument(
             "--sniff_channel_2g", help="Channel", type=str, default="11"
         )
-
-        parser.add_argument(
+        roaming_group.add_argument(
             "--sniff_channel_5g", help="Channel", type=str, default="44"
         )
-
-        parser.add_argument(
+        roaming_group.add_argument(
             "--sniff_channel_6g", help="Channel", type=str, default="239"
         )
-
-        parser.add_argument(
-            "--resource_ip",
-            help="Resource manager IP address for sniffing",
-            default="10.17.1.208",
-        )
-
-        parser.add_argument(
+        roaming_group.add_argument(
             "--ap_coordinates",
             help="Comma-separated list of AP coordinates for start/stop sniffing",
             default="",
@@ -5274,7 +5281,7 @@ def main():
             sniff_channel_5g=args.sniff_channel_5g,
             sniff_channel_6g=args.sniff_channel_6g,
             wait_at_point=args.wait_at_point,
-            resource_ip=args.resource_ip,
+            resource_ip=args.res_lf_ip,
             ap_coordinates=args.ap_coordinates,
         )
         if args.download_csv:
