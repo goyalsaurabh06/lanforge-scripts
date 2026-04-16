@@ -1123,7 +1123,7 @@ if __name__ == "__main__":
             break
         # stats = zoom_host.collecting_stats()
         zoom_host.send_stats_to_api(zoom_host.audio_stats, zoom_host.video_stats)
-        time.sleep(1)
+        time.sleep(2)
     print("test has been completed")
     zoom_host.wait_for_exit()
     zoom_host.stop_zoom()
