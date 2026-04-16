@@ -115,7 +115,7 @@
 
 
 """
-from lf_base_robo import RobotClass  # REAL
+from lf_base_robo import RobotClass
 import sys
 import os
 import importlib
@@ -261,7 +261,6 @@ class VideoStreamingTest(Realm):
             self.angle_list = angle_list
             self.rotation_enabled = rotation_enabled
             self.robot = RobotClass(robo_ip=self.robot_ip, angle_list=self.angle_list)
-            self.robot.robo_ip = f"{self.robot_ip}"
             self.last_rotated_angles = []
             self.charge_point_name = None
             self.robot.time_to_reach = int(duration_to_skip) * 60
@@ -2521,12 +2520,13 @@ class VideoStreamingTest(Realm):
             test_setup_info = self.create_test_setup_info(media_source=self.media_source, media_quality=self.media_quality)
             date = str(datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
             self.generate_report(date, [0], test_setup_info=test_setup_info, realtime_dataset=individual_df, iot_summary=None)
+            self.vs_stats = individual_df
             if self.postcleanup:
                 self.postcleanup()
 
             if args.dowebgui:
                 self.copy_reports_to_home_dir()
-            exit()
+            return
         for coordinate in coord_list:
             if self.test_stopped:
                 break
@@ -2592,7 +2592,6 @@ class VideoStreamingTest(Realm):
                         params = self.build_report_params_for_robo(args, cx_order_list, coordinate_df, iterations_before_test_stopped_by_user)
                         params["self_data"] = self.data.copy()
                         self.vs_data[self.current_coordinate] = params
-                        print("ggggg",self.vs_data)
 
                     # if rotation mode
                     else:

@@ -168,6 +168,7 @@ class Candela(Realm):
         self.parallel_index = 0
         self.series_index = 0
         self.robot_test = robot_test
+        self.do_bandsteering = do_bandsteering
         self.robot_ip = robot_ip
         self.coordinate = coordinate
         self.rotation = rotation
@@ -2893,7 +2894,11 @@ class Candela(Realm):
                                 coordinate = self.coordinate,
                                 rotation = self.rotation,
                                 rotation_enabled = True if self.rotation else False,
-                                angle_list = self.rotation.split(",") if self.rotation else []
+                                angle_list = self.rotation.split(",") if self.rotation else [],
+                                do_bandsteering=args.do_bandsteering,
+                                total_cycles=args.total_cycles,
+                                bssids=args.bssids.split(",") if args.bssids else [],
+                                duration_to_skip=args.duration_to_skip
                                 )
         args.upstream_port = self.vs_obj_dict[ce][obj_name]["obj"].change_port_to_ip(args.upstream_port)
         self.vs_obj_dict[ce][obj_name]["obj"].validate_args()
@@ -3104,10 +3109,16 @@ class Candela(Realm):
                 f'bytes_rd_{keys[i]}',
                 f'rx rate_{keys[i]} bps',
                 f'frame_rate_{keys[i]}',
-                f'Video Quality_{keys[i]}'
+                f'Video Quality_{keys[i]}',
+                f'BSSID_{keys[i]}',
+                f'Channel_{keys[i]}',
             ])
 
         individual_dataframe_columns.extend(['overall_video_format_bitrate', 'timestamp', 'iteration', 'start_time', 'end_time', 'remaining_Time', 'status'])
+        if self.robot_test and args.do_bandsteering:
+            individual_dataframe_columns.extend(['Robot X', 'Robot Y', 'From Coordinate', 'To Coordinate'])
+        elif self.robot_test and args.rotation:
+            individual_dataframe_columns.append('angle')
         individual_df = pd.DataFrame(columns=individual_dataframe_columns)
 
         cx_order_list = []
@@ -3202,6 +3213,7 @@ class Candela(Realm):
                     if i == 0:
                         if self.robot_test:
                             self.vs_obj_dict[ce][obj_name]["obj"].perform_robo(args, individual_dataframe_columns, cx_order_list, i, actual_start_time, iterations_before_test_stopped_by_user)
+                            
                             return True
                         self.vs_obj_dict[ce][obj_name]["obj"].data["start_time_webGUI"] = [datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')]
                         end_time_webGUI = (datetime.datetime.now() + datetime.timedelta(minutes=self.vs_obj_dict[ce][obj_name]["obj"].total_duration)).strftime('%Y-%m-%d %H:%M:%S')
@@ -3370,7 +3382,11 @@ class Candela(Realm):
         config=False,
         device_csv_name=None,
         get_live_view=False,
-        floors=0
+        floors=0,
+        do_bandsteering=False,
+        total_cycles=1,
+        bssids=None,
+        duration_to_skip=None,
     ):
         args = SimpleNamespace(**locals())
         args.host = self.lanforge_ip
@@ -8914,39 +8930,46 @@ class Candela(Realm):
                             obj_no = ''
 
                         
-                        if not self.robot_test:
-                            params = self.vs_obj_dict[ce][obj_name]["data"].copy()
-                            date = params["date"]
+                        if not self.robot_test or (self.robot_test and self.do_bandsteering):
+                            if not self.do_bandsteering:
+                                params = self.vs_obj_dict[ce][obj_name]["data"].copy()
+                                date = params["date"]
+                                iterations_before_test_stopped_by_user = (
+                                    params["iterations_before_test_stopped_by_user"].copy()
+                                    if isinstance(params["iterations_before_test_stopped_by_user"], (list, dict, set))
+                                    else params["iterations_before_test_stopped_by_user"]
+                                )
 
-                            iterations_before_test_stopped_by_user = (
-                                params["iterations_before_test_stopped_by_user"].copy()
-                                if isinstance(params["iterations_before_test_stopped_by_user"], (list, dict, set))
-                                else params["iterations_before_test_stopped_by_user"]
-                            )
+                                test_setup_info = (
+                                    params["test_setup_info"].copy()
+                                    if isinstance(params["test_setup_info"], (list, dict, set))
+                                    else params["test_setup_info"]
+                                )
 
-                            test_setup_info = (
-                                params["test_setup_info"].copy()
-                                if isinstance(params["test_setup_info"], (list, dict, set))
-                                else params["test_setup_info"]
-                            )
+                                realtime_dataset = (
+                                    params["realtime_dataset"].copy()
+                                    if isinstance(params["realtime_dataset"], (list, dict, set))
+                                    else params["realtime_dataset"]
+                                )
 
-                            realtime_dataset = (
-                                params["realtime_dataset"].copy()
-                                if isinstance(params["realtime_dataset"], (list, dict, set))
-                                else params["realtime_dataset"]
-                            )
+                                report_path = (
+                                    params["report_path"].copy()
+                                    if isinstance(params["report_path"], (list, dict, set))
+                                    else params["report_path"]
+                                )
 
-                            report_path = (
-                                params["report_path"].copy()
-                                if isinstance(params["report_path"], (list, dict, set))
-                                else params["report_path"]
-                            )
-
-                            cx_order_list = (
-                                params["cx_order_list"].copy()
-                                if isinstance(params["cx_order_list"], (list, dict, set))
-                                else params["cx_order_list"]
-                            )
+                                cx_order_list = (
+                                    params["cx_order_list"].copy()
+                                    if isinstance(params["cx_order_list"], (list, dict, set))
+                                    else params["cx_order_list"]
+                                )
+                            
+                            else:
+                                test_setup_info = self.vs_obj_dict[ce][obj_name]["obj"].create_test_setup_info(media_source=self.vs_obj_dict[ce][obj_name]["obj"].media_source, media_quality=self.vs_obj_dict[ce][obj_name]["obj"].media_quality)
+                                date = str(datetime.datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
+                                iterations_before_test_stopped_by_user = [0]
+                                realtime_dataset = self.vs_obj_dict[ce][obj_name]["obj"].vs_stats
+                                report_path = ''
                             self.overall_report.set_obj_html(_obj_title=f'Video Streaming Test {obj_no}', _obj="")
                             self.overall_report.build_objective()
                             created_incremental_values = self.vs_obj_dict[ce][obj_name]["obj"].get_incremental_capacity_list()
@@ -9178,7 +9201,7 @@ class Candela(Realm):
                                 self.overall_report.move_graph_image()
                                 self.overall_report.build_graph()
 
-                                if self.vs_obj_dict[ce][obj_name]["obj"].dowebgui and self.vs_obj_dict[ce][obj_name]["obj"].get_live_view:
+                                if self.vs_obj_dict[ce][obj_name]["obj"].dowebgui and self.vs_obj_dict[ce][obj_name]["obj"].get_live_view and not self.vs_obj_dict[ce][obj_name]["obj"].do_bandsteering:
                                     script_dir = os.path.dirname(os.path.abspath(__file__))
 
                                     self.overall_report.set_custom_html("<h2>No of Buffers and Wait Time %</h2>")
@@ -9247,6 +9270,13 @@ class Candela(Realm):
                                 dataframe3 = pd.DataFrame(dataframe2)
                                 self.overall_report.set_table_dataframe(dataframe3)
                                 self.overall_report.build_table()
+                                if self.vs_obj_dict[ce][obj_name]["obj"].do_bandsteering:
+                                    devices_on_running_state = []
+                                    device_names_on_running = []
+                                    for j in range(created_incremental_values[iter]):
+                                        devices_on_running_state.append(keys[j])
+                                        device_names_on_running.append(username[j])
+                                    self.vs_obj_dict[ce][obj_name]["obj"].get_bandsteering_stats(self.overall_report, realtime_dataset, devices_on_running_state, device_names_on_running)
                         else:
                             params = self.vs_obj_dict[ce][obj_name]["obj"].vs_data
                             test_setup_info_vs = params[self.coordinate_list[0]]["test_setup_info"]
@@ -11932,8 +11962,8 @@ def main():
     duration_dict = {}
     candela_apis = Candela(ip=args.mgr, port=args.mgr_port,order_priority=args.order_priority,test_name=args.test_name,result_dir=args.result_dir,dowebgui=args.dowebgui,no_cleanup=args.no_cleanup,robot_test=args.robot_test,robot_ip=args.robot_ip,coordinate=args.coordinate,rotation=args.rotation,do_bandsteering=args.do_bandsteering,bssids=args.bssids,cycles=args.cycles,duration_to_skip=args.duration_to_skip)
     print(args)
-    if args.robot_test:
-        candela_apis.init_robot()
+    # if args.robot_test:
+    #     candela_apis.init_robot()
     test_map = {
     "ping_test":   (run_ping_test, "PING TEST"),
     "http_test":   (run_http_test, "HTTP TEST"),
@@ -12446,7 +12476,11 @@ def run_vs_test(args, candela_apis):
         upstream_port=args.upstream_port,
         dowebgui=args.dowebgui,
         test_name=args.test_name,
-        result_dir=args.result_dir
+        result_dir=args.result_dir,
+        do_bandsteering=args.do_bandsteering,
+        total_cycles=args.cycles,
+        bssids=args.bssids,
+        duration_to_skip=args.duration_to_skip
     )
 
 def run_thput_test(args, candela_apis):
