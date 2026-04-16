@@ -680,9 +680,9 @@ class ROAMThroughput(RobotClass):
                 # STOP at next AP
                 # -----------------------------
                 if is_ap and is_sniffing and coordinate != last_ap:
-
-                    print(f"STOP sniff at {coordinate}")
+                    print("waiting for {} seconds to capture roaming".format(self.wait_at_point))
                     time.sleep(self.wait_at_point)
+                    print(f"STOP sniff at {coordinate}")
 
                     sniffer.stop_sniff()
 

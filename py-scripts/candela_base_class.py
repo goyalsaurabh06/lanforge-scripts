@@ -350,7 +350,7 @@ class RemoteSniffer:
             raise Exception("SSH connection not established.")
         if not hasattr(self, 'sftp') or self.sftp is None:
             self.sftp = self.ssh_client.open_sftp()
-        command = f"python3 ~/roaming_development/wifi_roaming_cli.py --mode parallel --pcap-dir {remote_folder} --all_clients"
+        command = f"python3 ~/roaming_development/wifi_roaming_cli.py --mode parallel --pcap-dir {remote_folder} --all-clients"
         print(f"Running remote command: {command}")
         stdin, stdout, stderr = self.ssh_client.exec_command(command)
         # Read all output and error
