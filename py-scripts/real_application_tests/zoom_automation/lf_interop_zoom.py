@@ -250,7 +250,7 @@ class SniffingManager:
             self._close_sniffer()
             return False
 
-    def stop_segment(self, wait_seconds=0):
+    def stop_segment(self, wait_seconds=0, current_cord=None):
         """Stop the current capture, fetch the pcap, and reset state.
 
         Safe to call when not sniffing (no-op).  Returns ``True`` on success,
@@ -260,6 +260,9 @@ class SniffingManager:
             return False
 
         if wait_seconds > 0:
+            logger.info(
+                f"[SNIFF STOP] Waiting for {wait_seconds} seconds at {current_cord} before stopping capture..."
+            )
             time.sleep(wait_seconds)
 
         try:
@@ -688,11 +691,9 @@ class ZoomAutomation(Realm):
                 self.get_live_data()
                 summary_data = self._get_summary_zoom_stats()
                 if summary_data:
-                    if self.do_bs or self.do_roam:
-                        lf_wifi_data = self.get_signal_and_channel_data_dict()
+                    # if self.do_bs or self.do_roam:
+                    #     lf_wifi_data = self.get_signal_and_channel_data_dict()
                     for hostname, stats in summary_data.items():
-
-                        final_filename = hostname
                         # Generates: 2026-02-02 15:41:40
                         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         stats["timestamp"] = timestamp
@@ -703,25 +704,25 @@ class ZoomAutomation(Realm):
                             stats["Y"] = y
                             stats["From_Coord"] = self.from_cord
                             stats["To_Coord"] = self.to_cord
-                            sta_id = self.hostname_to_station_map.get(
-                                final_filename, None
-                            )
+                            # sta_id = self.hostname_to_station_map.get(
+                            #     hostname, None
+                            # )
 
-                            if sta_id in lf_wifi_data:
-                                # This adds keys like 'lf_signal', 'lf_channel' to the 'stats' dict
-                                stats.update(lf_wifi_data[sta_id])
-                            else:
-                                # Fill with placeholders if no LF data found for this device
-                                stats.update(
-                                    {
-                                        "signal": "-",
-                                        "channel": "-",
-                                        "mode": "-",
-                                        "tx_rate": "-",
-                                        "rx_rate": "-",
-                                        "bssid": "-",
-                                    }
-                                )
+                            # if sta_id in lf_wifi_data:
+                            #     # This adds keys like 'lf_signal', 'lf_channel' to the 'stats' dict
+                            #     stats.update(lf_wifi_data[sta_id])
+                            # else:
+                            #     # Fill with placeholders if no LF data found for this device
+                            #     stats.update(
+                            #         {
+                            #             "signal": "-",
+                            #             "channel": "-",
+                            #             "mode": "-",
+                            #             "tx_rate": "-",
+                            #             "rx_rate": "-",
+                            #             "bssid": "-",
+                            #         }
+                            #     )
 
                         if self.do_robo or self.do_bs or self.do_roam:
                             # Add current coordinate and angle to stats
@@ -735,11 +736,11 @@ class ZoomAutomation(Realm):
                         # --- CSV FILE PATH GENERATION ---
                         if self.do_robo:
                             if self.rotations_enabled:
-                                csv_name = f"{final_filename}_{self.current_cord}_{self.current_angle}.csv"
+                                csv_name = f"{hostname}_{self.current_cord}_{self.current_angle}.csv"
                             else:
-                                csv_name = f"{final_filename}_{self.current_cord}.csv"
+                                csv_name = f"{hostname}_{self.current_cord}.csv"
                         else:
-                            csv_name = f"{final_filename}.csv"
+                            csv_name = f"{hostname}.csv"
 
                         csv_file = os.path.join(self.path, csv_name)
 
@@ -1590,7 +1591,10 @@ class ZoomAutomation(Realm):
                         and coordinate != self.sniff_mgr.last_ap
                     ):
                         # Arrived at a new AP: stop current capture, then start next segment
-                        self.sniff_mgr.stop_segment(wait_seconds=self.wait_at_point)
+                        self.sniff_mgr.stop_segment(
+                            wait_seconds=self.wait_at_point,
+                            current_cord=self.current_cord,
+                        )
                         self.sniff_mgr.last_ap = coordinate
 
                         next_ap = self.sniff_mgr.find_next_ap(
@@ -3753,6 +3757,14 @@ class ZoomAutomation(Realm):
             ),
             self.report_path_date_time,
         )
+        self.move_files(
+            os.path.join(
+                os.getcwd(),
+                "zoom_api_responses",
+                f"{self.remote_login_url}_raw_qos.json",
+            ),
+            self.report_path_date_time,
+        )
 
     def generate_roam_report(self, path, report_obj):
         roam_dir = os.path.join(path, "client_roaming_csvs")
@@ -5141,8 +5153,9 @@ def main():
         )
         roaming_group.add_argument(
             "--wait_at_point",
+            type=int,
             help="Robot wait duration in seconds before sniffing starts and stops",
-            default="30",
+            default=30,
         )
         roaming_group.add_argument(
             "--res_lf_ip", help="Resource manager IP address", default="10.17.1.208"
