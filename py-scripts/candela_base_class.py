@@ -97,7 +97,7 @@ class Candela(Realm):
     Candela Class file to invoke different scripts from py-scripts.
     """
 
-    def __init__(self, ip='localhost', port=8080,order_priority="series",result_dir="",dowebgui=False,test_name='',no_cleanup=False,robot_test=False,robot_ip=None,coordinate=[],rotation=[],do_bandsteering=False,bssids=None,cycles=1):
+    def __init__(self, ip='localhost', port=8080,order_priority="series",result_dir="",dowebgui=False,test_name='',no_cleanup=False,robot_test=False,robot_ip=None,coordinate=[],rotation=[],do_bandsteering=False,bssids=None,cycles=1,duration_to_skip=None):
         """
         Constructor to initialize the LANforge IP and port
         Args:
@@ -174,6 +174,7 @@ class Candela(Realm):
         self.do_bandsteering = do_bandsteering
         self.bssids = bssids
         self.cycles = cycles
+        self.duration_to_skip = duration_to_skip
         self.coordinate_list = coordinate.split(',')
         self.rotation_list = rotation.split(',')
         self.rotation_enabled  = True if rotation != '' else False
@@ -5347,7 +5348,11 @@ class Candela(Realm):
                                 coordinates_list=self.coordinate_list,
                                 angles_list=self.rotation_list,
                                 do_robo=self.robot_test,
-                                rotations_enabled=self.rotation_enabled
+                                rotations_enabled=self.rotation_enabled,
+                                do_bandsteering=self.do_bandsteering,
+                                bssids=self.bssids,
+                                cycles=self.cycles,
+                                duration_to_skip = self.duration_to_skip if self.duration_to_skip else None
                                 )
             print('CHECKING PORT AVAILBILITY for RB TEST')
             self.port_clean_up(5003)
@@ -5405,7 +5410,7 @@ class Candela(Realm):
             # traceback.print_exc()
         finally:
             if '--help' not in sys.argv and '-h' not in sys.argv:
-                if self.rb_test.do_robo:
+                if self.rb_test.do_robo and not self.do_bandsteering:
                     if self.rb_test.dowebgui:
                         self.rb_test.stop_webui_test()
                     self.rb_test.create_robo_report()
@@ -9324,7 +9329,7 @@ class Candela(Realm):
                         self.overall_report.build_table_title()
 
                         
-                        if not self.robot_test:
+                        if not self.robot_test or self.do_bandsteering:
                             final_eid_data = []
                             mac_data = []
                             channel_data = []
@@ -9348,7 +9353,7 @@ class Candela(Realm):
                                 test_setup_data=test_setup_info, value='Test Parameters')
                             self.rb_obj_dict[ce][obj_name]["obj"].csv_file_names
                             for i in range(0, len(self.rb_obj_dict[ce][obj_name]["obj"].csv_file_names)):
-                                if self.rb_obj_dict[ce][obj_name]["obj"].csv_file_names[i].startswith("real_time_data.csv"):
+                                if self.rb_obj_dict[ce][obj_name]["obj"].csv_file_names[i].startswith("real_time_data.csv") and not self.do_bandsteering:
                                     continue
 
                                 final_eid_data, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = self.rb_obj_dict[ce][obj_name]["obj"].extract_device_data("{}/{}".format(csv_paths,self.rb_obj_dict[ce][obj_name]["obj"].csv_file_names[i]))
@@ -9362,6 +9367,9 @@ class Candela(Realm):
                                     total_urls = data['total_urls'].tolist()
                                 else:
                                     raise ValueError("The 'total_urls' column was not found in the CSV file.")
+                                # print("FILE:=====", self.rb_obj_dict[ce][obj_name]["obj"].csv_file_names[i])
+                                # print("ROWS:======", len(data))
+                                # print(data.tail())
 
                                 x_fig_size = 18
                                 y_fig_size = len(device_type_data) * 1 + 4
@@ -9391,6 +9399,7 @@ class Candela(Realm):
                                 self.overall_report.build_graph_title()
 
                                 # Extract device names from CSV
+                             
                                 if 'time_to_target_urls' in data.columns:
                                     time_to_target_urls = data['time_to_target_urls'].tolist()
                                 else:
@@ -9482,6 +9491,106 @@ class Candela(Realm):
                             test_results_df = pd.DataFrame(final_test_results)
                             self.overall_report.set_table_dataframe(test_results_df)
                             self.overall_report.build_table()
+                            folder = csv_paths  # report folder
+
+                            band_files = [
+                                os.path.join(folder, f)
+                                for f in os.listdir(folder)
+                                if f.endswith("_bandsteering.csv")
+                            ]
+                            self.overall_report.set_table_title("Band Steering – BSSID Transition Analysis")
+                            self.overall_report.build_table_title()
+
+                            for file in band_files:
+                                print("Processing band file:", file)
+
+                                df = pd.read_csv(file)
+
+                                if df.empty or "bssid" not in df.columns:
+                                    continue
+
+                                device_name = os.path.basename(file).replace("_bandsteering.csv", "")
+
+                                df["bssid"] = df["bssid"].astype(str).str.upper().str.strip()
+
+                                df["prev_bssid"] = df["bssid"].shift()
+
+                                transition_mask = (
+                                    (df["bssid"] != df["prev_bssid"]) &
+                                    (df["bssid"] != "NA")
+                                )
+
+                                transition_rows = df[transition_mask]
+
+                                bssid_counts = {}
+
+                                transitions = []
+
+                                for _, row in transition_rows.iterrows():
+                                    curr_bssid = row["bssid"]
+
+                                    if curr_bssid not in bssid_counts:
+                                        bssid_counts[curr_bssid] = 0
+
+                                    bssid_counts[curr_bssid] += 1
+
+                                    transitions.append({
+                                        "BSSID": curr_bssid,
+                                        "Timestamp": row.get("timestamp", "NA"),
+                                        "From Coordinate": row.get("from_coordinate", "NA"),
+                                        "To Coordinate": row.get("to_coordinate", "NA"),
+                                        "Channel": row.get("channel", "NA")
+                                    })
+
+                                bssid_list = list(bssid_counts.keys())
+                                count_list = list(bssid_counts.values())
+
+                                if not bssid_list:
+                                    bssid_list = ["No Transition"]
+                                    count_list = [0]
+
+                                self.overall_report.set_graph_title(f"BSSID Change Count – {device_name}")
+                                self.overall_report.build_graph_title()
+
+                                graph = lf_bar_graph_horizontal(
+                                    _data_set=[count_list],
+                                    _xaxis_name="Transition Count",
+                                    _yaxis_name="BSSID",
+                                    _yaxis_label=bssid_list,
+                                    _yaxis_categories=bssid_list,
+                                    _bar_height=0.25,
+                                    _show_bar_value=True,
+                                    _figsize=(18, max(4, len(bssid_list))),
+                                    _graph_title="BSSID Transitions",
+                                    _graph_image_name=f"{device_name}_bssid_transitions",
+                                    _label=["Transitions"]
+                                )
+
+                                graph_image = graph.build_bar_graph_horizontal()
+                                self.overall_report.set_graph_image(graph_image)
+                                self.overall_report.move_graph_image()
+                                self.overall_report.build_graph()
+
+                                self.overall_report.set_table_title(f"Band Steering Results for {device_name}")
+                                self.overall_report.build_table_title()
+
+                                if not transitions:
+                                    first_row = df.iloc[0]
+                                    last_row = df.iloc[-1]
+
+                                    transitions.append({
+                                        "BSSID": first_row.get("bssid", "NA"),
+                                        "Timestamp": last_row.get("timestamp", "NA"),
+                                        "From Coordinate": first_row.get("from_coordinate", "NA"),
+                                        "To Coordinate": last_row.get("to_coordinate", "NA"),
+                                        "Channel": first_row.get("channel", "NA")
+                                    })
+
+                                transition_df = pd.DataFrame(transitions)
+
+                                self.overall_report.set_table_dataframe(transition_df)
+                                self.overall_report.build_table()
+                            
                         else:
                             test_setup_info = self.rb_obj_dict[ce][obj_name]["obj"].generate_test_setup_info()
                             self.overall_report.test_setup_table(
@@ -9791,7 +9900,7 @@ class Candela(Realm):
                         if self.rb_obj_dict[ce][obj_name]["obj"].dowebgui:
 
                             os.chdir(self.rb_obj_dict[ce][obj_name]["obj"].original_dir)
-
+                        
                         # self.overall_report.build_custom()
                         if ce == "series":
                             obj_no += 1
@@ -11821,7 +11930,7 @@ def main():
     args = parser.parse_args()
     args_dict = vars(args)
     duration_dict = {}
-    candela_apis = Candela(ip=args.mgr, port=args.mgr_port,order_priority=args.order_priority,test_name=args.test_name,result_dir=args.result_dir,dowebgui=args.dowebgui,no_cleanup=args.no_cleanup,robot_test=args.robot_test,robot_ip=args.robot_ip,coordinate=args.coordinate,rotation=args.rotation,do_bandsteering=args.do_bandsteering,bssids=args.bssids,cycles=args.cycles)
+    candela_apis = Candela(ip=args.mgr, port=args.mgr_port,order_priority=args.order_priority,test_name=args.test_name,result_dir=args.result_dir,dowebgui=args.dowebgui,no_cleanup=args.no_cleanup,robot_test=args.robot_test,robot_ip=args.robot_ip,coordinate=args.coordinate,rotation=args.rotation,do_bandsteering=args.do_bandsteering,bssids=args.bssids,cycles=args.cycles,duration_to_skip=args.duration_to_skip)
     print(args)
     if args.robot_test:
         candela_apis.init_robot()
