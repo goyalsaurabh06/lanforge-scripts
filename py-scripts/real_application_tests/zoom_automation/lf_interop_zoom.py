@@ -461,6 +461,8 @@ class ZoomAutomation(Realm):
             else:
                 self.ap_coordinates = list(ap_coordinates) if ap_coordinates else []
             self.ap_coord_set = set(self.ap_coordinates)
+            self.ap_coord_set.add(self.coordinates_list[0])  # Ensure starting point is included as an AP for sniffing
+            self.ap_coord_set.add(self.coordinates_list[-1])  # Ensure ending point is included as an AP for sniffing
             self.sniff_radio_2g = sniff_radio_2g
             self.sniff_radio_5g = sniff_radio_5g
             self.sniff_radio_6g = sniff_radio_6g
