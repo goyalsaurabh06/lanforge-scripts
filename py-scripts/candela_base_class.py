@@ -775,7 +775,11 @@ class Candela(Realm):
         expected_passfail_value: str = None,
         device_csv_name: str = None,
         wait_time: int = 60,
-        dev_list: str = None
+        dev_list: str = None,
+        do_bandsteering=False,
+        cycles=1,
+        bssids=None,
+        duration_to_skip=None, robot_test=False,
     ):
         # set the logger level to debug
         logger_config = lf_logger_config.lf_logger_config()
@@ -852,7 +856,9 @@ class Candela(Realm):
         # ping object creation
         self.ping_obj_dict[ce][obj_name]["obj"] = Ping(host=mgr_ip, port=mgr_port, ssid=ssid, security=security, password=password, radio=radio,
                     lanforge_password=mgr_password, target=target, interval=interval, sta_list=[], virtual=virtual, real=real, duration=duration, debug=debug, csv_name=device_csv_name,
-                    expected_passfail_val=expected_passfail_value, wait_time=wait_time, group_name=group_name,robo_ip=self.robot_ip,coordinate_list=self.coordinate.split(",") if self.coordinate else [],rotation_enabled=bool(self.rotation),angle_list=self.rotation.split(",") if self.rotation else [])
+                    expected_passfail_val=expected_passfail_value, wait_time=wait_time, group_name=group_name,robo_ip=self.robot_ip,coordinate_list=self.coordinate.split(",") if self.coordinate else [],rotation_enabled=bool(self.rotation),angle_list=self.rotation.split(",") if self.rotation else [],
+                    local_lf_report_dir=local_lf_report_dir,
+                    do_bandsteering=do_bandsteering, cycles=cycles, bssids=bssids, duration_to_skip=duration_to_skip,robot_test=robot_test)
 
         # changing the target from port to IP
         self.ping_obj_dict[ce][obj_name]["obj"].change_target_to_ip()
@@ -961,7 +967,7 @@ class Candela(Realm):
         self.ping_done_event.set()
         self.ping_rotate_done_event.set()
 
-        if self.robot_test :
+        if self.robot_test and not self.do_bandsteering:
             if self.dowebgui:
                 self.ping_obj_dict[ce][obj_name]["obj"].webgui = True
                 
@@ -1141,94 +1147,95 @@ class Candela(Realm):
                     params["group_device_map"] = group_device_map
                 self.ping_obj_dict[ce][obj_name]["data"] = params.copy()
                 return True
-
-
+        elif self.do_bandsteering:
+            self.ping_obj_dict[ce][obj_name]["obj"].perform_bandsteering()
         # run the test for the given duration
-        logging.info('Running the ping test for {} minutes'.format(duration))
+        if not self.robot_test and not self.do_bandsteering:
+            logging.info('Running the ping test for {} minutes'.format(duration))
 
-        # start generate endpoint
-        self.ping_obj_dict[ce][obj_name]["obj"].start_generic()
-        # time_counter = 0
-        ports_data_dict = self.ping_obj_dict[ce][obj_name]["obj"].json_get('/ports/all/')['interfaces']
-        ports_data = {}
-        for ports in ports_data_dict:
-            port, port_data = list(ports.keys())[0], list(ports.values())[0]
-            ports_data[port] = port_data
-        ping_duration = duration
-        if self.dowebgui:
-            try:
-                with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.lanforge_ip, self.test_name), 'r') as file:
-                    data = json.load(file)
-                    if data["status"] != "Running":
-                        logging.info('Test is stopped by the user')
-                        self.test_stopped = True
-                if not self.test_stopped:
-                    self.overall_status['ping'] = "started"
-                    self.overall_status["time"] = datetime.datetime.now().strftime("%Y %d %H:%M:%S")
-                    self.overall_status["current_mode"] = self.current_exec
-                    self.overall_status["current_test_name"] = "ping"
-                    self.overall_csv.append(self.overall_status.copy())
-                    df1 = pd.DataFrame(self.overall_csv)
-                    df1.to_csv('{}/overall_status.csv'.format(self.result_dir), index=False)
-            except BaseException:
-                logger.info("Error while running for webui during ping execution")
-            if self.test_stopped:
-                logger.info("test has been stopped by the user")
-                return False
-            start_time = datetime.datetime.now()
-            end_time = start_time + datetime.timedelta(seconds=ping_duration * 60)
-            temp_json = []
-            while (datetime.datetime.now() < end_time):
+            # start generate endpoint
+            self.ping_obj_dict[ce][obj_name]["obj"].start_generic()
+            # time_counter = 0
+            ports_data_dict = self.ping_obj_dict[ce][obj_name]["obj"].json_get('/ports/all/')['interfaces']
+            ports_data = {}
+            for ports in ports_data_dict:
+                port, port_data = list(ports.keys())[0], list(ports.values())[0]
+                ports_data[port] = port_data
+            ping_duration = duration
+            if self.dowebgui:
+                try:
+                    with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.lanforge_ip, self.test_name), 'r') as file:
+                        data = json.load(file)
+                        if data["status"] != "Running":
+                            logging.info('Test is stopped by the user')
+                            self.test_stopped = True
+                    if not self.test_stopped:
+                        self.overall_status['ping'] = "started"
+                        self.overall_status["time"] = datetime.datetime.now().strftime("%Y %d %H:%M:%S")
+                        self.overall_status["current_mode"] = self.current_exec
+                        self.overall_status["current_test_name"] = "ping"
+                        self.overall_csv.append(self.overall_status.copy())
+                        df1 = pd.DataFrame(self.overall_csv)
+                        df1.to_csv('{}/overall_status.csv'.format(self.result_dir), index=False)
+                except BaseException:
+                    logger.info("Error while running for webui during ping execution")
+                if self.test_stopped:
+                    logger.info("test has been stopped by the user")
+                    return False
+                start_time = datetime.datetime.now()
+                end_time = start_time + datetime.timedelta(seconds=ping_duration * 60)
                 temp_json = []
-                temp_checked_sta = []
-                temp_result_data = self.ping_obj_dict[ce][obj_name]["obj"].get_results()
-                if isinstance(temp_result_data, dict):
-                    for station in self.ping_obj_dict[ce][obj_name]["obj"].real_sta_list:
-                        current_device_data = ports_data[station]
-                        if (station in temp_result_data['name']):
-                            temp_json.append({
-                                'device': station,
-                                'sent': temp_result_data['tx pkts'],
-                                'recv': temp_result_data['rx pkts'],
-                                'dropped': temp_result_data['dropped'],
-                                'status': "Running",
-                                'start_time': start_time.strftime("%d/%m %I:%M:%S %p"),
-                                'end_time': end_time.strftime("%d/%m %I:%M:%S %p"),
-                                "remaining_time": ""
-                            })
-                else:
-                    for station in self.ping_obj_dict[ce][obj_name]["obj"].real_sta_list:
-                        current_device_data = ports_data[station]
-                        for ping_device in temp_result_data:
-                            ping_endp, ping_data = list(ping_device.keys())[0], list(ping_device.values())[0]
-                            if station.split('-')[-1] in ping_endp and station not in temp_checked_sta:
-                                temp_checked_sta.append(station)
+                while (datetime.datetime.now() < end_time):
+                    temp_json = []
+                    temp_checked_sta = []
+                    temp_result_data = self.ping_obj_dict[ce][obj_name]["obj"].get_results()
+                    if isinstance(temp_result_data, dict):
+                        for station in self.ping_obj_dict[ce][obj_name]["obj"].real_sta_list:
+                            current_device_data = ports_data[station]
+                            if (station in temp_result_data['name']):
                                 temp_json.append({
                                     'device': station,
-                                    'sent': ping_data['tx pkts'],
-                                    'recv': ping_data['rx pkts'],
-                                    'dropped': ping_data['dropped'],
+                                    'sent': temp_result_data['tx pkts'],
+                                    'recv': temp_result_data['rx pkts'],
+                                    'dropped': temp_result_data['dropped'],
                                     'status': "Running",
                                     'start_time': start_time.strftime("%d/%m %I:%M:%S %p"),
                                     'end_time': end_time.strftime("%d/%m %I:%M:%S %p"),
                                     "remaining_time": ""
                                 })
-                df1 = pd.DataFrame(temp_json)
-                df1.to_csv('{}/ping_datavalues.csv'.format(self.result_dir), index=False)
-                # try:
-                #     with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host, self.test_name), 'r') as file:
-                #         data = json.load(file)
-                #         if data["status"] != "Running":
-                #             logging.info('Test is stopped by the user')
-                #             break
-                # except BaseException:
-                #     logging.info("execption while reading running json in ping")
-                time.sleep(3)
-        else:
-            time.sleep(ping_duration * 60)
+                    else:
+                        for station in self.ping_obj_dict[ce][obj_name]["obj"].real_sta_list:
+                            current_device_data = ports_data[station]
+                            for ping_device in temp_result_data:
+                                ping_endp, ping_data = list(ping_device.keys())[0], list(ping_device.values())[0]
+                                if station.split('-')[-1] in ping_endp and station not in temp_checked_sta:
+                                    temp_checked_sta.append(station)
+                                    temp_json.append({
+                                        'device': station,
+                                        'sent': ping_data['tx pkts'],
+                                        'recv': ping_data['rx pkts'],
+                                        'dropped': ping_data['dropped'],
+                                        'status': "Running",
+                                        'start_time': start_time.strftime("%d/%m %I:%M:%S %p"),
+                                        'end_time': end_time.strftime("%d/%m %I:%M:%S %p"),
+                                        "remaining_time": ""
+                                    })
+                    df1 = pd.DataFrame(temp_json)
+                    df1.to_csv('{}/ping_datavalues.csv'.format(self.result_dir), index=False)
+                    # try:
+                    #     with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host, self.test_name), 'r') as file:
+                    #         data = json.load(file)
+                    #         if data["status"] != "Running":
+                    #             logging.info('Test is stopped by the user')
+                    #             break
+                    # except BaseException:
+                    #     logging.info("execption while reading running json in ping")
+                    time.sleep(3)
+            else:
+                time.sleep(ping_duration * 60)
 
-        logging.info('Stopping the test')
-        self.ping_obj_dict[ce][obj_name]["obj"].stop_generic()
+            logging.info('Stopping the test')
+            self.ping_obj_dict[ce][obj_name]["obj"].stop_generic()
 
         result_data = self.ping_obj_dict[ce][obj_name]["obj"].get_results()
         # logging.info(result_data)
@@ -12322,7 +12329,12 @@ def run_ping_test(args, candela_apis : Candela):
         pk_passwd=args.ping_pk_passwd,
         pac_file=args.ping_pac_file,
         wait_time=args.ping_wait_time,
-        local_lf_report_dir = candela_apis.result_path if not args.dowebgui else args.result_dir
+        local_lf_report_dir = candela_apis.result_path if not args.dowebgui else args.result_dir,
+        do_bandsteering=args.do_bandsteering,
+        cycles=args.cycles,
+        bssids=args.bssids,
+        duration_to_skip=args.duration_to_skip,
+        robot_test=args.robot_test
     )
 
 def run_http_test(args, candela_apis : Candela):
