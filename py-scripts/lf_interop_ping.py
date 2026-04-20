@@ -89,6 +89,7 @@ import asyncio
 import csv
 import json
 import shutil
+from collections import Counter
 
 if 'py-json' not in sys.path:
     sys.path.append(os.path.join(os.path.abspath('..'), 'py-json'))
@@ -159,8 +160,8 @@ class Ping(Realm):
                  wait_time=60,
                  total_floors: int = None,
                  get_live_view: bool = None,
-                 result_dir: str = None,
-                 robo_ip=None,angle_list=None,coordinate_list = [],rotation_enabled=None,local_lf_report_dir=''):
+                 result_dir: str = '',
+                 robo_ip=None,angle_list=None,coordinate_list = None,rotation_enabled=None,local_lf_report_dir='', do_bandsteering=False, cycles=None, bssids=None, duration_to_skip=None,robot_test=False):
         super().__init__(lfclient_host=host,
                          lfclient_port=port)
         self.ssid_list = []
@@ -188,6 +189,7 @@ class Ping(Realm):
         self.windows = 0
         self.mac = 0
         self.result_json = {}
+        self.bandsteering_data = {}
         self.generic_endps_profile = self.new_generic_endp_profile()
         self.generic_endps_profile.type = 'lfping'
         self.generic_endps_profile.dest = self.target
@@ -224,7 +226,7 @@ class Ping(Realm):
         self.test_input_list = []
         self.percent_pac_loss = []
         self.wait_time = wait_time
-
+        self.temp_json = []
         # variables related to robot 
         self.coordinate_list = coordinate_list
         self.rotation_enabled = rotation_enabled
@@ -233,6 +235,11 @@ class Ping(Realm):
         self.angle_list=angle_list if rotation_enabled else [0]
         self.currentangle=None
         self.currentcoordinate=None
+        self.do_bandsteering = do_bandsteering
+        self.cycles = cycles
+        self.bssids = bssids.split(',') if bssids else []
+        self.duration_to_skip = duration_to_skip
+        self.robot_test = robot_test
         if robo_ip is not None:
             self.robot=RobotClass(robo_ip=robo_ip, angle_list=self.angle_list)
             self.robot.robo_ip=robo_ip
@@ -383,6 +390,82 @@ class Ping(Realm):
 
     def stop_generic(self):
         self.generic_endps_profile.stop_cx()
+
+
+    def get_instinct_ping_data(self, start_time, end_time):
+        temp_checked_sta = []
+        temp_result_data = self.get_results()
+        if isinstance(temp_result_data, dict):
+            for station in self.real_sta_list:
+                ports_data_dict = self.json_get('/ports/all/')['interfaces']
+                ports_data = {}
+                for ports in ports_data_dict:
+                    port, port_data = list(ports.keys())[0], list(ports.values())[0]
+                    ports_data[port] = port_data
+                current_device_data = ports_data[station]
+                if self.robot_test and self.do_bandsteering:
+                    robo_x, robo_y, from_coord, to_coord = self.robot_obj.get_robot_pose()
+                current_time = datetime.now()
+                if (station in temp_result_data['name']):
+                    self.temp_json.append({
+                        'device': station,
+                        'sent': temp_result_data['tx pkts'],
+                        'recv': temp_result_data['rx pkts'],
+                        'dropped': temp_result_data['dropped'],
+                        'status': "Running",
+                        'start_time': start_time.strftime("%d/%m %I:%M:%S %p"),
+                        'end_time': end_time.strftime("%d/%m %I:%M:%S %p"),
+                        "remaining_time": "",
+                        "Timestamp" : current_time,
+                        "bssid" : current_device_data['ap'],
+                        "Channel" : current_device_data['channel']
+                    })
+                    if self.robot_test and self.do_bandsteering:
+                        self.temp_json[-1]['Robot X'] = robo_x
+                        self.temp_json[-1]['Robot Y'] = robo_y
+                        self.temp_json[-1]['From Coordinate'] = from_coord
+                        self.temp_json[-1]['To Coordinate'] = to_coord
+                        self.bandsteering_data[station].append(self.temp_json[-1])
+        else:
+            for station in self.real_sta_list:
+                ports_data_dict = self.json_get('/ports/all/')['interfaces']
+                ports_data = {}
+                for ports in ports_data_dict:
+                    port, port_data = list(ports.keys())[0], list(ports.values())[0]
+                    ports_data[port] = port_data
+                current_device_data = ports_data[station]
+                current_time = datetime.now()
+                for ping_device in temp_result_data:
+                    ping_endp, ping_data = list(ping_device.keys())[0], list(ping_device.values())[0]
+                    if station.split('-')[-1] in ping_endp and station not in temp_checked_sta:
+                        if self.robot_test and self.do_bandsteering:
+                            robo_x, robo_y, from_coord, to_coord = self.robot_obj.get_robot_pose()
+                        temp_checked_sta.append(station)
+                        self.temp_json.append({
+                            'device': station,
+                            'sent': ping_data['tx pkts'],
+                            'recv': ping_data['rx pkts'],
+                            'dropped': ping_data['dropped'],
+                            'status': "Running",
+                            'start_time': start_time.strftime("%d/%m %I:%M:%S %p"),
+                            'end_time': end_time.strftime("%d/%m %I:%M:%S %p"),
+                            "remaining_time": "",
+                            "Timestamp" : current_time,
+                            "bssid" : current_device_data['ap'],
+                            "Channel" : current_device_data['channel']
+                        })
+                        
+                        if self.robot_test and self.do_bandsteering:
+                            self.temp_json[-1]['Robot X'] = robo_x
+                            self.temp_json[-1]['Robot Y'] = robo_y
+                            self.temp_json[-1]['From Coordinate'] = from_coord
+                            self.temp_json[-1]['To Coordinate'] = to_coord
+                            self.bandsteering_data[station].append(self.temp_json[-1])
+        df1 = pd.DataFrame(self.temp_json)
+        if self.result_dir != '':
+            df1.to_csv('{}/ping_datavalues.csv'.format(self.result_dir), index=False)
+        else:
+            df1.to_csv('ping_datavalues.csv', index=False)
 
     def get_results(self):
         logging.debug(self.generic_endps_profile.created_endp)
@@ -550,6 +633,151 @@ class Ping(Realm):
                     report.set_custom_html(f'<img src="file://{image_path}"  style="width:1200px; height:800px;"></img>')
                     report.build_custom()
 
+    def get_bandsteering_stats(self, report):
+        """
+        Generate Band Steering statistics and report for each device.
+
+        Expected strict data format:
+        {
+            "1.12.wlan0": [
+                {
+                    "device": "1.12.wlan0",
+                    "Timestamp": datetime,
+                    "bssid": "xx:xx:xx:xx:xx:xx",
+                    "Channel": "36",
+                    "From Coordinate": "3",
+                    "To Coordinate": "4",
+                    ...
+                }
+            ],
+            ...
+        }
+
+        Logic:
+        - Detect BSSID transition only when BSSID changes
+        - Count occurrences of configured BSSID transitions
+        - Generate graph for BSSID change count
+        - Generate transition table if valid events found
+        """
+
+
+        data = self.bandsteering_data  # strict format like uploaded data :contentReference[oaicite:0]{index=0}
+
+        for dev_name, records in data.items():
+
+            if not records:
+                continue
+
+            # Convert strict list-of-dict data to DataFrame
+            df = pd.DataFrame(records)
+
+            if df.empty:
+                continue
+
+            allowed_bssids = set(self.bssids)
+
+            # Detect only actual BSSID transitions
+            mask = (
+                (df["bssid"] != df["bssid"].shift()) &
+                (df["bssid"].isin(allowed_bssids))
+            )
+
+            skip_table = not mask.any()
+
+            if skip_table:
+                bssid_counts = {bssid: 0 for bssid in self.bssids}
+                bssid_list = []
+                channel_list = []
+                timestamp_list = []
+                from_coordinate_list = []
+                to_coordinate_list = []
+
+            else:
+                bssid_list = df.loc[mask, "bssid"].tolist()
+                channel_list = df.loc[mask, "Channel"].tolist()
+                timestamp_list = df.loc[mask, "Timestamp"].tolist()
+
+                from_coordinate_list = (
+                    df.loc[mask, "From Coordinate"].tolist()
+                    if "From Coordinate" in df.columns else []
+                )
+
+                to_coordinate_list = (
+                    df.loc[mask, "To Coordinate"].tolist()
+                    if "To Coordinate" in df.columns else []
+                )
+
+                bssid_counts = Counter(bssid_list)
+
+            # Ensure all configured BSSIDs exist
+            final_bssid_counts = {
+                bssid: bssid_counts.get(bssid, 0)
+                for bssid in self.bssids
+            }
+
+            x_axis = list(final_bssid_counts.keys())
+            y_axis = [[float(v)] for v in final_bssid_counts.values()]
+
+            # Graph Title
+            report.set_obj_html(
+                _obj_title=f"BSSID Change Count Of The Client {dev_name}",
+                _obj=" "
+            )
+            report.build_objective()
+
+            graph = lf_bar_graph(
+                _data_set=y_axis,
+                _xaxis_name="BSSID",
+                _yaxis_name="Number of Changes",
+                _xaxis_categories=[""],
+                _xaxis_label=x_axis,
+                _graph_image_name=f"bssid_change_count_{dev_name}",
+                _label=x_axis,
+                _xaxis_step=1,
+                _graph_title=f"BSSID change count for device : {dev_name}",
+                _title_size=16,
+                _bar_width=0.15,
+                _figsize=(18, 6),
+                _dpi=96,
+                _show_bar_value=True,
+                _enable_csv=True,
+            )
+
+            graph_png = graph.build_bar_graph()
+
+            report.set_graph_image(graph_png)
+            report.move_graph_image()
+            report.set_csv_filename(graph_png)
+            report.move_csv_file()
+            report.build_graph()
+
+            # If no transition found
+            if skip_table:
+                report.set_obj_html(
+                    _obj_title=f"Band Steering Results for {dev_name}",
+                    _obj="No band steering events observed for the configured BSSID list."
+                )
+                report.build_objective()
+                continue
+
+            # Table Title
+            report.set_obj_html(
+                _obj_title=f"Band Steering Results for {dev_name}",
+                _obj=" "
+            )
+            report.build_objective()
+
+            table_df = pd.DataFrame({
+                "Timestamp": timestamp_list,
+                "BSSID": bssid_list,
+                "Channel": channel_list,
+                "From Coordinate": from_coordinate_list,
+                "To Coordinate": to_coordinate_list
+            })
+
+            report.set_table_dataframe(table_df)
+            report.build_table()
+
     def generate_report(self, result_json=None, result_dir='Ping_Test_Report', report_path='', config_devices='', group_device_map=None):
         if result_json is not None:
             self.result_json = result_json
@@ -588,6 +816,18 @@ class Ping(Realm):
                 'No of Devices': '{} (V:{}, A:{}, W:{}, L:{}, M:{})'.format(len(self.sta_list), len(self.sta_list) - len(self.real_sta_list), self.android, self.windows, self.linux, self.mac),
                 'Duration (in minutes)': self.duration
             }
+              
+        if self.robot_test:
+            test_setup_info["Robot IP"] = self.robo_ip
+            test_setup_info["Coordinates"] = str(self.coordinate_list)
+            if self.do_bandsteering:
+                del test_setup_info["Duration (in minutes)"]
+                test_setup_info["Cycles"] = str(self.cycles)
+                test_setup_info["BSSIDs for Bandsteering"] = str(self.bssids)
+            else:
+                if self.rotation_enabled:
+                    test_setup_info["Rotations"] = self.rotation
+                test_setup_info["Rotation Enabled"] = str(self.rotation_enabled)
         report.test_setup_table(
             test_setup_data=test_setup_info, value='Test Setup Information')
 
@@ -617,7 +857,7 @@ class Ping(Realm):
         self.device_mac = []
         self.device_names_with_errors = []
         self.devices_with_errors = []
-        self.report_names = []
+        report_names = []
         self.remarks = []
         self.device_ssid = []
         # packet_count_data = {}
@@ -637,9 +877,9 @@ class Ping(Realm):
             self.device_max.append(float(device_data['max_rtt'].replace(',', '')))
             self.device_avg.append(float(device_data['avg_rtt'].replace(',', '')))
             if (device_data['os'] == 'Virtual'):
-                self.report_names.append('{} {}'.format(device, device_data['os'])[0:25])
+                report_names.append('{} {}'.format(device, device_data['os'])[0:25])
             else:
-                self.report_names.append('{} {} {}'.format(device, device_data['os'], device_data['name']))
+                report_names.append('{} {} {}'.format(device, device_data['os'], device_data['name']))
             if (device_data['remarks'] != []):
                 self.device_names_with_errors.append(device_data['name'])
                 self.devices_with_errors.append(device)
@@ -667,8 +907,8 @@ class Ping(Realm):
                                         _label=[
                                             'Packets Loss', 'Packets Received', 'Packets Sent'],
                                         _graph_image_name='Packets sent vs received vs dropped',
-                                        _yaxis_label=self.report_names,
-                                        _yaxis_categories=self.report_names,
+                                        _yaxis_label=report_names,
+                                        _yaxis_categories=report_names,
                                         _yaxis_step=1,
                                         _yticks_font=8,
                                         _graph_title='Packets sent vs received vs dropped',
@@ -769,8 +1009,8 @@ class Ping(Realm):
                                         _label=[
                                             'Min Latency (ms)', 'Average Latency (ms)', 'Max Latency (ms)'],
                                         _graph_image_name='Ping Latency per client',
-                                        _yaxis_label=self.report_names,
-                                        _yaxis_categories=self.report_names,
+                                        _yaxis_label=report_names,
+                                        _yaxis_categories=report_names,
                                         _yaxis_step=1,
                                         _yticks_font=8,
                                         _graph_title='Ping Latency per client',
@@ -809,6 +1049,9 @@ class Ping(Realm):
         report.set_table_dataframe(dataframe2)
         report.build_table()
 
+
+        if self.do_bandsteering and self.robot_test:
+            self.get_bandsteering_stats(report=report)
         # check if there are remarks for any device. If there are remarks, build table else don't
         if (self.remarks != []):
             report.set_table_title('Notes')
@@ -1130,6 +1373,48 @@ class Ping(Realm):
 
             with open(filepath, 'w') as f:
                 json.dump(data, f, indent=4)
+
+    def perform_bandsteering(self):
+        self.robot_obj = RobotClass()
+        self.robot_obj.robo_ip = self.robo_ip
+        base_dir = os.path.dirname(os.path.dirname(self.result_dir))
+        nav_data = os.path.join(base_dir, 'nav_data.json')  # To generate nav_data.json in webgui folder
+        self.robot_obj.nav_data_path = nav_data
+        self.robot_obj.create_waypointlist()
+        self.robot_obj.ip = self.host
+        test_name = self.result_dir.split("/")[-1]
+        self.robot_obj.testname = test_name
+        self.robot_obj.runtime_dir = self.result_dir
+        self.robot_obj.coordinate_list = self.coordinate_list
+        self.robot_obj.time_to_reach = self.duration_to_skip
+        self.robot_obj.total_cycles = self.cycles
+        test_stopped_by_user = False
+        cycle_coords = self.robot_obj.get_coordinates_list()
+        if (len(cycle_coords) == 0):
+            logger.info("Coordinate list is empty test execution is stopped")
+            return
+        self.robot_obj.do_bandsteering = True
+        self.start_generic()
+        start_time = datetime.now()
+        end_time = start_time + timedelta(seconds=self.duration * 60)
+        for station in self.real_sta_list:
+            self.bandsteering_data[station] = []
+        for coordinate in cycle_coords:
+            if test_stopped_by_user:
+                break
+            # Check for battery status before moving to next coordinate
+            if_paused, test_stopped_by_user, test_status = self.robot_obj.wait_for_battery(monitor_function=lambda: self.get_instinct_ping_data(start_time, end_time))
+            # If test is stopped by user during battery wait
+            if test_stopped_by_user:
+                break
+            robo_moved, abort, test_status = self.robot_obj.move_to_coordinate(coordinate, monitor_function=lambda: self.get_instinct_ping_data(start_time, end_time))
+            # If robot failed to reach the coordinate
+            if abort:
+                break
+            if robo_moved:
+                logger.info("Reached the coordinate {}".format(coordinate))
+        self.stop_generic()
+        return
 
     def perform_robo_webui(self,args,Devices):
         self.result_dir = self.local_lf_report_dir
@@ -1722,7 +2007,7 @@ class Ping(Realm):
                 self.device_mac = []
                 self.device_names_with_errors = []
                 self.devices_with_errors = []
-                self.report_names = []
+                report_names = []
                 self.remarks = []
                 self.device_ssid = []
                 # packet_count_data = {}
@@ -1744,9 +2029,9 @@ class Ping(Realm):
                     self.device_max.append(float(device_data['max_rtt'].replace(',', '')))
                     self.device_avg.append(float(device_data['avg_rtt'].replace(',', '')))
                     if (device_data['os'] == 'Virtual'):
-                        self.report_names.append('{} {}'.format(device, device_data['os'])[0:25])
+                        report_names.append('{} {}'.format(device, device_data['os'])[0:25])
                     else:
-                        self.report_names.append('{} {} {}'.format(device, device_data['os'], device_data['name']))
+                        report_names.append('{} {} {}'.format(device, device_data['os'], device_data['name']))
                     if (device_data['remarks'] != []):
                         self.device_names_with_errors.append(device_data['name'])
                         self.devices_with_errors.append(device)
@@ -1774,8 +2059,8 @@ class Ping(Realm):
                                                 _label=[
                                                     'Packets Loss', 'Packets Received', 'Packets Sent'],
                                                 _graph_image_name='Packets sent vs received vs dropped',
-                                                _yaxis_label=self.report_names,
-                                                _yaxis_categories=self.report_names,
+                                                _yaxis_label=report_names,
+                                                _yaxis_categories=report_names,
                                                 _yaxis_step=1,
                                                 _yticks_font=8,
                                                 _graph_title='Packets sent vs received vs dropped',
@@ -1880,8 +2165,8 @@ class Ping(Realm):
                                                 _label=[
                                                     'Min Latency (ms)', 'Average Latency (ms)', 'Max Latency (ms)'],
                                                 _graph_image_name='Ping Latency per client',
-                                                _yaxis_label=self.report_names,
-                                                _yaxis_categories=self.report_names,
+                                                _yaxis_label=report_names,
+                                                _yaxis_categories=report_names,
                                                 _yaxis_step=1,
                                                 _yticks_font=8,
                                                 _graph_title='Ping Latency per client',
@@ -2262,7 +2547,11 @@ effectively over the network and pinpoint potential issues affecting connectivit
     optional.add_argument('--robot_ip', help='hostname for where Robot server is running')
     optional.add_argument('--coordinate',help="The coordinate dictionary consists points and their respective x and y values")
     optional.add_argument('--rotation',help="The set of angles to rotate at a particular point")
-
+    optional.add_argument('--robot_test', help='Enable bandsteering', action='store_true')
+    optional.add_argument('--do_bandsteering', help='Enable bandsteering', action='store_true')
+    optional.add_argument('--cycles', type=int, default=1, help='No of cycles to perform band steering')
+    optional.add_argument('--bssids', type=str, default='', help='hostname for where Robot server is running')
+    optional.add_argument("--duration_to_skip", type=int, help='Specify the maximum time in seconds to skip a point if there is an obstacle', default=60)
     args = parser.parse_args()
 
     if args.help_summary:
@@ -2337,7 +2626,8 @@ effectively over the network and pinpoint potential issues affecting connectivit
     # ping object creation
     ping = Ping(host=mgr_ip, port=mgr_port, ssid=ssid, security=security, password=password, radio=radio,
                 lanforge_password=mgr_password, target=target, interval=interval, sta_list=[], virtual=args.virtual, real=args.real, duration=duration, debug=debug, csv_name=args.device_csv_name,
-                expected_passfail_val=args.expected_passfail_value, wait_time=args.wait_time, group_name=group_name,robo_ip=args.robot_ip,rotation_enabled=rotation_enabled,coordinate_list=args.coordinate.split(",") if args.coordinate else [],angle_list=args.rotation.split(",") if rotation_enabled else [],local_lf_report_dir=args.local_lf_report_dir)
+                expected_passfail_val=args.expected_passfail_value, wait_time=args.wait_time, group_name=group_name,robo_ip=args.robot_ip,rotation_enabled=rotation_enabled,coordinate_list=args.coordinate.split(",") if args.coordinate else [],angle_list=args.rotation.split(",") if rotation_enabled else [],local_lf_report_dir=args.local_lf_report_dir,
+                do_bandsteering=args.do_bandsteering, cycles=args.cycles, bssids=args.bssids, duration_to_skip=args.duration_to_skip,robot_test=args.robot_test)
 
     # changing the target from port to IP
     ping.change_target_to_ip()
@@ -2440,26 +2730,31 @@ effectively over the network and pinpoint potential issues affecting connectivit
     logging.info(ping.generic_endps_profile.created_cx)
 
     if args.robot_ip:
-        ping.perform_robo(args,Devices)
-        exit(1)
+        if ping.do_bandsteering:
+            ping.perform_bandsteering()
+        else:
+            ping.perform_robo(args,Devices)
+            exit(1)
 
     # run the test for the given duration
-    logging.info('Running the ping test for {} minutes'.format(duration))
 
     # start generate endpoint
-    ping.start_generic()
-    # time_counter = 0
-    ports_data_dict = ping.json_get('/ports/all/')['interfaces']
-    ports_data = {}
-    for ports in ports_data_dict:
-        port, port_data = list(ports.keys())[0], list(ports.values())[0]
-        ports_data[port] = port_data
+    if not ping.robot_test:
+        logging.info('Running the ping test for {} minutes'.format(duration))
+        ping.start_generic()
+        # time_counter = 0
+        ports_data_dict = ping.json_get('/ports/all/')['interfaces']
+        ports_data = {}
+        for ports in ports_data_dict:
+            port, port_data = list(ports.keys())[0], list(ports.values())[0]
+            ports_data[port] = port_data
 
-    time.sleep(duration * 60)
+        time.sleep(duration * 60)
 
-    logging.info('Stopping the test')
-    ping.stop_generic()
+        logging.info('Stopping the test')
+        ping.stop_generic()
 
+    print("self.bandsteeringdata,",ping.bandsteering_data)
     result_data = ping.get_results()
     # logging.info(result_data)
     logging.info(ping.result_json)
