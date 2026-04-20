@@ -2417,7 +2417,7 @@ class L3VariableTime(Realm):
         cycle_coords = self.robot_obj.get_coordinates_list()
         if (len(cycle_coords) == 0):
             logger.info("Exiting test")
-            exit(1)
+            return 0
         self.robot_obj.do_bandsteering = True
         ul, dl, ul_pdu_str, dl_pdu_str, atten_val, ul_pdu, dl_pdu, passes, expected_passes, coordinate, rotation = self.start()
         logger.info("Starting CXs")
@@ -6854,7 +6854,7 @@ class L3VariableTime(Realm):
         tos_list = ['BK', 'BE', 'VI', 'VO']
 
         # Generate per-coordinate/rotation graphs and tables for robot test
-        if self.robo_test:
+        if self.robo_test and not self.do_bandsteering:
             logger.info("Building per-coordinate/rotation graphs and tables for robot test (from memory dict)")
             if self.dowebgui and self.get_live_view:
                 self.add_live_view_images_to_report()

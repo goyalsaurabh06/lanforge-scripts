@@ -179,6 +179,10 @@ class Candela(Realm):
         self.coordinate_list = coordinate.split(',')
         self.rotation_list = rotation.split(',')
         self.rotation_enabled  = True if rotation != '' else False
+        self.do_bandsteering=do_bandsteering
+        self.cycles=cycles
+        self.bssids=bssids.split(",") if bssids else []
+        self.duration_to_skip=duration_to_skip
         self.ftp_done_event = Event()
         self.qos_done_event = Event()
         self.http_done_event = Event()
@@ -4393,6 +4397,11 @@ class Candela(Realm):
             coordinate=self.coordinate,
             rotation=self.rotation,
 
+            do_bandsteering =self.do_bandsteering,
+            cycles=self.cycles,
+            bssids=self.bssids,
+            duration_to_skip=self.duration_to_skip
+
         )
 
         # Perform pre-test cleanup, if configured to do so
@@ -4416,7 +4425,10 @@ class Candela(Realm):
         logger.info("Starting test")
         if (self.robot_test and any(etype in args.endp_type for etype in ["mc_udp", "mc_udp6"])):
             logger.info("Multicast robot test detected")
-            self.mcast_obj_dict[ce][obj_name]["obj"].perform_robo()
+            if self.do_bandsteering:
+                self.mcast_obj_dict[ce][obj_name]["obj"].perform_bandsteering()
+            else:   
+                self.mcast_obj_dict[ce][obj_name]["obj"].perform_robo()
         else:
             self.mcast_obj_dict[ce][obj_name]["obj"].start(False)
 
@@ -8424,7 +8436,7 @@ class Candela(Realm):
                                             tos_data[key] = filtered_list
                         # logger.info(f"AFTER REAL A {self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A}")
                         
-                        if self.robot_test:
+                        if self.robot_test and not self.do_bandsteering:
                             logger.info("Building per-coordinate/rotation graphs and tables for robot test (from memory dict)")
                             if self.mcast_obj_dict[ce][obj_name]["obj"].dowebgui:
                                 self.mcast_obj_dict[ce][obj_name]["obj"].add_live_view_images_to_report()
@@ -8894,7 +8906,9 @@ class Candela(Realm):
                             # self.overall_report.build_table_title()
                             # self.overall_report.set_table_dataframe_from_csv(self.mcast_obj_dict[ce][obj_name]["obj"].csv_results_file)
                             # self.overall_report.build_table()
-
+                            if self.robot_test and self.do_bandsteering:
+                                self.mcast_obj_dict[ce][obj_name]["obj"].report=self.overall_report
+                                self.mcast_obj_dict[ce][obj_name]["obj"].get_bandsteering_stats()
                             # empty dictionarys evaluate to false , placing tables in output
                             if bool(self.mcast_obj_dict[ce][obj_name]["obj"].dl_port_csv_files):
                                 for key, value in self.mcast_obj_dict[ce][obj_name]["obj"].dl_port_csv_files.items():
