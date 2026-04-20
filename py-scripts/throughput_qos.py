@@ -38,13 +38,18 @@ EXAMPLES:   # Run download scenario with Voice TOS in 2.4GHz band
             # Run upload scenario with Background, Best Effort, Video and Voice TOS in 2.4GHz and 5GHz bands with 'Open' security
             ./throughput_qos.py --ap_name Cisco --mgr 192.168.209.223 --mgr_port 8080 --num_stations 64 --radio_2g wiphy0
                 --ssid_2g Cisco --passwd_2g [BLANK] --security_2g open --radio_5g wiphy1 --ssid_5g Cisco --passwd_5g [BLANK]
-                --security_5g open --bands dualband --upstream eth1 --test_duration 1m --download 0 --upload 1000000
+                --security_5g open --bands dualband --upstream eth1 --test_duration 1m--download 0 --upload 1000000
                 --traffic_type lf_udp --tos "BK,BE,VI,VO" --create_sta
 
             # Run bi-directional scenario with Video and Voice TOS in 6GHz band
             ./throughput_qos.py --ap_name Cisco --mgr 192.168.209.223 --mgr_port 8080 --num_stations 32 --radio_6g wiphy1
                 --ssid_6g Cisco --passwd_6g cisco@123 --security_6g wpa2 --bands 6g --upstream eth1 --test_duration 1m
                 --download 1000000 --upload 10000000 --traffic_type lf_udp --tos "VO,VI" --create_sta
+            
+            # Run download scenario with Voice TOS in 2.4GHz band with time_break for monitoring.
+            ./throughput_qos.py --ap_name Cisco --mgr 192.168.209.223 --mgr_port 8080 --num_stations 32 --radio_2g wiphy0
+                --ssid_2g Cisco --passwd_2g cisco@123 --security_2g wpa2 --bands 2.4g --upstream eth1 --test_duration 1m
+                --download 1000000 --upload 0 --traffic_type lf_udp --tos "VO" --timebreak 5s --create_sta
 
 SCRIPT_CLASSIFICATION:
             Test
@@ -71,6 +76,8 @@ import os
 import pandas as pd
 import importlib
 import copy
+import csv
+import shutil
 
 if sys.version_info[0] != 3:
     print("This script requires Python 3")
@@ -130,6 +137,7 @@ class ThroughputQOS(Realm):
                  mac_list=None,
                  use_ht160=False,
                  _debug_on=False,
+                 timebreak = 0,
                  _exit_on_error=False,
                  _exit_on_fail=False):
         super().__init__(lfclient_host=host, lfclient_port=port)
@@ -201,6 +209,8 @@ class ThroughputQOS(Realm):
         self.cx_profile.side_a_max_bps = side_a_max_rate
         self.cx_profile.side_b_min_bps = side_b_min_rate
         self.cx_profile.side_b_max_bps = side_b_max_rate
+        self.timebreak = self.parse_timebreak(timebreak)
+        print(f"timebreak: {self.timebreak}")
 
     def start(self, print_pass=False, print_fail=False):
         if len(self.cx_profile.created_cx) > 0:
@@ -455,25 +465,33 @@ class ThroughputQOS(Realm):
         index = -1
         connections_upload = dict.fromkeys(list(self.cx_profile.created_cx.keys()), float(0))
         connections_download = dict.fromkeys(list(self.cx_profile.created_cx.keys()), float(0))
+        print(f"Connections Download : {connections_download}")
         [(upload.append([]), download.append([]), drop_a.append([]), drop_b.append([])) for i in range(len(self.cx_profile.created_cx))]
+        
+        time_stamp_list = []
         while datetime.now() < end_time:
             index += 1
-            response = list(self.json_get('/cx/%s?fields=%s' % (','.join(self.cx_profile.created_cx.keys()), ",".join(['bps rx a', 'bps rx b', 'rx drop %25 a', 'rx drop %25 b']))).values())[2:]
+            response = list(self.json_get('/cx/%s?fields=%s' % (','.join(self.cx_profile.created_cx.keys()), ",".join(['bps rx a', 'bps rx b', 'rx drop %25 a', 'rx drop %25 b'])) ).values())[2:]
+            
             throughput[index] = list(
                 map(lambda i: [x for x in i.values()], response))
+            time_stamp_list.append(datetime.now())
             time.sleep(1)
-        print("throughput", throughput)
-        # # rx_rate list is calculated
+            
+        time_stamp_list = time_stamp_list[0:len(time_stamp_list)]
         for _, key in enumerate(throughput):
             for i in range(len(throughput[key])):
                 upload[i].append(throughput[key][i][1])
                 download[i].append(throughput[key][i][0])
                 drop_a[i].append(throughput[key][i][2])
                 drop_b[i].append(throughput[key][i][3])
+        
+        #print("Upload Data : ",upload[0])      
         upload_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in upload]
         download_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in download]
         drop_a_per = [float(round(sum(i) / len(i), 2)) for i in drop_a]
         drop_b_per = [float(round(sum(i) / len(i), 2)) for i in drop_b]
+            
         keys = list(connections_upload.keys())
         keys = list(connections_download.keys())
 
@@ -481,6 +499,221 @@ class ThroughputQOS(Realm):
             connections_download.update({keys[i]: float(f"{(download_throughput[i]):.2f}")})
         for i in range(len(upload_throughput)):
             connections_upload.update({keys[i]: float(f"{(upload_throughput[i]):.2f}")})
+        return connections_download, connections_upload, drop_a_per, drop_b_per
+         
+    def monitor_for_runtime_csv(self):
+        print("This is the station list : ",self.sta_list)
+        last_write_time = datetime.now()
+        if int(self.cx_profile.side_b_min_bps) != 0 and int(self.cx_profile.side_a_min_bps) != 0:
+            self.direction = "Bi-direction"
+        elif int(self.cx_profile.side_b_min_bps) != 0:
+            self.direction = "Download"
+        else:
+            if int(self.cx_profile.side_a_min_bps) != 0:
+                self.direction = "Upload"
+        print("direction", self.direction)
+        if self.test_duration is None or int(self.test_duration) <= 1:
+            raise ValueError("Monitor test duration should be > 1 second")
+        if self.cx_profile.created_cx is None:
+            raise ValueError("Monitor needs a list of Layer 3 connections")
+        if not self.cx_profile.created_cx:
+            raise ValueError("No CX profiles found")
+
+        all_station_rows = []
+        start_time = datetime.now()
+        end_time = start_time + timedelta(seconds=int(self.test_duration))
+
+        print("Monitoring started at:", start_time.strftime("%Y-%m-%d %H:%M:%S"))
+
+        cx_names = list(self.cx_profile.created_cx.keys())
+        connections_download = dict.fromkeys(cx_names, 0.0)
+        connections_upload = dict.fromkeys(cx_names, 0.0)
+        drop_a_per = [0.0] * len(cx_names)
+        drop_b_per = [0.0] * len(cx_names)
+
+        station_rows = {sta: [] for sta in self.sta_list}
+        while datetime.now() < end_time:
+            current_time = datetime.now()
+
+            cx_resp = self.json_get("/cx/all")
+            endp_resp = self.json_get(
+                "/endp/list?fields=name,rx rate (last),rx drop %25,tos"
+            )
+            port_resp = self.json_get("/port/all")
+            cx_download_cycle = dict.fromkeys(cx_names, 0.0)
+            cx_upload_cycle = dict.fromkeys(cx_names, 0.0)
+            cx_drop_a_cycle = dict.fromkeys(cx_names, 0.0)
+            cx_drop_b_cycle = dict.fromkeys(cx_names, 0.0)
+            station_tos_map = {
+                sta: {
+                    "BE_dl": 0, "BE_ul": 0,
+                    "BK_dl": 0, "BK_ul": 0,
+                    "VI_dl": 0, "VI_ul": 0,
+                    "VO_dl": 0, "VO_ul": 0
+                } for sta in self.sta_list
+            }
+            station_rtt_map = {sta : 0.0 for sta in self.sta_list}
+
+            for cx_name, cx_data in cx_resp.items():
+                if cx_name in ["handler","uri"]:
+                    continue
+                avg_rtt = cx_data.get("avg rtt",0)
+
+                for sta in self.sta_list:
+                    if sta in cx_name:
+                        station_rtt_map[sta] += float(avg_rtt)
+            
+            if "endpoint" in endp_resp:
+                for entry in endp_resp["endpoint"]:
+                    for endp_name, values in entry.items():
+                        rx_rate = values.get("rx rate (last)", 0)
+                        drop = values.get("rx drop %", 0)
+                        tos = values.get("tos", "")
+                        if not tos:
+                            continue
+                        tos = tos.strip().upper()
+                        if tos not in ["BE","BK","VO","VI"]:
+                            continue
+                        side = endp_name[-1]  # A or B
+                        cx_name = endp_name[:-2]  # remove -A or -B
+                        if cx_name not in cx_names:
+                            continue
+                        #index = cx_names.index(cx_name)
+
+                        if side == "A":
+                            cx_download_cycle[cx_name] = rx_rate / 1_000_000
+                            cx_drop_a_cycle[cx_name] = drop
+                        elif side == "B":
+                            cx_upload_cycle[cx_name] = rx_rate / 1_000_000
+                            cx_drop_b_cycle[cx_name] = drop
+
+                        for sta in self.sta_list:
+                            if sta in cx_name:
+                                key_dl = f"{tos}_dl"
+                                key_ul = f"{tos}_ul"
+
+                                if side == "A":
+                                    station_tos_map[sta][key_dl] = rx_rate / 1_000_000
+                                elif side == "B":
+                                    station_tos_map[sta][key_ul] = rx_rate / 1_000_000
+
+            for i, cx in enumerate(cx_names):
+                connections_download[cx] = round(cx_download_cycle[cx], 2)
+                connections_upload[cx] = round(cx_upload_cycle[cx], 2)
+                drop_a_per[i] = cx_drop_a_cycle[cx]
+                drop_b_per[i] = cx_drop_b_cycle[cx]
+                
+            station_stats = {}
+
+            if "interfaces" in port_resp:
+                for iface in port_resp["interfaces"]:
+                    for key, val in iface.items():
+                        for sta in self.sta_list:
+                            if sta in key:
+                                station_stats[sta] = {
+                                    "rx": round(val.get("bps rx", 0) / 1_000_000, 2),
+                                    "tx": round(val.get("bps tx", 0) / 1_000_000, 2),
+                                    "rssi": val.get("signal", ""),
+                                    "mode": val.get("mode",""),
+                                    "channel":val.get("channel",""),
+                                    "bssid" : val.get("ap","")
+                                }
+
+            remaining = end_time - current_time
+            remaining_sec = int(remaining.total_seconds())
+
+            if remaining_sec > 60:
+                remaining_time_str = f"{remaining_sec//3600} hr and {(remaining_sec%3600)//60} min"
+            else:
+                remaining_time_str = "<1 min"
+                
+            write_now = False
+            if not getattr(self,"timebreak",None):
+                write_now = True
+            else:
+                elapsed = (current_time - last_write_time).total_seconds()
+                if elapsed >= self.timebreak:
+                    write_now = True
+                    last_write_time = current_time
+                    
+            if write_now:
+                for sta in self.sta_list:
+                    stats = station_stats.get(sta, {"rx": 0, "tx": 0, "rssi": "", "mode" : "", "channel" : "", "bssid" : ""})
+                    row = station_tos_map[sta].copy()
+                    row.update({
+                        "timestamp": current_time.strftime("%d/%m %I:%M:%S %p"),
+                        "start_time": start_time.strftime("%d/%m %I:%M:%S %p"),
+                        "end_time": end_time.strftime("%d/%m %I:%M:%S %p"),
+                        "remaining_time": remaining_time_str,
+                        "status": "Running",
+                        f"{sta} avg rtt" : round(station_rtt_map.get(sta,0), 2),
+                        f"{sta} rx_rate": stats["rx"],
+                        f"{sta} tx_rate": stats["tx"],
+                        f"{sta} RSSI": stats["rssi"],
+                        f"{sta} mode" : stats["mode"],
+                        f"{sta} channel" : stats["channel"],
+                        f"{sta} BSSID" : stats["bssid"]
+                    })
+                    station_rows[sta].append(row)
+
+                overall_row = {
+                    k: round(sum(v[k] for v in station_tos_map.values()), 2)
+                    for k in [
+                        "BE_dl","BE_ul",
+                        "BK_dl","BK_ul",
+                        "VI_dl","VI_ul",
+                        "VO_dl","VO_ul"
+                    ]
+                }
+
+                overall_row.update({
+                    "timestamp": current_time.strftime("%d/%m %I:%M:%S %p"),
+                    "start_time": start_time.strftime("%d/%m %I:%M:%S %p"),
+                    "end_time": end_time.strftime("%d/%m %I:%M:%S %p"),
+                    "remaining_time": remaining_time_str,
+                    "status": "Running"
+                })
+
+                for sta, stats in station_stats.items():
+                    overall_row[f"{sta} avg rtt"] = round(station_rtt_map.get(sta,0),2)
+                    overall_row[f"{sta} rx_rate"] = stats.get("rx", 0)
+                    overall_row[f"{sta} tx_rate"] = stats.get("tx", 0)
+                    overall_row[f"{sta} RSSI"] = stats.get("rssi", "")
+                    overall_row[f"{sta} Mode"] = stats.get("mode", 0)
+                    overall_row[f"{sta} Channel"] = stats.get("channel", 0)
+                    overall_row[f"{sta} BSSID"] = stats.get("bssid", 0)
+
+                all_station_rows.append(overall_row)
+            time.sleep(1)
+
+        # Track generated station CSV files
+        if not hasattr(self, "generated_station_csv_files"):
+            self.generated_station_csv_files = []
+
+        for sta in self.sta_list:
+            if not station_rows[sta]:
+                continue
+            filename = f"{sta}_overall_throughput.csv"
+            with open(filename, "w", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=station_rows[sta][0].keys())
+                writer.writeheader()
+                writer.writerows(station_rows[sta])
+            print("Generated:", filename)
+            self.generated_station_csv_files.append(filename)
+        
+        if all_station_rows:
+            overall_filename = "overall_throughput.csv"
+            with open(overall_filename, "w", newline="") as f:
+                writer = csv.DictWriter(f,fieldnames=all_station_rows[0].keys())
+                writer.writeheader()
+                writer.writerows(all_station_rows)
+            print("Generated:", overall_filename)
+
+            # Track it for moving to report directory
+            if not hasattr(self, "generated_station_csv_files"):
+                self.generated_station_csv_files = []
+            self.generated_station_csv_files.append(overall_filename)
+
         return connections_download, connections_upload, drop_a_per, drop_b_per
 
     def evaluate_qos(self, connections_download, connections_upload, drop_a_per, drop_b_per):
@@ -709,7 +942,7 @@ class ThroughputQOS(Realm):
         return {key_download: tos_download}, {key_upload: tos_upload}, {"drop_per": tos_drop_dict}
 
     def set_report_data(self, data):
-        print("data", data)
+        #print("data", data)
         rate_down = str(str(int(self.cx_profile.side_b_min_bps) / 1000000) + ' ' + 'Mbps')
         rate_up = str(str(int(self.cx_profile.side_a_min_bps) / 1000000) + ' ' + 'Mbps')
         res = {}
@@ -747,10 +980,9 @@ class ThroughputQOS(Realm):
                         upload_throughput.append(
                             "BK : {}, BE : {}, VI: {}, VO: {}".format(res[case]['test_results'][0][1][rate_up]["bkQOS"],
                                                                       res[case]['test_results'][0][1][rate_up]["beQOS"],
-                                                                      res[case]['test_results'][0][1][rate_up][
-                                "videoQOS"],
-                                res[case]['test_results'][0][1][rate_up][
-                                "voiceQOS"]))
+                                                                      res[case]['test_results'][0][1][rate_up]["videoQOS"],
+                                                                      res[case]['test_results'][0][1][rate_up]["voiceQOS"])
+                                                                     )
                         upload_throughput_df[0].append(res[case]['test_results'][0][1][rate_up]['bkQOS'])
                         upload_throughput_df[1].append(res[case]['test_results'][0][1][rate_up]['beQOS'])
                         upload_throughput_df[2].append(res[case]['test_results'][0][1][rate_up]['videoQOS'])
@@ -856,6 +1088,7 @@ class ThroughputQOS(Realm):
                            _results_dir_name=result_dir_name)
         report_path = report.get_path()
         report_path_date_time = report.get_path_date_time()
+        self.move_station_csv_to_report(report_path_date_time)
         print("path: {}".format(report_path))
         print("path_date_time: {}".format(report_path_date_time))
         report.set_title("Throughput QOS")
@@ -899,7 +1132,7 @@ class ThroughputQOS(Realm):
                      "intended loads per station – {}".format(
                          "".join(str(key))))
         report.build_objective()
-        print("data set", res["graph_df"][key][0])
+        #print("data set", res["graph_df"][key][0])
         graph = lf_bar_graph(_data_set=data_set,
                              _xaxis_name="Load per Type of Service",
                              _yaxis_name="Throughput (Mbps)",
@@ -908,7 +1141,7 @@ class ThroughputQOS(Realm):
                              _graph_image_name=f"tos_{self.direction}_{key}Hz",
                              _label=["BK", "BE", "VI", "VO"],
                              _xaxis_step=1,
-                             _graph_title=f"Overall {self.direction} throughput – BK,BE,VO,VI traffic streams",
+                             _graph_title=f"Overall {self.direction} throughput : BK,BE,VO,VI traffic streams",
                              _title_size=16,
                              _color=['orange', 'lightcoral', 'steelblue', 'lightgrey'],
                              _color_edge='black',
@@ -928,7 +1161,7 @@ class ThroughputQOS(Realm):
         # need to move the graph image to the results directory
         report.move_graph_image()
         report.set_csv_filename(graph_png)
-        report.move_csv_file()
+        report.move_csv_file()  # 
         report.build_graph()
         self.generate_individual_graph(res, report)
         report.test_setup_table(test_setup_data=input_setup_info, value="Information")
@@ -1324,8 +1557,41 @@ class ThroughputQOS(Realm):
 
             else:
                 print("No individual graph to generate.")
+        
+    def move_station_csv_to_report(self, report_path):
+        print("Report Path :", report_path)
+        if not hasattr(self, "generated_station_csv_files"):
+            print("No station CSV files to move.")
+            return
+        station_reports_dir = os.path.join(report_path, "station_reports")
+        os.makedirs(station_reports_dir, exist_ok=True)
+        for file_name in self.generated_station_csv_files:
+            if os.path.exists(file_name):
+                dest_path = os.path.join(station_reports_dir, os.path.basename(file_name))
+                try:
+                    shutil.move(file_name, dest_path)
+                    print(f"Moved {file_name} → {dest_path}")
+                except Exception as e:
+                    print(f"Error moving {file_name}: {e}")
+            else:
+                print(f"{file_name} does not exist.")
+                
+    def parse_timebreak(self, tb_str):
+        if not tb_str:
+            return None
 
+        tb_str = tb_str.strip().lower()
 
+        if tb_str.endswith("s"):
+            return int(tb_str[:-1])
+        elif tb_str.endswith("m"):
+            return int(tb_str[:-1]) * 60
+        elif tb_str.endswith("h"):
+            return int(tb_str[:-1]) * 3600
+        else:
+            raise ValueError("Invalid timebreak format. Use 5s, 5m or 1h")
+
+          
 def parse_args():
     """Parse CLI arguments."""
     parser = Realm.create_basic_argparse(
@@ -1425,6 +1691,7 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
     parser.add_argument('--initial_band_pref',
                         help="If specified, set a band preference for stations created for specific band",
                         required=False, action='store_true', default=False)
+    parser.add_argument("--timebreak", type=str, default=None,help="CSV aggregation interval like 5s, 5m, 1h")
 
     return parser.parse_args()
 
@@ -1444,8 +1711,7 @@ def validate_args(args):
     if args.upload == "0" and args.download == "0":
         print("Neither upload or download rate specified")
         exit(1)
-
-
+        
 def main():
     args = parse_args()
 
@@ -1464,7 +1730,7 @@ def main():
     validate_args(args)
 
     print("--------------------------------------------")
-    print(args)
+    #print(args)
     print("--------------------------------------------")
     args.test_case = args.bands.split(',')
     test_results = {'test_results': []}
@@ -1475,6 +1741,7 @@ def main():
 
     if args.download and args.upload:
         loads = {'upload': str(args.upload).split(","), 'download': str(args.download).split(",")}
+        #exit(1)
 
     elif args.download:
         loads = {'upload': [], 'download': str(args.download).split(",")}
@@ -1540,6 +1807,7 @@ def main():
                                                            end_id_=((int(args.num_stations_2g)) + (int(args.num_stations_5g))) - 1,
                                                            padding_number_=10000,
                                                            radio=args.radio_5g))
+            print("stationlist",station_list)
         elif bands[i] == "triband" or bands[i] == "TRIBAND":
             args.bands = bands[i]
             args.mode = 0
@@ -1607,7 +1875,8 @@ def main():
                                            tos=args.tos,
                                            test_case=args.test_case,
                                            initial_band_pref=args.initial_band_pref,
-                                           _debug_on=args.debug
+                                           _debug_on=args.debug,
+                                           timebreak=args.timebreak
                                            )
             throughput_qos.pre_cleanup()
             throughput_qos.build()
@@ -1619,9 +1888,9 @@ def main():
 
             throughput_qos.start(False, False)
             time.sleep(10)
-            connections_download, connections_upload, drop_a_per, drop_b_per = throughput_qos.monitor()
-            print("connections download", connections_download)
-            print("connections upload", connections_upload)
+            connections_download, connections_upload, drop_a_per, drop_b_per = throughput_qos.monitor_for_runtime_csv()
+            #print("connections download", connections_download)
+            #print("connections upload", connections_upload)
             throughput_qos.stop()
             time.sleep(5)
             test_results['test_results'].append(throughput_qos.evaluate_qos(connections_download, connections_upload, drop_a_per, drop_b_per))
