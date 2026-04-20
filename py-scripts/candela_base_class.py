@@ -12288,7 +12288,7 @@ def save_logs():
     logger.info(f"Test logs saved to {log_filename}")
     return log_filename
 
-def run_ping_test(args, candela_apis):
+def run_ping_test(args, candela_apis : Candela):
     return candela_apis.run_ping_test(
         real=True,
         target=args.ping_target,
@@ -12325,7 +12325,7 @@ def run_ping_test(args, candela_apis):
         local_lf_report_dir = candela_apis.result_path if not args.dowebgui else args.result_dir
     )
 
-def run_http_test(args, candela_apis):
+def run_http_test(args, candela_apis : Candela):
     return candela_apis.run_http_test(
         upstream_port=args.upstream_port,
         bands=args.http_bands,
@@ -12368,7 +12368,7 @@ def run_http_test(args, candela_apis):
         duration_to_skip=args.duration_to_skip
     )
 
-def run_ftp_test(args, candela_apis):
+def run_ftp_test(args, candela_apis : Candela):
     return candela_apis.run_ftp_test(
         device_list=args.ftp_device_list,
         file_sizes=[args.ftp_file_size],
@@ -12411,7 +12411,7 @@ def run_ftp_test(args, candela_apis):
         duration_to_skip=args.duration_to_skip
     )
 
-def run_qos_test(args, candela_apis):
+def run_qos_test(args, candela_apis : Candela):
     print("QOS_LIST",args.qos_device_list)
     return candela_apis.run_qos_test(
         upstream_port=args.upstream_port,
@@ -12453,7 +12453,7 @@ def run_qos_test(args, candela_apis):
         result_dir=args.result_dir
     )
 
-def run_vs_test(args, candela_apis):
+def run_vs_test(args, candela_apis : Candela):
     return candela_apis.run_vs_test1(
         url=args.vs_url,
         media_source=args.vs_media_source,
@@ -12497,7 +12497,7 @@ def run_vs_test(args, candela_apis):
         duration_to_skip=args.duration_to_skip
     )
 
-def run_thput_test(args, candela_apis):
+def run_thput_test(args, candela_apis : Candela):
     if args.thput_do_interopability and args.thput_config:
         args.thput_default_config = False
         args.thput_config = False
@@ -12550,7 +12550,7 @@ def run_thput_test(args, candela_apis):
         bssids=args.bssids.split(",") if args.bssids else []
     )
 
-def run_mcast_test(args, candela_apis):
+def run_mcast_test(args, candela_apis : Candela):
     return candela_apis.run_mc_test1(
         test_duration=args.mcast_test_duration,
         upstream_port=args.upstream_port,
@@ -12590,7 +12590,7 @@ def run_mcast_test(args, candela_apis):
         result_dir=args.result_dir
     )
 
-def run_yt_test(args, candela_apis):
+def run_yt_test(args, candela_apis : Candela):
     return candela_apis.run_yt_test(
         url=args.yt_url,
         duration=args.yt_duration,
@@ -12629,7 +12629,7 @@ def run_yt_test(args, candela_apis):
         test_name=args.test_name
     )
 
-def run_rb_test(args, candela_apis):
+def run_rb_test(args, candela_apis : Candela):
     return candela_apis.run_rb_test(
         url=args.rb_url,
         upstream_port=args.upstream_port,
@@ -12670,7 +12670,7 @@ def run_rb_test(args, candela_apis):
         webgui_incremental=args.rb_webgui_incremental
     )
 
-def run_zoom_test(args, candela_apis):
+def run_zoom_test(args, candela_apis : Candela):
     return candela_apis.run_zoom_test(
         duration=args.zoom_duration,
         signin_email=args.zoom_signin_email,
