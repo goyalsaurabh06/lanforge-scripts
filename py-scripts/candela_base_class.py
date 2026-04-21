@@ -178,6 +178,9 @@ class Candela(Realm):
         self.duration_to_skip = duration_to_skip
         self.coordinate_list = coordinate.split(',')
         self.rotation_list = rotation.split(',')
+        self.do_bandsteering = do_bandsteering
+        self.bssids = bssids.split(",") if bssids else []
+        self.cycles = cycles
         self.rotation_enabled  = True if rotation != '' else False
         self.do_bandsteering=do_bandsteering
         self.cycles=cycles
@@ -2450,7 +2453,11 @@ class Candela(Realm):
         wait_time=60,
         config=False,
         get_live_view=False,
-        total_floors="0"
+        total_floors="0",
+        do_bandsteering=False,
+        cycles=None,
+        bssids=None,
+        duration_to_skip=None
     ):  
         dowebgui= True if dowebgui == "True" else False 
         if self.dowebgui:
@@ -2552,7 +2559,11 @@ class Candela(Realm):
                                             coordinate=self.coordinate,
                                             rotation=self.rotation,
                                             rotation_enabled = True if self.rotation else False,
-                                            angle_list= self.rotation.split(",") if self.rotation else []
+                                            angle_list= self.rotation.split(",") if self.rotation else [],
+                                            do_bandsteering=do_bandsteering,
+                                            cycles=cycles,
+                                            bssids=bssids,
+                                            duration_to_skip=duration_to_skip
                                             )
             self.qos_obj_dict[ce][obj_name]["obj"].os_type()
             _, configured_device, _, configuration = self.qos_obj_dict[ce][obj_name]["obj"].phantom_check()
@@ -4950,7 +4961,7 @@ class Candela(Realm):
                     #     logger.info("Stopping all the endpoints")
                     # else:
                     #     logging.warning("⚠️ generic_endps_profile is None — skipping stop_cx()")
-                if do_webUI:
+                if not (self.robot_test) and do_webUI:
                     # print("hii here data",self.yt_test_obj.stats_api_response)
                     self.yt_test_obj.create_report()
                 else:
@@ -4959,7 +4970,8 @@ class Candela(Realm):
                         # os.chdir("../real_application_tests/youtube/")
                         os.chdir("real_application_tests/youtube")
                         self.yt_test_obj.report_path_date_time = os.getcwd()
-                        print("current_directory", os.getcwd())
+                        if do_webUI:
+                            self.yt_test_obj.stop_webui_test()
                         self.yt_test_obj.create_robo_report()
                     else:
                         self.yt_test_obj.create_report()
@@ -5065,7 +5077,7 @@ class Candela(Realm):
                                                 upstream_port=upstream_port, config=config, selected_groups=selected_groups, selected_profiles=selected_profiles,
                                                 robo_ip=self.robot_ip,coordinates_list=self.coordinate_list,angles_list=self.rotation_list,do_robo=self.robot_test,
                                                 rotations_enabled=self.rotation_enabled,api_stats_collection=api_stats_collection,participants_req=participants,
-                                                signin_email=signin_email,signin_passwd=signin_passwd,duration=duration)
+                                                signin_email=signin_email,signin_passwd=signin_passwd,duration=duration,do_webui=self.dowebgui)
                 upstream_port = self.zoom_test_obj.change_port_to_ip(upstream_port)
                 realdevice = RealDevice(manager_ip=lanforge_ip,
                                         server_ip="192.168.1.61",
@@ -5295,7 +5307,7 @@ class Candela(Realm):
                 logger.info("Waiting for Browser Cleanup in Laptops")
                 time.sleep(10)
                 self.zoom_test_obj.app = None
-                if self.zoom_test_obj.do_webui:
+                if self.dowebgui:
                     self.zoom_test_obj.stop_webui()
                 
                 if self.robot_test and api_stats_collection:
@@ -8100,6 +8112,7 @@ class Candela(Realm):
                                 load = 'Upload' + ':' + rate_up + ',' + 'Download' + ':' + rate_down
                             config_devices = ""
                         if not self.robot_test:
+                            print("the qos data is",self.qos_obj_dict[ce][obj_name]["obj"].data)
                             params = self.qos_obj_dict[ce][obj_name]["data"]
                             data = params["data"].copy() if isinstance(params["data"], (list, dict, set)) else params["data"]
                             input_setup_info = params["input_setup_info"].copy() if isinstance(params["input_setup_info"], (list, dict, set)) else params["input_setup_info"]
@@ -8184,6 +8197,14 @@ class Candela(Realm):
                                 "TOS": self.qos_obj_dict[ce][obj_name]["obj"].tos,
                                 "Per TOS Load in Mbps": load
                             }
+                        if self.robot_test:
+                            test_setup_info["Robot IP"] = self.robot_ip
+                            test_setup_info["Selected Coordinated"] = self.coordinate_list
+                            if self.rotation_enabled:
+                                test_setup_info["Rotation Enabled"] = self.rotation_list
+                            if self.do_bandsteering:
+                                del test_setup_info["Traffic Duration in hours"]
+                                test_setup_info["no of cycles"] = self.cycles
                         # print(res["throughput_table_df"])
                         self.overall_report.set_obj_html(_obj_title=f'QOS Test {obj_no}', _obj="")
                         self.overall_report.build_objective()
@@ -8191,7 +8212,7 @@ class Candela(Realm):
                         
                         
                         
-                        if self.robot_test:
+                        if self.robot_test and not self.do_bandsteering:
                             if self.dowebgui:
                                 tos_for_report = self.qos_obj_dict[ce][obj_name]["obj"].tos
                                 tos_images, rssi_images = self.qos_obj_dict[ce][obj_name]["obj"].get_live_view_images()
@@ -8223,17 +8244,83 @@ class Candela(Realm):
                                     self.overall_report.set_obj_html(_obj_title=f"Coordinate: {self.qos_obj_dict[ce][obj_name]['obj'].coordinate_list[coordinate]}",
                                                         _obj="")
                                     self.overall_report.build_objective()
-                                    print("88888888",self.qos_obj_dict[ce][obj_name]["obj"].qos_data)
                                     data = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate]]["data"]
                                     connections_download_avg = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate]]["connections_download_avg"]
                                     connections_upload_avg = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate]]["connections_upload_avg"]
                                     avg_drop_a = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate]]["avg_drop_a"]
                                     avg_drop_b = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate]]["avg_drop_b"]
                                     self.qos_obj_dict[ce][obj_name]["obj"].generate_individual_coordinate(self.overall_report, data, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, coordinate, None)
+                                
                         else:
                             self.overall_report.set_table_title(
                                 f"Overall {self.qos_obj_dict[ce][obj_name]['obj'].direction} Throughput for all TOS i.e BK | BE | Video (VI) | Voice (VO)")
                             self.overall_report.build_table_title()
+                            if self.do_bandsteering:
+                                upload = []
+                                download = []
+                                drop_a = []
+                                drop_b = []
+                                avg_upload = []
+                                avg_download = []
+                                avg_drop_a = []
+                                avg_drop_b = []
+                                [(upload.append([]), download.append([]), drop_a.append([]), drop_b.append([]), avg_upload.append([]), avg_download.append([]), avg_drop_a.append([]), avg_drop_b.append([])) for i in
+                                range(len(self.qos_obj_dict[ce][obj_name]['obj'].cx_profile.created_cx))]
+                                dropa_connections = dict.fromkeys(list(self.qos_obj_dict[ce][obj_name]['obj'].cx_profile.created_cx.keys()), float(0))
+                                dropb_connections = dict.fromkeys(list(self.qos_obj_dict[ce][obj_name]['obj'].cx_profile.created_cx.keys()), float(0))
+                                connections_upload = dict.fromkeys(list(self.qos_obj_dict[ce][obj_name]['obj'].cx_profile.created_cx.keys()), float(0))
+                                connections_download = dict.fromkeys(list(self.qos_obj_dict[ce][obj_name]['obj'].cx_profile.created_cx.keys()), float(0))
+                                connections_upload_avg = dict.fromkeys(list(self.qos_obj_dict[ce][obj_name]['obj'].cx_profile.created_cx.keys()), float(0))
+                                connections_download_avg = dict.fromkeys(list(self.qos_obj_dict[ce][obj_name]['obj'].cx_profile.created_cx.keys()), float(0))
+                                # # rx_rate list is calculated
+                                for thpt in self.qos_obj_dict[ce][obj_name]['obj'].throughput_data:
+                                    for ind, _k in enumerate(thpt):
+                                        avg_upload[ind].append(thpt[ind][1])
+                                        avg_download[ind].append(thpt[ind][0])
+                                        avg_drop_a[ind].append(thpt[ind][2])
+                                        avg_drop_b[ind].append(thpt[ind][3])
+                                        upload[ind].append(thpt[ind][1])
+                                        download[ind].append(thpt[ind][0])
+                                        drop_a[ind].append(thpt[ind][2])
+                                        drop_b[ind].append(thpt[ind][3])
+
+                                # Rounding of the results upto 2 decimals
+                                upload_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in upload]
+                                download_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in download]
+                                drop_a_per = [float(round(sum(i) / len(i), 2)) for i in drop_a]
+                                drop_b_per = [float(round(sum(i) / len(i), 2)) for i in drop_b]
+                                avg_upload_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in avg_upload]
+                                avg_download_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in avg_download]
+                                avg_drop_a_per = [float(round(sum(i) / len(i), 2)) for i in avg_drop_a]
+                                avg_drop_b_per = [float(round(sum(i) / len(i), 2)) for i in avg_drop_b]
+                                keys = list(connections_download.keys())
+                                # Updated the calculated values to the respective connections in dictionary
+                                for i in range(len(download_throughput)):
+                                    connections_download.update({keys[i]: download_throughput[i]})
+                                for i in range(len(upload_throughput)):
+                                    connections_upload.update({keys[i]: upload_throughput[i]})
+                                for i in range(len(avg_download_throughput)):
+                                    connections_download_avg.update({keys[i]: avg_download_throughput[i]})
+                                for i in range(len(avg_upload_throughput)):
+                                    connections_upload_avg.update({keys[i]: avg_upload_throughput[i]})
+                                for i in range(len(avg_drop_a_per)):
+                                    dropa_connections.update({keys[i]: avg_drop_a_per[i]})
+                                for i in range(len(avg_drop_b_per)):
+                                    dropb_connections.update({keys[i]: avg_drop_b_per[i]})
+                                logger.info("connections download {}".format(connections_download))
+                                logger.info("connections {}".format(connections_upload))
+                                test_results = {'test_results': []}
+                                data = {}
+                                test_results['test_results'].append(self.qos_obj_dict[ce][obj_name]['obj'].evaluate_qos(connections_download, connections_upload, drop_a_per, drop_b_per))
+                                data.update(test_results)
+                                avg_drop_a = dropa_connections
+                                avg_drop_b = dropb_connections
+                                input_setup_info = {
+                                    "contact": "support@candelatech.com"
+                                }
+                                data_set, load, res = self.qos_obj_dict[ce][obj_name]["obj"].generate_graph_data_set(data)
+
+                        
                             df_throughput = pd.DataFrame(res["throughput_table_df"])
                             self.overall_report.set_table_dataframe(df_throughput)
                             self.overall_report.build_table()
@@ -8272,7 +8359,29 @@ class Candela(Realm):
                             self.overall_report.set_csv_filename(graph_png)
                             self.overall_report.move_csv_file()
                             self.overall_report.build_graph()
+                            if self.do_bandsteering:
+                                self.qos_obj_dict[ce][obj_name]['obj'].get_bandsteering_stats(report=self.overall_report, data=self.qos_obj_dict[ce][obj_name]['obj'].band_steering_df)
                             self.qos_obj_dict[ce][obj_name]["obj"].generate_individual_graph(res, self.overall_report, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b,obj_no)
+                            # if self.do_bandsteering:
+                            #     if len(self.robot.charging_timestamps) != 0:
+                            #         self.overall_report.set_obj_html(_obj_title="Charging Timestamps",
+                            #                             _obj="")
+                            #         self.overall_report.build_objective()
+                            #         df = pd.DataFrame(
+                            #             self.robot.charging_timestamps,
+                            #             columns=[
+                            #                 "charge_dock_arrival_timestamp",
+                            #                 "charging_completion_timestamp"
+                            #             ]
+                            #         )
+                            #         # Add S.No column
+                            #         df.insert(0, "S.No", range(1, len(df) + 1))
+                            #         self.overall_report.set_table_dataframe(df)
+                            #         self.overall_report.build_table()
+                            #     else:
+                            #         self.overall_report.set_obj_html(_obj_title="Charging Timestamps",
+                            #                             _obj="Robot did not went to charge during this test")
+                            #         self.overall_report.build_objective()
                             self.overall_report.test_setup_table(test_setup_data=input_setup_info, value="Information")
                         if ce == "series":
                             obj_no += 1
@@ -9658,15 +9767,37 @@ class Candela(Realm):
                             test_setup_info = self.rb_obj_dict[ce][obj_name]["obj"].generate_test_setup_info()
                             self.overall_report.test_setup_table(
                                 test_setup_data=test_setup_info, value='Test Parameters')
+                            if self.dowebgui:
+                                if self.robot_test:
+                                    url_image_path = os.path.join(self.rb_obj_dict[ce][obj_name]["obj"].result_dir, "live_view_images", f"rb_{self.rb_obj_dict[ce][obj_name]["obj"].test_name}_1.png")
+                                    timeout = 60  # seconds
+                                    start_time = time.time()
+                                    while not os.path.exists(url_image_path):
+                                        if time.time() - start_time > timeout:
+                                            logging.error("Timeout: Images not found within 60 seconds.")
+                                            break
+                                        time.sleep(1)
+                                    if os.path.exists(url_image_path):
+                                        html_content = (
+                                            '<div style="page-break-before: always;"></div>'
+                                            f'<img src="file://{url_image_path}" style="width:1200px; height:800px;"></img>'
+                                        )
+                                        self.overall_report.set_custom_html(html_content)
+                                        self.overall_report.build_custom()
                             self.rb_obj_dict[ce][obj_name]["obj"].report = self.overall_report
                             for coordinate in self.rb_obj_dict[ce][obj_name]["obj"].coordinates_list:
                                 if self.rb_obj_dict[ce][obj_name]["obj"].rotations_enabled:
                                     for angle in self.rb_obj_dict[ce][obj_name]["obj"].angles_list:
                                         try:
-                                            csv_file = os.path.join(
-                                                self.rb_obj_dict[ce][obj_name]["obj"].report_path_date_time,
+                                            if (self.dowebgui):
+                                                csv_file = os.path.join(
                                                 f"{coordinate}_{angle}_webBrowser.csv"
-                                            )
+                                                )
+                                            else:
+                                                csv_file = os.path.join(
+                                                    self.rb_obj_dict[ce][obj_name]["obj"].report_path_date_time,
+                                                    f"{coordinate}_{angle}_webBrowser.csv"
+                                                )
                                             _, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = self.rb_obj_dict[ce][obj_name]["obj"].extract_device_data(csv_file)
                                             if self.rb_obj_dict[ce][obj_name]["obj"].rotations_enabled:
                                                 self.overall_report.set_graph_title(f"Successful URL's per Device at coordinate {coordinate} and angle {angle}")
@@ -9798,7 +9929,6 @@ class Candela(Realm):
                                                     "Link Speed": tx_rate_data,
 
                                                 }
-                                                print("nk heree",final_test_results)
                                             test_results_df = pd.DataFrame(final_test_results)
                                             self.overall_report.set_table_dataframe(test_results_df)
                                             self.overall_report.build_table()
@@ -9807,10 +9937,15 @@ class Candela(Realm):
                                             logging.error(f"Error in create_robo_graphs_test_results {e}", exc_info=True)
 
                                 else:
-                                    csv_file = os.path.join(
-                                        self.rb_obj_dict[ce][obj_name]["obj"].report_path_date_time,
-                                        f"{coordinate}_webBrowser.csv"
-                                    )
+                                    if (self.dowebgui):
+                                                csv_file = os.path.join(self.rb_obj_dict[ce][obj_name]["obj"].report.path,
+                                                f"{coordinate}_webBrowser.csv"
+                                                )
+                                    else:
+                                        csv_file = os.path.join(
+                                            self.rb_obj_dict[ce][obj_name]["obj"].report_path_date_time,
+                                            f"{coordinate}_webBrowser.csv"
+                                        )
                                     try:
                                         angle=None
                                         _, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = self.rb_obj_dict[ce][obj_name]["obj"].extract_device_data(csv_file)
@@ -9944,16 +10079,15 @@ class Candela(Realm):
                                                 "Link Speed": tx_rate_data,
 
                                             }
-                                            print("nk heree",final_test_results)
                                         test_results_df = pd.DataFrame(final_test_results)
                                         self.overall_report.set_table_dataframe(test_results_df)
                                         self.overall_report.build_table()
 
                                     except Exception as e:
                                         logging.error(f"Error in create_robo_graphs_test_results {e}", exc_info=True)
-                            if self.dowebgui:
-                                if self.robot_test:
-                                    self.rb_obj_dict[ce][obj_name]["obj"].add_live_view_images_to_report()
+                            
+                                    # self.rb_obj_dict[ce][obj_name]["obj"].report = self.overall_report
+                                    # self.rb_obj_dict[ce][obj_name]["obj"].add_live_view_images_to_report()
                                 os.chdir(self.rb_obj_dict[ce][obj_name]["obj"].original_dir)
                             self.rb_obj_dict[ce][obj_name]["obj"].report.build_custom()
                             self.rb_obj_dict[ce][obj_name]["obj"].report.build_footer()
@@ -10267,10 +10401,30 @@ class Candela(Realm):
                                 self.overall_report.set_graph_image(output_file)
                                 self.overall_report.build_graph()
                             if self.dowebgui:
-                                self.yt_obj_dict[ce][obj_name]["obj"].add_live_view_images_to_report()
+                                url_image_path = os.path.join(self.yt_obj_dict[ce][obj_name]["obj"].ui_report_dir, "live_view_images", f"yt_{self.yt_obj_dict[ce][obj_name]["obj"].test_name}_1.png")
+                                timeout = 60  # seconds
+                                start_time = time.time()
+
+                                while not os.path.exists(url_image_path):
+                                    if time.time() - start_time > timeout:
+                                        logging.info("Timeout: Images not found within 60 seconds.")
+                                        break
+                                    time.sleep(1)
+                                if os.path.exists(url_image_path):
+                                    # self.report.set_custom_html('<div style="page-break-before: always;"></div>')
+                                    # self.report.build_custom()
+                                    # self.report.set_custom_html(f'<img src="file://{url_image_path}"></img>')
+                                    # self.report.build_custom()
+
+                                    # Combine the HTML into a single string
+                                    html_content = (
+                                        '<div style="page-break-before: always;"></div>'
+                                        f'<img src="file://{url_image_path}" style="width:1200px; height:800px;"></img>'
+                                    )
+                                    self.overall_report.set_custom_html(html_content)
                             print("CWD while generating image:", os.getcwd())
                             self.overall_report.build_custom()
-                            self.overall_report.build_footer()
+                            # self.overall_report.build_footer()
                             self.overall_report.write_html()
                             self.overall_report.write_pdf()
                             original_dir = os.getcwd()
@@ -10526,7 +10680,63 @@ class Candela(Realm):
                         }])
                         self.overall_report.set_table_dataframe(test_parameters)
                         self.overall_report.build_table()
+                        if self.robot_test and self.dowebgui:
+                            # live_view_dir = os.path.join(self.zoom_obj_dict[ce][obj_name]["obj"].path, "live_view_images")
 
+                            # # Define the specific filenames for Floor 1
+                            # video_img_name = f"zoom_video_{self.zoom_obj_dict[ce][obj_name]["obj"].testname}_floor1.png"
+                            # audio_img_name = f"zoom_audio_{self.zoom_obj_dict[ce][obj_name]["obj"].testname}_floor1.png"
+
+                            # video_path = os.path.join(live_view_dir, video_img_name)
+                            # audio_path = os.path.join(live_view_dir, audio_img_name)
+
+                            # timeout = 90  # seconds
+                            # start_time = time.time()
+
+                            # # 1. Wait for the Video image (Primary trigger)
+                            # # We assume if Video is ready, Audio is likely ready or close behind.
+                            # while not (os.path.exists(video_path) and os.path.exists(audio_path)):
+                            #     if time.time() - start_time > timeout:
+                            #         logger.error(f"Timeout: {video_img_name} not found within 60 seconds.")
+                            #         break
+                            #     time.sleep(1)
+
+                            # if os.path.exists(video_path):
+                            #     logger.info(f"Found video heatmap image: {video_path}")
+                            # else:
+                            #     logger.warning(f"Video heatmap image not found: {video_path}")
+
+                            # if os.path.exists(audio_path):
+                            #     logger.info(f"Found audio heatmap image: {audio_path}")
+                            # else:
+                            #     logger.warning(f"Audio heatmap image not found: {audio_path}")
+
+                            # # 2. Build the HTML Report Content
+                            # html_content = ""
+
+                            # # Add Video Map (if found)
+                            # if os.path.exists(video_path):
+                            #     html_content += (
+                            #         '<div style="page-break-before: always;"></div>'
+                            #         '<h3 style="text-align:center;">Video Heatmap</h3>'
+                            #         f'<div style="text-align:center;"><img src="file://{video_path}" style="width:1200px; height:800px;"></img></div>'
+                            #     )
+
+                            # # Add Audio Map (if found)
+                            # # Note: We check specifically for existence here in case only video was generated
+                            # if os.path.exists(audio_path):
+                            #     html_content += (
+                            #         '<div style="page-break-before: always;"></div>'
+                            #         '<h3 style="text-align:center;">Audio Heatmap</h3>'
+                            #         f'<div style="text-align:center;"><img src="file://{audio_path}" style="width:1200px; height:800px;"></img></div>'
+                            #     )
+
+                            # # 3. Inject into Report
+                            # if html_content:
+                            #     self.overall_report.set_custom_html(html_content)
+                            #     self.overall_report.build_custom()
+                            self.zoom_obj_dict[ce][obj_name]["obj"].report=self.overall_report
+                            self.zoom_obj_dict[ce][obj_name]["obj"].add_live_view_images_to_report()
                         if not self.robot_test:
                             client_array = []
                             accepted_clients = []
@@ -12474,7 +12684,11 @@ def run_qos_test(args, candela_apis : Candela):
         wait_time=args.qos_wait_time,
         dowebgui="True" if args.dowebgui else False,
         test_name=args.test_name,
-        result_dir=args.result_dir
+        result_dir=args.result_dir,
+        do_bandsteering=args.do_bandsteering,
+        cycles=args.cycles,
+        bssids=args.bssids,
+        duration_to_skip=args.duration_to_skip
     )
 
 def run_vs_test(args, candela_apis : Candela):

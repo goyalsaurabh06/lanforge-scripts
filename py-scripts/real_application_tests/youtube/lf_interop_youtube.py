@@ -1629,6 +1629,9 @@ class Youtube(Realm):
                     self.wifi_interface_list.append(port_name.split('.')[2])
 
     def perform_robo_test(self):
+        base_dir = os.path.dirname(os.path.dirname(self.ui_report_dir))
+        nav_data = os.path.join(base_dir, 'nav_data.json')  # To generate nav_data.json in webgui folder
+        self.robo_obj.nav_data_path = nav_data
         for coordinate in self.coordinates_list:
             self.robo_obj.wait_for_battery()
             matched, aborted = self.robo_obj.move_to_coordinate(coord=coordinate)

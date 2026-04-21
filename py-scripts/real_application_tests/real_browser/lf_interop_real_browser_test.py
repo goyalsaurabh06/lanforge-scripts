@@ -199,6 +199,7 @@ class RealBrowserTest(Realm):
                  current_angle=None,
                  rotations_enabled=False,
                  duration_to_skip=None
+                 duration_to_skip=None
                  ):
         super().__init__(lfclient_host=host, lfclient_port=8080)
         # Initialize attributes with provided parameters
@@ -1632,6 +1633,10 @@ class RealBrowserTest(Realm):
             self.run_robo_bandsteering_test(cx_batch)
             return
 
+        if self.do_robo:
+            base_dir = os.path.dirname(os.path.dirname(self.result_dir))
+            nav_data = os.path.join(base_dir, 'nav_data.json')  # To generate nav_data.json in webgui folder
+            self.robo_obj.nav_data_path = nav_data
         if self.do_robo and not self.do_bandsteering:
             for coordinate in self.coordinates_list:
                 # self.robo_obj.ensure_battery_for_test(duration_min=self.duration, mins_per_percent=self.mins_per_percent)
@@ -2770,7 +2775,6 @@ class RealBrowserTest(Realm):
         url_image_path = os.path.join(self.result_dir, "live_view_images", f"rb_{self.test_name}_1.png")
         timeout = 60  # seconds
         start_time = time.time()
-
         while not os.path.exists(url_image_path):
             if time.time() - start_time > timeout:
                 logging.error("Timeout: Images not found within 60 seconds.")
@@ -3489,6 +3493,8 @@ def main():
             '--do_robo',
             help="Specify this flag to perform the test with robo", action='store_true'
         )
+        robo.add_argument("--duration_to_skip", type=int, help='Specify the maximum time in seconds to skip a point if there is an obstacle', default=60)
+
         robo.add_argument(
             "--do_bandsteering",
             action="store_true",
