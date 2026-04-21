@@ -7595,7 +7595,7 @@ class Candela(Realm):
                                 'No of Devices': '{} (V:{}, A:{}, W:{}, L:{}, M:{})'.format(len(self.ping_obj_dict[ce][obj_name]["obj"].sta_list), len(self.ping_obj_dict[ce][obj_name]["obj"].sta_list) - len(self.ping_obj_dict[ce][obj_name]["obj"].real_sta_list), self.ping_obj_dict[ce][obj_name]["obj"].android, self.ping_obj_dict[ce][obj_name]["obj"].windows, self.ping_obj_dict[ce][obj_name]["obj"].linux, self.ping_obj_dict[ce][obj_name]["obj"].mac),
                                 'Duration (in minutes)': self.ping_obj_dict[ce][obj_name]["obj"].duration
                             }
-                        if self.robot_test:
+                        if self.robot_test and not self.do_bandsteering:
                             coordinate_map = self.ping_obj_dict[ce][obj_name]["obj"].generate_overall_data()
                             print("ccccc",coordinate_map)
                             for key,value in coordinate_map.items():
@@ -7852,6 +7852,17 @@ class Candela(Realm):
                                     break  
                     
                         else:
+                            if self.robot_test:
+                                test_setup_info["Robot IP"] =  self.ping_obj_dict[ce][obj_name]["obj"].robo_ip
+                                test_setup_info["Coordinates"] = str( self.ping_obj_dict[ce][obj_name]["obj"].coordinate_list)
+                                if  self.ping_obj_dict[ce][obj_name]["obj"].do_bandsteering:
+                                    del test_setup_info["Duration (in minutes)"]
+                                    test_setup_info["Cycles"] = str( self.ping_obj_dict[ce][obj_name]["obj"].cycles)
+                                    test_setup_info["BSSIDs for Bandsteering"] = str( self.ping_obj_dict[ce][obj_name]["obj"].bssids)
+                                else:
+                                    if  self.ping_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                        test_setup_info["Rotations"] =  self.ping_obj_dict[ce][obj_name]["obj"].rotation
+                                    test_setup_info["Rotation Enabled"] = str( self.ping_obj_dict[ce][obj_name]["obj"].rotation_enabled)
                             self.overall_report.test_setup_table(
                                 test_setup_data=test_setup_info, value='Test Setup Information')
 
@@ -8044,7 +8055,8 @@ class Candela(Realm):
                             })
                             self.overall_report.set_table_dataframe(dataframe2)
                             self.overall_report.build_table()
-
+                            if self.do_bandsteering and self.robot_test:
+                                self.ping_obj_dict[ce][obj_name]["obj"].get_bandsteering_stats(report=self.overall_report)
                             # check if there are remarks for any device. If there are remarks, build table else don't
                             if (self.ping_obj_dict[ce][obj_name]["obj"].remarks != []):
                                 self.overall_report.set_table_title('Notes')
