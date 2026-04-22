@@ -159,7 +159,7 @@ class SniffingManager:
         )
 
         # internal state
-        self._sniffer = None  # current RemoteSniffer instance
+        self._remote_sniffer = None  # current RemoteSniffer instance
         self._remote_pcap_path = None  # path to the in-progress pcap on the remote host
         self._is_sniffing = False
         self._last_ap = None
@@ -192,9 +192,9 @@ class SniffingManager:
 
     def _ensure_connected(self):
         """Create or reconnect the underlying RemoteSniffer SSH session."""
-        if self._sniffer is not None:
+        if self._remote_sniffer is not None:
             try:
-                transport = self._sniffer.ssh_client.get_transport()
+                transport = self._remote_sniffer.ssh_client.get_transport()
                 if transport and transport.is_active():
                     return  # existing connection is still alive
             except Exception:
@@ -202,23 +202,23 @@ class SniffingManager:
             # stale connection – tear it down
             self._close_sniffer()
 
-        self._sniffer = RemoteSniffer(
+        self._remote_sniffer = RemoteSniffer(
             self._resource_ip,
             self._username,
             password=self._password,
             test_name=self._test_folder_name,
         )
-        self._sniffer.connect()
+        self._remote_sniffer.connect()
         logger.info("[SNIFF] SSH connection established to %s", self._resource_ip)
 
     def _close_sniffer(self):
         """Safely close the current RemoteSniffer (if any)."""
-        if self._sniffer is not None:
+        if self._remote_sniffer is not None:
             try:
-                self._sniffer.close()
+                self._remote_sniffer.close()
             except Exception as exc:
                 logger.warning("[SNIFF] Error closing sniffer connection: %s", exc)
-            self._sniffer = None
+            self._remote_sniffer = None
 
     # -- segment start / stop -------------------------------------------------
 
@@ -233,10 +233,10 @@ class SniffingManager:
 
         try:
             self._ensure_connected()
-            self._sniffer.pcap_name = pcap_name
-            remote_folder = self._sniffer.create_remote_test_folder()
-            self._remote_pcap_path = self._sniffer.start_sniff_for_triband(
-                remote_folder,
+            self._remote_sniffer.pcap_name = pcap_name
+            self.remote_folder = self._remote_sniffer.create_remote_test_folder()
+            self._remote_pcap_path = self._remote_sniffer.start_sniff_for_triband(
+                self.remote_folder,
                 moni2g="moni2g",
                 moni5g="moni5g",
                 moni6g="moni6g",
@@ -256,7 +256,7 @@ class SniffingManager:
         Safe to call when not sniffing (no-op).  Returns ``True`` on success,
         ``False`` on failure or when there was nothing to stop.
         """
-        if not self._is_sniffing or self._sniffer is None:
+        if not self._is_sniffing or self._remote_sniffer is None:
             return False
 
         if wait_seconds > 0:
@@ -266,10 +266,10 @@ class SniffingManager:
             time.sleep(wait_seconds)
 
         try:
-            self._sniffer.stop_sniff()
-            # local_path = os.path.join(self._output_path, self._sniffer.pcap_name)
-            # self._sniffer.fetch_pcap(self._remote_pcap_path, local_path)
-            logger.info("[SNIFF STOP] Captured %s", self._sniffer.pcap_name)
+            self._remote_sniffer.stop_sniff()
+            # local_path = os.path.join(self._output_path, self._remote_sniffer.pcap_name)
+            # self._remote_sniffer.fetch_pcap(self._remote_pcap_path, local_path)
+            logger.info("[SNIFF STOP] Captured %s", self._remote_sniffer.pcap_name)
             return True
         except Exception as exc:
             logger.error("[SNIFF STOP] Failed: %s", exc, exc_info=True)
@@ -1642,9 +1642,11 @@ class ZoomAutomation(Realm):
             finally:
                 if self.do_roam:
                     try:
-                        self.sniff_mgr.close()
+                        self.sniff_mgr._remote_sniffer.run_command_and_fetch_folder(self.sniff_mgr.remote_folder, self.path)
                     except Exception as e:
                         logger.warning(f"Sniffer cleanup failed: {e}")
+                    finally:
+                        self.sniff_mgr.close()
 
                 count = 0
                 if self.download_csv:

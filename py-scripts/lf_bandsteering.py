@@ -654,12 +654,12 @@ class ROAMThroughput(RobotClass):
 
                 print(f"\nMoving to: {coordinate}")
 
-                pause, stopped, *_ = self.wait_for_battery(
-                    monitor_function=self.monitor_ap_bssid
-                )
+                # pause, stopped, *_ = self.wait_for_battery(
+                #     monitor_function=self.monitor_ap_bssid
+                # )
 
-                if stopped:
-                    break
+                # if stopped:
+                #     break
 
                 matched, abort, *_ = self.move_to_coordinate(
                     coordinate,
@@ -687,6 +687,19 @@ class ROAMThroughput(RobotClass):
                     sniffer.stop_sniff()
 
                     # sniffer.fetch_pcap(remote_pcap_path, sniffer.pcap_name)
+                    pause, stopped, *_ = self.wait_for_battery()
+                    if pause:
+                        matched, abort, *_ = self.move_to_coordinate(
+                            coordinate,
+                            monitor_function=self.monitor_ap_bssid
+                        )
+
+                        if abort:
+                            break
+                        if not matched:
+                            continue
+                    if stopped:
+                        break
 
                     logger.info(f"Captured: {sniffer.pcap_name}")
 
@@ -753,6 +766,7 @@ class ROAMThroughput(RobotClass):
                 if sniffer:
                     sniffer.close()
                 self.monitor_ap_bssid(test_status="STOPPED")
+                sniffer_obj1.clear_monitor_interfaces()
             except Exception as e:
                 logger.warning(f"Cleanup failed: {e}")
     def perform_throughput_test(self):
