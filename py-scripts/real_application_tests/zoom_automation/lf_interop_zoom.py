@@ -250,7 +250,7 @@ class SniffingManager:
             self._close_sniffer()
             return False
 
-    def stop_segment(self, wait_seconds=0, current_cord=None):
+    def stop_segment(self, wait_seconds=0, current_cord=None, robo_obj=None):
         """Stop the current capture, fetch the pcap, and reset state.
 
         Safe to call when not sniffing (no-op).  Returns ``True`` on success,
@@ -277,6 +277,14 @@ class SniffingManager:
         finally:
             self._is_sniffing = False
             self._remote_pcap_path = None
+            if robo_obj is not None:
+                pause, _ = (
+                    robo_obj.wait_for_battery()
+                )  # Ensure battery safety before next movement
+                if pause:
+                    robo_obj.move_to_coordinate(
+                        current_cord
+                    )  # Move back to current coordinate to maintain test flow
 
     def close(self):
         """Stop any in-progress capture and tear down the SSH connection."""
@@ -461,8 +469,12 @@ class ZoomAutomation(Realm):
             else:
                 self.ap_coordinates = list(ap_coordinates) if ap_coordinates else []
             self.ap_coord_set = set(self.ap_coordinates)
-            self.ap_coord_set.add(self.coordinates_list[0])  # Ensure starting point is included as an AP for sniffing
-            self.ap_coord_set.add(self.coordinates_list[-1])  # Ensure ending point is included as an AP for sniffing
+            self.ap_coord_set.add(
+                self.coordinates_list[0]
+            )  # Ensure starting point is included as an AP for sniffing
+            self.ap_coord_set.add(
+                self.coordinates_list[-1]
+            )  # Ensure ending point is included as an AP for sniffing
             self.sniff_radio_2g = sniff_radio_2g
             self.sniff_radio_5g = sniff_radio_5g
             self.sniff_radio_6g = sniff_radio_6g
@@ -1561,6 +1573,9 @@ class ZoomAutomation(Realm):
                     ):
                         current_iteration += 1
                         logger.info(
+                            "==============================================================================="
+                        )
+                        logger.info(
                             "Starting Roaming iteration %s/%s",
                             current_iteration,
                             total_iterations,
@@ -1569,9 +1584,6 @@ class ZoomAutomation(Realm):
                     logger.info(f"Moving robot to coordinate: {coordinate}")
                     self.from_cord = self.to_cord
                     self.to_cord = coordinate
-
-                    # Battery safety
-                    self.robo_obj.wait_for_battery()
 
                     matched, aborted = self.robo_obj.move_to_coordinate(
                         coord=coordinate
@@ -1596,6 +1608,7 @@ class ZoomAutomation(Realm):
                         self.sniff_mgr.stop_segment(
                             wait_seconds=self.wait_at_point,
                             current_cord=self.current_cord,
+                            robo_obj=self.robo_obj,
                         )
                         self.sniff_mgr.last_ap = coordinate
 
@@ -1607,7 +1620,7 @@ class ZoomAutomation(Realm):
 
                 # Final cleanup — stop any in-progress capture
                 if self.do_roam:
-                    self.sniff_mgr.stop_segment()
+                    self.sniff_mgr.stop_segment(robo_obj=self.robo_obj)
 
                 if self.do_bs:
                     logger.info(
