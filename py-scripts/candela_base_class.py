@@ -55,12 +55,14 @@ video_streaming_test=importlib.import_module("py-scripts.lf_interop_video_stream
 web_browser_test=importlib.import_module("py-scripts.real_application_tests.real_browser.lf_interop_real_browser_test")
 zoom_test=importlib.import_module("py-scripts.real_application_tests.zoom_automation.lf_interop_zoom")
 yt_test=importlib.import_module("py-scripts.real_application_tests.youtube.lf_interop_youtube")
+teams_test=importlib.import_module("py-scripts.real_application_tests.teams_automation.lf_interop_teams")
 lf_report_pdf = importlib.import_module("py-scripts.lf_report")
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 logger = logging.getLogger(__name__)
 RealBrowserTest = getattr(web_browser_test, "RealBrowserTest")
 Youtube = getattr(yt_test, "Youtube")
 ZoomAutomation = getattr(zoom_test, "ZoomAutomation")
+TeamsAutomation = getattr(teams_test, "TeamsAutomation")
 DeviceConfig=importlib.import_module("py-scripts.DeviceConfig")
 # from py_scripts import lf_logger_config, interop_connectivity
 # Saved working directory and index state WIP on test_base_class: 3f3a21f5 minor change
@@ -156,6 +158,7 @@ class Candela(Realm):
             "parallel": manager.dict(),
             "series": manager.dict()
         })
+        self.teams_obj_dict = {"parallel":{},"series":{}}
         # self.rb_obj_dict = manager.dict({
         #     "parallel": manager.dict(),
         #     "series": manager.dict()
@@ -378,19 +381,19 @@ class Candela(Realm):
         """
         if self.no_cleanup:
             return
-        # if layer3:
-        #     self.cleanup.cxs_clean()
-        #     self.cleanup.layer3_endp_clean()
-        # if layer4:
-        #     self.cleanup.layer4_endp_clean()
-        # if generic:
-        #     resp = self.json_get('/generic?fields=name')
-        #     if 'endpoints' in resp:
-        #         for i in resp['endpoints']:
-        #             if list(i.values())[0]['name']:
-        #                 self.generic_endps_profile.created_cx.append('CX_' + list(i.values())[0]['name'])
-        #                 self.generic_endps_profile.created_endp.append(list(i.values())[0]['name'])
-        #     self.generic_endps_profile.cleanup()
+        if layer3:
+            self.cleanup.cxs_clean()
+            self.cleanup.layer3_endp_clean()
+        if layer4:
+            self.cleanup.layer4_endp_clean()
+        if generic:
+            resp = self.json_get('/generic?fields=name')
+            if 'endpoints' in resp:
+                for i in resp['endpoints']:
+                    if list(i.values())[0]['name']:
+                        self.generic_endps_profile.created_cx.append('CX_' + list(i.values())[0]['name'])
+                        self.generic_endps_profile.created_endp.append(list(i.values())[0]['name'])
+            self.generic_endps_profile.cleanup()
 
 
 
@@ -5538,6 +5541,135 @@ class Candela(Realm):
         args.host = self.lanforge_ip
         return self.run_rb_test1(args)
     
+    def run_teams_test(self,
+            mgr: str = "localhost",
+            upstream_port: str = "eth1",
+            duration: int = None,
+            resources: str = None,
+            no_pre_cleanup: bool = False,
+            no_post_cleanup: bool = False,
+            log_level: str = "info",
+            lf_logger_config_json: str = None,
+            audio: bool = False,
+            video: bool = False,
+            do_webUI: bool = False,
+            testname: str = None,
+            report_dir: str = None,
+            enable_mobile_stats: bool = False,
+            robo_ip: str = None,
+            coordinates: str = None,
+            rotations: str = None,
+            do_robo: bool = False,
+            do_bs: bool = False,
+            cycles: int = 1,
+            bssids: str = None,):
+        try:
+            if self.dowebgui:
+                if not self.webgui_stop_check("teams"):
+                    return False
+            teams = None
+            mgr = self.lanforge_ip
+            logger_config = lf_logger_config.lf_logger_config()
+
+            if log_level:
+                logger_config.set_level(level=log_level)
+
+            if lf_logger_config_json:
+                logger_config.lf_logger_config_json = lf_logger_config_json
+                logger_config.load_lf_logger_config()
+
+            rotations_enabled = False
+            if do_robo or do_bs:
+                coordinates = coordinates.split(",") if coordinates else []
+                rotations = (
+                    [float(angle) for angle in rotations.split(",")]
+                    if rotations
+                    else []
+                )
+                if rotations:
+                    rotations_enabled = True
+
+                if bssids:
+                    bssids = bssids.split(",") if bssids else []
+
+            teams = TeamsAutomation(
+                lanforge_ip=self.lanforge_ip,
+                duration=duration,
+                upstream_port=upstream_port,
+                no_pre_cleanup=no_pre_cleanup,
+                no_post_cleanup=no_post_cleanup,
+                audio=audio,
+                video=video,
+                do_webui=do_webUI,
+                test_name=testname,
+                report_dir=report_dir,
+                robo_ip=robo_ip,
+                coordinates=coordinates,
+                rotations=rotations,
+                do_robo=do_robo,
+                do_bs=do_bs,
+                cycles=cycles,
+                bssids=bssids,
+                rotations_enabled=rotations_enabled,
+                enable_mobile_stats=enable_mobile_stats,
+            )
+
+            teams.upstream_port = teams.change_port_to_ip(upstream_port)
+
+            teams.realdevice = RealDevice(
+                manager_ip=self.lanforge_ip,
+                server_ip="192.168.1.61",
+                ssid_2g="Test Configured",
+                passwd_2g="",
+                encryption_2g="",
+                ssid_5g="Test Configured",
+                passwd_5g="",
+                encryption_5g="",
+                ssid_6g="Test Configured",
+                passwd_6g="",
+                encryption_6g="",
+                selected_bands=["5G"],
+            )
+
+            teams.select_real_devices(real_sta_list=resources)
+            if do_webUI:
+                teams.path = report_dir
+                teams.update_webui_data()
+            teams.load_credentials()
+            teams.handle_flask_server()
+            if do_robo:
+                teams.run_robo_test()
+            else:
+                teams.run()
+                time.sleep(10)
+                teams.create_avg_data()
+        except Exception as e:
+            logger.error(f"AN ERROR OCCURED WHILE RUNNING TEST {e}")
+            traceback.print_exc()
+
+        finally:
+            if teams is not None:
+                teams.stop_signal = True
+                if do_webUI:
+                    teams.stop_test_in_webui()
+                teams.generate_report()
+                logger.info("Waiting for Browser Cleanup at Client Side")
+                time.sleep(10)
+                logger.info("Browser Cleanup Completed")
+                if not teams.no_post_cleanup:
+                    teams.generic_endps_profile.cleanup()
+                logger.info(" Teams Test Completed")
+                teams.app = None
+                if self.current_exec == "parallel":
+                    self.teams_obj_dict["parallel"]["teams_test"]["obj"] =teams
+                else:
+                    for i in range(len(self.teams_obj_dict["series"])):
+                        if self.teams_obj_dict["series"][f"teams_test_{i+1}"]["obj"] is None:
+                            self.teams_obj_dict["series"][f"teams_test_{i+1}"]["obj"] = teams
+                            break
+            return True
+
+    
     def browser_cleanup(self,rb_test=False,yt_test=False):
         # count = 0
         # series_tests = args.series_tests.split(',') if args.series_tests else None
@@ -9769,7 +9901,7 @@ class Candela(Realm):
                                 test_setup_data=test_setup_info, value='Test Parameters')
                             if self.dowebgui:
                                 if self.robot_test:
-                                    url_image_path = os.path.join(self.rb_obj_dict[ce][obj_name]["obj"].result_dir, "live_view_images", f"rb_{self.rb_obj_dict[ce][obj_name]["obj"].test_name}_1.png")
+                                    url_image_path = os.path.join(self.rb_obj_dict[ce][obj_name]['obj'].result_dir, "live_view_images", f"rb_{self.rb_obj_dict[ce][obj_name]['obj'].test_name}_1.png")
                                     timeout = 60  # seconds
                                     start_time = time.time()
                                     while not os.path.exists(url_image_path):
@@ -10401,7 +10533,7 @@ class Candela(Realm):
                                 self.overall_report.set_graph_image(output_file)
                                 self.overall_report.build_graph()
                             if self.dowebgui:
-                                url_image_path = os.path.join(self.yt_obj_dict[ce][obj_name]["obj"].ui_report_dir, "live_view_images", f"yt_{self.yt_obj_dict[ce][obj_name]["obj"].test_name}_1.png")
+                                url_image_path = os.path.join(self.yt_obj_dict[ce][obj_name]['obj'].ui_report_dir, "live_view_images", f"yt_{self.yt_obj_dict[ce][obj_name]['obj'].test_name}_1.png")
                                 timeout = 60  # seconds
                                 start_time = time.time()
 
@@ -11907,7 +12039,113 @@ class Candela(Realm):
                             obj_name = f"zoom_test_{obj_no}"
                         else:
                             break
-            
+                
+                elif test_name == "teams_test":
+                    obj_no=1
+                    obj_name = "teams_test"
+                    if ce == "series":
+                        obj_name += "_1"
+                    while obj_name in self.teams_obj_dict[ce]:
+                        if ce == "parallel":
+                            obj_no = ''
+
+                        self.overall_report.set_table_title("Test Parameters:")
+                        self.overall_report.build_table_title()
+                        testtype = ""
+                        obj = self.teams_obj_dict[ce][obj_name]["obj"]
+                        if obj.audio and obj.video:
+                            testtype = "AUDIO & VIDEO"
+                        elif obj.audio:
+                            testtype = "AUDIO"
+                        elif obj.video:
+                            testtype = "VIDEO"
+
+                        test_parameters = pd.DataFrame(
+                            [
+                                {
+                                    "No of Clients": f"W({self.teams_obj_dict[ce][obj_name]['obj'].windows}),L({self.teams_obj_dict[ce][obj_name]['obj'].linux}),M({self.teams_obj_dict[ce][obj_name]['obj'].mac}),A({self.teams_obj_dict[ce][obj_name]['obj'].android})",
+                                    "Test Duration(min)": self.teams_obj_dict[ce][obj_name]['obj'].duration,
+                                    "HOST": self.teams_obj_dict[ce][obj_name]['obj'].real_sta_list[0],
+                                    "TEST TYPE": testtype,
+                                }
+                            ]
+                        )
+                        self.overall_report.set_table_dataframe(test_parameters)
+                        self.overall_report.build_table()
+
+                        self.overall_report.set_table_title("Test Devices:")
+                        self.overall_report.build_table_title()
+
+                        device_details = pd.DataFrame(
+                            {
+                                "Hostname": obj.real_sta_hostname,
+                                "OS Type": obj.real_sta_os_types,
+                            }
+                        )
+                        self.overall_report.set_table_dataframe(device_details)
+                        self.overall_report.build_table()
+
+                        if obj.audio:
+                            metrics = [
+                                ("Audio RTT(ms)", "Audio RTT (ms)"),
+                                ("Received Audio Jitter(ms)", "Received Audio Jitter (ms)"),
+                                ("Sent Audio Bitrate(Kbps)", "Sent Audio Bitrate (Kbps)"),
+                            ]
+
+                        if obj.video:
+                            # Create bar graphs for each metric
+                            metrics = [
+                                ("Sent Video Bitrate(Mbps)", "Sent Video Bitrate (Mbps)"),
+                                ("Received Video Bitrate(Mbps)", "Received Video Bitrate (Mbps)"),
+                                ("Sent Video Packets", "Sent Video Packets"),
+                            ]
+                        if obj.audio and obj.video:
+                            # Create bar graphs for each metric
+                            metrics = [
+                                ("Audio RTT(ms)", "Audio RTT (ms)"),
+                                ("Received Audio Jitter(ms)", "Received Audio Jitter (ms)"),
+                                ("Sent Audio Bitrate(Kbps)", "Sent Audio Bitrate (Kbps)"),
+                                ("Sent Video Bitrate(Mbps)", "Sent Video Bitrate (Mbps)"),
+                                ("Received Video Bitrate(Mbps)", "Received Video Bitrate (Mbps)"),
+                                ("Sent Video Packets", "Sent Video Packets"),
+                            ]
+
+                        # Read per-device average metrics
+
+                        print("herebefore", obj.avg_csv_files_list)
+                        print("path prefix", obj.report_path_date_time)
+
+                        new_list = []
+
+                        for avg_csvs in obj.avg_csv_files_list:
+                            file_name = os.path.basename(avg_csvs["file"])
+
+                            updated_dict = dict(avg_csvs)
+                            updated_dict["file"] = os.path.join(
+                                obj.report_path_date_time,
+                                file_name
+                            )
+
+                            new_list.append(updated_dict)
+
+                        obj.avg_csv_files_list = new_list
+
+                        # VERY IMPORTANT → reassign full object back
+                        obj.path = obj.report_path_date_time
+                        obj.report = self.overall_report
+                        print("hereafter", obj.avg_csv_files_list)
+                        obj.generate_graphs_and_tables(metrics)
+                        if obj.do_robo and obj.do_webui:
+                            obj.add_live_view_images_to_report()
+                        if obj.do_bs:
+                            obj.add_bandsteering_report_section()
+
+                        self.teams_obj_dict[ce][obj_name]["obj"] = obj
+                        if ce == "series":
+                            obj_no += 1
+                            obj_name = f"rb_test_{obj_no}"
+                        else:
+                            break
             except Exception as e:
                 traceback.print_exc()
                 logger.info(f"failed to generate report for {test_name} {e}")
@@ -12635,6 +12873,77 @@ def main():
     parser.add_argument("--client_secret", help="Zoom Client Secret")
     parser.add_argument("--env_file", type=str, default='.env', help='Path to .env file for credentials')
     
+
+    # Teams arguments
+    # Add parser arguments
+    parser.add_argument(
+        "--teams_duration", type=int, help="duration to run the test in min"
+    )
+    parser.add_argument(
+        "--teams_device_list", help="Specify the real device ports seperated by comma"
+    )
+    parser.add_argument(
+        "--teams_no_pre_cleanup",
+        action="store_true",
+        help="specify this flag to stop cleaning up generic cxs before the test",
+    )
+    parser.add_argument(
+        "--teams_no_post_cleanup",
+        action="store_true",
+        help="specify this flag to stop cleaning up generic cxs after the test",
+    )
+    parser.add_argument(
+        "--teams_log_level", help="Level of the logs to be dispalyed", default="info"
+    )
+    parser.add_argument("--teams_lf_logger_config_json", help="lf_logger config json")
+    parser.add_argument("--teams_audio", action="store_true")
+    parser.add_argument("--teams_video", action="store_true")
+    parser.add_argument(
+        "--teams_do_webUI",
+        action="store_true",
+        help="useful to specify whether we are running through webui or cli",
+    )
+    parser.add_argument(
+        "--teams_testname", help="report directory while running test through web ui"
+    )
+    parser.add_argument(
+        "--teams_report_dir", help="report directory while running test through web ui"
+    )
+    parser.add_argument(
+        "--teams_enable_mobile_stats",
+        action="store_true",
+        help="Used to specify whether to collect mobile stats through chrome browser based UI automation or not",
+    )
+
+    parser.add_argument("--teams_robo_ip", type=str, help="Specify the robo ip")
+    parser.add_argument(
+        "--teams_coordinates",
+        help="Comma-separated list of coordinate point names (e.g. 1,2,3), each mapping to x and y values",
+    )
+
+    parser.add_argument(
+        "--teams_rotations",
+        help="Comma-separated list of rotation angles (in degrees) to apply at respective points",
+    )
+    parser.add_argument(
+        "--teams_do_robo",
+        help="Specify this flag to perform the test with robo",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--teams_do_bs",
+        help="Specify this flag to perform the test with robo for band steering",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--teams_cycles", type=int, default=1, help="Number of cycles to run the test"
+    )
+
+    parser.add_argument(
+        "--teams_bssids",
+        type=str,
+        help="Comma-separated list of BSSIDs for bandsteering test",
+    )
     #Arguments to run robot tests
     parser.add_argument("--robot_test", help='to trigger robot test', action='store_true')
     parser.add_argument('--robot_ip', type=str, default='', help='hostname for where Robot server is running')
@@ -12664,6 +12973,7 @@ def main():
     "yt_test":     (run_yt_test, "YOUTUBE TEST"),
     "rb_test":     (run_rb_test, "REAL BROWSER TEST"),
     "zoom_test":   (run_zoom_test, "ZOOM TEST"),
+    "teams_test":   (run_teams_test, "TEAMS TEST"),
     }
 
 
@@ -12702,7 +13012,7 @@ def main():
                 duration_dict[test] = validate_time(args_dict[f"{test}_duration"])
             elif test == "mcast_test":
                 duration_dict[test] = validate_time(args_dict[f"{test.split('_')[0]}_test_duration"])
-            elif test == "ping_test" or test == "zoom_test":
+            elif test == "ping_test" or test == "zoom_test" or test == "teams_test":
                 duration_dict[test] = "{} mins".format(args_dict["{}_duration".format(test.split('_')[0])])
             else:
                 duration_dict[test] = validate_time(args_dict[f"{test.split('_')[0]}_duration"])
@@ -12712,7 +13022,7 @@ def main():
                 duration_dict[test] = validate_time(args_dict[f"{test}_duration"])
             elif test == "mcast_test":
                 duration_dict[test] = validate_time(args_dict[f"{test.split('_')[0]}_test_duration"])
-            elif test == "ping_test" or test == "zoom_test":
+            elif test == "ping_test" or test == "zoom_test" or test == "teams_test":
                 duration_dict[test] = "{} mins".format(args_dict["{}_duration".format(test.split('_')[0])])
             else:
                 duration_dict[test] = validate_time(args_dict[f"{test.split('_')[0]}_duration"])
@@ -12744,7 +13054,7 @@ def main():
             # ordered_parallel_tests = args.parallel_tests.split(',')
             # phase 1
             if args.dowebgui:
-                gen_order = ["ping_test","qos_test","ftp_test","http_test","mcast_test","vs_test","thput_test","yt_test","rb_test","zoom_test"]
+                gen_order = ["ping_test","qos_test","ftp_test","http_test","mcast_test","vs_test","thput_test","yt_test","rb_test","zoom_test", "teams_test"]
                 temp_ord_list = []
                 for test_name in gen_order:
                     if test_name in ordered_series_tests:
@@ -12755,7 +13065,7 @@ def main():
                 if test_name in test_map:
                     func, label = test_map[test_name]
                     args.current = "series"
-                    if test_name in ['rb_test','zoom_test','yt_test']:
+                    if test_name in ['rb_test','zoom_test','yt_test', 'teams_test']:
                         if test_name == "rb_test":
                             obj_no = 1
                             while f"rb_test_{obj_no}" in candela_apis.rb_obj_dict["series"]:
@@ -12776,6 +13086,13 @@ def main():
                             obj_name = f"zoom_test_{obj_no}"
                             candela_apis.zoom_obj_dict["series"][obj_name] = manager.dict({"obj":None,"data":None})
                             print('hiii data',candela_apis.zoom_obj_dict)
+                        elif test_name == "teams_test":
+                            obj_no = 1
+                            while f"teams_test_{obj_no}" in candela_apis.teams_obj_dict["series"]:
+                                obj_no+=1
+                            obj_name = f"teams_test_{obj_no}"
+                            candela_apis.teams_obj_dict["series"][obj_name] = manager.dict({"obj":None,"data":None})
+                            print('hiii data',candela_apis.teams_obj_dict)
                         series_threads.append(multiprocessing.Process(target=run_test_safe(func, f"{label} [Series {idx+1}]", args, candela_apis,duration_dict[test_name])))
                     else:                 
                         series_threads.append(threading.Thread(
@@ -12789,7 +13106,7 @@ def main():
             ordered_parallel_tests = args.parallel_tests.split(',')
             #phase 1
             if args.dowebgui:
-                gen_order = ["ping_test","qos_test","ftp_test","http_test","mcast_test","vs_test","thput_test","yt_test","rb_test","zoom_test"]
+                gen_order = ["ping_test","qos_test","ftp_test","http_test","mcast_test","vs_test","thput_test","yt_test","rb_test","zoom_test", "teams_test"]
                 temp_ord_list = []
                 for test_name in gen_order:
                     if test_name in ordered_parallel_tests:
@@ -12800,7 +13117,7 @@ def main():
                 if test_name in test_map:
                     func, label = test_map[test_name]
                     args.current = "parallel"
-                    if test_name in ['rb_test','zoom_test','yt_test']:
+                    if test_name in ['rb_test','zoom_test','yt_test', 'teams_test']:
                         # if test_name == "rb_test":
                             # candela_apis.rb_pipe_dict["parallel"][len(candela_apis.rb_pipe_dict["parallel"])] = {}
                             # candela_apis.rb_pipe_dict["parallel"][len(candela_apis.rb_pipe_dict["parallel"])]["parent"],candela_apis.rb_pipe_dict["parallel"][len(candela_apis.rb_pipe_dict["parallel"])]["child"] = multiprocessing.Pipe()
@@ -12814,7 +13131,13 @@ def main():
                             print('hiii data',candela_apis.yt_obj_dict)
                         elif test_name == "zoom_test":
                             candela_apis.zoom_obj_dict["parallel"]["zoom_test"] = manager.dict({"obj": None, "data": None})
+                            print('hiii data',candela_apis.zoom_obj_dict)
+                        elif test_name == "zoom_test":
+                            candela_apis.zoom_obj_dict["parallel"]["zoom_test"] = manager.dict({"obj": None, "data": None})
                             print('hiii data',candela_apis.zoom_obj_dict) 
+                        elif test_name == "teams_test":
+                            candela_apis.teams_obj_dict["parallel"]["teams_test"] = manager.dict({"obj": None, "data": None})
+                            print('hiii data',candela_apis.teams_obj_dict)
                         parallel_threads.append(multiprocessing.Process(target=run_test_safe(func, f"{label} [Parallel {idx+1}]", args, candela_apis,duration_dict[test_name])))
                     else:                 
                         parallel_threads.append(threading.Thread(
@@ -12830,7 +13153,7 @@ def main():
         if args.dowebgui:
             # overall_path = os.path.join(args.result_dir, directory)
             candela_apis.overall_status = {"ping": "notstarted", "qos": "notstarted", "ftp": "notstarted", "http": "notstarted",
-                            "mc": "notstarted", "vs": "notstarted", "thput": "notstarted","rb": "notstarted","vs": "notstarted","zoom": "notstarted","yt": "notstarted", "time": datetime.datetime.now().strftime("%Y %d %H:%M:%S"), "status": "running", "current_mode":"tbd" , "current_test_name": "tbd"}
+                            "mc": "notstarted", "vs": "notstarted", "thput": "notstarted","rb": "notstarted","vs": "notstarted","zoom": "notstarted","yt": "notstarted","teams": "notstarted", "time": datetime.datetime.now().strftime("%Y %d %H:%M:%S"), "status": "running", "current_mode":"tbd" , "current_test_name": "tbd"}
             candela_apis.overall_csv.append(candela_apis.overall_status.copy())
             df1 = pd.DataFrame(candela_apis.overall_csv)
             df1.to_csv('{}/overall_status.csv'.format(args.result_dir), index=False)
@@ -13401,6 +13724,26 @@ def run_zoom_test(args, candela_apis : Candela):
         client_id=args.client_id,
         client_secret=args.client_secret,
         account_id=args.account_id,
+    )
+
+def run_teams_test(args, candela_apis : Candela):
+    return candela_apis.run_teams_test(
+        duration = args.teams_duration,
+        resources = args.teams_device_list,
+        audio = args.teams_audio,
+        video = args.teams_video,
+        do_webUI = args.dowebgui,
+        testname = args.test_name,
+        report_dir = args.result_dir,
+        enable_mobile_stats = args.teams_enable_mobile_stats,
+        robo_ip = args.robot_ip,
+        coordinates = args.coordinate,
+        rotations = args.rotation,
+        do_robo = args.robot_test,
+        do_bs = args.do_bandsteering,
+        cycles = args.cycles,
+        bssids = args.bssids,
+        upstream_port=args.upstream_port,
     )
 # def browser_cleanup(args,candela_apis):
 #     return candela_apis.browser_cleanup(args)
