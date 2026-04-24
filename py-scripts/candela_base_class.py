@@ -12112,8 +12112,6 @@ class Candela(Realm):
 
                         # Read per-device average metrics
 
-                        print("herebefore", obj.avg_csv_files_list)
-                        print("path prefix", obj.report_path_date_time)
 
                         new_list = []
 
@@ -12133,7 +12131,6 @@ class Candela(Realm):
                         # VERY IMPORTANT → reassign full object back
                         obj.path = obj.report_path_date_time
                         obj.report = self.overall_report
-                        print("hereafter", obj.avg_csv_files_list)
                         obj.generate_graphs_and_tables(metrics)
                         if obj.do_robo and obj.do_webui:
                             obj.add_live_view_images_to_report()
@@ -13727,6 +13724,7 @@ def run_zoom_test(args, candela_apis : Candela):
     )
 
 def run_teams_test(args, candela_apis : Candela):
+    is_robot = args.robot_test and not args.do_bandsteering
     return candela_apis.run_teams_test(
         duration = args.teams_duration,
         resources = args.teams_device_list,
@@ -13739,7 +13737,7 @@ def run_teams_test(args, candela_apis : Candela):
         robo_ip = args.robot_ip,
         coordinates = args.coordinate,
         rotations = args.rotation,
-        do_robo = args.robot_test,
+        do_robo = is_robot,
         do_bs = args.do_bandsteering,
         cycles = args.cycles,
         bssids = args.bssids,
