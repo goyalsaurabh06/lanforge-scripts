@@ -499,30 +499,39 @@ class ZoomAutomator:
             )
 
     def upload_ping_log(self):
-        log_path = os.path.join(
-            os.getcwd(), "zoom_mobile_logs", f"{self.participant_name}_ping.log"
-        )
-        if not os.path.exists(log_path):
-            self.logger.warning(f"Ping log not found: {log_path}")
-            return
-
+        log_dir = os.path.join(os.getcwd(), "zoom_mobile_logs")
+        targets = [
+            (f"{self.participant_name}_ping.log", "text/plain"),
+            (f"{self.participant_name}_ping.jsonl", "application/x-ndjson"),
+        ]
         endpoint_url = f"{self.base_url}/upload_ping_log"
-        try:
-            with open(log_path, "rb") as fp:
-                files = {"file": (os.path.basename(log_path), fp, "text/plain")}
-                data = {"participant_name": self.participant_name}
-                resp = requests.post(endpoint_url, files=files, data=data, timeout=30)
 
-            if resp.status_code == 200:
-                self.logger.info(
-                    f"[{self.device_serial}] Ping log uploaded successfully"
-                )
-            else:
+        for filename, mime in targets:
+            path = os.path.join(log_dir, filename)
+            if not os.path.exists(path):
+                self.logger.warning(f"Ping log not found: {path}")
+                continue
+            try:
+                with open(path, "rb") as fp:
+                    files = {"file": (filename, fp, mime)}
+                    data = {"participant_name": self.participant_name}
+                    resp = requests.post(
+                        endpoint_url, files=files, data=data, timeout=30
+                    )
+
+                if resp.status_code == 200:
+                    self.logger.info(
+                        f"[{self.device_serial}] {filename} uploaded successfully"
+                    )
+                else:
+                    self.logger.error(
+                        f"[{self.device_serial}] {filename} upload failed: "
+                        f"{resp.status_code} {resp.text}"
+                    )
+            except Exception as e:
                 self.logger.error(
-                    f"[{self.device_serial}] Ping log upload failed: {resp.status_code} {resp.text}"
+                    f"[{self.device_serial}] Error uploading {filename}: {e}"
                 )
-        except Exception as e:
-            self.logger.error(f"[{self.device_serial}] Error uploading ping log: {e}")
 
 
 def main():

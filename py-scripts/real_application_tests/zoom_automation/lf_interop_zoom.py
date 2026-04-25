@@ -915,11 +915,17 @@ class ZoomAutomation(Realm):
                         400,
                     )
 
+                # Allow either the human-readable .log or the structured .jsonl
+                # produced by PingMonitor. Default to .log for backward compat.
+                ext = os.path.splitext(f.filename)[1].lower()
+                if ext not in (".log", ".jsonl"):
+                    ext = ".log"
+
                 ping_dir = os.path.join(self.path, "ping_logs")
                 os.makedirs(ping_dir, exist_ok=True)
 
                 # Force controlled filename format to avoid unsafe names from client
-                save_name = f"{participant_name}_ping.log"
+                save_name = f"{participant_name}_ping{ext}"
                 save_path = os.path.join(ping_dir, save_name)
                 f.save(save_path)
 
