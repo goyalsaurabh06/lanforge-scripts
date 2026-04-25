@@ -3762,6 +3762,11 @@ class ZoomAutomation(Realm):
         #         self.analyzer.generate_report_from_csv(path=self.path)
         # except Exception as e:
         #     logger.error(f"Error generating roam report from CSVs: {e}")
+        try:
+            self.add_ping_stats_to_report(report=self.report)
+        except Exception as e:
+            logger.error(f"Error adding ping stats to report: {e}")
+
         self.report.write_html()
         self.report.write_pdf(_page_size="Legal", _orientation="Landscape")
         for client in self.real_sta_hostname:
@@ -3786,6 +3791,149 @@ class ZoomAutomation(Realm):
             ),
             self.report_path_date_time,
         )
+
+    def _parse_ping_jsonl(self, path):
+        """
+        Read a ping JSONL file produced by PingMonitor and return
+        (summary_dict, loss_events_list).
+
+        - summary_dict: prefer the trailing record with type=="summary";
+          otherwise compute from collected reply records.
+        - loss_events_list: every record with type=="timeout" (jc emits
+          one such record per missed reply).
+        """
+        replies = []
+        timeouts = []
+        summary_record = None
+
+        with open(path, "r") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                rtype = rec.get("type")
+                if rtype == "reply":
+                    replies.append(rec)
+                elif rtype == "timeout":
+                    timeouts.append(rec)
+                elif rtype == "summary":
+                    summary_record = rec
+
+        if summary_record is not None:
+            summary = {
+                "Destination": summary_record.get("destination"),
+                "Transmitted": summary_record.get("packet_transmit"),
+                "Received": summary_record.get("packet_receive"),
+                "Loss Count": summary_record.get("packet_loss_count"),
+                "Loss %": summary_record.get("packet_loss_rate"),
+                "RTT min (ms)": summary_record.get("rtt_min_ms"),
+                "RTT avg (ms)": summary_record.get("rtt_avg_ms"),
+                "RTT max (ms)": summary_record.get("rtt_max_ms"),
+                "RTT mdev (ms)": summary_record.get("rtt_mdev_ms"),
+            }
+        else:
+            seqs = [r.get("icmp_seq") for r in replies if r.get("icmp_seq") is not None]
+            rtts = [r.get("time_ms") for r in replies if r.get("time_ms") is not None]
+            transmitted = max(seqs) if seqs else 0
+            received = len(replies)
+            loss_count = max(transmitted - received, 0)
+            loss_rate = (loss_count / transmitted * 100.0) if transmitted else 0.0
+            if rtts:
+                rtt_min = min(rtts)
+                rtt_max = max(rtts)
+                rtt_avg = sum(rtts) / len(rtts)
+                rtt_mdev = sum(abs(x - rtt_avg) for x in rtts) / len(rtts)
+            else:
+                rtt_min = rtt_max = rtt_avg = rtt_mdev = None
+            destination = replies[0].get("destination_ip") if replies else None
+            summary = {
+                "Destination": destination,
+                "Transmitted": transmitted,
+                "Received": received,
+                "Loss Count": loss_count,
+                "Loss %": round(loss_rate, 3),
+                "RTT min (ms)": rtt_min,
+                "RTT avg (ms)": round(rtt_avg, 3) if rtt_avg is not None else None,
+                "RTT max (ms)": rtt_max,
+                "RTT mdev (ms)": round(rtt_mdev, 3) if rtt_mdev is not None else None,
+            }
+
+        return summary, timeouts
+
+    def add_ping_stats_to_report(self, report):
+        """
+        Locate every <client>_ping.jsonl in self.path/ping_logs, parse it,
+        and add a per-client ping summary table plus a packet-loss-events
+        table to the report.
+        """
+        ping_dir = os.path.join(self.path, "ping_logs")
+        if not os.path.isdir(ping_dir):
+            logger.info(
+                f"No ping_logs directory found at {ping_dir}; skipping ping stats section."
+            )
+            return
+
+        jsonl_files = sorted(glob.glob(os.path.join(ping_dir, "*_ping.jsonl")))
+        if not jsonl_files:
+            logger.info(
+                f"No *_ping.jsonl files found in {ping_dir}; skipping ping stats section."
+            )
+            return
+
+        per_client = []  # list of (client, summary_dict, timeouts_list)
+        for jf in jsonl_files:
+            client = os.path.basename(jf)[: -len("_ping.jsonl")]
+            try:
+                summary, timeouts = self._parse_ping_jsonl(jf)
+            except Exception as e:
+                logger.error(f"Failed to parse ping JSONL {jf}: {e}")
+                continue
+            per_client.append((client, summary, timeouts))
+
+        if not per_client:
+            return
+
+        # --- Combined summary table ---
+        report.set_table_title("Ping Statistics (per client)")
+        report.build_table_title()
+
+        summary_rows = []
+        for client, summary, _ in per_client:
+            row = {"Client": client}
+            row.update(summary)
+            summary_rows.append(row)
+        report.set_table_dataframe(pd.DataFrame(summary_rows))
+        report.build_table()
+
+        # --- Per-client packet loss events ---
+        for client, _, timeouts in per_client:
+            report.set_obj_html(
+                _obj_title=f"Packet Loss Events - {client}",
+                _obj=f"Records with type=='timeout' from {client}_ping.jsonl. Each row represents a missed ping reply.",
+            )
+            report.build_objective()
+
+            if not timeouts:
+                report.set_text("No packet loss detected.")
+                report.build_text_simple()
+                continue
+
+            loss_rows = []
+            for t in timeouts:
+                loss_rows.append(
+                    {
+                        "host_ts": t.get("host_ts"),
+                        "icmp_seq": t.get("icmp_seq"),
+                        "destination_ip": t.get("destination_ip"),
+                        "timestamp": t.get("timestamp"),
+                    }
+                )
+            report.set_table_dataframe(pd.DataFrame(loss_rows))
+            report.build_table()
 
     def generate_roam_report(self, path, report_obj):
         roam_dir = os.path.join(path, "client_roaming_csvs")
@@ -4597,6 +4745,11 @@ class ZoomAutomation(Realm):
 
         if self.do_webui:
             self.add_live_view_images_to_report()
+
+        try:
+            self.add_ping_stats_to_report(report=self.report)
+        except Exception as e:
+            logger.error(f"Error adding ping stats to report: {e}")
 
         # --- Finalize Report ---
         self.report.build_custom()
