@@ -3795,12 +3795,15 @@ class ZoomAutomation(Realm):
     def _parse_ping_jsonl(self, path):
         """
         Read a ping JSONL file produced by PingMonitor and return
-        (summary_dict, loss_events_list).
+        (summary_dict, truly_lost_list, late_replies_list).
 
         - summary_dict: prefer the trailing record with type=="summary";
-          otherwise compute from collected reply records.
-        - loss_events_list: every record with type=="timeout" (jc emits
-          one such record per missed reply).
+          otherwise compute from collected reply records (using
+          truly-lost math: a seq is lost only if it never replied).
+        - truly_lost_list: timeout records whose icmp_seq never appears
+          in any reply record (deduped by icmp_seq, first occurrence kept).
+        - late_replies_list: reply records whose icmp_seq also appeared
+          as a timeout (i.e., the reply arrived after ping's 1s window).
         """
         replies = []
         timeouts = []
@@ -3823,6 +3826,23 @@ class ZoomAutomation(Realm):
                 elif rtype == "summary":
                     summary_record = rec
 
+        # Classify timeouts: truly lost vs. late-but-eventually-replied.
+        replied_seqs = {
+            r.get("icmp_seq") for r in replies if r.get("icmp_seq") is not None
+        }
+        truly_lost = {}  # icmp_seq -> first timeout record
+        late_seqs = set()
+        for t in timeouts:
+            seq = t.get("icmp_seq")
+            if seq is None:
+                continue
+            if seq in replied_seqs:
+                late_seqs.add(seq)
+            elif seq not in truly_lost:
+                truly_lost[seq] = t
+        truly_lost_list = list(truly_lost.values())
+        late_replies_list = [r for r in replies if r.get("icmp_seq") in late_seqs]
+
         if summary_record is not None:
             summary = {
                 "Destination": summary_record.get("destination"),
@@ -3839,8 +3859,8 @@ class ZoomAutomation(Realm):
             seqs = [r.get("icmp_seq") for r in replies if r.get("icmp_seq") is not None]
             rtts = [r.get("time_ms") for r in replies if r.get("time_ms") is not None]
             transmitted = max(seqs) if seqs else 0
-            received = len(replies)
-            loss_count = max(transmitted - received, 0)
+            loss_count = len(truly_lost_list)
+            received = max(transmitted - loss_count, 0)
             loss_rate = (loss_count / transmitted * 100.0) if transmitted else 0.0
             if rtts:
                 rtt_min = min(rtts)
@@ -3862,7 +3882,7 @@ class ZoomAutomation(Realm):
                 "RTT mdev (ms)": round(rtt_mdev, 3) if rtt_mdev is not None else None,
             }
 
-        return summary, timeouts
+        return summary, truly_lost_list, late_replies_list
 
     def add_ping_stats_to_report(self, report):
         """
@@ -3884,15 +3904,17 @@ class ZoomAutomation(Realm):
             )
             return
 
-        per_client = []  # list of (client, summary_dict, timeouts_list)
+        per_client = (
+            []
+        )  # list of (client, summary_dict, truly_lost_list, late_replies_list)
         for jf in jsonl_files:
             client = os.path.basename(jf)[: -len("_ping.jsonl")]
             try:
-                summary, timeouts = self._parse_ping_jsonl(jf)
+                summary, truly_lost, late_replies = self._parse_ping_jsonl(jf)
             except Exception as e:
                 logger.error(f"Failed to parse ping JSONL {jf}: {e}")
                 continue
-            per_client.append((client, summary, timeouts))
+            per_client.append((client, summary, truly_lost, late_replies))
 
         if not per_client:
             return
@@ -3902,7 +3924,7 @@ class ZoomAutomation(Realm):
         report.build_table_title()
 
         summary_rows = []
-        for client, summary, _ in per_client:
+        for client, summary, _, _ in per_client:
             row = {"Client": client}
             row.update(summary)
             summary_rows.append(row)
@@ -3910,30 +3932,71 @@ class ZoomAutomation(Realm):
         report.build_table()
 
         # --- Per-client packet loss events ---
-        for client, _, timeouts in per_client:
+        for client, _, truly_lost, late_replies in per_client:
+            # Truly-lost: sequences that never received a reply
             report.set_obj_html(
                 _obj_title=f"Packet Loss Events - {client}",
-                _obj=f"Records with type=='timeout' from {client}_ping.jsonl. Each row represents a missed ping reply.",
+                _obj=(
+                    f"Sequences from {client}_ping.jsonl that timed out and never "
+                    f"received a reply (truly lost packets)."
+                ),
             )
             report.build_objective()
 
-            if not timeouts:
+            if not truly_lost:
                 report.set_text("No packet loss detected.")
                 report.build_text_simple()
-                continue
+            else:
+                loss_rows = []
+                for t in truly_lost:
+                    ts = t.get("timestamp")
+                    try:
+                        ts_str = f"{float(ts):.6f}" if ts is not None else ""
+                    except (TypeError, ValueError):
+                        ts_str = str(ts)
+                    loss_rows.append(
+                        {
+                            "icmp_seq": t.get("icmp_seq"),
+                            "destination_ip": t.get("destination_ip"),
+                            "timestamp": ts_str,
+                        }
+                    )
+                report.set_table_dataframe(pd.DataFrame(loss_rows))
+                report.build_table()
 
-            loss_rows = []
-            for t in timeouts:
-                loss_rows.append(
-                    {
-                        "host_ts": t.get("host_ts"),
-                        "icmp_seq": t.get("icmp_seq"),
-                        "destination_ip": t.get("destination_ip"),
-                        "timestamp": t.get("timestamp"),
-                    }
-                )
-            report.set_table_dataframe(pd.DataFrame(loss_rows))
-            report.build_table()
+            # Late replies: timed out within 1s but a reply arrived later
+            report.set_obj_html(
+                _obj_title=f"Late Replies (>1s) - {client}",
+                _obj=(
+                    f"Sequences from {client}_ping.jsonl that exceeded ping's 1s "
+                    f"timeout window but eventually received a reply. These are "
+                    f"counted as received (not lost) but indicate transient network "
+                    f"stalls that hurt real-time traffic such as voice/video."
+                ),
+            )
+            report.build_objective()
+
+            if not late_replies:
+                report.set_text("No late replies (>1s).")
+                report.build_text_simple()
+            else:
+                late_rows = []
+                for r in late_replies:
+                    ts = r.get("timestamp")
+                    try:
+                        ts_str = f"{float(ts):.6f}" if ts is not None else ""
+                    except (TypeError, ValueError):
+                        ts_str = str(ts)
+                    late_rows.append(
+                        {
+                            "icmp_seq": r.get("icmp_seq"),
+                            "RTT (ms)": r.get("time_ms"),
+                            "destination_ip": r.get("destination_ip"),
+                            "timestamp": ts_str,
+                        }
+                    )
+                report.set_table_dataframe(pd.DataFrame(late_rows))
+                report.build_table()
 
     def generate_roam_report(self, path, report_obj):
         roam_dir = os.path.join(path, "client_roaming_csvs")
