@@ -2,6 +2,8 @@ import threading
 import subprocess
 import os
 import logging
+import argparse
+import time
 
 
 class PingMonitor:
@@ -45,13 +47,16 @@ class PingMonitor:
 
         try:
             self.stop_event.clear()
+            # Use `adb shell -tt` to allocate a PTY on the device so that
+            # `ping` line-buffers its output. Without a PTY, ping block-buffers
+            # (~4-8 KB) and replies never reach our reader thread before
+            # terminate() discards them.
             self.process = subprocess.Popen(
-                ["adb", "-s", device_serial, "shell", "ping", target_host],
+                ["adb", "-s", device_serial, "shell", "-tt", "ping", target_host],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                bufsize=1,  # Line buffered
-                universal_newlines=True,
+                bufsize=1,  # Line buffered on the Python side
             )
 
             # Start thread to read ping output
@@ -72,7 +77,8 @@ class PingMonitor:
                 line = self.process.stdout.readline()
                 if not line:
                     break
-                self.ping_logger.info(line.strip())
+                # PTY converts \n to \r\n; strip both.
+                self.ping_logger.info(line.rstrip("\r\n"))
         except Exception as e:
             self.ping_logger.error(f"Error reading ping output: {e}")
 
@@ -94,3 +100,61 @@ class PingMonitor:
 
             self.process = None
             self.ping_logger.info("Ping monitor stopped")
+
+
+def _main():
+    """Standalone smoke test: run ping over adb for a fixed duration."""
+
+    parser = argparse.ArgumentParser(
+        description="Standalone test for PingMonitor (runs ping over adb for a fixed duration)."
+    )
+    parser.add_argument(
+        "--device-serial",
+        "-s",
+        required=True,
+        help="ADB device serial (e.g., 3C271FDJG0034L). Run `adb devices` to list.",
+    )
+    parser.add_argument(
+        "--target",
+        "-t",
+        default="8.8.8.8",
+        help="Ping target host (default: 8.8.8.8).",
+    )
+    parser.add_argument(
+        "--duration",
+        "-d",
+        type=int,
+        default=30,
+        help="How long to run ping, in seconds (default: 30).",
+    )
+    parser.add_argument(
+        "--name",
+        "-n",
+        default="test_device",
+        help="Participant name used for the log file (default: test_device).",
+    )
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
+
+    monitor = PingMonitor(args.name)
+    log_path = os.path.join(os.getcwd(), "zoom_mobile_logs", f"{args.name}_ping.log")
+    print(
+        f"Starting ping on device={args.device_serial} target={args.target} "
+        f"for {args.duration}s"
+    )
+    print(f"Log file: {log_path}")
+
+    monitor.start_ping(args.device_serial, target_host=args.target)
+    try:
+        time.sleep(args.duration)
+    except KeyboardInterrupt:
+        print("Interrupted - stopping early.")
+    finally:
+        monitor.stop_ping()
+
+    print(f"Done. Inspect log: {log_path}")
+
+
+if __name__ == "__main__":
+    _main()
