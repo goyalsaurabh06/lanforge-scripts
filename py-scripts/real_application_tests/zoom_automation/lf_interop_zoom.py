@@ -3921,6 +3921,11 @@ class ZoomAutomation(Realm):
         if not per_client:
             return
 
+        # Page break so ping stats start on a fresh page in the PDF.
+        report.set_custom_html(
+            '<div style="page-break-before: always;"></div>'
+        )
+        report.build_custom()
         # --- Combined summary table ---
         report.set_table_title("Ping Statistics (per client)")
         report.build_table_title()
