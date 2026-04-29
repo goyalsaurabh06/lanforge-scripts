@@ -746,9 +746,6 @@ class ROAMThroughput(RobotClass):
 
                     is_sniffing = True
 
-            # -----------------------------
-            # FINAL CLEANUP
-            # -----------------------------
             if is_sniffing and sniffer:
                 print("Stopping final sniff")
                 sniffer.stop_sniff()

@@ -352,7 +352,7 @@ class RemoteSniffer:
             self.sftp = self.ssh_client.open_sftp()
         # command = f"python3 ~/roaming_development/wifi_roaming_cli.py --mode parallel --pcap-dir {remote_folder} --ap-alias Controller=06:03:7f:41:15:07,02:03:7f:01:53:51,06:03:7f:85:63:65 --ap-alias Agent1=06:03:7f:41:10:73,06:03:7f:85:69:89,02:03:7f:41:12:2d --ap-alias Agent2=06:03:7f:19:01:09,06:03:7f:12:1d:1d,02:03:7f:01:52:3f --client-alias SamsungS25Ultra=a0:1b:9e:13:99:5f,a2:1b:9e:13:99:e5,a2:1b:9e:13:99:e4 --client-alias iPhone17=5c:ad:ba:bd:92:2a,ce:b5:82:f8:cb:9b,c6:4a:a8:67:c6:ba --client-alias iPhone15Pro=d0:6b:78:5a:bf:ff --client-alias Pixel8Pro=5c:33:7b:f1:d9:1a,5e:33:7b:f1:d9:1b"
         # command = f"python3 ~/roaming_development/wifi_roaming_cli.py --mode parallel --pcap-dir {remote_folder} --all-clients"
-        command = f"python3 ~/roaming_development/wifi_roaming_cli.py --mode parallel --pcap-dir {remote_folder} --alias-file ./roaming_development/ap_client_aliases.json --report-image ./roaming_development/floor_plan.jpeg"
+        command = f"python3 ~/roaming_development/wifi_roaming_cli.py --mode parallel --pcap-dir {remote_folder} --alias-file ./roaming_development/ap_client_aliases.json --report-image ./roaming_development/floor_plan.jpeg --workers 6 --packets-per-chunk 15000 --pcap-batch-workers 3 --traffic-test 'Zoom Call' --auth-pass-ms 500 --gap-pass-ms 500"
         print(f"Running remote command: {command}")
         stdin, stdout, stderr = self.ssh_client.exec_command(command)
         # Read all output and error
