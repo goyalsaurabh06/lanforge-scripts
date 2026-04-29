@@ -336,6 +336,8 @@ class ZoomAutomation(Realm):
         wait_at_point=30,
         resource_ip=None,
         ap_coordinates="",
+        mgmt_roam_time=500,
+        data_roam_time=500,
     ):
 
         super().__init__(lfclient_host=lanforge_ip)
@@ -438,6 +440,8 @@ class ZoomAutomation(Realm):
         self.api_stats_collection = api_stats_collection
         self.do_webui = do_webui
         self.cycles = cycles
+        self.mgmt_roam_time = mgmt_roam_time
+        self.data_roam_time = data_roam_time
         if self.do_roam:
             logger.info("Roaming test configured for %s iteration(s)", self.cycles)
         self.from_cord = None
@@ -5427,6 +5431,19 @@ def main():
             help="Comma-separated list of AP coordinates for start/stop sniffing",
             default="",
         )
+        roaming_group.add_argument(
+            "--mgmt_roam_time",
+            help="Threshold Value in ms for MGMT Roaming to be considered successful",
+            type=int,
+            default=500,
+        )
+
+        roaming_group.add_argument(
+            "--data_roam_time",
+            help="Threshold Value in ms for Data Roaming to be considered successful",
+            type=int,
+            default=500,
+        )
 
         args = parser.parse_args()
 
@@ -5540,6 +5557,8 @@ def main():
             wait_at_point=args.wait_at_point,
             resource_ip=args.res_lf_ip,
             ap_coordinates=args.ap_coordinates,
+            mgmt_roam_time=args.mgmt_roam_time,
+            data_roam_time=args.data_roam_time,
         )
         if args.download_csv:
             zoom_automation.download_csv = True
