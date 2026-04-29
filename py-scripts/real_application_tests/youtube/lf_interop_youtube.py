@@ -225,7 +225,9 @@ class Youtube(Realm):
                  sniff_radio_6g='1.2.wiphy2',
                  sniff_channel_2g='11',
                  sniff_channel_5g='44',
-                 sniff_channel_6g='239'
+                 sniff_channel_6g='239',
+                 management_roam_time_threshold='500',
+                 data_roam_time_threshold='500',
                  ):
         """
         Initialize the YouTube streaming test parameters.
@@ -345,6 +347,8 @@ class Youtube(Realm):
             self.sniff_channel_2g = sniff_channel_2g
             self.sniff_channel_5g = sniff_channel_5g
             self.sniff_channel_6g = sniff_channel_6g
+            self.management_roam_time_threshold = management_roam_time_threshold
+            self.data_roam_time_threshold = data_roam_time_threshold
 
 
     def stop(self):
@@ -1934,11 +1938,11 @@ class Youtube(Realm):
                                                 _path='')
                     self.report_path = self.report.get_path()
                     self.report_path_date_time = self.report.get_path_date_time()
-                    # if self.do_webUI:
-                    #     sniffer.run_command_and_fetch_folder(remote_folder, self.ui_report_dir)
-                    # else:
-                    #     print("entereddddddd",self.report)
-                    #     sniffer.run_command_and_fetch_folder(remote_folder, self.report)
+                    if self.do_webUI:
+                        sniffer.run_command_and_fetch_folder(remote_folder, self.ui_report_dir,self.management_roam_time_threshold,self.data_roam_time_threshold)
+                    else:
+                        print("entereddddddd",self.report)
+                        sniffer.run_command_and_fetch_folder(remote_folder, self.report,self.management_roam_time_threshold,self.data_roam_time_threshold)
                     if sniffer:
                         sniffer.close()
                     sniffer_obj1.clear_monitor_interfaces()
@@ -2590,6 +2594,14 @@ NOTES:
                             help='Channel',
                             type=str,
                             default='239')
+        robo.add_argument('--management_roam_time_threshold',
+                            help='',
+                            type=str,
+                            default='500')
+        robo.add_argument('--data_roam_time_threshold',
+                            help='',
+                            type=str,
+                            default='500')
 
         args = parser.parse_args()
 
@@ -2716,7 +2728,9 @@ NOTES:
                 sniff_radio_6g=args.sniff_radio_6g,
                 sniff_channel_2g=args.sniff_channel_2g,
                 sniff_channel_5g=args.sniff_channel_5g,
-                sniff_channel_6g=args.sniff_channel_6g
+                sniff_channel_6g=args.sniff_channel_6g,
+                management_roam_time_threshold=args.management_roam_time_threshold,
+                data_roam_time_threshold=args.data_roam_time_threshold,
                 )
             youtube.start_flask_server()
             args.upstream_port = youtube.change_port_to_ip(args.upstream_port)
