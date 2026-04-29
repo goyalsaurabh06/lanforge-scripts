@@ -1646,7 +1646,7 @@ class ZoomAutomation(Realm):
             finally:
                 if self.do_roam:
                     try:
-                        self.sniff_mgr._remote_sniffer.run_command_and_fetch_folder(self.sniff_mgr.remote_folder, self.path)
+                        self.sniff_mgr._remote_sniffer.run_command_and_fetch_folder(self.sniff_mgr.remote_folder, self.path, self.mgmt_roam_time, self.data_roam_time)
                     except Exception as e:
                         logger.warning(f"Sniffer cleanup failed: {e}")
                     finally:
