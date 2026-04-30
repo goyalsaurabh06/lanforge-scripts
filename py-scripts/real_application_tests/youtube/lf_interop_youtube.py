@@ -226,8 +226,8 @@ class Youtube(Realm):
                  sniff_channel_2g='11',
                  sniff_channel_5g='44',
                  sniff_channel_6g='239',
-                 management_roam_time_threshold='500',
-                 data_roam_time_threshold='500',
+                 management_roam_time='500',
+                 data_roam_time='500',
                  ):
         """
         Initialize the YouTube streaming test parameters.
@@ -255,6 +255,7 @@ class Youtube(Realm):
         self.debug = debug
         self.sta_list = sta_list
         self.real_sta_list = []
+        self.test_stopped_by_user = False
         self.real_sta_data_dict = {}
         self.linux = 0
         self.windows = 0
@@ -347,8 +348,8 @@ class Youtube(Realm):
             self.sniff_channel_2g = sniff_channel_2g
             self.sniff_channel_5g = sniff_channel_5g
             self.sniff_channel_6g = sniff_channel_6g
-            self.management_roam_time_threshold = management_roam_time_threshold
-            self.data_roam_time_threshold = data_roam_time_threshold
+            self.management_roam_time = management_roam_time
+            self.data_roam_time = data_roam_time
 
 
     def stop(self):
@@ -896,6 +897,9 @@ class Youtube(Realm):
         """
         Gracefully shut down the application.
         """
+        if self.do_roaming:
+            self.test_stopped_by_user = True
+            return
         logging.info("Initiating graceful shutdown...")
         self.stop_signal = True
         time.sleep(10)
@@ -907,7 +911,6 @@ class Youtube(Realm):
         else:
             report_dir = self.ui_report_dir if self.do_webUI else ''
             self.create_report(self.stats_api_response, report_dir)
-
         os._exit(0)
 
     def updating_webui_runningjson(self, obj):
@@ -1754,6 +1757,18 @@ class Youtube(Realm):
                     sniff_channel=self.sniff_channel_6g,
                     moni_name="moni6g"
                 )
+                if self.do_webUI:
+                        self.report = lf_report(_output_pdf='youtube_streaming.pdf',
+                                                _output_html='youtube_streaming.html',
+                                                _results_dir_name="youtube_streaming_report",
+                                                _path=self.ui_report_dir)
+                else:
+                    self.report = lf_report(_output_pdf='youtube_streaming.pdf',
+                                            _output_html='youtube_streaming.html',
+                                            _results_dir_name="youtube_streaming_report",
+                                            _path='')
+                self.report_path = self.report.get_path()
+                self.report_path_date_time = self.report.get_path_date_time()
 
                 sniffer_obj1.clear_monitor_interfaces()
 
@@ -1824,7 +1839,8 @@ class Youtube(Realm):
                 # -----------------------------
                 
                 for idx, coordinate in enumerate(coordinate_list_with_robo):
-
+                    if self.test_stopped_by_user:
+                        break
                     print(f"\nMoving to: {coordinate}")
 
                     # pause, stopped, *_ = self.wait_for_battery(
@@ -1837,7 +1853,7 @@ class Youtube(Realm):
                     matched, abort, *_ = self.robo_obj.move_to_coordinate(
                         coordinate
                     )
-
+                    print("=========",abort)
                     if abort:
                         break
                     if not matched:
@@ -1925,35 +1941,16 @@ class Youtube(Realm):
                 logger.error(traceback.format_exc())
 
             finally:
-                try:
-                    if self.do_webUI:
-                        self.report = lf_report(_output_pdf='youtube_streaming.pdf',
-                                                _output_html='youtube_streaming.html',
-                                                _results_dir_name="youtube_streaming_report",
-                                                _path=self.ui_report_dir)
-                    else:
-                        self.report = lf_report(_output_pdf='youtube_streaming.pdf',
-                                                _output_html='youtube_streaming.html',
-                                                _results_dir_name="youtube_streaming_report",
-                                                _path='')
-                    self.report_path = self.report.get_path()
-                    self.report_path_date_time = self.report.get_path_date_time()
-                    if self.do_webUI:
-                        sniffer.run_command_and_fetch_folder(remote_folder, self.ui_report_dir,self.management_roam_time_threshold,self.data_roam_time_threshold)
-                    else:
-                        print("entereddddddd",self.report)
-                        sniffer.run_command_and_fetch_folder(remote_folder, self.report,self.management_roam_time_threshold,self.data_roam_time_threshold)
-                    if sniffer:
-                        sniffer.close()
-                    sniffer_obj1.clear_monitor_interfaces()
-                    self.stop_bandsteering_test()
-                except Exception as e:
-                    if sniffer:
-                        sniffer.close()
-                    sniffer_obj1.clear_monitor_interfaces()
-                    self.stop_bandsteering_test()
-                    logger.warning(f"Cleanup failed: {e}")
-                    logger.error(traceback.format_exc())
+
+                if self.do_webUI:
+                    sniffer.run_command_and_fetch_folder(remote_folder, self.ui_report_dir,self.management_roam_time,self.data_roam_time, "Youtube")
+                else:
+                    print("entereddddddd",self.report)
+                    sniffer.run_command_and_fetch_folder(remote_folder, self.report,self.management_roam_time,self.data_roam_time, "Youtube")
+                if sniffer:
+                    sniffer.close()
+                sniffer_obj1.clear_monitor_interfaces()
+                self.stop_bandsteering_test()
 
 
         else:
@@ -2594,11 +2591,11 @@ NOTES:
                             help='Channel',
                             type=str,
                             default='239')
-        robo.add_argument('--management_roam_time_threshold',
+        robo.add_argument('--management_roam_time',
                             help='',
                             type=str,
                             default='500')
-        robo.add_argument('--data_roam_time_threshold',
+        robo.add_argument('--data_roam_time',
                             help='',
                             type=str,
                             default='500')
@@ -2729,8 +2726,8 @@ NOTES:
                 sniff_channel_2g=args.sniff_channel_2g,
                 sniff_channel_5g=args.sniff_channel_5g,
                 sniff_channel_6g=args.sniff_channel_6g,
-                management_roam_time_threshold=args.management_roam_time_threshold,
-                data_roam_time_threshold=args.data_roam_time_threshold,
+                management_roam_time=args.management_roam_time,
+                data_roam_time=args.data_roam_time,
                 )
             youtube.start_flask_server()
             args.upstream_port = youtube.change_port_to_ip(args.upstream_port)
