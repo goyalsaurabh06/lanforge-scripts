@@ -18,10 +18,14 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from flask import Flask, request, jsonify
 from threading import Thread   
+import numpy as np
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 # Reduce noisy Flask internal logs
 werk_log = logging.getLogger('werkzeug')
 werk_log.setLevel(logging.ERROR)
@@ -29,6 +33,9 @@ werk_log.setLevel(logging.ERROR)
 # Pretty log format
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
 logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
+
+lf_report = importlib.import_module("py-scripts.lf_report")
+lf_report = lf_report.lf_report
 
 if 'py-json' not in sys.path:
     sys.path.append('/home/lanforge/lanforge-scripts/py-json')
@@ -98,8 +105,6 @@ class YouTubeShorts(Realm):
         self.cx_has_started = False
         self.cx_launch_time = None
         self.first_stat_time = None
-
-
 
         # Device discovery results
         self.real_sta_list = []
@@ -408,6 +413,7 @@ class YouTubeShorts(Realm):
 
         ports_list = []
         user_resources = ['.'.join(item.split('.')[:2]) for item in self.real_sta_list]
+        
 
         response = self.json_get("/resource/all")
 
@@ -993,9 +999,710 @@ class YouTubeShorts(Realm):
         except Exception as e:
             logger.error(f"Cleanup failed: {e}")
 
+    def clear_csv_data(self):
+        """
+        Remove old YouTube Shorts CSV files so each test starts fresh.
+        Deletes all *_shorts_stats.csv files from the directory
+        where they are written.
+        """
+        try:
+            if self.do_webUI:
+                csv_dir = self.ui_report_dir
+            else:
+                csv_dir = os.getcwd()
 
+            if not os.path.isdir(csv_dir):
+                logger.warning(f"CSV directory not found: {csv_dir}")
+                return
 
+            removed = 0
 
+            for file in os.listdir(csv_dir):
+                if file.endswith("_shorts_stats.csv"):
+                    full_path = os.path.join(csv_dir, file)
+                    os.remove(full_path)
+                    logger.info(f"Deleted old CSV: {full_path}")
+                    removed += 1
+
+            logger.info(f"Cleared {removed} old Shorts CSV files.")
+
+            # Reset tracking too
+            self.devices_list = []
+            self.last_written_timestamp = {}
+            self.mydatajson = {}
+
+        except Exception as e:
+            logger.error(f"Error clearing old CSV files: {e}") 
+    
+    
+    def create_report(self):
+        """Generate YouTube Shorts report."""
+
+        try:
+            logger.info(
+                "Generating YouTube Shorts report..."
+            )
+
+            report = lf_report(
+                _output_pdf="youtube_shorts.pdf",
+                _output_html="youtube_shorts.html",
+                _results_dir_name="youtube_shorts_report",
+                _path=(
+                    self.ui_report_dir
+                    if self.do_webUI else ''
+                )
+            )
+
+            report_path_date_time = (
+                report.get_path_date_time()
+            )
+
+            report.set_title(
+                "YouTube Shorts Streaming Report"
+            )
+            report.build_banner()
+
+            report.set_obj_html(
+                _obj_title="Objective",
+                _obj=(
+                    "Automated YouTube Shorts streaming "
+                    "test across multiple Android devices "
+                    "and laptops to gather streaming "
+                    "performance statistics."
+                )
+            )
+            report.build_objective()
+
+            configured_devices = getattr(
+                self,
+                "hostname_os_combination",
+                []
+            )
+
+            if not configured_devices:
+                configured_devices = (
+                    list(self.mydatajson.keys())
+                    or list(
+                        getattr(
+                            self,
+                            "mobile_devices",
+                            []
+                        )
+                    )
+                )
+
+            windows_count = getattr(
+                self, "windows", 0
+            )
+
+            linux_count = getattr(
+                self, "linux", 0
+            )
+
+            mac_count = getattr(
+                self, "mac", 0
+            )
+
+            android_count = len(
+                getattr(
+                    self,
+                    "mobile_devices",
+                    []
+                )
+            )
+
+            total_count = (
+                windows_count
+                + linux_count
+                + mac_count
+                + android_count
+            )
+
+            test_setup_info = {
+                "Test Name":
+                    "YouTube Shorts Streaming Test",
+
+                "Duration (in Minutes)":
+                    round(
+                        self.duration / 60,
+                        2
+                    ),
+
+                "Resolution":
+                    "1080p",
+
+                "Configured Devices":
+                    configured_devices,
+
+                "No of Devices":
+                    (
+                        f"Total({total_count}): "
+                        f"W({windows_count}), "
+                        f"L({linux_count}), "
+                        f"M({mac_count}), "
+                        f"A({android_count})"
+                    ),
+
+                "Scroll Interval (in Seconds)":
+                    self.scroll
+            }
+
+            report.test_setup_table(
+                test_setup_data=test_setup_info,
+                value="Input Parameters"
+            )
+
+            for file_path in self.devices_list:
+                if os.path.isfile(file_path):
+                    shutil.move(
+                        file_path,
+                        report_path_date_time
+                    )
+
+            csv_files = [
+                os.path.join(
+                    report_path_date_time,
+                    f
+                )
+                for f in os.listdir(
+                    report_path_date_time
+                )
+                if f.endswith(
+                    "_shorts_stats.csv"
+                )
+            ]
+
+            if not csv_files:
+                logger.warning(
+                    "No shorts CSV files found."
+                )
+
+            device_names = []
+            total_frames_list = []
+            dropped_frames_list = []
+
+            resolution_buckets = [
+                "480p",
+                "720p",
+                "1080p",
+                "1440p",
+                "2160p",
+                "4320p"
+            ]
+
+            device_names_res = []
+
+            resolution_data = {
+                r: []
+                for r in resolution_buckets
+            }
+
+            buffer_graph_data = []
+
+            for csv_file in csv_files:
+
+                try:
+                    df = pd.read_csv(
+                        csv_file
+                    )
+
+                    if df.empty:
+                        continue
+
+                    if (
+                        "Instance Name"
+                        not in df.columns
+                    ):
+                        continue
+
+                    device_name = str(
+                        df["Instance Name"].iloc[0]
+                    )
+
+                    if (
+                        "Iteartions" in df.columns
+                        and "TotalFrames" in df.columns
+                        and "DroppedFrames"
+                        in df.columns
+                    ):
+
+                        df["Iteartions"] = (
+                            pd.to_numeric(
+                                df["Iteartions"],
+                                errors="coerce"
+                            )
+                        )
+
+                        df["TotalFrames"] = (
+                            pd.to_numeric(
+                                df["TotalFrames"],
+                                errors="coerce"
+                            ).fillna(0)
+                        )
+
+                        df["DroppedFrames"] = (
+                            pd.to_numeric(
+                                df["DroppedFrames"],
+                                errors="coerce"
+                            ).fillna(0)
+                        )
+
+                        iter_last_rows = (
+                            df.sort_values(
+                                "Timestamp"
+                            )
+                            .groupby(
+                                "Iteartions",
+                                as_index=False
+                            )
+                            .last()
+                        )
+
+                        device_names.append(
+                            device_name
+                        )
+
+                        total_frames_list.append(
+                            int(
+                                iter_last_rows[
+                                    "TotalFrames"
+                                ].sum()
+                            )
+                        )
+
+                        dropped_frames_list.append(
+                            int(
+                                iter_last_rows[
+                                    "DroppedFrames"
+                                ].sum()
+                            )
+                        )
+
+                    if "CurrentRes" in df.columns:
+
+                        counts = {
+                            r: 0
+                            for r in
+                            resolution_buckets
+                        }
+
+                        for val in df[
+                            "CurrentRes"
+                        ].fillna(""):
+
+                            try:
+                                height = int(
+                                    str(val)
+                                    .split("@")[0]
+                                    .split("x")[1]
+                                )
+
+                                if height <= 854:
+                                    counts["480p"] += 1
+
+                                elif height <= 1280:
+                                    counts["720p"] += 1
+
+                                elif height <= 1920:
+                                    counts["1080p"] += 1
+
+                                elif height <= 2560:
+                                    counts["1440p"] += 1
+
+                                elif height <= 3840:
+                                    counts["2160p"] += 1
+
+                                else:
+                                    counts["4320p"] += 1
+
+                            except Exception:
+                                continue
+
+                        total_samples = sum(
+                            counts.values()
+                        )
+
+                        if total_samples:
+
+                            device_names_res.append(
+                                device_name
+                            )
+
+                            for r in (
+                                resolution_buckets
+                            ):
+                                resolution_data[
+                                    r
+                                ].append(
+                                    round(
+                                        counts[r]
+                                        * 100
+                                        / total_samples,
+                                        2
+                                    )
+                                )
+
+                    if (
+                        "BufferHealth"
+                        in df.columns
+                        and "Timestamp"
+                        in df.columns
+                    ):
+
+                        df["BufferHealth"] = (
+                            pd.to_numeric(
+                                df["BufferHealth"],
+                                errors="coerce"
+                            )
+                        )
+
+                        clean_df = (
+                            df[
+                                df[
+                                    "BufferHealth"
+                                ] > 0
+                            ]
+                            .drop_duplicates(
+                                subset="Timestamp"
+                            )
+                        )
+
+                        if not clean_df.empty:
+
+                            buffer_graph_data.append(
+                                (
+                                    device_name,
+                                    clean_df[
+                                        [
+                                            "Timestamp",
+                                            "BufferHealth"
+                                        ]
+                                    ]
+                                )
+                            )
+
+                except Exception as e:
+
+                    logger.error(
+                        f"Failed processing "
+                        f"{csv_file}: {e}"
+                    )
+            # -------------------------
+            # Build Test Results Table
+            # -------------------------
+            test_results = []
+
+            for i, device in enumerate(device_names):
+
+                # Default values
+                mac = "NA"
+                rssi = "NA"
+                link = "NA"
+                ssid = "NA"
+                os_type = "NA"
+                min_bh = "NA"
+                max_bh = "NA"
+
+                # Match with LANforge device info
+                if i < len(self.real_sta_hostname):
+
+                    try:
+                        idx = self.real_sta_hostname.index(device)
+
+                        os_type = self.real_sta_os_types[idx]
+
+                        if idx < len(self.mac_list):
+                            mac = self.mac_list[idx]
+
+                        if idx < len(self.rssi_list):
+                            rssi = self.rssi_list[idx]
+
+                        if idx < len(self.link_rate_list):
+                            link = self.link_rate_list[idx]
+
+                        if idx < len(self.ssid_list):
+                            ssid = self.ssid_list[idx]
+
+                    except Exception:
+                        pass
+
+                # Extract buffer min/max from CSV already read
+                try:
+                    df = pd.read_csv(
+                        os.path.join(
+                            report_path_date_time,
+                            f"{device}_shorts_stats.csv"
+                        )
+                    )
+
+                    if "BufferHealth" in df.columns:
+
+                        bh = pd.to_numeric(
+                            df["BufferHealth"],
+                            errors="coerce"
+                        )
+
+                        bh = bh[bh > 0]
+
+                        if not bh.empty:
+                            min_bh = round(bh.min(), 3)
+                            max_bh = round(bh.max(), 3)
+
+                except Exception:
+                    pass
+
+                test_results.append(
+                    {
+                        "Hostname": device,
+                        "OS Type": os_type,
+                        "MAC": mac,
+                        "RSSI (dBm)": rssi,
+                        "Link Rate (Mbps)": link,
+                        "SSID": ssid,
+                        "Total Frames": total_frames_list[i],
+                        "Dropped Frames": dropped_frames_list[i],
+                        "Min Buffer Health(s)": min_bh,
+                        "Max Buffer Health(s)": max_bh
+                    }
+                )
+
+            if device_names:
+
+                report.set_graph_title(
+                    "Total Frames vs Frames Dropped"
+                )
+
+                report.build_graph_title()
+
+                graph = lf_bar_graph_horizontal(
+                    _data_set=[
+                        dropped_frames_list,
+                        total_frames_list
+                    ],
+                    _xaxis_name="Number of Frames",
+                    _yaxis_name="Wireless Devices",
+                    _yaxis_categories=device_names,
+                    _graph_image_name=(
+                        "Dropped Frames vs Total Frames"
+                    ),
+                    _label=[
+                        "Dropped Frames",
+                        "Total Frames"
+                    ],
+                    _color=None,
+                    _color_edge='red',
+                    _figsize=(
+                        25,
+                        len(device_names) * 0.5 + 4
+                    ),
+                    _show_bar_value=True,
+                    _text_font=6,
+                    _text_rotation=True,
+                    _enable_csv=True,
+                    _legend_loc="upper right",
+                    _legend_box=(1.1, 1),
+                )
+
+                graph_image = (
+                    graph.build_bar_graph_horizontal()
+                )
+
+                report.set_graph_image(
+                    graph_image
+                )
+
+                report.move_graph_image()
+
+                report.build_graph()
+
+            if device_names_res:
+
+                report.set_graph_title(
+                    "Video Playback Resolution "
+                    "Distribution"
+                )
+
+                report.build_graph_title()
+
+                plt.figure(
+                    figsize=(
+                        18,
+                        len(
+                            device_names_res
+                        ) * 1.2 + 3
+                    )
+                )
+
+                y_pos = np.arange(
+                    len(
+                        device_names_res
+                    )
+                )
+
+                left = np.zeros(
+                    len(
+                        device_names_res
+                    )
+                )
+
+                for r in resolution_buckets:
+
+                    values = np.array(
+                        resolution_data[r]
+                    )
+
+                    plt.barh(
+                        y_pos,
+                        values,
+                        left=left,
+                        label=r
+                    )
+
+                    left += values
+
+                plt.yticks(
+                    y_pos,
+                    device_names_res
+                )
+
+                plt.xlabel(
+                    "Video Resolution (in %)"
+                )
+
+                plt.ylabel(
+                    "Wireless Devices"
+                )
+
+                plt.title(
+                    "Video Resolution "
+                    "Distribution Graph"
+                )
+
+                plt.legend(
+                    loc="upper center",
+                    bbox_to_anchor=(
+                        0.5,
+                        -0.08
+                    ),
+                    ncol=3
+                )
+
+                plt.tight_layout()
+
+                img_name = (
+                    "resolution_distribution.png"
+                )
+
+                plt.savefig(
+                    img_name
+                )
+
+                plt.close()
+
+                report.set_graph_image(
+                    img_name
+                )
+
+                report.move_graph_image()
+
+                report.build_graph()
+
+            for (
+                device_name,
+                df_buf
+            ) in buffer_graph_data:
+
+                try:
+                    report.set_graph_title(
+                        f"Buffer Health vs Time "
+                        f"for {device_name}"
+                    )
+
+                    report.build_graph_title()
+
+                    plt.figure(
+                        figsize=(16, 8)
+                    )
+
+                    plt.plot(
+                        df_buf["Timestamp"],
+                        df_buf["BufferHealth"]
+                    )
+
+                    plt.xlabel("Time")
+
+                    plt.ylabel(
+                        "Buffer Health"
+                    )
+
+                    plt.title(
+                        f"Buffer Health vs Time "
+                        f"for {device_name}"
+                    )
+
+                    plt.xticks(
+                        rotation=90
+                    )
+
+                    plt.tight_layout()
+
+                    img_name = (
+                        f"{device_name}"
+                        "_buffer_health.png"
+                    )
+
+                    plt.savefig(
+                        img_name
+                    )
+
+                    plt.close()
+
+                    report.set_graph_image(
+                        img_name
+                    )
+
+                    report.move_graph_image()
+
+                    report.build_graph()
+
+                except Exception as e:
+
+                    logger.error(
+                        f"Buffer graph failed "
+                        f"{device_name}: {e}"
+                    )
+            if test_results:
+
+                report.set_obj_html(
+                    _obj_title="Test Results",
+                    _obj=""
+                )
+
+                report.build_objective()
+
+                results_df = pd.DataFrame(test_results)
+
+                report.set_table_dataframe(results_df)
+
+                report.build_table()
+
+            report.build_custom()
+            report.build_footer()
+            report.write_html()
+            report.write_pdf()
+
+            logger.info(
+                f"Report generated in "
+                f"{report_path_date_time}"
+            )
+
+        except Exception as e:
+
+            logger.error(
+                f"Failed generating "
+                f"Shorts report: {e}"
+            )
+    
 def main():
     try:
         parser = argparse.ArgumentParser(
@@ -1003,12 +1710,13 @@ def main():
             formatter_class=argparse.RawTextHelpFormatter,
             description="LANforge YouTube Shorts Automation"
         )
-
+        webGUI_args = parser.add_argument_group("WebGUI arguments")
         # Required arguments
         parser.add_argument("--mgr", required=True, help="LANforge manager IP")
         parser.add_argument("--mgr_port", default=8080, help="LANforge HTTP port")
         parser.add_argument("--duration", type=int, required=True,
                             help="Total test duration in seconds")
+        parser.add_argument("--test_name",type=str, help="test name for webgui")
         parser.add_argument("--scroll", type=int, required=True,
                             help="Scroll interval in seconds (time between moving to next Short)")
         parser.add_argument("--flask_ip", required=True,
@@ -1023,6 +1731,11 @@ def main():
                             help="Skip cleanup BEFORE test")
         parser.add_argument("--no_post_cleanup", action="store_true",
                             help="Skip cleanup AFTER test")
+        #webgui specific args
+        webGUI_args.add_argument('--ui_report_dir', default=None, help='Specify the results directory to store the reports for webUI')
+        webGUI_args.add_argument('--do_webUI', action='store_true', help='specify this flag when triggering a test from webUI')
+
+
 
         args = parser.parse_args()
 
@@ -1045,10 +1758,15 @@ def main():
             debug=args.debug
         )
 
+        do_webUI = args.do_webUI
+        ui_report_dir = args.ui_report_dir
+
        
         # Start Flask server
         yt.start_flask_server()
         time.sleep(1)
+
+        yt.clear_csv_data()
 
         # Clear previous test stats
         yt.clear_previous_data()
@@ -1131,8 +1849,9 @@ def main():
         if not args.no_post_cleanup:
             logging.info("Running post-test cleanup...")
             yt.cleanup()
-        else:
             logging.info("Skipping post-test cleanup.")
+        
+        yt.create_report()  # optional report generation from collected CSVs
 
         # Final shutdown
         yt.shutdown()
