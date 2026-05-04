@@ -1,90 +1,108 @@
-import asyncio
-import importlib
-import datetime
-import time
-import requests
-import paramiko
-import threading
-import logging
-from lf_graph import lf_bar_graph_horizontal,lf_bar_graph,lf_line_graph
-import pandas as pd
-from lf_base_interop_profile import RealDevice
-from lf_ftp import FtpTest
-import lf_webpage as http_test
-import multiprocessing
-import lf_interop_qos as qos_test
-import lf_interop_ping as ping_test
-from lf_interop_throughput import Throughput
-from lf_interop_video_streaming import VideoStreamingTest
-from multiprocessing import Event, Value, Lock
-from lf_base_robo import RobotClass
-# from lf_interop_real_browser_test import RealBrowserTest
-from test_l3 import L3VariableTime,change_port_to_ip,configure_reporting,query_real_clients,valid_endp_types
-from lf_kpi_csv import lf_kpi_csv
-import lf_cleanup
-import os
-import shutil
-import sys
-lf_kpi_csv = importlib.import_module("py-scripts.lf_kpi_csv")
+# --- Standard Library Imports ---
 import argparse
-import json
-import glob
-import traceback
-from types import SimpleNamespace
-import matplotlib
+import asyncio
 import csv
+import datetime
+import glob
+import importlib
+import json
+import logging
+import multiprocessing
+import os
+import sys
+import threading
+import time
+import traceback
+from multiprocessing import Event, Lock, Manager, Value
+from types import SimpleNamespace
+
+# --- Third-Party Imports ---
+import matplotlib
 import matplotlib.pyplot as plt
-from pathlib import Path
+import pandas as pd
+import paramiko
+import requests
 from dotenv import load_dotenv
 
+# --- sys.path Setup (must precede local imports) ---
+matplotlib.use('Agg')  # Must be set before pyplot is used elsewhere
+base_path = os.getcwd()
+print('base path', base_path)
+sys.path.insert(0, os.path.join(base_path, 'py-json'))          # for interop_connectivity, LANforge
+sys.path.insert(0, os.path.join(base_path, 'py-json', 'LANforge'))  # for LFUtils
+sys.path.insert(0, os.path.join(base_path, 'py-scripts'))       # for lf_logger_config
+
+if 'py-json' not in sys.path:
+    sys.path.append(os.path.join(os.path.abspath('..'), 'py-json'))
+if 'py-scripts' not in sys.path:
+    sys.path.append('/home/lanforge/lanforge-scripts/py-scripts')
+
+# --- Local / Project Imports ---
+import lf_cleanup
+import lf_interop_qos as qos_test
+import lf_webpage as http_test
+from LANforge import LFUtils
+from lf_base_interop_profile import RealDevice
+from lf_base_robo import RobotClass
+from lf_ftp import FtpTest
+from lf_graph import lf_bar_graph, lf_bar_graph_horizontal, lf_line_graph
+from lf_interop_ping import Ping
+from lf_interop_throughput import Throughput
+from lf_interop_video_streaming import VideoStreamingTest
+# from lf_interop_real_browser_test import RealBrowserTest
+from test_l3 import (
+    L3VariableTime,
+    configure_reporting,
+    query_real_clients,
+    valid_endp_types,
+)
+
+# --- importlib-based Local Imports (dynamic module loading) ---
+lf_kpi_csv = importlib.import_module("py-scripts.lf_kpi_csv")
+lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
+lf_report = importlib.import_module("py-scripts.lf_report")
+lf_report_pdf = importlib.import_module("py-scripts.lf_report")
+througput_test = importlib.import_module("py-scripts.lf_interop_throughput")
+video_streaming_test = importlib.import_module("py-scripts.lf_interop_video_streaming")
+web_browser_test = importlib.import_module(
+    "py-scripts.real_application_tests.real_browser.lf_interop_real_browser_test"
+)
+zoom_test = importlib.import_module(
+    "py-scripts.real_application_tests.zoom_automation.lf_interop_zoom"
+)
+yt_test = importlib.import_module(
+    "py-scripts.real_application_tests.youtube.lf_interop_youtube"
+)
+teams_test = importlib.import_module(
+    "py-scripts.real_application_tests.teams_automation.lf_interop_teams"
+)
+DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
 realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
-error_logs = ""
-# objj = "obj" 
-test_results_df = pd.DataFrame(columns=['test_name', 'status'])
-matplotlib.use('Agg')  # Before importing pyplot
-base_path = os.getcwd()
-print('base path',base_path)
-sys.path.insert(0, os.path.join(base_path, 'py-json'))     # for interop_connectivity, LANforge
-sys.path.insert(0, os.path.join(base_path, 'py-json', 'LANforge'))  # for LFUtils
-sys.path.insert(0, os.path.join(base_path, 'py-scripts'))  # for lf_logger_config
-througput_test=importlib.import_module("py-scripts.lf_interop_throughput")
-video_streaming_test=importlib.import_module("py-scripts.lf_interop_video_streaming")
-web_browser_test=importlib.import_module("py-scripts.real_application_tests.real_browser.lf_interop_real_browser_test")
-zoom_test=importlib.import_module("py-scripts.real_application_tests.zoom_automation.lf_interop_zoom")
-yt_test=importlib.import_module("py-scripts.real_application_tests.youtube.lf_interop_youtube")
-teams_test=importlib.import_module("py-scripts.real_application_tests.teams_automation.lf_interop_teams")
-lf_report_pdf = importlib.import_module("py-scripts.lf_report")
-lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
-logger = logging.getLogger(__name__)
-lf_logger_config.lf_logger_config()
+
+# --- Class / Object Extraction from Dynamic Modules ---
 RealBrowserTest = getattr(web_browser_test, "RealBrowserTest")
 Youtube = getattr(yt_test, "Youtube")
 ZoomAutomation = getattr(zoom_test, "ZoomAutomation")
 TeamsAutomation = getattr(teams_test, "TeamsAutomation")
-DeviceConfig=importlib.import_module("py-scripts.DeviceConfig")
-from lf_interop_ping import Ping
-import sys
-import os
-from multiprocessing import Manager
+
+# --- Logger Setup ---
+logger = logging.getLogger(__name__)
+lf_logger_config.lf_logger_config()
+
+# --- Module-Level State ---
+error_logs = ""
+test_results_df = pd.DataFrame(columns=['test_name', 'status'])
 manager = Manager()
 test_results_list = manager.list()
-if 'py-json' not in sys.path:
-    sys.path.append(os.path.join(os.path.abspath('..'), 'py-json'))
 
-
-if 'py-scripts' not in sys.path:
-    sys.path.append('/home/lanforge/lanforge-scripts/py-scripts')
-lf_report = importlib.import_module("py-scripts.lf_report")
-from station_profile import StationProfile
-import interop_connectivity
-from LANforge import LFUtils
 class Candela(Realm):
     """
     Candela Class file to invoke different scripts from py-scripts.
     """
 
-    def __init__(self, ip='localhost', port=8080,order_priority="series",result_dir="",dowebgui=False,test_name='',no_cleanup=False,robot_test=False,robot_ip=None,coordinate=[],rotation=[],do_bandsteering=False,bssids=None,cycles=1,duration_to_skip=None):
+    def __init__(self, ip='localhost', port=8080, order_priority="series", result_dir="", dowebgui=False, test_name='', no_cleanup=False,
+                 robot_test=False, robot_ip=None, coordinate=[], rotation=[], do_bandsteering=False, bssids=None, cycles=1, duration_to_skip=None):
         super().__init__(lfclient_host=ip,
                          lfclient_port=port)
         self.lanforge_ip = ip
@@ -94,22 +112,22 @@ class Candela(Realm):
         self.ftp_test = None
         self.http_test = None
         self.generic_endps_profile = self.new_generic_endp_profile()
-        self.iterations_before_test_stopped_by_user=None
-        self.incremental_capacity_list=None
-        self.all_dataframes=None
-        self.to_run_cxs_len=None
-        self.date=None
-        self.test_setup_info=None
-        self.individual_df=None
-        self.cx_order_list=None
-        self.dataset2=None
+        self.iterations_before_test_stopped_by_user = None
+        self.incremental_capacity_list = None
+        self.all_dataframes = None
+        self.to_run_cxs_len = None
+        self.date = None
+        self.test_setup_info = None
+        self.individual_df = None
+        self.cx_order_list = None
+        self.dataset2 = None
         self.dataset = None
         self.lis = None
         self.bands = None
         self.total_urls = None
         self.uc_min_value = None
         self.cx_order_list = None
-        self.gave_incremental=None
+        self.gave_incremental = None
         self.result_path = os.getcwd()
         self.test_count_dict = {}
         self.current_exec = "series"
@@ -123,19 +141,19 @@ class Candela(Realm):
         self.test_stopped = False
         self.no_cleanup = no_cleanup
         self.duration_dict = {}
-        # Dictionaries to store objects and data for different test types, 
+        # Dictionaries to store objects and data for different test types,
         # categorized by parallel or series execution modes.
-        self.http_obj_dict = {"parallel":{},"series":{}}
-        self.ftp_obj_dict = {"parallel":{},"series":{}}
-        self.thput_obj_dict = {"parallel":{},"series":{}}
-        self.qos_obj_dict = {"parallel":{},"series":{}}
-        self.ping_obj_dict = {"parallel":{},"series":{}}
-        self.mcast_obj_dict = {"parallel":{},"series":{}}
-        self.rb_obj_dict = {"parallel":{},"series":{}}
-        self.yt_obj_dict = {"parallel":{},"series":{}}
-        self.zoom_obj_dict = {"parallel":{},"series":{}}
-        self.vs_obj_dict = {"parallel":{},"series":{}}
-        self.teams_obj_dict = {"parallel":{},"series":{}}
+        self.http_obj_dict = {"parallel": {}, "series": {}}
+        self.ftp_obj_dict = {"parallel": {}, "series": {}}
+        self.thput_obj_dict = {"parallel": {}, "series": {}}
+        self.qos_obj_dict = {"parallel": {}, "series": {}}
+        self.ping_obj_dict = {"parallel": {}, "series": {}}
+        self.mcast_obj_dict = {"parallel": {}, "series": {}}
+        self.rb_obj_dict = {"parallel": {}, "series": {}}
+        self.yt_obj_dict = {"parallel": {}, "series": {}}
+        self.zoom_obj_dict = {"parallel": {}, "series": {}}
+        self.vs_obj_dict = {"parallel": {}, "series": {}}
+        self.teams_obj_dict = {"parallel": {}, "series": {}}
         self.parallel_connect = {}
         self.series_connect = {}
         self.parallel_index = 0
@@ -150,7 +168,7 @@ class Candela(Realm):
         self.coordinate_list = coordinate.split(',')
         self.rotation_list = rotation.split(',')
         self.bssids = bssids.split(",") if bssids else []
-        self.rotation_enabled  = True if rotation != '' else False
+        self.rotation_enabled = True if rotation != '' else False
         # Multi-threading/multiprocessing synchronization events for individual test completions
         self.ftp_done_event = Event()
         self.qos_done_event = Event()
@@ -162,7 +180,7 @@ class Candela(Realm):
         self.yt_done_event = Event()
         self.rb_done_event = Event()
         self.zoom_done_event = Event()
-        
+
         # Synchronization events to trigger robot movement or rotation during tests required for robot scenarios
         self.robot_move_event = Event()
         self.ftp_rotate = Event()
@@ -175,7 +193,7 @@ class Candela(Realm):
         self.yt_rotate = Event()
         self.rb_rotate = Event()
         self.zoom_rotate = Event()
-        
+
         # Events indicating a triggered rotation has been completed by the robot
         self.ftp_rotate_done_event = Event()
         self.qos_rotate_done_event = Event()
@@ -187,7 +205,7 @@ class Candela(Realm):
         self.yt_rotate_done_event = Event()
         self.rb_rotate_done_event = Event()
         self.zoom_rotate_done_event = Event()
-        
+
         # General state tracking and locking for robot integration and test control
         self.robot_rotate_move_event = Event()
         self.test_stopped_event = Event()
@@ -198,15 +216,15 @@ class Candela(Realm):
         self.robot_rotate_call_counter = Value('i', 0)
         self.robot_call_counter = Value('i', 0)
 
-    def webgui_stop_check(self,test_name):
+    def webgui_stop_check(self, test_name):
         """
         Checks the running JSON file generated when a test is executed via the web GUI.
         If the user clicks 'Stop' in the GUI, this JSON file's status gets updated.
         This function detects that change and updates the internal test status accordingly.
-        
+
         Args:
             test_name (str): The name of the test currently being executed.
-            
+
         Returns:
             bool: False if the test was stopped by the user, True otherwise.
         """
@@ -237,7 +255,7 @@ class Candela(Realm):
         """
         Sends the 'stopped' status to the web GUI when the test has finished.
         Updates the overall status tracking and writes the final status to a CSV file.
-        
+
         Args:
             test_name (str): The name of the test that just finished.
         """
@@ -250,10 +268,10 @@ class Candela(Realm):
         except Exception as e:
             logger.info(e)
 
-    def port_clean_up(self,port_no):
+    def port_clean_up(self, port_no):
         """
         Cleans up the specified port by killing any processes using it.
-        
+
         Args:
             port_no (int): The port number to clean up.
         """
@@ -291,8 +309,7 @@ class Candela(Realm):
 
         ssh.close()
 
-
-    def misc_clean_up(self,layer3=False,layer4=False,generic=False,port_5000=False,port_5002=False,port_5003=False):
+    def misc_clean_up(self, layer3=False, layer4=False, generic=False, port_5000=False, port_5002=False, port_5003=False):
         """
         Use for the cleanup of cross connections
         arguments:
@@ -319,9 +336,7 @@ class Candela(Realm):
                         self.generic_endps_profile.created_endp.append(list(i.values())[0]['name'])
             self.generic_endps_profile.cleanup()
 
-
-
-        #TODO Need to verify this functionality , currently not required.
+        # TODO Need to verify this functionality , currently not required.
         # if port_5000 or port_5002 or port_5003:
         #     print('port cleanup......')
         #     time.sleep(5)
@@ -475,7 +490,7 @@ class Candela(Realm):
             if not self.robot_rotate_move_event.is_set():
                 self.robot_rotate_move_event.set()
                 self.robo_controller(coord=coordinate, angle=angle)
-        
+
             self.robot_rotate_call_counter.value += 1
             if self.robot_rotate_call_counter.value == len(self.parallel_tests):
                 self.robot_rotate_move_event.clear()
@@ -493,7 +508,7 @@ class Candela(Realm):
         Wait for all active parallel tests to completely finish their execution.
         """
         # print(self.qos_done_event.is_set(),"---",self.ftp_done_event.is_set(),"---",self.http_done_event.is_set())
-        print("parallel tests running",self.parallel_tests)
+        print("parallel tests running", self.parallel_tests)
         if "qos_test" in self.parallel_tests:
             logger.info("Waiting for QoS test to finish")
             self.qos_done_event.wait()
@@ -528,7 +543,7 @@ class Candela(Realm):
             if not self.robot_move_event.is_set():
                 self.robot_move_event.set()
                 self.robo_controller(coord=coordinate, angle=angle)
-        
+
             self.robot_call_counter.value += 1
             if self.robot_call_counter.value == len(self.parallel_tests):
                 self.robot_move_event.clear()
@@ -539,9 +554,8 @@ class Candela(Realm):
                 self.abort_event.is_set(),
                 self.robo_rotated.value
             )
-    
-    
-    def robo_controller(self,coord,angle=None):
+
+    def robo_controller(self, coord, angle=None):
         """
         Control the robot's movement or rotation.
         Ensures the robot has enough battery before proceeding. If 'angle' is provided,
@@ -553,19 +567,19 @@ class Candela(Realm):
         self.robo_moved.value = False
         self.abort_event.clear()
         self.test_stopped_event.clear()
-        
+
         if angle is None:
 
             if self.test_stopped_event.is_set():
                 return
-                    
+
             _, stopped = self.robot_obj.wait_for_battery(battery=40)
 
             if stopped:
                 logger.info("Test stopped while waiting for battery.")
                 self.test_stopped_event.set()
                 return
-                
+
             logger.info(f"Moving robot to coordinate: {coord}")
             moved, abort = self.robot_obj.move_to_coordinate(coord)
             self.robo_moved.value = moved
@@ -574,7 +588,7 @@ class Candela(Realm):
                 logger.warning("Robot movement aborted.")
                 self.abort_event.set()
                 return
-        
+
         else:
             if self.rotation_enabled:
                 logger.info(f"Rotating robot to angle: {angle}")
@@ -587,7 +601,6 @@ class Candela(Realm):
 
                 rotated = self.robot_obj.rotate_angle(1, 2, angle)
                 self.robo_rotated.value = rotated
-
 
     def run_ping_test(
         self,
@@ -705,15 +718,15 @@ class Candela(Realm):
                 debug:                    {}
                 '''.format(mgr_ip, mgr_port, ssid, security, password, target, interval, duration, virtual, num_sta, radio, real, debug))
 
-        ce = self.current_exec #seires
+        ce = self.current_exec  # seires
         if ce == "parallel":
             obj_name = "ping_test"
         else:
             obj_no = 1
             while f"ping_test_{obj_no}" in self.ping_obj_dict[ce]:
-                obj_no+=1 
-            obj_name = f"ping_test_{obj_no}" 
-        self.ping_obj_dict[ce][obj_name] = {"obj":None,"data":None}
+                obj_no += 1
+            obj_name = f"ping_test_{obj_no}"
+        self.ping_obj_dict[ce][obj_name] = {"obj": None, "data": None}
         if self.dowebgui:
             if not self.webgui_stop_check("ping"):
                 return False
@@ -723,8 +736,8 @@ class Candela(Realm):
         else:
             ping_robot_status = self.robot_ip
         self.ping_obj_dict[ce][obj_name]["obj"] = Ping(host=mgr_ip, port=mgr_port, ssid=ssid, security=security, password=password, radio=radio,
-                    lanforge_password=mgr_password, target=target, interval=interval, sta_list=[], virtual=virtual, real=real, duration=duration, debug=debug, csv_name=device_csv_name,
-                    expected_passfail_val=expected_passfail_value, wait_time=wait_time, group_name=group_name)
+                                                       lanforge_password=mgr_password, target=target, interval=interval, sta_list=[], virtual=virtual, real=real, duration=duration, debug=debug, csv_name=device_csv_name,
+                                                       expected_passfail_val=expected_passfail_value, wait_time=wait_time, group_name=group_name)
 
         # changing the target from port to IP
         self.ping_obj_dict[ce][obj_name]["obj"].change_target_to_ip()
@@ -813,7 +826,7 @@ class Candela(Realm):
                 self.ping_obj_dict[ce][obj_name]["obj"].select_real_devices(real_devices=Devices, device_list=dev_list)
 
         # station precleanup
-        self.ping_obj_dict[ce][obj_name]["obj"].cleanup() #11 change
+        self.ping_obj_dict[ce][obj_name]["obj"].cleanup()  # 11 change
 
         # building station if virtual
         if (virtual):
@@ -836,7 +849,7 @@ class Candela(Realm):
         if self.robot_test and not self.do_bandsteering:
             if self.dowebgui:
                 self.ping_obj_dict[ce][obj_name]["obj"].webgui = True
-                
+
             if self.current_exec != "parallel":
                 if self.dowebgui:
                     try:
@@ -859,15 +872,15 @@ class Candela(Realm):
                         logger.info("test has been stopped by the user")
                         return False
                 self.ping_obj_dict[ce][obj_name]["obj"].local_lf_report_dir = local_lf_report_dir
-                self.ping_obj_dict[ce][obj_name]["obj"].perform_robo_webui(self.ping_obj_dict[ce][obj_name]["obj"],Devices)
+                self.ping_obj_dict[ce][obj_name]["obj"].perform_robo_webui(self.ping_obj_dict[ce][obj_name]["obj"], Devices)
                 params = {
-                "result_json": None,
-                "result_dir": "Ping_Test_Report",
-                "report_path": "",
-                "config_devices": "",
-                "group_device_map": {}
+                    "result_json": None,
+                    "result_dir": "Ping_Test_Report",
+                    "report_path": "",
+                    "config_devices": "",
+                    "group_device_map": {}
                 }
-            
+
                 if local_lf_report_dir != "":
                     params["report_path"] = local_lf_report_dir
 
@@ -880,42 +893,42 @@ class Candela(Realm):
                 return True
             else:
                 self.ping_obj_dict[ce][obj_name]["obj"].local_lf_report_dir = local_lf_report_dir
-                rotation_enabled=bool(self.ping_obj_dict[ce][obj_name]["obj"].rotation_enabled)
-                abort=False
+                rotation_enabled = bool(self.ping_obj_dict[ce][obj_name]["obj"].rotation_enabled)
+                abort = False
                 ports_data_dict = self.json_get('/ports/all/')['interfaces']
                 ports_data = {}
                 for ports in ports_data_dict:
                     port, port_data = list(ports.keys())[0], list(ports.values())[0]
                     ports_data[port] = port_data
-                
+
                 for coord in self.ping_obj_dict[ce][obj_name]["obj"].coordinate_list:
-                    test_stopped_by_user,robo_moved, abort, robo_rotated = self.wait_for_all_tests_to_finish(coordinate=coord)
+                    test_stopped_by_user, robo_moved, abort, robo_rotated = self.wait_for_all_tests_to_finish(coordinate=coord)
                     if test_stopped_by_user:
                         break
                     if abort or not robo_moved:
                         break
                     self.ping_obj_dict[ce][obj_name]["obj"].coordinates_completed.append(coord)
-                    self.ping_obj_dict[ce][obj_name]["obj"].currentcoordinate=coord
+                    self.ping_obj_dict[ce][obj_name]["obj"].currentcoordinate = coord
                     logging.info("rotationlist {}".format(self.ping_obj_dict[ce][obj_name]["obj"].angle_list))
-                    self.ping_obj_dict[ce][obj_name]["obj"].result_json={}
-                    pause_angle=False
+                    self.ping_obj_dict[ce][obj_name]["obj"].result_json = {}
+                    pause_angle = False
                     for j in range(len(self.ping_obj_dict[ce][obj_name]["obj"].angle_list)):
                         if rotation_enabled:
                             # self.ping_done_event.clear()
-                            test_stopped_by_user,robo_moved, abort, robo_rotated = self.wait_for_all_tests_to_finish_rotation(coordinate=coord,angle=self.rotation_list[j])
+                            test_stopped_by_user, robo_moved, abort, robo_rotated = self.wait_for_all_tests_to_finish_rotation(coordinate=coord, angle=self.rotation_list[j])
                             # self.ping_done_event.set()
                             if test_stopped_by_user:
                                 break
                             if not robo_rotated:
-                                break    
-                        self.ping_obj_dict[ce][obj_name]["obj"].currentangle=self.ping_obj_dict[ce][obj_name]["obj"].angle_list[j]
+                                break
+                        self.ping_obj_dict[ce][obj_name]["obj"].currentangle = self.ping_obj_dict[ce][obj_name]["obj"].angle_list[j]
                         self.ping_done_event.clear()
                         if rotation_enabled:
                             self.ping_rotate_done_event.clear()
                             self.ping_rotate.set()
                             self.check_all_tests()
                         self.ping_obj_dict[ce][obj_name]["obj"].start_generic()
-                        duration=self.ping_obj_dict[ce][obj_name]["obj"].duration * 60
+                        duration = self.ping_obj_dict[ce][obj_name]["obj"].duration * 60
                         time.sleep(duration)
                         logging.info('Stopping the cx')
                         self.ping_obj_dict[ce][obj_name]["obj"].stop_generic()
@@ -949,7 +962,8 @@ class Candela(Realm):
                                                 'remarks': [],
                                                 'last_result': [result_data['last results'].split('\n')[-2] if len(result_data['last results']) != 0 else ""][0]
                                             }
-                                            self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['remarks'] = self.ping_obj_dict[ce][obj_name]["obj"].generate_remarks(self.ping_obj_dict[ce][obj_name]["obj"].result_json[station])
+                                            self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['remarks'] = self.ping_obj_dict[ce][obj_name]["obj"].generate_remarks(
+                                                self.ping_obj_dict[ce][obj_name]["obj"].result_json[station])
                                         except Exception:
                                             logging.error('Failed parsing the result for the station {}'.format(station))
                             else:
@@ -977,34 +991,36 @@ class Candela(Realm):
                                                     'remarks': [],
                                                     'last_result': [ping_data['last results'].split('\n')[-2] if len(ping_data['last results']) != 0 else ""][0]
                                                 }
-                                                self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['remarks'] = self.ping_obj_dict[ce][obj_name]["obj"].generate_remarks(self.ping_obj_dict[ce][obj_name]["obj"].result_json[station])
+                                                self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['remarks'] = self.ping_obj_dict[ce][obj_name]["obj"].generate_remarks(
+                                                    self.ping_obj_dict[ce][obj_name]["obj"].result_json[station])
                                             except Exception:
                                                 logging.error('Failed parsing the result for the station {}'.format(station))
 
                         if self.ping_obj_dict[ce][obj_name]["obj"].currentcoordinate not in self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json:
 
-                            self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json[self.ping_obj_dict[ce][obj_name]["obj"].currentcoordinate]={}
+                            self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json[self.ping_obj_dict[ce][obj_name]["obj"].currentcoordinate] = {}
                         if self.ping_obj_dict[ce][obj_name]["obj"].rotation_enabled:
-                                if self.ping_obj_dict[ce][obj_name]["obj"].currentangle not in self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json[self.ping_obj_dict[ce][obj_name]["obj"].currentcoordinate]:
-                                    self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json[self.ping_obj_dict[ce][obj_name]["obj"].currentcoordinate][self.ping_obj_dict[ce][obj_name]["obj"].currentangle]={}
-                                self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json[self.ping_obj_dict[ce][obj_name]["obj"].currentcoordinate][self.ping_obj_dict[ce][obj_name]["obj"].currentangle]=self.ping_obj_dict[ce][obj_name]["obj"].result_json                        
+                            if self.ping_obj_dict[ce][obj_name]["obj"].currentangle not in self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json[self.ping_obj_dict[ce][obj_name]["obj"].currentcoordinate]:
+                                self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json[self.ping_obj_dict[ce][obj_name]
+                                                                                        ["obj"].currentcoordinate][self.ping_obj_dict[ce][obj_name]["obj"].currentangle] = {}
+                            self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json[self.ping_obj_dict[ce][obj_name]["obj"].currentcoordinate][self.ping_obj_dict[ce]
+                                                                                                                                               [obj_name]["obj"].currentangle] = self.ping_obj_dict[ce][obj_name]["obj"].result_json
                         else:
-                            self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json[self.ping_obj_dict[ce][obj_name]["obj"].currentcoordinate]=self.ping_obj_dict[ce][obj_name]["obj"].result_json
-                
+                            self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json[self.ping_obj_dict[ce][obj_name]["obj"].currentcoordinate] = self.ping_obj_dict[ce][obj_name]["obj"].result_json
+
                 if self.ping_obj_dict[ce][obj_name]["obj"].local_lf_report_dir == "":
                     self.ping_obj_dict[ce][obj_name]["obj"].generate_report_robo()
                 else:
                     self.ping_obj_dict[ce][obj_name]["obj"].generate_report_robo(report_path=self.ping_obj_dict[ce][obj_name]["obj"].local_lf_report_dir)
 
-
                 params = {
-                "result_json": None,
-                "result_dir": "Ping_Test_Report",
-                "report_path": "",
-                "config_devices": "",
-                "group_device_map": {}
+                    "result_json": None,
+                    "result_dir": "Ping_Test_Report",
+                    "report_path": "",
+                    "config_devices": "",
+                    "group_device_map": {}
                 }
-            
+
                 if local_lf_report_dir != "":
                     params["report_path"] = local_lf_report_dir
 
@@ -1139,7 +1155,8 @@ class Candela(Realm):
                                     'remarks': [],
                                     'last_result': [result_data['last results'].split('\n')[-2] if len(result_data['last results']) != 0 else ""][0]
                                 }
-                                self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['remarks'] = self.ping_obj_dict[ce][obj_name]["obj"].generate_remarks(self.ping_obj_dict[ce][obj_name]["obj"].result_json[station])
+                                self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['remarks'] = self.ping_obj_dict[ce][obj_name]["obj"].generate_remarks(
+                                    self.ping_obj_dict[ce][obj_name]["obj"].result_json[station])
                             except BaseException:
                                 logging.error('Failed parsing the result for the station {}'.format(station))
 
@@ -1169,7 +1186,8 @@ class Candela(Realm):
                                         'remarks': [],
                                         'last_result': [ping_data['last results'].split('\n')[-2] if len(ping_data['last results']) != 0 else ""][0]
                                     }
-                                    self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['remarks'] = self.ping_obj_dict[ce][obj_name]["obj"].generate_remarks(self.ping_obj_dict[ce][obj_name]["obj"].result_json[station])
+                                    self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['remarks'] = self.ping_obj_dict[ce][obj_name]["obj"].generate_remarks(
+                                        self.ping_obj_dict[ce][obj_name]["obj"].result_json[station])
                                 except BaseException:
                                     logging.error('Failed parsing the result for the station {}'.format(station))
 
@@ -1198,7 +1216,8 @@ class Candela(Realm):
                                 'remarks': [],
                                 'last_result': [result_data['last results'].split('\n')[-2] if len(result_data['last results']) != 0 else ""][0]
                             }
-                            self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['remarks'] = self.ping_obj_dict[ce][obj_name]["obj"].generate_remarks(self.ping_obj_dict[ce][obj_name]["obj"].result_json[station])
+                            self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['remarks'] = self.ping_obj_dict[ce][obj_name]["obj"].generate_remarks(
+                                self.ping_obj_dict[ce][obj_name]["obj"].result_json[station])
                         except BaseException:
                             logging.error('Failed parsing the result for the station {}'.format(station))
             else:
@@ -1226,26 +1245,27 @@ class Candela(Realm):
                                     'remarks': [],
                                     'last_result': [ping_data['last results'].split('\n')[-2] if len(ping_data['last results']) != 0 else ""][0]
                                 }
-                                self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['remarks'] = self.ping_obj_dict[ce][obj_name]["obj"].generate_remarks(self.ping_obj_dict[ce][obj_name]["obj"].result_json[station])
+                                self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['remarks'] = self.ping_obj_dict[ce][obj_name]["obj"].generate_remarks(
+                                    self.ping_obj_dict[ce][obj_name]["obj"].result_json[station])
                             except BaseException:
                                 logging.error('Failed parsing the result for the station {}'.format(station))
 
         logging.info(self.ping_obj_dict[ce][obj_name]["obj"].result_json)
 
         # station post cleanup
-        self.ping_obj_dict[ce][obj_name]["obj"].cleanup() #12 change
+        self.ping_obj_dict[ce][obj_name]["obj"].cleanup()  # 12 change
         if self.dowebgui:
             temp_json = []
             for station in self.ping_obj_dict[ce][obj_name]["obj"].result_json:
                 logging.debug('{} {}'.format(station, self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]))
                 temp_json.append({'device': station,
-                                    'sent': self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['sent'],
-                                    'recv': self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['recv'],
-                                    'dropped': self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['dropped'],
-                                    'status': "Stopped",
-                                    'start_time': start_time.strftime("%d/%m %I:%M:%S %p"),
-                                    'end_time': end_time.strftime("%d/%m %I:%M:%S %p"),
-                                    "remaining_time": ""})
+                                  'sent': self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['sent'],
+                                  'recv': self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['recv'],
+                                  'dropped': self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['dropped'],
+                                  'status': "Stopped",
+                                  'start_time': start_time.strftime("%d/%m %I:%M:%S %p"),
+                                  'end_time': end_time.strftime("%d/%m %I:%M:%S %p"),
+                                  "remaining_time": ""})
             df1 = pd.DataFrame(temp_json)
             df1.to_csv('{}/ping_datavalues.csv'.format(self.result_dir), index=False)
         if local_lf_report_dir == "":
@@ -1269,7 +1289,7 @@ class Candela(Realm):
             "config_devices": "",
             "group_device_map": {}
         }
-        
+
         if local_lf_report_dir != "":
             params["report_path"] = local_lf_report_dir
 
@@ -1359,556 +1379,556 @@ class Candela(Realm):
         bssids=None,
         duration_to_skip=None
     ):
-            """
-            Configure and execute an HTTP test across virtual or real clients.
-            This handles test configuration, endpoint creation, and generates an HTTP report upon completion.
-            """
-            if self.dowebgui:
-                if not self.webgui_stop_check("http"):
-                    return False
-            bands.sort()
+        """
+        Configure and execute an HTTP test across virtual or real clients.
+        This handles test configuration, endpoint creation, and generates an HTTP report upon completion.
+        """
+        if self.dowebgui:
+            if not self.webgui_stop_check("http"):
+                return False
+        bands.sort()
 
-            # Error checking to prevent case issues
-            for band in range(len(bands)):
-                bands[band] = bands[band].upper()
-                if bands[band] == "BOTH":
-                    bands[band] = "Both"
+        # Error checking to prevent case issues
+        for band in range(len(bands)):
+            bands[band] = bands[band].upper()
+            if bands[band] == "BOTH":
+                bands[band] = "Both"
 
-            # Error checking for non-existent bands
-            valid_bands = ['2.4G', '5G', '6G', 'Both']
-            for band in bands:
-                if band not in valid_bands:
-                    raise ValueError("Invalid band '%s' used in bands argument!" % band)
+        # Error checking for non-existent bands
+        valid_bands = ['2.4G', '5G', '6G', 'Both']
+        for band in bands:
+            if band not in valid_bands:
+                raise ValueError("Invalid band '%s' used in bands argument!" % band)
 
-            # Check for Both being used independently
-            if len(bands) > 1 and "Both" in bands:
-                raise ValueError("'Both' test type must be used independently!")
+        # Check for Both being used independently
+        if len(bands) > 1 and "Both" in bands:
+            raise ValueError("'Both' test type must be used independently!")
 
-            # validate_args(args)
-            if duration.endswith('s') or duration.endswith('S'):
-                duration = int(duration[0:-1])
-            elif duration.endswith('m') or duration.endswith('M'):
-                duration = int(duration[0:-1]) * 60
-            elif duration.endswith('h') or duration.endswith('H'):
-                duration = int(duration[0:-1]) * 60 * 60
-            elif duration.endswith(''):
-                duration = int(duration)
+        # validate_args(args)
+        if duration.endswith('s') or duration.endswith('S'):
+            duration = int(duration[0:-1])
+        elif duration.endswith('m') or duration.endswith('M'):
+            duration = int(duration[0:-1]) * 60
+        elif duration.endswith('h') or duration.endswith('H'):
+            duration = int(duration[0:-1]) * 60 * 60
+        elif duration.endswith(''):
+            duration = int(duration)
 
-            list6G, list6G_bytes, list6G_speed, list6G_urltimes = [], [], [], []
-            list5G, list5G_bytes, list5G_speed, list5G_urltimes = [], [], [], []
-            list2G, list2G_bytes, list2G_speed, list2G_urltimes = [], [], [], []
-            Both, Both_bytes, Both_speed, Both_urltimes = [], [], [], []
-            listReal, listReal_bytes, listReal_speed, listReal_urltimes = [], [], [], []  # For real devices (not band specific)
-            dict_keys = []
-            dict_keys.extend(bands)
-            # print(dict_keys)
-            final_dict = dict.fromkeys(dict_keys)
-            # print(final_dict)
-            dict1_keys = ['dl_time', 'min', 'max', 'avg', 'bytes_rd', 'speed', 'url_times']
-            for i in final_dict:
-                final_dict[i] = dict.fromkeys(dict1_keys)
-            min6 = []
-            min5 = []
-            min2 = []
-            min_both = []
-            max6 = []
-            max5 = []
-            max2 = []
-            max_both = []
-            avg6 = []
-            avg2 = []
-            avg5 = []
-            avg_both = []
-            port_list, dev_list, macid_list = [], [], []
-            for band in bands:
-                # For real devices while ensuring no blocker for Virtual devices
-                if client_type == 'Real':
-                    ssid = ssid
-                    passwd = passwd
-                    security = security
-                elif band == "2.4G":
-                    security = [twog_security]
-                    ssid = [twog_ssid]
-                    passwd = [twog_passwd]
-                elif band == "5G":
-                    security = [fiveg_security]
-                    ssid = [fiveg_ssid]
-                    passwd = [fiveg_passwd]
-                elif band == "6G":
-                    security = [sixg_security]
-                    ssid = [sixg_ssid]
-                    passwd = [sixg_passwd]
-                elif band == "Both":
-                    security = [twog_security, fiveg_security]
-                    ssid = [twog_ssid, fiveg_ssid]
-                    passwd = [twog_passwd, fiveg_passwd]
-                ce = self.current_exec #seires
-                if ce == "parallel":
-                    obj_name = "http_test"
-                else:
-                    obj_no = 1
-                    while f"http_test_{obj_no}" in self.http_obj_dict[ce]:
-                        obj_no+=1 
-                    obj_name = f"http_test_{obj_no}" 
-                self.http_obj_dict[ce][obj_name] = {"obj":None,"data":None}
-                
-                self.http_obj_dict[ce][obj_name]["obj"] = http_test.HttpDownload(lfclient_host=self.lanforge_ip, lfclient_port=self.port,
-                                    upstream=upstream_port, num_sta=num_stations,
-                                    security=security, ap_name=ap_name,
-                                    ssid=ssid, password=passwd,
-                                    target_per_ten=target_per_ten,
-                                    file_size=file_size, bands=band,
-                                    twog_radio=twog_radio,
-                                    fiveg_radio=fiveg_radio,
-                                    sixg_radio=sixg_radio,
-                                    client_type=client_type,
-                                    lf_username=lf_username, lf_password=lf_password,
-                                    result_dir=result_dir,  # FOR WEBGUI
-                                    dowebgui=dowebgui,  # FOR WEBGUI
-                                    device_list=device_list,
-                                    test_name=test_name,  # FOR WEBGUI
-                                    get_url_from_file=get_url_from_file,
-                                    file_path=file_path,
-                                    file_name=file_name,
-                                    group_name=group_name,
-                                    profile_name=profile_name,
-                                    eap_method=eap_method,
-                                    eap_identity=eap_identity,
-                                    ieee80211=ieee8021x,
-                                    ieee80211u=ieee80211u,
-                                    ieee80211w=ieee80211w,
-                                    enable_pkc=enable_pkc,
-                                    bss_transition=bss_transition,
-                                    power_save=power_save,
-                                    disable_ofdma=disable_ofdma,
-                                    roam_ft_ds=roam_ft_ds,
-                                    key_management=key_management,
-                                    pairwise=pairwise,
-                                    private_key=private_key,
-                                    ca_cert=ca_cert,
-                                    client_cert=client_cert,
-                                    pk_passwd=pk_passwd,
-                                    pac_file=pac_file,
-                                    expected_passfail_value=expected_passfail_value,
-                                    device_csv_name=device_csv_name,
-                                    wait_time=wait_time,
-                                    config=config,
-                                    get_live_view= get_live_view,
-                                    total_floors = total_floors,
-                                    robot_test=self.robot_test,
-                                    robot_ip=self.robot_ip,
-                                    coordinate=self.coordinate,
-                                    rotation=self.rotation,
-                                    duration=duration,
-                                    do_bandsteering=do_bandsteering,
-                                    cycles=cycles,
-                                    bssids=bssids,
-                                    duration_to_skip=duration_to_skip
-                                    )
-                if client_type == "Real":
-                    if not isinstance(device_list, list):
-                        self.http_obj_dict[ce][obj_name]["obj"].device_list = self.http_obj_dict[ce][obj_name]["obj"].filter_iOS_devices(device_list)
-                        if len(self.http_obj_dict[ce][obj_name]["obj"].device_list) == 0:
-                            logger.info("There are no devices available")
-                            return False
-                    port_list, dev_list, macid_list, configuration = self.http_obj_dict[ce][obj_name]["obj"].get_real_client_list()
-                    if dowebgui and group_name:
-                        if len(dev_list) == 0:
-                            logger.info("No device is available to run the test")
-                            obj = {
-                                "status": "Stopped",
-                                "configuration_status": "configured"
-                            }
-                            self.http_obj_dict[ce][obj_name]["obj"].updating_webui_runningjson(obj)
-                            return
-                        else:
-                            obj = {
-                                "configured_devices": dev_list,
-                                "configuration_status": "configured"
-                            }
-                            self.http_obj_dict[ce][obj_name]["obj"].updating_webui_runningjson(obj)
-                    num_stations = len(port_list)
-                if not get_url_from_file:
-                    self.http_obj_dict[ce][obj_name]["obj"].file_create(ssh_port=ssh_port)
-                else:
-                    if file_path is None:
-                        logger.warning("Please Specify the path of the file, if you select the --get_url_from_file")
-                        return False
-                self.http_obj_dict[ce][obj_name]["obj"].set_values()
-                self.http_obj_dict[ce][obj_name]["obj"].precleanup()
-                self.http_obj_dict[ce][obj_name]["obj"].build()
-                if client_type == 'Real':
-                    self.http_obj_dict[ce][obj_name]["obj"].monitor_cx()
-                    self.http_done_event.set()
-                    self.http_rotate_done_event.set()
-                    logger.info(f'Test started on the devices : {self.http_obj_dict[ce][obj_name]["obj"].port_list}')
-                test_time = datetime.datetime.now()
-                # Solution For Leap Year conflict changed it to %Y
-                test_time = test_time.strftime("%Y %d %H:%M:%S")
-                logger.info(f"Test started at {test_time}")
-                if self.http_obj_dict[ce][obj_name]["obj"].robot_test:
-                    if self.current_exec != "parallel":
-                        self.http_obj_dict[ce][obj_name]["obj"].perform_robo()
-                    else:
-                        if self.http_obj_dict[ce][obj_name]["obj"].rotation_list[0] != "":
-                            self.http_obj_dict[ce][obj_name]["obj"].rotation_enabled = True
-
-                        test_stopped_by_user = False
-                        for coordinate in range(len(self.http_obj_dict[ce][obj_name]["obj"].coordinate_list)):
-                            # print("Moving to coordinate:", coordinate)
-                            # self.robot_move_event.clear()
-                            if test_stopped_by_user:
-                                break
-                            test_stopped_by_user,robo_moved, abort, robo_rotated = self.wait_for_all_tests_to_finish(coordinate=self.http_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate])
-                            if test_stopped_by_user:
-                                break
-                            
-                            if abort or not robo_moved:
-                                break
-                            # If robot reached the coordinate
-                            if robo_moved:
-                                self.http_obj_dict[ce][obj_name]["obj"].current_coordinate = self.http_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate]
-                                # if no rotation mode
-                                if not self.http_obj_dict[ce][obj_name]["obj"].rotation_enabled:
-                                    # Start the test
-                                    self.http_done_event.clear()
-                                    self.http_obj_dict[ce][obj_name]["obj"].start()
-                                    test_stopped_by_user_http = self.http_obj_dict[ce][obj_name]["obj"].monitor_for_runtime_csv(self.http_obj_dict[ce][obj_name]["obj"].duration)
-                                    self.http_obj_dict[ce][obj_name]["obj"].stop()
-                                    self.http_done_event.set()
-                                    self.http_obj_dict[ce][obj_name]["obj"].update_stop_status_robot()
-                                    if test_stopped_by_user_http:
-                                        break
-
-                                # if rotation mode
-                                else:
-                                    for angle in range(len(self.http_obj_dict[ce][obj_name]["obj"].rotation_list)):
-                                        test_stopped_by_user,robo_moved, abort, robo_rotated = self.wait_for_all_tests_to_finish_rotation(coordinate=self.http_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate],angle=self.http_obj_dict[ce][obj_name]["obj"].rotation_list[angle])
-                                        if test_stopped_by_user:
-                                            break
-                                        if robo_rotated:
-                                            self.http_obj_dict[ce][obj_name]["obj"].current_angle = self.http_obj_dict[ce][obj_name]["obj"].rotation_list[angle]
-                                            # self.http_monitor = True
-                                            self.http_done_event.clear()
-                                            self.http_rotate_done_event.clear()
-                                            self.http_rotate.set()
-                                            self.check_all_tests()
-                                            self.http_obj_dict[ce][obj_name]["obj"].start()
-                                            test_stopped_by_user_http = self.http_obj_dict[ce][obj_name]["obj"].monitor_for_runtime_csv(self.http_obj_dict[ce][obj_name]["obj"].duration)
-                                            self.http_obj_dict[ce][obj_name]["obj"].stop()
-                                            self.http_done_event.set()
-                                            self.http_rotate_done_event.set()
-                                            self.http_rotate.clear()
-                                            # self.http_monitor = False
-                                            self.http_obj_dict[ce][obj_name]["obj"].update_stop_status_robot()
-                                            # If test is stopped by user
-                                            if test_stopped_by_user_http:
-                                                break  
-                else:
-                    self.http_obj_dict[ce][obj_name]["obj"].start()
-                    if dowebgui:
-                        # FOR WEBGUI, -This fumction is called to fetch the runtime data from layer-4
-                        self.http_obj_dict[ce][obj_name]["obj"].monitor_for_runtime_csv(duration)
-                    elif client_type == 'Real':
-                        # To fetch runtime csv during runtime
-                        self.http_obj_dict[ce][obj_name]["obj"].monitor_for_runtime_csv(duration)
-                    else:
-                        time.sleep(duration)
-                    self.http_obj_dict[ce][obj_name]["obj"].stop()
-                # taking self.http_obj_dict[ce][obj_name]["obj"].data, which got updated in the monitor_for_runtime_csv method
-                if client_type == 'Real':
-                    uc_avg_val = self.http_obj_dict[ce][obj_name]["obj"].data['uc_avg']
-                    url_times = self.http_obj_dict[ce][obj_name]["obj"].data['url_data']
-                    rx_bytes_val = self.http_obj_dict[ce][obj_name]["obj"].data['bytes_rd']
-                    rx_rate_val = list(self.http_obj_dict[ce][obj_name]["obj"].data['rx rate (1m)'])
-                else:
-                    uc_avg_val = self.http_obj_dict[ce][obj_name]["obj"].my_monitor('uc-avg')
-                    url_times = self.http_obj_dict[ce][obj_name]["obj"].my_monitor('total-urls')
-                    rx_bytes_val = self.http_obj_dict[ce][obj_name]["obj"].my_monitor('bytes-rd')
-                    rx_rate_val = self.http_obj_dict[ce][obj_name]["obj"].my_monitor('rx rate')
-                if dowebgui:
-                    self.http_obj_dict[ce][obj_name]["obj"].data_for_webui["url_data"] = url_times  # storing the layer-4 url data at the end of test
-                if client_type == 'Real':  # for real clients
-                    listReal.extend(uc_avg_val)
-                    listReal_bytes.extend(rx_bytes_val)
-                    listReal_speed.extend(rx_rate_val)
-                    listReal_urltimes.extend(url_times)
-                    logger.info("%s %s %s", listReal, listReal_bytes, listReal_speed)
-                    final_dict[band]['dl_time'] = listReal
-                    min2.append(min(listReal))
-                    final_dict[band]['min'] = min2
-                    max2.append(max(listReal))
-                    final_dict[band]['max'] = max2
-                    avg2.append((sum(listReal) / num_stations))
-                    final_dict[band]['avg'] = avg2
-                    final_dict[band]['bytes_rd'] = listReal_bytes
-                    final_dict[band]['speed'] = listReal_speed
-                    final_dict[band]['url_times'] = listReal_urltimes
-                else:
-                    if band == "5G":
-                        list5G.extend(uc_avg_val)
-                        list5G_bytes.extend(rx_bytes_val)
-                        list5G_speed.extend(rx_rate_val)
-                        list5G_urltimes.extend(url_times)
-                        logger.info("%s %s %s %s", list5G, list5G_bytes, list5G_speed, list5G_urltimes)
-                        final_dict['5G']['dl_time'] = list5G
-                        min5.append(min(list5G))
-                        final_dict['5G']['min'] = min5
-                        max5.append(max(list5G))
-                        final_dict['5G']['max'] = max5
-                        avg5.append((sum(list5G) / num_stations))
-                        final_dict['5G']['avg'] = avg5
-                        final_dict['5G']['bytes_rd'] = list5G_bytes
-                        final_dict['5G']['speed'] = list5G_speed
-                        final_dict['5G']['url_times'] = list5G_urltimes
-                    elif band == "6G":
-                        list6G.extend(uc_avg_val)
-                        list6G_bytes.extend(rx_bytes_val)
-                        list6G_speed.extend(rx_rate_val)
-                        list6G_urltimes.extend(url_times)
-                        final_dict['6G']['dl_time'] = list6G
-                        min6.append(min(list6G))
-                        final_dict['6G']['min'] = min6
-                        max6.append(max(list6G))
-                        final_dict['6G']['max'] = max6
-                        avg6.append((sum(list6G) / num_stations))
-                        final_dict['6G']['avg'] = avg6
-                        final_dict['6G']['bytes_rd'] = list6G_bytes
-                        final_dict['6G']['speed'] = list6G_speed
-                        final_dict['6G']['url_times'] = list6G_urltimes
-                    elif band == "2.4G":
-                        list2G.extend(uc_avg_val)
-                        list2G_bytes.extend(rx_bytes_val)
-                        list2G_speed.extend(rx_rate_val)
-                        list2G_urltimes.extend(url_times)
-                        logger.info("%s %s %s", list2G, list2G_bytes, list2G_speed)
-                        final_dict['2.4G']['dl_time'] = list2G
-                        min2.append(min(list2G))
-                        final_dict['2.4G']['min'] = min2
-                        max2.append(max(list2G))
-                        final_dict['2.4G']['max'] = max2
-                        avg2.append((sum(list2G) / num_stations))
-                        final_dict['2.4G']['avg'] = avg2
-                        final_dict['2.4G']['bytes_rd'] = list2G_bytes
-                        final_dict['2.4G']['speed'] = list2G_speed
-                        final_dict['2.4G']['url_times'] = list2G_urltimes
-                    elif bands == "Both":
-                        Both.extend(uc_avg_val)
-                        Both_bytes.extend(rx_bytes_val)
-                        Both_speed.extend(rx_rate_val)
-                        Both_urltimes.extend(url_times)
-                        final_dict['Both']['dl_time'] = Both
-                        min_both.append(min(Both))
-                        final_dict['Both']['min'] = min_both
-                        max_both.append(max(Both))
-                        final_dict['Both']['max'] = max_both
-                        avg_both.append((sum(Both) / num_stations))
-                        final_dict['Both']['avg'] = avg_both
-                        final_dict['Both']['bytes_rd'] = Both_bytes
-                        final_dict['Both']['speed'] = Both_speed
-                        final_dict['Both']['url_times'] = Both_urltimes
-
-            result_data = final_dict
-            logger.info(f"result: {result_data}")
-            logger.info("Test Finished")
-            test_end = datetime.datetime.now()
-            test_end = test_end.strftime("%Y %d %H:%M:%S")
-            logger.info(f"Test ended at {test_end}")
-            s1 = test_time
-            s2 = test_end  # for example
-            FMT = '%Y %d %H:%M:%S'
-            test_duration = datetime.datetime.strptime(s2, FMT) - datetime.datetime.strptime(s1, FMT)
-
-            info_ssid = []
-            info_security = []
-            # For real clients
+        list6G, list6G_bytes, list6G_speed, list6G_urltimes = [], [], [], []
+        list5G, list5G_bytes, list5G_speed, list5G_urltimes = [], [], [], []
+        list2G, list2G_bytes, list2G_speed, list2G_urltimes = [], [], [], []
+        Both, Both_bytes, Both_speed, Both_urltimes = [], [], [], []
+        listReal, listReal_bytes, listReal_speed, listReal_urltimes = [], [], [], []  # For real devices (not band specific)
+        dict_keys = []
+        dict_keys.extend(bands)
+        # print(dict_keys)
+        final_dict = dict.fromkeys(dict_keys)
+        # print(final_dict)
+        dict1_keys = ['dl_time', 'min', 'max', 'avg', 'bytes_rd', 'speed', 'url_times']
+        for i in final_dict:
+            final_dict[i] = dict.fromkeys(dict1_keys)
+        min6 = []
+        min5 = []
+        min2 = []
+        min_both = []
+        max6 = []
+        max5 = []
+        max2 = []
+        max_both = []
+        avg6 = []
+        avg2 = []
+        avg5 = []
+        avg_both = []
+        port_list, dev_list, macid_list = [], [], []
+        for band in bands:
+            # For real devices while ensuring no blocker for Virtual devices
             if client_type == 'Real':
-                info_ssid.append(ssid)
-                info_security.append(security)
+                ssid = ssid
+                passwd = passwd
+                security = security
+            elif band == "2.4G":
+                security = [twog_security]
+                ssid = [twog_ssid]
+                passwd = [twog_passwd]
+            elif band == "5G":
+                security = [fiveg_security]
+                ssid = [fiveg_ssid]
+                passwd = [fiveg_passwd]
+            elif band == "6G":
+                security = [sixg_security]
+                ssid = [sixg_ssid]
+                passwd = [sixg_passwd]
+            elif band == "Both":
+                security = [twog_security, fiveg_security]
+                ssid = [twog_ssid, fiveg_ssid]
+                passwd = [twog_passwd, fiveg_passwd]
+            ce = self.current_exec  # seires
+            if ce == "parallel":
+                obj_name = "http_test"
             else:
-                for band in bands:
-                    if band == "2.4G":
-                        info_ssid.append(twog_ssid)
-                        info_security.append(twog_security)
-                    elif band == "5G":
-                        info_ssid.append(fiveg_ssid)
-                        info_security.append(fiveg_security)
-                    elif band == "6G":
-                        info_ssid.append(sixg_ssid)
-                        info_security.append(sixg_security)
-                    elif band == "Both":
-                        info_ssid.append(fiveg_ssid)
-                        info_security.append(fiveg_security)
-                        info_ssid.append(twog_ssid)
-                        info_security.append(twog_security)
+                obj_no = 1
+                while f"http_test_{obj_no}" in self.http_obj_dict[ce]:
+                    obj_no += 1
+                obj_name = f"http_test_{obj_no}"
+            self.http_obj_dict[ce][obj_name] = {"obj": None, "data": None}
 
-            logger.info(f"total test duration {test_duration}")
-            date = str(datetime.datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
-            duration = duration
-            if int(duration) < 60:
-                duration = str(duration) + "s"
-            elif int(duration == 60) or (int(duration) > 60 and int(duration) < 3600):
-                duration = str(duration / 60) + "m"
-            else:
-                if int(duration == 3600) or (int(duration) > 3600):
-                    duration = str(duration / 3600) + "h"
-
-            android_devices, windows_devices, linux_devices, mac_devices = 0, 0, 0, 0
-            all_devices_names = []
-            device_type = []
-            total_devices = ""
-            for i in self.http_obj_dict[ce][obj_name]["obj"].devices_list:
-                split_device_name = i.split(" ")
-                if 'android' in split_device_name:
-                    all_devices_names.append(split_device_name[2] + ("(Android)"))
-                    device_type.append("Android")
-                    android_devices += 1
-                elif 'Win' in split_device_name:
-                    all_devices_names.append(split_device_name[2] + ("(Windows)"))
-                    device_type.append("Windows")
-                    windows_devices += 1
-                elif 'Lin' in split_device_name:
-                    all_devices_names.append(split_device_name[2] + ("(Linux)"))
-                    device_type.append("Linux")
-                    linux_devices += 1
-                elif 'Mac' in split_device_name:
-                    all_devices_names.append(split_device_name[2] + ("(Mac)"))
-                    device_type.append("Mac")
-                    mac_devices += 1
-
-            # Build total_devices string based on counts
-            if android_devices > 0:
-                total_devices += f" Android({android_devices})"
-            if windows_devices > 0:
-                total_devices += f" Windows({windows_devices})"
-            if linux_devices > 0:
-                total_devices += f" Linux({linux_devices})"
-            if mac_devices > 0:
-                total_devices += f" Mac({mac_devices})"
+            self.http_obj_dict[ce][obj_name]["obj"] = http_test.HttpDownload(lfclient_host=self.lanforge_ip, lfclient_port=self.port,
+                                                                             upstream=upstream_port, num_sta=num_stations,
+                                                                             security=security, ap_name=ap_name,
+                                                                             ssid=ssid, password=passwd,
+                                                                             target_per_ten=target_per_ten,
+                                                                             file_size=file_size, bands=band,
+                                                                             twog_radio=twog_radio,
+                                                                             fiveg_radio=fiveg_radio,
+                                                                             sixg_radio=sixg_radio,
+                                                                             client_type=client_type,
+                                                                             lf_username=lf_username, lf_password=lf_password,
+                                                                             result_dir=result_dir,  # FOR WEBGUI
+                                                                             dowebgui=dowebgui,  # FOR WEBGUI
+                                                                             device_list=device_list,
+                                                                             test_name=test_name,  # FOR WEBGUI
+                                                                             get_url_from_file=get_url_from_file,
+                                                                             file_path=file_path,
+                                                                             file_name=file_name,
+                                                                             group_name=group_name,
+                                                                             profile_name=profile_name,
+                                                                             eap_method=eap_method,
+                                                                             eap_identity=eap_identity,
+                                                                             ieee80211=ieee8021x,
+                                                                             ieee80211u=ieee80211u,
+                                                                             ieee80211w=ieee80211w,
+                                                                             enable_pkc=enable_pkc,
+                                                                             bss_transition=bss_transition,
+                                                                             power_save=power_save,
+                                                                             disable_ofdma=disable_ofdma,
+                                                                             roam_ft_ds=roam_ft_ds,
+                                                                             key_management=key_management,
+                                                                             pairwise=pairwise,
+                                                                             private_key=private_key,
+                                                                             ca_cert=ca_cert,
+                                                                             client_cert=client_cert,
+                                                                             pk_passwd=pk_passwd,
+                                                                             pac_file=pac_file,
+                                                                             expected_passfail_value=expected_passfail_value,
+                                                                             device_csv_name=device_csv_name,
+                                                                             wait_time=wait_time,
+                                                                             config=config,
+                                                                             get_live_view=get_live_view,
+                                                                             total_floors=total_floors,
+                                                                             robot_test=self.robot_test,
+                                                                             robot_ip=self.robot_ip,
+                                                                             coordinate=self.coordinate,
+                                                                             rotation=self.rotation,
+                                                                             duration=duration,
+                                                                             do_bandsteering=do_bandsteering,
+                                                                             cycles=cycles,
+                                                                             bssids=bssids,
+                                                                             duration_to_skip=duration_to_skip
+                                                                             )
             if client_type == "Real":
-                if group_name:
-                    group_names = ', '.join(configuration.keys())
-                    profile_names = ', '.join(configuration.values())
-                    configmap = "Groups:" + group_names + " -> Profiles:" + profile_names
-                    test_setup_info = {
-                        "AP name": ap_name,
-                        "Configuration": configmap,
-                        "Configured Devices": ", ".join(all_devices_names),
-                        "No of Devices": "Total" + f"({len(all_devices_names)})" + total_devices,
-                        "Traffic Direction": "Download",
-                        "Traffic Duration ": duration
-                    }
+                if not isinstance(device_list, list):
+                    self.http_obj_dict[ce][obj_name]["obj"].device_list = self.http_obj_dict[ce][obj_name]["obj"].filter_iOS_devices(device_list)
+                    if len(self.http_obj_dict[ce][obj_name]["obj"].device_list) == 0:
+                        logger.info("There are no devices available")
+                        return False
+                port_list, dev_list, macid_list, configuration = self.http_obj_dict[ce][obj_name]["obj"].get_real_client_list()
+                if dowebgui and group_name:
+                    if len(dev_list) == 0:
+                        logger.info("No device is available to run the test")
+                        obj = {
+                            "status": "Stopped",
+                            "configuration_status": "configured"
+                        }
+                        self.http_obj_dict[ce][obj_name]["obj"].updating_webui_runningjson(obj)
+                        return
+                    else:
+                        obj = {
+                            "configured_devices": dev_list,
+                            "configuration_status": "configured"
+                        }
+                        self.http_obj_dict[ce][obj_name]["obj"].updating_webui_runningjson(obj)
+                num_stations = len(port_list)
+            if not get_url_from_file:
+                self.http_obj_dict[ce][obj_name]["obj"].file_create(ssh_port=ssh_port)
+            else:
+                if file_path is None:
+                    logger.warning("Please Specify the path of the file, if you select the --get_url_from_file")
+                    return False
+            self.http_obj_dict[ce][obj_name]["obj"].set_values()
+            self.http_obj_dict[ce][obj_name]["obj"].precleanup()
+            self.http_obj_dict[ce][obj_name]["obj"].build()
+            if client_type == 'Real':
+                self.http_obj_dict[ce][obj_name]["obj"].monitor_cx()
+                self.http_done_event.set()
+                self.http_rotate_done_event.set()
+                logger.info(f'Test started on the devices : {self.http_obj_dict[ce][obj_name]["obj"].port_list}')
+            test_time = datetime.datetime.now()
+            # Solution For Leap Year conflict changed it to %Y
+            test_time = test_time.strftime("%Y %d %H:%M:%S")
+            logger.info(f"Test started at {test_time}")
+            if self.http_obj_dict[ce][obj_name]["obj"].robot_test:
+                if self.current_exec != "parallel":
+                    self.http_obj_dict[ce][obj_name]["obj"].perform_robo()
                 else:
-                    test_setup_info = {
-                        "AP Name": ap_name,
-                        "SSID": ssid,
-                        "Device List": ", ".join(all_devices_names),
-                        "Security": security,
-                        "No of Devices": "Total" + f"({len(all_devices_names)})" + total_devices,
-                        "Traffic Direction": "Download",
-                        "Traffic Duration ": duration
-                    }
+                    if self.http_obj_dict[ce][obj_name]["obj"].rotation_list[0] != "":
+                        self.http_obj_dict[ce][obj_name]["obj"].rotation_enabled = True
+
+                    test_stopped_by_user = False
+                    for coordinate in range(len(self.http_obj_dict[ce][obj_name]["obj"].coordinate_list)):
+                        # print("Moving to coordinate:", coordinate)
+                        # self.robot_move_event.clear()
+                        if test_stopped_by_user:
+                            break
+                        test_stopped_by_user, robo_moved, abort, robo_rotated = self.wait_for_all_tests_to_finish(coordinate=self.http_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate])
+                        if test_stopped_by_user:
+                            break
+
+                        if abort or not robo_moved:
+                            break
+                        # If robot reached the coordinate
+                        if robo_moved:
+                            self.http_obj_dict[ce][obj_name]["obj"].current_coordinate = self.http_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate]
+                            # if no rotation mode
+                            if not self.http_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                # Start the test
+                                self.http_done_event.clear()
+                                self.http_obj_dict[ce][obj_name]["obj"].start()
+                                test_stopped_by_user_http = self.http_obj_dict[ce][obj_name]["obj"].monitor_for_runtime_csv(self.http_obj_dict[ce][obj_name]["obj"].duration)
+                                self.http_obj_dict[ce][obj_name]["obj"].stop()
+                                self.http_done_event.set()
+                                self.http_obj_dict[ce][obj_name]["obj"].update_stop_status_robot()
+                                if test_stopped_by_user_http:
+                                    break
+
+                            # if rotation mode
+                            else:
+                                for angle in range(len(self.http_obj_dict[ce][obj_name]["obj"].rotation_list)):
+                                    test_stopped_by_user, robo_moved, abort, robo_rotated = self.wait_for_all_tests_to_finish_rotation(
+                                        coordinate=self.http_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate], angle=self.http_obj_dict[ce][obj_name]["obj"].rotation_list[angle])
+                                    if test_stopped_by_user:
+                                        break
+                                    if robo_rotated:
+                                        self.http_obj_dict[ce][obj_name]["obj"].current_angle = self.http_obj_dict[ce][obj_name]["obj"].rotation_list[angle]
+                                        # self.http_monitor = True
+                                        self.http_done_event.clear()
+                                        self.http_rotate_done_event.clear()
+                                        self.http_rotate.set()
+                                        self.check_all_tests()
+                                        self.http_obj_dict[ce][obj_name]["obj"].start()
+                                        test_stopped_by_user_http = self.http_obj_dict[ce][obj_name]["obj"].monitor_for_runtime_csv(self.http_obj_dict[ce][obj_name]["obj"].duration)
+                                        self.http_obj_dict[ce][obj_name]["obj"].stop()
+                                        self.http_done_event.set()
+                                        self.http_rotate_done_event.set()
+                                        self.http_rotate.clear()
+                                        # self.http_monitor = False
+                                        self.http_obj_dict[ce][obj_name]["obj"].update_stop_status_robot()
+                                        # If test is stopped by user
+                                        if test_stopped_by_user_http:
+                                            break
+            else:
+                self.http_obj_dict[ce][obj_name]["obj"].start()
+                if dowebgui:
+                    # FOR WEBGUI, -This fumction is called to fetch the runtime data from layer-4
+                    self.http_obj_dict[ce][obj_name]["obj"].monitor_for_runtime_csv(duration)
+                elif client_type == 'Real':
+                    # To fetch runtime csv during runtime
+                    self.http_obj_dict[ce][obj_name]["obj"].monitor_for_runtime_csv(duration)
+                else:
+                    time.sleep(duration)
+                self.http_obj_dict[ce][obj_name]["obj"].stop()
+            # taking self.http_obj_dict[ce][obj_name]["obj"].data, which got updated in the monitor_for_runtime_csv method
+            if client_type == 'Real':
+                uc_avg_val = self.http_obj_dict[ce][obj_name]["obj"].data['uc_avg']
+                url_times = self.http_obj_dict[ce][obj_name]["obj"].data['url_data']
+                rx_bytes_val = self.http_obj_dict[ce][obj_name]["obj"].data['bytes_rd']
+                rx_rate_val = list(self.http_obj_dict[ce][obj_name]["obj"].data['rx rate (1m)'])
+            else:
+                uc_avg_val = self.http_obj_dict[ce][obj_name]["obj"].my_monitor('uc-avg')
+                url_times = self.http_obj_dict[ce][obj_name]["obj"].my_monitor('total-urls')
+                rx_bytes_val = self.http_obj_dict[ce][obj_name]["obj"].my_monitor('bytes-rd')
+                rx_rate_val = self.http_obj_dict[ce][obj_name]["obj"].my_monitor('rx rate')
+            if dowebgui:
+                self.http_obj_dict[ce][obj_name]["obj"].data_for_webui["url_data"] = url_times  # storing the layer-4 url data at the end of test
+            if client_type == 'Real':  # for real clients
+                listReal.extend(uc_avg_val)
+                listReal_bytes.extend(rx_bytes_val)
+                listReal_speed.extend(rx_rate_val)
+                listReal_urltimes.extend(url_times)
+                logger.info("%s %s %s", listReal, listReal_bytes, listReal_speed)
+                final_dict[band]['dl_time'] = listReal
+                min2.append(min(listReal))
+                final_dict[band]['min'] = min2
+                max2.append(max(listReal))
+                final_dict[band]['max'] = max2
+                avg2.append((sum(listReal) / num_stations))
+                final_dict[band]['avg'] = avg2
+                final_dict[band]['bytes_rd'] = listReal_bytes
+                final_dict[band]['speed'] = listReal_speed
+                final_dict[band]['url_times'] = listReal_urltimes
+            else:
+                if band == "5G":
+                    list5G.extend(uc_avg_val)
+                    list5G_bytes.extend(rx_bytes_val)
+                    list5G_speed.extend(rx_rate_val)
+                    list5G_urltimes.extend(url_times)
+                    logger.info("%s %s %s %s", list5G, list5G_bytes, list5G_speed, list5G_urltimes)
+                    final_dict['5G']['dl_time'] = list5G
+                    min5.append(min(list5G))
+                    final_dict['5G']['min'] = min5
+                    max5.append(max(list5G))
+                    final_dict['5G']['max'] = max5
+                    avg5.append((sum(list5G) / num_stations))
+                    final_dict['5G']['avg'] = avg5
+                    final_dict['5G']['bytes_rd'] = list5G_bytes
+                    final_dict['5G']['speed'] = list5G_speed
+                    final_dict['5G']['url_times'] = list5G_urltimes
+                elif band == "6G":
+                    list6G.extend(uc_avg_val)
+                    list6G_bytes.extend(rx_bytes_val)
+                    list6G_speed.extend(rx_rate_val)
+                    list6G_urltimes.extend(url_times)
+                    final_dict['6G']['dl_time'] = list6G
+                    min6.append(min(list6G))
+                    final_dict['6G']['min'] = min6
+                    max6.append(max(list6G))
+                    final_dict['6G']['max'] = max6
+                    avg6.append((sum(list6G) / num_stations))
+                    final_dict['6G']['avg'] = avg6
+                    final_dict['6G']['bytes_rd'] = list6G_bytes
+                    final_dict['6G']['speed'] = list6G_speed
+                    final_dict['6G']['url_times'] = list6G_urltimes
+                elif band == "2.4G":
+                    list2G.extend(uc_avg_val)
+                    list2G_bytes.extend(rx_bytes_val)
+                    list2G_speed.extend(rx_rate_val)
+                    list2G_urltimes.extend(url_times)
+                    logger.info("%s %s %s", list2G, list2G_bytes, list2G_speed)
+                    final_dict['2.4G']['dl_time'] = list2G
+                    min2.append(min(list2G))
+                    final_dict['2.4G']['min'] = min2
+                    max2.append(max(list2G))
+                    final_dict['2.4G']['max'] = max2
+                    avg2.append((sum(list2G) / num_stations))
+                    final_dict['2.4G']['avg'] = avg2
+                    final_dict['2.4G']['bytes_rd'] = list2G_bytes
+                    final_dict['2.4G']['speed'] = list2G_speed
+                    final_dict['2.4G']['url_times'] = list2G_urltimes
+                elif bands == "Both":
+                    Both.extend(uc_avg_val)
+                    Both_bytes.extend(rx_bytes_val)
+                    Both_speed.extend(rx_rate_val)
+                    Both_urltimes.extend(url_times)
+                    final_dict['Both']['dl_time'] = Both
+                    min_both.append(min(Both))
+                    final_dict['Both']['min'] = min_both
+                    max_both.append(max(Both))
+                    final_dict['Both']['max'] = max_both
+                    avg_both.append((sum(Both) / num_stations))
+                    final_dict['Both']['avg'] = avg_both
+                    final_dict['Both']['bytes_rd'] = Both_bytes
+                    final_dict['Both']['speed'] = Both_speed
+                    final_dict['Both']['url_times'] = Both_urltimes
+
+        result_data = final_dict
+        logger.info(f"result: {result_data}")
+        logger.info("Test Finished")
+        test_end = datetime.datetime.now()
+        test_end = test_end.strftime("%Y %d %H:%M:%S")
+        logger.info(f"Test ended at {test_end}")
+        s1 = test_time
+        s2 = test_end  # for example
+        FMT = '%Y %d %H:%M:%S'
+        test_duration = datetime.datetime.strptime(s2, FMT) - datetime.datetime.strptime(s1, FMT)
+
+        info_ssid = []
+        info_security = []
+        # For real clients
+        if client_type == 'Real':
+            info_ssid.append(ssid)
+            info_security.append(security)
+        else:
+            for band in bands:
+                if band == "2.4G":
+                    info_ssid.append(twog_ssid)
+                    info_security.append(twog_security)
+                elif band == "5G":
+                    info_ssid.append(fiveg_ssid)
+                    info_security.append(fiveg_security)
+                elif band == "6G":
+                    info_ssid.append(sixg_ssid)
+                    info_security.append(sixg_security)
+                elif band == "Both":
+                    info_ssid.append(fiveg_ssid)
+                    info_security.append(fiveg_security)
+                    info_ssid.append(twog_ssid)
+                    info_security.append(twog_security)
+
+        logger.info(f"total test duration {test_duration}")
+        date = str(datetime.datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
+        duration = duration
+        if int(duration) < 60:
+            duration = str(duration) + "s"
+        elif int(duration == 60) or (int(duration) > 60 and int(duration) < 3600):
+            duration = str(duration / 60) + "m"
+        else:
+            if int(duration == 3600) or (int(duration) > 3600):
+                duration = str(duration / 3600) + "h"
+
+        android_devices, windows_devices, linux_devices, mac_devices = 0, 0, 0, 0
+        all_devices_names = []
+        device_type = []
+        total_devices = ""
+        for i in self.http_obj_dict[ce][obj_name]["obj"].devices_list:
+            split_device_name = i.split(" ")
+            if 'android' in split_device_name:
+                all_devices_names.append(split_device_name[2] + ("(Android)"))
+                device_type.append("Android")
+                android_devices += 1
+            elif 'Win' in split_device_name:
+                all_devices_names.append(split_device_name[2] + ("(Windows)"))
+                device_type.append("Windows")
+                windows_devices += 1
+            elif 'Lin' in split_device_name:
+                all_devices_names.append(split_device_name[2] + ("(Linux)"))
+                device_type.append("Linux")
+                linux_devices += 1
+            elif 'Mac' in split_device_name:
+                all_devices_names.append(split_device_name[2] + ("(Mac)"))
+                device_type.append("Mac")
+                mac_devices += 1
+
+        # Build total_devices string based on counts
+        if android_devices > 0:
+            total_devices += f" Android({android_devices})"
+        if windows_devices > 0:
+            total_devices += f" Windows({windows_devices})"
+        if linux_devices > 0:
+            total_devices += f" Linux({linux_devices})"
+        if mac_devices > 0:
+            total_devices += f" Mac({mac_devices})"
+        if client_type == "Real":
+            if group_name:
+                group_names = ', '.join(configuration.keys())
+                profile_names = ', '.join(configuration.values())
+                configmap = "Groups:" + group_names + " -> Profiles:" + profile_names
+                test_setup_info = {
+                    "AP name": ap_name,
+                    "Configuration": configmap,
+                    "Configured Devices": ", ".join(all_devices_names),
+                    "No of Devices": "Total" + f"({len(all_devices_names)})" + total_devices,
+                    "Traffic Direction": "Download",
+                    "Traffic Duration ": duration
+                }
             else:
                 test_setup_info = {
                     "AP Name": ap_name,
                     "SSID": ssid,
+                    "Device List": ", ".join(all_devices_names),
                     "Security": security,
-                    "No of Devices": num_stations,
+                    "No of Devices": "Total" + f"({len(all_devices_names)})" + total_devices,
                     "Traffic Direction": "Download",
                     "Traffic Duration ": duration
                 }
-            test_input_infor = {
-                "LANforge ip": self.lanforge_ip,
-                "Bands": bands,
-                "Upstream": upstream_port,
-                "Stations": num_stations,
-                "SSID": ','.join(filter(None, info_ssid)) if info_ssid else "",
-                "Security": ', '.join(filter(None, info_security)) if info_security else "",
-                "Duration": duration,
-                "Contact": "support@candelatech.com"
+        else:
+            test_setup_info = {
+                "AP Name": ap_name,
+                "SSID": ssid,
+                "Security": security,
+                "No of Devices": num_stations,
+                "Traffic Direction": "Download",
+                "Traffic Duration ": duration
             }
-            if not file_path:
-                test_setup_info["File size"] = file_size
-                test_setup_info["File location"] = "/usr/local/lanforge/nginx/html"
-                test_input_infor["File size"] = file_size
-            else:
-                test_setup_info["File location (URLs from the File)"] = file_path
-            if client_type == "Real":
-                test_setup_info["failed_cx's"] = self.http_obj_dict[ce][obj_name]["obj"].failed_cx if self.http_obj_dict[ce][obj_name]["obj"].failed_cx else "NONE"
-            # dataset = self.http_obj_dict[ce][obj_name]["obj"].download_time_in_sec(result_data=result_data)
-            rx_rate = []
-            for i in result_data:
-                dataset = result_data[i]['dl_time']
-                dataset2 = result_data[i]['url_times']
-                bytes_rd = result_data[i]['bytes_rd']
-                rx_rate = result_data[i]['speed']
-            dataset1 = [round(x / 1000000, 4) for x in bytes_rd]
-            rx_rate = [round(x / 1000000, 4) for x in rx_rate]  # converting bps to mbps
+        test_input_infor = {
+            "LANforge ip": self.lanforge_ip,
+            "Bands": bands,
+            "Upstream": upstream_port,
+            "Stations": num_stations,
+            "SSID": ','.join(filter(None, info_ssid)) if info_ssid else "",
+            "Security": ', '.join(filter(None, info_security)) if info_security else "",
+            "Duration": duration,
+            "Contact": "support@candelatech.com"
+        }
+        if not file_path:
+            test_setup_info["File size"] = file_size
+            test_setup_info["File location"] = "/usr/local/lanforge/nginx/html"
+            test_input_infor["File size"] = file_size
+        else:
+            test_setup_info["File location (URLs from the File)"] = file_path
+        if client_type == "Real":
+            test_setup_info["failed_cx's"] = self.http_obj_dict[ce][obj_name]["obj"].failed_cx if self.http_obj_dict[ce][obj_name]["obj"].failed_cx else "NONE"
+        # dataset = self.http_obj_dict[ce][obj_name]["obj"].download_time_in_sec(result_data=result_data)
+        rx_rate = []
+        for i in result_data:
+            dataset = result_data[i]['dl_time']
+            dataset2 = result_data[i]['url_times']
+            bytes_rd = result_data[i]['bytes_rd']
+            rx_rate = result_data[i]['speed']
+        dataset1 = [round(x / 1000000, 4) for x in bytes_rd]
+        rx_rate = [round(x / 1000000, 4) for x in rx_rate]  # converting bps to mbps
 
-            self.lis = []
-            if band == "Both":
-                for i in range(1, num_stations * 2 + 1):
-                    self.lis.append(i)
-            else:
-                for i in range(1, num_stations + 1):
-                    self.lis.append(i)
+        self.lis = []
+        if band == "Both":
+            for i in range(1, num_stations * 2 + 1):
+                self.lis.append(i)
+        else:
+            for i in range(1, num_stations + 1):
+                self.lis.append(i)
 
-            if dowebgui:
-                self.http_obj_dict[ce][obj_name]["obj"].data_for_webui["status"] = ["STOPPED"] * len(self.http_obj_dict[ce][obj_name]["obj"].devices_list)
-                self.http_obj_dict[ce][obj_name]["obj"].data_for_webui['rx rate (1m)'] = self.http_obj_dict[ce][obj_name]["obj"].data['rx rate (1m)']
-                self.http_obj_dict[ce][obj_name]["obj"].data_for_webui['total_err'] = self.http_obj_dict[ce][obj_name]["obj"].data['total_err']
-                self.http_obj_dict[ce][obj_name]["obj"].data_for_webui["start_time"] = self.http_obj_dict[ce][obj_name]["obj"].data["start_time"]
-                self.http_obj_dict[ce][obj_name]["obj"].data_for_webui["end_time"] = self.http_obj_dict[ce][obj_name]["obj"].data["end_time"]
-                self.http_obj_dict[ce][obj_name]["obj"].data_for_webui["remaining_time"] = self.http_obj_dict[ce][obj_name]["obj"].data["remaining_time"]
-                df1 = pd.DataFrame(self.http_obj_dict[ce][obj_name]["obj"].data_for_webui)
-                df1.to_csv('{}/http_datavalues.csv'.format(self.http_obj_dict[ce][obj_name]["obj"].result_dir), index=False)
+        if dowebgui:
+            self.http_obj_dict[ce][obj_name]["obj"].data_for_webui["status"] = ["STOPPED"] * len(self.http_obj_dict[ce][obj_name]["obj"].devices_list)
+            self.http_obj_dict[ce][obj_name]["obj"].data_for_webui['rx rate (1m)'] = self.http_obj_dict[ce][obj_name]["obj"].data['rx rate (1m)']
+            self.http_obj_dict[ce][obj_name]["obj"].data_for_webui['total_err'] = self.http_obj_dict[ce][obj_name]["obj"].data['total_err']
+            self.http_obj_dict[ce][obj_name]["obj"].data_for_webui["start_time"] = self.http_obj_dict[ce][obj_name]["obj"].data["start_time"]
+            self.http_obj_dict[ce][obj_name]["obj"].data_for_webui["end_time"] = self.http_obj_dict[ce][obj_name]["obj"].data["end_time"]
+            self.http_obj_dict[ce][obj_name]["obj"].data_for_webui["remaining_time"] = self.http_obj_dict[ce][obj_name]["obj"].data["remaining_time"]
+            df1 = pd.DataFrame(self.http_obj_dict[ce][obj_name]["obj"].data_for_webui)
+            df1.to_csv('{}/http_datavalues.csv'.format(self.http_obj_dict[ce][obj_name]["obj"].result_dir), index=False)
 
-            self.http_obj_dict[ce][obj_name]["obj"].generate_report(date, num_stations=num_stations,
-                                duration=duration, test_setup_info=test_setup_info, dataset=dataset, lis=self.lis,
-                                bands=bands, threshold_2g=threshold_2g, threshold_5g=threshold_5g,
-                                threshold_both=threshold_both, dataset2=dataset2, dataset1=dataset1,
-                                # summary_table_value=summary_table_value,
-                                result_data=result_data, rx_rate=rx_rate,
-                                test_rig=test_rig, test_tag=test_tag, dut_hw_version=dut_hw_version,
-                                dut_sw_version=dut_sw_version, dut_model_num=dut_model_num,
-                                dut_serial_num=dut_serial_num, test_id=test_id,
-                                test_input_infor=test_input_infor, csv_outfile=csv_outfile,report_path=self.result_path if not self.dowebgui else self.result_dir)
-            params = {
-                        "date": date,
-                        "num_stations": num_stations,
-                        "duration": duration,
-                        "test_setup_info": test_setup_info,
-                        "dataset": dataset,
-                        "lis": self.lis,
-                        "bands": bands,
-                        "threshold_2g": threshold_2g,
-                        "threshold_5g": threshold_5g,
-                        "threshold_both": threshold_both,
-                        "dataset2": dataset2,
-                        "dataset1": dataset1,
-                        # "summary_table_value": summary_table_value,  # optional
-                        "result_data": result_data,
-                        "rx_rate": rx_rate,
-                        "test_rig": test_rig,
-                        "test_tag": test_tag,
-                        "dut_hw_version": dut_hw_version,
-                        "dut_sw_version": dut_sw_version,
-                        "dut_model_num": dut_model_num,
-                        "dut_serial_num": dut_serial_num,
-                        "test_id": test_id,
-                        "test_input_infor": test_input_infor,
-                        "csv_outfile": csv_outfile,
-                        "report_path": self.result_path
-                    }
-            self.http_obj_dict[ce][obj_name]["data"] = params.copy()
-            if self.dowebgui:
-                self.webgui_test_done("http")
+        self.http_obj_dict[ce][obj_name]["obj"].generate_report(date, num_stations=num_stations,
+                                                                duration=duration, test_setup_info=test_setup_info, dataset=dataset, lis=self.lis,
+                                                                bands=bands, threshold_2g=threshold_2g, threshold_5g=threshold_5g,
+                                                                threshold_both=threshold_both, dataset2=dataset2, dataset1=dataset1,
+                                                                # summary_table_value=summary_table_value,
+                                                                result_data=result_data, rx_rate=rx_rate,
+                                                                test_rig=test_rig, test_tag=test_tag, dut_hw_version=dut_hw_version,
+                                                                dut_sw_version=dut_sw_version, dut_model_num=dut_model_num,
+                                                                dut_serial_num=dut_serial_num, test_id=test_id,
+                                                                test_input_infor=test_input_infor, csv_outfile=csv_outfile, report_path=self.result_path if not self.dowebgui else self.result_dir)
+        params = {
+            "date": date,
+            "num_stations": num_stations,
+            "duration": duration,
+            "test_setup_info": test_setup_info,
+            "dataset": dataset,
+            "lis": self.lis,
+            "bands": bands,
+            "threshold_2g": threshold_2g,
+            "threshold_5g": threshold_5g,
+            "threshold_both": threshold_both,
+            "dataset2": dataset2,
+            "dataset1": dataset1,
+            # "summary_table_value": summary_table_value,  # optional
+            "result_data": result_data,
+            "rx_rate": rx_rate,
+            "test_rig": test_rig,
+            "test_tag": test_tag,
+            "dut_hw_version": dut_hw_version,
+            "dut_sw_version": dut_sw_version,
+            "dut_model_num": dut_model_num,
+            "dut_serial_num": dut_serial_num,
+            "test_id": test_id,
+            "test_input_infor": test_input_infor,
+            "csv_outfile": csv_outfile,
+            "report_path": self.result_path
+        }
+        self.http_obj_dict[ce][obj_name]["data"] = params.copy()
+        if self.dowebgui:
+            self.webgui_test_done("http")
 
-            self.http_obj_dict[ce][obj_name]["obj"].postcleanup()
-            if dowebgui:
-                self.http_obj_dict[ce][obj_name]["obj"].copy_reports_to_home_dir()
-            return True
-
+        self.http_obj_dict[ce][obj_name]["obj"].postcleanup()
+        if dowebgui:
+            self.http_obj_dict[ce][obj_name]["obj"].copy_reports_to_home_dir()
+        return True
 
     def run_ftp_test(
         self,
@@ -1989,7 +2009,7 @@ class Candela(Realm):
         args.mgr_port = int(self.port)
         return self.run_ftp_test1(args)
 
-    def run_ftp_test1(self,args):
+    def run_ftp_test1(self, args):
         """
         Execute an FTP test across virtual or real clients.
         This handles test configuration, endpoint creation, and generates an FTP report upon completion.
@@ -2014,79 +2034,79 @@ class Candela(Realm):
             args.traffic_duration = int(args.traffic_duration[0:-1]) * 60 * 60
         elif args.traffic_duration.endswith(''):
             args.traffic_duration = int(args.traffic_duration)
-        ce = self.current_exec #seires
+        ce = self.current_exec  # seires
         if ce == "parallel":
             obj_name = "ftp_test"
         else:
             obj_no = 1
             while f"ftp_test_{obj_no}" in self.ftp_obj_dict[ce]:
-                obj_no+=1 
-            obj_name = f"ftp_test_{obj_no}" 
-        self.ftp_obj_dict[ce][obj_name] = {"obj":None,"data":None}
+                obj_no += 1
+            obj_name = f"ftp_test_{obj_no}"
+        self.ftp_obj_dict[ce][obj_name] = {"obj": None, "data": None}
         # For all combinations ftp_data of directions, file size and client counts, run the test
         for band in args.bands:
             for direction in args.directions:
                 for file_size in args.file_sizes:
                     # Start Test
                     self.ftp_obj_dict[ce][obj_name]["obj"] = FtpTest(lfclient_host=args.mgr,
-                                lfclient_port=args.mgr_port,
-                                result_dir=args.result_dir,
-                                upstream=args.upstream_port,
-                                dut_ssid=args.ssid,
-                                group_name=args.group_name,
-                                profile_name=args.profile_name,
-                                file_name=args.file_name,
-                                dut_passwd=args.passwd,
-                                dut_security=args.security,
-                                num_sta=args.num_stations,
-                                band=band,
-                                ap_name=args.ap_name,
-                                file_size=file_size,
-                                direction=direction,
-                                twog_radio=args.twog_radio,
-                                fiveg_radio=args.fiveg_radio,
-                                sixg_radio=args.sixg_radio,
-                                lf_username=args.lf_username,
-                                lf_password=args.lf_password,
-                                # duration=pass_fail_duration(band, file_size),
-                                traffic_duration=args.traffic_duration,
-                                ssh_port=args.ssh_port,
-                                clients_type=args.clients_type,
-                                dowebgui=args.dowebgui,
-                                device_list=args.device_list,
-                                test_name=args.test_name,
-                                eap_method=args.eap_method,
-                                eap_identity=args.eap_identity,
-                                ieee80211=args.ieee8021x,
-                                ieee80211u=args.ieee80211u,
-                                ieee80211w=args.ieee80211w,
-                                enable_pkc=args.enable_pkc,
-                                bss_transition=args.bss_transition,
-                                power_save=args.power_save,
-                                disable_ofdma=args.disable_ofdma,
-                                roam_ft_ds=args.roam_ft_ds,
-                                key_management=args.key_management,
-                                pairwise=args.pairwise,
-                                private_key=args.private_key,
-                                ca_cert=args.ca_cert,
-                                client_cert=args.client_cert,
-                                pk_passwd=args.pk_passwd,
-                                pac_file=args.pac_file,
-                                expected_passfail_val=args.expected_passfail_value,
-                                csv_name=args.device_csv_name,
-                                wait_time=args.wait_time,
-                                config=args.config,
-                                get_live_view= args.get_live_view,
-                                total_floors = args.total_floors,
-                                robot_test=self.robot_test,
-                                robot_ip=self.robot_ip,
-                                coordinate=self.coordinate,
-                                rotation=self.rotation,
-                                do_bandsteering=args.do_bandsteering,
-                                cycles=args.cycles,
-                                bssids=args.bssids,
-                                duration_to_skip=args.duration_to_skip
-                                )
+                                                                     lfclient_port=args.mgr_port,
+                                                                     result_dir=args.result_dir,
+                                                                     upstream=args.upstream_port,
+                                                                     dut_ssid=args.ssid,
+                                                                     group_name=args.group_name,
+                                                                     profile_name=args.profile_name,
+                                                                     file_name=args.file_name,
+                                                                     dut_passwd=args.passwd,
+                                                                     dut_security=args.security,
+                                                                     num_sta=args.num_stations,
+                                                                     band=band,
+                                                                     ap_name=args.ap_name,
+                                                                     file_size=file_size,
+                                                                     direction=direction,
+                                                                     twog_radio=args.twog_radio,
+                                                                     fiveg_radio=args.fiveg_radio,
+                                                                     sixg_radio=args.sixg_radio,
+                                                                     lf_username=args.lf_username,
+                                                                     lf_password=args.lf_password,
+                                                                     # duration=pass_fail_duration(band, file_size),
+                                                                     traffic_duration=args.traffic_duration,
+                                                                     ssh_port=args.ssh_port,
+                                                                     clients_type=args.clients_type,
+                                                                     dowebgui=args.dowebgui,
+                                                                     device_list=args.device_list,
+                                                                     test_name=args.test_name,
+                                                                     eap_method=args.eap_method,
+                                                                     eap_identity=args.eap_identity,
+                                                                     ieee80211=args.ieee8021x,
+                                                                     ieee80211u=args.ieee80211u,
+                                                                     ieee80211w=args.ieee80211w,
+                                                                     enable_pkc=args.enable_pkc,
+                                                                     bss_transition=args.bss_transition,
+                                                                     power_save=args.power_save,
+                                                                     disable_ofdma=args.disable_ofdma,
+                                                                     roam_ft_ds=args.roam_ft_ds,
+                                                                     key_management=args.key_management,
+                                                                     pairwise=args.pairwise,
+                                                                     private_key=args.private_key,
+                                                                     ca_cert=args.ca_cert,
+                                                                     client_cert=args.client_cert,
+                                                                     pk_passwd=args.pk_passwd,
+                                                                     pac_file=args.pac_file,
+                                                                     expected_passfail_val=args.expected_passfail_value,
+                                                                     csv_name=args.device_csv_name,
+                                                                     wait_time=args.wait_time,
+                                                                     config=args.config,
+                                                                     get_live_view=args.get_live_view,
+                                                                     total_floors=args.total_floors,
+                                                                     robot_test=self.robot_test,
+                                                                     robot_ip=self.robot_ip,
+                                                                     coordinate=self.coordinate,
+                                                                     rotation=self.rotation,
+                                                                     do_bandsteering=args.do_bandsteering,
+                                                                     cycles=args.cycles,
+                                                                     bssids=args.bssids,
+                                                                     duration_to_skip=args.duration_to_skip
+                                                                     )
 
                     interation_num = interation_num + 1
                     self.ftp_obj_dict[ce][obj_name]["obj"].file_create()
@@ -2139,7 +2159,7 @@ class Candela(Realm):
                             for coordinate in range(len(self.ftp_obj_dict[ce][obj_name]["obj"].coordinate_list)):
                                 # self.robot_move_event.clear()
                                 # test_stopped_by_user,robo_moved, abort, robo_rotated = self.robo_controller(coord=coordinate)
-                                test_stopped_by_user,robo_moved, abort, robo_rotated = self.wait_for_all_tests_to_finish(coordinate=self.ftp_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate])
+                                test_stopped_by_user, robo_moved, abort, robo_rotated = self.wait_for_all_tests_to_finish(coordinate=self.ftp_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate])
                                 if test_stopped_by_user:
                                     break
                                 if abort or not robo_moved:
@@ -2164,14 +2184,15 @@ class Candela(Realm):
                                     # if rotation mode
                                     else:
                                         for angle in range(len(self.ftp_obj_dict[ce][obj_name]["obj"].rotation_list)):
-                                            test_stopped_by_user,robo_moved, abort, robo_rotated = self.wait_for_all_tests_to_finish_rotation(coordinate=self.ftp_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate],angle=self.ftp_obj_dict[ce][obj_name]["obj"].rotation_list[angle])
+                                            test_stopped_by_user, robo_moved, abort, robo_rotated = self.wait_for_all_tests_to_finish_rotation(
+                                                coordinate=self.ftp_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate], angle=self.ftp_obj_dict[ce][obj_name]["obj"].rotation_list[angle])
                                             # If test is stopped by user during battery wait
                                             if test_stopped_by_user:
                                                 break
                                             if robo_rotated:
                                                 self.ftp_obj_dict[ce][obj_name]["obj"].current_angle = self.ftp_obj_dict[ce][obj_name]["obj"].rotation_list[angle]
                                                 # self.ftp_monitor = True
-                                                self.ftp_done_event.clear() 
+                                                self.ftp_done_event.clear()
                                                 self.ftp_rotate_done_event.clear()
                                                 self.ftp_rotate.set()
                                                 self.check_all_tests()
@@ -2187,7 +2208,7 @@ class Candela(Realm):
                                                 # If test is stopped by user
                                                 if test_stopped_by_user_ftp:
                                                     break
-            
+
                     else:
                         self.ftp_obj_dict[ce][obj_name]["obj"].start(False, False)
                         # to fetch runtime values during the execution and fill the csv.
@@ -2242,17 +2263,17 @@ class Candela(Realm):
         # Report generation when groups are specified
         if args.group_name:
             self.ftp_obj_dict[ce][obj_name]["obj"].generate_report(ftp_data, date, input_setup_info, test_rig=args.test_rig,
-                                test_tag=args.test_tag, dut_hw_version=args.dut_hw_version,
-                                dut_sw_version=args.dut_sw_version, dut_model_num=args.dut_model_num,
-                                dut_serial_num=args.dut_serial_num, test_id=args.test_id,
-                                bands=args.bands, csv_outfile=args.csv_outfile, local_lf_report_dir=args.local_lf_report_dir, config_devices=configuration,report_path=self.result_path if not self.dowebgui else self.result_dir)
+                                                                   test_tag=args.test_tag, dut_hw_version=args.dut_hw_version,
+                                                                   dut_sw_version=args.dut_sw_version, dut_model_num=args.dut_model_num,
+                                                                   dut_serial_num=args.dut_serial_num, test_id=args.test_id,
+                                                                   bands=args.bands, csv_outfile=args.csv_outfile, local_lf_report_dir=args.local_lf_report_dir, config_devices=configuration, report_path=self.result_path if not self.dowebgui else self.result_dir)
         # Generating report without group-specific device configuration
         else:
             self.ftp_obj_dict[ce][obj_name]["obj"].generate_report(ftp_data, date, input_setup_info, test_rig=args.test_rig,
-                                test_tag=args.test_tag, dut_hw_version=args.dut_hw_version,
-                                dut_sw_version=args.dut_sw_version, dut_model_num=args.dut_model_num,
-                                dut_serial_num=args.dut_serial_num, test_id=args.test_id,
-                                bands=args.bands, csv_outfile=args.csv_outfile, local_lf_report_dir=args.local_lf_report_dir,report_path=self.result_path if not self.dowebgui else self.result_dir)
+                                                                   test_tag=args.test_tag, dut_hw_version=args.dut_hw_version,
+                                                                   dut_sw_version=args.dut_sw_version, dut_model_num=args.dut_model_num,
+                                                                   dut_serial_num=args.dut_serial_num, test_id=args.test_id,
+                                                                   bands=args.bands, csv_outfile=args.csv_outfile, local_lf_report_dir=args.local_lf_report_dir, report_path=self.result_path if not self.dowebgui else self.result_dir)
 
         params = {
             "ftp_data": ftp_data,
@@ -2279,7 +2300,6 @@ class Candela(Realm):
             self.webgui_test_done("ftp")
         return True
 
-        
     def run_qos_test(
         self,
         device_list=None,
@@ -2328,12 +2348,12 @@ class Candela(Realm):
         cycles=None,
         bssids=None,
         duration_to_skip=None
-    ):  
+    ):
         """
         Configure and execute a QoS (Quality of Service) throughput test.
         This handles test configuration, client setup, coordinates/rotation if using a robot, and generates a QoS report upon completion.
         """
-        dowebgui= True if dowebgui == "True" else False 
+        dowebgui = True if dowebgui == "True" else False
         if self.dowebgui:
             if not self.webgui_stop_check("qos"):
                 return False
@@ -2370,75 +2390,75 @@ class Candela(Realm):
             test_duration = int(test_duration[0:-1]) * 60 * 60
         elif test_duration.endswith(''):
             test_duration = int(test_duration)
-        ce = self.current_exec #seires
+        ce = self.current_exec  # seires
         if ce == "parallel":
             obj_name = "qos_test"
         else:
             obj_no = 1
             while f"qos_test_{obj_no}" in self.qos_obj_dict[ce]:
-                obj_no+=1 
-            obj_name = f"qos_test_{obj_no}" 
-        self.qos_obj_dict[ce][obj_name] = {"obj":None,"data":None}
+                obj_no += 1
+            obj_name = f"qos_test_{obj_no}"
+        self.qos_obj_dict[ce][obj_name] = {"obj": None, "data": None}
         for index in range(len(loads_data)):
             self.qos_obj_dict[ce][obj_name]["obj"] = qos_test.ThroughputQOS(host=self.lanforge_ip,
-                                            ip=self.lanforge_ip,
-                                            port=self.port,
-                                            number_template="0000",
-                                            ap_name=ap_name,
-                                            name_prefix="TOS-",
-                                            upstream=upstream_port,
-                                            ssid=ssid,
-                                            password=passwd,
-                                            security=security,
-                                            test_duration=test_duration,
-                                            use_ht160=False,
-                                            side_a_min_rate=int(loads['upload'][index]),
-                                            side_b_min_rate=int(loads['download'][index]),
-                                            traffic_type=traffic_type,
-                                            tos=tos,
-                                            csv_direction=direction,
-                                            dowebgui=dowebgui,
-                                            test_name=test_name,
-                                            result_dir=result_dir,
-                                            device_list=device_list,
-                                            _debug_on=debug,
-                                            group_name=group_name,
-                                            profile_name=profile_name,
-                                            file_name=file_name,
-                                            eap_method=eap_method,
-                                            eap_identity=eap_identity,
-                                            ieee80211=ieee8021x,
-                                            ieee80211u=ieee80211u,
-                                            ieee80211w=ieee80211w,
-                                            enable_pkc=enable_pkc,
-                                            bss_transition=bss_transition,
-                                            power_save=power_save,
-                                            disable_ofdma=disable_ofdma,
-                                            roam_ft_ds=roam_ft_ds,
-                                            key_management=key_management,
-                                            pairwise=pairwise,
-                                            private_key=private_key,
-                                            ca_cert=ca_cert,
-                                            client_cert=client_cert,
-                                            pk_passwd=pk_passwd,
-                                            pac_file=pac_file,
-                                            expected_passfail_val=expected_passfail_value,
-                                            csv_name=device_csv_name,
-                                            wait_time=wait_time,
-                                            config=config,
-                                            get_live_view=get_live_view,
-                                            total_floors=total_floors,
-                                            robot_test=self.robot_test,
-                                            robot_ip=self.robot_ip,
-                                            coordinate=self.coordinate,
-                                            rotation=self.rotation,
-                                            rotation_enabled = True if self.rotation else False,
-                                            angle_list= self.rotation.split(",") if self.rotation else [],
-                                            do_bandsteering=do_bandsteering,
-                                            cycles=cycles,
-                                            bssids=bssids,
-                                            duration_to_skip=duration_to_skip
-                                            )
+                                                                            ip=self.lanforge_ip,
+                                                                            port=self.port,
+                                                                            number_template="0000",
+                                                                            ap_name=ap_name,
+                                                                            name_prefix="TOS-",
+                                                                            upstream=upstream_port,
+                                                                            ssid=ssid,
+                                                                            password=passwd,
+                                                                            security=security,
+                                                                            test_duration=test_duration,
+                                                                            use_ht160=False,
+                                                                            side_a_min_rate=int(loads['upload'][index]),
+                                                                            side_b_min_rate=int(loads['download'][index]),
+                                                                            traffic_type=traffic_type,
+                                                                            tos=tos,
+                                                                            csv_direction=direction,
+                                                                            dowebgui=dowebgui,
+                                                                            test_name=test_name,
+                                                                            result_dir=result_dir,
+                                                                            device_list=device_list,
+                                                                            _debug_on=debug,
+                                                                            group_name=group_name,
+                                                                            profile_name=profile_name,
+                                                                            file_name=file_name,
+                                                                            eap_method=eap_method,
+                                                                            eap_identity=eap_identity,
+                                                                            ieee80211=ieee8021x,
+                                                                            ieee80211u=ieee80211u,
+                                                                            ieee80211w=ieee80211w,
+                                                                            enable_pkc=enable_pkc,
+                                                                            bss_transition=bss_transition,
+                                                                            power_save=power_save,
+                                                                            disable_ofdma=disable_ofdma,
+                                                                            roam_ft_ds=roam_ft_ds,
+                                                                            key_management=key_management,
+                                                                            pairwise=pairwise,
+                                                                            private_key=private_key,
+                                                                            ca_cert=ca_cert,
+                                                                            client_cert=client_cert,
+                                                                            pk_passwd=pk_passwd,
+                                                                            pac_file=pac_file,
+                                                                            expected_passfail_val=expected_passfail_value,
+                                                                            csv_name=device_csv_name,
+                                                                            wait_time=wait_time,
+                                                                            config=config,
+                                                                            get_live_view=get_live_view,
+                                                                            total_floors=total_floors,
+                                                                            robot_test=self.robot_test,
+                                                                            robot_ip=self.robot_ip,
+                                                                            coordinate=self.coordinate,
+                                                                            rotation=self.rotation,
+                                                                            rotation_enabled=True if self.rotation else False,
+                                                                            angle_list=self.rotation.split(",") if self.rotation else [],
+                                                                            do_bandsteering=do_bandsteering,
+                                                                            cycles=cycles,
+                                                                            bssids=bssids,
+                                                                            duration_to_skip=duration_to_skip
+                                                                            )
             self.qos_obj_dict[ce][obj_name]["obj"].os_type()
             _, configured_device, _, configuration = self.qos_obj_dict[ce][obj_name]["obj"].phantom_check()
             if dowebgui and group_name:
@@ -2501,7 +2521,7 @@ class Candela(Realm):
                         if self.qos_obj_dict[ce][obj_name]["obj"].robot_ip:
                             if self.qos_obj_dict[ce][obj_name]["obj"].test_stopped_by_user:
                                 break
-                            test_stopped_by_user,robo_moved, abort, robo_rotated = self.wait_for_all_tests_to_finish(coordinate=coordinate)
+                            test_stopped_by_user, robo_moved, abort, robo_rotated = self.wait_for_all_tests_to_finish(coordinate=coordinate)
                             if test_stopped_by_user:
                                 break
                             if abort or not robo_moved:
@@ -2572,7 +2592,7 @@ class Candela(Realm):
                                         self.qos_obj_dict[ce][obj_name]["obj"].current_coordinate = coordinate
                                         self.qos_obj_dict[ce][obj_name]["obj"].current_angle = self.qos_obj_dict[ce][obj_name]["obj"].angle_list[angle]
                                         # pause_angle, test_stopped_by_user = self.robot.wait_for_battery(battery=40,stop=self.stop)
-                                        test_stopped_by_user,robo_moved, abort, robo_rotated = self.wait_for_all_tests_to_finish_rotation(coordinate=coordinate,angle=self.rotation_list[angle])
+                                        test_stopped_by_user, robo_moved, abort, robo_rotated = self.wait_for_all_tests_to_finish_rotation(coordinate=coordinate, angle=self.rotation_list[angle])
                                         if test_stopped_by_user:
                                             break
 
@@ -2626,13 +2646,14 @@ class Candela(Realm):
                                                 self.qos_obj_dict[ce][obj_name]["obj"].qos_data[coordinate] = {}
                                             self.qos_obj_dict[ce][obj_name]["obj"].qos_data[coordinate][self.rotation_list[angle]] = params
 
-                    self.qos_obj_dict[ce][obj_name]["obj"].generate_report_for_robo(coordinate_list=coord_list, angle_list=self.rotation_list, passed_coordinates=passed_coord_list)  
+                    self.qos_obj_dict[ce][obj_name]["obj"].generate_report_for_robo(coordinate_list=coord_list, angle_list=self.rotation_list, passed_coordinates=passed_coord_list)
                     if self.dowebgui:
                         self.webgui_test_done("qos")
                 return True
             self.qos_obj_dict[ce][obj_name]["obj"].start(False, False)
             time.sleep(10)
-            connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b = self.qos_obj_dict[ce][obj_name]["obj"].monitor()
+            connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b = self.qos_obj_dict[ce][obj_name]["obj"].monitor(
+            )
             logger.info("connections download {}".format(connections_download))
             logger.info("connections upload {}".format(connections_upload))
             self.qos_obj_dict[ce][obj_name]["obj"].stop()
@@ -2713,7 +2734,7 @@ class Candela(Realm):
             self.webgui_test_done("qos")
         return True
 
-    def run_vs_test(self,args):
+    def run_vs_test(self, args):
         """
         Execute a Video Streaming (VS) test across specified devices.
         This handles test configuration, Android client coordination, and generates a video streaming report.
@@ -2759,42 +2780,42 @@ class Candela(Realm):
             logger_config.load_lf_logger_config()
 
         logger = logging.getLogger(__name__)
-        ce = self.current_exec #seires
+        ce = self.current_exec  # seires
         if ce == "parallel":
             obj_name = "vs_test"
         else:
             obj_no = 1
             while f"vs_test_{obj_no}" in self.vs_obj_dict[ce]:
-                obj_no+=1 
-            obj_name = f"vs_test_{obj_no}" 
-        self.vs_obj_dict[ce][obj_name] = {"obj":None,"data":None}
+                obj_no += 1
+            obj_name = f"vs_test_{obj_no}"
+        self.vs_obj_dict[ce][obj_name] = {"obj": None, "data": None}
         self.vs_obj_dict[ce][obj_name]["obj"] = VideoStreamingTest(host=args.host, ssid=args.ssid, passwd=args.passwd, encryp=args.encryp,
-                                suporrted_release=["7.0", "10", "11", "12"], max_speed=args.max_speed,
-                                url=args.url, urls_per_tenm=args.urls_per_tenm, duration=args.duration,
-                                resource_ids=args.device_list, dowebgui=args.dowebgui, media_quality=args.media_quality, media_source=args.media_source,
-                                result_dir=args.result_dir, test_name=args.test_name, incremental=args.incremental, postcleanup=args.postcleanup,
-                                precleanup=args.precleanup,
-                                pass_fail_val=args.expected_passfail_value,
-                                csv_name=args.device_csv_name,
-                                groups=args.group_name,
-                                profiles=args.profile_name,
-                                config=args.config,
-                                file_name=args.file_name,
-                                floors=args.floors,
-                                get_live_view=args.get_live_view,
+                                                                   suporrted_release=["7.0", "10", "11", "12"], max_speed=args.max_speed,
+                                                                   url=args.url, urls_per_tenm=args.urls_per_tenm, duration=args.duration,
+                                                                   resource_ids=args.device_list, dowebgui=args.dowebgui, media_quality=args.media_quality, media_source=args.media_source,
+                                                                   result_dir=args.result_dir, test_name=args.test_name, incremental=args.incremental, postcleanup=args.postcleanup,
+                                                                   precleanup=args.precleanup,
+                                                                   pass_fail_val=args.expected_passfail_value,
+                                                                   csv_name=args.device_csv_name,
+                                                                   groups=args.group_name,
+                                                                   profiles=args.profile_name,
+                                                                   config=args.config,
+                                                                   file_name=args.file_name,
+                                                                   floors=args.floors,
+                                                                   get_live_view=args.get_live_view,
 
-                                #for robot execution
-                                robot_test = self.robot_test,
-                                robot_ip = self.robot_ip,
-                                coordinate = self.coordinate,
-                                rotation = self.rotation,
-                                rotation_enabled = True if self.rotation else False,
-                                angle_list = self.rotation.split(",") if self.rotation else [],
-                                do_bandsteering=args.do_bandsteering,
-                                total_cycles=args.total_cycles,
-                                bssids=args.bssids.split(",") if args.bssids else [],
-                                duration_to_skip=args.duration_to_skip
-                                )
+                                                                   # for robot execution
+                                                                   robot_test=self.robot_test,
+                                                                   robot_ip=self.robot_ip,
+                                                                   coordinate=self.coordinate,
+                                                                   rotation=self.rotation,
+                                                                   rotation_enabled=True if self.rotation else False,
+                                                                   angle_list=self.rotation.split(",") if self.rotation else [],
+                                                                   do_bandsteering=args.do_bandsteering,
+                                                                   total_cycles=args.total_cycles,
+                                                                   bssids=args.bssids.split(",") if args.bssids else [],
+                                                                   duration_to_skip=args.duration_to_skip
+                                                                   )
         args.upstream_port = self.vs_obj_dict[ce][obj_name]["obj"].change_port_to_ip(args.upstream_port)
         self.vs_obj_dict[ce][obj_name]["obj"].validate_args()
         config_obj = DeviceConfig.DeviceConfig(lanforge_ip=args.host, file_name=args.file_name)
@@ -3108,7 +3129,7 @@ class Candela(Realm):
                     if i == 0:
                         if self.robot_test:
                             self.vs_obj_dict[ce][obj_name]["obj"].perform_robo(args, individual_dataframe_columns, cx_order_list, i, actual_start_time, iterations_before_test_stopped_by_user)
-                            
+
                             return True
                         self.vs_obj_dict[ce][obj_name]["obj"].data["start_time_webGUI"] = [datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')]
                         end_time_webGUI = (datetime.datetime.now() + datetime.timedelta(minutes=self.vs_obj_dict[ce][obj_name]["obj"].total_duration)).strftime('%Y-%m-%d %H:%M:%S')
@@ -3127,18 +3148,23 @@ class Candela(Realm):
                         self.vs_obj_dict[ce][obj_name]["obj"].data['remaining_time_webGUI'] = ['0:00']
                     else:
                         date_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        self.vs_obj_dict[ce][obj_name]["obj"].data['remaining_time_webGUI'] = [datetime.datetime.strptime(end_time_webGUI, "%Y-%m-%d %H:%M:%S") - datetime.datetime.strptime(date_time, "%Y-%m-%d %H:%M:%S")]
+                        self.vs_obj_dict[ce][obj_name]["obj"].data['remaining_time_webGUI'] = [datetime.datetime.strptime(
+                            end_time_webGUI, "%Y-%m-%d %H:%M:%S") - datetime.datetime.strptime(date_time, "%Y-%m-%d %H:%M:%S")]
 
                     if args.dowebgui:
-                        file_path = os.path.join(self.vs_obj_dict[ce][obj_name]["obj"].result_dir, "../../Running_instances/{}_{}_running.json".format(self.vs_obj_dict[ce][obj_name]["obj"].host, self.vs_obj_dict[ce][obj_name]["obj"].test_name))
+                        file_path = os.path.join(self.vs_obj_dict[ce][obj_name]["obj"].result_dir,
+                                                 "../../Running_instances/{}_{}_running.json".format(self.vs_obj_dict[ce][obj_name]["obj"].host,
+                                                                                                     self.vs_obj_dict[ce][obj_name]["obj"].test_name))
                         if os.path.exists(file_path):
                             with open(file_path, 'r') as file:
                                 data = json.load(file)
                                 if data["status"] != "Running":
                                     break
-                        test_stopped_by_user = self.vs_obj_dict[ce][obj_name]["obj"].monitor_for_runtime_csv(args.duration, file_path, individual_df, i, actual_start_time, resource_list_sorted, cx_order_list[i])
+                        test_stopped_by_user = self.vs_obj_dict[ce][obj_name]["obj"].monitor_for_runtime_csv(
+                            args.duration, file_path, individual_df, i, actual_start_time, resource_list_sorted, cx_order_list[i])
                     else:
-                        test_stopped_by_user = self.vs_obj_dict[ce][obj_name]["obj"].monitor_for_runtime_csv(args.duration, file_path, individual_df, i, actual_start_time, resource_list_sorted, cx_order_list[i])
+                        test_stopped_by_user = self.vs_obj_dict[ce][obj_name]["obj"].monitor_for_runtime_csv(
+                            args.duration, file_path, individual_df, i, actual_start_time, resource_list_sorted, cx_order_list[i])
                     if not test_stopped_by_user:
                         # Append current iteration index to iterations_before_test_stopped_by_user
                         iterations_before_test_stopped_by_user.append(i)
@@ -3186,9 +3212,21 @@ class Candela(Realm):
 
         # prev_inc_value = 0
         if self.vs_obj_dict[ce][obj_name]["obj"].resource_ids and self.vs_obj_dict[ce][obj_name]["obj"].incremental:
-            self.vs_obj_dict[ce][obj_name]["obj"].generate_report(date, list(set(iterations_before_test_stopped_by_user)), test_setup_info=test_setup_info, realtime_dataset=individual_df,report_path=self.result_path if not self.dowebgui else self.result_dir)
+            self.vs_obj_dict[ce][obj_name]["obj"].generate_report(
+                date,
+                list(
+                    set(iterations_before_test_stopped_by_user)),
+                test_setup_info=test_setup_info,
+                realtime_dataset=individual_df,
+                report_path=self.result_path if not self.dowebgui else self.result_dir)
         elif self.vs_obj_dict[ce][obj_name]["obj"].resource_ids:
-            self.vs_obj_dict[ce][obj_name]["obj"].generate_report(date, list(set(iterations_before_test_stopped_by_user)), test_setup_info=test_setup_info, realtime_dataset=individual_df,report_path=self.result_path if not self.dowebgui else self.result_dir)
+            self.vs_obj_dict[ce][obj_name]["obj"].generate_report(
+                date,
+                list(
+                    set(iterations_before_test_stopped_by_user)),
+                test_setup_info=test_setup_info,
+                realtime_dataset=individual_df,
+                report_path=self.result_path if not self.dowebgui else self.result_dir)
 
         params = {
             "date": None,
@@ -3224,7 +3262,6 @@ class Candela(Realm):
             self.vs_obj_dict[ce][obj_name]["obj"].copy_reports_to_home_dir()
             self.webgui_test_done("vs")
         return True
-
 
     def run_vs_test1(
         self,
@@ -3344,9 +3381,9 @@ class Candela(Realm):
         default_config=True,
         tput_mbps=False,
         help_summary=False,
-        do_bandsteering=False, 
-        total_cycles=1, 
-        bssids=None, 
+        do_bandsteering=False,
+        total_cycles=1,
+        bssids=None,
         duration_to_skip=None
     ):
         """
@@ -3364,7 +3401,7 @@ class Candela(Realm):
 
         logger_config = lf_logger_config.lf_logger_config()
 
-        if(tput_mbps):
+        if (tput_mbps):
             if download != '2560' and download != '0' and upload != '0' and upload != '2560':
                 download = str(int(download) * 1000000)
                 upload = str(int(upload) * 1000000)
@@ -3434,84 +3471,84 @@ class Candela(Realm):
         if (int(packet_size) < 16 or int(packet_size) > 65507) and int(packet_size) != -1:
             logger.error("Packet size should be greater than 16 bytes and less than 65507 bytes incorrect")
             return
-        ce = self.current_exec #series
+        ce = self.current_exec  # series
         if ce == "parallel":
             obj_name = "thput_test"
         else:
             obj_no = 1
             while f"thput_test_{obj_no}" in self.thput_obj_dict[ce]:
-                obj_no+=1 
-            obj_name = f"thput_test_{obj_no}" 
-        self.thput_obj_dict[ce][obj_name] = {"obj":None,"data":None}
+                obj_no += 1
+            obj_name = f"thput_test_{obj_no}"
+        self.thput_obj_dict[ce][obj_name] = {"obj": None, "data": None}
         for index in range(len(loads_data)):
             self.thput_obj_dict[ce][obj_name]["obj"] = Throughput(host=self.lanforge_ip,
-                                    ip=self.lanforge_ip,
-                                    port=self.port,
-                                    number_template="0000",
-                                    ap_name=ap_name,
-                                    name_prefix="TOS-",
-                                    upstream=upstream_port,
-                                    ssid=ssid,
-                                    password=passwd,
-                                    security=security,
-                                    test_duration=test_duration,
-                                    use_ht160=False,
-                                    side_a_min_rate=int(loads['upload'][index]),
-                                    side_b_min_rate=int(loads['download'][index]),
-                                    side_a_min_pdu=int(packet_size),
-                                    side_b_min_pdu=int(packet_size),
-                                    traffic_type=traffic_type,
-                                    tos=tos,
-                                    dowebgui=dowebgui,
-                                    test_name=test_name,
-                                    result_dir=result_dir,
-                                    device_list=device_list,
-                                    incremental_capacity=incremental_capacity,
-                                    report_timer=report_timer,
-                                    load_type=load_type,
-                                    do_interopability=do_interopability,
-                                    incremental=incremental,
-                                    precleanup=precleanup,
-                                    get_live_view= get_live_view,
-                                    total_floors = total_floors,
-                                    csv_direction=csv_direction,
-                                    expected_passfail_value=expected_passfail_value,
-                                    device_csv_name=device_csv_name,
-                                    file_name=file_name,
-                                    group_name=group_name,
-                                    profile_name=profile_name,
-                                    eap_method=eap_method,
-                                    eap_identity=eap_identity,
-                                    ieee80211=ieee8021x,
-                                    ieee80211u=ieee80211u,
-                                    ieee80211w=ieee80211w,
-                                    enable_pkc=enable_pkc,
-                                    bss_transition=bss_transition,
-                                    power_save=power_save,
-                                    disable_ofdma=disable_ofdma,
-                                    roam_ft_ds=roam_ft_ds,
-                                    key_management=key_management,
-                                    pairwise=pairwise,
-                                    private_key=private_key,
-                                    ca_cert=ca_cert,
-                                    client_cert=client_cert,
-                                    pk_passwd=pk_passwd,
-                                    pac_file=pac_file,
-                                    wait_time=wait_time,
-                                    config=config,
-                                    interopability_config = default_config,
+                                                                  ip=self.lanforge_ip,
+                                                                  port=self.port,
+                                                                  number_template="0000",
+                                                                  ap_name=ap_name,
+                                                                  name_prefix="TOS-",
+                                                                  upstream=upstream_port,
+                                                                  ssid=ssid,
+                                                                  password=passwd,
+                                                                  security=security,
+                                                                  test_duration=test_duration,
+                                                                  use_ht160=False,
+                                                                  side_a_min_rate=int(loads['upload'][index]),
+                                                                  side_b_min_rate=int(loads['download'][index]),
+                                                                  side_a_min_pdu=int(packet_size),
+                                                                  side_b_min_pdu=int(packet_size),
+                                                                  traffic_type=traffic_type,
+                                                                  tos=tos,
+                                                                  dowebgui=dowebgui,
+                                                                  test_name=test_name,
+                                                                  result_dir=result_dir,
+                                                                  device_list=device_list,
+                                                                  incremental_capacity=incremental_capacity,
+                                                                  report_timer=report_timer,
+                                                                  load_type=load_type,
+                                                                  do_interopability=do_interopability,
+                                                                  incremental=incremental,
+                                                                  precleanup=precleanup,
+                                                                  get_live_view=get_live_view,
+                                                                  total_floors=total_floors,
+                                                                  csv_direction=csv_direction,
+                                                                  expected_passfail_value=expected_passfail_value,
+                                                                  device_csv_name=device_csv_name,
+                                                                  file_name=file_name,
+                                                                  group_name=group_name,
+                                                                  profile_name=profile_name,
+                                                                  eap_method=eap_method,
+                                                                  eap_identity=eap_identity,
+                                                                  ieee80211=ieee8021x,
+                                                                  ieee80211u=ieee80211u,
+                                                                  ieee80211w=ieee80211w,
+                                                                  enable_pkc=enable_pkc,
+                                                                  bss_transition=bss_transition,
+                                                                  power_save=power_save,
+                                                                  disable_ofdma=disable_ofdma,
+                                                                  roam_ft_ds=roam_ft_ds,
+                                                                  key_management=key_management,
+                                                                  pairwise=pairwise,
+                                                                  private_key=private_key,
+                                                                  ca_cert=ca_cert,
+                                                                  client_cert=client_cert,
+                                                                  pk_passwd=pk_passwd,
+                                                                  pac_file=pac_file,
+                                                                  wait_time=wait_time,
+                                                                  config=config,
+                                                                  interopability_config=default_config,
 
-                                     # for Robot execution
-                                    rotation_enabled=True if self.rotation else False,
-                                    robo_ip=self.robot_ip,
-                                    coordinate_list=self.coordinate.split(",") if self.coordinate else [],
-                                    angle_list=self.rotation.split(",") if self.rotation else [],
-                                    # for bandsteering
-                                    do_bandsteering=do_bandsteering,
-                                    total_cycles= total_cycles if total_cycles else 1,
-                                    bssids= bssids if bssids else None,
-                                    duration_to_skip = duration_to_skip if duration_to_skip else None,
-                                    )
+                                                                  # for Robot execution
+                                                                  rotation_enabled=True if self.rotation else False,
+                                                                  robo_ip=self.robot_ip,
+                                                                  coordinate_list=self.coordinate.split(",") if self.coordinate else [],
+                                                                  angle_list=self.rotation.split(",") if self.rotation else [],
+                                                                  # for bandsteering
+                                                                  do_bandsteering=do_bandsteering,
+                                                                  total_cycles=total_cycles if total_cycles else 1,
+                                                                  bssids=bssids if bssids else None,
+                                                                  duration_to_skip=duration_to_skip if duration_to_skip else None,
+                                                                  )
 
             if gave_incremental:
                 self.thput_obj_dict[ce][obj_name]["obj"].gave_incremental = True
@@ -3535,7 +3572,7 @@ class Candela(Realm):
             created_cxs = self.thput_obj_dict[ce][obj_name]["obj"].build()
             time.sleep(10)
             created_cxs = list(created_cxs.keys())
-            
+
             # To execute the throughput test using ROBO
             if self.robot_test:
                 self.thput_obj_dict[ce][obj_name]["obj"].postcleanup = True
@@ -3553,8 +3590,7 @@ class Candela(Realm):
                 if self.dowebgui:
                     self.webgui_test_done("thput")
                 return True
-            
-            
+
             individual_dataframe_column = []
 
             to_run_cxs, to_run_cxs_len, created_cx_lists_keys, incremental_capacity_list = self.thput_obj_dict[ce][obj_name]["obj"].get_incremental_capacity_list()
@@ -3563,10 +3599,10 @@ class Candela(Realm):
 
                 # Extend individual_dataframe_column with dynamically generated column names
                 individual_dataframe_column.extend([f'Download{clients_to_run[i]}', f'Upload{clients_to_run[i]}', f'Rx % Drop  {clients_to_run[i]}',
-                                                f'Tx % Drop{clients_to_run[i]}', f'Average RTT {clients_to_run[i]} ', f'RSSI {clients_to_run[i]} ', f'Tx-Rate {clients_to_run[i]} ', f'Rx-Rate {clients_to_run[i]} ', f'BSSID {clients_to_run[i]}', f'Channel {clients_to_run[i]}'])
+                                                    f'Tx % Drop{clients_to_run[i]}', f'Average RTT {clients_to_run[i]} ', f'RSSI {clients_to_run[i]} ', f'Tx-Rate {clients_to_run[i]} ', f'Rx-Rate {clients_to_run[i]} ', f'BSSID {clients_to_run[i]}', f'Channel {clients_to_run[i]}'])
 
             individual_dataframe_column.extend(['Overall Download', 'Overall Upload', 'Overall Rx % Drop ', 'Overall Tx % Drop', 'Iteration',
-                                            'TIMESTAMP', 'Start_time', 'End_time', 'Remaining_Time', 'Incremental_list', 'status'])
+                                                'TIMESTAMP', 'Start_time', 'End_time', 'Remaining_Time', 'Incremental_list', 'status'])
             individual_df = pd.DataFrame(columns=individual_dataframe_column)
 
             overall_start_time = datetime.datetime.now()
@@ -3606,7 +3642,8 @@ class Candela(Realm):
                 device_names = created_cx_lists_keys[:to_run_cxs_len[i][-1]]
 
                 # Monitor throughput and capture all dataframes and test stop status
-                all_dataframes, test_stopped_by_user = self.thput_obj_dict[ce][obj_name]["obj"].monitor(i, individual_df, device_names, incremental_capacity_list, overall_start_time, overall_end_time, is_device_configured)
+                all_dataframes, test_stopped_by_user = self.thput_obj_dict[ce][obj_name]["obj"].monitor(
+                    i, individual_df, device_names, incremental_capacity_list, overall_start_time, overall_end_time, is_device_configured)
                 if do_interopability and "iOS" not in to_run_cxs[i][0] and not default_config:
                     # logger.info("Disconnecting device of resource{}".format(to_run_cxs[i][0]))
                     self.thput_obj_dict[ce][obj_name]["obj"].disconnect_all_devices([device_to_run_resource])
@@ -3626,7 +3663,13 @@ class Candela(Realm):
         self.thput_obj_dict[ce][obj_name]["obj"].stop()
         if postcleanup:
             self.thput_obj_dict[ce][obj_name]["obj"].cleanup()
-        self.thput_obj_dict[ce][obj_name]["obj"].generate_report(list(set(iterations_before_test_stopped_by_user)), incremental_capacity_list, data=all_dataframes, data1=to_run_cxs_len, report_path=self.result_path if not self.thput_obj_dict[ce][obj_name]["obj"].dowebgui else self.thput_obj_dict[ce][obj_name]["obj"].result_dir)
+        self.thput_obj_dict[ce][obj_name]["obj"].generate_report(
+            list(
+                set(iterations_before_test_stopped_by_user)),
+            incremental_capacity_list,
+            data=all_dataframes,
+            data1=to_run_cxs_len,
+            report_path=self.result_path if not self.thput_obj_dict[ce][obj_name]["obj"].dowebgui else self.thput_obj_dict[ce][obj_name]["obj"].result_dir)
         if self.thput_obj_dict[ce][obj_name]["obj"].dowebgui:
             # copying to home directory i.e home/user_name
             self.thput_obj_dict[ce][obj_name]["obj"].copy_reports_to_home_dir()
@@ -3642,7 +3685,7 @@ class Candela(Realm):
             self.webgui_test_done("thput")
         return True
 
-    def run_mc_test(self,args):
+    def run_mc_test(self, args):
         endp_types = "lf_udp"
 
         help_summary = '''\
@@ -4065,8 +4108,8 @@ class Candela(Realm):
                         logger.debug("wifi_settings flags set")
                     else:
                         logger.debug("wifi_settings is present wifi_mode, enable_flags need to be set "
-                                    "or remove the wifi_settings or set wifi_settings==False flag on "
-                                    "the radio for defaults")
+                                     "or remove the wifi_settings or set wifi_settings==False flag on "
+                                     "the radio for defaults")
                         return False
                     wifi_mode_list.append(radio_info_dict['wifi_mode'])
                     enable_flags_str = radio_info_dict['enable_flags'].replace(
@@ -4174,15 +4217,15 @@ class Candela(Realm):
         # Configure reporting
         logger.info("Configuring report")
         report, kpi_csv, csv_outfile = configure_reporting(**vars(args))
-        ce = self.current_exec #seires
+        ce = self.current_exec  # seires
         if ce == "parallel":
             obj_name = "mcast_test"
         else:
             obj_no = 1
             while f"mcast_test_{obj_no}" in self.mcast_obj_dict[ce]:
-                obj_no+=1 
-            obj_name = f"mcast_test_{obj_no}" 
-        self.mcast_obj_dict[ce][obj_name] = {"obj":None,"data":None}
+                obj_no += 1
+            obj_name = f"mcast_test_{obj_no}"
+        self.mcast_obj_dict[ce][obj_name] = {"obj": None, "data": None}
         logger.info("Configure test object")
         bssids_mcast = ','.join(f for f in self.bssids)
         self.mcast_obj_dict[ce][obj_name]["obj"] = L3VariableTime(
@@ -4246,8 +4289,8 @@ class Candela(Realm):
             test_name=test_name,
             dowebgui=args.dowebgui,
             ip=ip,
-            get_live_view= args.get_live_view,
-            total_floors = args.total_floors,
+            get_live_view=args.get_live_view,
+            total_floors=args.total_floors,
             # for uniformity from webGUI result_dir as variable is used insead of local_lf_report_dir
             result_dir=args.local_lf_report_dir,
 
@@ -4288,14 +4331,14 @@ class Candela(Realm):
             expected_passfail_value=args.expected_passfail_value,
             device_csv_name=args.device_csv_name,
             group_name=args.group_name,
-            
+
             # for Robot execution
             robot_test=self.robot_test,
             robot_ip=self.robot_ip,
             coordinate=self.coordinate,
             rotation=self.rotation,
 
-            do_bandsteering =self.do_bandsteering,
+            do_bandsteering=self.do_bandsteering,
             cycles=self.cycles,
             bssids=bssids_mcast,
             duration_to_skip=self.duration_to_skip
@@ -4325,7 +4368,7 @@ class Candela(Realm):
             logger.info("Multicast robot test detected")
             if self.do_bandsteering:
                 self.mcast_obj_dict[ce][obj_name]["obj"].perform_bandsteering()
-            else:   
+            else:
                 self.mcast_obj_dict[ce][obj_name]["obj"].perform_robo()
         else:
             self.mcast_obj_dict[ce][obj_name]["obj"].start(False)
@@ -4363,7 +4406,7 @@ class Candela(Realm):
         else:
             self.mcast_obj_dict[ce][obj_name]["obj"].generate_report()
         params = {
-            "config_devices" : None,
+            "config_devices": None,
             "group_device_map": None
         }
         params["group_device_map"] = group_device_map
@@ -4404,7 +4447,6 @@ class Candela(Realm):
         if self.dowebgui:
             self.webgui_test_done("mc")
         return True
-
 
     def run_mc_test1(
         self,
@@ -4502,7 +4544,7 @@ class Candela(Realm):
         get_live_view=False,
         total_floors="0",
         help_summary=False,
-        result_dir = ''
+        result_dir=''
     ):
         """
         Configure and execute a Layer 3 Multicast (MC) test.
@@ -4513,7 +4555,6 @@ class Candela(Realm):
         args.lfmgr = self.lanforge_ip
         args.local_lf_report_dir = os.getcwd() if not args.dowebgui else result_dir
         return self.run_mc_test(args)
-
 
     def run_yt_test(
             self,
@@ -4568,18 +4609,18 @@ class Candela(Realm):
         """
         try:
             if self.do_bandsteering:
-                duration=999999
+                duration = 999999
             if self.dowebgui:
                 if not self.webgui_stop_check("yt"):
                     return False
-            if type(duration) == int:
+            if isinstance(duration, int):
                 pass
             elif duration.endswith('s') or duration.endswith('S'):
-                duration = int(duration[0:-1])/60
+                duration = int(duration[0:-1]) / 60
             elif duration.endswith('m') or duration.endswith('M'):
                 duration = int(duration[0:-1])
             elif duration.endswith('h') or duration.endswith('H'):
-                duration = int(duration[0:-1])*60
+                duration = int(duration[0:-1]) * 60
             else:
                 duration = int(duration)
 
@@ -4623,19 +4664,18 @@ class Candela(Realm):
                 else:
                     selected_profiles = []
 
-
                 Devices = RealDevice(manager_ip=mgr_ip,
-                                    server_ip='192.168.1.61',
-                                    ssid_2g='Test Configured',
-                                    passwd_2g='',
-                                    encryption_2g='',
-                                    ssid_5g='Test Configured',
-                                    passwd_5g='',
-                                    encryption_5g='',
-                                    ssid_6g='Test Configured',
-                                    passwd_6g='',
-                                    encryption_6g='',
-                                    selected_bands=['5G'])
+                                     server_ip='192.168.1.61',
+                                     ssid_2g='Test Configured',
+                                     passwd_2g='',
+                                     encryption_2g='',
+                                     ssid_5g='Test Configured',
+                                     passwd_5g='',
+                                     encryption_5g='',
+                                     ssid_6g='Test Configured',
+                                     passwd_6g='',
+                                     encryption_6g='',
+                                     selected_bands=['5G'])
                 Devices.get_devices()
 
                 # Create a YouTube object with the specified parameters
@@ -4667,9 +4707,9 @@ class Candela(Realm):
                     rotations_enabled=self.rotation_enabled,
                     do_bandsteering=self.do_bandsteering,
                     # bssids=self.bssids,
-                    bssids = [b.strip() for b in self.bssids.split(",")] if isinstance(self.bssids, str) else (self.bssids or []),
+                    bssids=[b.strip() for b in self.bssids.split(",")] if isinstance(self.bssids, str) else (self.bssids or []),
                     cycles=self.cycles
-                    )
+                )
 
                 logging.info('CHECKING PORT AVAILBILITY for YT TEST')
                 self.port_clean_up(5002)
@@ -4810,7 +4850,7 @@ class Candela(Realm):
                     if self.do_bandsteering:
                         self.yt_test_obj.perform_robo_bandsteering_test()
                     else:
-                        self.yt_test_obj.perform_robo_test() 
+                        self.yt_test_obj.perform_robo_test()
                 else:
                     self.yt_test_obj.start_generic()
                     logging.info(f"yt_test_obj: {self.yt_test_obj}")
@@ -4820,10 +4860,9 @@ class Candela(Realm):
 
                     # duration = duration
                     # end_time = datetime.datetime.now() + datetime.timedelta(minutes=duration)
-                   
 
                     # while datetime.datetime.now() < end_time or not self.yt_test_obj.check_gen_cx():
-                        
+
                     #     time.sleep(5)
                     # if initial_data:
                     #     end_time_webgui = []
@@ -4873,11 +4912,11 @@ class Candela(Realm):
                 # traceback.print_exc()
                 self.yt_test_obj.stop()
                 if self.current_exec == "parallel":
-                    self.yt_obj_dict["parallel"]["yt_test"]["obj"] =self.yt_test_obj
+                    self.yt_obj_dict["parallel"]["yt_test"]["obj"] = self.yt_test_obj
                 else:
                     for i in range(len(self.yt_obj_dict["series"])):
-                        if self.yt_obj_dict["series"][f"yt_test_{i+1}"]["obj"] is None:
-                            self.yt_obj_dict["series"][f"yt_test_{i+1}"]["obj"] = self.yt_test_obj
+                        if self.yt_obj_dict["series"][f"yt_test_{i + 1}"]["obj"] is None:
+                            self.yt_obj_dict["series"][f"yt_test_{i + 1}"]["obj"] = self.yt_test_obj
                             break
                 # Stopping the Youtube test
                 if do_webUI:
@@ -4964,10 +5003,10 @@ class Candela(Realm):
 
                 # upstream_port = "10.253.8.126"
                 self.zoom_test_obj = ZoomAutomation(audio=audio, video=video, lanforge_ip=lanforge_ip, wait_time=wait_time, testname=testname,
-                                                upstream_port=upstream_port, config=config, selected_groups=selected_groups, selected_profiles=selected_profiles,
-                                                robo_ip=self.robot_ip,coordinates_list=self.coordinate_list,angles_list=self.rotation_list,do_robo=self.robot_test,
-                                                rotations_enabled=self.rotation_enabled,api_stats_collection=api_stats_collection,participants_req=participants,
-                                                signin_email=signin_email,signin_passwd=signin_passwd,duration=duration,do_webui=self.dowebgui,do_bs=self.do_bandsteering,bssids=self.bssids,cycles=self.cycles)
+                                                    upstream_port=upstream_port, config=config, selected_groups=selected_groups, selected_profiles=selected_profiles,
+                                                    robo_ip=self.robot_ip, coordinates_list=self.coordinate_list, angles_list=self.rotation_list, do_robo=self.robot_test,
+                                                    rotations_enabled=self.rotation_enabled, api_stats_collection=api_stats_collection, participants_req=participants,
+                                                    signin_email=signin_email, signin_passwd=signin_passwd, duration=duration, do_webui=self.dowebgui, do_bs=self.do_bandsteering, bssids=self.bssids, cycles=self.cycles)
                 upstream_port = self.zoom_test_obj.change_port_to_ip(upstream_port)
                 self.zoom_test_obj.upstream_port = upstream_port
                 realdevice = RealDevice(manager_ip=lanforge_ip,
@@ -5176,7 +5215,7 @@ class Candela(Realm):
                             "Missing Zoom API credentials. Please provide ACCOUNT_ID, CLIENT_ID, and CLIENT_SECRET as environment variables or through function arguments."
                         )
                 if self.robot_test and not self.do_bandsteering:
-                    self.zoom_test_obj.report_path_date_time = os.path.join(os.getcwd() , "zoom_test_results")
+                    self.zoom_test_obj.report_path_date_time = os.path.join(os.getcwd(), "zoom_test_results")
                     self.zoom_test_obj.run_robo_test()
                 else:
                     # self.zoom_test_obj.report_path_date_time = os.path.join(os.getcwd() , "zoom_test_results")
@@ -5192,7 +5231,7 @@ class Candela(Realm):
             traceback.print_exc()
         finally:
             if not ('--help' in sys.argv or '-h' in sys.argv):
-                
+
                 # self.zoom_test_obj.redis_client.set('login_completed', 0)
                 self.zoom_test_obj.stop_signal = True
                 logger.info("Waiting for Browser Cleanup in Laptops")
@@ -5200,7 +5239,7 @@ class Candela(Realm):
                 self.zoom_test_obj.app = None
                 if self.dowebgui:
                     self.zoom_test_obj.stop_webui()
-                
+
                 if self.robot_test and api_stats_collection and not self.do_bandsteering:
                     self.zoom_test_obj.generate_report_from_data()
                 elif api_stats_collection:
@@ -5209,11 +5248,11 @@ class Candela(Realm):
                 if self.dowebgui:
                     self.webgui_test_done("zoom")
                 if self.current_exec == "parallel":
-                    self.zoom_obj_dict["parallel"]["zoom_test"]["obj"] =self.zoom_test_obj
+                    self.zoom_obj_dict["parallel"]["zoom_test"]["obj"] = self.zoom_test_obj
                 else:
                     for i in range(len(self.zoom_obj_dict["series"])):
-                        if self.zoom_obj_dict["series"][f"zoom_test_{i+1}"]["obj"] is None:
-                            self.zoom_obj_dict["series"][f"zoom_test_{i+1}"]["obj"] = self.zoom_test_obj
+                        if self.zoom_obj_dict["series"][f"zoom_test_{i + 1}"]["obj"] is None:
+                            self.zoom_obj_dict["series"][f"zoom_test_{i + 1}"]["obj"] = self.zoom_test_obj
                             break
                 logging.info("Waiting for Browser Cleanup in Laptops")
                 self.zoom_test_obj.generic_endps_profile.cleanup()
@@ -5222,8 +5261,7 @@ class Candela(Realm):
 
         return True
 
-
-    def run_rb_test1(self,args):
+    def run_rb_test1(self, args):
         """
         Execute a Real Browser (RB) test.
         This configures and monitors real browser web traffic on devices.
@@ -5246,57 +5284,57 @@ class Candela(Realm):
                 args.url = "https://" + args.url.removeprefix("http://")
             bssids_rb = ','.join(f for f in self.bssids)
             self.rb_test = RealBrowserTest(host=args.host,
-                                ssid=args.ssid,
-                                passwd=args.passwd,
-                                encryp=args.encryp,
-                                suporrted_release=["7.0", "10", "11", "12"],
-                                max_speed=args.max_speed,
-                                url=args.url, count=args.count,
-                                duration=args.duration,
-                                resource_ids=args.device_list,
-                                dowebgui=args.dowebgui,
-                                result_dir=args.result_dir,
-                                test_name=args.test_name,
-                                incremental=args.incremental,
-                                no_postcleanup=args.no_postcleanup,
-                                no_precleanup=args.no_precleanup,
-                                file_name=args.file_name,
-                                group_name=args.group_name,
-                                profile_name=args.profile_name,
-                                eap_method=args.eap_method,
-                                eap_identity=args.eap_identity,
-                                ieee80211=args.ieee80211,
-                                ieee80211u=args.ieee80211u,
-                                ieee80211w=args.ieee80211w,
-                                enable_pkc=args.enable_pkc,
-                                bss_transition=args.bss_transition,
-                                power_save=args.power_save,
-                                disable_ofdma=args.disable_ofdma,
-                                roam_ft_ds=args.roam_ft_ds,
-                                key_management=args.key_management,
-                                pairwise=args.pairwise,
-                                private_key=args.private_key,
-                                ca_cert=args.ca_cert,
-                                client_cert=args.client_cert,
-                                pk_passwd=args.pk_passwd,
-                                pac_file=args.pac_file,
-                                upstream_port=args.upstream_port,
-                                expected_passfail_value=args.expected_passfail_value,
-                                device_csv_name=args.device_csv_name,
-                                wait_time=args.wait_time,
-                                config=args.config,
-                                selected_groups=args.group_name,
-                                selected_profiles=args.profile_name,
-                                robo_ip=self.robot_ip,
-                                coordinates_list=self.coordinate_list,
-                                angles_list=self.rotation_list,
-                                do_robo=self.robot_test,
-                                rotations_enabled=self.rotation_enabled,
-                                do_bandsteering=self.do_bandsteering,
-                                bssids=bssids_rb,
-                                cycles=self.cycles,
-                                duration_to_skip = self.duration_to_skip if self.duration_to_skip else None
-                                )
+                                           ssid=args.ssid,
+                                           passwd=args.passwd,
+                                           encryp=args.encryp,
+                                           suporrted_release=["7.0", "10", "11", "12"],
+                                           max_speed=args.max_speed,
+                                           url=args.url, count=args.count,
+                                           duration=args.duration,
+                                           resource_ids=args.device_list,
+                                           dowebgui=args.dowebgui,
+                                           result_dir=args.result_dir,
+                                           test_name=args.test_name,
+                                           incremental=args.incremental,
+                                           no_postcleanup=args.no_postcleanup,
+                                           no_precleanup=args.no_precleanup,
+                                           file_name=args.file_name,
+                                           group_name=args.group_name,
+                                           profile_name=args.profile_name,
+                                           eap_method=args.eap_method,
+                                           eap_identity=args.eap_identity,
+                                           ieee80211=args.ieee80211,
+                                           ieee80211u=args.ieee80211u,
+                                           ieee80211w=args.ieee80211w,
+                                           enable_pkc=args.enable_pkc,
+                                           bss_transition=args.bss_transition,
+                                           power_save=args.power_save,
+                                           disable_ofdma=args.disable_ofdma,
+                                           roam_ft_ds=args.roam_ft_ds,
+                                           key_management=args.key_management,
+                                           pairwise=args.pairwise,
+                                           private_key=args.private_key,
+                                           ca_cert=args.ca_cert,
+                                           client_cert=args.client_cert,
+                                           pk_passwd=args.pk_passwd,
+                                           pac_file=args.pac_file,
+                                           upstream_port=args.upstream_port,
+                                           expected_passfail_value=args.expected_passfail_value,
+                                           device_csv_name=args.device_csv_name,
+                                           wait_time=args.wait_time,
+                                           config=args.config,
+                                           selected_groups=args.group_name,
+                                           selected_profiles=args.profile_name,
+                                           robo_ip=self.robot_ip,
+                                           coordinates_list=self.coordinate_list,
+                                           angles_list=self.rotation_list,
+                                           do_robo=self.robot_test,
+                                           rotations_enabled=self.rotation_enabled,
+                                           do_bandsteering=self.do_bandsteering,
+                                           bssids=bssids_rb,
+                                           cycles=self.cycles,
+                                           duration_to_skip=self.duration_to_skip if self.duration_to_skip else None
+                                           )
             logging.info('CHECKING PORT AVAILBILITY for RB TEST')
             self.port_clean_up(5003)
             self.rb_test.change_port_to_ip()
@@ -5369,17 +5407,14 @@ class Candela(Realm):
                 self.webgui_test_done("rb")
             self.rb_test.app = None
             if self.current_exec == "parallel":
-                self.rb_obj_dict["parallel"]["rb_test"]["obj"] =self.rb_test
+                self.rb_obj_dict["parallel"]["rb_test"]["obj"] = self.rb_test
             else:
                 for i in range(len(self.rb_obj_dict["series"])):
-                    if self.rb_obj_dict["series"][f"rb_test_{i+1}"]["obj"] is None:
-                        self.rb_obj_dict["series"][f"rb_test_{i+1}"]["obj"] = self.rb_test
+                    if self.rb_obj_dict["series"][f"rb_test_{i + 1}"]["obj"] is None:
+                        self.rb_obj_dict["series"][f"rb_test_{i + 1}"]["obj"] = self.rb_test
                         break
 
-
-
         return True
-
 
     def run_rb_test(
         self,
@@ -5437,29 +5472,29 @@ class Candela(Realm):
         args = SimpleNamespace(**locals())
         args.host = self.lanforge_ip
         return self.run_rb_test1(args)
-    
+
     def run_teams_test(self,
-            mgr: str = "localhost",
-            upstream_port: str = "eth1",
-            duration: int = None,
-            resources: str = None,
-            no_pre_cleanup: bool = False,
-            no_post_cleanup: bool = False,
-            log_level: str = "info",
-            lf_logger_config_json: str = None,
-            audio: bool = False,
-            video: bool = False,
-            do_webUI: bool = False,
-            testname: str = None,
-            report_dir: str = None,
-            enable_mobile_stats: bool = False,
-            robo_ip: str = None,
-            coordinates: str = None,
-            rotations: str = None,
-            do_robo: bool = False,
-            do_bs: bool = False,
-            cycles: int = 1,
-            bssids: str = None,):
+                       mgr: str = "localhost",
+                       upstream_port: str = "eth1",
+                       duration: int = None,
+                       resources: str = None,
+                       no_pre_cleanup: bool = False,
+                       no_post_cleanup: bool = False,
+                       log_level: str = "info",
+                       lf_logger_config_json: str = None,
+                       audio: bool = False,
+                       video: bool = False,
+                       do_webUI: bool = False,
+                       testname: str = None,
+                       report_dir: str = None,
+                       enable_mobile_stats: bool = False,
+                       robo_ip: str = None,
+                       coordinates: str = None,
+                       rotations: str = None,
+                       do_robo: bool = False,
+                       do_bs: bool = False,
+                       cycles: int = 1,
+                       bssids: str = None,):
         """
         Configure and execute a Microsoft Teams automation test.
         This handles Teams client configuration and interaction over devices.
@@ -5562,16 +5597,16 @@ class Candela(Realm):
                 logger.info(" Teams Test Completed")
                 teams.app = None
                 if self.current_exec == "parallel":
-                    self.teams_obj_dict["parallel"]["teams_test"]["obj"] =teams
+                    self.teams_obj_dict["parallel"]["teams_test"]["obj"] = teams
                 else:
                     for i in range(len(self.teams_obj_dict["series"])):
-                        if self.teams_obj_dict["series"][f"teams_test_{i+1}"]["obj"] is None:
-                            self.teams_obj_dict["series"][f"teams_test_{i+1}"]["obj"] = teams
+                        if self.teams_obj_dict["series"][f"teams_test_{i + 1}"]["obj"] is None:
+                            self.teams_obj_dict["series"][f"teams_test_{i + 1}"]["obj"] = teams
                             break
             return True
 
-    #TODO This function can be useful in future to enable real application tests to run in parallel
-    def browser_cleanup(self,rb_test=False,yt_test=False):
+    # TODO This function can be useful in future to enable real application tests to run in parallel
+    def browser_cleanup(self, rb_test=False, yt_test=False):
         """
         Clean up browser processes for Real Browser (RB) or YouTube (YT) tests.
         Terminates Chrome and Chromedriver processes on Windows, Linux, and macOS endpoints.
@@ -5592,17 +5627,16 @@ class Candela(Realm):
                     cmd = "pkill -f Google Chrome; pkill -f chromedriver;"
                     self.rb_test_obj.generic_endps_profile.set_cmd(self.rb_test_obj.generic_endps_profile.created_endp[i], cmd)
                     if self.rb_test_obj.browser_precleanup:
-                        cmd+=" precleanup"
+                        cmd += " precleanup"
                     if self.rb_test_obj.browser_postcleanup:
-                        cmd+=" postcleanup"
+                        cmd += " postcleanup"
 
             for i, cx_batch in enumerate(self.rb_test_obj.cx_order_list):
                 self.rb_test_obj.start_specific(cx_batch)
                 logging.info(f"browser cleanup on {cx_batch}")
             logging.info('Realbrowser test laptop cleaning...')
-            time.sleep(20)  
-            
-        
+            time.sleep(20)
+
         if yt_test:
             for i in range(0, len(self.yt_test_obj.real_sta_os_types)):
                 if self.yt_test_obj.real_sta_os_types[i] == 'windows':
@@ -5618,7 +5652,7 @@ class Candela(Realm):
 
             self.yt_test_obj.generic_endps_profile.start_cx()
             logging.info('Youtube test laptop cleaning...')
-            time.sleep(20)  
+            time.sleep(20)
 
         # if zoom_test:
         #     for i in range(len(self.zoom_test_obj.real_sta_os_type)):
@@ -5634,7 +5668,7 @@ class Candela(Realm):
 
         #     self.zoom_test_obj.generic_endps_profile.start_cx()
 
-    def render_each_test(self,ce):
+    def render_each_test(self, ce):
         """
         Renders reports and logs for each test based on whether they are run in series or parallel.
         Parses test objects and generates corresponding report structures and visualizations.
@@ -5661,7 +5695,7 @@ class Candela(Realm):
                     obj_no = 1
                     obj_name = 'http_test'
                     if ce == "series":
-                        obj_name += "_1" 
+                        obj_name += "_1"
                     while obj_name in self.http_obj_dict[ce]:
                         if ce == "parallel":
                             obj_no = ''
@@ -5685,10 +5719,9 @@ class Candela(Realm):
                                 http_data["test_setup_info"]["No of Cycles"] = self.http_obj_dict[ce][obj_name]["obj"].cycles
                         self.overall_report.test_setup_table(value="Test Setup Information", test_setup_data=http_data["test_setup_info"])
 
-                        
                         if not self.http_obj_dict[ce][obj_name]["obj"].do_bandsteering and self.robot_test:
                             if self.dowebgui and self.http_obj_dict[ce][obj_name]["obj"].get_live_view:
-                                self.http_obj_dict[ce][obj_name]["obj"].add_live_view_images_to_report(self.overall_report) 
+                                self.http_obj_dict[ce][obj_name]["obj"].add_live_view_images_to_report(self.overall_report)
                             if self.http_obj_dict[ce][obj_name]["obj"].rotation_enabled:
                                 for coord, rotation_dict in self.http_obj_dict[ce][obj_name]["obj"].robot_data.items():
                                     for rotation, robot_info in rotation_dict.items():
@@ -5700,10 +5733,10 @@ class Candela(Realm):
                             if self.http_obj_dict[ce][obj_name]["obj"].do_bandsteering:
                                 self.http_obj_dict[ce][obj_name]["obj"].get_bandsteering_stats(self.overall_report)
                             self.overall_report.set_obj_html("No of times file Downloads", "The below graph represents number of times a file downloads for each client"
-                                                ". X- axis shows “No of times file downloads and Y-axis shows "
-                                                "Client names.")
+                                                             ". X- axis shows “No of times file downloads and Y-axis shows "
+                                                             "Client names.")
                             self.overall_report.build_objective()
-                            graph2 = self.http_obj_dict[ce][obj_name]["obj"].graph_2(http_data["dataset2"], lis=http_data["lis"], bands=http_data["bands"],graph_name=f'http_file_download_{obj_no}')
+                            graph2 = self.http_obj_dict[ce][obj_name]["obj"].graph_2(http_data["dataset2"], lis=http_data["lis"], bands=http_data["bands"], graph_name=f'http_file_download_{obj_no}')
                             logging.info("graph name %s", graph2)
                             self.overall_report.set_graph_image(graph2)
                             self.overall_report.set_csv_filename(graph2)
@@ -5719,7 +5752,8 @@ class Candela(Realm):
                             )
                             self.overall_report.build_objective()
 
-                            graph = self.http_obj_dict[ce][obj_name]["obj"].generate_graph(dataset=http_data["dataset"], lis=http_data["lis"], bands=http_data["bands"],graph_image_name=f'http_average_time_{obj_no}')
+                            graph = self.http_obj_dict[ce][obj_name]["obj"].generate_graph(
+                                dataset=http_data["dataset"], lis=http_data["lis"], bands=http_data["bands"], graph_image_name=f'http_average_time_{obj_no}')
                             self.overall_report.set_graph_image(graph)
                             self.overall_report.set_csv_filename(graph)
                             self.overall_report.move_csv_file()
@@ -5879,7 +5913,7 @@ class Candela(Realm):
 
                 elif test_name == "ftp_test":
                     """Processes FTP test reporting and visualizations."""
-                    obj_no=1
+                    obj_no = 1
                     obj_name = "ftp_test"
                     if ce == "series":
                         obj_name += "_1"
@@ -5958,8 +5992,8 @@ class Candela(Realm):
                             if self.ftp_obj_dict[ce][obj_name]["obj"].clients_type == "Virtual":
                                 client_list = self.ftp_obj_dict[ce][obj_name]["obj"].station_list
                         if 'ftp_test' not in self.test_count_dict:
-                            self.test_count_dict['ftp_test']=0
-                        self.test_count_dict['ftp_test']+=1
+                            self.test_count_dict['ftp_test'] = 0
+                        self.test_count_dict['ftp_test'] += 1
                         self.overall_report.set_obj_html(_obj_title=f'FTP Test {obj_no}', _obj="")
                         self.overall_report.build_objective()
                         self.overall_report.set_table_title("Test Setup Information")
@@ -6024,7 +6058,7 @@ class Candela(Realm):
                         if not self.ftp_obj_dict[ce][obj_name]["obj"].do_bandsteering and self.ftp_obj_dict[ce][obj_name]["obj"].robot_test:
                             self.ftp_obj_dict[ce][obj_name]["obj"].report = self.overall_report
                             if self.dowebgui and self.ftp_obj_dict[ce][obj_name]["obj"].get_live_view:
-                                self.ftp_obj_dict[ce][obj_name]["obj"].add_live_view_images_to_report() 
+                                self.ftp_obj_dict[ce][obj_name]["obj"].add_live_view_images_to_report()
                             logging.info("real_client_list1: %s", self.ftp_obj_dict[ce][obj_name]["obj"].real_client_list1)
                             if self.ftp_obj_dict[ce][obj_name]["obj"].rotation_enabled:
                                 for coord, rotation_dict in self.ftp_obj_dict[ce][obj_name]["obj"].robot_data.items():
@@ -6103,10 +6137,10 @@ class Candela(Realm):
                             self.overall_report.set_csv_filename(graph_png)
                             self.overall_report.move_csv_file()
                             self.overall_report.build_graph()
-                            if(self.ftp_obj_dict[ce][obj_name]["obj"].dowebgui and self.ftp_obj_dict[ce][obj_name]["obj"].get_live_view):
-                                for floor in range(0,int(self.ftp_obj_dict[ce][obj_name]["obj"].total_floors)):
+                            if (self.ftp_obj_dict[ce][obj_name]["obj"].dowebgui and self.ftp_obj_dict[ce][obj_name]["obj"].get_live_view):
+                                for floor in range(0, int(self.ftp_obj_dict[ce][obj_name]["obj"].total_floors)):
                                     script_dir = os.path.dirname(os.path.abspath(__file__))
-                                    throughput_image_path = os.path.join(script_dir, "heatmap_images", f"ftp_{self.ftp_obj_dict[ce][obj_name]['obj'].test_name}_{floor+1}.png")
+                                    throughput_image_path = os.path.join(script_dir, "heatmap_images", f"ftp_{self.ftp_obj_dict[ce][obj_name]['obj'].test_name}_{floor + 1}.png")
                                     # rssi_image_path = os.path.join(script_dir, "heatmap_images", f"{self.test_name}_rssi_{floor+1}.png")
                                     timeout = 60  # seconds
                                     start_time = time.time()
@@ -6126,7 +6160,7 @@ class Candela(Realm):
                                         self.overall_report.set_custom_html(f'<img src="file://{throughput_image_path}"></img>')
                                         self.overall_report.build_custom()
                             self.overall_report.set_obj_html("File Download Time (sec)", "The below table will provide information of "
-                                                    "minimum, maximum and the average time taken by clients to download a file in seconds")
+                                                             "minimum, maximum and the average time taken by clients to download a file in seconds")
                             self.overall_report.build_objective()
                             dataframe2 = {
                                 "Minimum": [str(round(min(self.ftp_obj_dict[ce][obj_name]["obj"].uc_min) / 1000, 1))],
@@ -6147,10 +6181,10 @@ class Candela(Realm):
                                     for key, val in self.ftp_obj_dict[ce][obj_name]["obj"].group_device_map.items():
                                         if self.ftp_obj_dict[ce][obj_name]["obj"].expected_passfail_val or self.ftp_obj_dict[ce][obj_name]["obj"].csv_name:
                                             dataframe = self.ftp_obj_dict[ce][obj_name]["obj"].generate_dataframe(val, client_list, self.ftp_obj_dict[ce][obj_name]["obj"].mac_id_list, self.ftp_obj_dict[ce][obj_name]["obj"].channel_list, self.ftp_obj_dict[ce][obj_name]["obj"].ssid_list, self.ftp_obj_dict[ce][obj_name]["obj"].mode_list,
-                                                                                self.ftp_obj_dict[ce][obj_name]["obj"].url_data, self.ftp_obj_dict[ce][obj_name]["obj"].test_input_list, self.ftp_obj_dict[ce][obj_name]["obj"].uc_avg, self.ftp_obj_dict[ce][obj_name]["obj"].bytes_rd, self.ftp_obj_dict[ce][obj_name]["obj"].rx_rate, self.ftp_obj_dict[ce][obj_name]["obj"].pass_fail_list,self.ftp_obj_dict[ce][obj_name]["obj"].total_err)
+                                                                                                                  self.ftp_obj_dict[ce][obj_name]["obj"].url_data, self.ftp_obj_dict[ce][obj_name]["obj"].test_input_list, self.ftp_obj_dict[ce][obj_name]["obj"].uc_avg, self.ftp_obj_dict[ce][obj_name]["obj"].bytes_rd, self.ftp_obj_dict[ce][obj_name]["obj"].rx_rate, self.ftp_obj_dict[ce][obj_name]["obj"].pass_fail_list, self.ftp_obj_dict[ce][obj_name]["obj"].total_err)
                                         else:
                                             dataframe = self.ftp_obj_dict[ce][obj_name]["obj"].generate_dataframe(val, client_list, self.ftp_obj_dict[ce][obj_name]["obj"].mac_id_list, self.ftp_obj_dict[ce][obj_name]["obj"].channel_list, self.ftp_obj_dict[ce][obj_name]["obj"].ssid_list,
-                                                                                self.ftp_obj_dict[ce][obj_name]["obj"].mode_list, self.ftp_obj_dict[ce][obj_name]["obj"].url_data, [], self.ftp_obj_dict[ce][obj_name]["obj"].uc_avg, self.ftp_obj_dict[ce][obj_name]["obj"].bytes_rd, self.ftp_obj_dict[ce][obj_name]["obj"].rx_rate, [], self.ftp_obj_dict[ce][obj_name]["obj"].total_err)
+                                                                                                                  self.ftp_obj_dict[ce][obj_name]["obj"].mode_list, self.ftp_obj_dict[ce][obj_name]["obj"].url_data, [], self.ftp_obj_dict[ce][obj_name]["obj"].uc_avg, self.ftp_obj_dict[ce][obj_name]["obj"].bytes_rd, self.ftp_obj_dict[ce][obj_name]["obj"].rx_rate, [], self.ftp_obj_dict[ce][obj_name]["obj"].total_err)
 
                                         if dataframe:
                                             self.overall_report.set_obj_html("", "Group: {}".format(key))
@@ -6201,14 +6235,14 @@ class Candela(Realm):
                             csv_outfile = self.overall_report.file_add_path(csv_outfile)
                             logger.info("csv output file : {}".format(csv_outfile))
                         if ce == "series":
-                            obj_no+=1
+                            obj_no += 1
                             obj_name = f"ftp_test_{obj_no}"
                         else:
                             break
 
                 elif test_name == "thput_test":
                     """Processes throughput test reporting and visualizations."""
-                    obj_no=1
+                    obj_no = 1
                     obj_name = "thput_test"
                     if ce == "series":
                         obj_name += "_1"
@@ -6219,25 +6253,29 @@ class Candela(Realm):
                         self.overall_report.build_objective()
                         # obj_name = f"thput_test_{obj_no}"
                         params = self.thput_obj_dict[ce][obj_name]["data"].copy()
-                        iterations_before_test_stopped_by_user = params["iterations_before_test_stopped_by_user"].copy() if isinstance(params["iterations_before_test_stopped_by_user"], (list, dict, set)) else params["iterations_before_test_stopped_by_user"]
-                        incremental_capacity_list = params["incremental_capacity_list"].copy() if isinstance(params["incremental_capacity_list"], (list, dict, set)) else params["incremental_capacity_list"]
+                        iterations_before_test_stopped_by_user = params["iterations_before_test_stopped_by_user"].copy() if isinstance(
+                            params["iterations_before_test_stopped_by_user"], (list, dict, set)) else params["iterations_before_test_stopped_by_user"]
+                        incremental_capacity_list = params["incremental_capacity_list"].copy() if isinstance(
+                            params["incremental_capacity_list"], (list, dict, set)) else params["incremental_capacity_list"]
                         data = params["data"].copy() if isinstance(params["data"], (list, dict, set)) else params["data"]
                         data1 = params["data1"].copy() if isinstance(params["data1"], (list, dict, set)) else params["data1"]
                         report_path = params["report_path"].copy() if isinstance(params["report_path"], (list, dict, set)) else params["report_path"]
 
                         self.thput_obj_dict[ce][obj_name]["obj"].ssid_list = self.thput_obj_dict[ce][obj_name]["obj"].get_ssid_list(self.thput_obj_dict[ce][obj_name]["obj"].input_devices_list)
-                        self.thput_obj_dict[ce][obj_name]["obj"].signal_list, self.thput_obj_dict[ce][obj_name]["obj"].channel_list, self.thput_obj_dict[ce][obj_name]["obj"].mode_list, self.thput_obj_dict[ce][obj_name]["obj"].link_speed_list, rx_rate_list,bssid_list = self.thput_obj_dict[ce][obj_name]["obj"].get_signal_and_channel_data(self.thput_obj_dict[ce][obj_name]["obj"].input_devices_list)
-                        selected_real_clients_names = params["selected_real_clients_names"] if "selected_real_clients_names" in params else None 
+                        self.thput_obj_dict[ce][obj_name]["obj"].signal_list, self.thput_obj_dict[ce][obj_name]["obj"].channel_list, self.thput_obj_dict[ce][obj_name]["obj"].mode_list, self.thput_obj_dict[ce][
+                            obj_name]["obj"].link_speed_list, rx_rate_list, bssid_list = self.thput_obj_dict[ce][obj_name]["obj"].get_signal_and_channel_data(self.thput_obj_dict[ce][obj_name]["obj"].input_devices_list)
+                        selected_real_clients_names = params["selected_real_clients_names"] if "selected_real_clients_names" in params else None
                         if selected_real_clients_names is not None:
                             self.thput_obj_dict[ce][obj_name]["obj"].num_stations = selected_real_clients_names
 
                         # Initialize the report object
-                        if (self.thput_obj_dict[ce][obj_name]["obj"].do_interopability == False and not self.robot_test)or(self.thput_obj_dict[ce][obj_name]["obj"].do_interopability == False and self.robot_test and self.thput_obj_dict[ce][obj_name]["obj"].do_bandsteering):
+                        if (self.thput_obj_dict[ce][obj_name]["obj"].do_interopability == False and not self.robot_test) or (self.thput_obj_dict[ce]
+                                                                                                                             [obj_name]["obj"].do_interopability == False and self.robot_test and self.thput_obj_dict[ce][obj_name]["obj"].do_bandsteering):
                             # df.to_csv(os.path.join(report_path_date_time, 'throughput_data.csv'))
                             # For groups and profiles configuration through webgui
 
                             self.overall_report.set_obj_html(_obj_title="Input Parameters",
-                                                _obj="The below tables provides the input parameters for the test")
+                                                             _obj="The below tables provides the input parameters for the test")
                             self.overall_report.build_objective()
 
                             # Initialize counts and lists for device types
@@ -6440,7 +6478,7 @@ class Candela(Realm):
                                             else:
                                                 packet_size_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu)
                                             direction_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].direction)
-                                    
+
                                     else:
 
                                         if self.thput_obj_dict[ce][obj_name]["obj"].direction == "Bi-direction":
@@ -6602,11 +6640,11 @@ class Candela(Realm):
                                 self.overall_report.set_graph_image(graph_png)
                                 self.overall_report.move_graph_image()
                                 self.overall_report.build_graph()
-                                if(self.thput_obj_dict[ce][obj_name]["obj"].do_bandsteering):
-                                    self.thput_obj_dict[ce][obj_name]["obj"].get_bandsteering_stats(self.overall_report,data,devices_on_running_trimmed)
-                                if(self.thput_obj_dict[ce][obj_name]["obj"].dowebgui and self.thput_obj_dict[ce][obj_name]["obj"].get_live_view):
+                                if (self.thput_obj_dict[ce][obj_name]["obj"].do_bandsteering):
+                                    self.thput_obj_dict[ce][obj_name]["obj"].get_bandsteering_stats(self.overall_report, data, devices_on_running_trimmed)
+                                if (self.thput_obj_dict[ce][obj_name]["obj"].dowebgui and self.thput_obj_dict[ce][obj_name]["obj"].get_live_view):
                                     self.thput_obj_dict[ce][obj_name]["obj"].add_live_view_images_to_report(self.overall_report)
-                                    
+
                                 if self.thput_obj_dict[ce][obj_name]["obj"].group_name:
                                     self.overall_report.set_obj_html(
                                         _obj_title="Detailed Result Table For Groups ",
@@ -6619,53 +6657,66 @@ class Candela(Realm):
                                 self.overall_report.build_objective()
                                 self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list = [item.split()[-1] if ' ' in item else item for item in self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list]
                                 if self.thput_obj_dict[ce][obj_name]["obj"].expected_passfail_value or self.thput_obj_dict[ce][obj_name]["obj"].device_csv_name:
-                                    test_input_list, pass_fail_list = self.thput_obj_dict[ce][obj_name]["obj"].get_pass_fail_list(device_type, incremental_capacity_list[i], devices_on_running, download_data, upload_data)
+                                    test_input_list, pass_fail_list = self.thput_obj_dict[ce][obj_name]["obj"].get_pass_fail_list(
+                                        device_type, incremental_capacity_list[i], devices_on_running, download_data, upload_data)
                                 if self.thput_obj_dict[ce][obj_name]["obj"].group_name:
                                     for key, val in self.thput_obj_dict[ce][obj_name]["obj"].group_device_map.items():
                                         if self.thput_obj_dict[ce][obj_name]["obj"].expected_passfail_value or self.thput_obj_dict[ce][obj_name]["obj"].device_csv_name:
                                             # Generating Dataframe when Groups with their profiles and pass_fail case is specified
                                             dataframe = self.thput_obj_dict[ce][obj_name]["obj"].generate_dataframe(val,
-                                                                                device_type[0:int(incremental_capacity_list[i])],
-                                                                                devices_on_running[0:int(incremental_capacity_list[i])],
-                                                                                self.thput_obj_dict[ce][obj_name]["obj"].ssid_list[0:int(incremental_capacity_list[i])],
-                                                                                self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list[0:int(incremental_capacity_list[i])],
-                                                                                self.thput_obj_dict[ce][obj_name]["obj"].channel_list[0:int(incremental_capacity_list[i])],
-                                                                                self.thput_obj_dict[ce][obj_name]["obj"].mode_list[0:int(incremental_capacity_list[i])],
-                                                                                direction_in_table[0:int(incremental_capacity_list[i])],
-                                                                                download_list[0:int(incremental_capacity_list[i])],
-                                                                                [str(n) for n in avg_rtt_data[0:int(incremental_capacity_list[i])]],
-                                                                                [str(n) + " Mbps" for n in download_data[0:int(incremental_capacity_list[i])]],
-                                                                                upload_list[0:int(incremental_capacity_list[i])],
-                                                                                [str(n) + " Mbps" for n in upload_data[0:int(incremental_capacity_list[i])]],
-                                                                                ['' if n == 0 else '-' + str(n) + " dbm" for n in rssi_data[0:int(incremental_capacity_list[i])]],
-                                                                                test_input_list,
-                                                                                self.thput_obj_dict[ce][obj_name]["obj"].link_speed_list[0:int(incremental_capacity_list[i])],
-                                                                                [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
-                                                                                pass_fail_list,
-                                                                                upload_drop,
-                                                                                download_drop)
+                                                                                                                    device_type[0:int(incremental_capacity_list[i])],
+                                                                                                                    devices_on_running[0:int(incremental_capacity_list[i])],
+                                                                                                                    self.thput_obj_dict[ce][obj_name]["obj"].ssid_list[0:int(
+                                                                                                                        incremental_capacity_list[i])],
+                                                                                                                    self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list[0:int(
+                                                                                                                        incremental_capacity_list[i])],
+                                                                                                                    self.thput_obj_dict[ce][obj_name]["obj"].channel_list[0:int(
+                                                                                                                        incremental_capacity_list[i])],
+                                                                                                                    self.thput_obj_dict[ce][obj_name]["obj"].mode_list[0:int(
+                                                                                                                        incremental_capacity_list[i])],
+                                                                                                                    direction_in_table[0:int(incremental_capacity_list[i])],
+                                                                                                                    download_list[0:int(incremental_capacity_list[i])],
+                                                                                                                    [str(n) for n in avg_rtt_data[0:int(incremental_capacity_list[i])]],
+                                                                                                                    [str(n) + " Mbps" for n in download_data[0:int(incremental_capacity_list[i])]],
+                                                                                                                    upload_list[0:int(incremental_capacity_list[i])],
+                                                                                                                    [str(n) + " Mbps" for n in upload_data[0:int(incremental_capacity_list[i])]],
+                                                                                                                    ['' if n == 0 else '-' +
+                                                                                                                        str(n) + " dbm" for n in rssi_data[0:int(incremental_capacity_list[i])]],
+                                                                                                                    test_input_list,
+                                                                                                                    self.thput_obj_dict[ce][obj_name]["obj"].link_speed_list[0:int(
+                                                                                                                        incremental_capacity_list[i])],
+                                                                                                                    [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
+                                                                                                                    pass_fail_list,
+                                                                                                                    upload_drop,
+                                                                                                                    download_drop)
                                         # Generating Dataframe for groups when pass_fail case is not specified
                                         else:
                                             dataframe = self.thput_obj_dict[ce][obj_name]["obj"].generate_dataframe(val,
-                                                                                device_type[0:int(incremental_capacity_list[i])],
-                                                                                devices_on_running[0:int(incremental_capacity_list[i])],
-                                                                                self.thput_obj_dict[ce][obj_name]["obj"].ssid_list[0:int(incremental_capacity_list[i])],
-                                                                                self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list[0:int(incremental_capacity_list[i])],
-                                                                                self.thput_obj_dict[ce][obj_name]["obj"].channel_list[0:int(incremental_capacity_list[i])],
-                                                                                self.thput_obj_dict[ce][obj_name]["obj"].mode_list[0:int(incremental_capacity_list[i])],
-                                                                                direction_in_table[0:int(incremental_capacity_list[i])],
-                                                                                download_list[0:int(incremental_capacity_list[i])],
-                                                                                [str(n) for n in avg_rtt_data[0:int(incremental_capacity_list[i])]],
-                                                                                [str(n) + " Mbps" for n in download_data[0:int(incremental_capacity_list[i])]],
-                                                                                upload_list[0:int(incremental_capacity_list[i])],
-                                                                                [str(n) + " Mbps" for n in upload_data[0:int(incremental_capacity_list[i])]],
-                                                                                ['' if n == 0 else '-' + str(n) + " dbm" for n in rssi_data[0:int(incremental_capacity_list[i])]],
-                                                                                [],
-                                                                                self.thput_obj_dict[ce][obj_name]["obj"].link_speed_list[0:int(incremental_capacity_list[i])],
-                                                                                [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
-                                                                                [],
-                                                                                upload_drop,
-                                                                                download_drop)
+                                                                                                                    device_type[0:int(incremental_capacity_list[i])],
+                                                                                                                    devices_on_running[0:int(incremental_capacity_list[i])],
+                                                                                                                    self.thput_obj_dict[ce][obj_name]["obj"].ssid_list[0:int(
+                                                                                                                        incremental_capacity_list[i])],
+                                                                                                                    self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list[0:int(
+                                                                                                                        incremental_capacity_list[i])],
+                                                                                                                    self.thput_obj_dict[ce][obj_name]["obj"].channel_list[0:int(
+                                                                                                                        incremental_capacity_list[i])],
+                                                                                                                    self.thput_obj_dict[ce][obj_name]["obj"].mode_list[0:int(
+                                                                                                                        incremental_capacity_list[i])],
+                                                                                                                    direction_in_table[0:int(incremental_capacity_list[i])],
+                                                                                                                    download_list[0:int(incremental_capacity_list[i])],
+                                                                                                                    [str(n) for n in avg_rtt_data[0:int(incremental_capacity_list[i])]],
+                                                                                                                    [str(n) + " Mbps" for n in download_data[0:int(incremental_capacity_list[i])]],
+                                                                                                                    upload_list[0:int(incremental_capacity_list[i])],
+                                                                                                                    [str(n) + " Mbps" for n in upload_data[0:int(incremental_capacity_list[i])]],
+                                                                                                                    ['' if n == 0 else '-' +
+                                                                                                                        str(n) + " dbm" for n in rssi_data[0:int(incremental_capacity_list[i])]],
+                                                                                                                    [],
+                                                                                                                    self.thput_obj_dict[ce][obj_name]["obj"].link_speed_list[0:int(
+                                                                                                                        incremental_capacity_list[i])],
+                                                                                                                    [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
+                                                                                                                    [],
+                                                                                                                    upload_drop,
+                                                                                                                    download_drop)
                                         if dataframe:
                                             self.overall_report.set_obj_html("", "Group: {}".format(key))
                                             self.overall_report.build_objective()
@@ -6682,12 +6733,12 @@ class Candela(Realm):
                                         " Mode": self.thput_obj_dict[ce][obj_name]["obj"].mode_list[0:int(incremental_capacity_list[i])],
                                         # " Direction":direction_in_table[0:int(incremental_capacity_list[i])],
                                         " Offered download rate (Mbps) ": download_list[0:int(incremental_capacity_list[i])],
-                                        " Observed Average download rate (Mbps) ": [str(n)  for n in download_data[0:int(incremental_capacity_list[i])]],
+                                        " Observed Average download rate (Mbps) ": [str(n) for n in download_data[0:int(incremental_capacity_list[i])]],
                                         " Offered upload rate (Mbps) ": upload_list[0:int(incremental_capacity_list[i])],
-                                        " Observed Average upload rate (Mbps) ": [str(n)  for n in upload_data[0:int(incremental_capacity_list[i])]],
-                                        " RSSI (dBm) ": ['' if n == 0 else '-' + str(n)  for n in rssi_data[0:int(incremental_capacity_list[i])]],
+                                        " Observed Average upload rate (Mbps) ": [str(n) for n in upload_data[0:int(incremental_capacity_list[i])]],
+                                        " RSSI (dBm) ": ['' if n == 0 else '-' + str(n) for n in rssi_data[0:int(incremental_capacity_list[i])]],
                                         # " Link Speed ":self.thput_obj_dict[ce][obj_name]["obj"].link_speed_list[0:int(incremental_capacity_list[i])],
-                                        " Average RTT (ms)" : avg_rtt_data[0:int(incremental_capacity_list[i])],
+                                        " Average RTT (ms)": avg_rtt_data[0:int(incremental_capacity_list[i])],
                                         " Packet Size(Bytes) ": [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
                                     }
                                     if self.thput_obj_dict[ce][obj_name]["obj"].direction == "Bi-direction":
@@ -6715,7 +6766,7 @@ class Candela(Realm):
                         elif self.thput_obj_dict[ce][obj_name]["obj"].do_interopability == False and self.robot_test:
                             if self.thput_obj_dict[ce][obj_name]["obj"].do_interopability is False:
                                 self.overall_report.set_obj_html(_obj_title="Input Parameters",
-                                                    _obj="The below tables provides the input parameters for the test")
+                                                                 _obj="The below tables provides the input parameters for the test")
                                 self.overall_report.build_objective()
 
                                 # Initialize counts and lists for device types
@@ -6828,8 +6879,12 @@ class Candela(Realm):
                                 # Add live view images in case of robot testing from webui
                                 if self.thput_obj_dict[ce][obj_name]["obj"].dowebgui:
 
-                                    throughput_image_path = os.path.join(self.thput_obj_dict[ce][obj_name]["obj"].result_dir, "live_view_images", f'{self.thput_obj_dict[ce][obj_name]["obj"].test_name}_throughput.png')
-                                    rssi_image_path = os.path.join(self.thput_obj_dict[ce][obj_name]["obj"].result_dir, "live_view_images", f'{self.thput_obj_dict[ce][obj_name]["obj"].test_name}_rssi.png')
+                                    throughput_image_path = os.path.join(
+                                        self.thput_obj_dict[ce][obj_name]["obj"].result_dir, "live_view_images", f'{
+                                            self.thput_obj_dict[ce][obj_name]["obj"].test_name}_throughput.png')
+                                    rssi_image_path = os.path.join(
+                                        self.thput_obj_dict[ce][obj_name]["obj"].result_dir, "live_view_images", f'{
+                                            self.thput_obj_dict[ce][obj_name]["obj"].test_name}_rssi.png')
                                     timeout = 300  # seconds
                                     start_time = time.time()
 
@@ -6920,8 +6975,10 @@ class Candela(Realm):
                                                         rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
                                                         avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
                                                         # Calculate and append upload and download throughput to lists
-                                                        upload_list.append(str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
-                                                        download_list.append(str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
+                                                        upload_list.append(
+                                                            str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
+                                                        download_list.append(
+                                                            str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
                                                         if self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu == -1:
                                                             packet_size_in_table.append('AUTO')
                                                         else:
@@ -6939,8 +6996,10 @@ class Candela(Realm):
                                                         rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
 
                                                         # Calculate and append upload and download throughput to lists
-                                                        upload_list.append(str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
-                                                        download_list.append(str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
+                                                        upload_list.append(
+                                                            str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
+                                                        download_list.append(
+                                                            str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
                                                         avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
                                                         # Append average download drop data from filtered dataframe
 
@@ -6954,8 +7013,10 @@ class Candela(Realm):
                                                     elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Upload':
 
                                                         # Calculate and append upload and download throughput to lists
-                                                        upload_list.append(str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
-                                                        download_list.append(str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
+                                                        upload_list.append(
+                                                            str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
+                                                        download_list.append(
+                                                            str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
 
                                                         rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
 
@@ -7077,7 +7138,13 @@ class Candela(Realm):
                                                 if not self.thput_obj_dict[ce][obj_name]["obj"].rotation_enabled:
                                                     real_time_data = f"Real Time Throughput: Achieved Throughput: Download : {round(((sum(download_data[0:int(incremental_capacity_list[i])]))), 2)} Mbps"
                                                 else:
-                                                    real_time_data = f"Real Time Throughput: Achieved Throughput At Angle {angle}: Download : {round(((sum(download_data[0:int(incremental_capacity_list[i])]))), 2)} Mbps"
+                                                    real_time_data = f"Real Time Throughput: Achieved Throughput At Angle {angle}: Download : {
+                                                        round(
+                                                            ((sum(
+                                                                download_data[
+                                                                    0:int(
+                                                                        incremental_capacity_list[i])]))),
+                                                            2)} Mbps"
 
                                             elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Upload':
                                                 if self.thput_obj_dict[ce][obj_name]["obj"].rotation_enabled:
@@ -7090,7 +7157,13 @@ class Candela(Realm):
                                                 if not self.thput_obj_dict[ce][obj_name]["obj"].rotation_enabled:
                                                     real_time_data = f"Real Time Throughput: Achieved Throughput: Upload : {round((sum(upload_data[0:int(incremental_capacity_list[i])])), 2)} Mbps"
                                                 else:
-                                                    real_time_data = f"Real Time Throughput: Achieved Throughput At Angle {angle}: Upload : {round((sum(upload_data[0:int(incremental_capacity_list[i])])), 2)} Mbps"
+                                                    real_time_data = f"Real Time Throughput: Achieved Throughput At Angle {angle}: Upload : {
+                                                        round(
+                                                            (sum(
+                                                                upload_data[
+                                                                    0:int(
+                                                                        incremental_capacity_list[i])])),
+                                                            2)} Mbps"
 
                                             if len(incremental_capacity_list) > 1:
                                                 self.overall_report.set_custom_html(f"<h2><u>Iteration-{i + 1}: Number of Devices Running : {len(devices_on_running)}</u></h2>")
@@ -7130,55 +7203,69 @@ class Candela(Realm):
                                                     _obj_title="Detailed Result Table ",
                                                     _obj="The below tables provides detailed information for the throughput test on each device.")
                                             self.overall_report.build_objective()
-                                            self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list = [item.split()[-1] if ' ' in item else item for item in self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list]
+                                            self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list = [
+                                                item.split()[-1] if ' ' in item else item for item in self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list]
                                             if self.thput_obj_dict[ce][obj_name]["obj"].expected_passfail_value or self.thput_obj_dict[ce][obj_name]["obj"].device_csv_name:
-                                                test_input_list, pass_fail_list = self.thput_obj_dict[ce][obj_name]["obj"].get_pass_fail_list(device_type, incremental_capacity_list[i], devices_on_running, download_data, upload_data)
+                                                test_input_list, pass_fail_list = self.thput_obj_dict[ce][obj_name]["obj"].get_pass_fail_list(
+                                                    device_type, incremental_capacity_list[i], devices_on_running, download_data, upload_data)
                                             if self.thput_obj_dict[ce][obj_name]["obj"].group_name:
                                                 for key, val in self.thput_obj_dict[ce][obj_name]["obj"].group_device_map.items():
                                                     if self.thput_obj_dict[ce][obj_name]["obj"].expected_passfail_value or self.thput_obj_dict[ce][obj_name]["obj"].device_csv_name:
                                                         # Generating Dataframe when Groups with their profiles and pass_fail case is specified
                                                         dataframe = self.thput_obj_dict[ce][obj_name]["obj"].generate_dataframe(val,
-                                                                                            device_type[0:int(incremental_capacity_list[i])],
-                                                                                            devices_on_running[0:int(incremental_capacity_list[i])],
-                                                                                            self.thput_obj_dict[ce][obj_name]["obj"].ssid_list[0:int(incremental_capacity_list[i])],
-                                                                                            self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list[0:int(incremental_capacity_list[i])],
-                                                                                            self.thput_obj_dict[ce][obj_name]["obj"].channel_list[0:int(incremental_capacity_list[i])],
-                                                                                            self.thput_obj_dict[ce][obj_name]["obj"].mode_list[0:int(incremental_capacity_list[i])],
-                                                                                            direction_in_table[0:int(incremental_capacity_list[i])],
-                                                                                            download_list[0:int(incremental_capacity_list[i])],
-                                                                                            [str(n) for n in avg_rtt_data[0:int(incremental_capacity_list[i])]],
-                                                                                            [str(n) + " Mbps" for n in download_data[0:int(incremental_capacity_list[i])]],
-                                                                                            upload_list[0:int(incremental_capacity_list[i])],
-                                                                                            [str(n) + " Mbps" for n in upload_data[0:int(incremental_capacity_list[i])]],
-                                                                                            ['' if n == 0 else '-' + str(n) + " dbm" for n in rssi_data[0:int(incremental_capacity_list[i])]],
-                                                                                            test_input_list,
-                                                                                            self.thput_obj_dict[ce][obj_name]["obj"].link_speed_list[0:int(incremental_capacity_list[i])],
-                                                                                            [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
-                                                                                            pass_fail_list,
-                                                                                            upload_drop,
-                                                                                            download_drop)
+                                                                                                                                device_type[0:int(incremental_capacity_list[i])],
+                                                                                                                                devices_on_running[0:int(incremental_capacity_list[i])],
+                                                                                                                                self.thput_obj_dict[ce][obj_name]["obj"].ssid_list[0:int(
+                                                                                                                                    incremental_capacity_list[i])],
+                                                                                                                                self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list[0:int(
+                                                                                                                                    incremental_capacity_list[i])],
+                                                                                                                                self.thput_obj_dict[ce][obj_name]["obj"].channel_list[0:int(
+                                                                                                                                    incremental_capacity_list[i])],
+                                                                                                                                self.thput_obj_dict[ce][obj_name]["obj"].mode_list[0:int(
+                                                                                                                                    incremental_capacity_list[i])],
+                                                                                                                                direction_in_table[0:int(incremental_capacity_list[i])],
+                                                                                                                                download_list[0:int(incremental_capacity_list[i])],
+                                                                                                                                [str(n) for n in avg_rtt_data[0:int(incremental_capacity_list[i])]],
+                                                                                                                                [str(n) + " Mbps" for n in download_data[0:int(incremental_capacity_list[i])]],
+                                                                                                                                upload_list[0:int(incremental_capacity_list[i])],
+                                                                                                                                [str(n) + " Mbps" for n in upload_data[0:int(incremental_capacity_list[i])]],
+                                                                                                                                ['' if n == 0 else '-' +
+                                                                                                                                    str(n) + " dbm" for n in rssi_data[0:int(incremental_capacity_list[i])]],
+                                                                                                                                test_input_list,
+                                                                                                                                self.thput_obj_dict[ce][obj_name]["obj"].link_speed_list[0:int(
+                                                                                                                                    incremental_capacity_list[i])],
+                                                                                                                                [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
+                                                                                                                                pass_fail_list,
+                                                                                                                                upload_drop,
+                                                                                                                                download_drop)
                                                     # Generating Dataframe for groups when pass_fail case is not specified
                                                     else:
                                                         dataframe = self.thput_obj_dict[ce][obj_name]["obj"].generate_dataframe(val,
-                                                                                            device_type[0:int(incremental_capacity_list[i])],
-                                                                                            devices_on_running[0:int(incremental_capacity_list[i])],
-                                                                                            self.thput_obj_dict[ce][obj_name]["obj"].ssid_list[0:int(incremental_capacity_list[i])],
-                                                                                            self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list[0:int(incremental_capacity_list[i])],
-                                                                                            self.thput_obj_dict[ce][obj_name]["obj"].channel_list[0:int(incremental_capacity_list[i])],
-                                                                                            self.thput_obj_dict[ce][obj_name]["obj"].mode_list[0:int(incremental_capacity_list[i])],
-                                                                                            direction_in_table[0:int(incremental_capacity_list[i])],
-                                                                                            download_list[0:int(incremental_capacity_list[i])],
-                                                                                            [str(n) for n in avg_rtt_data[0:int(incremental_capacity_list[i])]],
-                                                                                            [str(n) + " Mbps" for n in download_data[0:int(incremental_capacity_list[i])]],
-                                                                                            upload_list[0:int(incremental_capacity_list[i])],
-                                                                                            [str(n) + " Mbps" for n in upload_data[0:int(incremental_capacity_list[i])]],
-                                                                                            ['' if n == 0 else '-' + str(n) + " dbm" for n in rssi_data[0:int(incremental_capacity_list[i])]],
-                                                                                            [],
-                                                                                            self.thput_obj_dict[ce][obj_name]["obj"].link_speed_list[0:int(incremental_capacity_list[i])],
-                                                                                            [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
-                                                                                            [],
-                                                                                            upload_drop,
-                                                                                            download_drop)
+                                                                                                                                device_type[0:int(incremental_capacity_list[i])],
+                                                                                                                                devices_on_running[0:int(incremental_capacity_list[i])],
+                                                                                                                                self.thput_obj_dict[ce][obj_name]["obj"].ssid_list[0:int(
+                                                                                                                                    incremental_capacity_list[i])],
+                                                                                                                                self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list[0:int(
+                                                                                                                                    incremental_capacity_list[i])],
+                                                                                                                                self.thput_obj_dict[ce][obj_name]["obj"].channel_list[0:int(
+                                                                                                                                    incremental_capacity_list[i])],
+                                                                                                                                self.thput_obj_dict[ce][obj_name]["obj"].mode_list[0:int(
+                                                                                                                                    incremental_capacity_list[i])],
+                                                                                                                                direction_in_table[0:int(incremental_capacity_list[i])],
+                                                                                                                                download_list[0:int(incremental_capacity_list[i])],
+                                                                                                                                [str(n) for n in avg_rtt_data[0:int(incremental_capacity_list[i])]],
+                                                                                                                                [str(n) + " Mbps" for n in download_data[0:int(incremental_capacity_list[i])]],
+                                                                                                                                upload_list[0:int(incremental_capacity_list[i])],
+                                                                                                                                [str(n) + " Mbps" for n in upload_data[0:int(incremental_capacity_list[i])]],
+                                                                                                                                ['' if n == 0 else '-' +
+                                                                                                                                    str(n) + " dbm" for n in rssi_data[0:int(incremental_capacity_list[i])]],
+                                                                                                                                [],
+                                                                                                                                self.thput_obj_dict[ce][obj_name]["obj"].link_speed_list[0:int(
+                                                                                                                                    incremental_capacity_list[i])],
+                                                                                                                                [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
+                                                                                                                                [],
+                                                                                                                                upload_drop,
+                                                                                                                                download_drop)
                                                     if dataframe:
                                                         self.overall_report.set_obj_html("", "Group: {}".format(key))
                                                         self.overall_report.build_objective()
@@ -7224,10 +7311,14 @@ class Candela(Realm):
 
                                                 if coordinate in self.thput_obj_dict[ce][obj_name]["obj"].battery_log:
                                                     if self.thput_obj_dict[ce][obj_name]["obj"].rotation_enabled and (angle in self.thput_obj_dict[ce][obj_name]["obj"].battery_log[coordinate]):
-                                                        self.overall_report.set_custom_html(f'<h2>Robot went to charging Dock at {self.thput_obj_dict[ce][obj_name]["obj"].battery_log[coordinate][angle]}</h2>')
+                                                        self.overall_report.set_custom_html(
+                                                            f'<h2>Robot went to charging Dock at {
+                                                                self.thput_obj_dict[ce][obj_name]["obj"].battery_log[coordinate][angle]}</h2>')
                                                         self.overall_report.build_custom()
                                                     else:
-                                                        self.overall_report.set_custom_html(f'<h2>Robot went to charging Dock at {self.thput_obj_dict[ce][obj_name]["obj"].battery_log[coordinate]}</h2>')
+                                                        self.overall_report.set_custom_html(
+                                                            f'<h2>Robot went to charging Dock at {
+                                                                self.thput_obj_dict[ce][obj_name]["obj"].battery_log[coordinate]}</h2>')
                                                         self.overall_report.build_custom()
 
                                             self.overall_report.set_custom_html('<hr>')
@@ -7236,7 +7327,7 @@ class Candela(Realm):
                         elif self.thput_obj_dict[ce][obj_name]["obj"].do_interopability:
 
                             self.overall_report.set_obj_html(_obj_title="Input Parameters",
-                                                _obj="The below tables provides the input parameters for the test")
+                                                             _obj="The below tables provides the input parameters for the test")
                             self.overall_report.build_objective()
 
                             # Initialize counts and lists for device types
@@ -7294,10 +7385,10 @@ class Candela(Realm):
                             }
                             self.overall_report.test_setup_table(test_setup_data=test_setup_info, value="Test Configuration")
 
-                            if( self.thput_obj_dict[ce][obj_name]["obj"].interopability_config):
+                            if (self.thput_obj_dict[ce][obj_name]["obj"].interopability_config):
 
                                 self.overall_report.set_obj_html(_obj_title="Configuration Status of Devices",
-                                                    _obj="The table below shows the configuration status of each device (except iOS) with respect to the SSID connection.")
+                                                                 _obj="The table below shows the configuration status of each device (except iOS) with respect to the SSID connection.")
                                 self.overall_report.build_objective()
 
                                 configured_dataframe = self.thput_obj_dict[ce][obj_name]["obj"].convert_to_table(self.thput_obj_dict[ce][obj_name]["obj"].configured_devices_check)
@@ -7325,7 +7416,8 @@ class Candela(Realm):
                                 # Fetch devices_on_running from real_client_list
                                 devices_on_running.append(self.thput_obj_dict[ce][obj_name]["obj"].real_client_list[data1[i][-1] - 1].split(" ")[-1])
 
-                                if self.thput_obj_dict[ce][obj_name]["obj"].interopability_config and devices_on_running[0] in self.thput_obj_dict[ce][obj_name]["obj"].configured_devices_check and not self.thput_obj_dict[ce][obj_name]["obj"].configured_devices_check[devices_on_running[0]]:
+                                if self.thput_obj_dict[ce][obj_name]["obj"].interopability_config and devices_on_running[0] in self.thput_obj_dict[ce][obj_name][
+                                        "obj"].configured_devices_check and not self.thput_obj_dict[ce][obj_name]["obj"].configured_devices_check[devices_on_running[0]]:
                                     continue
 
                                 for k in devices_on_running:
@@ -7347,7 +7439,7 @@ class Candela(Realm):
                                         upload_drop.append(round((sum(filtered_df[[col for col in filtered_df.columns if "Tx % Drop" in col][0]].values.tolist()[1:ul_len]) / (ul_len - 1)), 2))
                                         download_drop.append(round((sum(filtered_df[[col for col in filtered_df.columns if "Rx % Drop " in col][0]].values.tolist()[1:dl_len]) / (dl_len - 1)), 2))
                                         rssi_data.append(int(round(sum(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()) /
-                                                            len(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()), 2)) * -1)
+                                                                   len(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()), 2)) * -1)
                                         avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
                                         # Calculate and append upload and download throughput to lists
                                         upload_list.append(str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000, 2)))
@@ -7362,7 +7454,7 @@ class Candela(Realm):
                                         # Append 0 for upload data
                                         upload_data.append(0)
                                         rssi_data.append(int(round(sum(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()) /
-                                                            len(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()), 2)) * -1)
+                                                                   len(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()), 2)) * -1)
                                         download_drop.append(round((sum(filtered_df[[col for col in filtered_df.columns if "Rx % Drop " in col][0]].values.tolist()[1:dl_len]) / (dl_len - 1)), 2))
                                         avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
                                         # Calculate and append upload and download throughput to lists
@@ -7376,7 +7468,7 @@ class Candela(Realm):
                                         upload_list.append(str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000, 2)))
                                         download_list.append(str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000, 2)))
                                         rssi_data.append(int(round(sum(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()) /
-                                                            len(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()), 2)) * -1)
+                                                                   len(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()), 2)) * -1)
                                         upload_drop.append(round((sum(filtered_df[[col for col in filtered_df.columns if "Tx % Drop" in col][0]].values.tolist()[1:ul_len]) / (ul_len - 1)), 2))
                                         avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
                                         # Append upload data from filtered dataframe
@@ -7498,7 +7590,8 @@ class Candela(Realm):
                                 self.overall_report.build_objective()
                                 self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list = [item.split()[-1] if ' ' in item else item for item in self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list]
                                 if self.thput_obj_dict[ce][obj_name]["obj"].expected_passfail_value or self.thput_obj_dict[ce][obj_name]["obj"].device_csv_name:
-                                    test_input_list, pass_fail_list = self.thput_obj_dict[ce][obj_name]["obj"].get_pass_fail_list(device_type, incremental_capacity_list[i], devices_on_running, download_data, upload_data)
+                                    test_input_list, pass_fail_list = self.thput_obj_dict[ce][obj_name]["obj"].get_pass_fail_list(
+                                        device_type, incremental_capacity_list[i], devices_on_running, download_data, upload_data)
                                 bk_dataframe = {}
 
                                 # Dataframe changes with respect to groups and profiles in case of interopability
@@ -7552,20 +7645,21 @@ class Candela(Realm):
                                 self.overall_report.set_custom_html('<hr>')
                                 self.overall_report.build_custom()
 
-                            if(self.thput_obj_dict[ce][obj_name]["obj"].dowebgui and self.thput_obj_dict[ce][obj_name]["obj"].get_live_view and self.thput_obj_dict[ce][obj_name]["obj"].do_interopability):
+                            if (self.thput_obj_dict[ce][obj_name]["obj"].dowebgui and self.thput_obj_dict[ce][obj_name]
+                                    ["obj"].get_live_view and self.thput_obj_dict[ce][obj_name]["obj"].do_interopability):
                                 self.thput_obj_dict[ce][obj_name]["obj"].add_live_view_images_to_report(self.overall_report)
                         if ce == "series":
                             obj_no += 1
                             obj_name = f"thput_test_{obj_no}"
                         else:
                             break
-                
+
                 elif test_name == "ping_test":
                     """Processes ping test reporting and visualizations."""
                     obj_no = 1
                     obj_name = 'ping_test'
                     if ce == "series":
-                        obj_name += "_1" 
+                        obj_name += "_1"
                     while obj_name in self.ping_obj_dict[ce]:
                         if ce == "parallel":
                             obj_no = ''
@@ -7602,7 +7696,7 @@ class Candela(Realm):
                         if self.robot_test and not self.do_bandsteering:
                             coordinate_map = self.ping_obj_dict[ce][obj_name]["obj"].generate_overall_data()
                             logging.info("coordinate_map: %s", coordinate_map)
-                            for key,value in coordinate_map.items():
+                            for key, value in coordinate_map.items():
                                 if self.ping_obj_dict[ce][obj_name]["obj"].rotation_enabled:
                                     self.overall_report.set_table_title("Overall Packetssent vs Received vs dropped of all coordinates at angle {}".format(key))
                                 else:
@@ -7636,25 +7730,26 @@ class Candela(Realm):
                                                             _color_name=['lightgrey', 'orange', 'steelblue']
                                                             )
 
-                                overallgraph_png=overallgraph.build_bar_graph()
+                                overallgraph_png = overallgraph.build_bar_graph()
                                 self.overall_report.set_graph_image(overallgraph_png)
                                 self.overall_report.move_graph_image()
                                 self.overall_report.build_graph()
                             last_interation = False
                             for coord in self.ping_obj_dict[ce][obj_name]["obj"].coordinates_completed:
                                 for angle in self.ping_obj_dict[ce][obj_name]["obj"].angle_list:
-                                    if coord == len(self.ping_obj_dict[ce][obj_name]["obj"].coordinates_completed)-1 and self.ping_obj_dict[ce][obj_name]["obj"].angle_list[angle]== self.ping_obj_dict[ce][obj_name]["obj"].currentangle:
-                                        last_interation=True
+                                    if coord == len(self.ping_obj_dict[ce][obj_name]["obj"].coordinates_completed) - \
+                                            1 and self.ping_obj_dict[ce][obj_name]["obj"].angle_list[angle] == self.ping_obj_dict[ce][obj_name]["obj"].currentangle:
+                                        last_interation = True
 
                                     if self.ping_obj_dict[ce][obj_name]["obj"].rotation_enabled:
-                                        self.overall_report.set_table_title("Coordinate {} : Angle {}".format(coord,angle))
+                                        self.overall_report.set_table_title("Coordinate {} : Angle {}".format(coord, angle))
                                         self.overall_report.build_table_title()
-                                        self.result_json=self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json[coord][angle]
+                                        self.result_json = self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json[coord][angle]
                                     else:
                                         self.overall_report.set_table_title("Coordinate {}".format(coord))
                                         self.overall_report.build_table_title()
-                                        self.result_json=self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json[coord]
-                            
+                                        self.result_json = self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json[coord]
+
                                     # packets sent vs received vs dropped
                                     self.overall_report.set_table_title(
                                         'Packets sent vs packets received vs packets dropped')
@@ -7742,10 +7837,10 @@ class Candela(Realm):
                                                                     _enable_csv=True,
                                                                     _color_name=['lightgrey', 'orange', 'steelblue'])
                                     if self.ping_obj_dict[ce][obj_name]["obj"].rotation_enabled:
-                                        graph.graph_image_name='Packets sent vs received vs dropped_{}_{}'.format(coord,angle)
+                                        graph.graph_image_name = 'Packets sent vs received vs dropped_{}_{}'.format(coord, angle)
                                     else:
-                                        graph.graph_image_name='Packets sent vs received vs dropped_{}'.format(coord)
-                                    
+                                        graph.graph_image_name = 'Packets sent vs received vs dropped_{}'.format(coord)
+
                                     graph_png = graph.build_bar_graph_horizontal()
                                     logging.info('graph name {}'.format(graph_png))
                                     self.overall_report.set_graph_image(graph_png)
@@ -7814,10 +7909,10 @@ class Candela(Realm):
                                                                     _color_name=['lightgrey', 'orange', 'steelblue'])
 
                                     if self.ping_obj_dict[ce][obj_name]["obj"].rotation_enabled:
-                                        graph.graph_image_name='Ping Latency per client_{}_{}'.format(coord,angle)
+                                        graph.graph_image_name = 'Ping Latency per client_{}_{}'.format(coord, angle)
                                     else:
-                                        graph.graph_image_name='Ping Latency per client_{}'.format(coord)
-                                    
+                                        graph.graph_image_name = 'Ping Latency per client_{}'.format(coord)
+
                                     graph_png = graph.build_bar_graph_horizontal()
                                     logging.info('graph name {}'.format(graph_png))
                                     self.overall_report.set_graph_image(graph_png)
@@ -7853,20 +7948,20 @@ class Candela(Realm):
                                         self.overall_report.build_table()
 
                                 if last_interation:
-                                    break  
-                    
+                                    break
+
                         else:
                             if self.robot_test:
-                                test_setup_info["Robot IP"] =  self.ping_obj_dict[ce][obj_name]["obj"].robo_ip
-                                test_setup_info["Coordinates"] = str( self.ping_obj_dict[ce][obj_name]["obj"].coordinate_list)
-                                if  self.ping_obj_dict[ce][obj_name]["obj"].do_bandsteering:
+                                test_setup_info["Robot IP"] = self.ping_obj_dict[ce][obj_name]["obj"].robo_ip
+                                test_setup_info["Coordinates"] = str(self.ping_obj_dict[ce][obj_name]["obj"].coordinate_list)
+                                if self.ping_obj_dict[ce][obj_name]["obj"].do_bandsteering:
                                     del test_setup_info["Duration (in minutes)"]
-                                    test_setup_info["Cycles"] = str( self.ping_obj_dict[ce][obj_name]["obj"].cycles)
-                                    test_setup_info["BSSIDs for Bandsteering"] = str( self.ping_obj_dict[ce][obj_name]["obj"].bssids)
+                                    test_setup_info["Cycles"] = str(self.ping_obj_dict[ce][obj_name]["obj"].cycles)
+                                    test_setup_info["BSSIDs for Bandsteering"] = str(self.ping_obj_dict[ce][obj_name]["obj"].bssids)
                                 else:
-                                    if  self.ping_obj_dict[ce][obj_name]["obj"].rotation_enabled:
-                                        test_setup_info["Rotations"] =  self.ping_obj_dict[ce][obj_name]["obj"].rotation
-                                    test_setup_info["Rotation Enabled"] = str( self.ping_obj_dict[ce][obj_name]["obj"].rotation_enabled)
+                                    if self.ping_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                        test_setup_info["Rotations"] = self.ping_obj_dict[ce][obj_name]["obj"].rotation
+                                    test_setup_info["Rotation Enabled"] = str(self.ping_obj_dict[ce][obj_name]["obj"].rotation_enabled)
                             self.overall_report.test_setup_table(
                                 test_setup_data=test_setup_info, value='Test Setup Information')
 
@@ -7971,7 +8066,7 @@ class Candela(Realm):
                                                 self.ping_obj_dict[ce][obj_name]["obj"].pass_fail_list)
                                         else:
                                             dataframe = self.ping_obj_dict[ce][obj_name]["obj"].generate_dataframe(val, self.ping_obj_dict[ce][obj_name]["obj"].device_names, self.ping_obj_dict[ce][obj_name]["obj"].device_mac, self.ping_obj_dict[ce][obj_name]["obj"].device_channels, self.ping_obj_dict[ce][obj_name]["obj"].device_ssid,
-                                                                                self.ping_obj_dict[ce][obj_name]["obj"].device_modes, self.ping_obj_dict[ce][obj_name]["obj"].packets_sent, self.ping_obj_dict[ce][obj_name]["obj"].packets_received, self.ping_obj_dict[ce][obj_name]["obj"].packets_dropped, [], [], [])
+                                                                                                                   self.ping_obj_dict[ce][obj_name]["obj"].device_modes, self.ping_obj_dict[ce][obj_name]["obj"].packets_sent, self.ping_obj_dict[ce][obj_name]["obj"].packets_received, self.ping_obj_dict[ce][obj_name]["obj"].packets_dropped, [], [], [])
                                         if dataframe:
                                             self.overall_report.set_obj_html("", "Group: {}".format(key))
                                             self.overall_report.build_objective()
@@ -8080,17 +8175,17 @@ class Candela(Realm):
                             obj_name = f"ping_test_{obj_no}"
                         else:
                             break
-                
+
                 elif test_name == "qos_test":
                     """Processes Quality of Service (QoS) test reporting and visualizations."""
                     obj_no = 1
                     obj_name = 'qos_test'
                     if ce == "series":
-                        obj_name += "_1" 
+                        obj_name += "_1"
                     while obj_name in self.qos_obj_dict[ce]:
                         if ce == "parallel":
                             obj_no = ''
-                        if(self.robot_test):
+                        if (self.robot_test):
                             load = ''
                             rate_down = str(str(int(self.qos_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000) + ' ' + 'Mbps')
                             rate_up = str(str(int(self.qos_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000) + ' ' + 'Mbps')
@@ -8106,14 +8201,16 @@ class Candela(Realm):
                             params = self.qos_obj_dict[ce][obj_name]["data"]
                             data = params["data"].copy() if isinstance(params["data"], (list, dict, set)) else params["data"]
                             input_setup_info = params["input_setup_info"].copy() if isinstance(params["input_setup_info"], (list, dict, set)) else params["input_setup_info"]
-                            connections_download_avg = params["connections_download_avg"].copy() if isinstance(params["connections_download_avg"], (list, dict, set)) else params["connections_download_avg"]
+                            connections_download_avg = params["connections_download_avg"].copy() if isinstance(
+                                params["connections_download_avg"], (list, dict, set)) else params["connections_download_avg"]
                             connections_upload_avg = params["connections_upload_avg"].copy() if isinstance(params["connections_upload_avg"], (list, dict, set)) else params["connections_upload_avg"]
                             avg_drop_a = params["avg_drop_a"].copy() if isinstance(params["avg_drop_a"], (list, dict, set)) else params["avg_drop_a"]
                             avg_drop_b = params["avg_drop_b"].copy() if isinstance(params["avg_drop_b"], (list, dict, set)) else params["avg_drop_b"]
                             report_path = params["report_path"].copy() if isinstance(params["report_path"], (list, dict, set)) else params["report_path"]
                             result_dir_name = params["result_dir_name"].copy() if isinstance(params["result_dir_name"], (list, dict, set)) else params["result_dir_name"]
                             config_devices = params["config_devices"].copy() if isinstance(params["config_devices"], (list, dict, set)) else params["config_devices"]
-                            selected_real_clients_names = params["selected_real_clients_names"].copy() if isinstance(params["selected_real_clients_names"], (list, dict, set)) else params["selected_real_clients_names"]
+                            selected_real_clients_names = params["selected_real_clients_names"].copy() if isinstance(
+                                params["selected_real_clients_names"], (list, dict, set)) else params["selected_real_clients_names"]
                             self.qos_obj_dict[ce][obj_name]["obj"].ssid_list = self.qos_obj_dict[ce][obj_name]["obj"].get_ssid_list(self.qos_obj_dict[ce][obj_name]["obj"].input_devices_list)
                             if selected_real_clients_names is not None:
                                 self.qos_obj_dict[ce][obj_name]["obj"].num_stations = selected_real_clients_names
@@ -8198,9 +8295,7 @@ class Candela(Realm):
                         self.overall_report.set_obj_html(_obj_title=f'QOS Test {obj_no}', _obj="")
                         self.overall_report.build_objective()
                         self.overall_report.test_setup_table(test_setup_data=test_setup_info, value="Test Configuration")
-                        
-                        
-                        
+
                         if self.robot_test and not self.do_bandsteering:
                             if self.dowebgui:
                                 tos_for_report = self.qos_obj_dict[ce][obj_name]["obj"].tos
@@ -8221,25 +8316,34 @@ class Candela(Realm):
                                 if self.qos_obj_dict[ce][obj_name]["obj"].rotation_enabled:
                                     for angle in range(len(self.qos_obj_dict[ce][obj_name]["obj"].rotation_list)):
                                         self.overall_report.set_obj_html(_obj_title=f"Coordinate: {self.qos_obj_dict[ce][obj_name]['obj'].coordinate_list[coordinate]} | Rotation Angle: {self.qos_obj_dict[ce][obj_name]['obj'].rotation_list[angle]}°",
-                                                            _obj="")
+                                                                         _obj="")
                                         self.overall_report.build_objective()
-                                        data = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate]][self.qos_obj_dict[ce][obj_name]["obj"].rotation_list[angle]]["data"]
-                                        connections_download_avg = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate]][self.qos_obj_dict[ce][obj_name]["obj"].rotation_list[angle]]["connections_download_avg"]
-                                        connections_upload_avg = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate]][self.qos_obj_dict[ce][obj_name]["obj"].rotation_list[angle]]["connections_upload_avg"]
-                                        avg_drop_a = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate]][self.qos_obj_dict[ce][obj_name]["obj"].rotation_list[angle]]["avg_drop_a"]
-                                        avg_drop_b = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate]][self.qos_obj_dict[ce][obj_name]["obj"].rotation_list[angle]]["avg_drop_b"]
-                                        self.qos_obj_dict[ce][obj_name]["obj"].generate_individual_coordinate(self.overall_report, data, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, coordinate, angle)
+                                        data = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]
+                                                                                               ["obj"].coordinate_list[coordinate]][self.qos_obj_dict[ce][obj_name]["obj"].rotation_list[angle]]["data"]
+                                        connections_download_avg = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]
+                                                                                                                   ["obj"].coordinate_list[coordinate]][self.qos_obj_dict[ce][obj_name]["obj"].rotation_list[angle]]["connections_download_avg"]
+                                        connections_upload_avg = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]
+                                                                                                                 ["obj"].coordinate_list[coordinate]][self.qos_obj_dict[ce][obj_name]["obj"].rotation_list[angle]]["connections_upload_avg"]
+                                        avg_drop_a = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]
+                                                                                                     ["obj"].coordinate_list[coordinate]][self.qos_obj_dict[ce][obj_name]["obj"].rotation_list[angle]]["avg_drop_a"]
+                                        avg_drop_b = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]
+                                                                                                     ["obj"].coordinate_list[coordinate]][self.qos_obj_dict[ce][obj_name]["obj"].rotation_list[angle]]["avg_drop_b"]
+                                        self.qos_obj_dict[ce][obj_name]["obj"].generate_individual_coordinate(
+                                            self.overall_report, data, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, coordinate, angle)
                                 else:
                                     self.overall_report.set_obj_html(_obj_title=f"Coordinate: {self.qos_obj_dict[ce][obj_name]['obj'].coordinate_list[coordinate]}",
-                                                        _obj="")
+                                                                     _obj="")
                                     self.overall_report.build_objective()
                                     data = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate]]["data"]
-                                    connections_download_avg = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate]]["connections_download_avg"]
-                                    connections_upload_avg = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate]]["connections_upload_avg"]
+                                    connections_download_avg = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce]
+                                                                                                               [obj_name]["obj"].coordinate_list[coordinate]]["connections_download_avg"]
+                                    connections_upload_avg = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce]
+                                                                                                             [obj_name]["obj"].coordinate_list[coordinate]]["connections_upload_avg"]
                                     avg_drop_a = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate]]["avg_drop_a"]
                                     avg_drop_b = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate]]["avg_drop_b"]
-                                    self.qos_obj_dict[ce][obj_name]["obj"].generate_individual_coordinate(self.overall_report, data, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, coordinate, None)
-                                
+                                    self.qos_obj_dict[ce][obj_name]["obj"].generate_individual_coordinate(
+                                        self.overall_report, data, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, coordinate, None)
+
                         else:
                             self.overall_report.set_table_title(
                                 f"Overall {self.qos_obj_dict[ce][obj_name]['obj'].direction} Throughput for all TOS i.e BK | BE | Video (VI) | Voice (VO)")
@@ -8254,7 +8358,7 @@ class Candela(Realm):
                                 avg_drop_a = []
                                 avg_drop_b = []
                                 [(upload.append([]), download.append([]), drop_a.append([]), drop_b.append([]), avg_upload.append([]), avg_download.append([]), avg_drop_a.append([]), avg_drop_b.append([])) for i in
-                                range(len(self.qos_obj_dict[ce][obj_name]['obj'].cx_profile.created_cx))]
+                                 range(len(self.qos_obj_dict[ce][obj_name]['obj'].cx_profile.created_cx))]
                                 dropa_connections = dict.fromkeys(list(self.qos_obj_dict[ce][obj_name]['obj'].cx_profile.created_cx.keys()), float(0))
                                 dropb_connections = dict.fromkeys(list(self.qos_obj_dict[ce][obj_name]['obj'].cx_profile.created_cx.keys()), float(0))
                                 connections_upload = dict.fromkeys(list(self.qos_obj_dict[ce][obj_name]['obj'].cx_profile.created_cx.keys()), float(0))
@@ -8309,37 +8413,39 @@ class Candela(Realm):
                                 }
                                 data_set, load, res = self.qos_obj_dict[ce][obj_name]["obj"].generate_graph_data_set(data)
 
-                        
                             df_throughput = pd.DataFrame(res["throughput_table_df"])
                             self.overall_report.set_table_dataframe(df_throughput)
                             self.overall_report.build_table()
                             for key in res["graph_df"]:
                                 self.overall_report.set_obj_html(
-                                    _obj_title=f"Overall {self.qos_obj_dict[ce][obj_name]['obj'].direction} throughput for {len(self.qos_obj_dict[ce][obj_name]['obj'].input_devices_list)} clients with different TOS.",
+                                    _obj_title=f"Overall {
+                                        self.qos_obj_dict[ce][obj_name]['obj'].direction} throughput for {
+                                        len(
+                                            self.qos_obj_dict[ce][obj_name]['obj'].input_devices_list)} clients with different TOS.",
                                     _obj=f"The below graph represents overall {self.qos_obj_dict[ce][obj_name]['obj'].direction} throughput for all "
-                                        "connected stations running BK, BE, VO, VI traffic with different "
-                                        f"intended loads{load} per tos")
+                                    "connected stations running BK, BE, VO, VI traffic with different "
+                                    f"intended loads{load} per tos")
                             self.overall_report.build_objective()
                             graph = lf_bar_graph(_data_set=data_set,
-                                                _xaxis_name="Load per Type of Service",
-                                                _yaxis_name="Throughput (Mbps)",
-                                                _xaxis_categories=["BK,BE,VI,VO"],
-                                                _xaxis_label=['1 Mbps', '2 Mbps', '3 Mbps', '4 Mbps', '5 Mbps'],
-                                                _graph_image_name=f"tos_download_{key}Hz {obj_no}",
-                                                _label=["BK", "BE", "VI", "VO"],
-                                                _xaxis_step=1,
-                                                _graph_title=f"Overall {self.qos_obj_dict[ce][obj_name]['obj'].direction} throughput – BK,BE,VO,VI traffic streams",
-                                                _title_size=16,
-                                                _color=['orange', 'lightcoral', 'steelblue', 'lightgrey'],
-                                                _color_edge='black',
-                                                _bar_width=0.15,
-                                                _figsize=(18, 6),
-                                                _legend_loc="best",
-                                                _legend_box=(1.0, 1.0),
-                                                _dpi=96,
-                                                _show_bar_value=True,
-                                                _enable_csv=True,
-                                                _color_name=['orange', 'lightcoral', 'steelblue', 'lightgrey'])
+                                                 _xaxis_name="Load per Type of Service",
+                                                 _yaxis_name="Throughput (Mbps)",
+                                                 _xaxis_categories=["BK,BE,VI,VO"],
+                                                 _xaxis_label=['1 Mbps', '2 Mbps', '3 Mbps', '4 Mbps', '5 Mbps'],
+                                                 _graph_image_name=f"tos_download_{key}Hz {obj_no}",
+                                                 _label=["BK", "BE", "VI", "VO"],
+                                                 _xaxis_step=1,
+                                                 _graph_title=f"Overall {self.qos_obj_dict[ce][obj_name]['obj'].direction} throughput – BK,BE,VO,VI traffic streams",
+                                                 _title_size=16,
+                                                 _color=['orange', 'lightcoral', 'steelblue', 'lightgrey'],
+                                                 _color_edge='black',
+                                                 _bar_width=0.15,
+                                                 _figsize=(18, 6),
+                                                 _legend_loc="best",
+                                                 _legend_box=(1.0, 1.0),
+                                                 _dpi=96,
+                                                 _show_bar_value=True,
+                                                 _enable_csv=True,
+                                                 _color_name=['orange', 'lightcoral', 'steelblue', 'lightgrey'])
                             graph_png = graph.build_bar_graph()
                             logging.info("graph name %s", graph_png)
                             self.overall_report.set_graph_image(graph_png)
@@ -8350,17 +8456,17 @@ class Candela(Realm):
                             self.overall_report.build_graph()
                             if self.do_bandsteering:
                                 self.qos_obj_dict[ce][obj_name]['obj'].get_bandsteering_stats(report=self.overall_report, data=self.qos_obj_dict[ce][obj_name]['obj'].band_steering_df)
-                            self.qos_obj_dict[ce][obj_name]["obj"].generate_individual_graph(res, self.overall_report, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b,obj_no)
+                            self.qos_obj_dict[ce][obj_name]["obj"].generate_individual_graph(res, self.overall_report, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, obj_no)
                             self.overall_report.test_setup_table(test_setup_data=input_setup_info, value="Information")
                         if ce == "series":
                             obj_no += 1
                             obj_name = f"qos_test_{obj_no}"
                         else:
                             break
-                
+
                 elif test_name == "mcast_test":
                     """Processes multicast test reporting and visualizations."""
-                    obj_no=1
+                    obj_no = 1
                     obj_name = "mcast_test"
                     if ce == "series":
                         obj_name += "_1"
@@ -8407,7 +8513,7 @@ class Candela(Realm):
                         self.overall_report.set_table_title("Test Configuration")
                         self.overall_report.build_table_title()
                         self.overall_report.test_setup_table(value="Test Configuration",
-                                                    test_setup_data=test_input_info)
+                                                             test_setup_data=test_input_info)
 
                         self.overall_report.set_table_title("Radio Configuration")
                         self.overall_report.build_table_title()
@@ -8525,7 +8631,7 @@ class Candela(Realm):
                                         elif key.endswith('_B'):
                                             filtered_list = [tos_data[key][i] for i in indices_to_keep_B if i < len(tos_data[key])]
                                             tos_data[key] = filtered_list
-                        
+
                         if self.robot_test and not self.do_bandsteering:
                             logger.info("Building per-coordinate/rotation graphs and tables for robot test (from memory dict)")
                             if self.mcast_obj_dict[ce][obj_name]["obj"].dowebgui:
@@ -8625,7 +8731,7 @@ class Candela(Realm):
                                         avg_rx = df_stations["rx_rate_bps"].mean()
                                         avg_drop = df_stations["drop_percent"].mean()
                                         self.overall_report.set_custom_html(
-                                            f"<p style='font-size:12px;'>Average RX Throughput: <b>{avg_rx/1e6:.2f} Mbps</b><br>"
+                                            f"<p style='font-size:12px;'>Average RX Throughput: <b>{avg_rx / 1e6:.2f} Mbps</b><br>"
                                             f"Average Drop Rate: <b>{avg_drop:.2f}%</b><br>"
                                             f"Total Stations: <b>{len(df_stations)}</b></p>"
                                         )
@@ -8700,7 +8806,7 @@ class Candela(Realm):
                                         self.overall_report.build_custom()
                                     except Exception as e:
                                         logger.warning(f"Could not aggregate rotation summary: {e}")
-                        
+
                         else:
                             for tos in tos_list:
                                 logging.debug("TOS: %s", self.mcast_obj_dict[ce][obj_name]["obj"].tos)
@@ -8736,35 +8842,35 @@ class Candela(Realm):
                                     self.overall_report.build_objective()
 
                                     graph = lf_bar_graph_horizontal(_data_set=dataset_list,
-                                                                            _xaxis_name="Throughput in bps",
-                                                                            _yaxis_name="Client names",
-                                                                            # _yaxis_categories=self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]["clients_A"],
-                                                                            _yaxis_categories=self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]["resource_alias_A"],
-                                                                            _graph_image_name=f"{tos}_A{obj_no}",
-                                                                            _label=self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['labels'],
-                                                                            _color_name=self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['colors'],
-                                                                            _color_edge=['black'],
-                                                                            # traditional station side -A
-                                                                            _graph_title=f"Individual {tos} client side traffic measurement - side a (downstream)",
-                                                                            _title_size=10,
-                                                                            _figsize=(x_fig_size, y_fig_size),
-                                                                            _show_bar_value=True,
-                                                                            _enable_csv=True,
-                                                                            _text_font=8,
-                                                                            _legend_loc="best",
-                                                                            _legend_box=(1.0, 1.0)
-                                                                            )
+                                                                    _xaxis_name="Throughput in bps",
+                                                                    _yaxis_name="Client names",
+                                                                    # _yaxis_categories=self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]["clients_A"],
+                                                                    _yaxis_categories=self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]["resource_alias_A"],
+                                                                    _graph_image_name=f"{tos}_A{obj_no}",
+                                                                    _label=self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['labels'],
+                                                                    _color_name=self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['colors'],
+                                                                    _color_edge=['black'],
+                                                                    # traditional station side -A
+                                                                    _graph_title=f"Individual {tos} client side traffic measurement - side a (downstream)",
+                                                                    _title_size=10,
+                                                                    _figsize=(x_fig_size, y_fig_size),
+                                                                    _show_bar_value=True,
+                                                                    _enable_csv=True,
+                                                                    _text_font=8,
+                                                                    _legend_loc="best",
+                                                                    _legend_box=(1.0, 1.0)
+                                                                    )
                                     graph_png = graph.build_bar_graph_horizontal()
                                     self.overall_report.set_graph_image(graph_png)
                                     self.overall_report.move_graph_image()
                                     self.overall_report.build_graph()
                                     self.overall_report.set_csv_filename(graph_png)
                                     self.overall_report.move_csv_file()
-                                    if(self.mcast_obj_dict[ce][obj_name]["obj"].dowebgui and self.mcast_obj_dict[ce][obj_name]["obj"].get_live_view):
-                                        for floor in range(0,int(self.mcast_obj_dict[ce][obj_name]["obj"].total_floors)):
+                                    if (self.mcast_obj_dict[ce][obj_name]["obj"].dowebgui and self.mcast_obj_dict[ce][obj_name]["obj"].get_live_view):
+                                        for floor in range(0, int(self.mcast_obj_dict[ce][obj_name]["obj"].total_floors)):
                                             script_dir = os.path.dirname(os.path.abspath(__file__))
-                                            throughput_image_path = os.path.join(script_dir, "heatmap_images", f"{self.mcast_obj_dict[ce][obj_name]['obj'].test_name}_throughput_{floor+1}.png")
-                                            rssi_image_path = os.path.join(script_dir, "heatmap_images", f"{self.mcast_obj_dict[ce][obj_name]['obj'].test_name}_rssi_{floor+1}.png")
+                                            throughput_image_path = os.path.join(script_dir, "heatmap_images", f"{self.mcast_obj_dict[ce][obj_name]['obj'].test_name}_throughput_{floor + 1}.png")
+                                            rssi_image_path = os.path.join(script_dir, "heatmap_images", f"{self.mcast_obj_dict[ce][obj_name]['obj'].test_name}_rssi_{floor + 1}.png")
                                             timeout = 60  # seconds
                                             start_time = time.time()
 
@@ -8935,23 +9041,23 @@ class Candela(Realm):
                                     self.overall_report.build_objective()
 
                                     graph = lf_bar_graph_horizontal(_data_set=dataset_list,
-                                                                            _xaxis_name="Throughput in bps",
-                                                                            _yaxis_name="Client names",
-                                                                            # _yaxis_categories=self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]["clients_B"],
-                                                                            _yaxis_categories=self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]["resource_alias_B"],
-                                                                            _graph_image_name=f"{tos}_B{obj_no}",
-                                                                            _label=self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]['labels'],
-                                                                            _color_name=self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]['colors'],
-                                                                            _color_edge=['black'],
-                                                                            _graph_title=f"Individual {tos} upstream side traffic measurement - side b (WIFI) traffic",
-                                                                            _title_size=10,
-                                                                            _figsize=(x_fig_size, y_fig_size),
-                                                                            _show_bar_value=True,
-                                                                            _enable_csv=True,
-                                                                            _text_font=8,
-                                                                            _legend_loc="best",
-                                                                            _legend_box=(1.0, 1.0)
-                                                                            )
+                                                                    _xaxis_name="Throughput in bps",
+                                                                    _yaxis_name="Client names",
+                                                                    # _yaxis_categories=self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]["clients_B"],
+                                                                    _yaxis_categories=self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]["resource_alias_B"],
+                                                                    _graph_image_name=f"{tos}_B{obj_no}",
+                                                                    _label=self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]['labels'],
+                                                                    _color_name=self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]['colors'],
+                                                                    _color_edge=['black'],
+                                                                    _graph_title=f"Individual {tos} upstream side traffic measurement - side b (WIFI) traffic",
+                                                                    _title_size=10,
+                                                                    _figsize=(x_fig_size, y_fig_size),
+                                                                    _show_bar_value=True,
+                                                                    _enable_csv=True,
+                                                                    _text_font=8,
+                                                                    _legend_loc="best",
+                                                                    _legend_box=(1.0, 1.0)
+                                                                    )
                                     graph_png = graph.build_bar_graph_horizontal()
                                     self.overall_report.set_graph_image(graph_png)
                                     self.overall_report.move_graph_image()
@@ -8985,7 +9091,7 @@ class Candela(Realm):
                                     self.overall_report.build_table()
 
                             if self.robot_test and self.do_bandsteering:
-                                self.mcast_obj_dict[ce][obj_name]["obj"].report=self.overall_report
+                                self.mcast_obj_dict[ce][obj_name]["obj"].report = self.overall_report
                                 self.mcast_obj_dict[ce][obj_name]["obj"].get_bandsteering_stats()
                             # empty dictionarys evaluate to false , placing tables in output
                             if bool(self.mcast_obj_dict[ce][obj_name]["obj"].dl_port_csv_files):
@@ -9005,16 +9111,16 @@ class Candela(Realm):
                                     self.overall_report.build_table_title()
                                     self.overall_report.set_table_dataframe(last_row)
                                     self.overall_report.build_table()
-                            
+
                         if ce == "series":
                             obj_no += 1
                             obj_name = f"mcast_test_{obj_no}"
                         else:
-                            break        
-                
+                            break
+
                 elif test_name == "vs_test":
                     """Processes video streaming test reporting and visualizations."""
-                    obj_no=1
+                    obj_no = 1
                     obj_name = "vs_test"
                     if ce == "series":
                         obj_name += "_1"
@@ -9022,7 +9128,6 @@ class Candela(Realm):
                         if ce == "parallel":
                             obj_no = ''
 
-                        
                         if not self.robot_test or (self.robot_test and self.do_bandsteering):
                             if not self.do_bandsteering:
                                 params = self.vs_obj_dict[ce][obj_name]["data"].copy()
@@ -9056,9 +9161,10 @@ class Candela(Realm):
                                     if isinstance(params["cx_order_list"], (list, dict, set))
                                     else params["cx_order_list"]
                                 )
-                            
+
                             else:
-                                test_setup_info = self.vs_obj_dict[ce][obj_name]["obj"].create_test_setup_info(media_source=self.vs_obj_dict[ce][obj_name]["obj"].media_source, media_quality=self.vs_obj_dict[ce][obj_name]["obj"].media_quality)
+                                test_setup_info = self.vs_obj_dict[ce][obj_name]["obj"].create_test_setup_info(
+                                    media_source=self.vs_obj_dict[ce][obj_name]["obj"].media_source, media_quality=self.vs_obj_dict[ce][obj_name]["obj"].media_quality)
                                 date = str(datetime.datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
                                 iterations_before_test_stopped_by_user = [0]
                                 realtime_dataset = self.vs_obj_dict[ce][obj_name]["obj"].vs_stats
@@ -9159,10 +9265,10 @@ class Candela(Realm):
                                     max_video_rate.append(max(filtered_df[[col for col in filtered_df.columns if "video_format_bitrate" in col][0]].values.tolist()))
                                     min_video_rate.append(min_val)
                                     avg_video_rate.append(round(sum(filtered_df[[col for col in filtered_df.columns if "video_format_bitrate" in col][0]].values.tolist()) /
-                                                        len(filtered_df[[col for col in filtered_df.columns if "video_format_bitrate" in col][0]].values.tolist()), 2))
+                                                                len(filtered_df[[col for col in filtered_df.columns if "video_format_bitrate" in col][0]].values.tolist()), 2))
                                     wait_time_data.append(filtered_df[[col for col in filtered_df.columns if "total_wait_time" in col][0]].values.tolist()[-1])
                                     rssi_data.append(int(round(sum(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()) /
-                                                    len(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()), 2)) * -1)
+                                                               len(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()), 2)) * -1)
                                     # Extract maximum bytes read for the device
                                     max_bytes_rd = max(filtered_df[[col for col in filtered_df.columns if "bytes_rd" in col][0]].values.tolist())
                                     max_bytes_rd_list.append(max_bytes_rd)
@@ -9174,7 +9280,7 @@ class Candela(Realm):
                                     if iter != 0:
                                         # Calculate the difference in total URLs between the current and previous iterations
                                         total_url_data.append(abs(filtered_df[[col for col in filtered_df.columns if "total_urls" in col][0]].values.tolist()[-1] -
-                                                            before_filtered_df[[col for col in before_filtered_df.columns if "total_urls" in col][0]].values.tolist()[-1]))
+                                                                  before_filtered_df[[col for col in before_filtered_df.columns if "total_urls" in col][0]].values.tolist()[-1]))
                                     else:
                                         # Append the total URLs for the first iteration
                                         total_url_data.append(filtered_df[[col for col in filtered_df.columns if "total_urls" in col][0]].values.tolist()[-1])
@@ -9202,13 +9308,13 @@ class Candela(Realm):
 
                                 # Create a line graph for video rate over time
                                 graph = lf_line_graph(_data_set=trimmed_data_set_in_graph,
-                                                    _xaxis_name="Time",
-                                                    _yaxis_name="Video Rate (Mbps)",
-                                                    _xaxis_categories=self.vs_obj_dict[ce][obj_name]["obj"].trim_data(len(realtime_dataset['timestamp'][realtime_dataset['iteration'] == iter + 1].values.tolist()),
-                                                                                    realtime_dataset['timestamp'][realtime_dataset['iteration'] == iter + 1].values.tolist()),
-                                                    _label=['Rate'],
-                                                    _graph_image_name=f"vs_line_graph{iter}{obj_no}"
-                                                    )
+                                                      _xaxis_name="Time",
+                                                      _yaxis_name="Video Rate (Mbps)",
+                                                      _xaxis_categories=self.vs_obj_dict[ce][obj_name]["obj"].trim_data(len(realtime_dataset['timestamp'][realtime_dataset['iteration'] == iter + 1].values.tolist()),
+                                                                                                                        realtime_dataset['timestamp'][realtime_dataset['iteration'] == iter + 1].values.tolist()),
+                                                      _label=['Rate'],
+                                                      _graph_image_name=f"vs_line_graph{iter}{obj_no}"
+                                                      )
                                 graph_png = graph.build_line_graph()
                                 logger.info("graph name {}".format(graph_png))
                                 self.overall_report.set_graph_image(graph_png)
@@ -9302,9 +9408,8 @@ class Candela(Realm):
 
                                     for floor in range(int(self.vs_obj_dict[ce][obj_name]["obj"].floors)):
                                         # Construct expected image paths
-                                        vs_buffer_image = os.path.join(script_dir, "heatmap_images", f"{self.vs_obj_dict[ce][obj_name]['obj'].test_name}_vs_buffer_{floor+1}.png")
-                                        vs_wait_time_image = os.path.join(script_dir, "heatmap_images", f"{self.vs_obj_dict[ce][obj_name]['obj'].test_name}_vs_wait_time_{floor+1}.png")
-
+                                        vs_buffer_image = os.path.join(script_dir, "heatmap_images", f"{self.vs_obj_dict[ce][obj_name]['obj'].test_name}_vs_buffer_{floor + 1}.png")
+                                        vs_wait_time_image = os.path.join(script_dir, "heatmap_images", f"{self.vs_obj_dict[ce][obj_name]['obj'].test_name}_vs_wait_time_{floor + 1}.png")
 
                                         # Wait for all required images to be generated (up to timeout)
                                         timeout = 60  # seconds
@@ -9428,22 +9533,25 @@ class Candela(Realm):
                                         self.vs_obj_dict[ce][obj_name]["obj"].current_angle = self.vs_obj_dict[ce][obj_name]["obj"].rotation_list[angle]
                                         coord, ang = self.vs_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate], self.vs_obj_dict[ce][obj_name]["obj"].rotation_list[angle]
                                         self.vs_obj_dict[ce][obj_name]["obj"].data = self.vs_obj_dict[ce][obj_name]["obj"].vs_data[int(coord)][ang]["self_data"]
-                                        self.vs_obj_dict[ce][obj_name]["obj"].generate_individual_coordinate(self.overall_report, device_type, username, ssid, mac, channel, mode, rssi, tx_rate, created_incremental_values, keys)
+                                        self.vs_obj_dict[ce][obj_name]["obj"].generate_individual_coordinate(
+                                            self.overall_report, device_type, username, ssid, mac, channel, mode, rssi, tx_rate, created_incremental_values, keys)
                                 else:
-                                    self.vs_obj_dict[ce][obj_name]["obj"].data = self.vs_obj_dict[ce][obj_name]["obj"].vs_data[self.vs_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate]]["self_data"]
-                                    self.vs_obj_dict[ce][obj_name]["obj"].generate_individual_coordinate(self.overall_report, device_type, username, ssid, mac, channel, mode, rssi, tx_rate, created_incremental_values, keys)
+                                    self.vs_obj_dict[ce][obj_name]["obj"].data = self.vs_obj_dict[ce][obj_name]["obj"].vs_data[self.vs_obj_dict[ce]
+                                                                                                                               [obj_name]["obj"].coordinate_list[coordinate]]["self_data"]
+                                    self.vs_obj_dict[ce][obj_name]["obj"].generate_individual_coordinate(
+                                        self.overall_report, device_type, username, ssid, mac, channel, mode, rssi, tx_rate, created_incremental_values, keys)
                         if ce == "series":
                             obj_no += 1
                             obj_name = f"vs_test_{obj_no}"
                         else:
                             break
-                
-                elif test_name =="rb_test":
+
+                elif test_name == "rb_test":
                     """
                     Generates the test report for Real Browser (rb_test) streams.
                     Processes URL access success rates, time taken per URL, and BSSID transitions.
                     """
-                    obj_no=1
+                    obj_no = 1
                     obj_name = "rb_test"
                     if ce == "series":
                         obj_name += "_1"
@@ -9455,7 +9563,6 @@ class Candela(Realm):
                         self.overall_report.set_table_title("Test Parameters:")
                         self.overall_report.build_table_title()
 
-                        
                         if not self.robot_test or self.do_bandsteering:
                             final_eid_data = []
                             mac_data = []
@@ -9476,7 +9583,8 @@ class Candela(Realm):
                             if self.do_bandsteering and self.dowebgui:
                                 csv_paths = self.rb_obj_dict[ce][obj_name]["obj"].report_path_date_time
 
-                            final_eid_data, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = self.rb_obj_dict[ce][obj_name]["obj"].extract_device_data('{}/real_time_data.csv'.format(csv_paths))
+                            final_eid_data, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = self.rb_obj_dict[ce][obj_name]["obj"].extract_device_data(
+                                '{}/real_time_data.csv'.format(csv_paths))
 
                             test_setup_info = self.rb_obj_dict[ce][obj_name]["obj"].generate_test_setup_info()
                             self.overall_report.test_setup_table(
@@ -9486,11 +9594,12 @@ class Candela(Realm):
                                 if self.rb_obj_dict[ce][obj_name]["obj"].csv_file_names[i].startswith("real_time_data.csv") and not self.do_bandsteering:
                                     continue
 
-                                final_eid_data, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = self.rb_obj_dict[ce][obj_name]["obj"].extract_device_data("{}/{}".format(csv_paths,self.rb_obj_dict[ce][obj_name]["obj"].csv_file_names[i]))
+                                final_eid_data, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = self.rb_obj_dict[ce][obj_name]["obj"].extract_device_data(
+                                    "{}/{}".format(csv_paths, self.rb_obj_dict[ce][obj_name]["obj"].csv_file_names[i]))
                                 self.overall_report.set_graph_title("Successful URL's per Device")
                                 self.overall_report.build_graph_title()
 
-                                data = pd.read_csv("{}/{}".format(csv_paths,self.rb_obj_dict[ce][obj_name]["obj"].csv_file_names[i]))
+                                data = pd.read_csv("{}/{}".format(csv_paths, self.rb_obj_dict[ce][obj_name]["obj"].csv_file_names[i]))
 
                                 # Extract device names from CSV
                                 if 'total_urls' in data.columns:
@@ -9524,7 +9633,7 @@ class Candela(Realm):
                                 self.overall_report.build_graph_title()
 
                                 # Extract device names from CSV
-                             
+
                                 if 'time_to_target_urls' in data.columns:
                                     time_to_target_urls = data['time_to_target_urls'].tolist()
                                 else:
@@ -9715,7 +9824,7 @@ class Candela(Realm):
 
                                 self.overall_report.set_table_dataframe(transition_df)
                                 self.overall_report.build_table()
-                            
+
                         else:
                             test_setup_info = self.rb_obj_dict[ce][obj_name]["obj"].generate_test_setup_info()
                             self.overall_report.test_setup_table(
@@ -9744,14 +9853,15 @@ class Candela(Realm):
                                         try:
                                             if (self.dowebgui):
                                                 csv_file = os.path.join(
-                                                f"{coordinate}_{angle}_webBrowser.csv"
+                                                    f"{coordinate}_{angle}_webBrowser.csv"
                                                 )
                                             else:
                                                 csv_file = os.path.join(
                                                     self.rb_obj_dict[ce][obj_name]["obj"].report_path_date_time,
                                                     f"{coordinate}_{angle}_webBrowser.csv"
                                                 )
-                                            _, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = self.rb_obj_dict[ce][obj_name]["obj"].extract_device_data(csv_file)
+                                            _, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = self.rb_obj_dict[ce][obj_name]["obj"].extract_device_data(
+                                                csv_file)
                                             if self.rb_obj_dict[ce][obj_name]["obj"].rotations_enabled:
                                                 self.overall_report.set_graph_title(f"Successful URL's per Device at coordinate {coordinate} and angle {angle}")
                                             else:
@@ -9786,9 +9896,13 @@ class Candela(Realm):
                                             self.overall_report.move_graph_image()
                                             self.overall_report.build_graph()
                                             if self.rb_obj_dict[ce][obj_name]["obj"].rotations_enabled:
-                                                self.overall_report.set_graph_title(f'Time Taken Vs Device For Completing {self.rb_obj_dict[ce][obj_name]["obj"].count} RealTime URLs at coordinate {coordinate} and angle {angle}')
+                                                self.overall_report.set_graph_title(
+                                                    f'Time Taken Vs Device For Completing {
+                                                        self.rb_obj_dict[ce][obj_name]["obj"].count} RealTime URLs at coordinate {coordinate} and angle {angle}')
                                             else:
-                                                self.overall_report.set_graph_title(f'Time Taken Vs Device For Completing {self.rb_obj_dict[ce][obj_name]["obj"].count} RealTime URLs at coordinate {coordinate}')
+                                                self.overall_report.set_graph_title(
+                                                    f'Time Taken Vs Device For Completing {
+                                                        self.rb_obj_dict[ce][obj_name]["obj"].count} RealTime URLs at coordinate {coordinate}')
                                             self.overall_report.build_graph_title()
 
                                             # Extract device names from CSV
@@ -9891,17 +10005,18 @@ class Candela(Realm):
 
                                 else:
                                     if (self.dowebgui):
-                                                csv_file = os.path.join(self.rb_obj_dict[ce][obj_name]["obj"].report.path,
-                                                f"{coordinate}_webBrowser.csv"
-                                                )
+                                        csv_file = os.path.join(self.rb_obj_dict[ce][obj_name]["obj"].report.path,
+                                                                f"{coordinate}_webBrowser.csv"
+                                                                )
                                     else:
                                         csv_file = os.path.join(
                                             self.rb_obj_dict[ce][obj_name]["obj"].report_path_date_time,
                                             f"{coordinate}_webBrowser.csv"
                                         )
                                     try:
-                                        angle=None
-                                        _, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = self.rb_obj_dict[ce][obj_name]["obj"].extract_device_data(csv_file)
+                                        angle = None
+                                        _, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = self.rb_obj_dict[ce][obj_name]["obj"].extract_device_data(
+                                            csv_file)
                                         if self.rb_obj_dict[ce][obj_name]["obj"].rotations_enabled:
                                             self.overall_report.set_graph_title(f"Successful URL's per Device at coordinate {coordinate} and angle {angle}")
                                         else:
@@ -9936,9 +10051,13 @@ class Candela(Realm):
                                         self.overall_report.move_graph_image()
                                         self.overall_report.build_graph()
                                         if self.rb_obj_dict[ce][obj_name]["obj"].rotations_enabled:
-                                            self.overall_report.set_graph_title(f'Time Taken Vs Device For Completing {self.rb_obj_dict[ce][obj_name]["obj"].count} RealTime URLs at coordinate {coordinate} and angle {angle}')
+                                            self.overall_report.set_graph_title(
+                                                f'Time Taken Vs Device For Completing {
+                                                    self.rb_obj_dict[ce][obj_name]["obj"].count} RealTime URLs at coordinate {coordinate} and angle {angle}')
                                         else:
-                                            self.overall_report.set_graph_title(f'Time Taken Vs Device For Completing {self.rb_obj_dict[ce][obj_name]["obj"].count} RealTime URLs at coordinate {coordinate}')
+                                            self.overall_report.set_graph_title(
+                                                f'Time Taken Vs Device For Completing {
+                                                    self.rb_obj_dict[ce][obj_name]["obj"].count} RealTime URLs at coordinate {coordinate}')
                                         self.overall_report.build_graph_title()
 
                                         # Extract device names from CSV
@@ -10038,29 +10157,29 @@ class Candela(Realm):
 
                                     except Exception as e:
                                         logging.error(f"Error in create_robo_graphs_test_results {e}", exc_info=True)
-                            
+
                                 os.chdir(self.rb_obj_dict[ce][obj_name]["obj"].original_dir)
                             self.rb_obj_dict[ce][obj_name]["obj"].report.build_custom()
                             self.rb_obj_dict[ce][obj_name]["obj"].report.build_footer()
                             self.rb_obj_dict[ce][obj_name]["obj"].report.write_html()
                             self.rb_obj_dict[ce][obj_name]["obj"].report.write_pdf()
-                        
+
                         if self.rb_obj_dict[ce][obj_name]["obj"].dowebgui:
 
                             os.chdir(self.rb_obj_dict[ce][obj_name]["obj"].original_dir)
-                        
+
                         if ce == "series":
                             obj_no += 1
                             obj_name = f"rb_test_{obj_no}"
                         else:
-                            break                    
+                            break
 
                 elif test_name == "yt_test":
                     """
                     Generates the test report for YouTube (yt_test) streams.
                     Collects and plots buffer health, dropped frames, and total frames.
                     """
-                    obj_no=1
+                    obj_no = 1
                     obj_name = "yt_test"
                     if ce == "series":
                         obj_name += "_1"
@@ -10126,7 +10245,6 @@ class Candela(Realm):
                             test_setup_data=test_setup_info, value='Test Parameters')
                         if self.robot_test and not self.do_bandsteering:
                             def add_frames_graphs_to_report(current_cord, current_angle):
-                                
                                 """
                                     Reads all CSV files in the current directory that start with '<current_cord>_',
                                     filters rows up to current_angle, and collects stats:
@@ -10258,11 +10376,10 @@ class Candela(Realm):
                                 self.overall_report.set_table_dataframe(test_results_df)
                                 self.overall_report.build_table()
 
-
                                 logging.info("\n📊 Summary for all devices:")
                                 for k, v in result_dict.items():
                                     logging.info(f"{k}: {v}")
-    
+
                             logging.info(f"Directory: {os.getcwd()}, YouTube report path: {self.yt_obj_dict[ce][obj_name]['obj'].report_path_date_time}")
                             os.chdir(self.report_path_date_time)
                             for coordinate in self.coordinate_list:
@@ -10469,7 +10586,7 @@ class Candela(Realm):
                             else:
                                 csv_files = [f for f in os.listdir(self.yt_obj_dict[ce][obj_name]["obj"].report_path_date_time) if f.endswith('.csv')]
                                 os.chdir(self.yt_obj_dict[ce][obj_name]["obj"].report_path_date_time)
-                            scp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),self.report_path_date_time)
+                            scp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), self.report_path_date_time)
                             for file_name in csv_files:
                                 data = pd.read_csv(file_name)
                                 self.overall_report.set_graph_title('Buffer Health vs Time Graph for {}'.format(file_name.split('_')[0]))
@@ -10505,7 +10622,7 @@ class Candela(Realm):
 
                                 plt.xticks(rotation=45, ha='right')
 
-                                output_file = os.path.join(scp_path,f"{file_name.split('_')[0]}buffer_health_vs_time{obj_no}.png")
+                                output_file = os.path.join(scp_path, f"{file_name.split('_')[0]}buffer_health_vs_time{obj_no}.png")
                                 plt.tight_layout()
                                 plt.savefig(output_file, dpi=96)
                                 plt.close()
@@ -10534,10 +10651,10 @@ class Candela(Realm):
                     Zoom Test Reporting Block
                     -------------------------
                     Processes results for Zoom testing scenarios.
-                    Constructs parameter tables, metrics graphs (audio/video, latency, jitter, loss), 
+                    Constructs parameter tables, metrics graphs (audio/video, latency, jitter, loss),
                     and integrates band steering analysis if configured.
                     '''
-                    obj_no=1
+                    obj_no = 1
                     obj_name = "zoom_test"
                     if ce == "series":
                         obj_name += "_1"
@@ -10588,7 +10705,7 @@ class Candela(Realm):
 
                             }])
                         else:
-                            
+
                             test_parameters = pd.DataFrame([{
                                 "Configured Devices": self.zoom_obj_dict[ce][obj_name]["obj"].hostname_os_combination,
                                 'No of Clients': f'W({self.zoom_obj_dict[ce][obj_name]["obj"].windows}),L({self.zoom_obj_dict[ce][obj_name]["obj"].linux}),M({self.zoom_obj_dict[ce][obj_name]["obj"].mac})',
@@ -10613,7 +10730,7 @@ class Candela(Realm):
                         self.overall_report.set_table_dataframe(test_parameters)
                         self.overall_report.build_table()
                         if self.robot_test and self.dowebgui and not self.do_bandsteering:
-                            self.zoom_obj_dict[ce][obj_name]["obj"].report=self.overall_report
+                            self.zoom_obj_dict[ce][obj_name]["obj"].report = self.overall_report
                             self.zoom_obj_dict[ce][obj_name]["obj"].add_live_view_images_to_report()
                         if not self.robot_test or self.do_bandsteering:
                             client_array = []
@@ -10664,7 +10781,7 @@ class Candela(Realm):
                                     "video_pktloss_r": [],
                                 }
                                 try:
-                                    if not self.do_bandsteering :
+                                    if not self.do_bandsteering:
                                         if self.dowebgui:
                                             file_path = os.path.join(self.zoom_obj_dict[ce][obj_name]["obj"].report.path_date_time, f'{self.zoom_obj_dict[ce][obj_name]["obj"].device_names[i]}.csv')
                                         else:
@@ -11065,7 +11182,6 @@ class Candela(Realm):
                                                 vi_loss = float(row["video_input_avg_loss_avg"] or 0)
                                                 vo_loss = float(row["video_output_avg_loss_avg"] or 0)
 
-
                                                 per_client_data["audio_jitter_s"].append(ai_jit)
                                                 per_client_data["audio_jitter_r"].append(ao_jit)
 
@@ -11083,7 +11199,6 @@ class Candela(Realm):
 
                                                 per_client_data["video_pktloss_s"].append(vi_loss)
                                                 per_client_data["video_pktloss_r"].append(vo_loss)
-
 
                                                 temp_max_audio_jitter_s = max(temp_max_audio_jitter_s, ai_jit)
                                                 temp_max_audio_jitter_r = max(temp_max_audio_jitter_r, ao_jit)
@@ -11103,7 +11218,6 @@ class Candela(Realm):
                                                 temp_max_video_pktloss_s = max(temp_max_video_pktloss_s, vi_loss)
                                                 temp_max_video_pktloss_r = max(temp_max_video_pktloss_r, vo_loss)
 
-
                                                 if ai_jit > 0:
                                                     temp_min_audio_jitter_s = ai_jit if temp_min_audio_jitter_s == 0 else min(temp_min_audio_jitter_s, ai_jit)
 
@@ -11122,7 +11236,6 @@ class Candela(Realm):
                                                 if ao_loss > 0:
                                                     temp_min_audio_pktloss_r = ao_loss if temp_min_audio_pktloss_r == 0 else min(temp_min_audio_pktloss_r, ao_loss)
 
-
                                                 if vi_jit > 0:
                                                     temp_min_video_jitter_s = vi_jit if temp_min_video_jitter_s == 0 else min(temp_min_video_jitter_s, vi_jit)
 
@@ -11140,8 +11253,6 @@ class Candela(Realm):
 
                                                 if vo_loss > 0:
                                                     temp_min_video_pktloss_r = vo_loss if temp_min_video_pktloss_r == 0 else min(temp_min_video_pktloss_r, vo_loss)
-
-
 
                                 except Exception as e:
                                     logging.error(f"Error in reading data in client {self.zoom_obj_dict[ce][obj_name]['obj'].device_names[i]}", e)
@@ -11314,7 +11425,7 @@ class Candela(Realm):
                                 })
                                 self.overall_report.set_table_dataframe(audio_test_results_dict)
                                 self.overall_report.dataframe_html = self.overall_report.dataframe.to_html(index=False,
-                                                                                justify='center', render_links=True, escape=False)  # have the index be able to be passed in.
+                                                                                                           justify='center', render_links=True, escape=False)  # have the index be able to be passed in.
                                 self.overall_report.html += self.overall_report.dataframe_html
                             if self.zoom_obj_dict[ce][obj_name]["obj"].video:
                                 self.overall_report.set_graph_title("Video Latency (Sent/Received)")
@@ -11401,44 +11512,44 @@ class Candela(Realm):
                                 self.overall_report.set_table_title("Test Video Results Table:")
                                 self.overall_report.build_table_title()
                                 video_test_results_dict = pd.DataFrame({
-                                'Device Name': [client for client in accepted_clients],
-                                'Avg Latency Sent (ms)': [
-                                    round(sum(data["video_latency_s"]) / len(data["video_latency_s"]), 2) if len(data["video_latency_s"]) != 0 else 0
-                                    for data in final_dataset
-                                ],
-                                'Avg Latency Recv (ms)': [
-                                    round(sum(data["video_latency_r"]) / len(data["video_latency_r"]), 2) if len(data["video_latency_r"]) != 0 else 0
-                                    for data in final_dataset
-                                ],
-                                'Avg Jitter Sent (ms)': [
-                                    round(sum(data["video_jitter_s"]) / len(data["video_jitter_s"]), 2) if len(data["video_jitter_s"]) != 0 else 0
-                                    for data in final_dataset
-                                ],
-                                'Avg Jitter Recv (ms)': [
-                                    round(sum(data["video_jitter_r"]) / len(data["video_jitter_r"]), 2) if len(data["video_jitter_r"]) != 0 else 0
-                                    for data in final_dataset
-                                ],
-                                'Avg Pkt Loss Sent': [
-                                    round(sum(data["video_pktloss_s"]) / len(data["video_pktloss_s"]), 2) if len(data["video_pktloss_s"]) != 0 else 0
-                                    for data in final_dataset
-                                ],
-                                'Avg Pkt Loss Recv': [
-                                    round(sum(data["video_pktloss_r"]) / len(data["video_pktloss_r"]), 2) if len(data["video_pktloss_r"]) != 0 else 0
-                                    for data in final_dataset
-                                ],
-                                'CSV link': [
-                                    '<a href="{}.csv" target="_blank">csv data</a>'.format(client)
-                                    for client in accepted_clients
-                                ]
-                            })
+                                    'Device Name': [client for client in accepted_clients],
+                                    'Avg Latency Sent (ms)': [
+                                        round(sum(data["video_latency_s"]) / len(data["video_latency_s"]), 2) if len(data["video_latency_s"]) != 0 else 0
+                                        for data in final_dataset
+                                    ],
+                                    'Avg Latency Recv (ms)': [
+                                        round(sum(data["video_latency_r"]) / len(data["video_latency_r"]), 2) if len(data["video_latency_r"]) != 0 else 0
+                                        for data in final_dataset
+                                    ],
+                                    'Avg Jitter Sent (ms)': [
+                                        round(sum(data["video_jitter_s"]) / len(data["video_jitter_s"]), 2) if len(data["video_jitter_s"]) != 0 else 0
+                                        for data in final_dataset
+                                    ],
+                                    'Avg Jitter Recv (ms)': [
+                                        round(sum(data["video_jitter_r"]) / len(data["video_jitter_r"]), 2) if len(data["video_jitter_r"]) != 0 else 0
+                                        for data in final_dataset
+                                    ],
+                                    'Avg Pkt Loss Sent': [
+                                        round(sum(data["video_pktloss_s"]) / len(data["video_pktloss_s"]), 2) if len(data["video_pktloss_s"]) != 0 else 0
+                                        for data in final_dataset
+                                    ],
+                                    'Avg Pkt Loss Recv': [
+                                        round(sum(data["video_pktloss_r"]) / len(data["video_pktloss_r"]), 2) if len(data["video_pktloss_r"]) != 0 else 0
+                                        for data in final_dataset
+                                    ],
+                                    'CSV link': [
+                                        '<a href="{}.csv" target="_blank">csv data</a>'.format(client)
+                                        for client in accepted_clients
+                                    ]
+                                })
                                 self.overall_report.set_table_dataframe(video_test_results_dict)
 
                                 self.overall_report.dataframe_html = self.overall_report.dataframe.to_html(index=False,
-                                                                                justify='center', render_links=True, escape=False)  # have the index be able to be passed in.
+                                                                                                           justify='center', render_links=True, escape=False)  # have the index be able to be passed in.
                                 self.overall_report.html += self.overall_report.dataframe_html
                             self.overall_report.set_custom_html("<br/><hr/>")
                             self.overall_report.build_custom()
-                            #band steering section
+                            # band steering section
                             if self.do_bandsteering:
 
                                 self.overall_report.set_table_title("Band Steering – BSSID Transition Analysis")
@@ -11523,7 +11634,6 @@ class Candela(Realm):
                                     self.overall_report.move_graph_image()
                                     self.overall_report.build_graph()
 
-
                                     # Transition table
                                     self.overall_report.set_table_title(
                                         f"Band Steering Results for {device_name}"
@@ -11548,7 +11658,7 @@ class Candela(Realm):
                                     self.overall_report.set_table_dataframe(transition_df)
                                     self.overall_report.build_table()
                         else:
-                            def _build_metric_graph( media_type, metric_name, unit, data, input_key, output_key, suffix=""):
+                            def _build_metric_graph(media_type, metric_name, unit, data, input_key, output_key, suffix=""):
                                 """
                                 Helper to build standard horizontal bar graphs with Device Names on Y-Axis.
                                 suffix: used for Robo graphs to ensure unique image names per coordinate.
@@ -11597,7 +11707,7 @@ class Candela(Realm):
                                     return val if val is not None else 0
 
                                 p = media_type
-                                
+
                                 details = pd.DataFrame(
                                     {
                                         "Device Name": self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_hostname,
@@ -11626,7 +11736,7 @@ class Candela(Realm):
                                 )
                                 self.overall_report.html += self.overall_report.dataframe_html
 
-                            report_1=self.zoom_obj_dict[ce][obj_name]["obj"].report
+                            report_1 = self.zoom_obj_dict[ce][obj_name]["obj"].report
                             # self.zoom_obj_dict[ce][obj_name]["obj"].report=self.overall_report
                             # self.zoom_obj_dict[ce][obj_name]["obj"]._generate_robo_per_location_report()
                             coords = self.zoom_obj_dict[ce][obj_name]["obj"].coordinates_list if self.zoom_obj_dict[ce][obj_name]["obj"].coordinates_list else ["0,0,0"]
@@ -11792,9 +11902,9 @@ class Candela(Realm):
                             obj_name = f"zoom_test_{obj_no}"
                         else:
                             break
-                
+
                 elif test_name == "teams_test":
-                    obj_no=1
+                    obj_no = 1
                     obj_name = "teams_test"
                     if ce == "series":
                         obj_name += "_1"
@@ -11865,7 +11975,6 @@ class Candela(Realm):
 
                         # Read per-device average metrics
 
-
                         new_list = []
 
                         for avg_csvs in obj.avg_csv_files_list:
@@ -11896,17 +12005,16 @@ class Candela(Realm):
                             obj_name = f"rb_test_{obj_no}"
                         else:
                             break
-            
+
             except Exception as e:
                 traceback.print_exc()
                 logger.info(f"failed to generate report for {test_name} {e}")
 
-
-    def generate_test_exc_df(self,test_results_df,args_dict):
+    def generate_test_exc_df(self, test_results_df, args_dict):
         '''
         Generate Test Execution DataFrames
         ----------------------------------
-        Splits and formats the main test_results_df into sequential (series_df) 
+        Splits and formats the main test_results_df into sequential (series_df)
         and parallel (parallel_df) dataframes based on the configured order priority.
         '''
         series_df = {}
@@ -11930,24 +12038,24 @@ class Candela(Realm):
                 series_df = test_results_df[len(self.parallel_tests):].copy()
                 series_df["s/no"] = range(1, len(series_df) + 1)
                 series_df = series_df[["s/no", "test_name", "Duration", "status"]]
-        return series_df,parallel_df
+        return series_df, parallel_df
 
-    def generate_overall_report(self,test_results_df='',args_dict={}):
+    def generate_overall_report(self, test_results_df='', args_dict={}):
         '''
         Generate Overall Report
         -----------------------
-        Initializes the overall report, adds banners and tables for 
+        Initializes the overall report, adds banners and tables for
         series/parallel test execution sets, and renders each test block.
         Finally builds the footer, writes the HTML and PDF reports.
         '''
         self.overall_report = lf_report.lf_report(_results_dir_name="Base_Class_Test_Overall_report", _output_html="base_class_overall.html",
-                                         _output_pdf="base_class_overall.pdf", _path=self.result_path if not self.dowebgui else self.result_dir)
+                                                  _output_pdf="base_class_overall.pdf", _path=self.result_path if not self.dowebgui else self.result_dir)
         self.report_path_date_time = self.overall_report.get_path_date_time()
         self.overall_report.set_title("Candela Base Class")
         self.overall_report.set_date(datetime.datetime.now())
         self.overall_report.build_banner()
         try:
-            series_df,parallel_df = self.generate_test_exc_df(test_results_df,args_dict)
+            series_df, parallel_df = self.generate_test_exc_df(test_results_df, args_dict)
         except Exception:
             logging.error('Exception failed dataframe creation', exc_info=True)
         if self.order_priority == "series":
@@ -11989,7 +12097,8 @@ class Candela(Realm):
         logging.info(f"Generated HTML report file: {html_file}")
         self.overall_report.write_pdf()
 
-def validate_individual_args(args,test_name):
+
+def validate_individual_args(args, test_name):
     '''
     Validate Individual Arguments
     -----------------------------
@@ -11998,17 +12107,17 @@ def validate_individual_args(args,test_name):
     '''
     if test_name == 'ping_test':
         return True
-    elif test_name =='http_test':
+    elif test_name == 'http_test':
         return True
-    elif test_name =='ftp_test':
+    elif test_name == 'ftp_test':
         return True
-    elif test_name =='thput_test':
+    elif test_name == 'thput_test':
         return True
-    elif test_name =='qos_test':
+    elif test_name == 'qos_test':
         return True
-    elif test_name =='vs_test':
+    elif test_name == 'vs_test':
         return True
-    elif test_name =="zoom_test":
+    elif test_name == "zoom_test":
         if args["zoom_signin_email"] is None:
             return False
         if args["zoom_signin_passwd"] is None:
@@ -12016,12 +12125,13 @@ def validate_individual_args(args,test_name):
         if args["zoom_participants"] is None:
             return False
         return True
-    elif test_name =="yt_test":
+    elif test_name == "yt_test":
         if args["yt_url"] is None:
             return False
         return True
     elif test_name == "rb_test":
         return True
+
 
 def validate_time(n: str) -> str:
     '''
@@ -12032,7 +12142,7 @@ def validate_time(n: str) -> str:
     Returns 'wrong type' if the input format is invalid.
     '''
     try:
-        if type(n) == int or type(n) == str and n.isdigit():
+        if isinstance(n, type(n)) == str and n.isdigit():
             seconds = int(n)
         elif n.endswith("s"):
             seconds = int(n[:-1])
@@ -12052,19 +12162,20 @@ def validate_time(n: str) -> str:
     except ValueError:
         return "wrong type"
 
+
 def validate_args(args):
     '''
     Validate Arguments
     ------------------
-    Validates general arguments for pass/fail, configurations, 
+    Validates general arguments for pass/fail, configurations,
     and groups/profiles across all specified series and parallel tests.
     '''
-    tests = ["http_test","ping_test","ftp_test","thput_test","qos_test","vs_test","mcast_test","yt_test","rb_test","zoom_test"]
-    
+    tests = ["http_test", "ping_test", "ftp_test", "thput_test", "qos_test", "vs_test", "mcast_test", "yt_test", "rb_test", "zoom_test"]
+
     series_tests_list = []
     if args.get("series_tests"):
         series_tests_list = args["series_tests"].split(',')
-        
+
     parallel_tests_list = []
     if args.get("parallel_tests"):
         parallel_tests_list = args["parallel_tests"].split(',')
@@ -12073,7 +12184,7 @@ def validate_args(args):
         flag_test = True
         if test in series_tests_list or test in parallel_tests_list:
             logger.info(f"validating args for {test}...")
-            flag_test = validate_individual_args(args,test)
+            flag_test = validate_individual_args(args, test)
             test = test.split('_')[0]
             if args[f'{test}_expected_passfail_value'] and args[f'{test}_device_csv_name']:
                 logger.error(f"Specify either --{test}_expected_passfail_value or --{test}_device_csv_name")
@@ -12131,7 +12242,7 @@ def main():
     '''
     Main Execution Block
     --------------------
-    Initializes the command-line argument parser, defines argument flags, 
+    Initializes the command-line argument parser, defines argument flags,
     and orchestrates test suite execution for the Candela Base Class.
     '''
     parser = argparse.ArgumentParser(
@@ -12139,56 +12250,56 @@ def main():
         description="Run Candela API Tests",
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    #Always Common
+    # Always Common
     parser.add_argument('--mgr', '--lfmgr', default='localhost', help='hostname for where LANforge GUI is running')
     parser.add_argument('--mgr_port', '--port', default=8080, help='port LANforge GUI HTTP service is running on')
     parser.add_argument('--upstream_port', '-u', default='eth1', help='non-station port that generates traffic: <resource>.<port>, e.g: 1.eth1')
-    #Common
+    # Common
     parser.add_argument('--device_list', help="Enter the devices on which the test should be run", default=[])
     parser.add_argument('--duration', help='Please enter the duration in s,m,h (seconds or minutes or hours).Eg: 30s,5m,48h')
     parser.add_argument('--parallel',
-                          action="store_true",
-                          help='to run in parallel')
-    parser.add_argument("--tests",type=str,help="Comma-separated ordered list of tests to run (e.g., ping_test,http_test,ping_test)")
+                        action="store_true",
+                        help='to run in parallel')
+    parser.add_argument("--tests", type=str, help="Comma-separated ordered list of tests to run (e.g., ping_test,http_test,ping_test)")
     parser.add_argument('--series_tests', help='Comma-separated list of tests to run in series')
     parser.add_argument('--parallel_tests', help='Comma-separated list of tests to run in parallel')
     parser.add_argument('--order_priority', choices=['series', 'parallel'], default='series',
-                    help='Which tests to run first: series or parallel')
+                        help='Which tests to run first: series or parallel')
     parser.add_argument('--test_name', help='Name of the Test')
     parser.add_argument('--dowebgui', help="If true will execute script for webgui", default=False, type=bool)
     parser.add_argument('--result_dir', help="Specify the result dir to store the runtime logs <Do not use in CLI, --used by webui>", default='')
-    parser.add_argument('--no_cleanup', help='Do not cleanup before exit',action='store_true')
-    #PING ARGS
-    #without config
+    parser.add_argument('--no_cleanup', help='Do not cleanup before exit', action='store_true')
+    # PING ARGS
+    # without config
     parser.add_argument('--ping_test',
-                          action="store_true",
-                          help='ping_test consists')
+                        action="store_true",
+                        help='ping_test consists')
     parser.add_argument('--ping_target',
-                          type=str,
-                          help='Target URL or port for ping test',
-                          default='1.1.eth1')
+                        type=str,
+                        help='Target URL or port for ping test',
+                        default='1.1.eth1')
     parser.add_argument('--ping_interval',
-                          type=str,
-                          help='Interval (in seconds) between the echo requests',
-                          default='1')
+                        type=str,
+                        help='Interval (in seconds) between the echo requests',
+                        default='1')
 
     parser.add_argument('--ping_duration',
-                          type=float,
-                          help='Duration (in minutes) to run the ping test',
-                          default=1)
+                        type=float,
+                        help='Duration (in minutes) to run the ping test',
+                        default=1)
     parser.add_argument('--ping_use_default_config',
-                          action='store_true',
-                          help='specify this flag if wanted to proceed with existing Wi-Fi configuration of the devices')
+                        action='store_true',
+                        help='specify this flag if wanted to proceed with existing Wi-Fi configuration of the devices')
     parser.add_argument('--ping_device_list', help="Enter the devices on which the ping test should be run", default=[])
-    #ping pass fail value
+    # ping pass fail value
     parser.add_argument("--ping_expected_passfail_value", help="Specify the expected number of urls", default=None)
     parser.add_argument("--ping_device_csv_name", type=str, help='Specify the csv name to store expected url values', default=None)
-    #ping with groups and profile configuration
+    # ping with groups and profile configuration
     parser.add_argument('--ping_file_name', type=str, help='Specify the file name containing group details. Example:file1')
     parser.add_argument('--ping_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
     parser.add_argument('--ping_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
 
-    #ping configuration with --config
+    # ping configuration with --config
     parser.add_argument("--ping_config", action="store_true", help="Specify for configuring the devices")
     parser.add_argument('--ping_ssid', help='WiFi SSID for script objects to associate to')
     parser.add_argument('--ping_passwd', '--ping_password', '--ping_key', default="[BLANK]", help='WiFi passphrase/password/key')
@@ -12211,24 +12322,24 @@ def main():
     parser.add_argument("--ping_pk_passwd", type=str, default='NA', help='Specify the password for the private key')
     parser.add_argument("--ping_pac_file", type=str, default='NA', help='Specify the pac file name')
     parser.add_argument("--ping_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
-    #HTTP ARGS
+    # HTTP ARGS
     parser.add_argument('--http_test',
-                          action="store_true",
-                          help='http consists')
+                        action="store_true",
+                        help='http consists')
     parser.add_argument('--http_bands', nargs="+", help='specify which band testing you want to run eg 5G, 2.4G, 6G',
-                          default=["5G", "2.4G", "6G"])
+                        default=["5G", "2.4G", "6G"])
     parser.add_argument('--http_duration', help='Please enter the duration in s,m,h (seconds or minutes or hours).Eg: 30s,5m,48h')
     parser.add_argument('--http_file_size', type=str, help='specify the size of file you want to download', default='5MB')
     parser.add_argument('--http_device_list', help="Enter the devices on which the http test should be run", default=[])
-    #http pass fail value
+    # http pass fail value
     parser.add_argument("--http_expected_passfail_value", help="Specify the expected number of urls", default=None)
     parser.add_argument("--http_device_csv_name", type=str, help='Specify the csv name to store expected url values', default=None)
-    #http with groups and profile configuration
+    # http with groups and profile configuration
     parser.add_argument('--http_file_name', type=str, help='Specify the file name containing group details. Example:file1')
     parser.add_argument('--http_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
     parser.add_argument('--http_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
 
-    #http configuration with --config
+    # http configuration with --config
     parser.add_argument("--http_config", action="store_true", help="Specify for configuring the devices")
     parser.add_argument('--http_ssid', help='WiFi SSID for script objects to associate to')
     parser.add_argument('--http_passwd', '--http_password', '--http_key', default="[BLANK]", help='WiFi passphrase/password/key')
@@ -12252,26 +12363,24 @@ def main():
     parser.add_argument("--http_pac_file", type=str, default='NA', help='Specify the pac file name')
     parser.add_argument("--http_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
 
-    
-
-    #ftp
+    # ftp
     parser.add_argument('--ftp_test',
-                          action="store_true",
-                          help='ftp_test consists')
+                        action="store_true",
+                        help='ftp_test consists')
     parser.add_argument('--ftp_bands', nargs="+", help='specify which band testing you want to run eg 5G, 2.4G, 6G',
-                          default=["5G", "2.4G", "6G"])
+                        default=["5G", "2.4G", "6G"])
     parser.add_argument('--ftp_duration', help='Please enter the duration in s,m,h (seconds or minutes or hours).Eg: 30s,5m,48h')
     parser.add_argument('--ftp_file_size', type=str, help='specify the size of file you want to download', default='5MB')
     parser.add_argument('--ftp_device_list', help="Enter the devices on which the ftp test should be run", default=[])
-    #ftp pass fail value
+    # ftp pass fail value
     parser.add_argument("--ftp_expected_passfail_value", help="Specify the expected number of urls", default=None)
     parser.add_argument("--ftp_device_csv_name", type=str, help='Specify the csv name to store expected url values', default=None)
-    #ftp with groups and profile configuration
+    # ftp with groups and profile configuration
     parser.add_argument('--ftp_file_name', type=str, help='Specify the file name containing group details. Example:file1')
     parser.add_argument('--ftp_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
     parser.add_argument('--ftp_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
 
-    #ftp configuration with --config
+    # ftp configuration with --config
     parser.add_argument("--ftp_config", action="store_true", help="Specify for configuring the devices")
     parser.add_argument('--ftp_ssid', help='WiFi SSID for script objects to associate to')
     parser.add_argument('--ftp_passwd', '--ftp_password', '--ftp_key', default="[BLANK]", help='WiFi passphrase/password/key')
@@ -12295,30 +12404,30 @@ def main():
     parser.add_argument("--ftp_pac_file", type=str, default='NA', help='Specify the pac file name')
     parser.add_argument("--ftp_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
 
-    #QOS ARGS
+    # QOS ARGS
     parser.add_argument('--qos_test',
-                          action="store_true",
-                          help='qos_test consists')
+                        action="store_true",
+                        help='qos_test consists')
     parser.add_argument('--qos_duration', help='--qos_duration sets the duration of the test', default="2m")
     parser.add_argument('--qos_upload', help='--upload traffic load per connection (upload rate)')
     parser.add_argument('--qos_download', help='--download traffic load per connection (download rate)')
     parser.add_argument('--qos_traffic_type', help='Select the Traffic Type [lf_udp, lf_tcp]', required=False)
     parser.add_argument('--qos_tos', help='Enter the tos. Example1 : "BK,BE,VI,VO" , Example2 : "BK,VO", Example3 : "VI" ')
     parser.add_argument('--qos_device_list', help="Enter the devices on which the qos test should be run", default=[])
-    #qos pass fail value
+    # qos pass fail value
     parser.add_argument("--qos_expected_passfail_value", help="Specify the expected number of urls", default=None)
     parser.add_argument("--qos_device_csv_name", type=str, help='Specify the csv name to store expected url values', default=None)
-    #qos with groups and profile configuration
+    # qos with groups and profile configuration
     parser.add_argument('--qos_file_name', type=str, help='Specify the file name containing group details. Example:file1')
     parser.add_argument('--qos_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
     parser.add_argument('--qos_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
 
-    #qos configuration with --config
+    # qos configuration with --config
     parser.add_argument("--qos_config", action="store_true", help="Specify for configuring the devices")
     parser.add_argument('--qos_ssid', help='WiFi SSID for script objects to associate to')
     parser.add_argument('--qos_passwd', '--qos_password', '--qos_key', default="[BLANK]", help='WiFi passphrase/password/key')
     parser.add_argument('--qos_security', help='WiFi Security protocol: < open | wep | wpa | wpa2 | wpa3 >', default="open")
-    #Optional qos config args
+    # Optional qos config args
     parser.add_argument("--qos_eap_method", type=str, default='DEFAULT', help="Specify the EAP method for authentication.")
     parser.add_argument("--qos_eap_identity", type=str, default='', help="Specify the EAP identity for authentication.")
     parser.add_argument("--qos_ieee8021x", action="store_true", help='Enables 802.1X enterprise authentication for test stations.')
@@ -12338,30 +12447,29 @@ def main():
     parser.add_argument("--qos_pac_file", type=str, default='NA', help='Specify the pac file name')
     parser.add_argument("--qos_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
 
-
-    #VS ARGS
+    # VS ARGS
     parser.add_argument('--vs_test',
-                          action="store_true",
-                          help='vs_test consists')
+                        action="store_true",
+                        help='vs_test consists')
     parser.add_argument("--vs_url", default="www.google.com", help='specify the url you want to test on')
     parser.add_argument("--vs_media_source", type=str, default='1')
     parser.add_argument("--vs_media_quality", type=str, default='0')
     parser.add_argument('--vs_duration', type=str, help='time to run traffic')
     parser.add_argument('--vs_device_list', help="Enter the devices on which the vs test should be run", default=[])
-    #vs pass fail value
+    # vs pass fail value
     parser.add_argument("--vs_expected_passfail_value", help="Specify the expected number of urls", default=None)
     parser.add_argument("--vs_device_csv_name", type=str, help='Specify the csv name to store expected url values', default=None)
-    #vs with groups and profile configuration
+    # vs with groups and profile configuration
     parser.add_argument('--vs_file_name', type=str, help='Specify the file name containing group details. Example:file1')
     parser.add_argument('--vs_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
     parser.add_argument('--vs_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
 
-    #vs configuration with --config
+    # vs configuration with --config
     parser.add_argument("--vs_config", action="store_true", help="Specify for configuring the devices")
     parser.add_argument('--vs_ssid', help='WiFi SSID for script objects to associate to')
     parser.add_argument('--vs_passwd', '--vs_password', '--vs_key', default="[BLANK]", help='WiFi passphrase/password/key')
     parser.add_argument('--vs_security', help='WiFi Security protocol: < open | wep | wpa | wpa2 | wpa3 >', default="open")
-    #Optional vs config args
+    # Optional vs config args
     parser.add_argument("--vs_eap_method", type=str, default='DEFAULT', help="Specify the EAP method for authentication.")
     parser.add_argument("--vs_eap_identity", type=str, default='', help="Specify the EAP identity for authentication.")
     parser.add_argument("--vs_ieee8021x", action="store_true", help='Enables 802.1X enterprise authentication for test stations.')
@@ -12381,10 +12489,10 @@ def main():
     parser.add_argument("--vs_pac_file", type=str, default='NA', help='Specify the pac file name')
     parser.add_argument("--vs_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
 
-    #THPUT ARGS
+    # THPUT ARGS
     parser.add_argument('--thput_test',
-                          action="store_true",
-                          help='thput_test consists')
+                        action="store_true",
+                        help='thput_test consists')
     parser.add_argument('--thput_test_duration', help='--thput_test_duration sets the duration of the test', default="")
     parser.add_argument('--thput_download', help='--thput_download traffic load per connection (download rate)', default='2560')
     parser.add_argument('--thput_traffic_type', help='Select the Traffic Type [lf_udp, lf_tcp]', required=False)
@@ -12392,22 +12500,22 @@ def main():
     parser.add_argument('--thput_device_list', help="Enter the devices on which the thput test should be run", default=[])
     parser.add_argument('--thput_do_interopability', action='store_true', help='Ensures test on devices run sequentially, capturing each device’s data individually for plotting in the final report.')
     parser.add_argument("--thput_default_config", action="store_true", help="To stop configuring the devices in interoperability")
-    #thput pass fail value
+    # thput pass fail value
     parser.add_argument("--thput_expected_passfail_value", help="Specify the expected number of urls", default=None)
     parser.add_argument("--thput_device_csv_name", type=str, help='Specify the csv name to store expected url values', default=None)
-    #thput with groups and profile configuration
+    # thput with groups and profile configuration
     parser.add_argument('--thput_file_name', type=str, help='Specify the file name containing group details. Example:file1')
     parser.add_argument('--thput_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
     parser.add_argument('--thput_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
     parser.add_argument('--thput_load_type', help="Determine the type of load: < wc_intended_load | wc_per_client_load >", default="wc_per_client_load")
     parser.add_argument('--thput_packet_size', help='Determine the size of the packet in which Packet Size Should be Greater than 16B or less than 64KB(65507)', default="-1")
 
-    #thput configuration with --config
+    # thput configuration with --config
     parser.add_argument("--thput_config", action="store_true", help="Specify for configuring the devices")
     parser.add_argument('--thput_ssid', help='WiFi SSID for script objects to associate to')
     parser.add_argument('--thput_passwd', '--thput_password', '--thput_key', default="[BLANK]", help='WiFi passphrase/password/key')
     parser.add_argument('--thput_security', help='WiFi Security protocol: < open | wep | wpa | wpa2 | wpa3 >', default="open")
-    #Optional thput config args
+    # Optional thput config args
     parser.add_argument("--thput_eap_method", type=str, default='DEFAULT', help="Specify the EAP method for authentication.")
     parser.add_argument("--thput_eap_identity", type=str, default='', help="Specify the EAP identity for authentication.")
     parser.add_argument("--thput_ieee8021x", action="store_true", help='Enables 802.1X enterprise authentication for test stations.')
@@ -12426,10 +12534,10 @@ def main():
     parser.add_argument("--thput_pk_passwd", type=str, default='NA', help='Specify the password for the private key')
     parser.add_argument("--thput_pac_file", type=str, default='NA', help='Specify the pac file name')
     parser.add_argument("--thput_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
-    #MCAST TEST
+    # MCAST TEST
     parser.add_argument('--mcast_test',
-                          action="store_true",
-                          help='mcast_test consists')
+                        action="store_true",
+                        help='mcast_test consists')
     parser.add_argument(
         '--mcast_test_duration',
         help='--test_duration <how long to run>  example --time 5d (5 days) default: 3m options: number followed by d, h, m or s',
@@ -12459,20 +12567,20 @@ def main():
         action='append',
         help='Specify the Resource IDs for real clients. Accepts a comma-separated list (e.g., 1.11,1.95,1.360).'
     )
-    #mcast pass fail value
+    # mcast pass fail value
     parser.add_argument("--mcast_expected_passfail_value", help="Specify the expected number of urls", default=None)
     parser.add_argument("--mcast_device_csv_name", type=str, help='Specify the csv name to store expected url values', default=None)
-    #mcast with groups and profile configuration
+    # mcast with groups and profile configuration
     parser.add_argument('--mcast_file_name', type=str, help='Specify the file name containing group details. Example:file1')
     parser.add_argument('--mcast_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
     parser.add_argument('--mcast_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
 
-    #mcast configuration with --config
+    # mcast configuration with --config
     parser.add_argument("--mcast_config", action="store_true", help="Specify for configuring the devices")
     parser.add_argument('--mcast_ssid', help='WiFi SSID for script objects to associate to')
     parser.add_argument('--mcast_passwd', '--mcast_password', '--mcast_key', default="[BLANK]", help='WiFi passphrase/password/key')
     parser.add_argument('--mcast_security', help='WiFi Security protocol: < open | wep | wpa | wpa2 | wpa3 >', default="open")
-    #Optional mcast config args
+    # Optional mcast config args
     parser.add_argument("--mcast_eap_method", type=str, default='DEFAULT', help="Specify the EAP method for authentication.")
     parser.add_argument("--mcast_eap_identity", type=str, default='', help="Specify the EAP identity for authentication.")
     parser.add_argument("--mcast_ieee8021x", action="store_true", help='Enables 802.1X enterprise authentication for test stations.')
@@ -12491,29 +12599,29 @@ def main():
     parser.add_argument("--mcast_pk_passwd", type=str, default='NA', help='Specify the password for the private key')
     parser.add_argument("--mcast_pac_file", type=str, default='NA', help='Specify the pac file name')
     parser.add_argument("--mcast_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
-    #YOUTUBE ARGS
+    # YOUTUBE ARGS
     parser.add_argument('--yt_test',
-                          action="store_true",
-                          help='yt_test consists')
+                        action="store_true",
+                        help='yt_test consists')
     parser.add_argument('--yt_url', type=str, help='youtube url')
     parser.add_argument('--yt_duration', help='duration to run the test in sec')
     parser.add_argument('--yt_res', default='Auto', help="to set resolution to  144p,240p,720p")
     # parser.add_argument('--yt_upstream_port', type=str, help='Specify The Upstream Port name or IP address', required=True)
     parser.add_argument('--yt_device_list', help='Specify the real device ports seperated by comma')
-    #yt pass fail value
+    # yt pass fail value
     parser.add_argument("--yt_expected_passfail_value", help="Specify the expected number of urls", default=None)
     parser.add_argument("--yt_device_csv_name", type=str, help='Specify the csv name to store expected url values', default=None)
-    #yt with groups and profile configuration
+    # yt with groups and profile configuration
     parser.add_argument('--yt_file_name', type=str, help='Specify the file name containing group details. Example:file1')
     parser.add_argument('--yt_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
     parser.add_argument('--yt_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
 
-    #yt configuration with --config
+    # yt configuration with --config
     parser.add_argument("--yt_config", action="store_true", help="Specify for configuring the devices")
     parser.add_argument('--yt_ssid', help='WiFi SSID for script objects to associate to')
     parser.add_argument('--yt_passwd', '--yt_password', '--yt_key', default="[BLANK]", help='WiFi passphrase/password/key')
     parser.add_argument('--yt_security', help='WiFi Security protocol: < open | wep | wpa | wpa2 | wpa3 >', default="open")
-    #Optional yt config args
+    # Optional yt config args
     parser.add_argument("--yt_eap_method", type=str, default='DEFAULT', help="Specify the EAP method for authentication.")
     parser.add_argument("--yt_eap_identity", type=str, default='', help="Specify the EAP identity for authentication.")
     parser.add_argument("--yt_ieee8021x", action="store_true", help='Enables 802.1X enterprise authentication for test stations.')
@@ -12532,31 +12640,31 @@ def main():
     parser.add_argument("--yt_pk_passwd", type=str, default='NA', help='Specify the password for the private key')
     parser.add_argument("--yt_pac_file", type=str, default='NA', help='Specify the pac file name')
     parser.add_argument("--yt_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
-    #REAL BROWSER ARGS
+    # REAL BROWSER ARGS
     parser.add_argument('--rb_test',
-                          action="store_true",
-                          help='rb_test consists')
+                        action="store_true",
+                        help='rb_test consists')
     parser.add_argument("--rb_url", default="https://google.com", help='specify the url you want to test on')
     parser.add_argument('--rb_duration', type=str, help='time to run traffic')
     parser.add_argument('--rb_device_list', type=str, help='provide resource_ids of android devices. for instance: "10,12,14"')
     parser.add_argument('--rb_webgui_incremental', '--rb_incremental_capacity', help="Specify the incremental values <1,2,3..>", dest='rb_webgui_incremental', type=str)
     parser.add_argument('--rb_incremental', help="to add incremental capacity to run the test", action='store_true')
     parser.add_argument("--rb_count", type=int, default=100, help='specify the number of url you want to test on '
-                                                                    'per minute')
-    #rb pass fail value
+                        'per minute')
+    # rb pass fail value
     parser.add_argument("--rb_expected_passfail_value", help="Specify the expected number of urls", default=None)
     parser.add_argument("--rb_device_csv_name", type=str, help='Specify the csv name to store expected url values', default=None)
-    #rb with groups and profile configuration
+    # rb with groups and profile configuration
     parser.add_argument('--rb_file_name', type=str, help='Specify the file name containing group details. Example:file1')
     parser.add_argument('--rb_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
     parser.add_argument('--rb_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
 
-    #rb configuration with --config
+    # rb configuration with --config
     parser.add_argument("--rb_config", action="store_true", help="Specify for configuring the devices")
     parser.add_argument('--rb_ssid', help='WiFi SSID for script objects to associate to')
     parser.add_argument('--rb_passwd', '--rb_password', '--rb_key', default="[BLANK]", help='WiFi passphrase/password/key')
     parser.add_argument('--rb_security', help='WiFi Security protocol: < open | wep | wpa | wpa2 | wpa3 >', default="open")
-    #Optional rb config args
+    # Optional rb config args
     parser.add_argument("--rb_eap_method", type=str, default='DEFAULT', help="Specify the EAP method for authentication.")
     parser.add_argument("--rb_eap_identity", type=str, default='', help="Specify the EAP identity for authentication.")
     parser.add_argument("--rb_ieee80211", action="store_true", help='Enables 802.1X enterprise authentication for test stations.')
@@ -12575,10 +12683,10 @@ def main():
     parser.add_argument("--rb_pk_passwd", type=str, default='NA', help='Specify the password for the private key')
     parser.add_argument("--rb_pac_file", type=str, default='NA', help='Specify the pac file name')
     parser.add_argument("--rb_wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
-    #ZOOM ARGS
+    # ZOOM ARGS
     parser.add_argument('--zoom_test',
-                          action="store_true",
-                          help='zoom_test consists')
+                        action="store_true",
+                        help='zoom_test consists')
     parser.add_argument('--zoom_duration', type=int, help="Duration of the Zoom meeting in minutes")
     parser.add_argument('--zoom_signin_email', type=str, help="Sign-in email")
     parser.add_argument('--zoom_signin_passwd', type=str, help="Sign-in password")
@@ -12587,20 +12695,20 @@ def main():
     parser.add_argument('--zoom_video', action='store_true')
     parser.add_argument('--zoom_device_list', help="resources participated in the test")
     parser.add_argument('--zoom_host', help="Host of the test")
-    #zoom pass fail value
+    # zoom pass fail value
     parser.add_argument("--zoom_expected_passfail_value", help="Specify the expected number of urls", default=None)
     parser.add_argument("--zoom_device_csv_name", type=str, help='Specify the csv name to store expected url values', default=None)
-    #zoom with groups and profile configuration
+    # zoom with groups and profile configuration
     parser.add_argument('--zoom_file_name', type=str, help='Specify the file name containing group details. Example:file1')
     parser.add_argument('--zoom_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
     parser.add_argument('--zoom_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
 
-    #zoom configuration with --config
+    # zoom configuration with --config
     parser.add_argument("--zoom_config", action="store_true", help="Specify for configuring the devices")
     parser.add_argument('--zoom_ssid', help='WiFi SSID for script objects to associate to')
     parser.add_argument('--zoom_passwd', '--zoom_password', '--zoom_key', default="[BLANK]", help='WiFi passphrase/password/key')
     parser.add_argument('--zoom_security', help='WiFi Security protocol: < open | wep | wpa | wpa2 | wpa3 >', default="open")
-    #Optional zoom config args
+    # Optional zoom config args
     parser.add_argument("--zoom_eap_method", type=str, default='DEFAULT', help="Specify the EAP method for authentication.")
     parser.add_argument("--zoom_eap_identity", type=str, default='', help="Specify the EAP identity for authentication.")
     parser.add_argument("--zoom_ieee8021x", action="store_true", help='Enables 802.1X enterprise authentication for test stations.')
@@ -12624,7 +12732,6 @@ def main():
     parser.add_argument("--client_id", help="Zoom Client ID")
     parser.add_argument("--client_secret", help="Zoom Client Secret")
     parser.add_argument("--env_file", type=str, default='.env', help='Path to .env file for credentials')
-    
 
     # TEAMS ARGS
     parser.add_argument(
@@ -12695,7 +12802,7 @@ def main():
         type=str,
         help="Comma-separated list of BSSIDs for bandsteering test",
     )
-    #Arguments to run robot tests
+    # Arguments to run robot tests
     parser.add_argument("--robot_test", help='to trigger robot test', action='store_true')
     parser.add_argument('--robot_ip', type=str, default='', help='hostname for where Robot server is running')
     parser.add_argument('--coordinate', type=str, default='', help="The coordinate contains list of coordinates to be ")
@@ -12709,20 +12816,35 @@ def main():
     args = parser.parse_args()
     args_dict = vars(args)
     duration_dict = {}
-    candela_apis = Candela(ip=args.mgr, port=args.mgr_port,order_priority=args.order_priority,test_name=args.test_name,result_dir=args.result_dir,dowebgui=args.dowebgui,no_cleanup=args.no_cleanup,robot_test=args.robot_test,robot_ip=args.robot_ip,coordinate=args.coordinate,rotation=args.rotation,do_bandsteering=args.do_bandsteering,bssids=args.bssids,cycles=args.cycles,duration_to_skip=args.duration_to_skip)
+    candela_apis = Candela(
+        ip=args.mgr,
+        port=args.mgr_port,
+        order_priority=args.order_priority,
+        test_name=args.test_name,
+        result_dir=args.result_dir,
+        dowebgui=args.dowebgui,
+        no_cleanup=args.no_cleanup,
+        robot_test=args.robot_test,
+        robot_ip=args.robot_ip,
+        coordinate=args.coordinate,
+        rotation=args.rotation,
+        do_bandsteering=args.do_bandsteering,
+        bssids=args.bssids,
+        cycles=args.cycles,
+        duration_to_skip=args.duration_to_skip)
     # Map available test flags to their respective execution methods
     test_map = {
-        "ping_test":   (run_ping_test, "PING TEST"),
-        "http_test":   (run_http_test, "HTTP TEST"),
-        "ftp_test":    (run_ftp_test, "FTP TEST"),
-        "qos_test":    (run_qos_test, "QoS TEST"),
-        "vs_test":     (run_vs_test, "VIDEO STREAMING TEST"),
-        "thput_test":  (run_thput_test, "THROUGHPUT TEST"),
-        "mcast_test":  (run_mcast_test, "MULTICAST TEST"),
-        "yt_test":     (run_yt_test, "YOUTUBE TEST"),
-        "rb_test":     (run_rb_test, "REAL BROWSER TEST"),
-        "zoom_test":   (run_zoom_test, "ZOOM TEST"),
-        "teams_test":  (run_teams_test, "TEAMS TEST"),
+        "ping_test": (run_ping_test, "PING TEST"),
+        "http_test": (run_http_test, "HTTP TEST"),
+        "ftp_test": (run_ftp_test, "FTP TEST"),
+        "qos_test": (run_qos_test, "QoS TEST"),
+        "vs_test": (run_vs_test, "VIDEO STREAMING TEST"),
+        "thput_test": (run_thput_test, "THROUGHPUT TEST"),
+        "mcast_test": (run_mcast_test, "MULTICAST TEST"),
+        "yt_test": (run_yt_test, "YOUTUBE TEST"),
+        "rb_test": (run_rb_test, "REAL BROWSER TEST"),
+        "zoom_test": (run_zoom_test, "ZOOM TEST"),
+        "teams_test": (run_teams_test, "TEAMS TEST"),
     }
 
     # Ensure at least one test suite is provided
@@ -12734,7 +12856,7 @@ def main():
     flag = 1
     tests_to_run_series = []
     tests_to_run_parallel = []
-    
+
     # Parse and validate series tests
     if args.series_tests:
         tests_to_run_series = args.series_tests.split(',')
@@ -12742,7 +12864,7 @@ def main():
             if test not in test_map:
                 logger.error(f"{test} is not available in test suite")
                 flag = 0
-                
+
     # Parse and validate parallel tests
     if args.parallel_tests:
         tests_to_run_parallel = args.parallel_tests.split(',')
@@ -12755,12 +12877,12 @@ def main():
     if not flag:
         logger.info(f"Available tests are {list(test_map.keys())}")
         exit(0)
-        
+
     # Prevent duplicate tests from running in parallel
     if args.parallel_tests and (len(tests_to_run_parallel) != len(set(tests_to_run_parallel))):
         logger.error("in --parallel dont specify duplicate tests")
         exit(0)
-        
+
     duration_flag = False
     if args.series_tests:
         for test in args.series_tests.split(','):
@@ -12782,7 +12904,7 @@ def main():
                 duration_dict[test] = "{} mins".format(args_dict["{}_duration".format(test.split('_')[0])])
             else:
                 duration_dict[test] = validate_time(args_dict[f"{test.split('_')[0]}_duration"])
-    for test_name,duration in duration_dict.items():
+    for test_name, duration in duration_dict.items():
         if duration == "wrong type":
             duration_flag = True
             logger.error(f"wrong duration type for {test_name}")
@@ -12795,7 +12917,7 @@ def main():
     isyt = 'yt_test' in tests_to_run_parallel or 'yt_test' in tests_to_run_series
     candela_apis.series_tests = tests_to_run_series
     candela_apis.parallel_tests = tests_to_run_parallel
-    candela_apis.misc_clean_up(layer3=True,layer4=True,generic=True,port_5000=iszoom,port_5002=isyt,port_5003=isrb)
+    candela_apis.misc_clean_up(layer3=True, layer4=True, generic=True, port_5000=iszoom, port_5002=isyt, port_5003=isrb)
     if args.series_tests or args.parallel_tests:
         series_threads = []
         parallel_threads = []
@@ -12808,7 +12930,7 @@ def main():
         if args.series_tests:
             ordered_series_tests = args.series_tests.split(',')
             if args.dowebgui:
-                gen_order = ["ping_test","qos_test","ftp_test","http_test","mcast_test","vs_test","thput_test","yt_test","rb_test","zoom_test", "teams_test"]
+                gen_order = ["ping_test", "qos_test", "ftp_test", "http_test", "mcast_test", "vs_test", "thput_test", "yt_test", "rb_test", "zoom_test", "teams_test"]
                 temp_ord_list = []
                 for test_name in gen_order:
                     if test_name in ordered_series_tests:
@@ -12819,42 +12941,42 @@ def main():
                 if test_name in test_map:
                     func, label = test_map[test_name]
                     args.current = "series"
-                    if test_name in ['rb_test','zoom_test','yt_test', 'teams_test']:
+                    if test_name in ['rb_test', 'zoom_test', 'yt_test', 'teams_test']:
                         if test_name == "rb_test":
                             obj_no = 1
                             while f"rb_test_{obj_no}" in candela_apis.rb_obj_dict["series"]:
-                                obj_no+=1
+                                obj_no += 1
                             obj_name = f"rb_test_{obj_no}"
-                            candela_apis.rb_obj_dict["series"][obj_name] = manager.dict({"obj":None,"data":None})
+                            candela_apis.rb_obj_dict["series"][obj_name] = manager.dict({"obj": None, "data": None})
                             logging.debug(f"Adding rb_test object to parallel execution")
                         elif test_name == "yt_test":
                             obj_no = 1
                             while f"yt_test_{obj_no}" in candela_apis.yt_obj_dict["series"]:
-                                obj_no+=1
+                                obj_no += 1
                             obj_name = f"yt_test_{obj_no}"
-                            candela_apis.yt_obj_dict["series"][obj_name] = manager.dict({"obj":None,"data":None})
+                            candela_apis.yt_obj_dict["series"][obj_name] = manager.dict({"obj": None, "data": None})
                         elif test_name == "zoom_test":
                             obj_no = 1
                             while f"zoom_test_{obj_no}" in candela_apis.zoom_obj_dict["series"]:
-                                obj_no+=1
+                                obj_no += 1
                             obj_name = f"zoom_test_{obj_no}"
-                            candela_apis.zoom_obj_dict["series"][obj_name] = manager.dict({"obj":None,"data":None})
+                            candela_apis.zoom_obj_dict["series"][obj_name] = manager.dict({"obj": None, "data": None})
                             logging.debug(f"Adding zoom_test object to parallel execution")
                         elif test_name == "teams_test":
                             obj_no = 1
                             while f"teams_test_{obj_no}" in candela_apis.teams_obj_dict["series"]:
-                                obj_no+=1
+                                obj_no += 1
                             obj_name = f"teams_test_{obj_no}"
-                            candela_apis.teams_obj_dict["series"][obj_name] = manager.dict({"obj":None,"data":None})
+                            candela_apis.teams_obj_dict["series"][obj_name] = manager.dict({"obj": None, "data": None})
                             logging.debug(f"Adding teams_test object to parallel execution")
-                        series_threads.append(multiprocessing.Process(target=run_test_safe(func, f"{label} [Series {idx+1}]", args, candela_apis,duration_dict[test_name])))
-                    else:                 
+                        series_threads.append(multiprocessing.Process(target=run_test_safe(func, f"{label} [Series {idx + 1}]", args, candela_apis, duration_dict[test_name])))
+                    else:
                         series_threads.append(threading.Thread(
-                            target=run_test_safe(func, f"{label} [Series {idx+1}]", args, candela_apis,duration_dict[test_name])
+                            target=run_test_safe(func, f"{label} [Series {idx + 1}]", args, candela_apis, duration_dict[test_name])
                         ))
                 else:
                     logging.warning(f"Unknown test '{test_name}' in --series_tests")
-        
+
         # Process parallel tests
         if args.parallel_tests:
             """
@@ -12862,11 +12984,11 @@ def main():
             Initializes appropriate threading or multiprocessing workers based on test type requirements.
             """
             ordered_parallel_tests = args.parallel_tests.split(',')
-            
+
             if args.dowebgui:
                 gen_order = ["ping_test", "qos_test", "ftp_test", "http_test", "mcast_test", "vs_test", "thput_test", "yt_test", "rb_test", "zoom_test", "teams_test"]
                 ordered_parallel_tests = [t for t in gen_order if t in ordered_parallel_tests]
-                
+
             for idx, test_name in enumerate(ordered_parallel_tests):
                 test_name = test_name.strip().lower()
                 if test_name in test_map:
@@ -12885,26 +13007,26 @@ def main():
                         elif test_name == "teams_test":
                             candela_apis.teams_obj_dict["parallel"]["teams_test"] = manager.dict({"obj": None, "data": None})
                             logging.debug("Adding teams_test object to parallel execution")
-                            
+
                         parallel_threads.append(multiprocessing.Process(
-                            target=run_test_safe(func, f"{label} [Parallel {idx+1}]", args, candela_apis, duration_dict[test_name])
+                            target=run_test_safe(func, f"{label} [Parallel {idx + 1}]", args, candela_apis, duration_dict[test_name])
                         ))
-                    else:                 
+                    else:
                         parallel_threads.append(threading.Thread(
-                            target=run_test_safe(func, f"{label} [Parallel {idx+1}]", args, candela_apis, duration_dict[test_name])
+                            target=run_test_safe(func, f"{label} [Parallel {idx + 1}]", args, candela_apis, duration_dict[test_name])
                         ))
                 else:
                     logging.warning(f"Unknown test '{test_name}' in --parallel_tests")
-        
+
         if args.dowebgui:
             """
             Initialize overall execution status and tracking CSV for Web GUI reporting.
             """
             candela_apis.overall_status = {
                 "ping": "notstarted", "qos": "notstarted", "ftp": "notstarted", "http": "notstarted",
-                "mc": "notstarted", "vs": "notstarted", "thput": "notstarted", "rb": "notstarted", 
-                "zoom": "notstarted", "yt": "notstarted", "teams": "notstarted", 
-                "time": datetime.datetime.now().strftime("%Y %d %H:%M:%S"), 
+                "mc": "notstarted", "vs": "notstarted", "thput": "notstarted", "rb": "notstarted",
+                "zoom": "notstarted", "yt": "notstarted", "teams": "notstarted",
+                "time": datetime.datetime.now().strftime("%Y %d %H:%M:%S"),
                 "status": "running", "current_mode": "tbd", "current_test_name": "tbd"
             }
             candela_apis.overall_csv.append(candela_apis.overall_status.copy())
@@ -12920,13 +13042,13 @@ def main():
                 t.start()
                 t.join()
                 candela_apis.series_index += 1
-                
+
             # Then run parallel tests
             if parallel_threads:
                 candela_apis.misc_clean_up(layer3=True, layer4=True, generic=True, port_5000=iszoom, port_5002=isyt, port_5003=isrb)
                 logging.info('Starting parallel tests...')
                 time.sleep(10)
-                
+
             candela_apis.current_exec = "parallel"
             for t in parallel_threads:
                 t.start()
@@ -12935,7 +13057,7 @@ def main():
             for t in parallel_threads:
                 t.join()
                 candela_apis.parallel_index += 1
-        
+
         else:
             candela_apis.current_exec = "parallel"
             for t in parallel_threads:
@@ -12948,7 +13070,7 @@ def main():
                 candela_apis.misc_clean_up(layer3=True, layer4=True, generic=True, port_5000=iszoom, port_5002=isyt, port_5003=isrb)
                 logging.info('Starting series tests...')
                 time.sleep(5)
-                
+
             candela_apis.current_exec = "series"
             for t in series_threads:
                 t.start()
@@ -12956,18 +13078,18 @@ def main():
     else:
         logger.error("Provide either --parallel_tests or --series_tests")
         exit(1)
-    
+
     """
-    Finalize test execution: perform cleanup, save logs, generate the overall report, 
+    Finalize test execution: perform cleanup, save logs, generate the overall report,
     and update the Web GUI status if applicable.
     """
     candela_apis.misc_clean_up(layer3=True, layer4=True, generic=True, port_5000=iszoom, port_5002=isyt, port_5003=isrb)
     log_file = save_logs()
     logging.info(f"Logs saved to: {log_file}")
-    
+
     test_results_df = pd.DataFrame(list(test_results_list))
     candela_apis.generate_overall_report(test_results_df=test_results_df, args_dict=args_dict)
-    
+
     if candela_apis.dowebgui:
         try:
             candela_apis.overall_status["status"] = "completed"
@@ -12980,25 +13102,27 @@ def main():
 
     logging.info(f"\nTest Results Summary:\n{test_results_df}")
 
+
 def run_test_safe(test_func, test_name, args, candela_apis, duration):
     """
     Creates a safe wrapper around a test function to capture execution status and exceptions.
-    
+
     Args:
         test_func (callable): The test function to execute.
         test_name (str): The name of the test being executed.
         args (object): The arguments passed to the test function.
         candela_apis (object): The Candela APIs instance passed to the test function.
         duration (int/str): The duration of the test run.
-        
+
     Returns:
         callable: A wrapper function that safely executes the test and logs results.
     """
     global error_logs
+
     def wrapper():
         """Executes the test function and captures its result or error state."""
         global error_logs
-        
+
         try:
             result = test_func(args, candela_apis)
             if not result:
@@ -13007,9 +13131,9 @@ def run_test_safe(test_func, test_name, args, candela_apis, duration):
             else:
                 status = "EXECUTED"
                 logger.info(f"{test_name} EXECUTED")
-            
+
             test_results_list.append({"test_name": test_name, "Duration": duration, "status": status})
-            
+
         except SystemExit as e:
             if e.code != 0:
                 status = "NOT EXECUTED"
@@ -13021,7 +13145,7 @@ def run_test_safe(test_func, test_name, args, candela_apis, duration):
             logger.error(error_msg)
             error_logs += error_msg
             test_results_list.append({"test_name": test_name, "Duration": duration, "status": status})
-            
+
         except Exception as e:
             status = "NOT EXECUTED"
             error_msg = f"{test_name} crashed unexpectedly\n"
@@ -13030,34 +13154,36 @@ def run_test_safe(test_func, test_name, args, candela_apis, duration):
             full_error = error_msg + tb_str + "\n"
             error_logs += full_error
             test_results_list.append({"test_name": test_name, "Duration": duration, "status": status})
-            
+
     return wrapper
+
 
 def save_logs():
     """
     Saves accumulated error logs to a timestamped file in the 'base_class_logs' directory.
-    
+
     Returns:
         str: The path to the newly created log file.
     """
     global error_logs
-    
+
     # Ensure the target directory exists
     log_dir = "base_class_logs"
     os.makedirs(log_dir, exist_ok=True)
-    
+
     # Generate a timestamp for a unique file name
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     log_filename = f"{log_dir}/test_logs_{timestamp}.txt"
-    
+
     # Dump accumulated logs
     with open(log_filename, 'w') as f:
         f.write(error_logs)
-        
+
     logger.info(f"Test logs saved to {log_filename}")
     return log_filename
 
-def run_ping_test(args, candela_apis : Candela):
+
+def run_ping_test(args, candela_apis: Candela):
     """Executes a ping test using the provided arguments and Candela APIs."""
     return candela_apis.run_ping_test(
         real=True,
@@ -13092,7 +13218,7 @@ def run_ping_test(args, candela_apis : Candela):
         pk_passwd=args.ping_pk_passwd,
         pac_file=args.ping_pac_file,
         wait_time=args.ping_wait_time,
-        local_lf_report_dir = candela_apis.result_path if not args.dowebgui else args.result_dir,
+        local_lf_report_dir=candela_apis.result_path if not args.dowebgui else args.result_dir,
         do_bandsteering=args.do_bandsteering,
         cycles=args.cycles,
         bssids=args.bssids,
@@ -13100,7 +13226,8 @@ def run_ping_test(args, candela_apis : Candela):
         robot_test=args.robot_test
     )
 
-def run_http_test(args, candela_apis : Candela):
+
+def run_http_test(args, candela_apis: Candela):
     """Executes a http test using the provided arguments and Candela APIs."""
     return candela_apis.run_http_test(
         upstream_port=args.upstream_port,
@@ -13144,7 +13271,8 @@ def run_http_test(args, candela_apis : Candela):
         duration_to_skip=args.duration_to_skip
     )
 
-def run_ftp_test(args, candela_apis : Candela):
+
+def run_ftp_test(args, candela_apis: Candela):
     """Executes a ftp test using the provided arguments and Candela APIs."""
     return candela_apis.run_ftp_test(
         device_list=args.ftp_device_list,
@@ -13188,7 +13316,8 @@ def run_ftp_test(args, candela_apis : Candela):
         duration_to_skip=args.duration_to_skip
     )
 
-def run_qos_test(args, candela_apis : Candela):
+
+def run_qos_test(args, candela_apis: Candela):
     """Executes a qos test using the provided arguments and Candela APIs."""
     return candela_apis.run_qos_test(
         upstream_port=args.upstream_port,
@@ -13234,7 +13363,8 @@ def run_qos_test(args, candela_apis : Candela):
         duration_to_skip=args.duration_to_skip
     )
 
-def run_vs_test(args, candela_apis : Candela):
+
+def run_vs_test(args, candela_apis: Candela):
     """Executes a video streaming test using the provided arguments and Candela APIs."""
     return candela_apis.run_vs_test1(
         url=args.vs_url,
@@ -13279,7 +13409,8 @@ def run_vs_test(args, candela_apis : Candela):
         duration_to_skip=args.duration_to_skip
     )
 
-def run_thput_test(args, candela_apis : Candela):
+
+def run_thput_test(args, candela_apis: Candela):
     """Executes a throughput test using the provided arguments and Candela APIs."""
     if args.thput_do_interopability and args.thput_config:
         args.thput_default_config = False
@@ -13333,7 +13464,8 @@ def run_thput_test(args, candela_apis : Candela):
         bssids=args.bssids.split(",") if args.bssids else []
     )
 
-def run_mcast_test(args, candela_apis : Candela):
+
+def run_mcast_test(args, candela_apis: Candela):
     """Executes a mukticast test using the provided arguments and Candela APIs."""
     return candela_apis.run_mc_test1(
         test_duration=args.mcast_test_duration,
@@ -13374,7 +13506,8 @@ def run_mcast_test(args, candela_apis : Candela):
         result_dir=args.result_dir
     )
 
-def run_yt_test(args, candela_apis : Candela):
+
+def run_yt_test(args, candela_apis: Candela):
     """Executes a Youtube test using the provided arguments and Candela APIs."""
     return candela_apis.run_yt_test(
         url=args.yt_url,
@@ -13410,11 +13543,12 @@ def run_yt_test(args, candela_apis : Candela):
         pac_file=args.yt_pac_file,
         exec_type=args.current,
         do_webUI="True" if args.dowebgui else False,
-        ui_report_dir = args.result_dir,
+        ui_report_dir=args.result_dir,
         test_name=args.test_name
     )
 
-def run_rb_test(args, candela_apis : Candela):
+
+def run_rb_test(args, candela_apis: Candela):
     """Executes a real browser test using the provided arguments and Candela APIs."""
     return candela_apis.run_rb_test(
         url=args.rb_url,
@@ -13449,14 +13583,15 @@ def run_rb_test(args, candela_apis : Candela):
         wait_time=args.rb_wait_time,
         duration=args.rb_duration,
         exec_type=args.current,
-        count = args.rb_count,
-        dowebgui = args.dowebgui,
+        count=args.rb_count,
+        dowebgui=args.dowebgui,
         result_dir=args.result_dir,
         test_name=args.test_name,
         webgui_incremental=args.rb_webgui_incremental
     )
 
-def run_zoom_test(args, candela_apis : Candela):
+
+def run_zoom_test(args, candela_apis: Candela):
     """Executes a zoom test using the provided arguments and Candela APIs."""
     return candela_apis.run_zoom_test(
         duration=args.zoom_duration,
@@ -13496,9 +13631,9 @@ def run_zoom_test(args, candela_apis : Candela):
         pac_file=args.zoom_pac_file,
         wait_time=args.zoom_wait_time,
         exec_type=args.current,
-        do_webUI= args.dowebgui,
-        report_dir= args.result_dir,
-        testname= args.test_name,
+        do_webUI=args.dowebgui,
+        report_dir=args.result_dir,
+        testname=args.test_name,
         env_file=args.env_file,
         api_stats_collection=args.api_stats_collection,
         client_id=args.client_id,
@@ -13506,27 +13641,29 @@ def run_zoom_test(args, candela_apis : Candela):
         account_id=args.account_id,
     )
 
-def run_teams_test(args, candela_apis : Candela):
+
+def run_teams_test(args, candela_apis: Candela):
     """Executes a teams test using the provided arguments and Candela APIs."""
     is_robot = args.robot_test and not args.do_bandsteering
     return candela_apis.run_teams_test(
-        duration = args.teams_duration,
-        resources = args.teams_device_list,
-        audio = args.teams_audio,
-        video = args.teams_video,
-        do_webUI = args.dowebgui,
-        testname = args.test_name,
-        report_dir = args.result_dir,
-        enable_mobile_stats = args.teams_enable_mobile_stats,
-        robo_ip = args.robot_ip,
-        coordinates = args.coordinate,
-        rotations = args.rotation,
-        do_robo = is_robot,
-        do_bs = args.do_bandsteering,
-        cycles = args.cycles,
-        bssids = args.bssids,
+        duration=args.teams_duration,
+        resources=args.teams_device_list,
+        audio=args.teams_audio,
+        video=args.teams_video,
+        do_webUI=args.dowebgui,
+        testname=args.test_name,
+        report_dir=args.result_dir,
+        enable_mobile_stats=args.teams_enable_mobile_stats,
+        robo_ip=args.robot_ip,
+        coordinates=args.coordinate,
+        rotations=args.rotation,
+        do_robo=is_robot,
+        do_bs=args.do_bandsteering,
+        cycles=args.cycles,
+        bssids=args.bssids,
         upstream_port=args.upstream_port,
     )
+
 
 if __name__ == "__main__":
     main()
