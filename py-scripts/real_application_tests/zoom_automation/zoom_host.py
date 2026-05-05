@@ -163,9 +163,11 @@ class ZoomHost:
             self.driver.refresh()
         try:
             element = self.dynamic_wait(5).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "button.btn-index-signin"))
+                EC.presence_of_element_located(
+                    (By.CSS_SELECTOR, "button[aria-label='Sign In']")
+                )
             )
-            element.click()
+            self.driver.execute_script("arguments[0].click();", element)
             print("clicked sign in button")
         except Exception:
             print("Loaded session through cookies")
