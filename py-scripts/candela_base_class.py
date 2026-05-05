@@ -1,8 +1,193 @@
+#!/usr/bin/env python3
+"""
+NAME: candela_base_class.py
+
+PURPOSE:
+candela_base_class.py is used to execute multiple network and real-application tests
+either in series, parallel, or hybrid mode.
+
+The script supports running tests sequentially (series), simultaneously (parallel),
+or a combination of both, with configurable execution priority.
+
+SUPPORTED TESTS:
+
+Network Tests (Parallel Supported):
+    ping_test
+    qos_test
+    ftp_test
+    http_test
+    mcast_test
+    vs_test
+    thput_test
+
+Real Application Tests (Only Series Supported):
+    yt_test        (YouTube)
+    rb_test        (Real Browser)
+    teams_test     (Microsoft Teams)
+    zoom_test      (Zoom Call)
+
+
+EXECUTION RULES:
+
+1. SERIES TESTS:
+   - Runs tests one after another
+   - Maintains execution order
+   - Allows duplicate tests
+
+2. PARALLEL TESTS:
+   - Runs tests simultaneously
+   - Duplicate tests are NOT allowed
+   - Real application tests are NOT supported
+
+3. HYBRID MODE:
+   - Both --series_tests and --parallel_tests can be used
+   - Execution order controlled by --order_priority
+
+
+ARGUMENT:
+
+--order_priority:
+    Defines which test group runs first
+    Choices:
+        series    -> series tests run first (
+        )
+        parallel  -> parallel tests run first
+
+
+EXAMPLE-1:
+Command Line Interface to run all tests in series
+python3 candela_base_class.py \
+--mgr 192.168.207.78 \
+--upstream_port eth1 \
+--series_tests ping_test,qos_test,ftp_test,http_test,mcast_test,vs_test,thput_test,rb_test,yt_test,teams_test,zoom_test
+
+
+EXAMPLE-2:
+Command Line Interface to run network tests in parallel
+python3 candela_base_class.py \
+--mgr 192.168.207.78 \
+--upstream_port eth1 \
+--parallel_tests ping_test,qos_test,ftp_test,http_test,mcast_test,vs_test,thput_test
+
+
+EXAMPLE-3:
+Command Line Interface to run hybrid execution (parallel first)
+python3 candela_base_class.py \
+--mgr 192.168.207.78 \
+--upstream_port eth1 \
+--order_priority parallel \
+--parallel_tests ping_test,qos_test,ftp_test,http_test,mcast_test,vs_test,thput_test \
+--series_tests yt_test,rb_test,teams_test,zoom_test
+
+
+EXAMPLE-4:
+Command Line Interface to run all series tests with full arguments
+
+python3 candela_base_class.py \
+--mgr 192.168.207.78 \
+--upstream_port eth1 \
+--series_tests ping_test,qos_test,ftp_test,http_test,mcast_test,vs_test,thput_test,rb_test,yt_test,teams_test,zoom_test \
+\
+--ping_target www.google.com \
+--ping_interval 5 \
+--ping_duration 1 \
+--ping_device_list 1.10,1.11,1.20 \
+\
+--qos_tos VO,VI,BE,BK \
+--qos_duration 1m \
+--qos_device_list 1.10,1.11,1.20 \
+--qos_traffic_type lf_tcp \
+--qos_download 10000000 \
+\
+--ftp_duration 1m \
+--ftp_file_size 5MB \
+--ftp_device_list 1.10,1.11,1.20 \
+--ftp_bands 5G \
+\
+--http_duration 1m \
+--http_file_size 5MB \
+--http_device_list 1.10,1.11,1.20 \
+--http_bands 5G \
+\
+--mcast_tos VO \
+--mcast_test_duration 1m \
+--mcast_side_b_min_bps 10000000 \
+--mcast_device_list 1.10,1.11,1.20 \
+--mcast_endp_type mc_udp \
+\
+--vs_url https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8 \
+--vs_media_source hls \
+--vs_media_quality 4k \
+--vs_duration 1m \
+--vs_device_list 1.10,1.11,1.20 \
+\
+--thput_test_duration 1m \
+--thput_traffic_type lf_udp \
+--thput_device_list 1.10,1.11,1.20 \
+--thput_upload 10000000 \
+\
+--rb_duration 1m \
+--rb_device_list 1.15,1.4 \
+--rb_webgui_incremental no_increment \
+--rb_count 10 \
+\
+--yt_url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" \
+--yt_duration 1m \
+--yt_res 144p \
+--yt_device_list 1.15,1.4 \
+\
+--zoom_signin_email candelatech2@gmail.com \
+--zoom_signin_passwd 'CANDELAtech1@530048' \
+--zoom_duration 2 \
+--zoom_host 1.15 \
+--zoom_participants 2 \
+--zoom_device_list 1.15,1.4 \
+--zoom_audio \
+--zoom_video \
+\
+--teams_duration 2m \
+--teams_device_list 1.15,1.4 \
+--teams_audio \
+--teams_video
+
+
+EXAMPLE-5:
+Duplicate tests in series (allowed)
+python3 candela_base_class.py \
+--mgr 192.168.207.78 \
+--upstream_port eth1 \
+--series_tests http_test,ftp_test,http_test
+
+
+EXAMPLE-6:
+Invalid usage (parallel limitations)
+--parallel_tests http_test,http_test
+--parallel_tests yt_test,zoom_test
+
+
+NOTES:
+1. Duration format: s (seconds), m (minutes), h (hours)
+2. Parallel execution improves performance but is limited to network tests
+3. Real application tests must always be executed in series
+4. Avoid duplicates in parallel_tests
+5. Use --order_priority to control execution flow
+
+STATUS : Functional
+
+SCRIPT_CLASSIFICATION : Test
+
+SCRIPT_CATEGORIES: Performance, Functional, Automation
+
+LICENSE :
+Copyright (C) 2020-2026 Candela Technologies Inc
+Free to distribute and modify. LANforge systems must be licensed.
+
+INCLUDE_IN_README: False
+"""
 import os
 import sys
 
 
-# --- sys.path Setup (must precede local imports) ---
 base_path = os.getcwd()
 print('base path', base_path)
 
@@ -11,7 +196,6 @@ sys.path.insert(0, os.path.join(base_path, 'py-json', 'LANforge'))
 sys.path.insert(0, os.path.join(base_path, 'py-scripts'))
 
 
-# --- Now all remaining imports ---
 import argparse  # noqa: E402
 import asyncio   # noqa: E402
 import csv       # noqa: E402
@@ -29,7 +213,6 @@ from multiprocessing import Event, Lock, Manager, Value  # noqa: E402
 from types import SimpleNamespace  # noqa: E402
 
 
-# --- Third-Party Imports ---
 import matplotlib  # noqa: E402
 matplotlib.use('Agg')  # must be before pyplot
 import matplotlib.pyplot as plt  # noqa: E402
@@ -39,7 +222,6 @@ import paramiko       # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
 
 
-# --- Local / Project Imports ---
 import lf_cleanup                    # noqa: E402
 import lf_interop_qos as qos_test   # noqa: E402
 import lf_webpage as http_test       # noqa: E402
@@ -60,7 +242,6 @@ from test_l3 import (                  # noqa: E402
 )
 
 
-# --- importlib-based Local Imports ---
 lf_kpi_csv = importlib.import_module("py-scripts.lf_kpi_csv")
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 lf_report = importlib.import_module("py-scripts.lf_report")
@@ -97,7 +278,6 @@ logger = logging.getLogger(__name__)
 lf_logger_config.lf_logger_config()
 
 
-# --- Module-Level State ---
 error_logs = ""
 test_results_df = pd.DataFrame(columns=['test_name', 'status'])
 
@@ -12249,8 +12429,9 @@ def main():
     '''
     parser = argparse.ArgumentParser(
         prog="candela_base_class.py",
-        description="Run Candela API Tests",
         formatter_class=argparse.RawTextHelpFormatter,
+        description='''
+        NAME: candela_base_class.py''',
     )
     # Always Common
     parser.add_argument('--mgr', '--lfmgr', default='localhost', help='hostname for where LANforge GUI is running')
