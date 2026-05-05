@@ -962,6 +962,8 @@ class ZoomAutomation(Realm):
             self.generate_report_from_data()
         elif self.api_stats_collection:
             self.generate_report_from_api()
+        if self.do_roam:
+            self.sniff_mgr.close()  # Ensure sniffer is closed if roaming was enabled
         self.generic_endps_profile.cleanup()
         logger.info("Initiating graceful shutdown...")
         os._exit(0)
