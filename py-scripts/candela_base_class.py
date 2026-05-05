@@ -10,7 +10,7 @@ The script supports running tests sequentially (series), simultaneously (paralle
 or a combination of both, with configurable execution priority.
 
 SUPPORTED TESTS:
-
+ 
 Network Tests (Parallel Supported):
     ping_test
     qos_test
@@ -12419,20 +12419,13 @@ def validate_args(args):
             if flag_test:
                 logger.info(f"Arg validation check done for {test}")
 
-
-def main():
-    '''
-    Main Execution Block
-    --------------------
-    Initializes the command-line argument parser, defines argument flags,
-    and orchestrates test suite execution for the Candela Base Class.
-    '''
+def parse_args():
     parser = argparse.ArgumentParser(
-        prog="candela_base_class.py",
-        formatter_class=argparse.RawTextHelpFormatter,
-        description='''
-        NAME: candela_base_class.py''',
-    )
+    prog="candela_base_class.py",
+    formatter_class=argparse.RawTextHelpFormatter,
+    description='''
+    NAME: candela_base_class.py''',
+)
     # Always Common
     parser.add_argument('--mgr', '--lfmgr', default='localhost', help='hostname for where LANforge GUI is running')
     parser.add_argument('--mgr_port', '--port', default=8080, help='port LANforge GUI HTTP service is running on')
@@ -12997,6 +12990,15 @@ def main():
     #
 
     args = parser.parse_args()
+
+def main():
+    '''
+    Main Execution Block
+    --------------------
+    Initializes the command-line argument parser, defines argument flags,
+    and orchestrates test suite execution for the Candela Base Class.
+    '''
+    args = parse_args()
     args_dict = vars(args)
     duration_dict = {}
     candela_apis = Candela(
