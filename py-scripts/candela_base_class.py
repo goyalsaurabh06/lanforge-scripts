@@ -1,69 +1,74 @@
-# --- Standard Library Imports ---
-import argparse
-import asyncio
-import csv
-import datetime
-import glob
-import importlib
-import json
-import logging
-import multiprocessing
 import os
 import sys
-import threading
-import time
-import traceback
-from multiprocessing import Event, Lock, Manager, Value
-from types import SimpleNamespace
 
-# --- Third-Party Imports ---
-import matplotlib
-import matplotlib.pyplot as plt
-import pandas as pd
-import paramiko
-import requests
-from dotenv import load_dotenv
 
 # --- sys.path Setup (must precede local imports) ---
-matplotlib.use('Agg')  # Must be set before pyplot is used elsewhere
 base_path = os.getcwd()
 print('base path', base_path)
-sys.path.insert(0, os.path.join(base_path, 'py-json'))          # for interop_connectivity, LANforge
-sys.path.insert(0, os.path.join(base_path, 'py-json', 'LANforge'))  # for LFUtils
-sys.path.insert(0, os.path.join(base_path, 'py-scripts'))       # for lf_logger_config
 
-if 'py-json' not in sys.path:
-    sys.path.append(os.path.join(os.path.abspath('..'), 'py-json'))
-if 'py-scripts' not in sys.path:
-    sys.path.append('/home/lanforge/lanforge-scripts/py-scripts')
+sys.path.insert(0, os.path.join(base_path, 'py-json'))
+sys.path.insert(0, os.path.join(base_path, 'py-json', 'LANforge'))
+sys.path.insert(0, os.path.join(base_path, 'py-scripts'))
+
+
+# --- Now all remaining imports ---
+import argparse  # noqa: E402
+import asyncio   # noqa: E402
+import csv       # noqa: E402
+import datetime  # noqa: E402
+import glob      # noqa: E402
+import importlib  # noqa: E402
+import json      # noqa: E402
+import logging   # noqa: E402
+import multiprocessing  # noqa: E402
+import threading  # noqa: E402
+import time      # noqa: E402
+import traceback  # noqa: E402
+import copy     # noqa: E402
+from multiprocessing import Event, Lock, Manager, Value  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+
+# --- Third-Party Imports ---
+import matplotlib  # noqa: E402
+matplotlib.use('Agg')  # must be before pyplot
+import matplotlib.pyplot as plt  # noqa: E402
+
+import pandas as pd  # noqa: E402
+import paramiko       # noqa: E402
+from dotenv import load_dotenv  # noqa: E402
+
 
 # --- Local / Project Imports ---
-import lf_cleanup
-import lf_interop_qos as qos_test
-import lf_webpage as http_test
-from LANforge import LFUtils
-from lf_base_interop_profile import RealDevice
-from lf_base_robo import RobotClass
-from lf_ftp import FtpTest
-from lf_graph import lf_bar_graph, lf_bar_graph_horizontal, lf_line_graph
-from lf_interop_ping import Ping
-from lf_interop_throughput import Throughput
-from lf_interop_video_streaming import VideoStreamingTest
-# from lf_interop_real_browser_test import RealBrowserTest
-from test_l3 import (
+import lf_cleanup                    # noqa: E402
+import lf_interop_qos as qos_test   # noqa: E402
+import lf_webpage as http_test       # noqa: E402
+from LANforge import LFUtils          # noqa: E402
+from lf_base_interop_profile import RealDevice  # noqa: E402
+
+from lf_ftp import FtpTest            # noqa: E402
+from lf_graph import lf_bar_graph, lf_bar_graph_horizontal, lf_line_graph  # noqa: E402
+from lf_interop_ping import Ping      # noqa: E402
+from lf_interop_throughput import Throughput  # noqa: E402
+from lf_interop_video_streaming import VideoStreamingTest  # noqa: E402
+
+from test_l3 import (                  # noqa: E402
     L3VariableTime,
     configure_reporting,
     query_real_clients,
     valid_endp_types,
 )
 
-# --- importlib-based Local Imports (dynamic module loading) ---
+
+# --- importlib-based Local Imports ---
 lf_kpi_csv = importlib.import_module("py-scripts.lf_kpi_csv")
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 lf_report = importlib.import_module("py-scripts.lf_report")
 lf_report_pdf = importlib.import_module("py-scripts.lf_report")
+
 througput_test = importlib.import_module("py-scripts.lf_interop_throughput")
 video_streaming_test = importlib.import_module("py-scripts.lf_interop_video_streaming")
+
 web_browser_test = importlib.import_module(
     "py-scripts.real_application_tests.real_browser.lf_interop_real_browser_test"
 )
@@ -76,25 +81,29 @@ yt_test = importlib.import_module(
 teams_test = importlib.import_module(
     "py-scripts.real_application_tests.teams_automation.lf_interop_teams"
 )
+
 DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
 realm = importlib.import_module("py-json.realm")
-Realm = realm.Realm
 
-# --- Class / Object Extraction from Dynamic Modules ---
-RealBrowserTest = getattr(web_browser_test, "RealBrowserTest")
-Youtube = getattr(yt_test, "Youtube")
-ZoomAutomation = getattr(zoom_test, "ZoomAutomation")
-TeamsAutomation = getattr(teams_test, "TeamsAutomation")
+Realm = realm.Realm
+RealBrowserTest = web_browser_test.RealBrowserTest
+Youtube = yt_test.Youtube
+ZoomAutomation = zoom_test.ZoomAutomation
+TeamsAutomation = teams_test.TeamsAutomation
+
 
 # --- Logger Setup ---
 logger = logging.getLogger(__name__)
 lf_logger_config.lf_logger_config()
 
+
 # --- Module-Level State ---
 error_logs = ""
 test_results_df = pd.DataFrame(columns=['test_name', 'status'])
+
 manager = Manager()
 test_results_list = manager.list()
+
 
 class Candela(Realm):
     """
@@ -102,7 +111,7 @@ class Candela(Realm):
     """
 
     def __init__(self, ip='localhost', port=8080, order_priority="series", result_dir="", dowebgui=False, test_name='', no_cleanup=False,
-                 robot_test=False, robot_ip=None, coordinate=[], rotation=[], do_bandsteering=False, bssids=None, cycles=1, duration_to_skip=None):
+                 robot_test=False, robot_ip=None, coordinate=None, rotation=None, do_bandsteering=False, bssids=None, cycles=1, duration_to_skip=None):
         super().__init__(lfclient_host=ip,
                          lfclient_port=port)
         self.lanforge_ip = ip
@@ -160,8 +169,8 @@ class Candela(Realm):
         self.series_index = 0
         self.robot_test = robot_test
         self.robot_ip = robot_ip
-        self.coordinate = coordinate
-        self.rotation = rotation
+        self.coordinate = coordinate if coordinate else []
+        self.rotation = rotation if rotation else []
         self.do_bandsteering = do_bandsteering
         self.cycles = cycles
         self.duration_to_skip = duration_to_skip
@@ -244,7 +253,7 @@ class Candela(Realm):
                 self.overall_csv.append(self.overall_status.copy())
                 df1 = pd.DataFrame(self.overall_csv)
                 df1.to_csv('{}/overall_status.csv'.format(self.result_dir), index=False)
-        except BaseException:
+        except Exception:
             logger.info(f"Error while running for webui during {test_name} execution")
         if self.test_stopped:
             logger.info("test has been stopped by the user")
@@ -730,14 +739,9 @@ class Candela(Realm):
         if self.dowebgui:
             if not self.webgui_stop_check("ping"):
                 return False
-        # ping object creation
-        if self.robot_ip == "":
-            ping_robot_status = None
-        else:
-            ping_robot_status = self.robot_ip
         self.ping_obj_dict[ce][obj_name]["obj"] = Ping(host=mgr_ip, port=mgr_port, ssid=ssid, security=security, password=password, radio=radio,
-                                                       lanforge_password=mgr_password, target=target, interval=interval, sta_list=[], virtual=virtual, real=real, duration=duration, debug=debug, csv_name=device_csv_name,
-                                                       expected_passfail_val=expected_passfail_value, wait_time=wait_time, group_name=group_name)
+                                                       lanforge_password=mgr_password, target=target, interval=interval, sta_list=[], virtual=virtual, real=real, duration=duration, debug=debug,
+                                                       csv_name=device_csv_name, expected_passfail_val=expected_passfail_value, wait_time=wait_time, group_name=group_name)
 
         # changing the target from port to IP
         self.ping_obj_dict[ce][obj_name]["obj"].change_target_to_ip()
@@ -866,7 +870,7 @@ class Candela(Realm):
                             self.overall_csv.append(self.overall_status.copy())
                             df1 = pd.DataFrame(self.overall_csv)
                             df1.to_csv('{}/overall_status.csv'.format(self.result_dir), index=False)
-                    except BaseException:
+                    except Exception:
                         logger.info("Error while running for webui during ping execution")
                     if self.test_stopped:
                         logger.info("test has been stopped by the user")
@@ -911,7 +915,6 @@ class Candela(Realm):
                     self.ping_obj_dict[ce][obj_name]["obj"].currentcoordinate = coord
                     logging.info("rotationlist {}".format(self.ping_obj_dict[ce][obj_name]["obj"].angle_list))
                     self.ping_obj_dict[ce][obj_name]["obj"].result_json = {}
-                    pause_angle = False
                     for j in range(len(self.ping_obj_dict[ce][obj_name]["obj"].angle_list)):
                         if rotation_enabled:
                             # self.ping_done_event.clear()
@@ -1000,11 +1003,11 @@ class Candela(Realm):
 
                             self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json[self.ping_obj_dict[ce][obj_name]["obj"].currentcoordinate] = {}
                         if self.ping_obj_dict[ce][obj_name]["obj"].rotation_enabled:
-                            if self.ping_obj_dict[ce][obj_name]["obj"].currentangle not in self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json[self.ping_obj_dict[ce][obj_name]["obj"].currentcoordinate]:
+                            if self.ping_obj_dict[ce][obj_name]["obj"].currentangle not in self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json[self.ping_obj_dict[ce][obj_name]["obj"].currentcoordinate]:  # noqa: E501
                                 self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json[self.ping_obj_dict[ce][obj_name]
                                                                                         ["obj"].currentcoordinate][self.ping_obj_dict[ce][obj_name]["obj"].currentangle] = {}
                             self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json[self.ping_obj_dict[ce][obj_name]["obj"].currentcoordinate][self.ping_obj_dict[ce]
-                                                                                                                                               [obj_name]["obj"].currentangle] = self.ping_obj_dict[ce][obj_name]["obj"].result_json
+                                                                                                                                               [obj_name]["obj"].currentangle] = self.ping_obj_dict[ce][obj_name]["obj"].result_json  # noqa: E501
                         else:
                             self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json[self.ping_obj_dict[ce][obj_name]["obj"].currentcoordinate] = self.ping_obj_dict[ce][obj_name]["obj"].result_json
 
@@ -1063,7 +1066,7 @@ class Candela(Realm):
                         self.overall_csv.append(self.overall_status.copy())
                         df1 = pd.DataFrame(self.overall_csv)
                         df1.to_csv('{}/overall_status.csv'.format(self.result_dir), index=False)
-                except BaseException:
+                except Exception:
                     logger.info("Error while running for webui during ping execution")
                 if self.test_stopped:
                     logger.info("test has been stopped by the user")
@@ -1114,7 +1117,7 @@ class Candela(Realm):
                     #         if data["status"] != "Running":
                     #             logging.info('Test is stopped by the user')
                     #             break
-                    # except BaseException:
+                    # except Exception:
                     #     logging.info("execption while reading running json in ping")
                     time.sleep(3)
             else:
@@ -1157,7 +1160,7 @@ class Candela(Realm):
                                 }
                                 self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['remarks'] = self.ping_obj_dict[ce][obj_name]["obj"].generate_remarks(
                                     self.ping_obj_dict[ce][obj_name]["obj"].result_json[station])
-                            except BaseException:
+                            except Exception:
                                 logging.error('Failed parsing the result for the station {}'.format(station))
 
             else:
@@ -1188,7 +1191,7 @@ class Candela(Realm):
                                     }
                                     self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['remarks'] = self.ping_obj_dict[ce][obj_name]["obj"].generate_remarks(
                                         self.ping_obj_dict[ce][obj_name]["obj"].result_json[station])
-                                except BaseException:
+                                except Exception:
                                     logging.error('Failed parsing the result for the station {}'.format(station))
 
         if (real):
@@ -1218,7 +1221,7 @@ class Candela(Realm):
                             }
                             self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['remarks'] = self.ping_obj_dict[ce][obj_name]["obj"].generate_remarks(
                                 self.ping_obj_dict[ce][obj_name]["obj"].result_json[station])
-                        except BaseException:
+                        except Exception:
                             logging.error('Failed parsing the result for the station {}'.format(station))
             else:
                 for station in self.ping_obj_dict[ce][obj_name]["obj"].real_sta_list:
@@ -1247,7 +1250,7 @@ class Candela(Realm):
                                 }
                                 self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['remarks'] = self.ping_obj_dict[ce][obj_name]["obj"].generate_remarks(
                                     self.ping_obj_dict[ce][obj_name]["obj"].result_json[station])
-                            except BaseException:
+                            except Exception:
                                 logging.error('Failed parsing the result for the station {}'.format(station))
 
         logging.info(self.ping_obj_dict[ce][obj_name]["obj"].result_json)
@@ -1319,7 +1322,7 @@ class Candela(Realm):
         sixg_passwd=None,
         target_per_ten=100,
         file_size='5MB',
-        bands=["5G", "2.4G", "6G"],
+        bands=None,
         duration=None,
         client_type="Real",
         threshold_5g="60",
@@ -1340,7 +1343,7 @@ class Candela(Realm):
         csv_outfile="",
         dowebgui=False,
         result_dir='',
-        device_list=[],
+        device_list=None,
         test_name=None,
         get_url_from_file=False,
         file_path=None,
@@ -1383,6 +1386,8 @@ class Candela(Realm):
         Configure and execute an HTTP test across virtual or real clients.
         This handles test configuration, endpoint creation, and generates an HTTP report upon completion.
         """
+        bands = ["5G", "2.4G", "6G"] if bands is None else bands
+        device_list = [] if device_list is None else device_list
         if self.dowebgui:
             if not self.webgui_stop_check("http"):
                 return False
@@ -1945,8 +1950,8 @@ class Candela(Realm):
         traffic_duration=None,
         clients_type="Real",
         dowebgui=False,
-        directions=["Download"],
-        file_sizes=["2MB", "500MB", "1000MB"],
+        directions=None,
+        file_sizes=None,
         local_lf_report_dir="",
         ap_ip=None,
         twog_radio='wiphy1',
@@ -1955,10 +1960,10 @@ class Candela(Realm):
         lf_username='lanforge',
         lf_password='lanforge',
         ssh_port=22,
-        bands=["5G", "2.4G", "6G", "Both"],
+        bands=None,
         num_stations=0,
         result_dir='',
-        device_list=[],
+        device_list=None,
         test_name=None,
         expected_passfail_value=None,
         device_csv_name=None,
@@ -2004,6 +2009,10 @@ class Candela(Realm):
         Configure and execute an FTP test.
         This handles argument processing and delegates execution to `run_ftp_test1`.
         """
+        directions = ["Download"] if directions is None else directions
+        file_sizes = ["2MB", "500MB", "1000MB"] if file_sizes is None else file_sizes
+        bands = ["5G", "2.4G", "6G", "Both"] if bands is None else bands
+        device_list = [] if device_list is None else device_list
         args = SimpleNamespace(**locals())
         args.mgr = self.lanforge_ip
         args.mgr_port = int(self.port)
@@ -2018,7 +2027,6 @@ class Candela(Realm):
             if not self.webgui_stop_check("ftp"):
                 return False
         # 1st time stamp for test duration
-        time_stamp1 = datetime.datetime.now()
         # use for creating ftp_test dictionary
         interation_num = 0
 
@@ -2225,15 +2233,7 @@ class Candela(Realm):
                     time2 = datetime.datetime.now()
                     logger.info("Test ended at %s", time2)
 
-        # 2nd time stamp for test duration
-        time_stamp2 = datetime.datetime.now()
-
-        # total time for test duration
-        # test_duration = str(time_stamp2 - time_stamp1)[:-7]
-
         date = str(datetime.datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
-
-        # print(ftp_data)
 
         input_setup_info = {
             "AP IP": args.ap_ip,
@@ -2266,14 +2266,14 @@ class Candela(Realm):
                                                                    test_tag=args.test_tag, dut_hw_version=args.dut_hw_version,
                                                                    dut_sw_version=args.dut_sw_version, dut_model_num=args.dut_model_num,
                                                                    dut_serial_num=args.dut_serial_num, test_id=args.test_id,
-                                                                   bands=args.bands, csv_outfile=args.csv_outfile, local_lf_report_dir=args.local_lf_report_dir, config_devices=configuration, report_path=self.result_path if not self.dowebgui else self.result_dir)
+                                                                   bands=args.bands, csv_outfile=args.csv_outfile, local_lf_report_dir=args.local_lf_report_dir, config_devices=configuration, report_path=self.result_path if not self.dowebgui else self.result_dir)  # noqa: E501
         # Generating report without group-specific device configuration
         else:
             self.ftp_obj_dict[ce][obj_name]["obj"].generate_report(ftp_data, date, input_setup_info, test_rig=args.test_rig,
                                                                    test_tag=args.test_tag, dut_hw_version=args.dut_hw_version,
                                                                    dut_sw_version=args.dut_sw_version, dut_model_num=args.dut_model_num,
                                                                    dut_serial_num=args.dut_serial_num, test_id=args.test_id,
-                                                                   bands=args.bands, csv_outfile=args.csv_outfile, local_lf_report_dir=args.local_lf_report_dir, report_path=self.result_path if not self.dowebgui else self.result_dir)
+                                                                   bands=args.bands, csv_outfile=args.csv_outfile, local_lf_report_dir=args.local_lf_report_dir, report_path=self.result_path if not self.dowebgui else self.result_dir)  # noqa: E501
 
         params = {
             "ftp_data": ftp_data,
@@ -2365,13 +2365,13 @@ class Candela(Realm):
             loads_data = loads["download"]
         elif download:
             loads = {'upload': [], 'download': str(download).split(",")}
-            for i in range(len(download)):
+            for _i in range(len(download)):
                 loads['upload'].append(0)
             loads_data = loads["download"]
         else:
             if upload:
                 loads = {'upload': str(upload).split(","), 'download': []}
-                for i in range(len(upload)):
+                for _i in range(len(upload)):
                     loads['download'].append(0)
                 loads_data = loads["upload"]
         if download and upload:
@@ -2542,8 +2542,7 @@ class Candela(Realm):
                                     self.qos_done_event.clear()
                                     self.qos_obj_dict[ce][obj_name]["obj"].start(False, False)
                                     time.sleep(10)
-                                    connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b = self.qos_obj_dict[ce][obj_name]["obj"].monitor(
-                                        curr_coordinate=coordinate)
+                                    connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b = self.qos_obj_dict[ce][obj_name]["obj"].monitor(curr_coordinate=coordinate)  # noqa: E501
                                     logger.info("connections download {}".format(connections_download))
                                     logger.info("connections upload {}".format(connections_upload))
                                     self.qos_obj_dict[ce][obj_name]["obj"].stop()
@@ -2581,7 +2580,6 @@ class Candela(Realm):
                                 # If rotations are enabled
                                 else:
                                     self.qos_rotate_done_event.set()
-                                    exit_from_monitor = False
                                     for angle in range(len(self.qos_obj_dict[ce][obj_name]["obj"].rotation_list)):
                                         test_results = {'test_results': []}
                                         data = {}
@@ -2606,8 +2604,20 @@ class Candela(Realm):
                                             self.check_all_tests()
                                             self.qos_obj_dict[ce][obj_name]["obj"].start(False, False)
                                             monitor_charge_time = datetime.datetime.now()
-                                            connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b = self.qos_obj_dict[ce][obj_name]["obj"].monitor(
-                                                curr_coordinate=coordinate, curr_rotation=self.qos_obj_dict[ce][obj_name]["obj"].current_angle, monitor_charge_time=monitor_charge_time)
+                                            (
+                                                connections_download,
+                                                connections_upload,
+                                                drop_a_per,
+                                                drop_b_per,
+                                                connections_download_avg,
+                                                connections_upload_avg,
+                                                avg_drop_a,
+                                                avg_drop_b,
+                                            ) = self.qos_obj_dict[ce][obj_name]["obj"].monitor(
+                                                curr_coordinate=coordinate,
+                                                curr_rotation=self.qos_obj_dict[ce][obj_name]["obj"].current_angle,
+                                                monitor_charge_time=monitor_charge_time,
+                                            )
                                             logger.info("connections download {}".format(connections_download))
                                             logger.info("connections upload {}".format(connections_upload))
                                             self.qos_obj_dict[ce][obj_name]["obj"].stop()
@@ -3330,7 +3340,7 @@ class Candela(Realm):
 
     def run_throughput_test(
         self,
-        device_list=[],
+        device_list=None,
         upstream_port='eth1',
         ssid=None,
         passwd='[BLANK]',
@@ -3343,7 +3353,7 @@ class Candela(Realm):
         dowebgui=False,
         tos='Best_Efforts',
         packet_size='-1',
-        incremental_capacity=[],
+        incremental_capacity=None,
         load_type='wc_per_client_load',
         do_interopability=False,
         postcleanup=False,
@@ -3390,6 +3400,8 @@ class Candela(Realm):
         Configure and execute a Throughput test.
         This handles test parameters setup, client configuration, and coordinates execution either locally or using a robot.
         """
+        device_list = [] if device_list is None else device_list
+        incremental_capacity = [] if incremental_capacity is None else incremental_capacity
         if dowebgui:
             if (upload == '0'):
                 upload = '2560'
@@ -3399,7 +3411,7 @@ class Candela(Realm):
             if not self.webgui_stop_check("thput"):
                 return False
 
-        logger_config = lf_logger_config.lf_logger_config()
+        lf_logger_config.lf_logger_config()
 
         if (tput_mbps):
             if download != '2560' and download != '0' and upload != '0' and upload != '2560':
@@ -3418,13 +3430,13 @@ class Candela(Realm):
             loads_data = loads["download"]
         elif download:
             loads = {'upload': [], 'download': str(download).split(",")}
-            for i in range(len(download)):
+            for _i in range(len(download)):
                 loads['upload'].append(2560)
             loads_data = loads["download"]
         else:
             if upload:
                 loads = {'upload': str(upload).split(","), 'download': []}
-                for i in range(len(upload)):
+                for _i in range(len(upload)):
                     loads['download'].append(2560)
                 loads_data = loads["upload"]
 
@@ -3556,16 +3568,16 @@ class Candela(Realm):
 
             check_condition, clients_to_run = self.thput_obj_dict[ce][obj_name]["obj"].phantom_check()
 
-            if check_condition == False:
+            if not check_condition:
                 return
 
             check_increment_condition = self.thput_obj_dict[ce][obj_name]["obj"].check_incremental_list()
 
-            if check_increment_condition == False:
+            if not check_increment_condition:
                 logger.error("Incremental values given for selected devices are incorrect")
                 return
 
-            elif (len(incremental_capacity) > 0 and check_increment_condition == False):
+            elif (len(incremental_capacity) > 0 and not check_increment_condition):
                 logger.error("Incremental values given for selected devices are incorrect")
                 return
 
@@ -3599,7 +3611,8 @@ class Candela(Realm):
 
                 # Extend individual_dataframe_column with dynamically generated column names
                 individual_dataframe_column.extend([f'Download{clients_to_run[i]}', f'Upload{clients_to_run[i]}', f'Rx % Drop  {clients_to_run[i]}',
-                                                    f'Tx % Drop{clients_to_run[i]}', f'Average RTT {clients_to_run[i]} ', f'RSSI {clients_to_run[i]} ', f'Tx-Rate {clients_to_run[i]} ', f'Rx-Rate {clients_to_run[i]} ', f'BSSID {clients_to_run[i]}', f'Channel {clients_to_run[i]}'])
+                                                    f'Tx % Drop{clients_to_run[i]}', f'Average RTT {clients_to_run[i]} ', f'RSSI {clients_to_run[i]} ', f'Tx-Rate {clients_to_run[i]} ',
+                                                    f'Rx-Rate {clients_to_run[i]} ', f'BSSID {clients_to_run[i]}', f'Channel {clients_to_run[i]}'])
 
             individual_dataframe_column.extend(['Overall Download', 'Overall Upload', 'Overall Rx % Drop ', 'Overall Tx % Drop', 'Iteration',
                                                 'TIMESTAMP', 'Start_time', 'End_time', 'Remaining_Time', 'Incremental_list', 'status'])
@@ -3648,7 +3661,7 @@ class Candela(Realm):
                     # logger.info("Disconnecting device of resource{}".format(to_run_cxs[i][0]))
                     self.thput_obj_dict[ce][obj_name]["obj"].disconnect_all_devices([device_to_run_resource])
                 # Check if the test was stopped by the user
-                if test_stopped_by_user == False:
+                if not test_stopped_by_user:
 
                     # Append current iteration index to iterations_before_test_stopped_by_user
                     iterations_before_test_stopped_by_user.append(i)
@@ -3688,16 +3701,6 @@ class Candela(Realm):
     def run_mc_test(self, args):
         endp_types = "lf_udp"
 
-        help_summary = '''\
-    The Layer 3 Traffic Generation Test is designed to test the performance of the
-    Access Point by running layer 3 TCP and/or UDP Traffic.  Layer-3 Cross-Connects represent a stream
-    of data flowing through the system under test. A Cross-Connect (CX) is composed of two Endpoints,
-    each of which is associated with a particular Port (physical or virtual interface).
-
-    The test will create stations, create CX traffic between upstream port and stations, run traffic
-    and generate a report.
-    '''
-        # args = parse_args()
         if self.dowebgui:
             if not self.webgui_stop_check("mc"):
                 return False
@@ -4928,7 +4931,7 @@ class Candela(Realm):
         return True
 
     def run_zoom_test(
-            self,
+        self,
         duration: int,
         signin_email: str,
         signin_passwd: str,
@@ -5006,7 +5009,7 @@ class Candela(Realm):
                                                     upstream_port=upstream_port, config=config, selected_groups=selected_groups, selected_profiles=selected_profiles,
                                                     robo_ip=self.robot_ip, coordinates_list=self.coordinate_list, angles_list=self.rotation_list, do_robo=self.robot_test,
                                                     rotations_enabled=self.rotation_enabled, api_stats_collection=api_stats_collection, participants_req=participants,
-                                                    signin_email=signin_email, signin_passwd=signin_passwd, duration=duration, do_webui=self.dowebgui, do_bs=self.do_bandsteering, bssids=self.bssids, cycles=self.cycles)
+                                                    signin_email=signin_email, signin_passwd=signin_passwd, duration=duration, do_webui=self.dowebgui, do_bs=self.do_bandsteering, bssids=self.bssids, cycles=self.cycles)  # noqa: E501
                 upstream_port = self.zoom_test_obj.change_port_to_ip(upstream_port)
                 self.zoom_test_obj.upstream_port = upstream_port
                 realdevice = RealDevice(manager_ip=lanforge_ip,
@@ -5504,7 +5507,6 @@ class Candela(Realm):
                 if not self.webgui_stop_check("teams"):
                     return False
             teams = None
-            mgr = self.lanforge_ip
             logger_config = lf_logger_config.lf_logger_config()
 
             if log_level:
@@ -5603,7 +5605,7 @@ class Candela(Realm):
                         if self.teams_obj_dict["series"][f"teams_test_{i + 1}"]["obj"] is None:
                             self.teams_obj_dict["series"][f"teams_test_{i + 1}"]["obj"] = teams
                             break
-            return True
+        return True
 
     # TODO This function can be useful in future to enable real application tests to run in parallel
     def browser_cleanup(self, rb_test=False, yt_test=False):
@@ -5617,7 +5619,7 @@ class Candela(Realm):
             logging.info(f"endpoints: {self.rb_test_obj.generic_endps_profile.created_endp}")
             for i in range(0, len(self.rb_test_obj.laptop_os_types)):
                 if self.rb_test_obj.laptop_os_types[i] == 'windows':
-                    cmd = "echo Performing POST cleanup of browser processes... & taskkill /F /IM chrome.exe /T >nul 2>&1 & taskkill /F /IM chromedriver.exe /T >nul 2>&1 & echo Browser processes terminated."
+                    cmd = "echo Performing POST cleanup of browser processes... & taskkill /F /IM chrome.exe /T >nul 2>&1 & taskkill /F /IM chromedriver.exe /T >nul 2>&1 & echo Browser processes terminated."  # noqa: E501
                     self.rb_test_obj.generic_endps_profile.set_cmd(self.rb_test_obj.generic_endps_profile.created_endp[i], cmd)
                 elif self.rb_test_obj.laptop_os_types[i] == 'linux':
                     # cmd = "su -l lanforge  ctrb.bash %s %s %s %s" % (self.rb_test_obj.new_port_list[i], self.rb_test_obj.url, self.rb_test_obj.upstream_port, self.rb_test_obj.duration)
@@ -5631,7 +5633,7 @@ class Candela(Realm):
                     if self.rb_test_obj.browser_postcleanup:
                         cmd += " postcleanup"
 
-            for i, cx_batch in enumerate(self.rb_test_obj.cx_order_list):
+            for _i, cx_batch in enumerate(self.rb_test_obj.cx_order_list):
                 self.rb_test_obj.start_specific(cx_batch)
                 logging.info(f"browser cleanup on {cx_batch}")
             logging.info('Realbrowser test laptop cleaning...')
@@ -5640,7 +5642,7 @@ class Candela(Realm):
         if yt_test:
             for i in range(0, len(self.yt_test_obj.real_sta_os_types)):
                 if self.yt_test_obj.real_sta_os_types[i] == 'windows':
-                    cmd = "echo Performing POST cleanup of browser processes... & taskkill /F /IM chrome.exe /T >nul 2>&1 & taskkill /F /IM chromedriver.exe /T >nul 2>&1 & echo Browser processes terminated."
+                    cmd = "echo Performing POST cleanup of browser processes... & taskkill /F /IM chrome.exe /T >nul 2>&1 & taskkill /F /IM chromedriver.exe /T >nul 2>&1 & echo Browser processes terminated."  # noqa: E501
                     self.yt_test_obj.generic_endps_profile.set_cmd(self.yt_test_obj.generic_endps_profile.created_endp[i], cmd)
                 elif self.yt_test_obj.real_sta_os_types[i] == 'linux':
                     cmd = "pkill -f chrome; pkill -f chromedriver"
@@ -5700,43 +5702,42 @@ class Candela(Realm):
                         if ce == "parallel":
                             obj_no = ''
                         http_data = self.http_obj_dict[ce][obj_name]["data"]
-                        if http_data["bands"] == "Both":
-                            num_stations = num_stations * 2
 
                         self.overall_report.set_obj_html(_obj_title=f'HTTP Test {obj_no}', _obj="")
                         self.overall_report.build_objective()
                         self.overall_report.set_table_title("Test Setup Information")
                         self.overall_report.build_table_title()
-                        if self.http_obj_dict[ce][obj_name]["obj"].robot_test:
+                        curr_http_obj = copy.copy(self.http_obj_dict[ce][obj_name]["obj"])
+                        if curr_http_obj.robot_test:
                             # If robot test, add robot specific info to test setup
-                            http_data["test_setup_info"]["Robot IP"] = self.http_obj_dict[ce][obj_name]["obj"].robot_ip
-                            http_data["test_setup_info"]["Coordinates"] = self.http_obj_dict[ce][obj_name]["obj"].coordinate
-                            if not self.http_obj_dict[ce][obj_name]["obj"].do_bandsteering:
-                                http_data["test_setup_info"]["Rotation"] = self.http_obj_dict[ce][obj_name]["obj"].rotation
+                            http_data["test_setup_info"]["Robot IP"] = curr_http_obj.robot_ip
+                            http_data["test_setup_info"]["Coordinates"] = curr_http_obj.coordinate
+                            if not curr_http_obj.do_bandsteering:
+                                http_data["test_setup_info"]["Rotation"] = curr_http_obj.rotation
                             else:
                                 if "Traffic Duration " in http_data["test_setup_info"]:
                                     del http_data["test_setup_info"]["Traffic Duration "]
-                                http_data["test_setup_info"]["No of Cycles"] = self.http_obj_dict[ce][obj_name]["obj"].cycles
+                                http_data["test_setup_info"]["No of Cycles"] = curr_http_obj.cycles
                         self.overall_report.test_setup_table(value="Test Setup Information", test_setup_data=http_data["test_setup_info"])
 
-                        if not self.http_obj_dict[ce][obj_name]["obj"].do_bandsteering and self.robot_test:
-                            if self.dowebgui and self.http_obj_dict[ce][obj_name]["obj"].get_live_view:
-                                self.http_obj_dict[ce][obj_name]["obj"].add_live_view_images_to_report(self.overall_report)
-                            if self.http_obj_dict[ce][obj_name]["obj"].rotation_enabled:
-                                for coord, rotation_dict in self.http_obj_dict[ce][obj_name]["obj"].robot_data.items():
-                                    for rotation, robot_info in rotation_dict.items():
-                                        self.http_obj_dict[ce][obj_name]["obj"].build_graphs_and_table(coord, rotation, self.overall_report, self.lis, [self.http_obj_dict[ce][obj_name]["obj"].bands])
+                        if not curr_http_obj.do_bandsteering and self.robot_test:
+                            if self.dowebgui and curr_http_obj.get_live_view:
+                                curr_http_obj.add_live_view_images_to_report(self.overall_report)
+                            if curr_http_obj.rotation_enabled:
+                                for coord, rotation_dict in curr_http_obj.robot_data.items():
+                                    for rotation, _robot_info in rotation_dict.items():
+                                        curr_http_obj.build_graphs_and_table(coord, rotation, self.overall_report, self.lis, [curr_http_obj.bands])
                             else:
-                                for coord, robot_info in self.http_obj_dict[ce][obj_name]["obj"].robot_data.items():
-                                    self.http_obj_dict[ce][obj_name]["obj"].build_graphs_and_table(coord, "", self.overall_report, self.lis, [self.http_obj_dict[ce][obj_name]["obj"].bands])
+                                for coord, _robot_info in curr_http_obj.robot_data.items():
+                                    curr_http_obj.build_graphs_and_table(coord, "", self.overall_report, self.lis, [curr_http_obj.bands])
                         else:
-                            if self.http_obj_dict[ce][obj_name]["obj"].do_bandsteering:
-                                self.http_obj_dict[ce][obj_name]["obj"].get_bandsteering_stats(self.overall_report)
+                            if curr_http_obj.do_bandsteering:
+                                curr_http_obj.get_bandsteering_stats(self.overall_report)
                             self.overall_report.set_obj_html("No of times file Downloads", "The below graph represents number of times a file downloads for each client"
                                                              ". X- axis shows “No of times file downloads and Y-axis shows "
                                                              "Client names.")
                             self.overall_report.build_objective()
-                            graph2 = self.http_obj_dict[ce][obj_name]["obj"].graph_2(http_data["dataset2"], lis=http_data["lis"], bands=http_data["bands"], graph_name=f'http_file_download_{obj_no}')
+                            graph2 = curr_http_obj.graph_2(http_data["dataset2"], lis=http_data["lis"], bands=http_data["bands"], graph_name=f'http_file_download_{obj_no}')
                             logging.info("graph name %s", graph2)
                             self.overall_report.set_graph_image(graph2)
                             self.overall_report.set_csv_filename(graph2)
@@ -5752,7 +5753,7 @@ class Candela(Realm):
                             )
                             self.overall_report.build_objective()
 
-                            graph = self.http_obj_dict[ce][obj_name]["obj"].generate_graph(
+                            graph = curr_http_obj.generate_graph(
                                 dataset=http_data["dataset"], lis=http_data["lis"], bands=http_data["bands"], graph_image_name=f'http_average_time_{obj_no}')
                             self.overall_report.set_graph_image(graph)
                             self.overall_report.set_csv_filename(graph)
@@ -5767,26 +5768,26 @@ class Candela(Realm):
                             )
                             self.overall_report.build_objective()
 
-                            self.http_obj_dict[ce][obj_name]["obj"].response_port = self.http_obj_dict[ce][obj_name]["obj"].local_realm.json_get("/port/all")
-                            self.http_obj_dict[ce][obj_name]["obj"].channel_list, self.http_obj_dict[ce][obj_name]["obj"].mode_list, self.http_obj_dict[ce][obj_name]["obj"].ssid_list = [], [], []
+                            curr_http_obj.response_port = curr_http_obj.local_realm.json_get("/port/all")
+                            curr_http_obj.channel_list, curr_http_obj.mode_list, curr_http_obj.ssid_list = [], [], []
 
-                            if self.http_obj_dict[ce][obj_name]["obj"].client_type == "Real":
-                                self.http_obj_dict[ce][obj_name]["obj"].devices = self.http_obj_dict[ce][obj_name]["obj"].devices_list
-                                for interface in self.http_obj_dict[ce][obj_name]["obj"].response_port['interfaces']:
+                            if curr_http_obj.client_type == "Real":
+                                curr_http_obj.devices = curr_http_obj.devices_list
+                                for interface in curr_http_obj.response_port['interfaces']:
                                     for port, port_data in interface.items():
-                                        if port in self.http_obj_dict[ce][obj_name]["obj"].port_list:
-                                            self.http_obj_dict[ce][obj_name]["obj"].channel_list.append(str(port_data['channel']))
-                                            self.http_obj_dict[ce][obj_name]["obj"].mode_list.append(str(port_data['mode']))
-                                            self.http_obj_dict[ce][obj_name]["obj"].ssid_list.append(str(port_data['ssid']))
-                            elif self.http_obj_dict[ce][obj_name]["obj"].client_type == "Virtual":
-                                self.http_obj_dict[ce][obj_name]["obj"].devices = self.http_obj_dict[ce][obj_name]["obj"].station_list[0]
-                                for interface in self.http_obj_dict[ce][obj_name]["obj"].response_port['interfaces']:
+                                        if port in curr_http_obj.port_list:
+                                            curr_http_obj.channel_list.append(str(port_data['channel']))
+                                            curr_http_obj.mode_list.append(str(port_data['mode']))
+                                            curr_http_obj.ssid_list.append(str(port_data['ssid']))
+                            elif curr_http_obj.client_type == "Virtual":
+                                curr_http_obj.devices = curr_http_obj.station_list[0]
+                                for interface in curr_http_obj.response_port['interfaces']:
                                     for port, port_data in interface.items():
-                                        if port in self.http_obj_dict[ce][obj_name]["obj"].station_list[0]:
-                                            self.http_obj_dict[ce][obj_name]["obj"].channel_list.append(str(port_data['channel']))
-                                            self.http_obj_dict[ce][obj_name]["obj"].mode_list.append(str(port_data['mode']))
-                                            self.http_obj_dict[ce][obj_name]["obj"].macid_list.append(str(port_data['mac']))
-                                            self.http_obj_dict[ce][obj_name]["obj"].ssid_list.append(str(port_data['ssid']))
+                                        if port in curr_http_obj.station_list[0]:
+                                            curr_http_obj.channel_list.append(str(port_data['channel']))
+                                            curr_http_obj.mode_list.append(str(port_data['mode']))
+                                            curr_http_obj.macid_list.append(str(port_data['mac']))
+                                            curr_http_obj.ssid_list.append(str(port_data['ssid']))
 
                             z, z1, z2 = [], [], []
                             for fcc in list(http_data["result_data"].keys()):
@@ -5840,29 +5841,29 @@ class Candela(Realm):
                             self.overall_report.set_table_dataframe(test_setup)
                             self.overall_report.build_table()
 
-                            if self.http_obj_dict[ce][obj_name]["obj"].group_name:
+                            if curr_http_obj.group_name:
                                 self.overall_report.set_table_title("Overall Results for Groups")
                             else:
                                 self.overall_report.set_table_title("Overall Results")
                             self.overall_report.build_table_title()
 
-                            if self.http_obj_dict[ce][obj_name]["obj"].client_type == "Real":
-                                if self.http_obj_dict[ce][obj_name]["obj"].expected_passfail_value or self.http_obj_dict[ce][obj_name]["obj"].device_csv_name:
-                                    test_input_list, pass_fail_list = self.http_obj_dict[ce][obj_name]["obj"].get_pass_fail_list(http_data["dataset2"])
+                            if curr_http_obj.client_type == "Real":
+                                if curr_http_obj.expected_passfail_value or curr_http_obj.device_csv_name:
+                                    test_input_list, pass_fail_list = curr_http_obj.get_pass_fail_list(http_data["dataset2"])
 
-                                if self.http_obj_dict[ce][obj_name]["obj"].group_name:
-                                    for key, val in self.http_obj_dict[ce][obj_name]["obj"].group_device_map.items():
-                                        if self.http_obj_dict[ce][obj_name]["obj"].expected_passfail_value or self.http_obj_dict[ce][obj_name]["obj"].device_csv_name:
-                                            dataframe = self.http_obj_dict[ce][obj_name]["obj"].generate_dataframe(
-                                                val, self.http_obj_dict[ce][obj_name]["obj"].devices, self.http_obj_dict[ce][obj_name]["obj"].macid_list, self.http_obj_dict[ce][obj_name]["obj"].channel_list,
-                                                self.http_obj_dict[ce][obj_name]["obj"].ssid_list, self.http_obj_dict[ce][obj_name]["obj"].mode_list, http_data["dataset2"], test_input_list,
-                                                http_data["dataset"], http_data["dataset1"], http_data["rx_rate"], pass_fail_list, self.http_obj_dict[ce][obj_name]["obj"].data["total_err"]
+                                if curr_http_obj.group_name:
+                                    for key, val in curr_http_obj.group_device_map.items():
+                                        if curr_http_obj.expected_passfail_value or curr_http_obj.device_csv_name:
+                                            dataframe = curr_http_obj.generate_dataframe(
+                                                val, curr_http_obj.devices, curr_http_obj.macid_list, curr_http_obj.channel_list,
+                                                curr_http_obj.ssid_list, curr_http_obj.mode_list, http_data["dataset2"], test_input_list,
+                                                http_data["dataset"], http_data["dataset1"], http_data["rx_rate"], pass_fail_list, curr_http_obj.data["total_err"]
                                             )
                                         else:
-                                            dataframe = self.http_obj_dict[ce][obj_name]["obj"].generate_dataframe(
-                                                val, self.http_obj_dict[ce][obj_name]["obj"].devices, self.http_obj_dict[ce][obj_name]["obj"].macid_list, self.http_obj_dict[ce][obj_name]["obj"].channel_list,
-                                                self.http_obj_dict[ce][obj_name]["obj"].ssid_list, self.http_obj_dict[ce][obj_name]["obj"].mode_list, http_data["dataset2"], [], http_data["dataset"],
-                                                http_data["dataset1"], http_data["rx_rate"], [], self.http_obj_dict[ce][obj_name]["obj"].data["total_err"]
+                                            dataframe = curr_http_obj.generate_dataframe(
+                                                val, curr_http_obj.devices, curr_http_obj.macid_list, curr_http_obj.channel_list,
+                                                curr_http_obj.ssid_list, curr_http_obj.mode_list, http_data["dataset2"], [], http_data["dataset"],
+                                                http_data["dataset1"], http_data["rx_rate"], [], curr_http_obj.data["total_err"]
                                             )
                                         if dataframe:
                                             self.overall_report.set_obj_html("", "Group: {}".format(key))
@@ -5872,18 +5873,18 @@ class Candela(Realm):
                                             self.overall_report.build_table()
                                 else:
                                     dataframe = {
-                                        " Clients": self.http_obj_dict[ce][obj_name]["obj"].devices,
-                                        " MAC ": self.http_obj_dict[ce][obj_name]["obj"].macid_list,
-                                        " Channel": self.http_obj_dict[ce][obj_name]["obj"].channel_list,
-                                        " SSID ": self.http_obj_dict[ce][obj_name]["obj"].ssid_list,
-                                        " Mode": self.http_obj_dict[ce][obj_name]["obj"].mode_list,
+                                        " Clients": curr_http_obj.devices,
+                                        " MAC ": curr_http_obj.macid_list,
+                                        " Channel": curr_http_obj.channel_list,
+                                        " SSID ": curr_http_obj.ssid_list,
+                                        " Mode": curr_http_obj.mode_list,
                                         " No of times File downloaded ": http_data["dataset2"],
                                         " Average time taken to Download file (ms)": http_data["dataset"],
                                         " Bytes-rd (Mega Bytes) ": http_data["dataset1"],
                                         "Rx Rate (Mbps)": http_data["rx_rate"],
-                                        "Failed url's": self.http_obj_dict[ce][obj_name]["obj"].data["total_err"]
+                                        "Failed url's": curr_http_obj.data["total_err"]
                                     }
-                                    if self.http_obj_dict[ce][obj_name]["obj"].expected_passfail_value or self.http_obj_dict[ce][obj_name]["obj"].device_csv_name:
+                                    if curr_http_obj.expected_passfail_value or curr_http_obj.device_csv_name:
                                         dataframe[" Expected value of no of times file downloaded"] = test_input_list
                                         dataframe["Status"] = pass_fail_list
                                     dataframe1 = pd.DataFrame(dataframe)
@@ -5891,11 +5892,11 @@ class Candela(Realm):
                                     self.overall_report.build_table()
                             else:
                                 dataframe = {
-                                    " Clients": self.http_obj_dict[ce][obj_name]["obj"].devices,
-                                    " MAC ": self.http_obj_dict[ce][obj_name]["obj"].macid_list,
-                                    " Channel": self.http_obj_dict[ce][obj_name]["obj"].channel_list,
-                                    " SSID ": self.http_obj_dict[ce][obj_name]["obj"].ssid_list,
-                                    " Mode": self.http_obj_dict[ce][obj_name]["obj"].mode_list,
+                                    " Clients": curr_http_obj.devices,
+                                    " MAC ": curr_http_obj.macid_list,
+                                    " Channel": curr_http_obj.channel_list,
+                                    " SSID ": curr_http_obj.ssid_list,
+                                    " Mode": curr_http_obj.mode_list,
                                     " No of times File downloaded ": http_data["dataset2"],
                                     " Average time taken to Download file (ms)": http_data["dataset"],
                                     " Bytes-rd (Mega Bytes) ": http_data["dataset1"]
@@ -5921,19 +5922,8 @@ class Candela(Realm):
                         if ce == "parallel":
                             obj_no = ''
                         params = self.ftp_obj_dict[ce][obj_name]["data"].copy()
-                        ftp_data = params["ftp_data"].copy() if isinstance(params["ftp_data"], (list, dict, set)) else params["ftp_data"]
-                        date = params["date"].copy() if isinstance(params["date"], (list, dict, set)) else params["date"]
                         input_setup_info = params["input_setup_info"].copy() if isinstance(params["input_setup_info"], (list, dict, set)) else params["input_setup_info"]
-                        test_rig = params["test_rig"].copy() if isinstance(params["test_rig"], (list, dict, set)) else params["test_rig"]
-                        test_tag = params["test_tag"].copy() if isinstance(params["test_tag"], (list, dict, set)) else params["test_tag"]
-                        dut_hw_version = params["dut_hw_version"].copy() if isinstance(params["dut_hw_version"], (list, dict, set)) else params["dut_hw_version"]
-                        dut_sw_version = params["dut_sw_version"].copy() if isinstance(params["dut_sw_version"], (list, dict, set)) else params["dut_sw_version"]
-                        dut_model_num = params["dut_model_num"].copy() if isinstance(params["dut_model_num"], (list, dict, set)) else params["dut_model_num"]
-                        dut_serial_num = params["dut_serial_num"].copy() if isinstance(params["dut_serial_num"], (list, dict, set)) else params["dut_serial_num"]
-                        test_id = params["test_id"].copy() if isinstance(params["test_id"], (list, dict, set)) else params["test_id"]
-                        bands = params["bands"].copy() if isinstance(params["bands"], (list, dict, set)) else params["bands"]
                         csv_outfile = params["csv_outfile"].copy() if isinstance(params["csv_outfile"], (list, dict, set)) else params["csv_outfile"]
-                        local_lf_report_dir = params["local_lf_report_dir"].copy() if isinstance(params["local_lf_report_dir"], (list, dict, set)) else params["local_lf_report_dir"]
                         report_path = params["report_path"].copy() if isinstance(params["report_path"], (list, dict, set)) else params["report_path"]
 
                         # Optional parameter
@@ -5944,24 +5934,25 @@ class Candela(Realm):
                         no_of_stations = ""
                         duration = ""
                         x_fig_size = 18
-                        y_fig_size = len(self.ftp_obj_dict[ce][obj_name]["obj"].real_client_list1) * .5 + 4
+                        curr_ftp_obj = copy.copy(self.ftp_obj_dict[ce][obj_name]["obj"])
+                        y_fig_size = len(curr_ftp_obj.real_client_list1) * .5 + 4
 
-                        if int(self.ftp_obj_dict[ce][obj_name]["obj"].traffic_duration) < 60:
-                            duration = str(self.ftp_obj_dict[ce][obj_name]["obj"].traffic_duration) + "s"
-                        elif int(self.ftp_obj_dict[ce][obj_name]["obj"].traffic_duration == 60) or (int(self.ftp_obj_dict[ce][obj_name]["obj"].traffic_duration) > 60 and int(self.ftp_obj_dict[ce][obj_name]["obj"].traffic_duration) < 3600):
-                            duration = str(self.ftp_obj_dict[ce][obj_name]["obj"].traffic_duration / 60) + "m"
+                        if int(curr_ftp_obj.traffic_duration) < 60:
+                            duration = str(curr_ftp_obj.traffic_duration) + "s"
+                        elif int(curr_ftp_obj.traffic_duration == 60) or (int(curr_ftp_obj.traffic_duration) > 60 and int(curr_ftp_obj.traffic_duration) < 3600):
+                            duration = str(curr_ftp_obj.traffic_duration / 60) + "m"
                         else:
-                            if int(self.ftp_obj_dict[ce][obj_name]["obj"].traffic_duration == 3600) or (int(self.ftp_obj_dict[ce][obj_name]["obj"].traffic_duration) > 3600):
-                                duration = str(self.ftp_obj_dict[ce][obj_name]["obj"].traffic_duration / 3600) + "h"
+                            if int(curr_ftp_obj.traffic_duration == 3600) or (int(curr_ftp_obj.traffic_duration) > 3600):
+                                duration = str(curr_ftp_obj.traffic_duration / 3600) + "h"
 
                         client_list = []
-                        if self.ftp_obj_dict[ce][obj_name]["obj"].clients_type == "Real":
-                            client_list = self.ftp_obj_dict[ce][obj_name]["obj"].real_client_list1
+                        if curr_ftp_obj.clients_type == "Real":
+                            client_list = curr_ftp_obj.real_client_list1
                             android_devices, windows_devices, linux_devices, mac_devices = 0, 0, 0, 0
                             all_devices_names = []
                             device_type = []
                             total_devices = ""
-                            for i in self.ftp_obj_dict[ce][obj_name]["obj"].real_client_list:
+                            for i in curr_ftp_obj.real_client_list:
                                 split_device_name = i.split(" ")
                                 if 'android' in split_device_name:
                                     all_devices_names.append(split_device_name[2] + ("(Android)"))
@@ -5989,8 +5980,8 @@ class Candela(Realm):
                             if mac_devices > 0:
                                 total_devices += f" Mac({mac_devices})"
                         else:
-                            if self.ftp_obj_dict[ce][obj_name]["obj"].clients_type == "Virtual":
-                                client_list = self.ftp_obj_dict[ce][obj_name]["obj"].station_list
+                            if curr_ftp_obj.clients_type == "Virtual":
+                                client_list = curr_ftp_obj.station_list
                         if 'ftp_test' not in self.test_count_dict:
                             self.test_count_dict['ftp_test'] = 0
                         self.test_count_dict['ftp_test'] += 1
@@ -5999,23 +5990,23 @@ class Candela(Realm):
                         self.overall_report.set_table_title("Test Setup Information")
                         self.overall_report.build_table_title()
 
-                        if self.ftp_obj_dict[ce][obj_name]["obj"].clients_type == "Virtual":
-                            no_of_stations = str(len(self.ftp_obj_dict[ce][obj_name]["obj"].station_list))
+                        if curr_ftp_obj.clients_type == "Virtual":
+                            no_of_stations = str(len(curr_ftp_obj.station_list))
                         else:
-                            no_of_stations = str(len(self.ftp_obj_dict[ce][obj_name]["obj"].input_devices_list))
+                            no_of_stations = str(len(curr_ftp_obj.input_devices_list))
 
-                        if self.ftp_obj_dict[ce][obj_name]["obj"].clients_type == "Real":
+                        if curr_ftp_obj.clients_type == "Real":
                             if config_devices == "":
                                 test_setup_info = {
-                                    "AP Name": self.ftp_obj_dict[ce][obj_name]["obj"].ap_name,
-                                    "SSID": self.ftp_obj_dict[ce][obj_name]["obj"].ssid,
-                                    "Security": self.ftp_obj_dict[ce][obj_name]["obj"].security,
+                                    "AP Name": curr_ftp_obj.ap_name,
+                                    "SSID": curr_ftp_obj.ssid,
+                                    "Security": curr_ftp_obj.security,
                                     "Device List": ", ".join(all_devices_names),
                                     "No of Devices": "Total" + f"({no_of_stations})" + total_devices,
-                                    "Failed CXs": self.ftp_obj_dict[ce][obj_name]["obj"].failed_cx if self.ftp_obj_dict[ce][obj_name]["obj"].failed_cx else "NONE",
-                                    "File size": self.ftp_obj_dict[ce][obj_name]["obj"].file_size,
+                                    "Failed CXs": curr_ftp_obj.failed_cx if curr_ftp_obj.failed_cx else "NONE",
+                                    "File size": curr_ftp_obj.file_size,
                                     "File location": "/home/lanforge",
-                                    "Traffic Direction": self.ftp_obj_dict[ce][obj_name]["obj"].direction,
+                                    "Traffic Direction": curr_ftp_obj.direction,
                                     "Traffic Duration ": duration
                                 }
                             else:
@@ -6023,54 +6014,54 @@ class Candela(Realm):
                                 profile_names = ', '.join(config_devices.values())
                                 configmap = "Groups:" + group_names + " -> Profiles:" + profile_names
                                 test_setup_info = {
-                                    "AP Name": self.ftp_obj_dict[ce][obj_name]["obj"].ap_name,
+                                    "AP Name": curr_ftp_obj.ap_name,
                                     'Configuration': configmap,
                                     "No of Devices": "Total" + f"({no_of_stations})" + total_devices,
-                                    "File size": self.ftp_obj_dict[ce][obj_name]["obj"].file_size,
+                                    "File size": curr_ftp_obj.file_size,
                                     "File location": "/home/lanforge",
-                                    "Traffic Direction": self.ftp_obj_dict[ce][obj_name]["obj"].direction,
+                                    "Traffic Direction": curr_ftp_obj.direction,
                                     "Traffic Duration ": duration
                                 }
                         else:
                             test_setup_info = {
-                                "AP Name": self.ftp_obj_dict[ce][obj_name]["obj"].ap_name,
-                                "SSID": self.ftp_obj_dict[ce][obj_name]["obj"].ssid,
-                                "Security": self.ftp_obj_dict[ce][obj_name]["obj"].security,
+                                "AP Name": curr_ftp_obj.ap_name,
+                                "SSID": curr_ftp_obj.ssid,
+                                "Security": curr_ftp_obj.security,
                                 "No of Devices": no_of_stations,
-                                "File size": self.ftp_obj_dict[ce][obj_name]["obj"].file_size,
+                                "File size": curr_ftp_obj.file_size,
                                 "File location": "/home/lanforge",
-                                "Traffic Direction": self.ftp_obj_dict[ce][obj_name]["obj"].direction,
+                                "Traffic Direction": curr_ftp_obj.direction,
                                 "Traffic Duration ": duration
                             }
-                        if self.ftp_obj_dict[ce][obj_name]["obj"].robot_test:
+                        if curr_ftp_obj.robot_test:
                             # Added Robot details in Test setup information table
-                            test_setup_info["Robot IP"] = self.ftp_obj_dict[ce][obj_name]["obj"].robot_ip
-                            test_setup_info["Coordinates"] = self.ftp_obj_dict[ce][obj_name]["obj"].coordinate
-                            if not self.ftp_obj_dict[ce][obj_name]["obj"].do_bandsteering:
-                                if self.ftp_obj_dict[ce][obj_name]["obj"].rotation_enabled:
-                                    test_setup_info["Rotations"] = self.ftp_obj_dict[ce][obj_name]["obj"].rotation
+                            test_setup_info["Robot IP"] = curr_ftp_obj.robot_ip
+                            test_setup_info["Coordinates"] = curr_ftp_obj.coordinate
+                            if not curr_ftp_obj.do_bandsteering:
+                                if curr_ftp_obj.rotation_enabled:
+                                    test_setup_info["Rotations"] = curr_ftp_obj.rotation
                             else:
                                 if "Traffic Duration " in test_setup_info:
                                     del test_setup_info["Traffic Duration "]
-                                test_setup_info["Total Cycles"] = self.ftp_obj_dict[ce][obj_name]["obj"].cycles
+                                test_setup_info["Total Cycles"] = curr_ftp_obj.cycles
                         self.overall_report.test_setup_table(value="Test Setup Information", test_setup_data=test_setup_info)
 
-                        if not self.ftp_obj_dict[ce][obj_name]["obj"].do_bandsteering and self.ftp_obj_dict[ce][obj_name]["obj"].robot_test:
-                            self.ftp_obj_dict[ce][obj_name]["obj"].report = self.overall_report
-                            if self.dowebgui and self.ftp_obj_dict[ce][obj_name]["obj"].get_live_view:
-                                self.ftp_obj_dict[ce][obj_name]["obj"].add_live_view_images_to_report()
-                            logging.info("real_client_list1: %s", self.ftp_obj_dict[ce][obj_name]["obj"].real_client_list1)
-                            if self.ftp_obj_dict[ce][obj_name]["obj"].rotation_enabled:
-                                for coord, rotation_dict in self.ftp_obj_dict[ce][obj_name]["obj"].robot_data.items():
+                        if not curr_ftp_obj.do_bandsteering and curr_ftp_obj.robot_test:
+                            curr_ftp_obj.report = self.overall_report
+                            if self.dowebgui and curr_ftp_obj.get_live_view:
+                                curr_ftp_obj.add_live_view_images_to_report()
+                            logging.info("real_client_list1: %s", curr_ftp_obj.real_client_list1)
+                            if curr_ftp_obj.rotation_enabled:
+                                for coord, rotation_dict in curr_ftp_obj.robot_data.items():
                                     for rotation, robot_info in rotation_dict.items():
-                                        self.ftp_obj_dict[ce][obj_name]["obj"].build_graphs_and_table(coord, rotation, robot_info, self.ftp_obj_dict[ce][obj_name]["obj"].real_client_list1)
+                                        curr_ftp_obj.build_graphs_and_table(coord, rotation, robot_info, curr_ftp_obj.real_client_list1)
                             else:
-                                for coord, robot_info in self.ftp_obj_dict[ce][obj_name]["obj"].robot_data.items():
-                                    self.ftp_obj_dict[ce][obj_name]["obj"].build_graphs_and_table(coord, None, robot_info, self.ftp_obj_dict[ce][obj_name]["obj"].real_client_list1)
+                                for coord, robot_info in curr_ftp_obj.robot_data.items():
+                                    curr_ftp_obj.build_graphs_and_table(coord, None, robot_info, curr_ftp_obj.real_client_list1)
                         else:
-                            if self.ftp_obj_dict[ce][obj_name]["obj"].do_bandsteering:
-                                self.ftp_obj_dict[ce][obj_name]["obj"].report = self.overall_report
-                                self.ftp_obj_dict[ce][obj_name]["obj"].get_bandsteering_stats()
+                            if curr_ftp_obj.do_bandsteering:
+                                curr_ftp_obj.report = self.overall_report
+                                curr_ftp_obj.get_bandsteering_stats()
                             self.overall_report.set_obj_html(
                                 _obj_title=f"No of times file {self.ftp_obj_dict[ce][obj_name]['obj'].direction}",
                                 _obj=f"The below graph represents number of times a file {self.ftp_obj_dict[ce][obj_name]['obj'].direction} for each client"
@@ -6078,7 +6069,7 @@ class Candela(Realm):
                                 f"Client names.")
 
                             self.overall_report.build_objective()
-                            graph = lf_bar_graph_horizontal(_data_set=[self.ftp_obj_dict[ce][obj_name]["obj"].url_data], _xaxis_name=f"No of times file {self.ftp_obj_dict[ce][obj_name]['obj'].direction}",
+                            graph = lf_bar_graph_horizontal(_data_set=[curr_ftp_obj.url_data], _xaxis_name=f"No of times file {self.ftp_obj_dict[ce][obj_name]['obj'].direction}",
                                                             _yaxis_name="Client names",
                                                             _yaxis_categories=[i for i in client_list],
                                                             _yaxis_label=[i for i in client_list],
@@ -6095,7 +6086,7 @@ class Candela(Realm):
                                                             _enable_csv=True,
                                                             _graph_image_name=f"Total-url_ftp_{obj_no}", _color_edge=['black'],
                                                             _color=['orange'],
-                                                            _label=[self.ftp_obj_dict[ce][obj_name]["obj"].direction])
+                                                            _label=[curr_ftp_obj.direction])
                             graph_png = graph.build_bar_graph_horizontal()
                             logging.info("graph name %s", graph_png)
                             self.overall_report.set_graph_image(graph_png)
@@ -6111,7 +6102,7 @@ class Candela(Realm):
                                 f"Client names.")
 
                             self.overall_report.build_objective()
-                            graph = lf_bar_graph_horizontal(_data_set=[self.ftp_obj_dict[ce][obj_name]["obj"].uc_avg], _xaxis_name=f"Average time taken to {self.ftp_obj_dict[ce][obj_name]['obj'].direction} file in ms",
+                            graph = lf_bar_graph_horizontal(_data_set=[curr_ftp_obj.uc_avg], _xaxis_name=f"Average time taken to {self.ftp_obj_dict[ce][obj_name]['obj'].direction} file in ms",
                                                             _yaxis_name="Client names",
                                                             _yaxis_categories=[i for i in client_list],
                                                             _yaxis_label=[i for i in client_list],
@@ -6128,7 +6119,7 @@ class Candela(Realm):
                                                             _enable_csv=True,
                                                             _graph_image_name=f"ucg-avg_ftp_{obj_no}", _color_edge=['black'],
                                                             _color=['steelblue'],
-                                                            _label=[self.ftp_obj_dict[ce][obj_name]["obj"].direction])
+                                                            _label=[curr_ftp_obj.direction])
                             graph_png = graph.build_bar_graph_horizontal()
                             logging.info("graph name %s", graph_png)
                             self.overall_report.set_graph_image(graph_png)
@@ -6137,8 +6128,8 @@ class Candela(Realm):
                             self.overall_report.set_csv_filename(graph_png)
                             self.overall_report.move_csv_file()
                             self.overall_report.build_graph()
-                            if (self.ftp_obj_dict[ce][obj_name]["obj"].dowebgui and self.ftp_obj_dict[ce][obj_name]["obj"].get_live_view):
-                                for floor in range(0, int(self.ftp_obj_dict[ce][obj_name]["obj"].total_floors)):
+                            if (curr_ftp_obj.dowebgui and curr_ftp_obj.get_live_view):
+                                for floor in range(0, int(curr_ftp_obj.total_floors)):
                                     script_dir = os.path.dirname(os.path.abspath(__file__))
                                     throughput_image_path = os.path.join(script_dir, "heatmap_images", f"ftp_{self.ftp_obj_dict[ce][obj_name]['obj'].test_name}_{floor + 1}.png")
                                     # rssi_image_path = os.path.join(script_dir, "heatmap_images", f"{self.test_name}_rssi_{floor+1}.png")
@@ -6163,28 +6154,27 @@ class Candela(Realm):
                                                              "minimum, maximum and the average time taken by clients to download a file in seconds")
                             self.overall_report.build_objective()
                             dataframe2 = {
-                                "Minimum": [str(round(min(self.ftp_obj_dict[ce][obj_name]["obj"].uc_min) / 1000, 1))],
-                                "Maximum": [str(round(max(self.ftp_obj_dict[ce][obj_name]["obj"].uc_max) / 1000, 1))],
-                                "Average": [str(round((sum(self.ftp_obj_dict[ce][obj_name]["obj"].uc_avg) / len(client_list)) / 1000, 1))]
+                                "Minimum": [str(round(min(curr_ftp_obj.uc_min) / 1000, 1))],
+                                "Maximum": [str(round(max(curr_ftp_obj.uc_max) / 1000, 1))],
+                                "Average": [str(round((sum(curr_ftp_obj.uc_avg) / len(client_list)) / 1000, 1))]
                             }
                             dataframe3 = pd.DataFrame(dataframe2)
                             self.overall_report.set_table_dataframe(dataframe3)
                             self.overall_report.build_table()
                             self.overall_report.set_table_title("Overall Results")
                             self.overall_report.build_table_title()
-                            if self.ftp_obj_dict[ce][obj_name]["obj"].clients_type == 'Real':
+                            if curr_ftp_obj.clients_type == 'Real':
                                 # Calculating the pass/fail criteria when either expected_passfail_val or csv_name is provided
-                                if self.ftp_obj_dict[ce][obj_name]["obj"].expected_passfail_val or self.ftp_obj_dict[ce][obj_name]["obj"].csv_name:
-                                    self.ftp_obj_dict[ce][obj_name]["obj"].get_pass_fail_list(client_list)
+                                if curr_ftp_obj.expected_passfail_val or curr_ftp_obj.csv_name:
+                                    curr_ftp_obj.get_pass_fail_list(client_list)
                                 # When groups are provided a seperate table will be generated for each group using generate_dataframe
-                                if self.ftp_obj_dict[ce][obj_name]["obj"].group_name:
-                                    for key, val in self.ftp_obj_dict[ce][obj_name]["obj"].group_device_map.items():
-                                        if self.ftp_obj_dict[ce][obj_name]["obj"].expected_passfail_val or self.ftp_obj_dict[ce][obj_name]["obj"].csv_name:
-                                            dataframe = self.ftp_obj_dict[ce][obj_name]["obj"].generate_dataframe(val, client_list, self.ftp_obj_dict[ce][obj_name]["obj"].mac_id_list, self.ftp_obj_dict[ce][obj_name]["obj"].channel_list, self.ftp_obj_dict[ce][obj_name]["obj"].ssid_list, self.ftp_obj_dict[ce][obj_name]["obj"].mode_list,
-                                                                                                                  self.ftp_obj_dict[ce][obj_name]["obj"].url_data, self.ftp_obj_dict[ce][obj_name]["obj"].test_input_list, self.ftp_obj_dict[ce][obj_name]["obj"].uc_avg, self.ftp_obj_dict[ce][obj_name]["obj"].bytes_rd, self.ftp_obj_dict[ce][obj_name]["obj"].rx_rate, self.ftp_obj_dict[ce][obj_name]["obj"].pass_fail_list, self.ftp_obj_dict[ce][obj_name]["obj"].total_err)
+                                if curr_ftp_obj.group_name:
+                                    for key, val in curr_ftp_obj.group_device_map.items():
+                                        if curr_ftp_obj.expected_passfail_val or curr_ftp_obj.csv_name:
+                                            dataframe = curr_ftp_obj.generate_dataframe(val, client_list, curr_ftp_obj.mac_id_list, curr_ftp_obj.channel_list, curr_ftp_obj.ssid_list, curr_ftp_obj.mode_list, curr_ftp_obj.url_data, curr_ftp_obj.test_input_list, curr_ftp_obj.uc_avg, curr_ftp_obj.bytes_rd, curr_ftp_obj.rx_rate, curr_ftp_obj.pass_fail_list, curr_ftp_obj.total_err)  # noqa: E501
                                         else:
-                                            dataframe = self.ftp_obj_dict[ce][obj_name]["obj"].generate_dataframe(val, client_list, self.ftp_obj_dict[ce][obj_name]["obj"].mac_id_list, self.ftp_obj_dict[ce][obj_name]["obj"].channel_list, self.ftp_obj_dict[ce][obj_name]["obj"].ssid_list,
-                                                                                                                  self.ftp_obj_dict[ce][obj_name]["obj"].mode_list, self.ftp_obj_dict[ce][obj_name]["obj"].url_data, [], self.ftp_obj_dict[ce][obj_name]["obj"].uc_avg, self.ftp_obj_dict[ce][obj_name]["obj"].bytes_rd, self.ftp_obj_dict[ce][obj_name]["obj"].rx_rate, [], self.ftp_obj_dict[ce][obj_name]["obj"].total_err)
+                                            dataframe = curr_ftp_obj.generate_dataframe(val, client_list, curr_ftp_obj.mac_id_list, curr_ftp_obj.channel_list, curr_ftp_obj.ssid_list,
+                                                                                        curr_ftp_obj.mode_list, curr_ftp_obj.url_data, [], curr_ftp_obj.uc_avg, curr_ftp_obj.bytes_rd, curr_ftp_obj.rx_rate, [], curr_ftp_obj.total_err)  # noqa: E501
 
                                         if dataframe:
                                             self.overall_report.set_obj_html("", "Group: {}".format(key))
@@ -6195,19 +6185,19 @@ class Candela(Realm):
                                 else:
                                     dataframe = {
                                         " Clients": client_list,
-                                        " MAC ": self.ftp_obj_dict[ce][obj_name]["obj"].mac_id_list,
-                                        " Channel": self.ftp_obj_dict[ce][obj_name]["obj"].channel_list,
-                                        " SSID ": self.ftp_obj_dict[ce][obj_name]["obj"].ssid_list,
-                                        " Mode": self.ftp_obj_dict[ce][obj_name]["obj"].mode_list,
-                                        " No of times File downloaded ": self.ftp_obj_dict[ce][obj_name]["obj"].url_data,
-                                        " Time Taken to Download file (ms)": self.ftp_obj_dict[ce][obj_name]["obj"].uc_avg,
-                                        " Bytes-rd (Mega Bytes)": self.ftp_obj_dict[ce][obj_name]["obj"].bytes_rd,
-                                        " RX RATE (Mbps) ": self.ftp_obj_dict[ce][obj_name]["obj"].rx_rate,
-                                        "Failed Urls": self.ftp_obj_dict[ce][obj_name]["obj"].total_err
+                                        " MAC ": curr_ftp_obj.mac_id_list,
+                                        " Channel": curr_ftp_obj.channel_list,
+                                        " SSID ": curr_ftp_obj.ssid_list,
+                                        " Mode": curr_ftp_obj.mode_list,
+                                        " No of times File downloaded ": curr_ftp_obj.url_data,
+                                        " Time Taken to Download file (ms)": curr_ftp_obj.uc_avg,
+                                        " Bytes-rd (Mega Bytes)": curr_ftp_obj.bytes_rd,
+                                        " RX RATE (Mbps) ": curr_ftp_obj.rx_rate,
+                                        "Failed Urls": curr_ftp_obj.total_err
                                     }
-                                    if self.ftp_obj_dict[ce][obj_name]["obj"].expected_passfail_val or self.ftp_obj_dict[ce][obj_name]["obj"].csv_name:
-                                        dataframe[" Expected output "] = self.ftp_obj_dict[ce][obj_name]["obj"].test_input_list
-                                        dataframe[" Status "] = self.ftp_obj_dict[ce][obj_name]["obj"].pass_fail_list
+                                    if curr_ftp_obj.expected_passfail_val or curr_ftp_obj.csv_name:
+                                        dataframe[" Expected output "] = curr_ftp_obj.test_input_list
+                                        dataframe[" Status "] = curr_ftp_obj.pass_fail_list
 
                                     dataframe1 = pd.DataFrame(dataframe)
                                     self.overall_report.set_table_dataframe(dataframe1)
@@ -6216,13 +6206,13 @@ class Candela(Realm):
                             else:
                                 dataframe = {
                                     " Clients": client_list,
-                                    " MAC ": self.ftp_obj_dict[ce][obj_name]["obj"].mac_id_list,
-                                    " Channel": self.ftp_obj_dict[ce][obj_name]["obj"].channel_list,
-                                    " SSID ": self.ftp_obj_dict[ce][obj_name]["obj"].ssid_list,
-                                    " Mode": self.ftp_obj_dict[ce][obj_name]["obj"].mode_list,
-                                    " No of times File downloaded ": self.ftp_obj_dict[ce][obj_name]["obj"].url_data,
-                                    " Time Taken to Download file (ms)": self.ftp_obj_dict[ce][obj_name]["obj"].uc_avg,
-                                    " Bytes-rd (Mega Bytes)": self.ftp_obj_dict[ce][obj_name]["obj"].bytes_rd,
+                                    " MAC ": curr_ftp_obj.mac_id_list,
+                                    " Channel": curr_ftp_obj.channel_list,
+                                    " SSID ": curr_ftp_obj.ssid_list,
+                                    " Mode": curr_ftp_obj.mode_list,
+                                    " No of times File downloaded ": curr_ftp_obj.url_data,
+                                    " Time Taken to Download file (ms)": curr_ftp_obj.uc_avg,
+                                    " Bytes-rd (Mega Bytes)": curr_ftp_obj.bytes_rd,
                                 }
                                 dataframe1 = pd.DataFrame(dataframe)
                                 self.overall_report.set_table_dataframe(dataframe1)
@@ -6260,17 +6250,17 @@ class Candela(Realm):
                         data = params["data"].copy() if isinstance(params["data"], (list, dict, set)) else params["data"]
                         data1 = params["data1"].copy() if isinstance(params["data1"], (list, dict, set)) else params["data1"]
                         report_path = params["report_path"].copy() if isinstance(params["report_path"], (list, dict, set)) else params["report_path"]
-
-                        self.thput_obj_dict[ce][obj_name]["obj"].ssid_list = self.thput_obj_dict[ce][obj_name]["obj"].get_ssid_list(self.thput_obj_dict[ce][obj_name]["obj"].input_devices_list)
-                        self.thput_obj_dict[ce][obj_name]["obj"].signal_list, self.thput_obj_dict[ce][obj_name]["obj"].channel_list, self.thput_obj_dict[ce][obj_name]["obj"].mode_list, self.thput_obj_dict[ce][
-                            obj_name]["obj"].link_speed_list, rx_rate_list, bssid_list = self.thput_obj_dict[ce][obj_name]["obj"].get_signal_and_channel_data(self.thput_obj_dict[ce][obj_name]["obj"].input_devices_list)
+                        curr_thpt_obj = copy.copy(self.thput_obj_dict[ce][obj_name]["obj"])
+                        curr_thpt_obj.ssid_list = curr_thpt_obj.get_ssid_list(curr_thpt_obj.input_devices_list)
+                        curr_thpt_obj.signal_list, curr_thpt_obj.channel_list, curr_thpt_obj.mode_list, self.thput_obj_dict[ce][
+                            obj_name]["obj"].link_speed_list, rx_rate_list, bssid_list = curr_thpt_obj.get_signal_and_channel_data(curr_thpt_obj.input_devices_list)
                         selected_real_clients_names = params["selected_real_clients_names"] if "selected_real_clients_names" in params else None
                         if selected_real_clients_names is not None:
-                            self.thput_obj_dict[ce][obj_name]["obj"].num_stations = selected_real_clients_names
+                            curr_thpt_obj.num_stations = selected_real_clients_names
 
                         # Initialize the report object
-                        if (self.thput_obj_dict[ce][obj_name]["obj"].do_interopability == False and not self.robot_test) or (self.thput_obj_dict[ce]
-                                                                                                                             [obj_name]["obj"].do_interopability == False and self.robot_test and self.thput_obj_dict[ce][obj_name]["obj"].do_bandsteering):
+                        if (not curr_thpt_obj.do_interopability and not self.robot_test) or (not self.thput_obj_dict[ce]
+                                                                                             [obj_name]["obj"].do_interopability and self.robot_test and curr_thpt_obj.do_bandsteering):
                             # df.to_csv(os.path.join(report_path_date_time, 'throughput_data.csv'))
                             # For groups and profiles configuration through webgui
 
@@ -6284,16 +6274,16 @@ class Candela(Realm):
                             device_type = []
                             packet_size_text = ''
                             total_devices = ""
-                            if self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu == -1:
+                            if curr_thpt_obj.cx_profile.side_a_min_pdu == -1:
                                 packet_size_text = 'AUTO'
                             else:
-                                packet_size_text = str(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu) + ' Bytes'
-                            # Determine load type name based on self.thput_obj_dict[ce][obj_name]["obj"].load_type
-                            if self.thput_obj_dict[ce][obj_name]["obj"].load_type == "wc_intended_load":
+                                packet_size_text = str(curr_thpt_obj.cx_profile.side_a_min_pdu) + ' Bytes'
+                            # Determine load type name based on curr_thpt_obj.load_type
+                            if curr_thpt_obj.load_type == "wc_intended_load":
                                 load_type_name = "Intended Load"
                             else:
                                 load_type_name = "Per Client Load"
-                            for i in self.thput_obj_dict[ce][obj_name]["obj"].real_client_list:
+                            for i in curr_thpt_obj.real_client_list:
                                 split_device_name = i.split(" ")
                                 if 'android' in split_device_name:
                                     all_devices_names.append(split_device_name[2] + ("(Android)"))
@@ -6328,50 +6318,50 @@ class Candela(Realm):
                             if ios_devices > 0:
                                 total_devices += f" iOS({ios_devices})"
 
-                            # Determine incremental_capacity_data based on self.thput_obj_dict[ce][obj_name]["obj"].incremental_capacity
-                            if self.thput_obj_dict[ce][obj_name]["obj"].gave_incremental:
+                            # Determine incremental_capacity_data based on curr_thpt_obj.incremental_capacity
+                            if curr_thpt_obj.gave_incremental:
                                 incremental_capacity_data = "No Incremental values provided"
-                            elif len(self.thput_obj_dict[ce][obj_name]["obj"].incremental_capacity) == 1:
+                            elif len(curr_thpt_obj.incremental_capacity) == 1:
                                 if len(incremental_capacity_list) == 1:
-                                    incremental_capacity_data = str(self.thput_obj_dict[ce][obj_name]["obj"].incremental_capacity[0])
+                                    incremental_capacity_data = str(curr_thpt_obj.incremental_capacity[0])
                                 else:
                                     incremental_capacity_data = ','.join(map(str, incremental_capacity_list))
-                            elif (len(self.thput_obj_dict[ce][obj_name]["obj"].incremental_capacity) > 1):
-                                self.thput_obj_dict[ce][obj_name]["obj"].incremental_capacity = self.thput_obj_dict[ce][obj_name]["obj"].incremental_capacity.split(',')
-                                incremental_capacity_data = ', '.join(self.thput_obj_dict[ce][obj_name]["obj"].incremental_capacity)
+                            elif (len(curr_thpt_obj.incremental_capacity) > 1):
+                                curr_thpt_obj.incremental_capacity = curr_thpt_obj.incremental_capacity.split(',')
+                                incremental_capacity_data = ', '.join(curr_thpt_obj.incremental_capacity)
                             else:
                                 incremental_capacity_data = "None"
 
                             # Construct test_setup_info dictionary for test setup table
-                            if self.thput_obj_dict[ce][obj_name]["obj"].group_name:
-                                group_names = ', '.join(self.thput_obj_dict[ce][obj_name]["obj"].configdevices.keys())
-                                profile_names = ', '.join(self.thput_obj_dict[ce][obj_name]["obj"].configdevices.values())
+                            if curr_thpt_obj.group_name:
+                                group_names = ', '.join(curr_thpt_obj.configdevices.keys())
+                                profile_names = ', '.join(curr_thpt_obj.configdevices.values())
                                 configmap = "Groups:" + group_names + " -> Profiles:" + profile_names
                                 test_setup_info = {
-                                    "Test name": self.thput_obj_dict[ce][obj_name]["obj"].test_name,
+                                    "Test name": curr_thpt_obj.test_name,
                                     "Configuration": configmap,
                                     "Configured Devices": ", ".join(all_devices_names),
                                     "No of Devices": "Total" + f"({str(self.thput_obj_dict[ce][obj_name]['obj'].num_stations)})" + total_devices,
                                     "Increment": incremental_capacity_data,
-                                    "Traffic Duration in minutes": round(int(self.thput_obj_dict[ce][obj_name]["obj"].test_duration) * len(incremental_capacity_list) / 60, 2),
-                                    "Traffic Type": (self.thput_obj_dict[ce][obj_name]["obj"].traffic_type.strip("lf_")).upper(),
-                                    "Traffic Direction": self.thput_obj_dict[ce][obj_name]["obj"].direction,
-                                    "Upload Rate(Mbps)": str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000, 2)) + "Mbps",
-                                    "Download Rate(Mbps)": str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000, 2)) + "Mbps",
+                                    "Traffic Duration in minutes": round(int(curr_thpt_obj.test_duration) * len(incremental_capacity_list) / 60, 2),
+                                    "Traffic Type": (curr_thpt_obj.traffic_type.strip("lf_")).upper(),
+                                    "Traffic Direction": curr_thpt_obj.direction,
+                                    "Upload Rate(Mbps)": str(round(int(curr_thpt_obj.cx_profile.side_a_min_bps) / 1000000, 2)) + "Mbps",
+                                    "Download Rate(Mbps)": str(round(int(curr_thpt_obj.cx_profile.side_b_min_bps) / 1000000, 2)) + "Mbps",
                                     "Load Type": load_type_name,
                                     "Packet Size": packet_size_text
                                 }
                             else:
                                 test_setup_info = {
-                                    "Test name": self.thput_obj_dict[ce][obj_name]["obj"].test_name,
+                                    "Test name": curr_thpt_obj.test_name,
                                     "Device List": ", ".join(all_devices_names),
                                     "No of Devices": "Total" + f"({str(self.thput_obj_dict[ce][obj_name]['obj'].num_stations)})" + total_devices,
                                     "Increment": incremental_capacity_data,
-                                    "Traffic Duration in minutes": round(int(self.thput_obj_dict[ce][obj_name]["obj"].test_duration) * len(incremental_capacity_list) / 60, 2),
-                                    "Traffic Type": (self.thput_obj_dict[ce][obj_name]["obj"].traffic_type.strip("lf_")).upper(),
-                                    "Traffic Direction": self.thput_obj_dict[ce][obj_name]["obj"].direction,
-                                    "Upload Rate(Mbps)": str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000, 2)) + "Mbps",
-                                    "Download Rate(Mbps)": str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000, 2)) + "Mbps",
+                                    "Traffic Duration in minutes": round(int(curr_thpt_obj.test_duration) * len(incremental_capacity_list) / 60, 2),
+                                    "Traffic Type": (curr_thpt_obj.traffic_type.strip("lf_")).upper(),
+                                    "Traffic Direction": curr_thpt_obj.direction,
+                                    "Upload Rate(Mbps)": str(round(int(curr_thpt_obj.cx_profile.side_a_min_bps) / 1000000, 2)) + "Mbps",
+                                    "Download Rate(Mbps)": str(round(int(curr_thpt_obj.cx_profile.side_b_min_bps) / 1000000, 2)) + "Mbps",
                                     "Load Type": load_type_name,
                                     "Packet Size": packet_size_text
                                 }
@@ -6394,13 +6384,13 @@ class Candela(Realm):
                                 data_iter = data[data['Iteration'] == i + 1]
                                 avg_rtt_data = []
 
-                                # for sig in self.thput_obj_dict[ce][obj_name]["obj"].signal_list[0:int(incremental_capacity_list[i])]:
+                                # for sig in curr_thpt_obj.signal_list[0:int(incremental_capacity_list[i])]:
                                 #     signal_data.append(int(sig)*(-1))
                                 # rssi_signal_data.append(signal_data)
 
                                 # Fetch devices_on_running from real_client_list
                                 for j in range(data1[i][-1]):
-                                    devices_on_running.append(self.thput_obj_dict[ce][obj_name]["obj"].real_client_list[j].split(" ")[-1])
+                                    devices_on_running.append(curr_thpt_obj.real_client_list[j].split(" ")[-1])
 
                                 # Fetch download_data and upload_data based on load_type and direction
                                 for k in devices_on_running:
@@ -6414,8 +6404,8 @@ class Candela(Realm):
                                     upload_drop_col = filtered_df[[col for col in filtered_df.columns if "Tx % Drop" in col][0]].values.tolist()
                                     download_drop_col = filtered_df[[col for col in filtered_df.columns if "Rx % Drop " in col][0]].values.tolist()
                                     rssi_col = filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()
-                                    if self.thput_obj_dict[ce][obj_name]["obj"].load_type == "wc_intended_load":
-                                        if self.thput_obj_dict[ce][obj_name]["obj"].direction == "Bi-direction":
+                                    if curr_thpt_obj.load_type == "wc_intended_load":
+                                        if curr_thpt_obj.direction == "Bi-direction":
 
                                             # Append average download and upload data from filtered dataframe
                                             download_data.append(round(sum(download_col) / len(download_col), 2))
@@ -6426,15 +6416,15 @@ class Candela(Realm):
                                             rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
                                             avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
                                             # Calculate and append upload and download throughput to lists
-                                            upload_list.append(str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
-                                            download_list.append(str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
-                                            if self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu == -1:
+                                            upload_list.append(str(round((int(curr_thpt_obj.cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
+                                            download_list.append(str(round((int(curr_thpt_obj.cx_profile.side_b_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
+                                            if curr_thpt_obj.cx_profile.side_a_min_pdu == -1:
                                                 packet_size_in_table.append('AUTO')
                                             else:
-                                                packet_size_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu)
-                                            direction_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].direction)
+                                                packet_size_in_table.append(curr_thpt_obj.cx_profile.side_a_min_pdu)
+                                            direction_in_table.append(curr_thpt_obj.direction)
 
-                                        elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Download':
+                                        elif curr_thpt_obj.direction == 'Download':
 
                                             # Append average download data from filtered dataframe
                                             download_data.append(round(sum(download_col) / len(download_col), 2))
@@ -6445,23 +6435,23 @@ class Candela(Realm):
                                             rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
 
                                             # Calculate and append upload and download throughput to lists
-                                            upload_list.append(str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
-                                            download_list.append(str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
+                                            upload_list.append(str(round((int(curr_thpt_obj.cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
+                                            download_list.append(str(round((int(curr_thpt_obj.cx_profile.side_b_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
                                             avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
                                             # Append average download drop data from filtered dataframe
 
                                             download_drop.append(round(sum(download_drop_col) / len(download_drop_col), 2))
-                                            if self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu == -1:
+                                            if curr_thpt_obj.cx_profile.side_a_min_pdu == -1:
                                                 packet_size_in_table.append('AUTO')
                                             else:
-                                                packet_size_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu)
-                                            direction_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].direction)
+                                                packet_size_in_table.append(curr_thpt_obj.cx_profile.side_a_min_pdu)
+                                            direction_in_table.append(curr_thpt_obj.direction)
 
-                                        elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Upload':
+                                        elif curr_thpt_obj.direction == 'Upload':
 
                                             # Calculate and append upload and download throughput to lists
-                                            upload_list.append(str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
-                                            download_list.append(str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
+                                            upload_list.append(str(round((int(curr_thpt_obj.cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
+                                            download_list.append(str(round((int(curr_thpt_obj.cx_profile.side_b_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
 
                                             rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
 
@@ -6473,15 +6463,15 @@ class Candela(Realm):
                                             upload_drop.append(round(sum(upload_drop_col) / len(upload_drop_col), 2))
                                             avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
 
-                                            if self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu == -1:
+                                            if curr_thpt_obj.cx_profile.side_a_min_pdu == -1:
                                                 packet_size_in_table.append('AUTO')
                                             else:
-                                                packet_size_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu)
-                                            direction_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].direction)
+                                                packet_size_in_table.append(curr_thpt_obj.cx_profile.side_a_min_pdu)
+                                            direction_in_table.append(curr_thpt_obj.direction)
 
                                     else:
 
-                                        if self.thput_obj_dict[ce][obj_name]["obj"].direction == "Bi-direction":
+                                        if curr_thpt_obj.direction == "Bi-direction":
                                             # Append average download and upload data from filtered dataframe
                                             download_data.append(round(sum(download_col) / len(download_col), 2))
                                             upload_data.append(round(sum(upload_col) / len(upload_col), 2))
@@ -6493,15 +6483,15 @@ class Candela(Realm):
                                             avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
 
                                             # Calculate and append upload and download throughput to lists
-                                            upload_list.append(str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000, 2)))
-                                            download_list.append(str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000, 2)))
+                                            upload_list.append(str(round(int(curr_thpt_obj.cx_profile.side_a_min_bps) / 1000000, 2)))
+                                            download_list.append(str(round(int(curr_thpt_obj.cx_profile.side_b_min_bps) / 1000000, 2)))
 
-                                            if self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu == -1:
+                                            if curr_thpt_obj.cx_profile.side_a_min_pdu == -1:
                                                 packet_size_in_table.append('AUTO')
                                             else:
-                                                packet_size_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu)
-                                            direction_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].direction)
-                                        elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Download':
+                                                packet_size_in_table.append(curr_thpt_obj.cx_profile.side_a_min_pdu)
+                                            direction_in_table.append(curr_thpt_obj.direction)
+                                        elif curr_thpt_obj.direction == 'Download':
 
                                             # Append average download data from filtered dataframe
                                             download_data.append(round(sum(download_col) / len(download_col), 2))
@@ -6511,20 +6501,20 @@ class Candela(Realm):
                                             avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
 
                                             # Calculate and append upload and download throughput to lists
-                                            upload_list.append(str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000, 2)))
-                                            download_list.append(str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000, 2)))
+                                            upload_list.append(str(round(int(curr_thpt_obj.cx_profile.side_a_min_bps) / 1000000, 2)))
+                                            download_list.append(str(round(int(curr_thpt_obj.cx_profile.side_b_min_bps) / 1000000, 2)))
                                             # Append average download drop data from filtered dataframe
                                             download_drop.append(round(sum(download_drop_col) / len(download_drop_col), 2))
-                                            if self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu == -1:
+                                            if curr_thpt_obj.cx_profile.side_a_min_pdu == -1:
                                                 packet_size_in_table.append('AUTO')
                                             else:
-                                                packet_size_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu)
-                                            direction_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].direction)
-                                        elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Upload':
+                                                packet_size_in_table.append(curr_thpt_obj.cx_profile.side_a_min_pdu)
+                                            direction_in_table.append(curr_thpt_obj.direction)
+                                        elif curr_thpt_obj.direction == 'Upload':
 
                                             # Calculate and append upload and download throughput to lists
-                                            upload_list.append(str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000, 2)) + "Mbps")
-                                            download_list.append(str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000, 2)) + "Mbps")
+                                            upload_list.append(str(round(int(curr_thpt_obj.cx_profile.side_a_min_bps) / 1000000, 2)) + "Mbps")
+                                            download_list.append(str(round(int(curr_thpt_obj.cx_profile.side_b_min_bps) / 1000000, 2)) + "Mbps")
                                             rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
                                             avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
 
@@ -6536,16 +6526,16 @@ class Candela(Realm):
                                             # Append 0 for download data
                                             download_data.append(0)
 
-                                            if self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu == -1:
+                                            if curr_thpt_obj.cx_profile.side_a_min_pdu == -1:
                                                 packet_size_in_table.append('AUTO')
                                             else:
-                                                packet_size_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu)
-                                            direction_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].direction)
+                                                packet_size_in_table.append(curr_thpt_obj.cx_profile.side_a_min_pdu)
+                                            direction_in_table.append(curr_thpt_obj.direction)
                                 data_set_in_graph = []
 
                                 # Depending on the test direction, retrieve corresponding throughput data,
                                 # organize it into datasets for graphing, and calculate real-time average throughput values accordingly.
-                                if self.thput_obj_dict[ce][obj_name]["obj"].direction == "Bi-direction":
+                                if curr_thpt_obj.direction == "Bi-direction":
                                     download_values_list = data['Overall Download'][data['Iteration'] == i + 1].values.tolist()
                                     upload_values_list = data['Overall Upload'][data['Iteration'] == i + 1].values.tolist()
                                     data_set_in_graph.append(download_values_list)
@@ -6558,14 +6548,14 @@ class Candela(Realm):
                                         f"Upload: {round(sum(upload_data[0:int(incremental_capacity_list[i])]), 2)} Mbps"
                                     )
 
-                                elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Download':
+                                elif curr_thpt_obj.direction == 'Download':
                                     download_values_list = data['Overall Download'][data['Iteration'] == i + 1].values.tolist()
                                     data_set_in_graph.append(download_values_list)
                                     devices_data_to_create_bar_graph.append(download_data)
                                     label_data = ['Download']
                                     real_time_data = f"Real Time Throughput: Achieved Throughput: Download : {round(((sum(download_data[0:int(incremental_capacity_list[i])]))), 2)} Mbps"
 
-                                elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Upload':
+                                elif curr_thpt_obj.direction == 'Upload':
                                     upload_values_list = data['Overall Upload'][data['Iteration'] == i + 1].values.tolist()
                                     data_set_in_graph.append(upload_values_list)
                                     devices_data_to_create_bar_graph.append(upload_data)
@@ -6580,7 +6570,7 @@ class Candela(Realm):
                                     _obj_title=f"{real_time_data}",
                                     _obj=" ")
                                 self.overall_report.build_objective()
-                                graph_png = self.thput_obj_dict[ce][obj_name]["obj"].build_line_graph(
+                                graph_png = curr_thpt_obj.build_line_graph(
                                     data_set=data_set_in_graph,
                                     xaxis_name="Time",
                                     yaxis_name="Throughput (Mbps)",
@@ -6640,12 +6630,12 @@ class Candela(Realm):
                                 self.overall_report.set_graph_image(graph_png)
                                 self.overall_report.move_graph_image()
                                 self.overall_report.build_graph()
-                                if (self.thput_obj_dict[ce][obj_name]["obj"].do_bandsteering):
-                                    self.thput_obj_dict[ce][obj_name]["obj"].get_bandsteering_stats(self.overall_report, data, devices_on_running_trimmed)
-                                if (self.thput_obj_dict[ce][obj_name]["obj"].dowebgui and self.thput_obj_dict[ce][obj_name]["obj"].get_live_view):
-                                    self.thput_obj_dict[ce][obj_name]["obj"].add_live_view_images_to_report(self.overall_report)
+                                if (curr_thpt_obj.do_bandsteering):
+                                    curr_thpt_obj.get_bandsteering_stats(self.overall_report, data, devices_on_running_trimmed)
+                                if (curr_thpt_obj.dowebgui and curr_thpt_obj.get_live_view):
+                                    curr_thpt_obj.add_live_view_images_to_report(self.overall_report)
 
-                                if self.thput_obj_dict[ce][obj_name]["obj"].group_name:
+                                if curr_thpt_obj.group_name:
                                     self.overall_report.set_obj_html(
                                         _obj_title="Detailed Result Table For Groups ",
                                         _obj="The below tables provides detailed information for the throughput test on each group.")
@@ -6655,68 +6645,68 @@ class Candela(Realm):
                                         _obj_title="Detailed Result Table ",
                                         _obj="The below tables provides detailed information for the throughput test on each device.")
                                 self.overall_report.build_objective()
-                                self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list = [item.split()[-1] if ' ' in item else item for item in self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list]
-                                if self.thput_obj_dict[ce][obj_name]["obj"].expected_passfail_value or self.thput_obj_dict[ce][obj_name]["obj"].device_csv_name:
-                                    test_input_list, pass_fail_list = self.thput_obj_dict[ce][obj_name]["obj"].get_pass_fail_list(
+                                curr_thpt_obj.mac_id_list = [item.split()[-1] if ' ' in item else item for item in curr_thpt_obj.mac_id_list]
+                                if curr_thpt_obj.expected_passfail_value or curr_thpt_obj.device_csv_name:
+                                    test_input_list, pass_fail_list = curr_thpt_obj.get_pass_fail_list(
                                         device_type, incremental_capacity_list[i], devices_on_running, download_data, upload_data)
-                                if self.thput_obj_dict[ce][obj_name]["obj"].group_name:
-                                    for key, val in self.thput_obj_dict[ce][obj_name]["obj"].group_device_map.items():
-                                        if self.thput_obj_dict[ce][obj_name]["obj"].expected_passfail_value or self.thput_obj_dict[ce][obj_name]["obj"].device_csv_name:
+                                if curr_thpt_obj.group_name:
+                                    for key, val in curr_thpt_obj.group_device_map.items():
+                                        if curr_thpt_obj.expected_passfail_value or curr_thpt_obj.device_csv_name:
                                             # Generating Dataframe when Groups with their profiles and pass_fail case is specified
-                                            dataframe = self.thput_obj_dict[ce][obj_name]["obj"].generate_dataframe(val,
-                                                                                                                    device_type[0:int(incremental_capacity_list[i])],
-                                                                                                                    devices_on_running[0:int(incremental_capacity_list[i])],
-                                                                                                                    self.thput_obj_dict[ce][obj_name]["obj"].ssid_list[0:int(
-                                                                                                                        incremental_capacity_list[i])],
-                                                                                                                    self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list[0:int(
-                                                                                                                        incremental_capacity_list[i])],
-                                                                                                                    self.thput_obj_dict[ce][obj_name]["obj"].channel_list[0:int(
-                                                                                                                        incremental_capacity_list[i])],
-                                                                                                                    self.thput_obj_dict[ce][obj_name]["obj"].mode_list[0:int(
-                                                                                                                        incremental_capacity_list[i])],
-                                                                                                                    direction_in_table[0:int(incremental_capacity_list[i])],
-                                                                                                                    download_list[0:int(incremental_capacity_list[i])],
-                                                                                                                    [str(n) for n in avg_rtt_data[0:int(incremental_capacity_list[i])]],
-                                                                                                                    [str(n) + " Mbps" for n in download_data[0:int(incremental_capacity_list[i])]],
-                                                                                                                    upload_list[0:int(incremental_capacity_list[i])],
-                                                                                                                    [str(n) + " Mbps" for n in upload_data[0:int(incremental_capacity_list[i])]],
-                                                                                                                    ['' if n == 0 else '-' +
-                                                                                                                        str(n) + " dbm" for n in rssi_data[0:int(incremental_capacity_list[i])]],
-                                                                                                                    test_input_list,
-                                                                                                                    self.thput_obj_dict[ce][obj_name]["obj"].link_speed_list[0:int(
-                                                                                                                        incremental_capacity_list[i])],
-                                                                                                                    [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
-                                                                                                                    pass_fail_list,
-                                                                                                                    upload_drop,
-                                                                                                                    download_drop)
+                                            dataframe = curr_thpt_obj.generate_dataframe(val,
+                                                                                         device_type[0:int(incremental_capacity_list[i])],
+                                                                                         devices_on_running[0:int(incremental_capacity_list[i])],
+                                                                                         curr_thpt_obj.ssid_list[0:int(
+                                                                                             incremental_capacity_list[i])],
+                                                                                         curr_thpt_obj.mac_id_list[0:int(
+                                                                                             incremental_capacity_list[i])],
+                                                                                         curr_thpt_obj.channel_list[0:int(
+                                                                                             incremental_capacity_list[i])],
+                                                                                         curr_thpt_obj.mode_list[0:int(
+                                                                                             incremental_capacity_list[i])],
+                                                                                         direction_in_table[0:int(incremental_capacity_list[i])],
+                                                                                         download_list[0:int(incremental_capacity_list[i])],
+                                                                                         [str(n) for n in avg_rtt_data[0:int(incremental_capacity_list[i])]],
+                                                                                         [str(n) + " Mbps" for n in download_data[0:int(incremental_capacity_list[i])]],
+                                                                                         upload_list[0:int(incremental_capacity_list[i])],
+                                                                                         [str(n) + " Mbps" for n in upload_data[0:int(incremental_capacity_list[i])]],
+                                                                                         ['' if n == 0 else '-' +
+                                                                                          str(n) + " dbm" for n in rssi_data[0:int(incremental_capacity_list[i])]],
+                                                                                         test_input_list,
+                                                                                         curr_thpt_obj.link_speed_list[0:int(
+                                                                                             incremental_capacity_list[i])],
+                                                                                         [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
+                                                                                         pass_fail_list,
+                                                                                         upload_drop,
+                                                                                         download_drop)
                                         # Generating Dataframe for groups when pass_fail case is not specified
                                         else:
-                                            dataframe = self.thput_obj_dict[ce][obj_name]["obj"].generate_dataframe(val,
-                                                                                                                    device_type[0:int(incremental_capacity_list[i])],
-                                                                                                                    devices_on_running[0:int(incremental_capacity_list[i])],
-                                                                                                                    self.thput_obj_dict[ce][obj_name]["obj"].ssid_list[0:int(
-                                                                                                                        incremental_capacity_list[i])],
-                                                                                                                    self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list[0:int(
-                                                                                                                        incremental_capacity_list[i])],
-                                                                                                                    self.thput_obj_dict[ce][obj_name]["obj"].channel_list[0:int(
-                                                                                                                        incremental_capacity_list[i])],
-                                                                                                                    self.thput_obj_dict[ce][obj_name]["obj"].mode_list[0:int(
-                                                                                                                        incremental_capacity_list[i])],
-                                                                                                                    direction_in_table[0:int(incremental_capacity_list[i])],
-                                                                                                                    download_list[0:int(incremental_capacity_list[i])],
-                                                                                                                    [str(n) for n in avg_rtt_data[0:int(incremental_capacity_list[i])]],
-                                                                                                                    [str(n) + " Mbps" for n in download_data[0:int(incremental_capacity_list[i])]],
-                                                                                                                    upload_list[0:int(incremental_capacity_list[i])],
-                                                                                                                    [str(n) + " Mbps" for n in upload_data[0:int(incremental_capacity_list[i])]],
-                                                                                                                    ['' if n == 0 else '-' +
-                                                                                                                        str(n) + " dbm" for n in rssi_data[0:int(incremental_capacity_list[i])]],
-                                                                                                                    [],
-                                                                                                                    self.thput_obj_dict[ce][obj_name]["obj"].link_speed_list[0:int(
-                                                                                                                        incremental_capacity_list[i])],
-                                                                                                                    [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
-                                                                                                                    [],
-                                                                                                                    upload_drop,
-                                                                                                                    download_drop)
+                                            dataframe = curr_thpt_obj.generate_dataframe(val,
+                                                                                         device_type[0:int(incremental_capacity_list[i])],
+                                                                                         devices_on_running[0:int(incremental_capacity_list[i])],
+                                                                                         curr_thpt_obj.ssid_list[0:int(
+                                                                                             incremental_capacity_list[i])],
+                                                                                         curr_thpt_obj.mac_id_list[0:int(
+                                                                                             incremental_capacity_list[i])],
+                                                                                         curr_thpt_obj.channel_list[0:int(
+                                                                                             incremental_capacity_list[i])],
+                                                                                         curr_thpt_obj.mode_list[0:int(
+                                                                                             incremental_capacity_list[i])],
+                                                                                         direction_in_table[0:int(incremental_capacity_list[i])],
+                                                                                         download_list[0:int(incremental_capacity_list[i])],
+                                                                                         [str(n) for n in avg_rtt_data[0:int(incremental_capacity_list[i])]],
+                                                                                         [str(n) + " Mbps" for n in download_data[0:int(incremental_capacity_list[i])]],
+                                                                                         upload_list[0:int(incremental_capacity_list[i])],
+                                                                                         [str(n) + " Mbps" for n in upload_data[0:int(incremental_capacity_list[i])]],
+                                                                                         ['' if n == 0 else '-' +
+                                                                                          str(n) + " dbm" for n in rssi_data[0:int(incremental_capacity_list[i])]],
+                                                                                         [],
+                                                                                         curr_thpt_obj.link_speed_list[0:int(
+                                                                                             incremental_capacity_list[i])],
+                                                                                         [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
+                                                                                         [],
+                                                                                         upload_drop,
+                                                                                         download_drop)
                                         if dataframe:
                                             self.overall_report.set_obj_html("", "Group: {}".format(key))
                                             self.overall_report.build_objective()
@@ -6727,24 +6717,24 @@ class Candela(Realm):
                                     bk_dataframe = {
                                         " Device Type ": device_type[0:int(incremental_capacity_list[i])],
                                         " Username": devices_on_running[0:int(incremental_capacity_list[i])],
-                                        " SSID ": self.thput_obj_dict[ce][obj_name]["obj"].ssid_list[0:int(incremental_capacity_list[i])],
-                                        " MAC ": self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list[0:int(incremental_capacity_list[i])],
-                                        " Channel ": self.thput_obj_dict[ce][obj_name]["obj"].channel_list[0:int(incremental_capacity_list[i])],
-                                        " Mode": self.thput_obj_dict[ce][obj_name]["obj"].mode_list[0:int(incremental_capacity_list[i])],
+                                        " SSID ": curr_thpt_obj.ssid_list[0:int(incremental_capacity_list[i])],
+                                        " MAC ": curr_thpt_obj.mac_id_list[0:int(incremental_capacity_list[i])],
+                                        " Channel ": curr_thpt_obj.channel_list[0:int(incremental_capacity_list[i])],
+                                        " Mode": curr_thpt_obj.mode_list[0:int(incremental_capacity_list[i])],
                                         # " Direction":direction_in_table[0:int(incremental_capacity_list[i])],
                                         " Offered download rate (Mbps) ": download_list[0:int(incremental_capacity_list[i])],
                                         " Observed Average download rate (Mbps) ": [str(n) for n in download_data[0:int(incremental_capacity_list[i])]],
                                         " Offered upload rate (Mbps) ": upload_list[0:int(incremental_capacity_list[i])],
                                         " Observed Average upload rate (Mbps) ": [str(n) for n in upload_data[0:int(incremental_capacity_list[i])]],
                                         " RSSI (dBm) ": ['' if n == 0 else '-' + str(n) for n in rssi_data[0:int(incremental_capacity_list[i])]],
-                                        # " Link Speed ":self.thput_obj_dict[ce][obj_name]["obj"].link_speed_list[0:int(incremental_capacity_list[i])],
+                                        # " Link Speed ":curr_thpt_obj.link_speed_list[0:int(incremental_capacity_list[i])],
                                         " Average RTT (ms)": avg_rtt_data[0:int(incremental_capacity_list[i])],
                                         " Packet Size(Bytes) ": [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
                                     }
-                                    if self.thput_obj_dict[ce][obj_name]["obj"].direction == "Bi-direction":
+                                    if curr_thpt_obj.direction == "Bi-direction":
                                         bk_dataframe[" Average Tx Drop % "] = upload_drop
                                         bk_dataframe[" Average Rx Drop % "] = download_drop
-                                    elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Download':
+                                    elif curr_thpt_obj.direction == 'Download':
                                         bk_dataframe[" Average Rx Drop % "] = download_drop
                                         # adding rx drop while uploading as 0
                                         bk_dataframe[" Average Tx Drop % "] = [0.0] * len(download_drop)
@@ -6753,8 +6743,8 @@ class Candela(Realm):
                                         bk_dataframe[" Average Tx Drop % "] = upload_drop
                                         # adding rx drop while downloading as 0
                                         bk_dataframe[" Average Rx Drop % "] = [0.0] * len(upload_drop)
-                                    if self.thput_obj_dict[ce][obj_name]["obj"].expected_passfail_value or self.thput_obj_dict[ce][obj_name]["obj"].device_csv_name:
-                                        bk_dataframe[" Expected " + self.thput_obj_dict[ce][obj_name]["obj"].direction + " rate "] = [str(n) + " Mbps" for n in test_input_list]
+                                    if curr_thpt_obj.expected_passfail_value or curr_thpt_obj.device_csv_name:
+                                        bk_dataframe[" Expected " + curr_thpt_obj.direction + " rate "] = [str(n) + " Mbps" for n in test_input_list]
                                         bk_dataframe[" Status "] = pass_fail_list
                                     dataframe1 = pd.DataFrame(bk_dataframe)
                                     self.overall_report.set_table_dataframe(dataframe1)
@@ -6763,8 +6753,8 @@ class Candela(Realm):
                                 self.overall_report.set_custom_html('<hr>')
                                 self.overall_report.build_custom()
 
-                        elif self.thput_obj_dict[ce][obj_name]["obj"].do_interopability == False and self.robot_test:
-                            if self.thput_obj_dict[ce][obj_name]["obj"].do_interopability is False:
+                        elif not curr_thpt_obj.do_interopability and self.robot_test:
+                            if curr_thpt_obj.do_interopability is False:
                                 self.overall_report.set_obj_html(_obj_title="Input Parameters",
                                                                  _obj="The below tables provides the input parameters for the test")
                                 self.overall_report.build_objective()
@@ -6775,16 +6765,16 @@ class Candela(Realm):
                                 device_type = []
                                 packet_size_text = ''
                                 total_devices = ""
-                                if self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu == -1:
+                                if curr_thpt_obj.cx_profile.side_a_min_pdu == -1:
                                     packet_size_text = 'AUTO'
                                 else:
-                                    packet_size_text = str(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu) + ' Bytes'
-                                # Determine load type name based on self.thput_obj_dict[ce][obj_name]["obj"].load_type
-                                if self.thput_obj_dict[ce][obj_name]["obj"].load_type == "wc_intended_load":
+                                    packet_size_text = str(curr_thpt_obj.cx_profile.side_a_min_pdu) + ' Bytes'
+                                # Determine load type name based on curr_thpt_obj.load_type
+                                if curr_thpt_obj.load_type == "wc_intended_load":
                                     load_type_name = "Intended Load"
                                 else:
                                     load_type_name = "Per Client Load"
-                                for i in self.thput_obj_dict[ce][obj_name]["obj"].real_client_list:
+                                for i in curr_thpt_obj.real_client_list:
                                     split_device_name = i.split(" ")
                                     if 'android' in split_device_name:
                                         all_devices_names.append(split_device_name[2] + ("(Android)"))
@@ -6819,72 +6809,72 @@ class Candela(Realm):
                                 if ios_devices > 0:
                                     total_devices += f" iOS({ios_devices})"
 
-                                # Determine incremental_capacity_data based on self.thput_obj_dict[ce][obj_name]["obj"].incremental_capacity
-                                if self.thput_obj_dict[ce][obj_name]["obj"].gave_incremental:
+                                # Determine incremental_capacity_data based on curr_thpt_obj.incremental_capacity
+                                if curr_thpt_obj.gave_incremental:
                                     incremental_capacity_data = "No Incremental values provided"
-                                elif len(self.thput_obj_dict[ce][obj_name]["obj"].incremental_capacity) == 1:
+                                elif len(curr_thpt_obj.incremental_capacity) == 1:
                                     if len(incremental_capacity_list) == 1:
-                                        incremental_capacity_data = str(self.thput_obj_dict[ce][obj_name]["obj"].incremental_capacity[0])
+                                        incremental_capacity_data = str(curr_thpt_obj.incremental_capacity[0])
                                     else:
                                         incremental_capacity_data = ','.join(map(str, incremental_capacity_list))
-                                elif (len(self.thput_obj_dict[ce][obj_name]["obj"].incremental_capacity) > 1):
-                                    self.thput_obj_dict[ce][obj_name]["obj"].incremental_capacity = self.thput_obj_dict[ce][obj_name]["obj"].incremental_capacity.split(',')
-                                    incremental_capacity_data = ', '.join(self.thput_obj_dict[ce][obj_name]["obj"].incremental_capacity)
+                                elif (len(curr_thpt_obj.incremental_capacity) > 1):
+                                    curr_thpt_obj.incremental_capacity = curr_thpt_obj.incremental_capacity.split(',')
+                                    incremental_capacity_data = ', '.join(curr_thpt_obj.incremental_capacity)
                                 else:
                                     incremental_capacity_data = "None"
 
                                 # Construct test_setup_info dictionary for test setup table
-                                if self.thput_obj_dict[ce][obj_name]["obj"].group_name:
-                                    group_names = ', '.join(self.thput_obj_dict[ce][obj_name]["obj"].configdevices.keys())
-                                    profile_names = ', '.join(self.thput_obj_dict[ce][obj_name]["obj"].configdevices.values())
+                                if curr_thpt_obj.group_name:
+                                    group_names = ', '.join(curr_thpt_obj.configdevices.keys())
+                                    profile_names = ', '.join(curr_thpt_obj.configdevices.values())
                                     configmap = "Groups:" + group_names + " -> Profiles:" + profile_names
                                     test_setup_info = {
-                                        "Test name": self.thput_obj_dict[ce][obj_name]["obj"].test_name,
+                                        "Test name": curr_thpt_obj.test_name,
                                         "Configuration": configmap,
                                         "Configured Devices": ", ".join(all_devices_names),
-                                        # "No of Devices": "Total" + f"({str(self.thput_obj_dict[ce][obj_name]["obj"].num_stations)})" + total_devices,
+                                        # "No of Devices": "Total" + f"({str(curr_thpt_obj.num_stations)})" + total_devices,
                                         "No of Devices": f"Total ({self.thput_obj_dict[ce][obj_name]['obj'].num_stations}) {total_devices}",
                                         "Increment": incremental_capacity_data,
-                                        "Traffic Duration in minutes": round(int(self.thput_obj_dict[ce][obj_name]["obj"].test_duration) * len(incremental_capacity_list) / 60, 2),
-                                        "Traffic Type": (self.thput_obj_dict[ce][obj_name]["obj"].traffic_type.strip("lf_")).upper(),
-                                        "Traffic Direction": self.thput_obj_dict[ce][obj_name]["obj"].direction,
-                                        "Upload Rate(Mbps)": str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000, 2)) + "Mbps",
-                                        "Download Rate(Mbps)": str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000, 2)) + "Mbps",
+                                        "Traffic Duration in minutes": round(int(curr_thpt_obj.test_duration) * len(incremental_capacity_list) / 60, 2),
+                                        "Traffic Type": (curr_thpt_obj.traffic_type.strip("lf_")).upper(),
+                                        "Traffic Direction": curr_thpt_obj.direction,
+                                        "Upload Rate(Mbps)": str(round(int(curr_thpt_obj.cx_profile.side_a_min_bps) / 1000000, 2)) + "Mbps",
+                                        "Download Rate(Mbps)": str(round(int(curr_thpt_obj.cx_profile.side_b_min_bps) / 1000000, 2)) + "Mbps",
                                         "Load Type": load_type_name,
                                         "Packet Size": packet_size_text
                                     }
                                 else:
                                     test_setup_info = {
-                                        "Test name": self.thput_obj_dict[ce][obj_name]["obj"].test_name,
+                                        "Test name": curr_thpt_obj.test_name,
                                         "Device List": ", ".join(all_devices_names),
-                                        # "No of Devices": "Total" + f"({str(self.thput_obj_dict[ce][obj_name]["obj"].num_stations)})" + total_devices,
+                                        # "No of Devices": "Total" + f"({str(curr_thpt_obj.num_stations)})" + total_devices,
                                         "No of Devices": f"Total ({self.thput_obj_dict[ce][obj_name]['obj'].num_stations}) {total_devices}",
                                         "Increment": incremental_capacity_data,
-                                        "Traffic Duration in minutes": round(int(self.thput_obj_dict[ce][obj_name]["obj"].test_duration) * len(incremental_capacity_list) / 60, 2),
-                                        "Traffic Type": (self.thput_obj_dict[ce][obj_name]["obj"].traffic_type.strip("lf_")).upper(),
-                                        "Traffic Direction": self.thput_obj_dict[ce][obj_name]["obj"].direction,
-                                        "Upload Rate(Mbps)": str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000, 2)) + "Mbps",
-                                        "Download Rate(Mbps)": str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000, 2)) + "Mbps",
+                                        "Traffic Duration in minutes": round(int(curr_thpt_obj.test_duration) * len(incremental_capacity_list) / 60, 2),
+                                        "Traffic Type": (curr_thpt_obj.traffic_type.strip("lf_")).upper(),
+                                        "Traffic Direction": curr_thpt_obj.direction,
+                                        "Upload Rate(Mbps)": str(round(int(curr_thpt_obj.cx_profile.side_a_min_bps) / 1000000, 2)) + "Mbps",
+                                        "Download Rate(Mbps)": str(round(int(curr_thpt_obj.cx_profile.side_b_min_bps) / 1000000, 2)) + "Mbps",
                                         "Load Type": load_type_name,
                                         "Packet Size": packet_size_text
                                     }
                                 # Add robot IP, completed coordinates, and selected angles to the test summary
-                                test_setup_info["ROBOT IP"] = self.thput_obj_dict[ce][obj_name]["obj"].robo_ip
-                                test_setup_info["Selected Coordinates"] = ",".join(self.thput_obj_dict[ce][obj_name]["obj"].coordinates_completed)
-                                if self.thput_obj_dict[ce][obj_name]["obj"].rotation_enabled:
-                                    test_setup_info["Selected Angles"] = ",".join(self.thput_obj_dict[ce][obj_name]["obj"].angle_list)
+                                test_setup_info["ROBOT IP"] = curr_thpt_obj.robo_ip
+                                test_setup_info["Selected Coordinates"] = ",".join(curr_thpt_obj.coordinates_completed)
+                                if curr_thpt_obj.rotation_enabled:
+                                    test_setup_info["Selected Angles"] = ",".join(curr_thpt_obj.angle_list)
 
                                 self.overall_report.test_setup_table(test_setup_data=test_setup_info, value="Test Configuration")
 
                                 # Add live view images in case of robot testing from webui
-                                if self.thput_obj_dict[ce][obj_name]["obj"].dowebgui:
+                                if curr_thpt_obj.dowebgui:
 
                                     throughput_image_path = os.path.join(
-                                        self.thput_obj_dict[ce][obj_name]["obj"].result_dir, "live_view_images", f'{
-                                            self.thput_obj_dict[ce][obj_name]["obj"].test_name}_throughput.png')
+                                        curr_thpt_obj.result_dir, "live_view_images", f'{
+                                            curr_thpt_obj.test_name}_throughput.png')
                                     rssi_image_path = os.path.join(
-                                        self.thput_obj_dict[ce][obj_name]["obj"].result_dir, "live_view_images", f'{
-                                            self.thput_obj_dict[ce][obj_name]["obj"].test_name}_rssi.png')
+                                        curr_thpt_obj.result_dir, "live_view_images", f'{
+                                            curr_thpt_obj.test_name}_rssi.png')
                                     timeout = 300  # seconds
                                     start_time = time.time()
 
@@ -6910,18 +6900,18 @@ class Candela(Realm):
                                         self.overall_report.set_custom_html(f'<img src="file://{rssi_image_path}" style="width:1500px; height:900px;"></img>')
                                         self.overall_report.build_custom()
                                 # Loop through each coordinate
-                                for i, coordinate in enumerate(self.thput_obj_dict[ce][obj_name]["obj"].coordinates_completed):
+                                for i, coordinate in enumerate(curr_thpt_obj.coordinates_completed):
 
                                     self.overall_report.set_obj_html(
                                         _obj_title=f"<h3 style='text-decoration: underline;'>Throughput Test Details – Robot Position: Point {coordinate}</h3>",
                                         _obj=" ")
                                     self.overall_report.build_objective()
-                                    logging.info("Result directory: %s", self.thput_obj_dict[ce][obj_name]["obj"].result_dir)
+                                    logging.info("Result directory: %s", curr_thpt_obj.result_dir)
                                     coordinate_csv = f"{coordinate}_throughput_data.csv"
-                                    file_path = os.path.join(self.thput_obj_dict[ce][obj_name]["obj"].result_dir, coordinate_csv)
+                                    file_path = os.path.join(curr_thpt_obj.result_dir, coordinate_csv)
                                     data = pd.read_csv(file_path)
 
-                                    for angle in self.thput_obj_dict[ce][obj_name]["obj"].angle_list:
+                                    for angle in curr_thpt_obj.angle_list:
                                         # Loop through iterations and build graphs, tables for each iteration
                                         for i in range(len(iterations_before_test_stopped_by_user)):
                                             # rssi_signal_data=[]
@@ -6939,13 +6929,13 @@ class Candela(Realm):
                                             data_iter = data[data['Iteration'] == i + 1]
                                             avg_rtt_data = []
 
-                                            # for sig in self.thput_obj_dict[ce][obj_name]["obj"].signal_list[0:int(incremental_capacity_list[i])]:
+                                            # for sig in curr_thpt_obj.signal_list[0:int(incremental_capacity_list[i])]:
                                             #     signal_data.append(int(sig)*(-1))
                                             # rssi_signal_data.append(signal_data)
 
                                             # Fetch devices_on_running from real_client_list
                                             for j in range(data1[i][-1]):
-                                                devices_on_running.append(self.thput_obj_dict[ce][obj_name]["obj"].real_client_list[j].split(" ")[-1])
+                                                devices_on_running.append(curr_thpt_obj.real_client_list[j].split(" ")[-1])
 
                                             # Fetch download_data and upload_data based on load_type and direction
                                             for k in devices_on_running:
@@ -6953,7 +6943,7 @@ class Candela(Realm):
 
                                                 # Checking individual device download and upload rate by searching device name in dataframe
                                                 columns_with_substring = [col for col in data_iter.columns if k in col]
-                                                if self.thput_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                                if curr_thpt_obj.rotation_enabled:
                                                     angle = float(angle)
                                                     filtered_df = data_iter.loc[data_iter["Angle"] == angle, columns_with_substring]
                                                 else:
@@ -6963,8 +6953,8 @@ class Candela(Realm):
                                                 upload_drop_col = filtered_df[[col for col in filtered_df.columns if "Tx % Drop" in col][0]].values.tolist()
                                                 download_drop_col = filtered_df[[col for col in filtered_df.columns if "Rx % Drop " in col][0]].values.tolist()
                                                 rssi_col = filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()
-                                                if self.thput_obj_dict[ce][obj_name]["obj"].load_type == "wc_intended_load":
-                                                    if self.thput_obj_dict[ce][obj_name]["obj"].direction == "Bi-direction":
+                                                if curr_thpt_obj.load_type == "wc_intended_load":
+                                                    if curr_thpt_obj.direction == "Bi-direction":
 
                                                         # Append average download and upload data from filtered dataframe
                                                         download_data.append(round(sum(download_col) / len(download_col), 2))
@@ -6976,16 +6966,16 @@ class Candela(Realm):
                                                         avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
                                                         # Calculate and append upload and download throughput to lists
                                                         upload_list.append(
-                                                            str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
+                                                            str(round((int(curr_thpt_obj.cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
                                                         download_list.append(
-                                                            str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
-                                                        if self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu == -1:
+                                                            str(round((int(curr_thpt_obj.cx_profile.side_b_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
+                                                        if curr_thpt_obj.cx_profile.side_a_min_pdu == -1:
                                                             packet_size_in_table.append('AUTO')
                                                         else:
-                                                            packet_size_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu)
-                                                        direction_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].direction)
+                                                            packet_size_in_table.append(curr_thpt_obj.cx_profile.side_a_min_pdu)
+                                                        direction_in_table.append(curr_thpt_obj.direction)
 
-                                                    elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Download':
+                                                    elif curr_thpt_obj.direction == 'Download':
 
                                                         # Append average download data from filtered dataframe
                                                         download_data.append(round(sum(download_col) / len(download_col), 2))
@@ -6997,26 +6987,26 @@ class Candela(Realm):
 
                                                         # Calculate and append upload and download throughput to lists
                                                         upload_list.append(
-                                                            str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
+                                                            str(round((int(curr_thpt_obj.cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
                                                         download_list.append(
-                                                            str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
+                                                            str(round((int(curr_thpt_obj.cx_profile.side_b_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
                                                         avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
                                                         # Append average download drop data from filtered dataframe
 
                                                         download_drop.append(round(sum(download_drop_col) / len(download_drop_col), 2))
-                                                        if self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu == -1:
+                                                        if curr_thpt_obj.cx_profile.side_a_min_pdu == -1:
                                                             packet_size_in_table.append('AUTO')
                                                         else:
-                                                            packet_size_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu)
-                                                        direction_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].direction)
+                                                            packet_size_in_table.append(curr_thpt_obj.cx_profile.side_a_min_pdu)
+                                                        direction_in_table.append(curr_thpt_obj.direction)
 
-                                                    elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Upload':
+                                                    elif curr_thpt_obj.direction == 'Upload':
 
                                                         # Calculate and append upload and download throughput to lists
                                                         upload_list.append(
-                                                            str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
+                                                            str(round((int(curr_thpt_obj.cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
                                                         download_list.append(
-                                                            str(round((int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
+                                                            str(round((int(curr_thpt_obj.cx_profile.side_b_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
 
                                                         rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
 
@@ -7028,15 +7018,15 @@ class Candela(Realm):
                                                         upload_drop.append(round(sum(upload_drop_col) / len(upload_drop_col), 2))
                                                         avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
 
-                                                        if self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu == -1:
+                                                        if curr_thpt_obj.cx_profile.side_a_min_pdu == -1:
                                                             packet_size_in_table.append('AUTO')
                                                         else:
-                                                            packet_size_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu)
-                                                        direction_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].direction)
+                                                            packet_size_in_table.append(curr_thpt_obj.cx_profile.side_a_min_pdu)
+                                                        direction_in_table.append(curr_thpt_obj.direction)
 
                                                 else:
 
-                                                    if self.thput_obj_dict[ce][obj_name]["obj"].direction == "Bi-direction":
+                                                    if curr_thpt_obj.direction == "Bi-direction":
                                                         # Append average download and upload data from filtered dataframe
                                                         download_data.append(round(sum(download_col) / len(download_col), 2))
                                                         upload_data.append(round(sum(upload_col) / len(upload_col), 2))
@@ -7048,15 +7038,15 @@ class Candela(Realm):
                                                         avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
 
                                                         # Calculate and append upload and download throughput to lists
-                                                        upload_list.append(str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000, 2)))
-                                                        download_list.append(str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000, 2)))
+                                                        upload_list.append(str(round(int(curr_thpt_obj.cx_profile.side_a_min_bps) / 1000000, 2)))
+                                                        download_list.append(str(round(int(curr_thpt_obj.cx_profile.side_b_min_bps) / 1000000, 2)))
 
-                                                        if self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu == -1:
+                                                        if curr_thpt_obj.cx_profile.side_a_min_pdu == -1:
                                                             packet_size_in_table.append('AUTO')
                                                         else:
-                                                            packet_size_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu)
-                                                        direction_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].direction)
-                                                    elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Download':
+                                                            packet_size_in_table.append(curr_thpt_obj.cx_profile.side_a_min_pdu)
+                                                        direction_in_table.append(curr_thpt_obj.direction)
+                                                    elif curr_thpt_obj.direction == 'Download':
 
                                                         # Append average download data from filtered dataframe
                                                         download_data.append(round(sum(download_col) / len(download_col), 2))
@@ -7066,20 +7056,20 @@ class Candela(Realm):
                                                         avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
 
                                                         # Calculate and append upload and download throughput to lists
-                                                        upload_list.append(str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000, 2)))
-                                                        download_list.append(str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000, 2)))
+                                                        upload_list.append(str(round(int(curr_thpt_obj.cx_profile.side_a_min_bps) / 1000000, 2)))
+                                                        download_list.append(str(round(int(curr_thpt_obj.cx_profile.side_b_min_bps) / 1000000, 2)))
                                                         # Append average download drop data from filtered dataframe
                                                         download_drop.append(round(sum(download_drop_col) / len(download_drop_col), 2))
-                                                        if self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu == -1:
+                                                        if curr_thpt_obj.cx_profile.side_a_min_pdu == -1:
                                                             packet_size_in_table.append('AUTO')
                                                         else:
-                                                            packet_size_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu)
-                                                        direction_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].direction)
-                                                    elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Upload':
+                                                            packet_size_in_table.append(curr_thpt_obj.cx_profile.side_a_min_pdu)
+                                                        direction_in_table.append(curr_thpt_obj.direction)
+                                                    elif curr_thpt_obj.direction == 'Upload':
 
                                                         # Calculate and append upload and download throughput to lists
-                                                        upload_list.append(str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000, 2)) + "Mbps")
-                                                        download_list.append(str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000, 2)) + "Mbps")
+                                                        upload_list.append(str(round(int(curr_thpt_obj.cx_profile.side_a_min_bps) / 1000000, 2)) + "Mbps")
+                                                        download_list.append(str(round(int(curr_thpt_obj.cx_profile.side_b_min_bps) / 1000000, 2)) + "Mbps")
                                                         rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
                                                         avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
 
@@ -7091,21 +7081,21 @@ class Candela(Realm):
                                                         # Append 0 for download data
                                                         download_data.append(0)
 
-                                                        if self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu == -1:
+                                                        if curr_thpt_obj.cx_profile.side_a_min_pdu == -1:
                                                             packet_size_in_table.append('AUTO')
                                                         else:
-                                                            packet_size_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu)
-                                                        direction_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].direction)
+                                                            packet_size_in_table.append(curr_thpt_obj.cx_profile.side_a_min_pdu)
+                                                        direction_in_table.append(curr_thpt_obj.direction)
 
                                             data_set_in_graph = []
                                             data_for_angle = []
-                                            if self.thput_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                            if curr_thpt_obj.rotation_enabled:
                                                 angle = float(angle)
                                                 data_for_angle = data[data["Angle"] == angle]
                                             # Depending on the test direction, retrieve corresponding throughput data,
                                             # organize it into datasets for graphing, and calculate real-time average throughput values accordingly.
-                                            if self.thput_obj_dict[ce][obj_name]["obj"].direction == "Bi-direction":
-                                                if self.thput_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                            if curr_thpt_obj.direction == "Bi-direction":
+                                                if curr_thpt_obj.rotation_enabled:
                                                     download_values_list = data_for_angle['Overall Download'][data_for_angle['Iteration'] == i + 1].values.tolist()
                                                     upload_values_list = data_for_angle['Overall Upload'][data_for_angle['Iteration'] == i + 1].values.tolist()
                                                 else:
@@ -7116,27 +7106,27 @@ class Candela(Realm):
                                                 devices_data_to_create_bar_graph.append(download_data)
                                                 devices_data_to_create_bar_graph.append(upload_data)
                                                 label_data = ['Download', 'Upload']
-                                                if not self.thput_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                                if not curr_thpt_obj.rotation_enabled:
                                                     real_time_data = (
                                                         f"Real Time Throughput: Achieved Throughput: Download:{round(sum(download_data[0:int(incremental_capacity_list[i])]), 2)} Mbps, "
                                                         f"Upload: {round(sum(upload_data[0:int(incremental_capacity_list[i])]), 2)} Mbps"
                                                     )
                                                 else:
                                                     real_time_data = (
-                                                        f"Real Time Throughput: Achieved Throughput At Angle {angle}: Download: {round(sum(download_data[0:int(incremental_capacity_list[i])]), 2)} Mbps, "
+                                                        f"Real Time Throughput: Achieved Throughput At Angle {angle}: Download: {round(sum(download_data[0:int(incremental_capacity_list[i])]), 2)} Mbps, "  # noqa: E501
                                                         f"Upload: {round(sum(upload_data[0:int(incremental_capacity_list[i])]), 2)} Mbps"
                                                     )
 
-                                            elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Download':
-                                                if self.thput_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                            elif curr_thpt_obj.direction == 'Download':
+                                                if curr_thpt_obj.rotation_enabled:
                                                     download_values_list = data_for_angle['Overall Download'][data_for_angle['Iteration'] == i + 1].values.tolist()
                                                 else:
                                                     download_values_list = data['Overall Download'][data['Iteration'] == i + 1].values.tolist()
                                                 data_set_in_graph.append(download_values_list)
                                                 devices_data_to_create_bar_graph.append(download_data)
                                                 label_data = ['Download']
-                                                if not self.thput_obj_dict[ce][obj_name]["obj"].rotation_enabled:
-                                                    real_time_data = f"Real Time Throughput: Achieved Throughput: Download : {round(((sum(download_data[0:int(incremental_capacity_list[i])]))), 2)} Mbps"
+                                                if not curr_thpt_obj.rotation_enabled:
+                                                    real_time_data = f"Real Time Throughput: Achieved Throughput: Download : {round(((sum(download_data[0:int(incremental_capacity_list[i])]))), 2)} Mbps"  # noqa E501
                                                 else:
                                                     real_time_data = f"Real Time Throughput: Achieved Throughput At Angle {angle}: Download : {
                                                         round(
@@ -7146,15 +7136,15 @@ class Candela(Realm):
                                                                         incremental_capacity_list[i])]))),
                                                             2)} Mbps"
 
-                                            elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Upload':
-                                                if self.thput_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                            elif curr_thpt_obj.direction == 'Upload':
+                                                if curr_thpt_obj.rotation_enabled:
                                                     upload_values_list = data_for_angle['Overall Upload'][data_for_angle['Iteration'] == i + 1].values.tolist()
                                                 else:
                                                     upload_values_list = data['Overall Upload'][data['Iteration'] == i + 1].values.tolist()
                                                 data_set_in_graph.append(upload_values_list)
                                                 devices_data_to_create_bar_graph.append(upload_data)
                                                 label_data = ['Upload']
-                                                if not self.thput_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                                if not curr_thpt_obj.rotation_enabled:
                                                     real_time_data = f"Real Time Throughput: Achieved Throughput: Upload : {round((sum(upload_data[0:int(incremental_capacity_list[i])])), 2)} Mbps"
                                                 else:
                                                     real_time_data = f"Real Time Throughput: Achieved Throughput At Angle {angle}: Upload : {
@@ -7173,13 +7163,13 @@ class Candela(Realm):
                                                 _obj_title=f"{real_time_data}",
                                                 _obj=" ")
                                             self.overall_report.build_objective()
-                                            if self.thput_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                            if curr_thpt_obj.rotation_enabled:
                                                 xaxis_categories = data_for_angle['TIMESTAMP'][data_for_angle['Iteration'] == i + 1].values.tolist()
                                                 graph_image_name = "line_graph{}_{}_{}".format(coordinate, angle, i)
                                             else:
                                                 xaxis_categories = data['TIMESTAMP'][data['Iteration'] == i + 1].values.tolist()
                                                 graph_image_name = "line_graph{}_{}".format(coordinate, i)
-                                            graph_png = self.thput_obj_dict[ce][obj_name]["obj"].build_line_graph(
+                                            graph_png = curr_thpt_obj.build_line_graph(
                                                 data_set=data_set_in_graph,
                                                 xaxis_name="Time",
                                                 yaxis_name="Throughput (Mbps)",
@@ -7193,7 +7183,7 @@ class Candela(Realm):
 
                                             self.overall_report.build_graph()
 
-                                            if self.thput_obj_dict[ce][obj_name]["obj"].group_name:
+                                            if curr_thpt_obj.group_name:
                                                 self.overall_report.set_obj_html(
                                                     _obj_title="Detailed Result Table For Groups ",
                                                     _obj="The below tables provides detailed information for the throughput test on each group.")
@@ -7203,69 +7193,69 @@ class Candela(Realm):
                                                     _obj_title="Detailed Result Table ",
                                                     _obj="The below tables provides detailed information for the throughput test on each device.")
                                             self.overall_report.build_objective()
-                                            self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list = [
-                                                item.split()[-1] if ' ' in item else item for item in self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list]
-                                            if self.thput_obj_dict[ce][obj_name]["obj"].expected_passfail_value or self.thput_obj_dict[ce][obj_name]["obj"].device_csv_name:
-                                                test_input_list, pass_fail_list = self.thput_obj_dict[ce][obj_name]["obj"].get_pass_fail_list(
+                                            curr_thpt_obj.mac_id_list = [
+                                                item.split()[-1] if ' ' in item else item for item in curr_thpt_obj.mac_id_list]
+                                            if curr_thpt_obj.expected_passfail_value or curr_thpt_obj.device_csv_name:
+                                                test_input_list, pass_fail_list = curr_thpt_obj.get_pass_fail_list(
                                                     device_type, incremental_capacity_list[i], devices_on_running, download_data, upload_data)
-                                            if self.thput_obj_dict[ce][obj_name]["obj"].group_name:
-                                                for key, val in self.thput_obj_dict[ce][obj_name]["obj"].group_device_map.items():
-                                                    if self.thput_obj_dict[ce][obj_name]["obj"].expected_passfail_value or self.thput_obj_dict[ce][obj_name]["obj"].device_csv_name:
+                                            if curr_thpt_obj.group_name:
+                                                for key, val in curr_thpt_obj.group_device_map.items():
+                                                    if curr_thpt_obj.expected_passfail_value or curr_thpt_obj.device_csv_name:
                                                         # Generating Dataframe when Groups with their profiles and pass_fail case is specified
-                                                        dataframe = self.thput_obj_dict[ce][obj_name]["obj"].generate_dataframe(val,
-                                                                                                                                device_type[0:int(incremental_capacity_list[i])],
-                                                                                                                                devices_on_running[0:int(incremental_capacity_list[i])],
-                                                                                                                                self.thput_obj_dict[ce][obj_name]["obj"].ssid_list[0:int(
-                                                                                                                                    incremental_capacity_list[i])],
-                                                                                                                                self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list[0:int(
-                                                                                                                                    incremental_capacity_list[i])],
-                                                                                                                                self.thput_obj_dict[ce][obj_name]["obj"].channel_list[0:int(
-                                                                                                                                    incremental_capacity_list[i])],
-                                                                                                                                self.thput_obj_dict[ce][obj_name]["obj"].mode_list[0:int(
-                                                                                                                                    incremental_capacity_list[i])],
-                                                                                                                                direction_in_table[0:int(incremental_capacity_list[i])],
-                                                                                                                                download_list[0:int(incremental_capacity_list[i])],
-                                                                                                                                [str(n) for n in avg_rtt_data[0:int(incremental_capacity_list[i])]],
-                                                                                                                                [str(n) + " Mbps" for n in download_data[0:int(incremental_capacity_list[i])]],
-                                                                                                                                upload_list[0:int(incremental_capacity_list[i])],
-                                                                                                                                [str(n) + " Mbps" for n in upload_data[0:int(incremental_capacity_list[i])]],
-                                                                                                                                ['' if n == 0 else '-' +
-                                                                                                                                    str(n) + " dbm" for n in rssi_data[0:int(incremental_capacity_list[i])]],
-                                                                                                                                test_input_list,
-                                                                                                                                self.thput_obj_dict[ce][obj_name]["obj"].link_speed_list[0:int(
-                                                                                                                                    incremental_capacity_list[i])],
-                                                                                                                                [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
-                                                                                                                                pass_fail_list,
-                                                                                                                                upload_drop,
-                                                                                                                                download_drop)
+                                                        dataframe = curr_thpt_obj.generate_dataframe(val,
+                                                                                                     device_type[0:int(incremental_capacity_list[i])],
+                                                                                                     devices_on_running[0:int(incremental_capacity_list[i])],
+                                                                                                     curr_thpt_obj.ssid_list[0:int(
+                                                                                                         incremental_capacity_list[i])],
+                                                                                                     curr_thpt_obj.mac_id_list[0:int(
+                                                                                                         incremental_capacity_list[i])],
+                                                                                                     curr_thpt_obj.channel_list[0:int(
+                                                                                                         incremental_capacity_list[i])],
+                                                                                                     curr_thpt_obj.mode_list[0:int(
+                                                                                                         incremental_capacity_list[i])],
+                                                                                                     direction_in_table[0:int(incremental_capacity_list[i])],
+                                                                                                     download_list[0:int(incremental_capacity_list[i])],
+                                                                                                     [str(n) for n in avg_rtt_data[0:int(incremental_capacity_list[i])]],
+                                                                                                     [str(n) + " Mbps" for n in download_data[0:int(incremental_capacity_list[i])]],
+                                                                                                     upload_list[0:int(incremental_capacity_list[i])],
+                                                                                                     [str(n) + " Mbps" for n in upload_data[0:int(incremental_capacity_list[i])]],
+                                                                                                     ['' if n == 0 else '-' +
+                                                                                                      str(n) + " dbm" for n in rssi_data[0:int(incremental_capacity_list[i])]],
+                                                                                                     test_input_list,
+                                                                                                     curr_thpt_obj.link_speed_list[0:int(
+                                                                                                         incremental_capacity_list[i])],
+                                                                                                     [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
+                                                                                                     pass_fail_list,
+                                                                                                     upload_drop,
+                                                                                                     download_drop)
                                                     # Generating Dataframe for groups when pass_fail case is not specified
                                                     else:
-                                                        dataframe = self.thput_obj_dict[ce][obj_name]["obj"].generate_dataframe(val,
-                                                                                                                                device_type[0:int(incremental_capacity_list[i])],
-                                                                                                                                devices_on_running[0:int(incremental_capacity_list[i])],
-                                                                                                                                self.thput_obj_dict[ce][obj_name]["obj"].ssid_list[0:int(
-                                                                                                                                    incremental_capacity_list[i])],
-                                                                                                                                self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list[0:int(
-                                                                                                                                    incremental_capacity_list[i])],
-                                                                                                                                self.thput_obj_dict[ce][obj_name]["obj"].channel_list[0:int(
-                                                                                                                                    incremental_capacity_list[i])],
-                                                                                                                                self.thput_obj_dict[ce][obj_name]["obj"].mode_list[0:int(
-                                                                                                                                    incremental_capacity_list[i])],
-                                                                                                                                direction_in_table[0:int(incremental_capacity_list[i])],
-                                                                                                                                download_list[0:int(incremental_capacity_list[i])],
-                                                                                                                                [str(n) for n in avg_rtt_data[0:int(incremental_capacity_list[i])]],
-                                                                                                                                [str(n) + " Mbps" for n in download_data[0:int(incremental_capacity_list[i])]],
-                                                                                                                                upload_list[0:int(incremental_capacity_list[i])],
-                                                                                                                                [str(n) + " Mbps" for n in upload_data[0:int(incremental_capacity_list[i])]],
-                                                                                                                                ['' if n == 0 else '-' +
-                                                                                                                                    str(n) + " dbm" for n in rssi_data[0:int(incremental_capacity_list[i])]],
-                                                                                                                                [],
-                                                                                                                                self.thput_obj_dict[ce][obj_name]["obj"].link_speed_list[0:int(
-                                                                                                                                    incremental_capacity_list[i])],
-                                                                                                                                [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
-                                                                                                                                [],
-                                                                                                                                upload_drop,
-                                                                                                                                download_drop)
+                                                        dataframe = curr_thpt_obj.generate_dataframe(val,
+                                                                                                     device_type[0:int(incremental_capacity_list[i])],
+                                                                                                     devices_on_running[0:int(incremental_capacity_list[i])],
+                                                                                                     curr_thpt_obj.ssid_list[0:int(
+                                                                                                         incremental_capacity_list[i])],
+                                                                                                     curr_thpt_obj.mac_id_list[0:int(
+                                                                                                         incremental_capacity_list[i])],
+                                                                                                     curr_thpt_obj.channel_list[0:int(
+                                                                                                         incremental_capacity_list[i])],
+                                                                                                     curr_thpt_obj.mode_list[0:int(
+                                                                                                         incremental_capacity_list[i])],
+                                                                                                     direction_in_table[0:int(incremental_capacity_list[i])],
+                                                                                                     download_list[0:int(incremental_capacity_list[i])],
+                                                                                                     [str(n) for n in avg_rtt_data[0:int(incremental_capacity_list[i])]],
+                                                                                                     [str(n) + " Mbps" for n in download_data[0:int(incremental_capacity_list[i])]],
+                                                                                                     upload_list[0:int(incremental_capacity_list[i])],
+                                                                                                     [str(n) + " Mbps" for n in upload_data[0:int(incremental_capacity_list[i])]],
+                                                                                                     ['' if n == 0 else '-' +
+                                                                                                      str(n) + " dbm" for n in rssi_data[0:int(incremental_capacity_list[i])]],
+                                                                                                     [],
+                                                                                                     curr_thpt_obj.link_speed_list[0:int(
+                                                                                                         incremental_capacity_list[i])],
+                                                                                                     [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
+                                                                                                     [],
+                                                                                                     upload_drop,
+                                                                                                     download_drop)
                                                     if dataframe:
                                                         self.overall_report.set_obj_html("", "Group: {}".format(key))
                                                         self.overall_report.build_objective()
@@ -7276,10 +7266,10 @@ class Candela(Realm):
                                                 bk_dataframe = {
                                                     " Device Type ": device_type[0:int(incremental_capacity_list[i])],
                                                     " Username": devices_on_running[0:int(incremental_capacity_list[i])],
-                                                    " SSID ": self.thput_obj_dict[ce][obj_name]["obj"].ssid_list[0:int(incremental_capacity_list[i])],
-                                                    " MAC ": self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list[0:int(incremental_capacity_list[i])],
-                                                    " Channel ": self.thput_obj_dict[ce][obj_name]["obj"].channel_list[0:int(incremental_capacity_list[i])],
-                                                    " Mode": self.thput_obj_dict[ce][obj_name]["obj"].mode_list[0:int(incremental_capacity_list[i])],
+                                                    " SSID ": curr_thpt_obj.ssid_list[0:int(incremental_capacity_list[i])],
+                                                    " MAC ": curr_thpt_obj.mac_id_list[0:int(incremental_capacity_list[i])],
+                                                    " Channel ": curr_thpt_obj.channel_list[0:int(incremental_capacity_list[i])],
+                                                    " Mode": curr_thpt_obj.mode_list[0:int(incremental_capacity_list[i])],
                                                     # " Direction":direction_in_table[0:int(incremental_capacity_list[i])],
                                                     " Offered download rate (Mbps) ": download_list[0:int(incremental_capacity_list[i])],
                                                     " Observed Average download rate (Mbps) ": [str(n) for n in download_data[0:int(incremental_capacity_list[i])]],
@@ -7290,10 +7280,10 @@ class Candela(Realm):
                                                     " Average RTT (ms)": avg_rtt_data[0:int(incremental_capacity_list[i])],
                                                     " Packet Size(Bytes) ": [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
                                                 }
-                                                if self.thput_obj_dict[ce][obj_name]["obj"].direction == "Bi-direction":
+                                                if curr_thpt_obj.direction == "Bi-direction":
                                                     bk_dataframe[" Average Tx Drop % "] = upload_drop
                                                     bk_dataframe[" Average Rx Drop % "] = download_drop
-                                                elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Download':
+                                                elif curr_thpt_obj.direction == 'Download':
                                                     bk_dataframe[" Average Rx Drop % "] = download_drop
                                                     # adding rx drop while uploading as 0
                                                     bk_dataframe[" Average Tx Drop % "] = [0.0] * len(download_drop)
@@ -7302,29 +7292,29 @@ class Candela(Realm):
                                                     bk_dataframe[" Average Tx Drop % "] = upload_drop
                                                     # adding rx drop while downloading as 0
                                                     bk_dataframe[" Average Rx Drop % "] = [0.0] * len(upload_drop)
-                                                if self.thput_obj_dict[ce][obj_name]["obj"].expected_passfail_value or self.thput_obj_dict[ce][obj_name]["obj"].device_csv_name:
-                                                    bk_dataframe[" Expected " + self.thput_obj_dict[ce][obj_name]["obj"].direction + " rate "] = [str(n) + " Mbps" for n in test_input_list]
+                                                if curr_thpt_obj.expected_passfail_value or curr_thpt_obj.device_csv_name:
+                                                    bk_dataframe[" Expected " + curr_thpt_obj.direction + " rate "] = [str(n) + " Mbps" for n in test_input_list]
                                                     bk_dataframe[" Status "] = pass_fail_list
                                                 dataframe1 = pd.DataFrame(bk_dataframe)
                                                 self.overall_report.set_table_dataframe(dataframe1)
                                                 self.overall_report.build_table()
 
-                                                if coordinate in self.thput_obj_dict[ce][obj_name]["obj"].battery_log:
-                                                    if self.thput_obj_dict[ce][obj_name]["obj"].rotation_enabled and (angle in self.thput_obj_dict[ce][obj_name]["obj"].battery_log[coordinate]):
+                                                if coordinate in curr_thpt_obj.battery_log:
+                                                    if curr_thpt_obj.rotation_enabled and (angle in curr_thpt_obj.battery_log[coordinate]):
                                                         self.overall_report.set_custom_html(
                                                             f'<h2>Robot went to charging Dock at {
-                                                                self.thput_obj_dict[ce][obj_name]["obj"].battery_log[coordinate][angle]}</h2>')
+                                                                curr_thpt_obj.battery_log[coordinate][angle]}</h2>')
                                                         self.overall_report.build_custom()
                                                     else:
                                                         self.overall_report.set_custom_html(
                                                             f'<h2>Robot went to charging Dock at {
-                                                                self.thput_obj_dict[ce][obj_name]["obj"].battery_log[coordinate]}</h2>')
+                                                                curr_thpt_obj.battery_log[coordinate]}</h2>')
                                                         self.overall_report.build_custom()
 
                                             self.overall_report.set_custom_html('<hr>')
                                             self.overall_report.build_custom()
 
-                        elif self.thput_obj_dict[ce][obj_name]["obj"].do_interopability:
+                        elif curr_thpt_obj.do_interopability:
 
                             self.overall_report.set_obj_html(_obj_title="Input Parameters",
                                                              _obj="The below tables provides the input parameters for the test")
@@ -7336,7 +7326,7 @@ class Candela(Realm):
                             device_type = []
                             total_devices = ""
 
-                            for i in self.thput_obj_dict[ce][obj_name]["obj"].real_client_list:
+                            for i in curr_thpt_obj.real_client_list:
                                 split_device_name = i.split(" ")
                                 if 'android' in split_device_name:
                                     all_devices_names.append(split_device_name[2] + ("(Android)"))
@@ -7373,25 +7363,25 @@ class Candela(Realm):
 
                             # Construct test_setup_info dictionary for test setup table
                             test_setup_info = {
-                                "Test name": self.thput_obj_dict[ce][obj_name]["obj"].test_name,
+                                "Test name": curr_thpt_obj.test_name,
                                 "Device List": ", ".join(all_devices_names),
                                 "No of Devices": "Total" + f"({str(self.thput_obj_dict[ce][obj_name]['obj'].num_stations)})" + total_devices,
-                                "Traffic Duration in minutes": round(int(self.thput_obj_dict[ce][obj_name]["obj"].test_duration) * len(incremental_capacity_list) / 60, 2),
-                                "Traffic Type": (self.thput_obj_dict[ce][obj_name]["obj"].traffic_type.strip("lf_")).upper(),
-                                "Traffic Direction": self.thput_obj_dict[ce][obj_name]["obj"].direction,
-                                "Upload Rate(Mbps)": str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000, 2)) + "Mbps",
-                                "Download Rate(Mbps)": str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000, 2)) + "Mbps",
-                                # "Packet Size" : str(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_pdu) + " Bytes"
+                                "Traffic Duration in minutes": round(int(curr_thpt_obj.test_duration) * len(incremental_capacity_list) / 60, 2),
+                                "Traffic Type": (curr_thpt_obj.traffic_type.strip("lf_")).upper(),
+                                "Traffic Direction": curr_thpt_obj.direction,
+                                "Upload Rate(Mbps)": str(round(int(curr_thpt_obj.cx_profile.side_a_min_bps) / 1000000, 2)) + "Mbps",
+                                "Download Rate(Mbps)": str(round(int(curr_thpt_obj.cx_profile.side_b_min_bps) / 1000000, 2)) + "Mbps",
+                                # "Packet Size" : str(curr_thpt_obj.cx_profile.side_a_min_pdu) + " Bytes"
                             }
                             self.overall_report.test_setup_table(test_setup_data=test_setup_info, value="Test Configuration")
 
-                            if (self.thput_obj_dict[ce][obj_name]["obj"].interopability_config):
+                            if (curr_thpt_obj.interopability_config):
 
                                 self.overall_report.set_obj_html(_obj_title="Configuration Status of Devices",
                                                                  _obj="The table below shows the configuration status of each device (except iOS) with respect to the SSID connection.")
                                 self.overall_report.build_objective()
 
-                                configured_dataframe = self.thput_obj_dict[ce][obj_name]["obj"].convert_to_table(self.thput_obj_dict[ce][obj_name]["obj"].configured_devices_check)
+                                configured_dataframe = curr_thpt_obj.convert_to_table(curr_thpt_obj.configured_devices_check)
                                 dataframe1 = pd.DataFrame(configured_dataframe)
                                 self.overall_report.set_table_dataframe(dataframe1)
                                 self.overall_report.build_table()
@@ -7414,10 +7404,10 @@ class Candela(Realm):
                                 avg_rtt_data = []
 
                                 # Fetch devices_on_running from real_client_list
-                                devices_on_running.append(self.thput_obj_dict[ce][obj_name]["obj"].real_client_list[data1[i][-1] - 1].split(" ")[-1])
+                                devices_on_running.append(curr_thpt_obj.real_client_list[data1[i][-1] - 1].split(" ")[-1])
 
-                                if self.thput_obj_dict[ce][obj_name]["obj"].interopability_config and devices_on_running[0] in self.thput_obj_dict[ce][obj_name][
-                                        "obj"].configured_devices_check and not self.thput_obj_dict[ce][obj_name]["obj"].configured_devices_check[devices_on_running[0]]:
+                                if curr_thpt_obj.interopability_config and devices_on_running[0] in self.thput_obj_dict[ce][obj_name][
+                                        "obj"].configured_devices_check and not curr_thpt_obj.configured_devices_check[devices_on_running[0]]:
                                     continue
 
                                 for k in devices_on_running:
@@ -7431,7 +7421,9 @@ class Candela(Realm):
                                     upload_drop_col = filtered_df[[col for col in filtered_df.columns if "Tx % Drop" in col][0]].values.tolist()
                                     download_drop_col = filtered_df[[col for col in filtered_df.columns if "Rx % Drop" in col][0]].values.tolist()
                                     rssi_col = filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()
-                                    if self.thput_obj_dict[ce][obj_name]["obj"].direction == "Bi-direction":
+                                    dl_len = len(filtered_df)
+                                    ul_len = len(filtered_df)
+                                    if curr_thpt_obj.direction == "Bi-direction":
 
                                         # Append download and upload data from filtered dataframe
                                         download_data.append(round((sum(filtered_df[[col for col in filtered_df.columns if "Download" in col][0]].values.tolist()[1:dl_len]) / (dl_len - 1)), 2))
@@ -7442,11 +7434,11 @@ class Candela(Realm):
                                                                    len(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()), 2)) * -1)
                                         avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
                                         # Calculate and append upload and download throughput to lists
-                                        upload_list.append(str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000, 2)))
-                                        download_list.append(str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000, 2)))
+                                        upload_list.append(str(round(int(curr_thpt_obj.cx_profile.side_a_min_bps) / 1000000, 2)))
+                                        download_list.append(str(round(int(curr_thpt_obj.cx_profile.side_b_min_bps) / 1000000, 2)))
 
-                                        direction_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].direction)
-                                    elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Download':
+                                        direction_in_table.append(curr_thpt_obj.direction)
+                                    elif curr_thpt_obj.direction == 'Download':
 
                                         # Append download data from filtered dataframe
                                         download_data.append(round((sum(filtered_df[[col for col in filtered_df.columns if "Download" in col][0]].values.tolist()[1:dl_len]) / (dl_len - 1)), 2))
@@ -7458,15 +7450,15 @@ class Candela(Realm):
                                         download_drop.append(round((sum(filtered_df[[col for col in filtered_df.columns if "Rx % Drop " in col][0]].values.tolist()[1:dl_len]) / (dl_len - 1)), 2))
                                         avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
                                         # Calculate and append upload and download throughput to lists
-                                        upload_list.append(str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000, 2)))
-                                        download_list.append(str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000, 2)))
+                                        upload_list.append(str(round(int(curr_thpt_obj.cx_profile.side_a_min_bps) / 1000000, 2)))
+                                        download_list.append(str(round(int(curr_thpt_obj.cx_profile.side_b_min_bps) / 1000000, 2)))
 
-                                        direction_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].direction)
-                                    elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Upload':
+                                        direction_in_table.append(curr_thpt_obj.direction)
+                                    elif curr_thpt_obj.direction == 'Upload':
 
                                         # Calculate and append upload and download throughput to lists
-                                        upload_list.append(str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000, 2)))
-                                        download_list.append(str(round(int(self.thput_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000, 2)))
+                                        upload_list.append(str(round(int(curr_thpt_obj.cx_profile.side_a_min_bps) / 1000000, 2)))
+                                        download_list.append(str(round(int(curr_thpt_obj.cx_profile.side_b_min_bps) / 1000000, 2)))
                                         rssi_data.append(int(round(sum(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()) /
                                                                    len(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()), 2)) * -1)
                                         upload_drop.append(round((sum(filtered_df[[col for col in filtered_df.columns if "Tx % Drop" in col][0]].values.tolist()[1:ul_len]) / (ul_len - 1)), 2))
@@ -7477,12 +7469,12 @@ class Candela(Realm):
                                         # Append 0 for download data
                                         download_data.append(0)
 
-                                        direction_in_table.append(self.thput_obj_dict[ce][obj_name]["obj"].direction)
+                                        direction_in_table.append(curr_thpt_obj.direction)
                                 data_set_in_graph = []
 
                                 # Depending on the test direction, retrieve corresponding throughput data,
                                 # organize it into datasets for graphing, and calculate real-time average throughput values accordingly.
-                                if self.thput_obj_dict[ce][obj_name]["obj"].direction == "Bi-direction":
+                                if curr_thpt_obj.direction == "Bi-direction":
                                     download_values_list = data['Overall Download'][data['Iteration'] == i + 1].values.tolist()
                                     upload_values_list = data['Overall Upload'][data['Iteration'] == i + 1].values.tolist()
                                     data_set_in_graph.append(download_values_list)
@@ -7496,7 +7488,7 @@ class Candela(Realm):
                                         f"Upload: {round(sum(upload_data[0:int(incremental_capacity_list[i])]) / len(upload_data[0:int(incremental_capacity_list[i])]), 2)} Mbps"
                                     )
 
-                                elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Download':
+                                elif curr_thpt_obj.direction == 'Download':
                                     download_values_list = data['Overall Download'][data['Iteration'] == i + 1].values.tolist()
                                     data_set_in_graph.append(download_values_list)
                                     devices_data_to_create_bar_graph.append(download_data)
@@ -7506,7 +7498,7 @@ class Candela(Realm):
                                         f"{round(sum(download_data[0:int(incremental_capacity_list[i])]) / len(download_data[0:int(incremental_capacity_list[i])]), 2)} Mbps"
                                     )
 
-                                elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Upload':
+                                elif curr_thpt_obj.direction == 'Upload':
                                     upload_values_list = data['Overall Upload'][data['Iteration'] == i + 1].values.tolist()
                                     data_set_in_graph.append(upload_values_list)
                                     devices_data_to_create_bar_graph.append(upload_data)
@@ -7523,7 +7515,7 @@ class Candela(Realm):
                                     _obj_title=f"{real_time_data}",
                                     _obj=" ")
                                 self.overall_report.build_objective()
-                                graph_png = self.thput_obj_dict[ce][obj_name]["obj"].build_line_graph(
+                                graph_png = curr_thpt_obj.build_line_graph(
                                     data_set=data_set_in_graph,
                                     xaxis_name="Time",
                                     yaxis_name="Throughput (Mbps)",
@@ -7588,15 +7580,15 @@ class Candela(Realm):
                                     _obj_title="Detailed Result Table ",
                                     _obj="The below tables provides detailed information for the throughput test on each device.")
                                 self.overall_report.build_objective()
-                                self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list = [item.split()[-1] if ' ' in item else item for item in self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list]
-                                if self.thput_obj_dict[ce][obj_name]["obj"].expected_passfail_value or self.thput_obj_dict[ce][obj_name]["obj"].device_csv_name:
-                                    test_input_list, pass_fail_list = self.thput_obj_dict[ce][obj_name]["obj"].get_pass_fail_list(
+                                curr_thpt_obj.mac_id_list = [item.split()[-1] if ' ' in item else item for item in curr_thpt_obj.mac_id_list]
+                                if curr_thpt_obj.expected_passfail_value or curr_thpt_obj.device_csv_name:
+                                    test_input_list, pass_fail_list = curr_thpt_obj.get_pass_fail_list(
                                         device_type, incremental_capacity_list[i], devices_on_running, download_data, upload_data)
                                 bk_dataframe = {}
 
                                 # Dataframe changes with respect to groups and profiles in case of interopability
-                                if self.thput_obj_dict[ce][obj_name]["obj"].group_name:
-                                    interop_tab_data = self.thput_obj_dict[ce][obj_name]["obj"].json_get('/adb/')["devices"]
+                                if curr_thpt_obj.group_name:
+                                    interop_tab_data = curr_thpt_obj.json_get('/adb/')["devices"]
                                     res_list = []
                                     grp_name = []
                                     if device_type[int(incremental_capacity_list[i]) - 1] != 'Android':
@@ -7607,7 +7599,7 @@ class Candela(Realm):
                                                 if item['user-name'] == devices_on_running[-1]:
                                                     res_list.append(item['name'].split('.')[2])
                                                     break
-                                    for key, value in self.thput_obj_dict[ce][obj_name]["obj"].group_device_map.items():
+                                    for key, value in curr_thpt_obj.group_device_map.items():
                                         if res_list[-1] in value:
                                             grp_name.append(key)
                                             break
@@ -7615,28 +7607,28 @@ class Candela(Realm):
 
                                 bk_dataframe[" Device Type "] = device_type[int(incremental_capacity_list[i]) - 1]
                                 bk_dataframe[" Username"] = devices_on_running[-1]
-                                bk_dataframe[" SSID "] = self.thput_obj_dict[ce][obj_name]["obj"].ssid_list[int(incremental_capacity_list[i]) - 1]
-                                bk_dataframe[" MAC "] = self.thput_obj_dict[ce][obj_name]["obj"].mac_id_list[int(incremental_capacity_list[i]) - 1]
-                                bk_dataframe[" Channel "] = self.thput_obj_dict[ce][obj_name]["obj"].channel_list[int(incremental_capacity_list[i]) - 1]
-                                bk_dataframe[" Mode"] = self.thput_obj_dict[ce][obj_name]["obj"].mode_list[int(incremental_capacity_list[i]) - 1]
+                                bk_dataframe[" SSID "] = curr_thpt_obj.ssid_list[int(incremental_capacity_list[i]) - 1]
+                                bk_dataframe[" MAC "] = curr_thpt_obj.mac_id_list[int(incremental_capacity_list[i]) - 1]
+                                bk_dataframe[" Channel "] = curr_thpt_obj.channel_list[int(incremental_capacity_list[i]) - 1]
+                                bk_dataframe[" Mode"] = curr_thpt_obj.mode_list[int(incremental_capacity_list[i]) - 1]
                                 bk_dataframe[" Offered download rate (Mbps)"] = download_list[-1]
                                 bk_dataframe[" Observed Average download rate (Mbps)"] = [str(download_data[-1])]
                                 bk_dataframe[" Offered upload rate (Mbps)"] = upload_list[-1]
                                 bk_dataframe[" Observed Average upload rate (Mbps)"] = [str(upload_data[-1])]
                                 bk_dataframe[" Average RTT (ms) "] = avg_rtt_data[-1]
                                 bk_dataframe[" RSSI (dBm)"] = ['' if rssi_data[-1] == 0 else '-' + str(rssi_data[-1])]
-                                if self.thput_obj_dict[ce][obj_name]["obj"].direction == "Bi-direction":
+                                if curr_thpt_obj.direction == "Bi-direction":
                                     bk_dataframe[" Average Tx Drop % "] = upload_drop
                                     bk_dataframe[" Average Rx Drop % "] = download_drop
-                                elif self.thput_obj_dict[ce][obj_name]["obj"].direction == 'Download':
+                                elif curr_thpt_obj.direction == 'Download':
                                     bk_dataframe[" Average Rx Drop % "] = download_drop
                                     bk_dataframe[" Average Tx Drop % "] = [0.0] * len(download_drop)
                                 else:
                                     bk_dataframe[" Average Tx Drop % "] = upload_drop
                                     bk_dataframe[" Average Rx Drop % "] = [0.0] * len(upload_drop)
                                 # When pass fail criteria is specified
-                                if self.thput_obj_dict[ce][obj_name]["obj"].expected_passfail_value or self.thput_obj_dict[ce][obj_name]["obj"].device_csv_name:
-                                    bk_dataframe[" Expected " + self.thput_obj_dict[ce][obj_name]["obj"].direction + " rate "] = test_input_list
+                                if curr_thpt_obj.expected_passfail_value or curr_thpt_obj.device_csv_name:
+                                    bk_dataframe[" Expected " + curr_thpt_obj.direction + " rate "] = test_input_list
                                     bk_dataframe[" Status "] = pass_fail_list
                                 dataframe1 = pd.DataFrame(bk_dataframe)
                                 self.overall_report.set_table_dataframe(dataframe1)
@@ -7645,9 +7637,9 @@ class Candela(Realm):
                                 self.overall_report.set_custom_html('<hr>')
                                 self.overall_report.build_custom()
 
-                            if (self.thput_obj_dict[ce][obj_name]["obj"].dowebgui and self.thput_obj_dict[ce][obj_name]
-                                    ["obj"].get_live_view and self.thput_obj_dict[ce][obj_name]["obj"].do_interopability):
-                                self.thput_obj_dict[ce][obj_name]["obj"].add_live_view_images_to_report(self.overall_report)
+                            if (curr_thpt_obj.dowebgui and self.thput_obj_dict[ce][obj_name]
+                                    ["obj"].get_live_view and curr_thpt_obj.do_interopability):
+                                curr_thpt_obj.add_live_view_images_to_report(self.overall_report)
                         if ce == "series":
                             obj_no += 1
                             obj_name = f"thput_test_{obj_no}"
@@ -7665,22 +7657,22 @@ class Candela(Realm):
                             obj_no = ''
                         params = self.ping_obj_dict[ce][obj_name]["data"].copy()
                         result_json = params["result_json"]
-                        result_dir = params["result_dir"]
                         report_path = params["report_path"]
                         config_devices = params["config_devices"]
                         group_device_map = params["group_device_map"]
+                        curr_ping_obj = copy.copy(self.ping_obj_dict[ce][obj_name]["obj"])
                         if result_json is not None:
-                            self.ping_obj_dict[ce][obj_name]["obj"].result_json = result_json
+                            curr_ping_obj.result_json = result_json
                         self.overall_report.set_obj_html(_obj_title=f'PING Test {obj_no}', _obj="")
                         self.overall_report.build_objective()
                         # Test setup information table for devices in device list
                         if config_devices == '':
                             test_setup_info = {
-                                'SSID': self.ping_obj_dict[ce][obj_name]["obj"].ssid,
-                                'Security': self.ping_obj_dict[ce][obj_name]["obj"].security,
-                                'Website / IP': self.ping_obj_dict[ce][obj_name]["obj"].target,
-                                'No of Devices': '{} (V:{}, A:{}, W:{}, L:{}, M:{})'.format(len(self.ping_obj_dict[ce][obj_name]["obj"].sta_list), len(self.ping_obj_dict[ce][obj_name]["obj"].sta_list) - len(self.ping_obj_dict[ce][obj_name]["obj"].real_sta_list), self.ping_obj_dict[ce][obj_name]["obj"].android, self.ping_obj_dict[ce][obj_name]["obj"].windows, self.ping_obj_dict[ce][obj_name]["obj"].linux, self.ping_obj_dict[ce][obj_name]["obj"].mac),
-                                'Duration (in minutes)': self.ping_obj_dict[ce][obj_name]["obj"].duration
+                                'SSID': curr_ping_obj.ssid,
+                                'Security': curr_ping_obj.security,
+                                'Website / IP': curr_ping_obj.target,
+                                'No of Devices': '{} (V:{}, A:{}, W:{}, L:{}, M:{})'.format(len(curr_ping_obj.sta_list), len(curr_ping_obj.sta_list) - len(curr_ping_obj.real_sta_list), curr_ping_obj.android, curr_ping_obj.windows, curr_ping_obj.linux, curr_ping_obj.mac),  # noqa E501
+                                'Duration (in minutes)': curr_ping_obj.duration
                             }
                         # Test setup information table for devices in groups
                         else:
@@ -7689,21 +7681,21 @@ class Candela(Realm):
                             configmap = "Groups:" + group_names + " -> Profiles:" + profile_names
                             test_setup_info = {
                                 'Configuration': configmap,
-                                'Website / IP': self.ping_obj_dict[ce][obj_name]["obj"].target,
-                                'No of Devices': '{} (V:{}, A:{}, W:{}, L:{}, M:{})'.format(len(self.ping_obj_dict[ce][obj_name]["obj"].sta_list), len(self.ping_obj_dict[ce][obj_name]["obj"].sta_list) - len(self.ping_obj_dict[ce][obj_name]["obj"].real_sta_list), self.ping_obj_dict[ce][obj_name]["obj"].android, self.ping_obj_dict[ce][obj_name]["obj"].windows, self.ping_obj_dict[ce][obj_name]["obj"].linux, self.ping_obj_dict[ce][obj_name]["obj"].mac),
-                                'Duration (in minutes)': self.ping_obj_dict[ce][obj_name]["obj"].duration
+                                'Website / IP': curr_ping_obj.target,
+                                'No of Devices': '{} (V:{}, A:{}, W:{}, L:{}, M:{})'.format(len(curr_ping_obj.sta_list), len(curr_ping_obj.sta_list) - len(curr_ping_obj.real_sta_list), curr_ping_obj.android, curr_ping_obj.windows, curr_ping_obj.linux, curr_ping_obj.mac), # noqa E501
+                                'Duration (in minutes)': curr_ping_obj.duration
                             }
                         if self.robot_test and not self.do_bandsteering:
-                            coordinate_map = self.ping_obj_dict[ce][obj_name]["obj"].generate_overall_data()
+                            coordinate_map = curr_ping_obj.generate_overall_data()
                             logging.info("coordinate_map: %s", coordinate_map)
                             for key, value in coordinate_map.items():
-                                if self.ping_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                if curr_ping_obj.rotation_enabled:
                                     self.overall_report.set_table_title("Overall Packetssent vs Received vs dropped of all coordinates at angle {}".format(key))
                                 else:
                                     self.overall_report.set_table_title("Overall Packetssent vs Received vs dropped of all coordinates")
                                 self.overall_report.build_table_title()
                                 x_fig_size = 19
-                                y_fig_size = len(self.ping_obj_dict[ce][obj_name]["obj"].device_names) * .5 + 4
+                                y_fig_size = len(curr_ping_obj.device_names) * .5 + 4
 
                                 overallgraph = lf_bar_graph(_data_set=value,
                                                             _yaxis_name='Packets Count',
@@ -7712,7 +7704,7 @@ class Candela(Realm):
                                                                 'Packets Loss', 'Packets Received', 'Packets Sent'],
                                                             _graph_image_name=f'Packets sent vs received vs dropped {obj_no}',
                                                             # _xaxis_label=self.coordinates_completed,
-                                                            _xaxis_categories=self.ping_obj_dict[ce][obj_name]["obj"].coordinates_completed,
+                                                            _xaxis_categories=curr_ping_obj.coordinates_completed,
                                                             _xaxis_step=1,
                                                             _xticks_font=8,
                                                             _graph_title='OverallPackets sent vs received vs dropped',
@@ -7735,20 +7727,20 @@ class Candela(Realm):
                                 self.overall_report.move_graph_image()
                                 self.overall_report.build_graph()
                             last_interation = False
-                            for coord in self.ping_obj_dict[ce][obj_name]["obj"].coordinates_completed:
-                                for angle in self.ping_obj_dict[ce][obj_name]["obj"].angle_list:
-                                    if coord == len(self.ping_obj_dict[ce][obj_name]["obj"].coordinates_completed) - \
-                                            1 and self.ping_obj_dict[ce][obj_name]["obj"].angle_list[angle] == self.ping_obj_dict[ce][obj_name]["obj"].currentangle:
+                            for coord in curr_ping_obj.coordinates_completed:
+                                for angle in curr_ping_obj.angle_list:
+                                    if coord == len(curr_ping_obj.coordinates_completed) - \
+                                            1 and curr_ping_obj.angle_list[angle] == curr_ping_obj.currentangle:
                                         last_interation = True
 
-                                    if self.ping_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                    if curr_ping_obj.rotation_enabled:
                                         self.overall_report.set_table_title("Coordinate {} : Angle {}".format(coord, angle))
                                         self.overall_report.build_table_title()
-                                        self.result_json = self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json[coord][angle]
+                                        self.result_json = curr_ping_obj.coordinate_json[coord][angle]
                                     else:
                                         self.overall_report.set_table_title("Coordinate {}".format(coord))
                                         self.overall_report.build_table_title()
-                                        self.result_json = self.ping_obj_dict[ce][obj_name]["obj"].coordinate_json[coord]
+                                        self.result_json = curr_ping_obj.coordinate_json[coord]
 
                                     # packets sent vs received vs dropped
                                     self.overall_report.set_table_title(
@@ -7836,7 +7828,7 @@ class Candela(Realm):
                                                                     _show_bar_value=False,
                                                                     _enable_csv=True,
                                                                     _color_name=['lightgrey', 'orange', 'steelblue'])
-                                    if self.ping_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                    if curr_ping_obj.rotation_enabled:
                                         graph.graph_image_name = 'Packets sent vs received vs dropped_{}_{}'.format(coord, angle)
                                     else:
                                         graph.graph_image_name = 'Packets sent vs received vs dropped_{}'.format(coord)
@@ -7850,7 +7842,7 @@ class Candela(Realm):
                                     self.overall_report.move_csv_file()
                                     self.overall_report.build_graph()
 
-                                    if self.ping_obj_dict[ce][obj_name]["obj"].real:
+                                    if curr_ping_obj.real:
                                         dataframe1 = pd.DataFrame({
                                             'Wireless Client': self.device_names,
                                             'MAC': self.device_mac,
@@ -7863,9 +7855,9 @@ class Candela(Realm):
                                         })
                                         self.overall_report.set_table_dataframe(dataframe1)
                                         self.overall_report.build_table()
-                                        if self.ping_obj_dict[ce][obj_name]["obj"].get_live_view:
+                                        if curr_ping_obj.get_live_view:
                                             report_path = self.overall_report.get_path()
-                                            self.ping_obj_dict[ce][obj_name]["obj"].add_live_view_images_to_report(report=self.overall_report, report_path=report_path)
+                                            curr_ping_obj.add_live_view_images_to_report(report=self.overall_report, report_path=report_path)
                                     else:
                                         dataframe1 = pd.DataFrame({
                                             'Wireless Client': self.device_names,
@@ -7908,7 +7900,7 @@ class Candela(Realm):
                                                                     _enable_csv=True,
                                                                     _color_name=['lightgrey', 'orange', 'steelblue'])
 
-                                    if self.ping_obj_dict[ce][obj_name]["obj"].rotation_enabled:
+                                    if curr_ping_obj.rotation_enabled:
                                         graph.graph_image_name = 'Ping Latency per client_{}_{}'.format(coord, angle)
                                     else:
                                         graph.graph_image_name = 'Ping Latency per client_{}'.format(coord)
@@ -7952,16 +7944,16 @@ class Candela(Realm):
 
                         else:
                             if self.robot_test:
-                                test_setup_info["Robot IP"] = self.ping_obj_dict[ce][obj_name]["obj"].robo_ip
-                                test_setup_info["Coordinates"] = str(self.ping_obj_dict[ce][obj_name]["obj"].coordinate_list)
-                                if self.ping_obj_dict[ce][obj_name]["obj"].do_bandsteering:
+                                test_setup_info["Robot IP"] = curr_ping_obj.robo_ip
+                                test_setup_info["Coordinates"] = str(curr_ping_obj.coordinate_list)
+                                if curr_ping_obj.do_bandsteering:
                                     del test_setup_info["Duration (in minutes)"]
-                                    test_setup_info["Cycles"] = str(self.ping_obj_dict[ce][obj_name]["obj"].cycles)
-                                    test_setup_info["BSSIDs for Bandsteering"] = str(self.ping_obj_dict[ce][obj_name]["obj"].bssids)
+                                    test_setup_info["Cycles"] = str(curr_ping_obj.cycles)
+                                    test_setup_info["BSSIDs for Bandsteering"] = str(curr_ping_obj.bssids)
                                 else:
-                                    if self.ping_obj_dict[ce][obj_name]["obj"].rotation_enabled:
-                                        test_setup_info["Rotations"] = self.ping_obj_dict[ce][obj_name]["obj"].rotation
-                                    test_setup_info["Rotation Enabled"] = str(self.ping_obj_dict[ce][obj_name]["obj"].rotation_enabled)
+                                    if curr_ping_obj.rotation_enabled:
+                                        test_setup_info["Rotations"] = curr_ping_obj.rotation
+                                    test_setup_info["Rotation Enabled"] = str(curr_ping_obj.rotation_enabled)
                             self.overall_report.test_setup_table(
                                 test_setup_data=test_setup_info, value='Test Setup Information')
 
@@ -7970,55 +7962,55 @@ class Candela(Realm):
                                 'Packets sent vs packets received vs packets dropped')
                             self.overall_report.build_table_title()
                             # graph for the above
-                            self.ping_obj_dict[ce][obj_name]["obj"].packets_sent = []
-                            self.ping_obj_dict[ce][obj_name]["obj"].packets_received = []
-                            self.ping_obj_dict[ce][obj_name]["obj"].packets_dropped = []
-                            self.ping_obj_dict[ce][obj_name]["obj"].device_names = []
-                            self.ping_obj_dict[ce][obj_name]["obj"].device_modes = []
-                            self.ping_obj_dict[ce][obj_name]["obj"].device_channels = []
-                            self.ping_obj_dict[ce][obj_name]["obj"].device_min = []
-                            self.ping_obj_dict[ce][obj_name]["obj"].device_max = []
-                            self.ping_obj_dict[ce][obj_name]["obj"].device_avg = []
-                            self.ping_obj_dict[ce][obj_name]["obj"].device_mac = []
-                            self.ping_obj_dict[ce][obj_name]["obj"].device_names_with_errors = []
-                            self.ping_obj_dict[ce][obj_name]["obj"].devices_with_errors = []
-                            self.ping_obj_dict[ce][obj_name]["obj"].report_names = []
-                            self.ping_obj_dict[ce][obj_name]["obj"].remarks = []
-                            self.ping_obj_dict[ce][obj_name]["obj"].device_ssid = []
+                            curr_ping_obj.packets_sent = []
+                            curr_ping_obj.packets_received = []
+                            curr_ping_obj.packets_dropped = []
+                            curr_ping_obj.device_names = []
+                            curr_ping_obj.device_modes = []
+                            curr_ping_obj.device_channels = []
+                            curr_ping_obj.device_min = []
+                            curr_ping_obj.device_max = []
+                            curr_ping_obj.device_avg = []
+                            curr_ping_obj.device_mac = []
+                            curr_ping_obj.device_names_with_errors = []
+                            curr_ping_obj.devices_with_errors = []
+                            curr_ping_obj.report_names = []
+                            curr_ping_obj.remarks = []
+                            curr_ping_obj.device_ssid = []
                             # packet_count_data = {}
                             os_type = []
-                            for device, device_data in self.ping_obj_dict[ce][obj_name]["obj"].result_json.items():
+                            for device, device_data in curr_ping_obj.result_json.items():
                                 logging.info('Device data: {} {}'.format(device, device_data))
                                 os_type.append(device_data['os'])
-                                self.ping_obj_dict[ce][obj_name]["obj"].packets_sent.append(int(device_data['sent']))
-                                self.ping_obj_dict[ce][obj_name]["obj"].packets_received.append(int(device_data['recv']))
-                                self.ping_obj_dict[ce][obj_name]["obj"].packets_dropped.append(int(device_data['dropped']))
-                                self.ping_obj_dict[ce][obj_name]["obj"].device_names.append(device_data['name'] + ' ' + device_data['os'])
-                                self.ping_obj_dict[ce][obj_name]["obj"].device_modes.append(device_data['mode'])
-                                self.ping_obj_dict[ce][obj_name]["obj"].device_channels.append(device_data['channel'])
-                                self.ping_obj_dict[ce][obj_name]["obj"].device_mac.append(device_data['mac'])
-                                self.ping_obj_dict[ce][obj_name]["obj"].device_ssid.append(device_data['ssid'])
-                                self.ping_obj_dict[ce][obj_name]["obj"].device_min.append(float(device_data['min_rtt'].replace(',', '')))
-                                self.ping_obj_dict[ce][obj_name]["obj"].device_max.append(float(device_data['max_rtt'].replace(',', '')))
-                                self.ping_obj_dict[ce][obj_name]["obj"].device_avg.append(float(device_data['avg_rtt'].replace(',', '')))
+                                curr_ping_obj.packets_sent.append(int(device_data['sent']))
+                                curr_ping_obj.packets_received.append(int(device_data['recv']))
+                                curr_ping_obj.packets_dropped.append(int(device_data['dropped']))
+                                curr_ping_obj.device_names.append(device_data['name'] + ' ' + device_data['os'])
+                                curr_ping_obj.device_modes.append(device_data['mode'])
+                                curr_ping_obj.device_channels.append(device_data['channel'])
+                                curr_ping_obj.device_mac.append(device_data['mac'])
+                                curr_ping_obj.device_ssid.append(device_data['ssid'])
+                                curr_ping_obj.device_min.append(float(device_data['min_rtt'].replace(',', '')))
+                                curr_ping_obj.device_max.append(float(device_data['max_rtt'].replace(',', '')))
+                                curr_ping_obj.device_avg.append(float(device_data['avg_rtt'].replace(',', '')))
                                 if (device_data['os'] == 'Virtual'):
-                                    self.ping_obj_dict[ce][obj_name]["obj"].report_names.append('{} {}'.format(device, device_data['os'])[0:25])
+                                    curr_ping_obj.report_names.append('{} {}'.format(device, device_data['os'])[0:25])
                                 else:
-                                    self.ping_obj_dict[ce][obj_name]["obj"].report_names.append('{} {} {}'.format(device, device_data['os'], device_data['name']))
+                                    curr_ping_obj.report_names.append('{} {} {}'.format(device, device_data['os'], device_data['name']))
                                 if (device_data['remarks'] != []):
-                                    self.ping_obj_dict[ce][obj_name]["obj"].device_names_with_errors.append(device_data['name'])
-                                    self.ping_obj_dict[ce][obj_name]["obj"].devices_with_errors.append(device)
-                                    self.ping_obj_dict[ce][obj_name]["obj"].remarks.append(','.join(device_data['remarks']))
+                                    curr_ping_obj.device_names_with_errors.append(device_data['name'])
+                                    curr_ping_obj.devices_with_errors.append(device)
+                                    curr_ping_obj.remarks.append(','.join(device_data['remarks']))
                             x_fig_size = 15
-                            y_fig_size = len(self.ping_obj_dict[ce][obj_name]["obj"].device_names) * .5 + 4
-                            graph = lf_bar_graph_horizontal(_data_set=[self.ping_obj_dict[ce][obj_name]["obj"].packets_dropped, self.ping_obj_dict[ce][obj_name]["obj"].packets_received, self.ping_obj_dict[ce][obj_name]["obj"].packets_sent],
+                            y_fig_size = len(curr_ping_obj.device_names) * .5 + 4
+                            graph = lf_bar_graph_horizontal(_data_set=[curr_ping_obj.packets_dropped, curr_ping_obj.packets_received, curr_ping_obj.packets_sent],
                                                             _xaxis_name='Packets Count',
                                                             _yaxis_name='Wireless Clients',
                                                             _label=[
                                                                 'Packets Loss', 'Packets Received', 'Packets Sent'],
                                                             _graph_image_name=f'Packets sent vs received vs dropped {obj_no}',
-                                                            _yaxis_label=self.ping_obj_dict[ce][obj_name]["obj"].report_names,
-                                                            _yaxis_categories=self.ping_obj_dict[ce][obj_name]["obj"].report_names,
+                                                            _yaxis_label=curr_ping_obj.report_names,
+                                                            _yaxis_categories=curr_ping_obj.report_names,
                                                             _yaxis_step=1,
                                                             _yticks_font=8,
                                                             _graph_title='Packets sent vs received vs dropped',
@@ -8043,30 +8035,30 @@ class Candela(Realm):
                             self.overall_report.set_csv_filename(graph_png)
                             self.overall_report.move_csv_file()
                             self.overall_report.build_graph()
-                            if self.ping_obj_dict[ce][obj_name]["obj"].real:
+                            if curr_ping_obj.real:
                                 # Calculating the pass/fail criteria when either expected_passfail_val or csv_name is provided
-                                if self.ping_obj_dict[ce][obj_name]["obj"].expected_passfail_val or self.ping_obj_dict[ce][obj_name]["obj"].csv_name:
-                                    self.ping_obj_dict[ce][obj_name]["obj"].get_pass_fail_list(os_type)
+                                if curr_ping_obj.expected_passfail_val or curr_ping_obj.csv_name:
+                                    curr_ping_obj.get_pass_fail_list(os_type)
                                 # When groups are provided a seperate table will be generated for each group using generate_dataframe
-                                if self.ping_obj_dict[ce][obj_name]["obj"].group_name:
+                                if curr_ping_obj.group_name:
                                     for key, val in group_device_map.items():
-                                        if self.ping_obj_dict[ce][obj_name]["obj"].expected_passfail_val or self.ping_obj_dict[ce][obj_name]["obj"].csv_name:
-                                            dataframe = self.ping_obj_dict[ce][obj_name]["obj"].generate_dataframe(
+                                        if curr_ping_obj.expected_passfail_val or curr_ping_obj.csv_name:
+                                            dataframe = curr_ping_obj.generate_dataframe(
                                                 val,
-                                                self.ping_obj_dict[ce][obj_name]["obj"].device_names,
-                                                self.ping_obj_dict[ce][obj_name]["obj"].device_mac,
-                                                self.ping_obj_dict[ce][obj_name]["obj"].device_channels,
-                                                self.ping_obj_dict[ce][obj_name]["obj"].device_ssid,
-                                                self.ping_obj_dict[ce][obj_name]["obj"].device_modes,
-                                                self.ping_obj_dict[ce][obj_name]["obj"].packets_sent,
-                                                self.ping_obj_dict[ce][obj_name]["obj"].packets_received,
-                                                self.ping_obj_dict[ce][obj_name]["obj"].packets_dropped,
-                                                self.ping_obj_dict[ce][obj_name]["obj"].percent_pac_loss,
-                                                self.ping_obj_dict[ce][obj_name]["obj"].test_input_list,
-                                                self.ping_obj_dict[ce][obj_name]["obj"].pass_fail_list)
+                                                curr_ping_obj.device_names,
+                                                curr_ping_obj.device_mac,
+                                                curr_ping_obj.device_channels,
+                                                curr_ping_obj.device_ssid,
+                                                curr_ping_obj.device_modes,
+                                                curr_ping_obj.packets_sent,
+                                                curr_ping_obj.packets_received,
+                                                curr_ping_obj.packets_dropped,
+                                                curr_ping_obj.percent_pac_loss,
+                                                curr_ping_obj.test_input_list,
+                                                curr_ping_obj.pass_fail_list)
                                         else:
-                                            dataframe = self.ping_obj_dict[ce][obj_name]["obj"].generate_dataframe(val, self.ping_obj_dict[ce][obj_name]["obj"].device_names, self.ping_obj_dict[ce][obj_name]["obj"].device_mac, self.ping_obj_dict[ce][obj_name]["obj"].device_channels, self.ping_obj_dict[ce][obj_name]["obj"].device_ssid,
-                                                                                                                   self.ping_obj_dict[ce][obj_name]["obj"].device_modes, self.ping_obj_dict[ce][obj_name]["obj"].packets_sent, self.ping_obj_dict[ce][obj_name]["obj"].packets_received, self.ping_obj_dict[ce][obj_name]["obj"].packets_dropped, [], [], [])
+                                            dataframe = curr_ping_obj.generate_dataframe(val, curr_ping_obj.device_names, curr_ping_obj.device_mac, curr_ping_obj.device_channels, curr_ping_obj.device_ssid,  # noqa E501
+                                                                                         curr_ping_obj.device_modes, curr_ping_obj.packets_sent, curr_ping_obj.packets_received, curr_ping_obj.packets_dropped, [], [], [])  # noqa E501
                                         if dataframe:
                                             self.overall_report.set_obj_html("", "Group: {}".format(key))
                                             self.overall_report.build_objective()
@@ -8076,31 +8068,31 @@ class Candela(Realm):
 
                                 else:
                                     dataframe1 = pd.DataFrame({
-                                        'Wireless Client': self.ping_obj_dict[ce][obj_name]["obj"].device_names,
-                                        'MAC': self.ping_obj_dict[ce][obj_name]["obj"].device_mac,
-                                        'Channel': self.ping_obj_dict[ce][obj_name]["obj"].device_channels,
-                                        'SSID ': self.ping_obj_dict[ce][obj_name]["obj"].device_ssid,
-                                        'Mode': self.ping_obj_dict[ce][obj_name]["obj"].device_modes,
-                                        'Packets Sent': self.ping_obj_dict[ce][obj_name]["obj"].packets_sent,
-                                        'Packets Received': self.ping_obj_dict[ce][obj_name]["obj"].packets_received,
-                                        'Packets Loss': self.ping_obj_dict[ce][obj_name]["obj"].packets_dropped,
+                                        'Wireless Client': curr_ping_obj.device_names,
+                                        'MAC': curr_ping_obj.device_mac,
+                                        'Channel': curr_ping_obj.device_channels,
+                                        'SSID ': curr_ping_obj.device_ssid,
+                                        'Mode': curr_ping_obj.device_modes,
+                                        'Packets Sent': curr_ping_obj.packets_sent,
+                                        'Packets Received': curr_ping_obj.packets_received,
+                                        'Packets Loss': curr_ping_obj.packets_dropped,
                                     })
-                                    if self.ping_obj_dict[ce][obj_name]["obj"].expected_passfail_val or self.ping_obj_dict[ce][obj_name]["obj"].csv_name:
-                                        dataframe1[" Percentage of Packet loss %"] = self.ping_obj_dict[ce][obj_name]["obj"].percent_pac_loss
-                                        dataframe1['Expected Packet loss %'] = self.ping_obj_dict[ce][obj_name]["obj"].test_input_list
-                                        dataframe1['Status'] = self.ping_obj_dict[ce][obj_name]["obj"].pass_fail_list
+                                    if curr_ping_obj.expected_passfail_val or curr_ping_obj.csv_name:
+                                        dataframe1[" Percentage of Packet loss %"] = curr_ping_obj.percent_pac_loss
+                                        dataframe1['Expected Packet loss %'] = curr_ping_obj.test_input_list
+                                        dataframe1['Status'] = curr_ping_obj.pass_fail_list
                                     self.overall_report.set_table_dataframe(dataframe1)
                                     self.overall_report.build_table()
                             else:
                                 dataframe1 = pd.DataFrame({
-                                    'Wireless Client': self.ping_obj_dict[ce][obj_name]["obj"].device_names,
-                                    'MAC': self.ping_obj_dict[ce][obj_name]["obj"].device_mac,
-                                    'Channel': self.ping_obj_dict[ce][obj_name]["obj"].device_channels,
-                                    'SSID ': self.ping_obj_dict[ce][obj_name]["obj"].device_ssid,
-                                    'Mode': self.ping_obj_dict[ce][obj_name]["obj"].device_modes,
-                                    'Packets Sent': self.ping_obj_dict[ce][obj_name]["obj"].packets_sent,
-                                    'Packets Received': self.ping_obj_dict[ce][obj_name]["obj"].packets_received,
-                                    'Packets Loss': self.ping_obj_dict[ce][obj_name]["obj"].packets_dropped,
+                                    'Wireless Client': curr_ping_obj.device_names,
+                                    'MAC': curr_ping_obj.device_mac,
+                                    'Channel': curr_ping_obj.device_channels,
+                                    'SSID ': curr_ping_obj.device_ssid,
+                                    'Mode': curr_ping_obj.device_modes,
+                                    'Packets Sent': curr_ping_obj.packets_sent,
+                                    'Packets Received': curr_ping_obj.packets_received,
+                                    'Packets Loss': curr_ping_obj.packets_dropped,
                                 })
                                 self.overall_report.set_table_dataframe(dataframe1)
                                 self.overall_report.build_table()
@@ -8109,14 +8101,14 @@ class Candela(Realm):
                             self.overall_report.set_table_title('Ping Latency Graph')
                             self.overall_report.build_table_title()
 
-                            graph = lf_bar_graph_horizontal(_data_set=[self.ping_obj_dict[ce][obj_name]["obj"].device_min, self.ping_obj_dict[ce][obj_name]["obj"].device_avg, self.ping_obj_dict[ce][obj_name]["obj"].device_max],
+                            graph = lf_bar_graph_horizontal(_data_set=[curr_ping_obj.device_min, curr_ping_obj.device_avg, curr_ping_obj.device_max],
                                                             _xaxis_name='Time (ms)',
                                                             _yaxis_name='Wireless Clients',
                                                             _label=[
                                                                 'Min Latency (ms)', 'Average Latency (ms)', 'Max Latency (ms)'],
                                                             _graph_image_name=f'Ping Latency per client {obj_no}',
-                                                            _yaxis_label=self.ping_obj_dict[ce][obj_name]["obj"].report_names,
-                                                            _yaxis_categories=self.ping_obj_dict[ce][obj_name]["obj"].report_names,
+                                                            _yaxis_label=curr_ping_obj.report_names,
+                                                            _yaxis_categories=curr_ping_obj.report_names,
                                                             _yaxis_step=1,
                                                             _yticks_font=8,
                                                             _graph_title='Ping Latency per client',
@@ -8143,27 +8135,27 @@ class Candela(Realm):
                             self.overall_report.build_graph()
 
                             dataframe2 = pd.DataFrame({
-                                'Wireless Client': self.ping_obj_dict[ce][obj_name]["obj"].device_names,
-                                'MAC': self.ping_obj_dict[ce][obj_name]["obj"].device_mac,
-                                'Channel': self.ping_obj_dict[ce][obj_name]["obj"].device_channels,
-                                'SSID ': self.ping_obj_dict[ce][obj_name]["obj"].device_ssid,
-                                'Mode': self.ping_obj_dict[ce][obj_name]["obj"].device_modes,
-                                'Min Latency (ms)': self.ping_obj_dict[ce][obj_name]["obj"].device_min,
-                                'Average Latency (ms)': self.ping_obj_dict[ce][obj_name]["obj"].device_avg,
-                                'Max Latency (ms)': self.ping_obj_dict[ce][obj_name]["obj"].device_max
+                                'Wireless Client': curr_ping_obj.device_names,
+                                'MAC': curr_ping_obj.device_mac,
+                                'Channel': curr_ping_obj.device_channels,
+                                'SSID ': curr_ping_obj.device_ssid,
+                                'Mode': curr_ping_obj.device_modes,
+                                'Min Latency (ms)': curr_ping_obj.device_min,
+                                'Average Latency (ms)': curr_ping_obj.device_avg,
+                                'Max Latency (ms)': curr_ping_obj.device_max
                             })
                             self.overall_report.set_table_dataframe(dataframe2)
                             self.overall_report.build_table()
                             if self.do_bandsteering and self.robot_test:
-                                self.ping_obj_dict[ce][obj_name]["obj"].get_bandsteering_stats(report=self.overall_report)
+                                curr_ping_obj.get_bandsteering_stats(report=self.overall_report)
                             # check if there are remarks for any device. If there are remarks, build table else don't
-                            if (self.ping_obj_dict[ce][obj_name]["obj"].remarks != []):
+                            if (curr_ping_obj.remarks != []):
                                 self.overall_report.set_table_title('Notes')
                                 self.overall_report.build_table_title()
                                 dataframe3 = pd.DataFrame({
-                                    'Wireless Client': self.ping_obj_dict[ce][obj_name]["obj"].device_names_with_errors,
-                                    'Port': self.ping_obj_dict[ce][obj_name]["obj"].devices_with_errors,
-                                    'Remarks': self.ping_obj_dict[ce][obj_name]["obj"].remarks
+                                    'Wireless Client': curr_ping_obj.device_names_with_errors,
+                                    'Port': curr_ping_obj.devices_with_errors,
+                                    'Remarks': curr_ping_obj.remarks
                                 })
                                 self.overall_report.set_table_dataframe(dataframe3)
                                 self.overall_report.build_table()
@@ -8185,14 +8177,15 @@ class Candela(Realm):
                     while obj_name in self.qos_obj_dict[ce]:
                         if ce == "parallel":
                             obj_no = ''
+                        curr_qos_obj = copy.copy(self.qos_obj_dict[ce][obj_name]["obj"])
                         if (self.robot_test):
                             load = ''
-                            rate_down = str(str(int(self.qos_obj_dict[ce][obj_name]["obj"].cx_profile.side_b_min_bps) / 1000000) + ' ' + 'Mbps')
-                            rate_up = str(str(int(self.qos_obj_dict[ce][obj_name]["obj"].cx_profile.side_a_min_bps) / 1000000) + ' ' + 'Mbps')
-                            logging.debug("QOS Direction: %s", self.qos_obj_dict[ce][obj_name]["obj"].direction)
-                            if self.qos_obj_dict[ce][obj_name]["obj"].direction == "download":
+                            rate_down = str(str(int(curr_qos_obj.cx_profile.side_b_min_bps) / 1000000) + ' ' + 'Mbps')
+                            rate_up = str(str(int(curr_qos_obj.cx_profile.side_a_min_bps) / 1000000) + ' ' + 'Mbps')
+                            logging.debug("QOS Direction: %s", curr_qos_obj.direction)
+                            if curr_qos_obj.direction == "download":
                                 load = rate_down
-                            elif self.qos_obj_dict[ce][obj_name]["obj"].direction == "upload":
+                            elif curr_qos_obj.direction == "upload":
                                 load = rate_up
                             else:
                                 load = 'Upload' + ':' + rate_up + ',' + 'Download' + ':' + rate_down
@@ -8207,20 +8200,19 @@ class Candela(Realm):
                             avg_drop_a = params["avg_drop_a"].copy() if isinstance(params["avg_drop_a"], (list, dict, set)) else params["avg_drop_a"]
                             avg_drop_b = params["avg_drop_b"].copy() if isinstance(params["avg_drop_b"], (list, dict, set)) else params["avg_drop_b"]
                             report_path = params["report_path"].copy() if isinstance(params["report_path"], (list, dict, set)) else params["report_path"]
-                            result_dir_name = params["result_dir_name"].copy() if isinstance(params["result_dir_name"], (list, dict, set)) else params["result_dir_name"]
                             config_devices = params["config_devices"].copy() if isinstance(params["config_devices"], (list, dict, set)) else params["config_devices"]
                             selected_real_clients_names = params["selected_real_clients_names"].copy() if isinstance(
                                 params["selected_real_clients_names"], (list, dict, set)) else params["selected_real_clients_names"]
-                            self.qos_obj_dict[ce][obj_name]["obj"].ssid_list = self.qos_obj_dict[ce][obj_name]["obj"].get_ssid_list(self.qos_obj_dict[ce][obj_name]["obj"].input_devices_list)
+                            curr_qos_obj.ssid_list = curr_qos_obj.get_ssid_list(curr_qos_obj.input_devices_list)
                             if selected_real_clients_names is not None:
-                                self.qos_obj_dict[ce][obj_name]["obj"].num_stations = selected_real_clients_names
-                            data_set, load, res = self.qos_obj_dict[ce][obj_name]["obj"].generate_graph_data_set(data)
+                                curr_qos_obj.num_stations = selected_real_clients_names
+                            data_set, load, res = curr_qos_obj.generate_graph_data_set(data)
                         # Initialize counts and lists for device types
                         android_devices, windows_devices, linux_devices, ios_devices, ios_mob_devices = 0, 0, 0, 0, 0
                         all_devices_names = []
                         device_type = []
                         total_devices = ""
-                        for i in self.qos_obj_dict[ce][obj_name]["obj"].real_client_list:
+                        for i in curr_qos_obj.real_client_list:
                             split_device_name = i.split(" ")
                             if 'android' in split_device_name:
                                 all_devices_names.append(split_device_name[2] + ("(Android)"))
@@ -8260,13 +8252,13 @@ class Candela(Realm):
                             test_setup_info = {
                                 "Device List": ", ".join(all_devices_names),
                                 "Number of Stations": "Total" + f"({self.qos_obj_dict[ce][obj_name]['obj'].num_stations})" + total_devices,
-                                "AP Model": self.qos_obj_dict[ce][obj_name]["obj"].ap_name,
-                                "SSID": self.qos_obj_dict[ce][obj_name]["obj"].ssid,
-                                "Traffic Duration in hours": round(int(self.qos_obj_dict[ce][obj_name]["obj"].test_duration) / 3600, 2),
-                                "Security": self.qos_obj_dict[ce][obj_name]["obj"].security,
-                                "Protocol": (self.qos_obj_dict[ce][obj_name]["obj"].traffic_type.strip("lf_")).upper(),
-                                "Traffic Direction": self.qos_obj_dict[ce][obj_name]["obj"].direction,
-                                "TOS": self.qos_obj_dict[ce][obj_name]["obj"].tos,
+                                "AP Model": curr_qos_obj.ap_name,
+                                "SSID": curr_qos_obj.ssid,
+                                "Traffic Duration in hours": round(int(curr_qos_obj.test_duration) / 3600, 2),
+                                "Security": curr_qos_obj.security,
+                                "Protocol": (curr_qos_obj.traffic_type.strip("lf_")).upper(),
+                                "Traffic Direction": curr_qos_obj.direction,
+                                "TOS": curr_qos_obj.tos,
                                 "Per TOS Load in Mbps": load
                             }
                         # Test setup information table for devices in groups
@@ -8275,13 +8267,13 @@ class Candela(Realm):
                             profile_names = ', '.join(config_devices.values())
                             configmap = "Groups:" + group_names + " -> Profiles:" + profile_names
                             test_setup_info = {
-                                "AP Model": self.qos_obj_dict[ce][obj_name]["obj"].ap_name,
+                                "AP Model": curr_qos_obj.ap_name,
                                 'Configuration': configmap,
-                                "Traffic Duration in hours": round(int(self.qos_obj_dict[ce][obj_name]["obj"].test_duration) / 3600, 2),
-                                "Security": self.qos_obj_dict[ce][obj_name]["obj"].security,
-                                "Protocol": (self.qos_obj_dict[ce][obj_name]["obj"].traffic_type.strip("lf_")).upper(),
-                                "Traffic Direction": self.qos_obj_dict[ce][obj_name]["obj"].direction,
-                                "TOS": self.qos_obj_dict[ce][obj_name]["obj"].tos,
+                                "Traffic Duration in hours": round(int(curr_qos_obj.test_duration) / 3600, 2),
+                                "Security": curr_qos_obj.security,
+                                "Protocol": (curr_qos_obj.traffic_type.strip("lf_")).upper(),
+                                "Traffic Direction": curr_qos_obj.direction,
+                                "TOS": curr_qos_obj.tos,
                                 "Per TOS Load in Mbps": load
                             }
                         if self.robot_test:
@@ -8298,8 +8290,8 @@ class Candela(Realm):
 
                         if self.robot_test and not self.do_bandsteering:
                             if self.dowebgui:
-                                tos_for_report = self.qos_obj_dict[ce][obj_name]["obj"].tos
-                                tos_images, rssi_images = self.qos_obj_dict[ce][obj_name]["obj"].get_live_view_images()
+                                tos_for_report = curr_qos_obj.tos
+                                tos_images, rssi_images = curr_qos_obj.get_live_view_images()
                                 for tos_val in tos_for_report:
                                     for image_path in tos_images[tos_val]:
                                         self.overall_report.set_custom_html('<div style="page-break-before: always;"></div>')
@@ -8312,36 +8304,43 @@ class Candela(Realm):
                                         self.overall_report.build_custom()
                                         self.overall_report.set_custom_html(f'<img src="file://{rssi_image_path}" style="width: 1000px; height: 800px;"></img>')
                                         self.overall_report.build_custom()
-                            for coordinate in range(len(self.qos_obj_dict[ce][obj_name]["obj"].coordinate_list)):
-                                if self.qos_obj_dict[ce][obj_name]["obj"].rotation_enabled:
-                                    for angle in range(len(self.qos_obj_dict[ce][obj_name]["obj"].rotation_list)):
-                                        self.overall_report.set_obj_html(_obj_title=f"Coordinate: {self.qos_obj_dict[ce][obj_name]['obj'].coordinate_list[coordinate]} | Rotation Angle: {self.qos_obj_dict[ce][obj_name]['obj'].rotation_list[angle]}°",
-                                                                         _obj="")
+                            for coordinate in range(len(curr_qos_obj.coordinate_list)):
+                                if curr_qos_obj.rotation_enabled:
+                                    for angle in range(len(curr_qos_obj.rotation_list)):
+                                        self.overall_report.set_obj_html(
+                                            _obj_title=(
+                                                f"Coordinate: "
+                                                f"{self.qos_obj_dict[ce][obj_name]['obj'].coordinate_list[coordinate]} | "
+                                                f"Rotation Angle: "
+                                                f"{self.qos_obj_dict[ce][obj_name]['obj'].rotation_list[angle]}°"
+                                            ),
+                                            _obj=""
+                                        )
                                         self.overall_report.build_objective()
-                                        data = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]
-                                                                                               ["obj"].coordinate_list[coordinate]][self.qos_obj_dict[ce][obj_name]["obj"].rotation_list[angle]]["data"]
-                                        connections_download_avg = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]
-                                                                                                                   ["obj"].coordinate_list[coordinate]][self.qos_obj_dict[ce][obj_name]["obj"].rotation_list[angle]]["connections_download_avg"]
-                                        connections_upload_avg = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]
-                                                                                                                 ["obj"].coordinate_list[coordinate]][self.qos_obj_dict[ce][obj_name]["obj"].rotation_list[angle]]["connections_upload_avg"]
-                                        avg_drop_a = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]
-                                                                                                     ["obj"].coordinate_list[coordinate]][self.qos_obj_dict[ce][obj_name]["obj"].rotation_list[angle]]["avg_drop_a"]
-                                        avg_drop_b = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]
-                                                                                                     ["obj"].coordinate_list[coordinate]][self.qos_obj_dict[ce][obj_name]["obj"].rotation_list[angle]]["avg_drop_b"]
-                                        self.qos_obj_dict[ce][obj_name]["obj"].generate_individual_coordinate(
+                                        data = curr_qos_obj.qos_data[self.qos_obj_dict[ce][obj_name]
+                                                                     ["obj"].coordinate_list[coordinate]][curr_qos_obj.rotation_list[angle]]["data"]
+                                        connections_download_avg = curr_qos_obj.qos_data[self.qos_obj_dict[ce][obj_name]
+                                                                                         ["obj"].coordinate_list[coordinate]][curr_qos_obj.rotation_list[angle]]["connections_download_avg"]
+                                        connections_upload_avg = curr_qos_obj.qos_data[self.qos_obj_dict[ce][obj_name]
+                                                                                       ["obj"].coordinate_list[coordinate]][curr_qos_obj.rotation_list[angle]]["connections_upload_avg"]
+                                        avg_drop_a = curr_qos_obj.qos_data[self.qos_obj_dict[ce][obj_name]
+                                                                           ["obj"].coordinate_list[coordinate]][curr_qos_obj.rotation_list[angle]]["avg_drop_a"]
+                                        avg_drop_b = curr_qos_obj.qos_data[self.qos_obj_dict[ce][obj_name]
+                                                                           ["obj"].coordinate_list[coordinate]][curr_qos_obj.rotation_list[angle]]["avg_drop_b"]
+                                        curr_qos_obj.generate_individual_coordinate(
                                             self.overall_report, data, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, coordinate, angle)
                                 else:
                                     self.overall_report.set_obj_html(_obj_title=f"Coordinate: {self.qos_obj_dict[ce][obj_name]['obj'].coordinate_list[coordinate]}",
                                                                      _obj="")
                                     self.overall_report.build_objective()
-                                    data = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate]]["data"]
-                                    connections_download_avg = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce]
-                                                                                                               [obj_name]["obj"].coordinate_list[coordinate]]["connections_download_avg"]
-                                    connections_upload_avg = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce]
-                                                                                                             [obj_name]["obj"].coordinate_list[coordinate]]["connections_upload_avg"]
-                                    avg_drop_a = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate]]["avg_drop_a"]
-                                    avg_drop_b = self.qos_obj_dict[ce][obj_name]["obj"].qos_data[self.qos_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate]]["avg_drop_b"]
-                                    self.qos_obj_dict[ce][obj_name]["obj"].generate_individual_coordinate(
+                                    data = curr_qos_obj.qos_data[curr_qos_obj.coordinate_list[coordinate]]["data"]
+                                    connections_download_avg = curr_qos_obj.qos_data[self.qos_obj_dict[ce]
+                                                                                     [obj_name]["obj"].coordinate_list[coordinate]]["connections_download_avg"]
+                                    connections_upload_avg = curr_qos_obj.qos_data[self.qos_obj_dict[ce]
+                                                                                   [obj_name]["obj"].coordinate_list[coordinate]]["connections_upload_avg"]
+                                    avg_drop_a = curr_qos_obj.qos_data[curr_qos_obj.coordinate_list[coordinate]]["avg_drop_a"]
+                                    avg_drop_b = curr_qos_obj.qos_data[curr_qos_obj.coordinate_list[coordinate]]["avg_drop_b"]
+                                    curr_qos_obj.generate_individual_coordinate(
                                         self.overall_report, data, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, coordinate, None)
 
                         else:
@@ -8357,8 +8356,15 @@ class Candela(Realm):
                                 avg_download = []
                                 avg_drop_a = []
                                 avg_drop_b = []
-                                [(upload.append([]), download.append([]), drop_a.append([]), drop_b.append([]), avg_upload.append([]), avg_download.append([]), avg_drop_a.append([]), avg_drop_b.append([])) for i in
-                                 range(len(self.qos_obj_dict[ce][obj_name]['obj'].cx_profile.created_cx))]
+                                for _ in range(len(self.qos_obj_dict[ce][obj_name]['obj'].cx_profile.created_cx)):
+                                    upload.append([])
+                                    download.append([])
+                                    drop_a.append([])
+                                    drop_b.append([])
+                                    avg_upload.append([])
+                                    avg_download.append([])
+                                    avg_drop_a.append([])
+                                    avg_drop_b.append([])
                                 dropa_connections = dict.fromkeys(list(self.qos_obj_dict[ce][obj_name]['obj'].cx_profile.created_cx.keys()), float(0))
                                 dropb_connections = dict.fromkeys(list(self.qos_obj_dict[ce][obj_name]['obj'].cx_profile.created_cx.keys()), float(0))
                                 connections_upload = dict.fromkeys(list(self.qos_obj_dict[ce][obj_name]['obj'].cx_profile.created_cx.keys()), float(0))
@@ -8411,12 +8417,12 @@ class Candela(Realm):
                                 input_setup_info = {
                                     "contact": "support@candelatech.com"
                                 }
-                                data_set, load, res = self.qos_obj_dict[ce][obj_name]["obj"].generate_graph_data_set(data)
+                                data_set, load, res = curr_qos_obj.generate_graph_data_set(data)
 
                             df_throughput = pd.DataFrame(res["throughput_table_df"])
                             self.overall_report.set_table_dataframe(df_throughput)
                             self.overall_report.build_table()
-                            for key in res["graph_df"]:
+                            for _key in res["graph_df"]:
                                 self.overall_report.set_obj_html(
                                     _obj_title=f"Overall {
                                         self.qos_obj_dict[ce][obj_name]['obj'].direction} throughput for {
@@ -8431,7 +8437,7 @@ class Candela(Realm):
                                                  _yaxis_name="Throughput (Mbps)",
                                                  _xaxis_categories=["BK,BE,VI,VO"],
                                                  _xaxis_label=['1 Mbps', '2 Mbps', '3 Mbps', '4 Mbps', '5 Mbps'],
-                                                 _graph_image_name=f"tos_download_{key}Hz {obj_no}",
+                                                 _graph_image_name=f"tos_download_{_key}Hz {obj_no}",
                                                  _label=["BK", "BE", "VI", "VO"],
                                                  _xaxis_step=1,
                                                  _graph_title=f"Overall {self.qos_obj_dict[ce][obj_name]['obj'].direction} throughput – BK,BE,VO,VI traffic streams",
@@ -8456,7 +8462,7 @@ class Candela(Realm):
                             self.overall_report.build_graph()
                             if self.do_bandsteering:
                                 self.qos_obj_dict[ce][obj_name]['obj'].get_bandsteering_stats(report=self.overall_report, data=self.qos_obj_dict[ce][obj_name]['obj'].band_steering_df)
-                            self.qos_obj_dict[ce][obj_name]["obj"].generate_individual_graph(res, self.overall_report, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, obj_no)
+                            curr_qos_obj.generate_individual_graph(res, self.overall_report, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, obj_no)
                             self.overall_report.test_setup_table(test_setup_data=input_setup_info, value="Information")
                         if ce == "series":
                             obj_no += 1
@@ -8477,37 +8483,37 @@ class Candela(Realm):
                         params = self.mcast_obj_dict[ce][obj_name]["data"].copy()
                         config_devices = params["config_devices"].copy() if isinstance(params["config_devices"], (list, dict, set)) else params["config_devices"]
                         group_device_map = params["group_device_map"].copy() if isinstance(params["group_device_map"], (list, dict, set)) else params["group_device_map"]
-
+                        curr_mcast_obj = copy.copy(self.mcast_obj_dict[ce][obj_name]["obj"])
                         test_setup_info = {
-                            "DUT Name": self.mcast_obj_dict[ce][obj_name]["obj"].dut_model_num,
-                            "DUT Hardware Version": self.mcast_obj_dict[ce][obj_name]["obj"].dut_hw_version,
-                            "DUT Software Version": self.mcast_obj_dict[ce][obj_name]["obj"].dut_sw_version,
-                            "DUT Serial Number": self.mcast_obj_dict[ce][obj_name]["obj"].dut_serial_num,
+                            "DUT Name": curr_mcast_obj.dut_model_num,
+                            "DUT Hardware Version": curr_mcast_obj.dut_hw_version,
+                            "DUT Software Version": curr_mcast_obj.dut_sw_version,
+                            "DUT Serial Number": curr_mcast_obj.dut_serial_num,
                         }
                         self.overall_report.set_obj_html(_obj_title=f'MULTICAST Test {obj_no}', _obj="")
                         self.overall_report.build_objective()
                         # For real devices when groups specified for configuration
-                        if self.mcast_obj_dict[ce][obj_name]["obj"].real and self.mcast_obj_dict[ce][obj_name]["obj"].group_name:
+                        if curr_mcast_obj.real and curr_mcast_obj.group_name:
                             group_names = ', '.join(config_devices.keys())
                             profile_names = ', '.join(config_devices.values())
                             configmap = "Groups:" + group_names + " -> Profiles:" + profile_names
                             test_input_info = {
-                                "LANforge ip": self.mcast_obj_dict[ce][obj_name]["obj"].lfmgr,
-                                "LANforge port": self.mcast_obj_dict[ce][obj_name]["obj"].lfmgr_port,
-                                "Upstream": self.mcast_obj_dict[ce][obj_name]["obj"].upstream_port,
-                                "Test Duration": self.mcast_obj_dict[ce][obj_name]["obj"].test_duration,
+                                "LANforge ip": curr_mcast_obj.lfmgr,
+                                "LANforge port": curr_mcast_obj.lfmgr_port,
+                                "Upstream": curr_mcast_obj.upstream_port,
+                                "Test Duration": curr_mcast_obj.test_duration,
                                 "Test Configuration": configmap,
-                                "Polling Interval": self.mcast_obj_dict[ce][obj_name]["obj"].polling_interval,
-                                "Total No. of Devices": self.mcast_obj_dict[ce][obj_name]["obj"].station_count,
+                                "Polling Interval": curr_mcast_obj.polling_interval,
+                                "Total No. of Devices": curr_mcast_obj.station_count,
                             }
                         else:
                             test_input_info = {
-                                "LANforge ip": self.mcast_obj_dict[ce][obj_name]["obj"].lfmgr,
-                                "LANforge port": self.mcast_obj_dict[ce][obj_name]["obj"].lfmgr_port,
-                                "Upstream": self.mcast_obj_dict[ce][obj_name]["obj"].upstream_port,
-                                "Test Duration": self.mcast_obj_dict[ce][obj_name]["obj"].test_duration,
-                                "Polling Interval": self.mcast_obj_dict[ce][obj_name]["obj"].polling_interval,
-                                "Total No. of Devices": self.mcast_obj_dict[ce][obj_name]["obj"].station_count,
+                                "LANforge ip": curr_mcast_obj.lfmgr,
+                                "LANforge port": curr_mcast_obj.lfmgr_port,
+                                "Upstream": curr_mcast_obj.upstream_port,
+                                "Test Duration": curr_mcast_obj.test_duration,
+                                "Polling Interval": curr_mcast_obj.polling_interval,
+                                "Total No. of Devices": curr_mcast_obj.station_count,
                             }
 
                         self.overall_report.set_table_title("Test Configuration")
@@ -8552,15 +8558,15 @@ class Candela(Realm):
                                 _reset_port_enable_,
                                 _reset_port_time_min_,
                                 _reset_port_time_max_) in zip(
-                                self.mcast_obj_dict[ce][obj_name]["obj"].radio_name_list,
-                                self.mcast_obj_dict[ce][obj_name]["obj"].ssid_list,
-                                self.mcast_obj_dict[ce][obj_name]["obj"].ssid_password_list,
-                                self.mcast_obj_dict[ce][obj_name]["obj"].ssid_security_list,
-                                self.mcast_obj_dict[ce][obj_name]["obj"].wifi_mode_list,
-                                self.mcast_obj_dict[ce][obj_name]["obj"].enable_flags_list,
-                                self.mcast_obj_dict[ce][obj_name]["obj"].reset_port_enable_list,
-                                self.mcast_obj_dict[ce][obj_name]["obj"].reset_port_time_min_list,
-                                self.mcast_obj_dict[ce][obj_name]["obj"].reset_port_time_max_list):
+                                curr_mcast_obj.radio_name_list,
+                                curr_mcast_obj.ssid_list,
+                                curr_mcast_obj.ssid_password_list,
+                                curr_mcast_obj.ssid_security_list,
+                                curr_mcast_obj.wifi_mode_list,
+                                curr_mcast_obj.enable_flags_list,
+                                curr_mcast_obj.reset_port_enable_list,
+                                curr_mcast_obj.reset_port_time_min_list,
+                                curr_mcast_obj.reset_port_time_max_list):
 
                             mode_value = wifi_mode_dict[int(mode_)]
 
@@ -8577,17 +8583,17 @@ class Candela(Realm):
                         # Graph TOS data
                         # Once the data is stopped can collect the data for the cx's both multi cast and uni cast
                         # if the traffic is still running will gather the running traffic
-                        # self.mcast_obj_dict[ce][obj_name]["obj"].evaluate_qos()
+                        # curr_mcast_obj.evaluate_qos()
 
                         # graph BK A
                         # try to do as a loop
                         tos_list = ['BK', 'BE', 'VI', 'VO']
-                        if self.mcast_obj_dict[ce][obj_name]["obj"].real:
+                        if curr_mcast_obj.real:
                             tos_types = ['BE', 'BK', 'VI', 'VO']
-                            logging.debug("client_dict_B is client_dict_A: %s", self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B is self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A)
+                            logging.debug("client_dict_B is client_dict_A: %s", curr_mcast_obj.client_dict_B is curr_mcast_obj.client_dict_A)
                             for tos_key in tos_types:
-                                if tos_key in self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A:
-                                    tos_data = self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos_key]
+                                if tos_key in curr_mcast_obj.client_dict_A:
+                                    tos_data = curr_mcast_obj.client_dict_A[tos_key]
 
                                     # Filter A side
                                     traffic_proto_A = tos_data.get("traffic_protocol_A", [])
@@ -8609,8 +8615,8 @@ class Candela(Realm):
                                             filtered_list = [tos_data[key][i] for i in indices_to_keep_B if i < len(tos_data[key])]
                                             tos_data[key] = filtered_list
                             for tos_key in tos_types:
-                                if tos_key in self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B:
-                                    tos_data = self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos_key]
+                                if tos_key in curr_mcast_obj.client_dict_B:
+                                    tos_data = curr_mcast_obj.client_dict_B[tos_key]
 
                                     # Filter A side
                                     traffic_proto_A = tos_data.get("traffic_protocol_A", [])
@@ -8634,14 +8640,14 @@ class Candela(Realm):
 
                         if self.robot_test and not self.do_bandsteering:
                             logger.info("Building per-coordinate/rotation graphs and tables for robot test (from memory dict)")
-                            if self.mcast_obj_dict[ce][obj_name]["obj"].dowebgui:
-                                self.mcast_obj_dict[ce][obj_name]["obj"].add_live_view_images_to_report()
-                            if not hasattr(self.mcast_obj_dict[ce][obj_name]["obj"], "multicast_robot_results") or not self.mcast_obj_dict[ce][obj_name]["obj"].multicast_robot_results:
+                            if curr_mcast_obj.dowebgui:
+                                curr_mcast_obj.add_live_view_images_to_report()
+                            if not hasattr(curr_mcast_obj, "multicast_robot_results") or not curr_mcast_obj.multicast_robot_results:
                                 self.overall_report.set_custom_html("<p><i>No robot test results found.</i></p>")
                                 self.overall_report.build_custom()
                             else:
                                 # Iterate through each coordinate/rotation result
-                                for _, result in self.mcast_obj_dict[ce][obj_name]["obj"].multicast_robot_results.items():
+                                for _, result in curr_mcast_obj.multicast_robot_results.items():
                                     coord = result.get("coordinate", "NA")
                                     rot = result.get("rotation", "NA")
                                     stations = result.get("stations", [])
@@ -8753,7 +8759,7 @@ class Candela(Realm):
                                     self.overall_report.build_custom()
 
                                 all_summary = []
-                                for pos_key, res in self.mcast_obj_dict[ce][obj_name]["obj"].multicast_robot_results.items():
+                                for _pos_key, res in curr_mcast_obj.multicast_robot_results.items():
                                     sm = res.get("summary")
                                     if sm:
                                         all_summary.append(sm)
@@ -8809,26 +8815,30 @@ class Candela(Realm):
 
                         else:
                             for tos in tos_list:
-                                logging.debug("TOS: %s", self.mcast_obj_dict[ce][obj_name]["obj"].tos)
-                                if tos not in self.mcast_obj_dict[ce][obj_name]["obj"].tos:
+                                logging.debug("TOS: %s", curr_mcast_obj.tos)
+                                if tos not in curr_mcast_obj.tos:
                                     continue
-                                if (self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]["ul_A"] and self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]["dl_A"]):
-                                    min_bps_a = self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A["min_bps_a"]
-                                    min_bps_b = self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A["min_bps_b"]
+                                if (curr_mcast_obj.client_dict_A[tos]["ul_A"] and curr_mcast_obj.client_dict_A[tos]["dl_A"]):
+                                    min_bps_a = curr_mcast_obj.client_dict_A["min_bps_a"]
+                                    min_bps_b = curr_mcast_obj.client_dict_A["min_bps_b"]
 
-                                    dataset_list = [self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]["ul_A"], self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]["dl_A"]]
+                                    dataset_list = [curr_mcast_obj.client_dict_A[tos]["ul_A"], curr_mcast_obj.client_dict_A[tos]["dl_A"]]
                                     # TODO possibly explain the wording for upload and download
-                                    dataset_length = len(self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]["ul_A"])
+                                    dataset_length = len(curr_mcast_obj.client_dict_A[tos]["ul_A"])
                                     x_fig_size = 20
-                                    y_fig_size = len(self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]["clients_A"]) * .4 + 5
+                                    y_fig_size = len(curr_mcast_obj.client_dict_A[tos]["clients_A"]) * .4 + 5
                                     logger.debug("length of clients_A {clients} resource_alias_A {alias_A}".format(
-                                        clients=len(self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]["clients_A"]), alias_A=len(self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]["resource_alias_A"])))
-                                    logger.debug("clients_A {clients}".format(clients=self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]["clients_A"]))
-                                    logger.debug("resource_alias_A {alias_A}".format(alias_A=self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]["resource_alias_A"]))
+                                        clients=len(curr_mcast_obj.client_dict_A[tos]["clients_A"]), alias_A=len(curr_mcast_obj.client_dict_A[tos]["resource_alias_A"])))
+                                    logger.debug("clients_A {clients}".format(clients=curr_mcast_obj.client_dict_A[tos]["clients_A"]))
+                                    logger.debug("resource_alias_A {alias_A}".format(alias_A=curr_mcast_obj.client_dict_A[tos]["resource_alias_A"]))
 
                                     if int(min_bps_a) != 0:
                                         self.overall_report.set_obj_html(
-                                            _obj_title=f"Individual throughput measured  upload tcp or udp bps: {min_bps_a},  download tcp, udp, or mcast  bps: {min_bps_b} station for traffic {tos} (WiFi).",
+                                            _obj_title=(
+                                                f"Individual throughput measured upload tcp or udp bps: {min_bps_a}, "
+                                                f"download tcp, udp, or mcast bps: {min_bps_b} "
+                                                f"station for traffic {tos} (WiFi)."
+                                            ),
                                             _obj=f"The below graph represents individual throughput for {dataset_length} clients running {tos} "
                                             f"(WiFi) traffic.  Y- axis shows “Client names“ and X-axis shows “"
                                             f"Throughput in Mbps”.")
@@ -8844,11 +8854,11 @@ class Candela(Realm):
                                     graph = lf_bar_graph_horizontal(_data_set=dataset_list,
                                                                     _xaxis_name="Throughput in bps",
                                                                     _yaxis_name="Client names",
-                                                                    # _yaxis_categories=self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]["clients_A"],
-                                                                    _yaxis_categories=self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]["resource_alias_A"],
+                                                                    # _yaxis_categories=curr_mcast_obj.client_dict_A[tos]["clients_A"],
+                                                                    _yaxis_categories=curr_mcast_obj.client_dict_A[tos]["resource_alias_A"],
                                                                     _graph_image_name=f"{tos}_A{obj_no}",
-                                                                    _label=self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['labels'],
-                                                                    _color_name=self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['colors'],
+                                                                    _label=curr_mcast_obj.client_dict_A[tos]['labels'],
+                                                                    _color_name=curr_mcast_obj.client_dict_A[tos]['colors'],
                                                                     _color_edge=['black'],
                                                                     # traditional station side -A
                                                                     _graph_title=f"Individual {tos} client side traffic measurement - side a (downstream)",
@@ -8866,8 +8876,8 @@ class Candela(Realm):
                                     self.overall_report.build_graph()
                                     self.overall_report.set_csv_filename(graph_png)
                                     self.overall_report.move_csv_file()
-                                    if (self.mcast_obj_dict[ce][obj_name]["obj"].dowebgui and self.mcast_obj_dict[ce][obj_name]["obj"].get_live_view):
-                                        for floor in range(0, int(self.mcast_obj_dict[ce][obj_name]["obj"].total_floors)):
+                                    if (curr_mcast_obj.dowebgui and curr_mcast_obj.get_live_view):
+                                        for floor in range(0, int(curr_mcast_obj.total_floors)):
                                             script_dir = os.path.dirname(os.path.abspath(__file__))
                                             throughput_image_path = os.path.join(script_dir, "heatmap_images", f"{self.mcast_obj_dict[ce][obj_name]['obj'].test_name}_throughput_{floor + 1}.png")
                                             rssi_image_path = os.path.join(script_dir, "heatmap_images", f"{self.mcast_obj_dict[ce][obj_name]['obj'].test_name}_rssi_{floor + 1}.png")
@@ -8895,69 +8905,69 @@ class Candela(Realm):
                                                 self.overall_report.build_custom()
 
                                     # For real devices appending the required data for pass fail criteria
-                                    if self.mcast_obj_dict[ce][obj_name]["obj"].real:
+                                    if curr_mcast_obj.real:
                                         up, down, off_up, off_down = [], [], [], []
-                                        for i in self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['ul_A']:
+                                        for i in curr_mcast_obj.client_dict_A[tos]['ul_A']:
                                             up.append(int(i) / 1000000)
-                                        for i in self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['dl_A']:
+                                        for i in curr_mcast_obj.client_dict_A[tos]['dl_A']:
                                             down.append(int(i) / 1000000)
-                                        for i in self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['offered_upload_rate_A']:
+                                        for i in curr_mcast_obj.client_dict_A[tos]['offered_upload_rate_A']:
                                             off_up.append(int(i) / 1_000_000)
-                                        for i in self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['offered_download_rate_A']:
+                                        for i in curr_mcast_obj.client_dict_A[tos]['offered_download_rate_A']:
                                             off_down.append(int(i) / 1000000)
                                         # if either 'expected_passfail_value' or 'device_csv_name' is provided for pass/fail evaluation
-                                        if self.mcast_obj_dict[ce][obj_name]["obj"].expected_passfail_value or self.mcast_obj_dict[ce][obj_name]["obj"].device_csv_name:
-                                            test_input_list, pass_fail_list = self.mcast_obj_dict[ce][obj_name]["obj"].get_pass_fail_list(tos, up, down)
+                                        if curr_mcast_obj.expected_passfail_value or curr_mcast_obj.device_csv_name:
+                                            test_input_list, pass_fail_list = curr_mcast_obj.get_pass_fail_list(tos, up, down)
 
-                                    if self.mcast_obj_dict[ce][obj_name]["obj"].real:
+                                    if curr_mcast_obj.real:
                                         # When groups and profiles specifed for configuration
-                                        if self.mcast_obj_dict[ce][obj_name]["obj"].group_name:
+                                        if curr_mcast_obj.group_name:
                                             for key, val in group_device_map.items():
                                                 # Generating Dataframe when Groups with their profiles and pass_fail case is specified
-                                                if self.mcast_obj_dict[ce][obj_name]["obj"].expected_passfail_value or self.mcast_obj_dict[ce][obj_name]["obj"].device_csv_name:
-                                                    dataframe = self.mcast_obj_dict[ce][obj_name]["obj"].generate_dataframe(
+                                                if curr_mcast_obj.expected_passfail_value or curr_mcast_obj.device_csv_name:
+                                                    dataframe = curr_mcast_obj.generate_dataframe(
                                                         val,
-                                                        self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['resource_alias_A'],
-                                                        self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['resource_eid_A'],
-                                                        self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['resource_host_A'],
-                                                        self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['resource_hw_ver_A'],
-                                                        self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]["clients_A"],
-                                                        self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['port_A'],
-                                                        self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['mode_A'],
-                                                        self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['mac_A'],
-                                                        self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['ssid_A'],
-                                                        self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['channel_A'],
-                                                        self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['traffic_type_A'],
-                                                        self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['traffic_protocol_A'],
+                                                        curr_mcast_obj.client_dict_A[tos]['resource_alias_A'],
+                                                        curr_mcast_obj.client_dict_A[tos]['resource_eid_A'],
+                                                        curr_mcast_obj.client_dict_A[tos]['resource_host_A'],
+                                                        curr_mcast_obj.client_dict_A[tos]['resource_hw_ver_A'],
+                                                        curr_mcast_obj.client_dict_A[tos]["clients_A"],
+                                                        curr_mcast_obj.client_dict_A[tos]['port_A'],
+                                                        curr_mcast_obj.client_dict_A[tos]['mode_A'],
+                                                        curr_mcast_obj.client_dict_A[tos]['mac_A'],
+                                                        curr_mcast_obj.client_dict_A[tos]['ssid_A'],
+                                                        curr_mcast_obj.client_dict_A[tos]['channel_A'],
+                                                        curr_mcast_obj.client_dict_A[tos]['traffic_type_A'],
+                                                        curr_mcast_obj.client_dict_A[tos]['traffic_protocol_A'],
                                                         off_up,
                                                         off_down,
                                                         up,
                                                         down,
                                                         test_input_list,
-                                                        self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['download_rx_drop_percent_A'],
+                                                        curr_mcast_obj.client_dict_A[tos]['download_rx_drop_percent_A'],
                                                         pass_fail_list)
                                                 # Generating Dataframe for groups when pass_fail case is not specified
                                                 else:
-                                                    dataframe = self.mcast_obj_dict[ce][obj_name]["obj"].generate_dataframe(
+                                                    dataframe = curr_mcast_obj.generate_dataframe(
                                                         val,
-                                                        self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['resource_alias_A'],
-                                                        self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['resource_eid_A'],
-                                                        self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['resource_host_A'],
-                                                        self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['resource_hw_ver_A'],
-                                                        self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]["clients_A"],
-                                                        self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['port_A'],
-                                                        self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['mode_A'],
-                                                        self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['mac_A'],
-                                                        self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['ssid_A'],
-                                                        self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['channel_A'],
-                                                        self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['traffic_type_A'],
-                                                        self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['traffic_protocol_A'],
+                                                        curr_mcast_obj.client_dict_A[tos]['resource_alias_A'],
+                                                        curr_mcast_obj.client_dict_A[tos]['resource_eid_A'],
+                                                        curr_mcast_obj.client_dict_A[tos]['resource_host_A'],
+                                                        curr_mcast_obj.client_dict_A[tos]['resource_hw_ver_A'],
+                                                        curr_mcast_obj.client_dict_A[tos]["clients_A"],
+                                                        curr_mcast_obj.client_dict_A[tos]['port_A'],
+                                                        curr_mcast_obj.client_dict_A[tos]['mode_A'],
+                                                        curr_mcast_obj.client_dict_A[tos]['mac_A'],
+                                                        curr_mcast_obj.client_dict_A[tos]['ssid_A'],
+                                                        curr_mcast_obj.client_dict_A[tos]['channel_A'],
+                                                        curr_mcast_obj.client_dict_A[tos]['traffic_type_A'],
+                                                        curr_mcast_obj.client_dict_A[tos]['traffic_protocol_A'],
                                                         off_up,
                                                         off_down,
                                                         up,
                                                         down,
                                                         [],
-                                                        self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['download_rx_drop_percent_A'],
+                                                        curr_mcast_obj.client_dict_A[tos]['download_rx_drop_percent_A'],
                                                         [],)
                                                 # When the client exists in either group.
                                                 if dataframe:
@@ -8968,27 +8978,27 @@ class Candela(Realm):
                                                     self.overall_report.build_table()
                                         else:
                                             tos_dataframe_A = {
-                                                " Client Alias ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['resource_alias_A'],
-                                                " Host eid ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['resource_eid_A'],
-                                                " Host Name ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['resource_host_A'],
-                                                " Device Type / Hw Ver ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['resource_hw_ver_A'],
-                                                " Endp Name": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]["clients_A"],
+                                                " Client Alias ": curr_mcast_obj.client_dict_A[tos]['resource_alias_A'],
+                                                " Host eid ": curr_mcast_obj.client_dict_A[tos]['resource_eid_A'],
+                                                " Host Name ": curr_mcast_obj.client_dict_A[tos]['resource_host_A'],
+                                                " Device Type / Hw Ver ": curr_mcast_obj.client_dict_A[tos]['resource_hw_ver_A'],
+                                                " Endp Name": curr_mcast_obj.client_dict_A[tos]["clients_A"],
                                                 # TODO : port A being set to many times
-                                                " Port Name ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['port_A'],
-                                                " Mode ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['mode_A'],
-                                                " Mac ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['mac_A'],
-                                                " SSID ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['ssid_A'],
-                                                " Channel ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['channel_A'],
-                                                " Type of traffic ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['traffic_type_A'],
-                                                " Traffic Protocol ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['traffic_protocol_A'],
-                                                " Offered Upload Rate Per Client": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['offered_upload_rate_A'],
-                                                " Offered Download Rate Per Client": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['offered_download_rate_A'],
-                                                " Upload Rate Per Client": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['ul_A'],
-                                                " Download Rate Per Client": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['dl_A'],
-                                                " Drop Percentage (%)": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['download_rx_drop_percent_A'],
+                                                " Port Name ": curr_mcast_obj.client_dict_A[tos]['port_A'],
+                                                " Mode ": curr_mcast_obj.client_dict_A[tos]['mode_A'],
+                                                " Mac ": curr_mcast_obj.client_dict_A[tos]['mac_A'],
+                                                " SSID ": curr_mcast_obj.client_dict_A[tos]['ssid_A'],
+                                                " Channel ": curr_mcast_obj.client_dict_A[tos]['channel_A'],
+                                                " Type of traffic ": curr_mcast_obj.client_dict_A[tos]['traffic_type_A'],
+                                                " Traffic Protocol ": curr_mcast_obj.client_dict_A[tos]['traffic_protocol_A'],
+                                                " Offered Upload Rate Per Client": curr_mcast_obj.client_dict_A[tos]['offered_upload_rate_A'],
+                                                " Offered Download Rate Per Client": curr_mcast_obj.client_dict_A[tos]['offered_download_rate_A'],
+                                                " Upload Rate Per Client": curr_mcast_obj.client_dict_A[tos]['ul_A'],
+                                                " Download Rate Per Client": curr_mcast_obj.client_dict_A[tos]['dl_A'],
+                                                " Drop Percentage (%)": curr_mcast_obj.client_dict_A[tos]['download_rx_drop_percent_A'],
                                             }
                                             # When pass_Fail criteria specified
-                                            if self.mcast_obj_dict[ce][obj_name]["obj"].expected_passfail_value or self.mcast_obj_dict[ce][obj_name]["obj"].device_csv_name:
+                                            if curr_mcast_obj.expected_passfail_value or curr_mcast_obj.device_csv_name:
                                                 tos_dataframe_A[" Expected " + 'Download' + " Rate"] = [float(x) * 10**6 for x in test_input_list]
                                                 tos_dataframe_A[" Status "] = pass_fail_list
 
@@ -8999,23 +9009,23 @@ class Candela(Realm):
                                     # For virtual clients
                                     else:
                                         tos_dataframe_A = {
-                                            " Client Alias ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['resource_alias_A'],
-                                            " Host eid ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['resource_eid_A'],
-                                            " Host Name ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['resource_host_A'],
-                                            " Device Type / Hw Ver ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['resource_hw_ver_A'],
-                                            " Endp Name": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]["clients_A"],
-                                            " Port Name ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['port_A'],
-                                            " Mode ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['mode_A'],
-                                            " Mac ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['mac_A'],
-                                            " SSID ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['ssid_A'],
-                                            " Channel ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['channel_A'],
-                                            " Type of traffic ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['traffic_type_A'],
-                                            " Traffic Protocol ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['traffic_protocol_A'],
-                                            " Offered Upload Rate Per Client": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['offered_upload_rate_A'],
-                                            " Offered Download Rate Per Client": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['offered_download_rate_A'],
-                                            " Upload Rate Per Client": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['ul_A'],
-                                            " Download Rate Per Client": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['dl_A'],
-                                            " Drop Percentage (%)": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_A[tos]['download_rx_drop_percent_A'],
+                                            " Client Alias ": curr_mcast_obj.client_dict_A[tos]['resource_alias_A'],
+                                            " Host eid ": curr_mcast_obj.client_dict_A[tos]['resource_eid_A'],
+                                            " Host Name ": curr_mcast_obj.client_dict_A[tos]['resource_host_A'],
+                                            " Device Type / Hw Ver ": curr_mcast_obj.client_dict_A[tos]['resource_hw_ver_A'],
+                                            " Endp Name": curr_mcast_obj.client_dict_A[tos]["clients_A"],
+                                            " Port Name ": curr_mcast_obj.client_dict_A[tos]['port_A'],
+                                            " Mode ": curr_mcast_obj.client_dict_A[tos]['mode_A'],
+                                            " Mac ": curr_mcast_obj.client_dict_A[tos]['mac_A'],
+                                            " SSID ": curr_mcast_obj.client_dict_A[tos]['ssid_A'],
+                                            " Channel ": curr_mcast_obj.client_dict_A[tos]['channel_A'],
+                                            " Type of traffic ": curr_mcast_obj.client_dict_A[tos]['traffic_type_A'],
+                                            " Traffic Protocol ": curr_mcast_obj.client_dict_A[tos]['traffic_protocol_A'],
+                                            " Offered Upload Rate Per Client": curr_mcast_obj.client_dict_A[tos]['offered_upload_rate_A'],
+                                            " Offered Download Rate Per Client": curr_mcast_obj.client_dict_A[tos]['offered_download_rate_A'],
+                                            " Upload Rate Per Client": curr_mcast_obj.client_dict_A[tos]['ul_A'],
+                                            " Download Rate Per Client": curr_mcast_obj.client_dict_A[tos]['dl_A'],
+                                            " Drop Percentage (%)": curr_mcast_obj.client_dict_A[tos]['download_rx_drop_percent_A'],
                                         }
                                         dataframe3 = pd.DataFrame(tos_dataframe_A)
                                         self.overall_report.set_table_dataframe(dataframe3)
@@ -9023,15 +9033,15 @@ class Candela(Realm):
 
                             # TODO both client_dict_A and client_dict_B contains the same information
                             for tos in tos_list:
-                                if (self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]["ul_B"] and self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]["dl_B"]):
-                                    min_bps_a = self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B["min_bps_a"]
-                                    min_bps_b = self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B["min_bps_b"]
+                                if (curr_mcast_obj.client_dict_B[tos]["ul_B"] and curr_mcast_obj.client_dict_B[tos]["dl_B"]):
+                                    min_bps_a = curr_mcast_obj.client_dict_B["min_bps_a"]
+                                    min_bps_b = curr_mcast_obj.client_dict_B["min_bps_b"]
 
-                                    dataset_list = [self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]["ul_B"], self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]["dl_B"]]
-                                    dataset_length = len(self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]["ul_B"])
+                                    dataset_list = [curr_mcast_obj.client_dict_B[tos]["ul_B"], curr_mcast_obj.client_dict_B[tos]["dl_B"]]
+                                    dataset_length = len(curr_mcast_obj.client_dict_B[tos]["ul_B"])
 
                                     x_fig_size = 20
-                                    y_fig_size = len(self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]["clients_B"]) * .4 + 5
+                                    y_fig_size = len(curr_mcast_obj.client_dict_B[tos]["clients_B"]) * .4 + 5
 
                                     self.overall_report.set_obj_html(
                                         _obj_title=f"Individual throughput upstream endp,  offered upload bps: {min_bps_a} offered download bps: {min_bps_b} /station for traffic {tos} (WiFi).",
@@ -9043,11 +9053,11 @@ class Candela(Realm):
                                     graph = lf_bar_graph_horizontal(_data_set=dataset_list,
                                                                     _xaxis_name="Throughput in bps",
                                                                     _yaxis_name="Client names",
-                                                                    # _yaxis_categories=self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]["clients_B"],
-                                                                    _yaxis_categories=self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]["resource_alias_B"],
+                                                                    # _yaxis_categories=curr_mcast_obj.client_dict_B[tos]["clients_B"],
+                                                                    _yaxis_categories=curr_mcast_obj.client_dict_B[tos]["resource_alias_B"],
                                                                     _graph_image_name=f"{tos}_B{obj_no}",
-                                                                    _label=self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]['labels'],
-                                                                    _color_name=self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]['colors'],
+                                                                    _label=curr_mcast_obj.client_dict_B[tos]['labels'],
+                                                                    _color_name=curr_mcast_obj.client_dict_B[tos]['colors'],
                                                                     _color_edge=['black'],
                                                                     _graph_title=f"Individual {tos} upstream side traffic measurement - side b (WIFI) traffic",
                                                                     _title_size=10,
@@ -9066,24 +9076,24 @@ class Candela(Realm):
                                     self.overall_report.move_csv_file()
 
                                     tos_dataframe_B = {
-                                        " Client Alias ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]['resource_alias_B'],
-                                        " Host eid ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]['resource_eid_B'],
-                                        " Host Name ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]['resource_host_B'],
-                                        " Device Type / HW Ver ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]['resource_hw_ver_B'],
-                                        " Endp Name": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]["clients_B"],
+                                        " Client Alias ": curr_mcast_obj.client_dict_B[tos]['resource_alias_B'],
+                                        " Host eid ": curr_mcast_obj.client_dict_B[tos]['resource_eid_B'],
+                                        " Host Name ": curr_mcast_obj.client_dict_B[tos]['resource_host_B'],
+                                        " Device Type / HW Ver ": curr_mcast_obj.client_dict_B[tos]['resource_hw_ver_B'],
+                                        " Endp Name": curr_mcast_obj.client_dict_B[tos]["clients_B"],
                                         # TODO get correct size
-                                        " Port Name ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]['port_B'],
-                                        " Mode ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]['mode_B'],
-                                        " Mac ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]['mac_B'],
-                                        " SSID ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]['ssid_B'],
-                                        " Channel ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]['channel_B'],
-                                        " Type of traffic ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]['traffic_type_B'],
-                                        " Traffic Protocol ": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]['traffic_protocol_B'],
-                                        " Offered Upload Rate Per Client": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]['offered_upload_rate_B'],
-                                        " Offered Download Rate Per Client": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]['offered_download_rate_B'],
-                                        " Upload Rate Per Client": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]['ul_B'],
-                                        " Download Rate Per Client": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]['dl_B'],
-                                        " Drop Percentage (%)": self.mcast_obj_dict[ce][obj_name]["obj"].client_dict_B[tos]['download_rx_drop_percent_B']
+                                        " Port Name ": curr_mcast_obj.client_dict_B[tos]['port_B'],
+                                        " Mode ": curr_mcast_obj.client_dict_B[tos]['mode_B'],
+                                        " Mac ": curr_mcast_obj.client_dict_B[tos]['mac_B'],
+                                        " SSID ": curr_mcast_obj.client_dict_B[tos]['ssid_B'],
+                                        " Channel ": curr_mcast_obj.client_dict_B[tos]['channel_B'],
+                                        " Type of traffic ": curr_mcast_obj.client_dict_B[tos]['traffic_type_B'],
+                                        " Traffic Protocol ": curr_mcast_obj.client_dict_B[tos]['traffic_protocol_B'],
+                                        " Offered Upload Rate Per Client": curr_mcast_obj.client_dict_B[tos]['offered_upload_rate_B'],
+                                        " Offered Download Rate Per Client": curr_mcast_obj.client_dict_B[tos]['offered_download_rate_B'],
+                                        " Upload Rate Per Client": curr_mcast_obj.client_dict_B[tos]['ul_B'],
+                                        " Download Rate Per Client": curr_mcast_obj.client_dict_B[tos]['dl_B'],
+                                        " Drop Percentage (%)": curr_mcast_obj.client_dict_B[tos]['download_rx_drop_percent_B']
                                     }
 
                                     dataframe3 = pd.DataFrame(tos_dataframe_B)
@@ -9091,12 +9101,12 @@ class Candela(Realm):
                                     self.overall_report.build_table()
 
                             if self.robot_test and self.do_bandsteering:
-                                self.mcast_obj_dict[ce][obj_name]["obj"].report = self.overall_report
-                                self.mcast_obj_dict[ce][obj_name]["obj"].get_bandsteering_stats()
+                                curr_mcast_obj.report = self.overall_report
+                                curr_mcast_obj.get_bandsteering_stats()
                             # empty dictionarys evaluate to false , placing tables in output
-                            if bool(self.mcast_obj_dict[ce][obj_name]["obj"].dl_port_csv_files):
-                                for key, value in self.mcast_obj_dict[ce][obj_name]["obj"].dl_port_csv_files.items():
-                                    if self.mcast_obj_dict[ce][obj_name]["obj"].csv_data_to_report:
+                            if bool(curr_mcast_obj.dl_port_csv_files):
+                                for key, value in curr_mcast_obj.dl_port_csv_files.items():
+                                    if curr_mcast_obj.csv_data_to_report:
                                         # read the csv file
                                         self.overall_report.set_table_title("Layer 3 Cx Traffic  {key}".format(key=key))
                                         self.overall_report.build_table_title()
@@ -9128,10 +9138,10 @@ class Candela(Realm):
                         if ce == "parallel":
                             obj_no = ''
 
+                        curr_vs_obj = copy.copy(self.vs_obj_dict[ce][obj_name]["obj"])
                         if not self.robot_test or (self.robot_test and self.do_bandsteering):
                             if not self.do_bandsteering:
                                 params = self.vs_obj_dict[ce][obj_name]["data"].copy()
-                                date = params["date"]
                                 iterations_before_test_stopped_by_user = (
                                     params["iterations_before_test_stopped_by_user"].copy()
                                     if isinstance(params["iterations_before_test_stopped_by_user"], (list, dict, set))
@@ -9156,33 +9166,26 @@ class Candela(Realm):
                                     else params["report_path"]
                                 )
 
-                                cx_order_list = (
-                                    params["cx_order_list"].copy()
-                                    if isinstance(params["cx_order_list"], (list, dict, set))
-                                    else params["cx_order_list"]
-                                )
-
                             else:
-                                test_setup_info = self.vs_obj_dict[ce][obj_name]["obj"].create_test_setup_info(
-                                    media_source=self.vs_obj_dict[ce][obj_name]["obj"].media_source, media_quality=self.vs_obj_dict[ce][obj_name]["obj"].media_quality)
-                                date = str(datetime.datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
+                                test_setup_info = curr_vs_obj.create_test_setup_info(
+                                    media_source=curr_vs_obj.media_source, media_quality=curr_vs_obj.media_quality)
                                 iterations_before_test_stopped_by_user = [0]
-                                realtime_dataset = self.vs_obj_dict[ce][obj_name]["obj"].vs_stats
+                                realtime_dataset = curr_vs_obj.vs_stats
                                 report_path = ''
                             self.overall_report.set_obj_html(_obj_title=f'Video Streaming Test {obj_no}', _obj="")
                             self.overall_report.build_objective()
-                            created_incremental_values = self.vs_obj_dict[ce][obj_name]["obj"].get_incremental_capacity_list()
-                            keys = list(self.vs_obj_dict[ce][obj_name]["obj"].http_profile.created_cx.keys())
+                            created_incremental_values = curr_vs_obj.get_incremental_capacity_list()
+                            keys = list(curr_vs_obj.http_profile.created_cx.keys())
 
                             self.overall_report.set_table_title("Input Parameters")
                             self.overall_report.build_table_title()
-                            if self.vs_obj_dict[ce][obj_name]["obj"].config:
-                                test_setup_info["SSID"] = self.vs_obj_dict[ce][obj_name]["obj"].ssid
-                                test_setup_info["Password"] = self.vs_obj_dict[ce][obj_name]["obj"].passwd
-                                test_setup_info["ENCRYPTION"] = self.vs_obj_dict[ce][obj_name]["obj"].encryp
-                            elif len(self.vs_obj_dict[ce][obj_name]["obj"].selected_groups) > 0 and len(self.vs_obj_dict[ce][obj_name]["obj"].selected_profiles) > 0:
+                            if curr_vs_obj.config:
+                                test_setup_info["SSID"] = curr_vs_obj.ssid
+                                test_setup_info["Password"] = curr_vs_obj.passwd
+                                test_setup_info["ENCRYPTION"] = curr_vs_obj.encryp
+                            elif len(curr_vs_obj.selected_groups) > 0 and len(curr_vs_obj.selected_profiles) > 0:
                                 # Map each group with a profile
-                                gp_pairs = zip(self.vs_obj_dict[ce][obj_name]["obj"].selected_groups, self.vs_obj_dict[ce][obj_name]["obj"].selected_profiles)
+                                gp_pairs = zip(curr_vs_obj.selected_groups, curr_vs_obj.selected_profiles)
                                 # Create a string by joining the mapped pairs
                                 gp_map = ", ".join(f"{group} -> {profile}" for group, profile in gp_pairs)
                                 test_setup_info["Configuration"] = gp_map
@@ -9198,9 +9201,9 @@ class Candela(Realm):
                             rssi = []
                             channel = []
                             tx_rate = []
-                            resource_ids = list(map(int, self.vs_obj_dict[ce][obj_name]["obj"].resource_ids.split(',')))
+                            resource_ids = list(map(int, curr_vs_obj.resource_ids.split(',')))
                             try:
-                                eid_data = self.vs_obj_dict[ce][obj_name]["obj"].json_get("ports?fields=alias,mac,mode,Parent Dev,rx-rate,tx-rate,ssid,signal,channel")
+                                eid_data = curr_vs_obj.json_get("ports?fields=alias,mac,mode,Parent Dev,rx-rate,tx-rate,ssid,signal,channel")
                             except KeyError:
                                 logger.error("Error: 'interfaces' key not found in port data")
                                 exit(1)
@@ -9212,7 +9215,7 @@ class Candela(Realm):
                                     if int(i.split(".")[1]) > 1 and alias[i]["alias"] == 'wlan0':
 
                                         # Get resource data for specific interface
-                                        resource_hw_data = self.vs_obj_dict[ce][obj_name]["obj"].json_get("/resource/" + i.split(".")[0] + "/" + i.split(".")[1])
+                                        resource_hw_data = curr_vs_obj.json_get("/resource/" + i.split(".")[0] + "/" + i.split(".")[1])
                                         hw_version = resource_hw_data['resource']['hw version']
 
                                         # Filter based on OS and resource ID
@@ -9225,9 +9228,9 @@ class Candela(Realm):
                                             rssi.append(alias[i]['signal'])
                                             channel.append(alias[i]['channel'])
                                             tx_rate.append(alias[i]['tx-rate'])
-                            total_urls = self.vs_obj_dict[ce][obj_name]["obj"].data["total_urls"]
-                            total_err = self.vs_obj_dict[ce][obj_name]["obj"].data["total_err"]
-                            total_buffer = self.vs_obj_dict[ce][obj_name]["obj"].data["total_buffer"]
+                            total_urls = curr_vs_obj.data["total_urls"]
+                            total_err = curr_vs_obj.data["total_err"]
+                            total_buffer = curr_vs_obj.data["total_buffer"]
                             max_bytes_rd_list = []
                             avg_rx_rate_list = []
                             # Iterate through the length of cx_order_list
@@ -9255,7 +9258,7 @@ class Candela(Realm):
                                     # Filter columns related to the current device
                                     columns_with_substring = [col for col in data_iter.columns if k in col]
                                     filtered_df = data_iter[columns_with_substring]
-                                    min_val = self.vs_obj_dict[ce][obj_name]["obj"].process_list(filtered_df[[col for col in filtered_df.columns if "video_format_bitrate" in col][0]].values.tolist())
+                                    min_val = curr_vs_obj.process_list(filtered_df[[col for col in filtered_df.columns if "video_format_bitrate" in col][0]].values.tolist())
                                     if iter != 0:
                                         # Filter columns related to the current device from the previous iteration
                                         before_iter_columns_with_substring = [col for col in before_data_iter.columns if k in col]
@@ -9294,7 +9297,7 @@ class Candela(Realm):
 
                                 # Trim the data in data_set_in_graph and append to trimmed_data_set_in_graph
                                 for _ in range(len(data_set_in_graph)):
-                                    trimmed_data_set_in_graph.append(self.vs_obj_dict[ce][obj_name]["obj"].trim_data(len(data_set_in_graph[_]), data_set_in_graph[_]))
+                                    trimmed_data_set_in_graph.append(curr_vs_obj.trim_data(len(data_set_in_graph[_]), data_set_in_graph[_]))
 
                                 # If there are multiple incremental values, add custom HTML content to the report for the current iteration
                                 if len(created_incremental_values) > 1:
@@ -9310,8 +9313,8 @@ class Candela(Realm):
                                 graph = lf_line_graph(_data_set=trimmed_data_set_in_graph,
                                                       _xaxis_name="Time",
                                                       _yaxis_name="Video Rate (Mbps)",
-                                                      _xaxis_categories=self.vs_obj_dict[ce][obj_name]["obj"].trim_data(len(realtime_dataset['timestamp'][realtime_dataset['iteration'] == iter + 1].values.tolist()),
-                                                                                                                        realtime_dataset['timestamp'][realtime_dataset['iteration'] == iter + 1].values.tolist()),
+                                                      _xaxis_categories=curr_vs_obj.trim_data(len(realtime_dataset['timestamp'][realtime_dataset['iteration'] == iter + 1].values.tolist()),
+                                                                                              realtime_dataset['timestamp'][realtime_dataset['iteration'] == iter + 1].values.tolist()),
                                                       _label=['Rate'],
                                                       _graph_image_name=f"vs_line_graph{iter}{obj_no}"
                                                       )
@@ -9400,13 +9403,13 @@ class Candela(Realm):
                                 self.overall_report.move_graph_image()
                                 self.overall_report.build_graph()
 
-                                if self.vs_obj_dict[ce][obj_name]["obj"].dowebgui and self.vs_obj_dict[ce][obj_name]["obj"].get_live_view and not self.vs_obj_dict[ce][obj_name]["obj"].do_bandsteering:
+                                if curr_vs_obj.dowebgui and curr_vs_obj.get_live_view and not curr_vs_obj.do_bandsteering:
                                     script_dir = os.path.dirname(os.path.abspath(__file__))
 
                                     self.overall_report.set_custom_html("<h2>No of Buffers and Wait Time %</h2>")
                                     self.overall_report.build_custom()
 
-                                    for floor in range(int(self.vs_obj_dict[ce][obj_name]["obj"].floors)):
+                                    for floor in range(int(curr_vs_obj.floors)):
                                         # Construct expected image paths
                                         vs_buffer_image = os.path.join(script_dir, "heatmap_images", f"{self.vs_obj_dict[ce][obj_name]['obj'].test_name}_vs_buffer_{floor + 1}.png")
                                         vs_wait_time_image = os.path.join(script_dir, "heatmap_images", f"{self.vs_obj_dict[ce][obj_name]['obj'].test_name}_vs_wait_time_{floor + 1}.png")
@@ -9452,7 +9455,7 @@ class Candela(Realm):
                                     "avg_rx_rate_list": avg_rx_rate_list
                                 }
 
-                                dataframe = self.vs_obj_dict[ce][obj_name]["obj"].handle_passfail_criteria(test_data)
+                                dataframe = curr_vs_obj.handle_passfail_criteria(test_data)
 
                                 dataframe1 = pd.DataFrame(dataframe)
                                 self.overall_report.set_table_dataframe(dataframe1)
@@ -9468,25 +9471,25 @@ class Candela(Realm):
                                 dataframe3 = pd.DataFrame(dataframe2)
                                 self.overall_report.set_table_dataframe(dataframe3)
                                 self.overall_report.build_table()
-                                if self.vs_obj_dict[ce][obj_name]["obj"].do_bandsteering:
+                                if curr_vs_obj.do_bandsteering:
                                     devices_on_running_state = []
                                     device_names_on_running = []
                                     for j in range(created_incremental_values[iter]):
                                         devices_on_running_state.append(keys[j])
                                         device_names_on_running.append(username[j])
-                                    self.vs_obj_dict[ce][obj_name]["obj"].get_bandsteering_stats(self.overall_report, realtime_dataset, devices_on_running_state, device_names_on_running)
+                                    curr_vs_obj.get_bandsteering_stats(self.overall_report, realtime_dataset, devices_on_running_state, device_names_on_running)
                         else:
-                            params = self.vs_obj_dict[ce][obj_name]["obj"].vs_data
+                            params = curr_vs_obj.vs_data
                             test_setup_info_vs = params[self.coordinate_list[0]]["test_setup_info"]
                             self.overall_report.set_obj_html(_obj_title=f'Video Streaming Test {obj_no}', _obj="")
                             self.overall_report.build_objective()
-                            created_incremental_values = self.vs_obj_dict[ce][obj_name]["obj"].get_incremental_capacity_list()
-                            keys = list(self.vs_obj_dict[ce][obj_name]["obj"].http_profile.created_cx.keys())
+                            created_incremental_values = curr_vs_obj.get_incremental_capacity_list()
+                            keys = list(curr_vs_obj.http_profile.created_cx.keys())
                             self.overall_report.set_table_title("Input Parameters")
                             self.overall_report.build_table_title()
-                            test_setup_info_vs["SSID"] = self.vs_obj_dict[ce][obj_name]["obj"].ssid
-                            test_setup_info_vs["Password"] = self.vs_obj_dict[ce][obj_name]["obj"].passwd
-                            test_setup_info_vs["ENCRYPTION"] = self.vs_obj_dict[ce][obj_name]["obj"].encryp
+                            test_setup_info_vs["SSID"] = curr_vs_obj.ssid
+                            test_setup_info_vs["Password"] = curr_vs_obj.passwd
+                            test_setup_info_vs["ENCRYPTION"] = curr_vs_obj.encryp
                             self.overall_report.test_setup_table(value="Test Setup Information", test_setup_data=test_setup_info_vs)
                             device_type = []
                             username = []
@@ -9496,9 +9499,9 @@ class Candela(Realm):
                             mode = []
                             rssi = []
                             tx_rate = []
-                            resource_ids = list(map(int, self.vs_obj_dict[ce][obj_name]["obj"].resource_ids.split(',')))
+                            resource_ids = list(map(int, curr_vs_obj.resource_ids.split(',')))
                             try:
-                                eid_data = self.vs_obj_dict[ce][obj_name]["obj"].json_get("ports?fields=alias,mac,mode,Parent Dev,rx-rate,tx-rate,ssid,signal,channel")
+                                eid_data = curr_vs_obj.json_get("ports?fields=alias,mac,mode,Parent Dev,rx-rate,tx-rate,ssid,signal,channel")
                             except KeyError:
                                 logger.error("Error: 'interfaces' key not found in port data")
                                 exit(1)
@@ -9510,7 +9513,7 @@ class Candela(Realm):
                                     if int(i.split(".")[1]) > 1 and alias[i]["alias"] == 'wlan0':
 
                                         # Get resource data for specific interface
-                                        resource_hw_data = self.vs_obj_dict[ce][obj_name]["obj"].json_get("/resource/" + i.split(".")[0] + "/" + i.split(".")[1])
+                                        resource_hw_data = curr_vs_obj.json_get("/resource/" + i.split(".")[0] + "/" + i.split(".")[1])
                                         hw_version = resource_hw_data['resource']['hw version']
 
                                         # Filter based on OS and resource ID
@@ -9523,22 +9526,21 @@ class Candela(Realm):
                                             rssi.append(alias[i]['signal'])
                                             channel.append(alias[i]['channel'])
                                             tx_rate.append(alias[i]['tx-rate'])
-                            self.vs_obj_dict[ce][obj_name]["obj"].get_live_view = True
-                            self.vs_obj_dict[ce][obj_name]["obj"].add_buffer_and_wait_time_images(report=self.overall_report)
+                            curr_vs_obj.get_live_view = True
+                            curr_vs_obj.add_buffer_and_wait_time_images(report=self.overall_report)
                             for coordinate in range(len(self.coordinate_list)):
-                                self.vs_obj_dict[ce][obj_name]["obj"].current_coordinate = self.vs_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate]
-                                csv_suffix = "_{}".format(self.vs_obj_dict[ce][obj_name]["obj"].current_coordinate)
-                                if self.vs_obj_dict[ce][obj_name]["obj"].rotation_enabled:
-                                    for angle in range(len(self.vs_obj_dict[ce][obj_name]["obj"].rotation_list)):
-                                        self.vs_obj_dict[ce][obj_name]["obj"].current_angle = self.vs_obj_dict[ce][obj_name]["obj"].rotation_list[angle]
-                                        coord, ang = self.vs_obj_dict[ce][obj_name]["obj"].coordinate_list[coordinate], self.vs_obj_dict[ce][obj_name]["obj"].rotation_list[angle]
-                                        self.vs_obj_dict[ce][obj_name]["obj"].data = self.vs_obj_dict[ce][obj_name]["obj"].vs_data[int(coord)][ang]["self_data"]
-                                        self.vs_obj_dict[ce][obj_name]["obj"].generate_individual_coordinate(
+                                curr_vs_obj.current_coordinate = curr_vs_obj.coordinate_list[coordinate]
+                                if curr_vs_obj.rotation_enabled:
+                                    for angle in range(len(curr_vs_obj.rotation_list)):
+                                        curr_vs_obj.current_angle = curr_vs_obj.rotation_list[angle]
+                                        coord, ang = curr_vs_obj.coordinate_list[coordinate], curr_vs_obj.rotation_list[angle]
+                                        curr_vs_obj.data = curr_vs_obj.vs_data[int(coord)][ang]["self_data"]
+                                        curr_vs_obj.generate_individual_coordinate(
                                             self.overall_report, device_type, username, ssid, mac, channel, mode, rssi, tx_rate, created_incremental_values, keys)
                                 else:
-                                    self.vs_obj_dict[ce][obj_name]["obj"].data = self.vs_obj_dict[ce][obj_name]["obj"].vs_data[self.vs_obj_dict[ce]
-                                                                                                                               [obj_name]["obj"].coordinate_list[coordinate]]["self_data"]
-                                    self.vs_obj_dict[ce][obj_name]["obj"].generate_individual_coordinate(
+                                    curr_vs_obj.data = curr_vs_obj.vs_data[self.vs_obj_dict[ce]
+                                                                           [obj_name]["obj"].coordinate_list[coordinate]]["self_data"]
+                                    curr_vs_obj.generate_individual_coordinate(
                                         self.overall_report, device_type, username, ssid, mac, channel, mode, rssi, tx_rate, created_incremental_values, keys)
                         if ce == "series":
                             obj_no += 1
@@ -9578,28 +9580,28 @@ class Candela(Realm):
                             uc_max_data = []
                             uc_avg_data = []
                             total_err_data = []
-
-                            csv_paths = self.rb_obj_dict[ce][obj_name]["obj"].report_path_date_time if not self.dowebgui else self.result_dir
+                            curr_rb_obj = copy.copy(self.rb_obj_dict[ce][obj_name]["obj"])
+                            csv_paths = curr_rb_obj.report_path_date_time if not self.dowebgui else self.result_dir
                             if self.do_bandsteering and self.dowebgui:
-                                csv_paths = self.rb_obj_dict[ce][obj_name]["obj"].report_path_date_time
+                                csv_paths = curr_rb_obj.report_path_date_time
 
-                            final_eid_data, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = self.rb_obj_dict[ce][obj_name]["obj"].extract_device_data(
+                            final_eid_data, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = curr_rb_obj.extract_device_data(
                                 '{}/real_time_data.csv'.format(csv_paths))
 
-                            test_setup_info = self.rb_obj_dict[ce][obj_name]["obj"].generate_test_setup_info()
+                            test_setup_info = curr_rb_obj.generate_test_setup_info()
                             self.overall_report.test_setup_table(
                                 test_setup_data=test_setup_info, value='Test Parameters')
-                            self.rb_obj_dict[ce][obj_name]["obj"].csv_file_names
-                            for i in range(0, len(self.rb_obj_dict[ce][obj_name]["obj"].csv_file_names)):
-                                if self.rb_obj_dict[ce][obj_name]["obj"].csv_file_names[i].startswith("real_time_data.csv") and not self.do_bandsteering:
+                            curr_rb_obj.csv_file_names
+                            for i in range(0, len(curr_rb_obj.csv_file_names)):
+                                if curr_rb_obj.csv_file_names[i].startswith("real_time_data.csv") and not self.do_bandsteering:
                                     continue
 
-                                final_eid_data, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = self.rb_obj_dict[ce][obj_name]["obj"].extract_device_data(
-                                    "{}/{}".format(csv_paths, self.rb_obj_dict[ce][obj_name]["obj"].csv_file_names[i]))
+                                final_eid_data, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = curr_rb_obj.extract_device_data(
+                                    "{}/{}".format(csv_paths, curr_rb_obj.csv_file_names[i]))
                                 self.overall_report.set_graph_title("Successful URL's per Device")
                                 self.overall_report.build_graph_title()
 
-                                data = pd.read_csv("{}/{}".format(csv_paths, self.rb_obj_dict[ce][obj_name]["obj"].csv_file_names[i]))
+                                data = pd.read_csv("{}/{}".format(csv_paths, curr_rb_obj.csv_file_names[i]))
 
                                 # Extract device names from CSV
                                 if 'total_urls' in data.columns:
@@ -9683,8 +9685,8 @@ class Candela(Realm):
 
                             self.overall_report.set_table_title("Final Test Results")
                             self.overall_report.build_table_title()
-                            if self.rb_obj_dict[ce][obj_name]["obj"].expected_passfail_value or self.rb_obj_dict[ce][obj_name]["obj"].device_csv_name:
-                                pass_fail_list, test_input_list = self.rb_obj_dict[ce][obj_name]["obj"].generate_pass_fail_list(device_type_data, device_names, total_urls)
+                            if curr_rb_obj.expected_passfail_value or curr_rb_obj.device_csv_name:
+                                pass_fail_list, test_input_list = curr_rb_obj.generate_pass_fail_list(device_type_data, device_names, total_urls)
 
                                 final_test_results = {
 
@@ -9826,7 +9828,7 @@ class Candela(Realm):
                                 self.overall_report.build_table()
 
                         else:
-                            test_setup_info = self.rb_obj_dict[ce][obj_name]["obj"].generate_test_setup_info()
+                            test_setup_info = curr_rb_obj.generate_test_setup_info()
                             self.overall_report.test_setup_table(
                                 test_setup_data=test_setup_info, value='Test Parameters')
                             if self.dowebgui:
@@ -9846,10 +9848,10 @@ class Candela(Realm):
                                         )
                                         self.overall_report.set_custom_html(html_content)
                                         self.overall_report.build_custom()
-                            self.rb_obj_dict[ce][obj_name]["obj"].report = self.overall_report
-                            for coordinate in self.rb_obj_dict[ce][obj_name]["obj"].coordinates_list:
-                                if self.rb_obj_dict[ce][obj_name]["obj"].rotations_enabled:
-                                    for angle in self.rb_obj_dict[ce][obj_name]["obj"].angles_list:
+                            curr_rb_obj.report = self.overall_report
+                            for coordinate in curr_rb_obj.coordinates_list:
+                                if curr_rb_obj.rotations_enabled:
+                                    for angle in curr_rb_obj.angles_list:
                                         try:
                                             if (self.dowebgui):
                                                 csv_file = os.path.join(
@@ -9857,12 +9859,12 @@ class Candela(Realm):
                                                 )
                                             else:
                                                 csv_file = os.path.join(
-                                                    self.rb_obj_dict[ce][obj_name]["obj"].report_path_date_time,
+                                                    curr_rb_obj.report_path_date_time,
                                                     f"{coordinate}_{angle}_webBrowser.csv"
                                                 )
-                                            _, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = self.rb_obj_dict[ce][obj_name]["obj"].extract_device_data(
+                                            _, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = curr_rb_obj.extract_device_data(
                                                 csv_file)
-                                            if self.rb_obj_dict[ce][obj_name]["obj"].rotations_enabled:
+                                            if curr_rb_obj.rotations_enabled:
                                                 self.overall_report.set_graph_title(f"Successful URL's per Device at coordinate {coordinate} and angle {angle}")
                                             else:
                                                 self.overall_report.set_graph_title(f"Successful URL's per Device at coordinate {coordinate}")
@@ -9895,14 +9897,14 @@ class Candela(Realm):
                                             self.overall_report.set_graph_image(graph_image)
                                             self.overall_report.move_graph_image()
                                             self.overall_report.build_graph()
-                                            if self.rb_obj_dict[ce][obj_name]["obj"].rotations_enabled:
+                                            if curr_rb_obj.rotations_enabled:
                                                 self.overall_report.set_graph_title(
                                                     f'Time Taken Vs Device For Completing {
-                                                        self.rb_obj_dict[ce][obj_name]["obj"].count} RealTime URLs at coordinate {coordinate} and angle {angle}')
+                                                        curr_rb_obj.count} RealTime URLs at coordinate {coordinate} and angle {angle}')
                                             else:
                                                 self.overall_report.set_graph_title(
                                                     f'Time Taken Vs Device For Completing {
-                                                        self.rb_obj_dict[ce][obj_name]["obj"].count} RealTime URLs at coordinate {coordinate}')
+                                                        curr_rb_obj.count} RealTime URLs at coordinate {coordinate}')
                                             self.overall_report.build_graph_title()
 
                                             # Extract device names from CSV
@@ -9953,13 +9955,13 @@ class Candela(Realm):
                                             else:
                                                 raise ValueError("The 'total_err' column was not found in the CSV file.")
 
-                                            if self.rb_obj_dict[ce][obj_name]["obj"].rotations_enabled:
+                                            if curr_rb_obj.rotations_enabled:
                                                 self.overall_report.set_table_title(f"Final Test Results at coordinate {coordinate} and angle {angle}:")
                                             else:
                                                 self.overall_report.set_table_title(f"Final Test Results at coordinate {coordinate}:")
                                             self.overall_report.build_table_title()
-                                            if self.rb_obj_dict[ce][obj_name]["obj"].expected_passfail_value or self.rb_obj_dict[ce][obj_name]["obj"].device_csv_name:
-                                                pass_fail_list, test_input_list = self.rb_obj_dict[ce][obj_name]["obj"].generate_pass_fail_list(device_type_data, device_names, total_urls)
+                                            if curr_rb_obj.expected_passfail_value or curr_rb_obj.device_csv_name:
+                                                pass_fail_list, test_input_list = curr_rb_obj.generate_pass_fail_list(device_type_data, device_names, total_urls)
 
                                                 final_test_results = {
 
@@ -10005,19 +10007,19 @@ class Candela(Realm):
 
                                 else:
                                     if (self.dowebgui):
-                                        csv_file = os.path.join(self.rb_obj_dict[ce][obj_name]["obj"].report.path,
+                                        csv_file = os.path.join(curr_rb_obj.report.path,
                                                                 f"{coordinate}_webBrowser.csv"
                                                                 )
                                     else:
                                         csv_file = os.path.join(
-                                            self.rb_obj_dict[ce][obj_name]["obj"].report_path_date_time,
+                                            curr_rb_obj.report_path_date_time,
                                             f"{coordinate}_webBrowser.csv"
                                         )
                                     try:
                                         angle = None
-                                        _, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = self.rb_obj_dict[ce][obj_name]["obj"].extract_device_data(
+                                        _, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = curr_rb_obj.extract_device_data(
                                             csv_file)
-                                        if self.rb_obj_dict[ce][obj_name]["obj"].rotations_enabled:
+                                        if curr_rb_obj.rotations_enabled:
                                             self.overall_report.set_graph_title(f"Successful URL's per Device at coordinate {coordinate} and angle {angle}")
                                         else:
                                             self.overall_report.set_graph_title(f"Successful URL's per Device at coordinate {coordinate}")
@@ -10050,14 +10052,14 @@ class Candela(Realm):
                                         self.overall_report.set_graph_image(graph_image)
                                         self.overall_report.move_graph_image()
                                         self.overall_report.build_graph()
-                                        if self.rb_obj_dict[ce][obj_name]["obj"].rotations_enabled:
+                                        if curr_rb_obj.rotations_enabled:
                                             self.overall_report.set_graph_title(
                                                 f'Time Taken Vs Device For Completing {
-                                                    self.rb_obj_dict[ce][obj_name]["obj"].count} RealTime URLs at coordinate {coordinate} and angle {angle}')
+                                                    curr_rb_obj.count} RealTime URLs at coordinate {coordinate} and angle {angle}')
                                         else:
                                             self.overall_report.set_graph_title(
                                                 f'Time Taken Vs Device For Completing {
-                                                    self.rb_obj_dict[ce][obj_name]["obj"].count} RealTime URLs at coordinate {coordinate}')
+                                                    curr_rb_obj.count} RealTime URLs at coordinate {coordinate}')
                                         self.overall_report.build_graph_title()
 
                                         # Extract device names from CSV
@@ -10108,13 +10110,13 @@ class Candela(Realm):
                                         else:
                                             raise ValueError("The 'total_err' column was not found in the CSV file.")
 
-                                        if self.rb_obj_dict[ce][obj_name]["obj"].rotations_enabled:
+                                        if curr_rb_obj.rotations_enabled:
                                             self.overall_report.set_table_title(f"Final Test Results at coordinate {coordinate} and angle {angle}:")
                                         else:
                                             self.overall_report.set_table_title(f"Final Test Results at coordinate {coordinate}:")
                                         self.overall_report.build_table_title()
-                                        if self.rb_obj_dict[ce][obj_name]["obj"].expected_passfail_value or self.rb_obj_dict[ce][obj_name]["obj"].device_csv_name:
-                                            pass_fail_list, test_input_list = self.rb_obj_dict[ce][obj_name]["obj"].generate_pass_fail_list(device_type_data, device_names, total_urls)
+                                        if curr_rb_obj.expected_passfail_value or curr_rb_obj.device_csv_name:
+                                            pass_fail_list, test_input_list = curr_rb_obj.generate_pass_fail_list(device_type_data, device_names, total_urls)
 
                                             final_test_results = {
 
@@ -10158,15 +10160,15 @@ class Candela(Realm):
                                     except Exception as e:
                                         logging.error(f"Error in create_robo_graphs_test_results {e}", exc_info=True)
 
-                                os.chdir(self.rb_obj_dict[ce][obj_name]["obj"].original_dir)
-                            self.rb_obj_dict[ce][obj_name]["obj"].report.build_custom()
-                            self.rb_obj_dict[ce][obj_name]["obj"].report.build_footer()
-                            self.rb_obj_dict[ce][obj_name]["obj"].report.write_html()
-                            self.rb_obj_dict[ce][obj_name]["obj"].report.write_pdf()
+                                os.chdir(curr_rb_obj.original_dir)
+                            curr_rb_obj.report.build_custom()
+                            curr_rb_obj.report.build_footer()
+                            curr_rb_obj.report.write_html()
+                            curr_rb_obj.report.write_pdf()
 
-                        if self.rb_obj_dict[ce][obj_name]["obj"].dowebgui:
+                        if curr_rb_obj.dowebgui:
 
-                            os.chdir(self.rb_obj_dict[ce][obj_name]["obj"].original_dir)
+                            os.chdir(curr_rb_obj.original_dir)
 
                         if ce == "series":
                             obj_no += 1
@@ -10186,9 +10188,10 @@ class Candela(Realm):
                     while obj_name in self.yt_obj_dict[ce]:
                         if ce == "parallel":
                             obj_no = ''
-                        result_data = self.yt_obj_dict[ce][obj_name]["obj"].stats_api_response
+                        curr_yt_obj = copy.copy((self.yt_obj_dict[ce][obj_name]["obj"]))
+                        result_data = curr_yt_obj.stats_api_response
                         for device, stats in result_data.items():
-                            self.yt_obj_dict[ce][obj_name]["obj"].mydatajson.setdefault(device, {}).update({
+                            curr_yt_obj.mydatajson.setdefault(device, {}).update({
                                 "Viewport": stats.get("Viewport", ""),
                                 "DroppedFrames": stats.get("DroppedFrames", "0"),
                                 "TotalFrames": stats.get("TotalFrames", "0"),
@@ -10198,45 +10201,45 @@ class Candela(Realm):
                                 "Timestamp": stats.get("Timestamp", ""),
                             })
 
-                        if self.yt_obj_dict[ce][obj_name]["obj"].config:
+                        if curr_yt_obj.config:
 
                             # Test setup info
                             test_setup_info = {
                                 'Test Name': 'YouTube Streaming Test',
-                                'Duration (in Minutes)': self.yt_obj_dict[ce][obj_name]["obj"].duration,
-                                'Resolution': self.yt_obj_dict[ce][obj_name]["obj"].resolution,
-                                'Configured Devices': self.yt_obj_dict[ce][obj_name]["obj"].hostname_os_combination,
-                                'No of Devices :': f' Total({len(self.yt_obj_dict[ce][obj_name]["obj"].real_sta_os_types)}) : W({self.yt_obj_dict[ce][obj_name]["obj"].windows}),L({self.yt_obj_dict[ce][obj_name]["obj"].linux}),M({self.yt_obj_dict[ce][obj_name]["obj"].mac})',
-                                "Video URL": self.yt_obj_dict[ce][obj_name]["obj"].url,
-                                "SSID": self.yt_obj_dict[ce][obj_name]["obj"].ssid,
-                                "Security": self.yt_obj_dict[ce][obj_name]["obj"].security,
+                                'Duration (in Minutes)': curr_yt_obj.duration,
+                                'Resolution': curr_yt_obj.resolution,
+                                'Configured Devices': curr_yt_obj.hostname_os_combination,
+                                'No of Devices :': f' Total({len(curr_yt_obj.real_sta_os_types)}) : W({curr_yt_obj.windows}),L({curr_yt_obj.linux}),M({curr_yt_obj.mac})',
+                                "Video URL": curr_yt_obj.url,
+                                "SSID": curr_yt_obj.ssid,
+                                "Security": curr_yt_obj.security,
 
                             }
 
-                        elif len(self.yt_obj_dict[ce][obj_name]["obj"].selected_groups) > 0 and len(self.yt_obj_dict[ce][obj_name]["obj"].selected_profiles) > 0:
-                            gp_pairs = zip(self.yt_obj_dict[ce][obj_name]["obj"].selected_groups, self.yt_obj_dict[ce][obj_name]["obj"].selected_profiles)
+                        elif len(curr_yt_obj.selected_groups) > 0 and len(curr_yt_obj.selected_profiles) > 0:
+                            gp_pairs = zip(curr_yt_obj.selected_groups, curr_yt_obj.selected_profiles)
                             gp_map = ", ".join(f"{group} -> {profile}" for group, profile in gp_pairs)
 
                             # Test setup info
                             test_setup_info = {
                                 'Test Name': 'YouTube Streaming Test',
-                                'Duration (in Minutes)': self.yt_obj_dict[ce][obj_name]["obj"].duration,
-                                'Resolution': self.yt_obj_dict[ce][obj_name]["obj"].resolution,
+                                'Duration (in Minutes)': curr_yt_obj.duration,
+                                'Resolution': curr_yt_obj.resolution,
                                 "Configuration": gp_map,
-                                'Configured Devices': self.yt_obj_dict[ce][obj_name]["obj"].hostname_os_combination,
-                                'No of Devices :': f' Total({len(self.yt_obj_dict[ce][obj_name]["obj"].real_sta_os_types)}) : W({self.yt_obj_dict[ce][obj_name]["obj"].windows}),L({self.yt_obj_dict[ce][obj_name]["obj"].linux}),M({self.yt_obj_dict[ce][obj_name]["obj"].mac})',
-                                "Video URL": self.yt_obj_dict[ce][obj_name]["obj"].url,
+                                'Configured Devices': curr_yt_obj.hostname_os_combination,
+                                'No of Devices :': f' Total({len(curr_yt_obj.real_sta_os_types)}) : W({curr_yt_obj.windows}),L({curr_yt_obj.linux}),M({curr_yt_obj.mac})',
+                                "Video URL": curr_yt_obj.url,
 
                             }
                         else:
                             # Test setup info
                             test_setup_info = {
                                 'Test Name': 'YouTube Streaming Test',
-                                'Duration (in Minutes)': self.yt_obj_dict[ce][obj_name]["obj"].duration,
-                                'Resolution': self.yt_obj_dict[ce][obj_name]["obj"].resolution,
-                                'Configured Devices': self.yt_obj_dict[ce][obj_name]["obj"].hostname_os_combination,
-                                'No of Devices :': f' Total({len(self.yt_obj_dict[ce][obj_name]["obj"].real_sta_os_types)}) : W({self.yt_obj_dict[ce][obj_name]["obj"].windows}),L({self.yt_obj_dict[ce][obj_name]["obj"].linux}),M({self.yt_obj_dict[ce][obj_name]["obj"].mac})',
-                                "Video URL": self.yt_obj_dict[ce][obj_name]["obj"].url,
+                                'Duration (in Minutes)': curr_yt_obj.duration,
+                                'Resolution': curr_yt_obj.resolution,
+                                'Configured Devices': curr_yt_obj.hostname_os_combination,
+                                'No of Devices :': f' Total({len(curr_yt_obj.real_sta_os_types)}) : W({curr_yt_obj.windows}),L({curr_yt_obj.linux}),M({curr_yt_obj.mac})',
+                                "Video URL": curr_yt_obj.url,
 
                             }
                         self.overall_report.set_obj_html(_obj_title=f'Youtube Streaming Test {obj_no}', _obj="")
@@ -10244,7 +10247,7 @@ class Candela(Realm):
                         self.overall_report.test_setup_table(
                             test_setup_data=test_setup_info, value='Test Parameters')
                         if self.robot_test and not self.do_bandsteering:
-                            def add_frames_graphs_to_report(current_cord, current_angle):
+                            def add_frames_graphs_to_report(current_cord, current_angle, curr_yt_obj=curr_yt_obj):
                                 """
                                     Reads all CSV files in the current directory that start with '<current_cord>_',
                                     filters rows up to current_angle, and collects stats:
@@ -10258,7 +10261,7 @@ class Candela(Realm):
                                     - Min Buffer Health
                                 """
                                 prefix = f"{current_cord}_"
-                                target_folder = os.path.join(os.getcwd(), "..", "real_application_tests", "youtube", self.yt_obj_dict[ce][obj_name]["obj"].report_path_date_time)
+                                target_folder = os.path.join(os.getcwd(), "..", "real_application_tests", "youtube", curr_yt_obj.report_path_date_time)
                                 all_csv_files = glob.glob(os.path.join(target_folder, "*.csv"))
                                 filtered_csv_files = [
                                     f for f in all_csv_files
@@ -10388,9 +10391,9 @@ class Candela(Realm):
                                         add_frames_graphs_to_report(coordinate, angle)
                                 else:
                                     add_frames_graphs_to_report(coordinate, "NA")
-                            for hostname in self.yt_obj_dict[ce][obj_name]["obj"].real_sta_hostname:
-                                # target_folder = self.yt_obj_dict[ce][obj_name]["obj"].report_path_date_time
-                                target_folder = os.path.join(os.getcwd(), "..", "real_application_tests", "youtube", self.yt_obj_dict[ce][obj_name]["obj"].report_path_date_time)
+                            for hostname in curr_yt_obj.real_sta_hostname:
+                                # target_folder = curr_yt_obj.report_path_date_time
+                                target_folder = os.path.join(os.getcwd(), "..", "real_application_tests", "youtube", curr_yt_obj.report_path_date_time)
                                 all_csv_files = glob.glob(os.path.join(target_folder, "*.csv"))
                                 filtered_csv_files = [f for f in all_csv_files if f.endswith(f"{hostname}_youtube_stats_report.csv")]
 
@@ -10488,9 +10491,9 @@ class Candela(Realm):
                             max_buffer_health_list = []
                             min_buffer_health_list = []
 
-                            for hostname in self.yt_obj_dict[ce][obj_name]["obj"].real_sta_hostname:
-                                if hostname in self.yt_obj_dict[ce][obj_name]["obj"].mydatajson:
-                                    stats = self.yt_obj_dict[ce][obj_name]["obj"].mydatajson[hostname]
+                            for hostname in curr_yt_obj.real_sta_hostname:
+                                if hostname in curr_yt_obj.mydatajson:
+                                    stats = curr_yt_obj.mydatajson[hostname]
                                     viewport_list.append(stats.get("Viewport", ""))
                                     current_res_list.append(stats.get("CurrentRes", ""))
                                     optimal_res_list.append(stats.get("OptimalRes", ""))
@@ -10531,12 +10534,12 @@ class Candela(Realm):
                             self.overall_report.set_graph_title("Total Frames vs Frames dropped")
                             self.overall_report.build_graph_title()
                             x_fig_size = 25
-                            y_fig_size = len(self.yt_obj_dict[ce][obj_name]["obj"].device_names) * .5 + 4
+                            y_fig_size = len(curr_yt_obj.device_names) * .5 + 4
 
                             graph = lf_bar_graph_horizontal(_data_set=[dropped_frames_list, total_frames_list],
                                                             _xaxis_name="No of Frames",
                                                             _yaxis_name="Devices",
-                                                            _yaxis_categories=self.yt_obj_dict[ce][obj_name]["obj"].real_sta_hostname,
+                                                            _yaxis_categories=curr_yt_obj.real_sta_hostname,
                                                             _graph_image_name=f"Dropped Frames vs Total Frames{obj_no}",
                                                             _label=["dropped Frames", "Total Frames"],
                                                             _color=None,
@@ -10558,13 +10561,13 @@ class Candela(Realm):
                             self.overall_report.build_table_title()
 
                             test_results = {
-                                "Hostname": self.yt_obj_dict[ce][obj_name]["obj"].real_sta_hostname,
-                                "OS Type": self.yt_obj_dict[ce][obj_name]["obj"].real_sta_os_types,
-                                "MAC": self.yt_obj_dict[ce][obj_name]["obj"].mac_list,
-                                "RSSI": self.yt_obj_dict[ce][obj_name]["obj"].rssi_list,
-                                "Link Rate": self.yt_obj_dict[ce][obj_name]["obj"].link_rate_list,
+                                "Hostname": curr_yt_obj.real_sta_hostname,
+                                "OS Type": curr_yt_obj.real_sta_os_types,
+                                "MAC": curr_yt_obj.mac_list,
+                                "RSSI": curr_yt_obj.rssi_list,
+                                "Link Rate": curr_yt_obj.link_rate_list,
                                 "ViewPort": viewport_list,
-                                "SSID": self.yt_obj_dict[ce][obj_name]["obj"].ssid_list,
+                                "SSID": curr_yt_obj.ssid_list,
                                 "Video Resoultion": current_res_list,
                                 "Max Buffer Health (Seconds)": max_buffer_health_list,
                                 "Min Buffer health (Seconds)": min_buffer_health_list,
@@ -10580,12 +10583,12 @@ class Candela(Realm):
 
                             original_dir = os.getcwd()
 
-                            if self.yt_obj_dict[ce][obj_name]["obj"].do_webUI:
-                                csv_files = [f for f in os.listdir(self.yt_obj_dict[ce][obj_name]["obj"].report_path_date_time) if f.endswith('.csv')]
-                                os.chdir(self.yt_obj_dict[ce][obj_name]["obj"].report_path_date_time)
+                            if curr_yt_obj.do_webUI:
+                                csv_files = [f for f in os.listdir(curr_yt_obj.report_path_date_time) if f.endswith('.csv')]
+                                os.chdir(curr_yt_obj.report_path_date_time)
                             else:
-                                csv_files = [f for f in os.listdir(self.yt_obj_dict[ce][obj_name]["obj"].report_path_date_time) if f.endswith('.csv')]
-                                os.chdir(self.yt_obj_dict[ce][obj_name]["obj"].report_path_date_time)
+                                csv_files = [f for f in os.listdir(curr_yt_obj.report_path_date_time) if f.endswith('.csv')]
+                                os.chdir(curr_yt_obj.report_path_date_time)
                             scp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), self.report_path_date_time)
                             for file_name in csv_files:
                                 data = pd.read_csv(file_name)
@@ -10636,7 +10639,7 @@ class Candela(Realm):
                                 self.overall_report.build_graph()
 
                         os.chdir(original_dir)
-                        yt_obj = self.yt_obj_dict[ce][obj_name]["obj"]
+                        yt_obj = curr_yt_obj
                         if self.do_bandsteering:
                             yt_obj.add_bandsteering_report_section(report=self.overall_report)
 
@@ -10666,72 +10669,73 @@ class Candela(Realm):
                         self.overall_report.set_table_title("Test Parameters:")
                         self.overall_report.build_table_title()
                         testtype = ""
-                        if self.zoom_obj_dict[ce][obj_name]["obj"].audio and self.zoom_obj_dict[ce][obj_name]["obj"].video:
+                        curr_zoom_obj = copy.copy(self.zoom_obj_dict[ce][obj_name]["obj"])
+                        if curr_zoom_obj.audio and curr_zoom_obj.video:
                             testtype = "AUDIO & VIDEO"
-                        elif self.zoom_obj_dict[ce][obj_name]["obj"].audio:
+                        elif curr_zoom_obj.audio:
                             testtype = "AUDIO"
-                        elif self.zoom_obj_dict[ce][obj_name]["obj"].video:
+                        elif curr_zoom_obj.video:
                             testtype = "VIDEO"
 
-                        if self.zoom_obj_dict[ce][obj_name]["obj"].config:
+                        if curr_zoom_obj.config:
                             test_parameters = pd.DataFrame([{
-                                "Configured Devices": self.zoom_obj_dict[ce][obj_name]["obj"].hostname_os_combination,
-                                'No of Clients': f'W({self.zoom_obj_dict[ce][obj_name]["obj"].windows}),L({self.zoom_obj_dict[ce][obj_name]["obj"].linux}),M({self.zoom_obj_dict[ce][obj_name]["obj"].mac})',
-                                'Test Duration(min)': self.zoom_obj_dict[ce][obj_name]["obj"].duration,
-                                'EMAIL ID': self.zoom_obj_dict[ce][obj_name]["obj"].signin_email,
-                                "PASSWORD": self.zoom_obj_dict[ce][obj_name]["obj"].signin_passwd,
-                                "HOST": self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_list[0],
+                                "Configured Devices": curr_zoom_obj.hostname_os_combination,
+                                'No of Clients': f'W({curr_zoom_obj.windows}),L({curr_zoom_obj.linux}),M({curr_zoom_obj.mac})',
+                                'Test Duration(min)': curr_zoom_obj.duration,
+                                'EMAIL ID': curr_zoom_obj.signin_email,
+                                "PASSWORD": curr_zoom_obj.signin_passwd,
+                                "HOST": curr_zoom_obj.real_sta_list[0],
                                 "TEST TYPE": testtype,
-                                "SSID": self.zoom_obj_dict[ce][obj_name]["obj"].ssid,
-                                "Security": self.zoom_obj_dict[ce][obj_name]["obj"].security
+                                "SSID": curr_zoom_obj.ssid,
+                                "Security": curr_zoom_obj.security
 
                             }])
-                        elif len(self.zoom_obj_dict[ce][obj_name]["obj"].selected_groups) > 0 and len(self.zoom_obj_dict[ce][obj_name]["obj"].selected_profiles) > 0:
+                        elif len(curr_zoom_obj.selected_groups) > 0 and len(curr_zoom_obj.selected_profiles) > 0:
                             # Map each group with a profile
-                            gp_pairs = zip(self.zoom_obj_dict[ce][obj_name]["obj"].selected_groups, self.zoom_obj_dict[ce][obj_name]["obj"].selected_profiles)
+                            gp_pairs = zip(curr_zoom_obj.selected_groups, curr_zoom_obj.selected_profiles)
 
                             # Create a string by joining the mapped pairs
                             gp_map = ", ".join(f"{group} -> {profile}" for group, profile in gp_pairs)
 
                             test_parameters = pd.DataFrame([{
                                 "Configuration": gp_map,
-                                "Configured Devices": self.zoom_obj_dict[ce][obj_name]["obj"].hostname_os_combination,
-                                'No of Clients': f'W({self.zoom_obj_dict[ce][obj_name]["obj"].windows}),L({self.zoom_obj_dict[ce][obj_name]["obj"].linux}),M({self.zoom_obj_dict[ce][obj_name]["obj"].mac})',
-                                'Test Duration(min)': self.zoom_obj_dict[ce][obj_name]["obj"].duration,
-                                'EMAIL ID': self.zoom_obj_dict[ce][obj_name]["obj"].signin_email,
-                                "PASSWORD": self.zoom_obj_dict[ce][obj_name]["obj"].signin_passwd,
-                                "HOST": self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_list[0],
+                                "Configured Devices": curr_zoom_obj.hostname_os_combination,
+                                'No of Clients': f'W({curr_zoom_obj.windows}),L({curr_zoom_obj.linux}),M({curr_zoom_obj.mac})',
+                                'Test Duration(min)': curr_zoom_obj.duration,
+                                'EMAIL ID': curr_zoom_obj.signin_email,
+                                "PASSWORD": curr_zoom_obj.signin_passwd,
+                                "HOST": curr_zoom_obj.real_sta_list[0],
                                 "TEST TYPE": testtype,
 
                             }])
                         else:
 
                             test_parameters = pd.DataFrame([{
-                                "Configured Devices": self.zoom_obj_dict[ce][obj_name]["obj"].hostname_os_combination,
-                                'No of Clients': f'W({self.zoom_obj_dict[ce][obj_name]["obj"].windows}),L({self.zoom_obj_dict[ce][obj_name]["obj"].linux}),M({self.zoom_obj_dict[ce][obj_name]["obj"].mac})',
-                                'Test Duration(min)': self.zoom_obj_dict[ce][obj_name]["obj"].duration,
-                                'EMAIL ID': self.zoom_obj_dict[ce][obj_name]["obj"].signin_email,
-                                "PASSWORD": self.zoom_obj_dict[ce][obj_name]["obj"].signin_passwd,
-                                "HOST": self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_list[0],
+                                "Configured Devices": curr_zoom_obj.hostname_os_combination,
+                                'No of Clients': f'W({curr_zoom_obj.windows}),L({curr_zoom_obj.linux}),M({curr_zoom_obj.mac})',
+                                'Test Duration(min)': curr_zoom_obj.duration,
+                                'EMAIL ID': curr_zoom_obj.signin_email,
+                                "PASSWORD": curr_zoom_obj.signin_passwd,
+                                "HOST": curr_zoom_obj.real_sta_list[0],
                                 "TEST TYPE": testtype,
 
                             }])
 
                         test_parameters = pd.DataFrame([{
 
-                            'No of Clients': f'W({self.zoom_obj_dict[ce][obj_name]["obj"].windows}),L({self.zoom_obj_dict[ce][obj_name]["obj"].linux}),M({self.zoom_obj_dict[ce][obj_name]["obj"].mac})',
-                            'Test Duration(min)': self.zoom_obj_dict[ce][obj_name]["obj"].duration,
-                            'EMAIL ID': self.zoom_obj_dict[ce][obj_name]["obj"].signin_email,
-                            "PASSWORD": self.zoom_obj_dict[ce][obj_name]["obj"].signin_passwd,
-                            "HOST": self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_list[0],
+                            'No of Clients': f'W({curr_zoom_obj.windows}),L({curr_zoom_obj.linux}),M({curr_zoom_obj.mac})',
+                            'Test Duration(min)': curr_zoom_obj.duration,
+                            'EMAIL ID': curr_zoom_obj.signin_email,
+                            "PASSWORD": curr_zoom_obj.signin_passwd,
+                            "HOST": curr_zoom_obj.real_sta_list[0],
                             "TEST TYPE": testtype
 
                         }])
                         self.overall_report.set_table_dataframe(test_parameters)
                         self.overall_report.build_table()
                         if self.robot_test and self.dowebgui and not self.do_bandsteering:
-                            self.zoom_obj_dict[ce][obj_name]["obj"].report = self.overall_report
-                            self.zoom_obj_dict[ce][obj_name]["obj"].add_live_view_images_to_report()
+                            curr_zoom_obj.report = self.overall_report
+                            curr_zoom_obj.add_live_view_images_to_report()
                         if not self.robot_test or self.do_bandsteering:
                             client_array = []
                             accepted_clients = []
@@ -10752,7 +10756,7 @@ class Candela(Realm):
                             max_video_latency_r, min_video_latency_r = [], []
                             max_video_pktloss_s, min_video_pktloss_s = [], []
                             max_video_pktloss_r, min_video_pktloss_r = [], []
-                            for i in range(0, len(self.zoom_obj_dict[ce][obj_name]["obj"].device_names)):
+                            for i in range(0, len(curr_zoom_obj.device_names)):
                                 temp_max_audio_jitter_s, temp_min_audio_jitter_s = 0.0, 0.0
                                 temp_max_audio_jitter_r, temp_min_audio_jitter_r = 0.0, 0.0
                                 temp_max_audio_latency_s, temp_min_audio_latency_s = 0.0, 0.0
@@ -10783,12 +10787,12 @@ class Candela(Realm):
                                 try:
                                     if not self.do_bandsteering:
                                         if self.dowebgui:
-                                            file_path = os.path.join(self.zoom_obj_dict[ce][obj_name]["obj"].report.path_date_time, f'{self.zoom_obj_dict[ce][obj_name]["obj"].device_names[i]}.csv')
+                                            file_path = os.path.join(curr_zoom_obj.report.path_date_time, f'{curr_zoom_obj.device_names[i]}.csv')
                                         else:
-                                            file_path = os.path.join(self.zoom_obj_dict[ce][obj_name]["obj"].report.path_date_time, f'{self.zoom_obj_dict[ce][obj_name]["obj"].device_names[i]}.csv')
+                                            file_path = os.path.join(curr_zoom_obj.report.path_date_time, f'{curr_zoom_obj.device_names[i]}.csv')
                                         if not os.path.exists(file_path):
                                             logger.error(
-                                                f'File not found for client {self.zoom_obj_dict[ce][obj_name]["obj"].device_names[i]}: {file_path}'
+                                                f'File not found for client {curr_zoom_obj.device_names[i]}: {file_path}'
                                             )
                                             continue
                                         with open(
@@ -11151,13 +11155,13 @@ class Candela(Realm):
                                     elif self.do_bandsteering:
                                         if not self.dowebgui:
                                             file_path = os.path.join(
-                                                self.zoom_obj_dict[ce][obj_name]["obj"].report.path_date_time,
-                                                f'{self.zoom_obj_dict[ce][obj_name]["obj"].device_names[i]}.csv'
+                                                curr_zoom_obj.report.path_date_time,
+                                                f'{curr_zoom_obj.device_names[i]}.csv'
                                             )
                                         else:
                                             file_path = os.path.join(
-                                                self.zoom_obj_dict[ce][obj_name]["obj"].report.path_date_time,
-                                                f'{self.zoom_obj_dict[ce][obj_name]["obj"].device_names[i]}.csv'
+                                                curr_zoom_obj.report.path_date_time,
+                                                f'{curr_zoom_obj.device_names[i]}.csv'
                                             )
                                         with open(file_path, mode='r', encoding='utf-8', errors='ignore') as file:
                                             csv_reader = csv.DictReader(file)
@@ -11256,12 +11260,12 @@ class Candela(Realm):
 
                                 except Exception as e:
                                     logging.error(f"Error in reading data in client {self.zoom_obj_dict[ce][obj_name]['obj'].device_names[i]}", e)
-                                    no_csv_client.append(self.zoom_obj_dict[ce][obj_name]["obj"].device_names[i])
-                                    rejected_clients.append(self.zoom_obj_dict[ce][obj_name]["obj"].device_names[i])
-                                if self.zoom_obj_dict[ce][obj_name]["obj"].device_names[i] not in no_csv_client:
-                                    client_array.append(self.zoom_obj_dict[ce][obj_name]["obj"].device_names[i])
-                                    accepted_clients.append(self.zoom_obj_dict[ce][obj_name]["obj"].device_names[i])
-                                    accepted_ostypes.append(self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_os_type[i])
+                                    no_csv_client.append(curr_zoom_obj.device_names[i])
+                                    rejected_clients.append(curr_zoom_obj.device_names[i])
+                                if curr_zoom_obj.device_names[i] not in no_csv_client:
+                                    client_array.append(curr_zoom_obj.device_names[i])
+                                    accepted_clients.append(curr_zoom_obj.device_names[i])
+                                    accepted_ostypes.append(curr_zoom_obj.real_sta_os_type[i])
                                     max_audio_jitter_s.append(temp_max_audio_jitter_s)
                                     min_audio_jitter_s.append(temp_min_audio_jitter_s)
                                     max_audio_jitter_r.append(temp_max_audio_jitter_r)
@@ -11294,18 +11298,18 @@ class Candela(Realm):
                             self.overall_report.build_table_title()
 
                             device_details = pd.DataFrame({
-                                'Hostname': self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_hostname,
-                                'OS Type': self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_os_type,
-                                "MAC": self.zoom_obj_dict[ce][obj_name]["obj"].mac_list,
-                                "RSSI": self.zoom_obj_dict[ce][obj_name]["obj"].rssi_list,
-                                "Link Rate": self.zoom_obj_dict[ce][obj_name]["obj"].link_rate_list,
-                                "SSID": self.zoom_obj_dict[ce][obj_name]["obj"].ssid_list,
+                                'Hostname': curr_zoom_obj.real_sta_hostname,
+                                'OS Type': curr_zoom_obj.real_sta_os_type,
+                                "MAC": curr_zoom_obj.mac_list,
+                                "RSSI": curr_zoom_obj.rssi_list,
+                                "Link Rate": curr_zoom_obj.link_rate_list,
+                                "SSID": curr_zoom_obj.ssid_list,
 
                             })
                             self.overall_report.set_table_dataframe(device_details)
                             self.overall_report.build_table()
 
-                            if self.zoom_obj_dict[ce][obj_name]["obj"].audio:
+                            if curr_zoom_obj.audio:
                                 self.overall_report.set_graph_title("Audio Latency (Sent/Received)")
                                 self.overall_report.build_graph_title()
                                 x_data_set = [max_audio_latency_s.copy(), min_audio_latency_s.copy(), max_audio_latency_r.copy(), min_audio_latency_r.copy()]
@@ -11427,7 +11431,7 @@ class Candela(Realm):
                                 self.overall_report.dataframe_html = self.overall_report.dataframe.to_html(index=False,
                                                                                                            justify='center', render_links=True, escape=False)  # have the index be able to be passed in.
                                 self.overall_report.html += self.overall_report.dataframe_html
-                            if self.zoom_obj_dict[ce][obj_name]["obj"].video:
+                            if curr_zoom_obj.video:
                                 self.overall_report.set_graph_title("Video Latency (Sent/Received)")
                                 self.overall_report.build_graph_title()
                                 x_data_set = [max_video_latency_s.copy(), min_video_latency_s.copy(), max_video_latency_r.copy(), min_video_latency_r.copy()]
@@ -11555,7 +11559,7 @@ class Candela(Realm):
                                 self.overall_report.set_table_title("Band Steering – BSSID Transition Analysis")
                                 self.overall_report.build_table_title()
 
-                                folder = self.zoom_obj_dict[ce][obj_name]["obj"].report.path_date_time
+                                folder = curr_zoom_obj.report.path_date_time
 
                                 for device in accepted_clients:
 
@@ -11658,7 +11662,7 @@ class Candela(Realm):
                                     self.overall_report.set_table_dataframe(transition_df)
                                     self.overall_report.build_table()
                         else:
-                            def _build_metric_graph(media_type, metric_name, unit, data, input_key, output_key, suffix=""):
+                            def _build_metric_graph(media_type, metric_name, unit, data, input_key, output_key, suffix="", curr_zoom_obj=curr_zoom_obj):
                                 """
                                 Helper to build standard horizontal bar graphs with Device Names on Y-Axis.
                                 suffix: used for Robo graphs to ensure unique image names per coordinate.
@@ -11670,13 +11674,13 @@ class Candela(Realm):
                                 recv_vals = []
 
                                 # Iterate directly through hostnames
-                                for client in self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_hostname:
+                                for client in curr_zoom_obj.real_sta_hostname:
                                     # Use the hostname directly as the key to fetch data
                                     device_key = client
 
                                     # Safe Get
-                                    def get_val(key):
-                                        val = data.get(device_key, {}).get(key)
+                                    def get_val(key):  # noqa: B023
+                                        val = data.get(device_key, {}).get(key)  # noqa: B023
                                         return val if val is not None else 0
 
                                     sent_vals.append(get_val(output_key))
@@ -11687,11 +11691,11 @@ class Candela(Realm):
                                     _data_set=[sent_vals, recv_vals],
                                     _xaxis_name=f"{metric_name} ({unit})",
                                     _yaxis_name="Devices",
-                                    _yaxis_categories=self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_hostname,  # Device Names on Y-Axis
+                                    _yaxis_categories=curr_zoom_obj.real_sta_hostname,  # Device Names on Y-Axis
                                     _graph_title=f"{media_type} {metric_name}",
                                     _graph_image_name=f"{media_type}_{metric_name}{suffix}",
                                     _label=["Avg Sent", "Avg Recv"],
-                                    _figsize=(18, len(self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_hostname) * 1 + 4),
+                                    _figsize=(18, len(curr_zoom_obj.real_sta_hostname) * 1 + 4),
                                     _color_name=["blue", "orange"],
                                 )
                                 self.overall_report.set_graph_image(bar_graph.build_bar_graph_horizontal())
@@ -11699,34 +11703,34 @@ class Candela(Realm):
                                 logging.debug(f"Report path date time: {self.overall_report.path_date_time}")
                                 self.overall_report.build_graph()
 
-                            def _build_results_table(data, media_type):
+                            def _build_results_table(data, media_type, curr_zoom_obj=curr_zoom_obj):
                                 """Helper for Summary Table"""
 
                                 def fmt_val(client, key):
-                                    val = data.get(client, {}).get(key)
+                                    val = data.get(client, {}).get(key)  # noqa: B023
                                     return val if val is not None else 0
 
                                 p = media_type
 
                                 details = pd.DataFrame(
                                     {
-                                        "Device Name": self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_hostname,
+                                        "Device Name": curr_zoom_obj.real_sta_hostname,
                                         # FIXED: Sent uses 'output', Received uses 'input'
                                         "Avg Bitrate (kbps) [S/R]": [
                                             f"{fmt_val(c, f'{p}_output_bitrate_avg')}/{fmt_val(c, f'{p}_input_bitrate_avg')}"
-                                            for c in self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_hostname
+                                            for c in curr_zoom_obj.real_sta_hostname
                                         ],
                                         "Avg Latency (ms) [S/R]": [
                                             f"{fmt_val(c, f'{p}_output_latency_avg')}/{fmt_val(c, f'{p}_input_latency_avg')}"
-                                            for c in self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_hostname
+                                            for c in curr_zoom_obj.real_sta_hostname
                                         ],
                                         "Avg Jitter (ms) [S/R]": [
                                             f"{fmt_val(c, f'{p}_output_jitter_avg')}/{fmt_val(c, f'{p}_input_jitter_avg')}"
-                                            for c in self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_hostname
+                                            for c in curr_zoom_obj.real_sta_hostname
                                         ],
                                         "Avg Pkt Loss (%) [S/R]": [
                                             f"{fmt_val(c, f'{p}_output_avg_loss_avg')}/{fmt_val(c, f'{p}_input_avg_loss_avg')}"
-                                            for c in self.zoom_obj_dict[ce][obj_name]["obj"].real_sta_hostname
+                                            for c in curr_zoom_obj.real_sta_hostname
                                         ],
                                     }
                                 )
@@ -11736,21 +11740,18 @@ class Candela(Realm):
                                 )
                                 self.overall_report.html += self.overall_report.dataframe_html
 
-                            report_1 = self.zoom_obj_dict[ce][obj_name]["obj"].report
-                            # self.zoom_obj_dict[ce][obj_name]["obj"].report=self.overall_report
-                            # self.zoom_obj_dict[ce][obj_name]["obj"]._generate_robo_per_location_report()
-                            coords = self.zoom_obj_dict[ce][obj_name]["obj"].coordinates_list if self.zoom_obj_dict[ce][obj_name]["obj"].coordinates_list else ["0,0,0"]
+                            coords = curr_zoom_obj.coordinates_list if curr_zoom_obj.coordinates_list else ["0,0,0"]
 
                             for coord in coords:
                                 # Determine angles loop
-                                if self.zoom_obj_dict[ce][obj_name]["obj"].rotations_enabled and self.zoom_obj_dict[ce][obj_name]["obj"].angles_list:
-                                    angles_loop = self.zoom_obj_dict[ce][obj_name]["obj"].angles_list
+                                if curr_zoom_obj.rotations_enabled and curr_zoom_obj.angles_list:
+                                    angles_loop = curr_zoom_obj.angles_list
                                 else:
-                                    angles_loop = [self.zoom_obj_dict[ce][obj_name]["obj"].current_angle]
+                                    angles_loop = [curr_zoom_obj.current_angle]
 
                                 for angle in angles_loop:
                                     # 1. Heading for this Location
-                                    if self.zoom_obj_dict[ce][obj_name]["obj"].rotations_enabled:
+                                    if curr_zoom_obj.rotations_enabled:
                                         heading = f"Audio and Video graphs at coordinate {coord} and angle {angle}"
                                     else:
                                         heading = f"Audio and Video graphs at coordinate {coord}"
@@ -11760,7 +11761,7 @@ class Candela(Realm):
                                     # 2. Load Data
                                     json_pattern = f"*_{coord}_{angle}_qos.json"
                                     file_path = os.path.join("zoom_api_responses", json_pattern)
-                                    file_path_1 = os.path.join(self.zoom_obj_dict[ce][obj_name]["obj"].report.path_date_time, json_pattern)
+                                    file_path_1 = os.path.join(curr_zoom_obj.report.path_date_time, json_pattern)
                                     found_files = glob.glob(file_path_1)
                                     logging.debug(f"Checking found files: {found_files}")
 
@@ -11770,7 +11771,7 @@ class Candela(Realm):
                                             with open(found_files[0], "r") as f:
                                                 raw_data = json.load(f)
                                             # Parse data to get per-device averages
-                                            device_data = self.zoom_obj_dict[ce][obj_name]["obj"].summarize_audio_video(raw_data)
+                                            device_data = curr_zoom_obj.summarize_audio_video(raw_data)
                                             logging.debug(f"Checking device data in robo report: {device_data}")
                                         except Exception as e:
                                             logger.error(f"Error reading {found_files[0]}: {e}")
@@ -11783,7 +11784,7 @@ class Candela(Realm):
                                         continue
 
                                     # 3. Generate Audio Graphs (Device on Y-Axis)
-                                    if self.zoom_obj_dict[ce][obj_name]["obj"].audio:
+                                    if curr_zoom_obj.audio:
                                         # if self.rotations_enabled:
                                         #     self.report.set_text(
                                         #         f"Audio Performance at {coord} coordinate - {angle} degrees angle"
@@ -11833,7 +11834,7 @@ class Candela(Realm):
                                         _build_results_table(device_data, "audio")
 
                                     # 4. Generate Video Graphs (Device on Y-Axis)
-                                    if self.zoom_obj_dict[ce][obj_name]["obj"].video:
+                                    if curr_zoom_obj.video:
                                         # if self.rotations_enabled:
                                         #     self.report.set_text(
                                         #         f"Video Performance at {coord} coordinate - {angle} degrees angle"
@@ -11885,15 +11886,15 @@ class Candela(Realm):
                                     self.overall_report.set_custom_html("<hr>")
                                     self.overall_report.build_custom()
 
-                            if self.zoom_obj_dict[ce][obj_name]["obj"].do_webui:
-                                self.zoom_obj_dict[ce][obj_name]["obj"].add_live_view_images_to_report()
+                            if curr_zoom_obj.do_webui:
+                                curr_zoom_obj.add_live_view_images_to_report()
 
                             # --- Finalize Report ---
                             # self.overall_report.build_custom()
                             # self.overall_report.write_html()
                             # self.overall_report.write_pdf(_page_size="Legal", _orientation="Landscape")
-                            # self.zoom_obj_dict[ce][obj_name]["obj"]._move_report_files(report_1.get_path_date_time())
-                        zoom_obj = self.zoom_obj_dict[ce][obj_name]["obj"]
+                            # curr_zoom_obj._move_report_files(report_1.get_path_date_time())
+                        zoom_obj = curr_zoom_obj
                         if self.do_bandsteering:
                             zoom_obj.add_bandsteering_report_section(report=self.overall_report)
                             logging.info(f"Band steering report added for {obj_name}")
@@ -11922,13 +11923,13 @@ class Candela(Realm):
                             testtype = "AUDIO"
                         elif obj.video:
                             testtype = "VIDEO"
-
+                        curr_teams_obj = copy.copy(self.teams_obj_dict[ce][obj_name]['obj'])
                         test_parameters = pd.DataFrame(
                             [
                                 {
-                                    "No of Clients": f"W({self.teams_obj_dict[ce][obj_name]['obj'].windows}),L({self.teams_obj_dict[ce][obj_name]['obj'].linux}),M({self.teams_obj_dict[ce][obj_name]['obj'].mac}),A({self.teams_obj_dict[ce][obj_name]['obj'].android})",
-                                    "Test Duration(min)": self.teams_obj_dict[ce][obj_name]['obj'].duration,
-                                    "HOST": self.teams_obj_dict[ce][obj_name]['obj'].real_sta_list[0],
+                                    "No of Clients": f"W({curr_teams_obj.windows}),L({curr_teams_obj.linux}),M({curr_teams_obj.mac}),A({curr_teams_obj.android})",
+                                    "Test Duration(min)": curr_teams_obj.duration,
+                                    "HOST": curr_teams_obj.real_sta_list[0],
                                     "TEST TYPE": testtype,
                                 }
                             ]
@@ -12040,7 +12041,7 @@ class Candela(Realm):
                 series_df = series_df[["s/no", "test_name", "Duration", "status"]]
         return series_df, parallel_df
 
-    def generate_overall_report(self, test_results_df='', args_dict={}):
+    def generate_overall_report(self, test_results_df='', args_dict=None):
         '''
         Generate Overall Report
         -----------------------
@@ -12048,6 +12049,7 @@ class Candela(Realm):
         series/parallel test execution sets, and renders each test block.
         Finally builds the footer, writes the HTML and PDF reports.
         '''
+        args_dict = {} if args_dict is None else args_dict
         self.overall_report = lf_report.lf_report(_results_dir_name="Base_Class_Test_Overall_report", _output_html="base_class_overall.html",
                                                   _output_pdf="base_class_overall.pdf", _path=self.result_path if not self.dowebgui else self.result_dir)
         self.report_path_date_time = self.overall_report.get_path_date_time()
@@ -12199,7 +12201,7 @@ def validate_args(args):
                 selected_profiles = []
 
             if len(selected_groups) != len(selected_profiles):
-                logger.error(f"Number of groups should match number of profiles")
+                logger.error("Number of groups should match number of profiles")
                 flag_test = False
             elif args[f'{test}_group_name'] and args[f'{test}_profile_name'] and args[f'{test}_file_name'] and args[f'{test}_device_list'] != []:
                 logger.error(f"Either --{test}_group_name or --{test}_device_list should be entered not both")
@@ -12209,7 +12211,7 @@ def validate_args(args):
                 flag_test = False
 
             elif args[f'{test}_file_name'] and (args.get(f'{test}_group_name') is None or args.get(f'{test}_profile_name') is None):
-                logger.error(f"Please enter the correct set of arguments for configuration")
+                logger.error("Please enter the correct set of arguments for configuration")
                 flag_test = False
 
             if args[f'{test}_config'] and args.get(f'{test}_group_name') is None:
@@ -12229,10 +12231,10 @@ def validate_args(args):
                         logger.error(f'Security must be provided when --{test}_ssid and --{test}_password specified')
                         flag_test = False
                     elif args[f'{test}_passwd'] == '[BLANK]' and args[f'{test}_security'].lower() != 'open':
-                        logger.error(f'Please provide valid passwd and security configuration')
+                        logger.error('Please provide valid passwd and security configuration')
                         flag_test = False
                     elif args[f'{test}_security'].lower() == 'open' and args[f'{test}_passwd'] != '[BLANK]':
-                        logger.error(f"For an open type security, the password should be left blank (i.e., set to '' or [BLANK]).")
+                        logger.error("For an open type security, the password should be left blank (i.e., set to '' or [BLANK]).")
                         flag_test = False
             if flag_test:
                 logger.info(f"Arg validation check done for {test}")
@@ -12921,11 +12923,6 @@ def main():
     if args.series_tests or args.parallel_tests:
         series_threads = []
         parallel_threads = []
-        parallel_connect = []
-        series_connect = []
-        rb_test = 'rb_test' in tests_to_run_parallel
-        yt_test = 'yt_test' in tests_to_run_parallel
-        zoom_test = 'zoom_test' in tests_to_run_parallel
         # Process series tests
         if args.series_tests:
             ordered_series_tests = args.series_tests.split(',')
@@ -12948,7 +12945,7 @@ def main():
                                 obj_no += 1
                             obj_name = f"rb_test_{obj_no}"
                             candela_apis.rb_obj_dict["series"][obj_name] = manager.dict({"obj": None, "data": None})
-                            logging.debug(f"Adding rb_test object to parallel execution")
+                            logging.debug("Adding rb_test object to parallel execution")
                         elif test_name == "yt_test":
                             obj_no = 1
                             while f"yt_test_{obj_no}" in candela_apis.yt_obj_dict["series"]:
@@ -12961,14 +12958,14 @@ def main():
                                 obj_no += 1
                             obj_name = f"zoom_test_{obj_no}"
                             candela_apis.zoom_obj_dict["series"][obj_name] = manager.dict({"obj": None, "data": None})
-                            logging.debug(f"Adding zoom_test object to parallel execution")
+                            logging.debug("Adding zoom_test object to parallel execution")
                         elif test_name == "teams_test":
                             obj_no = 1
                             while f"teams_test_{obj_no}" in candela_apis.teams_obj_dict["series"]:
                                 obj_no += 1
                             obj_name = f"teams_test_{obj_no}"
                             candela_apis.teams_obj_dict["series"][obj_name] = manager.dict({"obj": None, "data": None})
-                            logging.debug(f"Adding teams_test object to parallel execution")
+                            logging.debug("Adding teams_test object to parallel execution")
                         series_threads.append(multiprocessing.Process(target=run_test_safe(func, f"{label} [Series {idx + 1}]", args, candela_apis, duration_dict[test_name])))
                     else:
                         series_threads.append(threading.Thread(
@@ -13117,11 +13114,11 @@ def run_test_safe(test_func, test_name, args, candela_apis, duration):
     Returns:
         callable: A wrapper function that safely executes the test and logs results.
     """
-    global error_logs
+    global error_logs  # noqa: F824
 
     def wrapper():
         """Executes the test function and captures its result or error state."""
-        global error_logs
+        global error_logs  # noqa: F824
 
         try:
             result = test_func(args, candela_apis)
@@ -13146,7 +13143,7 @@ def run_test_safe(test_func, test_name, args, candela_apis, duration):
             error_logs += error_msg
             test_results_list.append({"test_name": test_name, "Duration": duration, "status": status})
 
-        except Exception as e:
+        except Exception:
             status = "NOT EXECUTED"
             error_msg = f"{test_name} crashed unexpectedly\n"
             logger.exception(error_msg)
@@ -13165,7 +13162,7 @@ def save_logs():
     Returns:
         str: The path to the newly created log file.
     """
-    global error_logs
+    global error_logs  # noqa: F824
 
     # Ensure the target directory exists
     log_dir = "base_class_logs"
