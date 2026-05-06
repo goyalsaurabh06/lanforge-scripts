@@ -496,7 +496,7 @@ class ZoomAutomation(Realm):
                                 stats["rotations_enabled"] = False
 
                         # --- CSV FILE PATH GENERATION ---
-                        if self.do_robo:
+                        if self.do_robo and not self.do_bs:
                             if self.rotations_enabled:
                                 csv_name = f"{hostname}_{self.current_cord}_{self.current_angle}.csv"
                             else:
@@ -2561,6 +2561,7 @@ class ZoomAutomation(Realm):
         for client in accepted_clients:
             file_to_move_path = os.path.join(self.path, f'{client}.csv')
             self.move_files(file_to_move_path, report_path_date_time)
+        self.report=report
 
     def change_port_to_ip(self, upstream_port):
         """
@@ -3977,6 +3978,9 @@ class ZoomAutomation(Realm):
             logger.error(f"Error updating running_status.json: {e}")
 
     def run_robo_test(self):
+        base_dir = os.path.dirname(os.path.dirname(self.path))
+        nav_data = os.path.join(base_dir, 'nav_data.json')  # To generate nav_data.json in webgui folder
+        self.robo_obj.nav_data_path = nav_data
         for coordinate in self.coordinates_list:
             self.robo_obj.wait_for_battery()
             matched, aborted = self.robo_obj.move_to_coordinate(coord=coordinate)
