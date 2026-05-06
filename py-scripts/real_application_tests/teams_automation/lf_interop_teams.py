@@ -701,6 +701,11 @@ class TeamsAutomation(Realm):
             self.reset_variables_for_next_run()
 
     def run_robo_test(self):
+        if self.do_webui:
+            # Generates nav_data.json in the webgui folder (used by base_class.py)
+            base_dir = os.path.dirname(os.path.dirname(self.report_dir))
+            nav_data = os.path.join(base_dir, 'nav_data.json')
+            self.robo_obj.nav_data_path = nav_data
         for coord in self.coordinates:
             self.robo_obj.wait_for_battery()
             matched, aborted = self.robo_obj.move_to_coordinate(coord=coord)
