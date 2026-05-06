@@ -133,7 +133,7 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 from candela_base_class import initialize_sniffer_obj, RemoteSniffer
-from post_roam_analysis import RoamAnalyzer
+# from post_roam_analysis import RoamAnalyzer
 
 logger = logging.getLogger(__name__)
 log = logging.getLogger('werkzeug')
@@ -331,6 +331,8 @@ class Youtube(Realm):
         self.rotations_enabled = rotations_enabled
         self.pause = False
         self.cycles = cycles
+        self.sniffer = None
+        self.remote_folder = None
         if self.do_robo:
             self.robo_obj = robo_base_class.RobotClass(
                 robo_ip=self.robo_ip,
@@ -1757,6 +1759,7 @@ class Youtube(Realm):
                     sniff_channel=self.sniff_channel_6g,
                     moni_name="moni6g"
                 )
+                sniffer_obj1.clear_monitor_interfaces()
                 if self.do_webUI:
                         self.report = lf_report(_output_pdf='youtube_streaming.pdf',
                                                 _output_html='youtube_streaming.html',
@@ -1769,15 +1772,32 @@ class Youtube(Realm):
                                             _path='')
                 self.report_path = self.report.get_path()
                 self.report_path_date_time = self.report.get_path_date_time()
-
+                moni2g = None
+                moni5g = None
+                moni6g = None
                 sniffer_obj1.clear_monitor_interfaces()
+                if(self.sniff_radio_2g!=""):
+                    if sniffer_obj1.create_monitor():
+                        moni2g = "moni2g"
+                    else:
+                        print("⚠️ 2.4GHz monitor not created")
+                if(self.sniff_radio_5g!=""): 
+                    if sniffer_obj2.create_monitor():
+                        moni5g = "moni5g"
+                    else:
+                        print("⚠️ 5GHz monitor not created")
+                if(self.sniff_radio_6g!=""):
+                    if sniffer_obj3.create_monitor():
+                        moni6g = "moni6g"
+                    else:
+                        print("⚠️ 6GHz monitor not created")
 
-                if not sniffer_obj1.create_monitor():
-                    raise Exception("Failed to create 2.4GHz monitor")
-                if not sniffer_obj2.create_monitor():
-                    raise Exception("Failed to create 5GHz monitor")
-                if not sniffer_obj3.create_monitor():
-                    raise Exception("Failed to create 6GHz monitor")
+                # if not sniffer_obj1.create_monitor():
+                #     raise Exception("Failed to create 2.4GHz monitor")
+                # if not sniffer_obj2.create_monitor():
+                #     raise Exception("Failed to create 5GHz monitor")
+                # if not sniffer_obj3.create_monitor():
+                #     raise Exception("Failed to create 6GHz monitor")
 
                 logger.info("All monitors created successfully")
 
@@ -1788,7 +1808,7 @@ class Youtube(Realm):
                 is_sniffing = False
                 cycle_map = {}
 
-                test_folder_name = time.strftime("%Y-%m-%d_%H-%M-%S") + "_" + self.test_name
+                test_folder_name = time.strftime("%Y-%m-%d_%H-%M-%S") + "_" + "youtube_roaming"
 
                 # -----------------------------
                 # INITIAL POSITION
@@ -1827,9 +1847,9 @@ class Youtube(Realm):
 
                     remote_pcap_path = sniffer.start_sniff_for_triband(
                         remote_folder,
-                        moni2g="moni2g",
-                        moni5g="moni5g",
-                        moni6g="moni6g"
+                        moni2g=moni2g,
+                        moni5g=moni5g,
+                        moni6g=moni6g
                     )
 
                     is_sniffing = True
@@ -1924,9 +1944,9 @@ class Youtube(Realm):
 
                         remote_pcap_path = sniffer.start_sniff_for_triband(
                             remote_folder,
-                            moni2g="moni2g",
-                            moni5g="moni5g",
-                            moni6g="moni6g"
+                            moni2g=moni2g,
+                            moni5g=moni5g,
+                            moni6g=moni6g
                         )
 
                         is_sniffing = True
@@ -1941,14 +1961,15 @@ class Youtube(Realm):
                 logger.error(traceback.format_exc())
 
             finally:
-
-                if self.do_webUI:
-                    sniffer.run_command_and_fetch_folder(remote_folder, self.ui_report_dir,self.management_roam_time,self.data_roam_time, "Youtube")
-                else:
-                    print("entereddddddd",self.report)
-                    sniffer.run_command_and_fetch_folder(remote_folder, self.report,self.management_roam_time,self.data_roam_time, "Youtube")
-                if sniffer:
-                    sniffer.close()
+                self.sniffer = sniffer
+                self.remote_folder = remote_folder
+                # if self.do_webUI:
+                #     sniffer.run_command_and_fetch_folder(remote_folder, self.ui_report_dir,self.management_roam_time,self.data_roam_time, "Youtube")
+                # else:
+                #     print("entereddddddd",self.report)
+                #     sniffer.run_command_and_fetch_folder(remote_folder, self.report,self.management_roam_time,self.data_roam_time, "Youtube")
+                # if sniffer:
+                #     sniffer.close()
                 sniffer_obj1.clear_monitor_interfaces()
                 self.stop_bandsteering_test()
 
@@ -2906,6 +2927,21 @@ NOTES:
         logger.error("An exception occurred:\n%s", tb_str)
     finally:
         if not ('--help' in sys.argv or '-h' in sys.argv):
+            if(args.do_roaming):
+                if args.do_webUI:
+                    youtube.stop()
+                    youtube.create_report(youtube.stats_api_response, youtube.ui_report_dir, iot_summary=iot_summary)
+                    youtube.sniffer.run_command_and_fetch_folder(
+                        youtube.remote_folder,
+                        youtube.ui_report_dir,
+                        youtube.management_roam_time,
+                        youtube.data_roam_time,
+                        "Youtube Streaming"
+                    )
+                    youtube.stop_webui_test()
+                    youtube.sniffer.close()
+                    return 
+                    
             if args.do_webUI:
                 youtube.stop_webui_test()
             youtube.stop()
@@ -2917,6 +2953,7 @@ NOTES:
                 youtube.create_report(youtube.stats_api_response, '', iot_summary=iot_summary)
             logging.info("Waiting for Cleanup of Browsers in Devices")
             time.sleep(10)
+
 
 
 if __name__ == "__main__":

@@ -35,7 +35,7 @@ import json
 import traceback
 from types import SimpleNamespace
 import matplotlib
-from dotenv import load_dotenv
+# from dotenv import load_dotenv
 import csv
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -396,28 +396,52 @@ class RemoteSniffer:
         print(f"Remote folder ready: {remote_path}")
         return remote_path
 
-    def start_sniff_for_triband(self, remote_dir, moni2g, moni5g, moni6g):
-        remote_pcap_path = f"{remote_dir}/{self.pcap_name}"
+    def start_sniff_for_triband(self, remote_dir, moni2g=None, moni5g=None, moni6g=None):
 
+        remote_pcap_path = f"{remote_dir}/{self.pcap_name}"
         filter_str = '(type mgt and not subtype beacon and not subtype probe-req) or ether proto 0x888e'
 
+        # -----------------------------
+        # Build interface list
+        # -----------------------------
+        interfaces = []
+
+        if moni2g:
+            interfaces.append(moni2g)
+        if moni5g:
+            interfaces.append(moni5g)
+        if moni6g:
+            interfaces.append(moni6g)
+
+        # ❌ No interfaces → fail
+        if not interfaces:
+            raise Exception("No monitor interfaces provided")
+
+        # -----------------------------
+        # Build tshark command
+        # -----------------------------
+        iface_str = " ".join([f"-i {iface}" for iface in interfaces])
+
         cmd = (
-            f'nohup tshark -i {moni2g} -i {moni5g} -i {moni6g} '
+            f'nohup tshark {iface_str} '
             f'-w {remote_pcap_path} '
             f'> /dev/null 2>&1 & echo $!'
         )
+        print("=================",cmd)
 
         stdin, stdout, stderr = self.ssh_client.exec_command(cmd)
         pid = stdout.read().decode().strip()
 
         if not pid:
-            raise Exception("Failed to start tshark")
+            err = stderr.read().decode()
+            raise Exception(f"Failed to start tshark: {err}")
 
         self.remote_process_pid = pid
-        print(f"Started sniffing PID: {pid}")
+
+        print(f"Started sniffing on: {interfaces}")
+        print(f"PID: {pid}")
 
         return remote_pcap_path
-
     def stop_sniff(self):
         if not self.remote_process_pid:
             return
@@ -434,6 +458,8 @@ class RemoteSniffer:
             self.sftp.close()
         if self.ssh_client:
             self.ssh_client.close()
+
+
 class Candela(Realm):
     """
     Candela Class file to invoke different scripts from py-scripts.
