@@ -5688,7 +5688,7 @@ class Candela(Realm):
                     return False
             teams = None
             logger_config = lf_logger_config.lf_logger_config()
-
+            self.port_clean_up(5005)
             if log_level:
                 logger_config.set_level(level=log_level)
 
@@ -9744,7 +9744,7 @@ class Candela(Realm):
                         self.overall_report.build_objective()
                         self.overall_report.set_table_title("Test Parameters:")
                         self.overall_report.build_table_title()
-
+                        curr_rb_obj = copy.copy(self.rb_obj_dict[ce][obj_name]["obj"])
                         if not self.robot_test or self.do_bandsteering:
                             final_eid_data = []
                             mac_data = []
@@ -9760,7 +9760,6 @@ class Candela(Realm):
                             uc_max_data = []
                             uc_avg_data = []
                             total_err_data = []
-                            curr_rb_obj = copy.copy(self.rb_obj_dict[ce][obj_name]["obj"])
                             csv_paths = curr_rb_obj.report_path_date_time if not self.dowebgui else self.result_dir
                             if self.do_bandsteering and self.dowebgui:
                                 csv_paths = curr_rb_obj.report_path_date_time
@@ -12419,6 +12418,42 @@ def validate_args(args):
             if flag_test:
                 logger.info(f"Arg validation check done for {test}")
 
+def normalise_time(value):
+    if value is None:
+        return value
+
+    value = str(value).strip()
+
+    if not value:
+        return value
+
+    # Pure number → return int
+    if value.isnumeric():
+        return int(value)
+
+    num_part = ''
+    unit_part = ''
+
+    for ch in value:
+        if ch.isdigit() or ch == '.':
+            num_part += ch
+        else:
+            unit_part += ch
+
+    if not num_part:
+        return value  # leave as is if invalid
+
+    num = float(num_part)
+    unit = unit_part.lower()
+
+    if unit == 'm':
+        return int(num)
+    elif unit == 'h':
+        return int(num * 60)
+    elif unit == 's':
+        return int(num / 60)   # will become 0 for values < 60s
+    else:
+        return value  # unknown suffix → unchanged
 def parse_args():
     parser = argparse.ArgumentParser(
     prog="candela_base_class.py",
@@ -12460,9 +12495,8 @@ def parse_args():
                         default='1')
 
     parser.add_argument('--ping_duration',
-                        type=float,
                         help='Duration (in minutes) to run the ping test',
-                        default=1)
+                        default="1")
     parser.add_argument('--ping_use_default_config',
                         action='store_true',
                         help='specify this flag if wanted to proceed with existing Wi-Fi configuration of the devices')
@@ -12863,7 +12897,7 @@ def parse_args():
     parser.add_argument('--zoom_test',
                         action="store_true",
                         help='zoom_test consists')
-    parser.add_argument('--zoom_duration', type=int, help="Duration of the Zoom meeting in minutes")
+    parser.add_argument('--zoom_duration', help="Duration of the Zoom meeting in minutes", default="1")
     parser.add_argument('--zoom_signin_email', type=str, help="Sign-in email")
     parser.add_argument('--zoom_signin_passwd', type=str, help="Sign-in password")
     parser.add_argument('--zoom_participants', type=int, help="no of participanrs")
@@ -13000,6 +13034,8 @@ def main():
     and orchestrates test suite execution for the Candela Base Class.
     '''
     args = parse_args()
+    args.zoom_duration = normalise_time(args.zoom_duration)
+    args.ping_duration = normalise_time(args.ping_duration)
     args_dict = vars(args)
     duration_dict = {}
     candela_apis = Candela(
