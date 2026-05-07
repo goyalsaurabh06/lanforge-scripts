@@ -1,195 +1,297 @@
 #!/usr/bin/env python3
 """
-NAME: candela_base_class.py
+    NAME: lf_multi_traffic.py
 
-PURPOSE:
-candela_base_class.py is used to execute multiple network and real-application tests
-either in series, parallel, or hybrid mode.
+    PURPOSE:
+    lf_multi_traffic.py is used to execute multiple network and real-application tests
+    either in series, parallel, or hybrid mode.
 
-The script supports running tests sequentially (series), simultaneously (parallel),
-or a combination of both, with configurable execution priority.
+    The script supports running tests sequentially (series), simultaneously (parallel),
+    or a combination of both, with configurable execution priority.
 
-SUPPORTED TESTS:
- 
-Network Tests (Parallel Supported):
-    ping_test
-    qos_test
-    ftp_test
-    http_test
-    mcast_test
-    vs_test
-    thput_test
+    SUPPORTED TESTS:
 
-Real Application Tests (Only Series Supported):
-    yt_test        (YouTube)
-    rb_test        (Real Browser)
-    teams_test     (Microsoft Teams)
-    zoom_test      (Zoom Call)
+    Tests supported for series execution:
+        ping_test
+        qos_test
+        ftp_test
+        http_test
+        mcast_test
+        vs_test
+        thput_test
+        rb_test
+        teams_test
+        yt_test
+        zoom_test
 
+    Tests supported for parallel execution:
+        ping_test
+        qos_test
+        ftp_test
+        http_test
+        mcast_test
+        vs_test
+        thput_test
 
-EXECUTION RULES:
-
-1. SERIES TESTS:
-   - Runs tests one after another
-   - Maintains execution order
-   - Allows duplicate tests
-
-2. PARALLEL TESTS:
-   - Runs tests simultaneously
-   - Duplicate tests are NOT allowed
-   - Real application tests are NOT supported
-
-3. HYBRID MODE:
-   - Both --series_tests and --parallel_tests can be used
-   - Execution order controlled by --order_priority
+    Real Application Tests (Only Series Supported):
+        yt_test        (YouTube)
+        rb_test        (Real Browser)
+        teams_test     (Microsoft Teams)
+        zoom_test      (Zoom Call)
 
 
-ARGUMENT:
+    EXECUTION RULES:
 
---order_priority:
-    Defines which test group runs first
-    Choices:
-        series    -> series tests run first (
-        )
-        parallel  -> parallel tests run first
+    1. SERIES TESTS:
+    - Runs tests one after another
+    - Maintains execution order
+    - Allows duplicate tests
 
+    2. PARALLEL TESTS:
+    - Runs tests simultaneously
+    - Duplicate tests are NOT allowed
+    - Real application tests are NOT supported
 
-EXAMPLE-1:
-Command Line Interface to run all tests in series
-python3 candela_base_class.py \
---mgr 192.168.207.78 \
---upstream_port eth1 \
---series_tests ping_test,qos_test,ftp_test,http_test,mcast_test,vs_test,thput_test,rb_test,yt_test,teams_test,zoom_test
-
-
-EXAMPLE-2:
-Command Line Interface to run network tests in parallel
-python3 candela_base_class.py \
---mgr 192.168.207.78 \
---upstream_port eth1 \
---parallel_tests ping_test,qos_test,ftp_test,http_test,mcast_test,vs_test,thput_test
+    3. HYBRID MODE:
+    - Both --series_tests and --parallel_tests can be used
+    - Execution order controlled by --order_priority
 
 
-EXAMPLE-3:
-Command Line Interface to run hybrid execution (parallel first)
-python3 candela_base_class.py \
---mgr 192.168.207.78 \
---upstream_port eth1 \
---order_priority parallel \
---parallel_tests ping_test,qos_test,ftp_test,http_test,mcast_test,vs_test,thput_test \
---series_tests yt_test,rb_test,teams_test,zoom_test
+    ARGUMENT:
+
+    --order_priority:
+        Defines which test group runs first
+        Choices:
+            series    -> series tests run first
+            parallel  -> parallel tests run first
 
 
-EXAMPLE-4:
-Command Line Interface to run all series tests with full arguments
+    EXAMPLE-1:
+    Command Line Interface to run all series tests with full arguments
 
-python3 candela_base_class.py \
---mgr 192.168.207.78 \
---upstream_port eth1 \
---series_tests ping_test,qos_test,ftp_test,http_test,mcast_test,vs_test,thput_test,rb_test,yt_test,teams_test,zoom_test \
-\
---ping_target www.google.com \
---ping_interval 5 \
---ping_duration 1 \
---ping_device_list 1.10,1.11,1.20 \
-\
---qos_tos VO,VI,BE,BK \
---qos_duration 1m \
---qos_device_list 1.10,1.11,1.20 \
---qos_traffic_type lf_tcp \
---qos_download 10000000 \
-\
---ftp_duration 1m \
---ftp_file_size 5MB \
---ftp_device_list 1.10,1.11,1.20 \
---ftp_bands 5G \
-\
---http_duration 1m \
---http_file_size 5MB \
---http_device_list 1.10,1.11,1.20 \
---http_bands 5G \
-\
---mcast_tos VO \
---mcast_test_duration 1m \
---mcast_side_b_min_bps 10000000 \
---mcast_device_list 1.10,1.11,1.20 \
---mcast_endp_type mc_udp \
-\
---vs_url https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8 \
---vs_media_source hls \
---vs_media_quality 4k \
---vs_duration 1m \
---vs_device_list 1.10,1.11,1.20 \
-\
---thput_test_duration 1m \
---thput_traffic_type lf_udp \
---thput_device_list 1.10,1.11,1.20 \
---thput_upload 10000000 \
-\
---rb_duration 1m \
---rb_device_list 1.15,1.4 \
---rb_webgui_incremental no_increment \
---rb_count 10 \
-\
---yt_url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" \
---yt_duration 1m \
---yt_res 144p \
---yt_device_list 1.15,1.4 \
-\
---zoom_signin_email candelatech2@gmail.com \
---zoom_signin_passwd 'CANDELAtech1@530048' \
---zoom_duration 2 \
---zoom_host 1.15 \
---zoom_participants 2 \
---zoom_device_list 1.15,1.4 \
---zoom_audio \
---zoom_video \
-\
---teams_duration 2m \
---teams_device_list 1.15,1.4 \
---teams_audio \
---teams_video
+    python3 lf_multi_traffic.py \
+    --mgr 192.168.207.78 \
+    --upstream_port eth1 \
+    --series_tests ping_test,qos_test,ftp_test,http_test,mcast_test,vs_test,thput_test,rb_test,yt_test,teams_test,zoom_test \
+    \
+    --ping_target www.google.com \
+    --ping_interval 5 \
+    --ping_duration 1 \
+    --ping_device_list 1.10,1.11,1.20 \
+    \
+    --qos_tos VO,VI,BE,BK \
+    --qos_duration 1m \
+    --qos_device_list 1.10,1.11,1.20 \
+    --qos_traffic_type lf_tcp \
+    --qos_download 10000000 \
+    \
+    --ftp_duration 1m \
+    --ftp_file_size 5MB \
+    --ftp_device_list 1.10,1.11,1.20 \
+    --ftp_bands 5G \
+    \
+    --http_duration 1m \
+    --http_file_size 5MB \
+    --http_device_list 1.10,1.11,1.20 \
+    --http_bands 5G \
+    \
+    --mcast_tos VO \
+    --mcast_test_duration 1m \
+    --mcast_side_b_min_bps 10000000 \
+    --mcast_device_list 1.10,1.11,1.20 \
+    --mcast_endp_type mc_udp \
+    \
+    --vs_url https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8 \
+    --vs_media_source hls \
+    --vs_media_quality 4k \
+    --vs_duration 1m \
+    --vs_device_list 1.10,1.11,1.20 \
+    \
+    --thput_test_duration 1m \
+    --thput_traffic_type lf_udp \
+    --thput_device_list 1.10,1.11,1.20 \
+    --thput_upload 10000000 \
+    \
+    --rb_duration 1m \
+    --rb_device_list 1.15,1.4 \
+    --rb_webgui_incremental no_increment \
+    --rb_count 10 \
+    \
+    --yt_url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" \
+    --yt_duration 1m \
+    --yt_res 144p \
+    --yt_device_list 1.15,1.4 \
+    \
+    --zoom_signin_email candelatech2@gmail.com \
+    --zoom_signin_passwd 'CANDELAtech1@530048' \
+    --zoom_duration 2 \
+    --zoom_host 1.15 \
+    --zoom_participants 2 \
+    --zoom_device_list 1.15,1.4 \
+    --zoom_audio \
+    --zoom_video \
+    \
+    --teams_duration 2m \
+    --teams_device_list 1.15,1.4 \
+    --teams_audio \
+    --teams_video
+
+    EXAMPLE-2:
+    Command Line Interface to run all parallel tests with full arguments
+
+    python3 lf_multi_traffic.py \
+    --mgr 192.168.207.78 \
+    --upstream_port eth1 \
+    --parallel_tests ping_test,qos_test,ftp_test,http_test,mcast_test,vs_test,thput_test \
+    \
+    --ping_target www.google.com \
+    --ping_interval 5 \
+    --ping_duration 1 \
+    --ping_device_list 1.10,1.11,1.20 \
+    \
+    --qos_tos VO,VI,BE,BK \
+    --qos_duration 1m \
+    --qos_device_list 1.10,1.11,1.20 \
+    --qos_traffic_type lf_tcp \
+    --qos_download 10000000 \
+    \
+    --ftp_duration 1m \
+    --ftp_file_size 5MB \
+    --ftp_device_list 1.10,1.11,1.20 \
+    --ftp_bands 5G \
+    \
+    --http_duration 1m \
+    --http_file_size 5MB \
+    --http_device_list 1.10,1.11,1.20 \
+    --http_bands 5G \
+    \
+    --mcast_tos VO \
+    --mcast_test_duration 1m \
+    --mcast_side_b_min_bps 10000000 \
+    --mcast_device_list 1.10,1.11,1.20 \
+    --mcast_endp_type mc_udp \
+    \
+    --vs_url https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8 \
+    --vs_media_source hls \
+    --vs_media_quality 4k \
+    --vs_duration 1m \
+    --vs_device_list 1.10,1.11,1.20 \
+    \
+    --thput_test_duration 1m \
+    --thput_traffic_type lf_udp \
+    --thput_device_list 1.10,1.11,1.20 \
+    --thput_upload 10000000
+
+    EXAMPLE-3:
+    Command Line Interface to run all series tests and parallel with full arguments
+
+    python3 lf_multi_traffic.py \
+    --mgr 192.168.207.78 \
+    --upstream_port eth1 \
+    --series_tests ping_test,qos_test,ftp_test,http_test,mcast_test,vs_test,thput_test,rb_test,yt_test,teams_test,zoom_test \
+    --parallel_tests ping_test,qos_test,ftp_test,http_test,mcast_test,vs_test,thput_test,rb_test,yt_test,teams_test,zoom_test \
+    \
+    --ping_target www.google.com \
+    --ping_interval 5 \
+    --ping_duration 1 \
+    --ping_device_list 1.10,1.11,1.20 \
+    \
+    --qos_tos VO,VI,BE,BK \
+    --qos_duration 1m \
+    --qos_device_list 1.10,1.11,1.20 \
+    --qos_traffic_type lf_tcp \
+    --qos_download 10000000 \
+    \
+    --ftp_duration 1m \
+    --ftp_file_size 5MB \
+    --ftp_device_list 1.10,1.11,1.20 \
+    --ftp_bands 5G \
+    \
+    --http_duration 1m \
+    --http_file_size 5MB \
+    --http_device_list 1.10,1.11,1.20 \
+    --http_bands 5G \
+    \
+    --mcast_tos VO \
+    --mcast_test_duration 1m \
+    --mcast_side_b_min_bps 10000000 \
+    --mcast_device_list 1.10,1.11,1.20 \
+    --mcast_endp_type mc_udp \
+    \
+    --vs_url https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8 \
+    --vs_media_source hls \
+    --vs_media_quality 4k \
+    --vs_duration 1m \
+    --vs_device_list 1.10,1.11,1.20 \
+    \
+    --thput_test_duration 1m \
+    --thput_traffic_type lf_udp \
+    --thput_device_list 1.10,1.11,1.20 \
+    --thput_upload 10000000 \
+    \
+    --rb_duration 1m \
+    --rb_device_list 1.15,1.4 \
+    --rb_webgui_incremental no_increment \
+    --rb_count 10 \
+    \
+    --yt_url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" \
+    --yt_duration 1m \
+    --yt_res 144p \
+    --yt_device_list 1.15,1.4 \
+    \
+    --zoom_signin_email candelatech2@gmail.com \
+    --zoom_signin_passwd 'CANDELAtech1@530048' \
+    --zoom_duration 2 \
+    --zoom_host 1.15 \
+    --zoom_participants 2 \
+    --zoom_device_list 1.15,1.4 \
+    --zoom_audio \
+    --zoom_video \
+    \
+    --teams_duration 2m \
+    --teams_device_list 1.15,1.4 \
+    --teams_audio \
+    --teams_video
+
+    EXAMPLE-4:
+    Duplicate tests allowed only in series
+    python3 lf_multi_traffic.py \
+    --mgr 192.168.207.78 \
+    --upstream_port eth1 \
+    --series_tests http_test,ftp_test,http_test
+
+    NOTE : Add traffic related args from EXAMPLE 1
 
 
-EXAMPLE-5:
-Duplicate tests in series (allowed)
-python3 candela_base_class.py \
---mgr 192.168.207.78 \
---upstream_port eth1 \
---series_tests http_test,ftp_test,http_test
+    NOTES:
+    1. Duration format: s (seconds), m (minutes), h (hours)
+    2. Parallel execution improves performance but is limited to network tests
+    3. Real application tests must always be executed in series
+    4. Avoid duplicates in parallel_tests
+    5. Use --order_priority to control execution flow
 
+    STATUS : Functional
 
-EXAMPLE-6:
-Invalid usage (parallel limitations)
---parallel_tests http_test,http_test
---parallel_tests yt_test,zoom_test
+    SCRIPT_CLASSIFICATION : Test
 
+    SCRIPT_CATEGORIES: Performance, Functional, Automation
 
-NOTES:
-1. Duration format: s (seconds), m (minutes), h (hours)
-2. Parallel execution improves performance but is limited to network tests
-3. Real application tests must always be executed in series
-4. Avoid duplicates in parallel_tests
-5. Use --order_priority to control execution flow
+    VERIFIED_ON:
+    Working date - 09/04/2026
+    Build version - 5.5.2
+    kernel version - 6.15.6+
 
-STATUS : Functional
+    LICENSE :
+    Copyright (C) 2020-2026 Candela Technologies Inc
+    Free to distribute and modify. LANforge systems must be licensed.
 
-SCRIPT_CLASSIFICATION : Test
-
-SCRIPT_CATEGORIES: Performance, Functional, Automation
-
-LICENSE :
-Copyright (C) 2020-2026 Candela Technologies Inc
-Free to distribute and modify. LANforge systems must be licensed.
-
-INCLUDE_IN_README: False
+    INCLUDE_IN_README: False
 """
 import os
 import sys
 
 
 base_path = os.getcwd()
-print('base path', base_path)
 
 sys.path.insert(0, os.path.join(base_path, 'py-json'))
 sys.path.insert(0, os.path.join(base_path, 'py-json', 'LANforge'))
@@ -285,9 +387,9 @@ manager = Manager()
 test_results_list = manager.list()
 
 
-class Candela(Realm):
+class MultiTraffic(Realm):
     """
-    Candela Class file to invoke different scripts from py-scripts.
+    Multi Traffic Class file to invoke different scripts from py-scripts.
     """
 
     def __init__(self, ip='localhost', port=8080, order_priority="series", result_dir="", dowebgui=False, test_name='', no_cleanup=False,
@@ -7050,11 +7152,16 @@ class Candela(Realm):
                                 if curr_thpt_obj.dowebgui:
 
                                     throughput_image_path = os.path.join(
-                                        curr_thpt_obj.result_dir, "live_view_images", f'{
-                                            curr_thpt_obj.test_name}_throughput.png')
+                                        curr_thpt_obj.result_dir,
+                                        "live_view_images",
+                                        f"{curr_thpt_obj.test_name}_throughput.png"
+                                    )
+
                                     rssi_image_path = os.path.join(
-                                        curr_thpt_obj.result_dir, "live_view_images", f'{
-                                            curr_thpt_obj.test_name}_rssi.png')
+                                        curr_thpt_obj.result_dir,
+                                        "live_view_images",
+                                        f"{curr_thpt_obj.test_name}_rssi.png"
+                                    )
                                     timeout = 300  # seconds
                                     start_time = time.time()
 
@@ -7308,13 +7415,11 @@ class Candela(Realm):
                                                 if not curr_thpt_obj.rotation_enabled:
                                                     real_time_data = f"Real Time Throughput: Achieved Throughput: Download : {round(((sum(download_data[0:int(incremental_capacity_list[i])]))), 2)} Mbps"  # noqa E501
                                                 else:
-                                                    real_time_data = f"Real Time Throughput: Achieved Throughput At Angle {angle}: Download : {
-                                                        round(
-                                                            ((sum(
-                                                                download_data[
-                                                                    0:int(
-                                                                        incremental_capacity_list[i])]))),
-                                                            2)} Mbps"
+                                                    real_time_data = (
+                                                        f"Real Time Throughput: Achieved Throughput At Angle {angle}: "
+                                                        f"Download : "
+                                                        f"{round(sum(download_data[0:int(incremental_capacity_list[i])]), 2)} Mbps"
+                                                    )
 
                                             elif curr_thpt_obj.direction == 'Upload':
                                                 if curr_thpt_obj.rotation_enabled:
@@ -7327,13 +7432,11 @@ class Candela(Realm):
                                                 if not curr_thpt_obj.rotation_enabled:
                                                     real_time_data = f"Real Time Throughput: Achieved Throughput: Upload : {round((sum(upload_data[0:int(incremental_capacity_list[i])])), 2)} Mbps"
                                                 else:
-                                                    real_time_data = f"Real Time Throughput: Achieved Throughput At Angle {angle}: Upload : {
-                                                        round(
-                                                            (sum(
-                                                                upload_data[
-                                                                    0:int(
-                                                                        incremental_capacity_list[i])])),
-                                                            2)} Mbps"
+                                                    real_time_data = (
+                                                        f"Real Time Throughput: Achieved Throughput At Angle {angle}: "
+                                                        f"Upload : "
+                                                        f"{round(sum(upload_data[0:int(incremental_capacity_list[i])]), 2)} Mbps"
+                                                    )
 
                                             if len(incremental_capacity_list) > 1:
                                                 self.overall_report.set_custom_html(f"<h2><u>Iteration-{i + 1}: Number of Devices Running : {len(devices_on_running)}</u></h2>")
@@ -7482,13 +7585,13 @@ class Candela(Realm):
                                                 if coordinate in curr_thpt_obj.battery_log:
                                                     if curr_thpt_obj.rotation_enabled and (angle in curr_thpt_obj.battery_log[coordinate]):
                                                         self.overall_report.set_custom_html(
-                                                            f'<h2>Robot went to charging Dock at {
-                                                                curr_thpt_obj.battery_log[coordinate][angle]}</h2>')
+                                                            f"<h2>Robot went to charging Dock at {curr_thpt_obj.battery_log[coordinate][angle]}</h2>"
+                                                        )
                                                         self.overall_report.build_custom()
                                                     else:
                                                         self.overall_report.set_custom_html(
-                                                            f'<h2>Robot went to charging Dock at {
-                                                                curr_thpt_obj.battery_log[coordinate]}</h2>')
+                                                            f"<h2>Robot went to charging Dock at {curr_thpt_obj.battery_log[coordinate]}</h2>"
+                                                        )
                                                         self.overall_report.build_custom()
 
                                             self.overall_report.set_custom_html('<hr>')
@@ -8604,13 +8707,19 @@ class Candela(Realm):
                             self.overall_report.build_table()
                             for _key in res["graph_df"]:
                                 self.overall_report.set_obj_html(
-                                    _obj_title=f"Overall {
-                                        self.qos_obj_dict[ce][obj_name]['obj'].direction} throughput for {
-                                        len(
-                                            self.qos_obj_dict[ce][obj_name]['obj'].input_devices_list)} clients with different TOS.",
-                                    _obj=f"The below graph represents overall {self.qos_obj_dict[ce][obj_name]['obj'].direction} throughput for all "
-                                    "connected stations running BK, BE, VO, VI traffic with different "
-                                    f"intended loads{load} per tos")
+                                    _obj_title=(
+                                        f"Overall "
+                                        f"{self.qos_obj_dict[ce][obj_name]['obj'].direction} throughput for "
+                                        f"{len(self.qos_obj_dict[ce][obj_name]['obj'].input_devices_list)} "
+                                        f"clients with different TOS."
+                                    ),
+                                    _obj=(
+                                        f"The below graph represents overall "
+                                        f"{self.qos_obj_dict[ce][obj_name]['obj'].direction} throughput for all "
+                                        "connected stations running BK, BE, VO, VI traffic with different "
+                                        f"intended loads {load} per TOS"
+                                    )
+                                )
                             self.overall_report.build_objective()
                             graph = lf_bar_graph(_data_set=data_set,
                                                  _xaxis_name="Load per Type of Service",
@@ -10078,12 +10187,17 @@ class Candela(Realm):
                                             self.overall_report.build_graph()
                                             if curr_rb_obj.rotations_enabled:
                                                 self.overall_report.set_graph_title(
-                                                    f'Time Taken Vs Device For Completing {
-                                                        curr_rb_obj.count} RealTime URLs at coordinate {coordinate} and angle {angle}')
+                                                    f"Time Taken Vs Device For Completing "
+                                                    f"{curr_rb_obj.count} RealTime URLs "
+                                                    f"at coordinate {coordinate} and angle {angle}"
+                                                )
                                             else:
                                                 self.overall_report.set_graph_title(
-                                                    f'Time Taken Vs Device For Completing {
-                                                        curr_rb_obj.count} RealTime URLs at coordinate {coordinate}')
+                                                    f"Time Taken Vs Device For Completing "
+                                                    f"{curr_rb_obj.count} RealTime URLs "
+                                                    f"at coordinate {coordinate}"
+                                                )
+
                                             self.overall_report.build_graph_title()
 
                                             # Extract device names from CSV
@@ -10233,12 +10347,16 @@ class Candela(Realm):
                                         self.overall_report.build_graph()
                                         if curr_rb_obj.rotations_enabled:
                                             self.overall_report.set_graph_title(
-                                                f'Time Taken Vs Device For Completing {
-                                                    curr_rb_obj.count} RealTime URLs at coordinate {coordinate} and angle {angle}')
+                                                f"Time Taken Vs Device For Completing "
+                                                f"{curr_rb_obj.count} RealTime URLs "
+                                                f"at coordinate {coordinate} and angle {angle}"
+                                            )
                                         else:
                                             self.overall_report.set_graph_title(
-                                                f'Time Taken Vs Device For Completing {
-                                                    curr_rb_obj.count} RealTime URLs at coordinate {coordinate}')
+                                                f"Time Taken Vs Device For Completing "
+                                                f"{curr_rb_obj.count} RealTime URLs "
+                                                f"at coordinate {coordinate}"
+                                            )
                                         self.overall_report.build_graph_title()
 
                                         # Extract device names from CSV
@@ -12229,10 +12347,10 @@ class Candela(Realm):
         Finally builds the footer, writes the HTML and PDF reports.
         '''
         args_dict = {} if args_dict is None else args_dict
-        self.overall_report = lf_report.lf_report(_results_dir_name="Base_Class_Test_Overall_report", _output_html="base_class_overall.html",
-                                                  _output_pdf="base_class_overall.pdf", _path=self.result_path if not self.dowebgui else self.result_dir)
+        self.overall_report = lf_report.lf_report(_results_dir_name="lf_multi_traffic_Test_Overall_report", _output_html="lf_multi_traffic_overall.html",
+                                                  _output_pdf="lf_multi_traffic_overall.pdf", _path=self.result_path if not self.dowebgui else self.result_dir)
         self.report_path_date_time = self.overall_report.get_path_date_time()
-        self.overall_report.set_title("Candela Base Class")
+        self.overall_report.set_title("MULTI TRAFFIC TEST")
         self.overall_report.set_date(datetime.datetime.now())
         self.overall_report.build_banner()
         try:
@@ -12418,6 +12536,7 @@ def validate_args(args):
             if flag_test:
                 logger.info(f"Arg validation check done for {test}")
 
+
 def normalise_time(value):
     if value is None:
         return value
@@ -12454,13 +12573,302 @@ def normalise_time(value):
         return int(num / 60)   # will become 0 for values < 60s
     else:
         return value  # unknown suffix → unchanged
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
-    prog="candela_base_class.py",
-    formatter_class=argparse.RawTextHelpFormatter,
-    description='''
-    NAME: candela_base_class.py''',
-)
+        prog="lf_multi_traffic.py",
+        formatter_class=argparse.RawTextHelpFormatter,
+        description='''
+
+    NAME: lf_multi_traffic.py
+
+    PURPOSE:
+    lf_multi_traffic.py is used to execute multiple testcases
+    either in series, parallel, or hybrid mode.
+
+    The script supports running tests sequentially (series), simultaneously (parallel),
+    or a combination of both, with configurable execution priority.
+
+    SUPPORTED TESTS:
+
+    Tests supported for series execution:
+        ping_test
+        qos_test
+        ftp_test
+        http_test
+        mcast_test
+        vs_test
+        thput_test
+        rb_test
+        teams_test
+        yt_test
+        zoom_test
+
+    Tests supported for parallel execution:
+        ping_test
+        qos_test
+        ftp_test
+        http_test
+        mcast_test
+        vs_test
+        thput_test
+
+    Real Application Tests (Only Series Supported):
+        yt_test        (YouTube)
+        rb_test        (Real Browser)
+        teams_test     (Microsoft Teams)
+        zoom_test      (Zoom Call)
+
+
+    EXECUTION RULES:
+
+    1. SERIES TESTS:
+    - Runs tests one after another
+    - Maintains execution order
+    - Allows duplicate tests
+
+    2. PARALLEL TESTS:
+    - Runs tests simultaneously
+    - Duplicate tests are NOT allowed
+    - Real application tests are NOT supported
+
+    3. HYBRID MODE:
+    - Both --series_tests and --parallel_tests can be used
+    - Execution order controlled by --order_priority
+
+
+    ARGUMENT:
+
+    --order_priority:
+        Defines which test group runs first
+        Choices:
+            series    -> series tests run first
+            parallel  -> parallel tests run first
+
+    EXAMPLE-1:
+    Command Line Interface to run all series tests with full arguments
+
+    python3 lf_multi_traffic.py \
+    --mgr 192.168.207.78 \
+    --upstream_port eth1 \
+    --series_tests ping_test,qos_test,ftp_test,http_test,mcast_test,vs_test,thput_test,rb_test,yt_test,teams_test,zoom_test \
+    \
+    --ping_target www.google.com \
+    --ping_interval 5 \
+    --ping_duration 1 \
+    --ping_device_list 1.10,1.11,1.20 \
+    \
+    --qos_tos VO,VI,BE,BK \
+    --qos_duration 1m \
+    --qos_device_list 1.10,1.11,1.20 \
+    --qos_traffic_type lf_tcp \
+    --qos_download 10000000 \
+    \
+    --ftp_duration 1m \
+    --ftp_file_size 5MB \
+    --ftp_device_list 1.10,1.11,1.20 \
+    --ftp_bands 5G \
+    \
+    --http_duration 1m \
+    --http_file_size 5MB \
+    --http_device_list 1.10,1.11,1.20 \
+    --http_bands 5G \
+    \
+    --mcast_tos VO \
+    --mcast_test_duration 1m \
+    --mcast_side_b_min_bps 10000000 \
+    --mcast_device_list 1.10,1.11,1.20 \
+    --mcast_endp_type mc_udp \
+    \
+    --vs_url https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8 \
+    --vs_media_source hls \
+    --vs_media_quality 4k \
+    --vs_duration 1m \
+    --vs_device_list 1.10,1.11,1.20 \
+    \
+    --thput_test_duration 1m \
+    --thput_traffic_type lf_udp \
+    --thput_device_list 1.10,1.11,1.20 \
+    --thput_upload 10000000 \
+    \
+    --rb_duration 1m \
+    --rb_device_list 1.15,1.4 \
+    --rb_webgui_incremental no_increment \
+    --rb_count 10 \
+    \
+    --yt_url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" \
+    --yt_duration 1m \
+    --yt_res 144p \
+    --yt_device_list 1.15,1.4 \
+    \
+    --zoom_signin_email candelatech2@gmail.com \
+    --zoom_signin_passwd 'CANDELAtech1@530048' \
+    --zoom_duration 2 \
+    --zoom_host 1.15 \
+    --zoom_participants 2 \
+    --zoom_device_list 1.15,1.4 \
+    --zoom_audio \
+    --zoom_video \
+    \
+    --teams_duration 2m \
+    --teams_device_list 1.15,1.4 \
+    --teams_audio \
+    --teams_video
+
+    EXAMPLE-2:
+    Command Line Interface to run all parallel tests with full arguments
+
+    python3 lf_multi_traffic.py \
+    --mgr 192.168.207.78 \
+    --upstream_port eth1 \
+    --parallel_tests ping_test,qos_test,ftp_test,http_test,mcast_test,vs_test,thput_test \
+    \
+    --ping_target www.google.com \
+    --ping_interval 5 \
+    --ping_duration 1 \
+    --ping_device_list 1.10,1.11,1.20 \
+    \
+    --qos_tos VO,VI,BE,BK \
+    --qos_duration 1m \
+    --qos_device_list 1.10,1.11,1.20 \
+    --qos_traffic_type lf_tcp \
+    --qos_download 10000000 \
+    \
+    --ftp_duration 1m \
+    --ftp_file_size 5MB \
+    --ftp_device_list 1.10,1.11,1.20 \
+    --ftp_bands 5G \
+    \
+    --http_duration 1m \
+    --http_file_size 5MB \
+    --http_device_list 1.10,1.11,1.20 \
+    --http_bands 5G \
+    \
+    --mcast_tos VO \
+    --mcast_test_duration 1m \
+    --mcast_side_b_min_bps 10000000 \
+    --mcast_device_list 1.10,1.11,1.20 \
+    --mcast_endp_type mc_udp \
+    \
+    --vs_url https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8 \
+    --vs_media_source hls \
+    --vs_media_quality 4k \
+    --vs_duration 1m \
+    --vs_device_list 1.10,1.11,1.20 \
+    \
+    --thput_test_duration 1m \
+    --thput_traffic_type lf_udp \
+    --thput_device_list 1.10,1.11,1.20 \
+    --thput_upload 10000000
+
+    EXAMPLE-3:
+    Command Line Interface to run all series tests and parallel with full arguments
+
+    python3 lf_multi_traffic.py \
+    --mgr 192.168.207.78 \
+    --upstream_port eth1 \
+    --series_tests ping_test,qos_test,ftp_test,http_test,mcast_test,vs_test,thput_test,rb_test,yt_test,teams_test,zoom_test \
+    --parallel_tests ping_test,qos_test,ftp_test,http_test,mcast_test,vs_test,thput_test,rb_test,yt_test,teams_test,zoom_test \
+    \
+    --ping_target www.google.com \
+    --ping_interval 5 \
+    --ping_duration 1 \
+    --ping_device_list 1.10,1.11,1.20 \
+    \
+    --qos_tos VO,VI,BE,BK \
+    --qos_duration 1m \
+    --qos_device_list 1.10,1.11,1.20 \
+    --qos_traffic_type lf_tcp \
+    --qos_download 10000000 \
+    \
+    --ftp_duration 1m \
+    --ftp_file_size 5MB \
+    --ftp_device_list 1.10,1.11,1.20 \
+    --ftp_bands 5G \
+    \
+    --http_duration 1m \
+    --http_file_size 5MB \
+    --http_device_list 1.10,1.11,1.20 \
+    --http_bands 5G \
+    \
+    --mcast_tos VO \
+    --mcast_test_duration 1m \
+    --mcast_side_b_min_bps 10000000 \
+    --mcast_device_list 1.10,1.11,1.20 \
+    --mcast_endp_type mc_udp \
+    \
+    --vs_url https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8 \
+    --vs_media_source hls \
+    --vs_media_quality 4k \
+    --vs_duration 1m \
+    --vs_device_list 1.10,1.11,1.20 \
+    \
+    --thput_test_duration 1m \
+    --thput_traffic_type lf_udp \
+    --thput_device_list 1.10,1.11,1.20 \
+    --thput_upload 10000000 \
+    \
+    --rb_duration 1m \
+    --rb_device_list 1.15,1.4 \
+    --rb_webgui_incremental no_increment \
+    --rb_count 10 \
+    \
+    --yt_url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" \
+    --yt_duration 1m \
+    --yt_res 144p \
+    --yt_device_list 1.15,1.4 \
+    \
+    --zoom_signin_email candelatech2@gmail.com \
+    --zoom_signin_passwd 'CANDELAtech1@530048' \
+    --zoom_duration 2 \
+    --zoom_host 1.15 \
+    --zoom_participants 2 \
+    --zoom_device_list 1.15,1.4 \
+    --zoom_audio \
+    --zoom_video \
+    \
+    --teams_duration 2m \
+    --teams_device_list 1.15,1.4 \
+    --teams_audio \
+    --teams_video
+
+    EXAMPLE-4:
+    Duplicate tests allowed only in series
+    python3 lf_multi_traffic.py \
+    --mgr 192.168.207.78 \
+    --upstream_port eth1 \
+    --series_tests http_test,ftp_test,http_test
+
+    NOTE : Add traffic related args from EXAMPLE 1
+
+
+
+    NOTES:
+    1. Duration format: s (seconds), m (minutes), h (hours)
+    2. Parallel execution improves performance but is limited to network tests
+    3. Real application tests must always be executed in series
+    4. Avoid duplicates in parallel_tests
+    5. Use --order_priority to control execution flow
+
+    STATUS : Functional
+
+    SCRIPT_CLASSIFICATION : Test
+
+    SCRIPT_CATEGORIES: Performance, Functional, Automation
+
+    VERIFIED_ON:
+    Working date - 09/04/2026
+    Build version - 5.5.2
+    kernel version - 6.15.6+
+
+    LICENSE :
+    Copyright (C) 2020-2026 Candela Technologies Inc
+    Free to distribute and modify. LANforge systems must be licensed.
+
+    INCLUDE_IN_README: False
+    ''',
+    )
     # Always Common
     parser.add_argument('--mgr', '--lfmgr', default='localhost', help='hostname for where LANforge GUI is running')
     parser.add_argument('--mgr_port', '--port', default=8080, help='port LANforge GUI HTTP service is running on')
@@ -12945,7 +13353,7 @@ def parse_args():
 
     # TEAMS ARGS
     parser.add_argument(
-        "--teams_duration", type=int, help="duration to run the test in min"
+        "--teams_duration", help="duration to run the test in min", default="1"
     )
     parser.add_argument(
         "--teams_device_list", help="Specify the real device ports seperated by comma"
@@ -13026,19 +13434,21 @@ def parse_args():
     args = parser.parse_args()
     return args
 
+
 def main():
     '''
     Main Execution Block
     --------------------
     Initializes the command-line argument parser, defines argument flags,
-    and orchestrates test suite execution for the Candela Base Class.
+    and orchestrates test suite execution for the MULTI TRAFFIC TEST.
     '''
     args = parse_args()
     args.zoom_duration = normalise_time(args.zoom_duration)
     args.ping_duration = normalise_time(args.ping_duration)
+    args.teams_duration = normalise_time(args.teams_duration)
     args_dict = vars(args)
     duration_dict = {}
-    candela_apis = Candela(
+    multi_traffic_obj = MultiTraffic(
         ip=args.mgr,
         port=args.mgr_port,
         order_priority=args.order_priority,
@@ -13094,6 +13504,9 @@ def main():
             if test not in test_map:
                 logger.error(f"{test} is not available in test suite")
                 flag = 0
+        if any(test in tests_to_run_parallel for test in ("rb_test", "teams_test", "yt_test", "zoom_test")):
+            logger.error("Real application tests are not supported in parallel execution.")
+            exit(0)
 
     # Abort execution if invalid tests were requested
     if not flag:
@@ -13132,14 +13545,14 @@ def main():
             logger.error(f"wrong duration type for {test_name}")
     if duration_flag:
         exit(1)
-    candela_apis.duration_dict = duration_dict.copy()
+    multi_traffic_obj.duration_dict = duration_dict.copy()
     # args.current = "series"
     iszoom = 'zoom_test' in tests_to_run_parallel or 'zoom_test' in tests_to_run_series
     isrb = 'rb_test' in tests_to_run_parallel or 'rb_test' in tests_to_run_series
     isyt = 'yt_test' in tests_to_run_parallel or 'yt_test' in tests_to_run_series
-    candela_apis.series_tests = tests_to_run_series
-    candela_apis.parallel_tests = tests_to_run_parallel
-    candela_apis.misc_clean_up(layer3=True, layer4=True, generic=True, port_5000=iszoom, port_5002=isyt, port_5003=isrb)
+    multi_traffic_obj.series_tests = tests_to_run_series
+    multi_traffic_obj.parallel_tests = tests_to_run_parallel
+    multi_traffic_obj.misc_clean_up(layer3=True, layer4=True, generic=True, port_5000=iszoom, port_5002=isyt, port_5003=isrb)
     if args.series_tests or args.parallel_tests:
         series_threads = []
         parallel_threads = []
@@ -13161,35 +13574,35 @@ def main():
                     if test_name in ['rb_test', 'zoom_test', 'yt_test', 'teams_test']:
                         if test_name == "rb_test":
                             obj_no = 1
-                            while f"rb_test_{obj_no}" in candela_apis.rb_obj_dict["series"]:
+                            while f"rb_test_{obj_no}" in multi_traffic_obj.rb_obj_dict["series"]:
                                 obj_no += 1
                             obj_name = f"rb_test_{obj_no}"
-                            candela_apis.rb_obj_dict["series"][obj_name] = manager.dict({"obj": None, "data": None})
+                            multi_traffic_obj.rb_obj_dict["series"][obj_name] = manager.dict({"obj": None, "data": None})
                             logging.debug("Adding rb_test object to parallel execution")
                         elif test_name == "yt_test":
                             obj_no = 1
-                            while f"yt_test_{obj_no}" in candela_apis.yt_obj_dict["series"]:
+                            while f"yt_test_{obj_no}" in multi_traffic_obj.yt_obj_dict["series"]:
                                 obj_no += 1
                             obj_name = f"yt_test_{obj_no}"
-                            candela_apis.yt_obj_dict["series"][obj_name] = manager.dict({"obj": None, "data": None})
+                            multi_traffic_obj.yt_obj_dict["series"][obj_name] = manager.dict({"obj": None, "data": None})
                         elif test_name == "zoom_test":
                             obj_no = 1
-                            while f"zoom_test_{obj_no}" in candela_apis.zoom_obj_dict["series"]:
+                            while f"zoom_test_{obj_no}" in multi_traffic_obj.zoom_obj_dict["series"]:
                                 obj_no += 1
                             obj_name = f"zoom_test_{obj_no}"
-                            candela_apis.zoom_obj_dict["series"][obj_name] = manager.dict({"obj": None, "data": None})
+                            multi_traffic_obj.zoom_obj_dict["series"][obj_name] = manager.dict({"obj": None, "data": None})
                             logging.debug("Adding zoom_test object to parallel execution")
                         elif test_name == "teams_test":
                             obj_no = 1
-                            while f"teams_test_{obj_no}" in candela_apis.teams_obj_dict["series"]:
+                            while f"teams_test_{obj_no}" in multi_traffic_obj.teams_obj_dict["series"]:
                                 obj_no += 1
                             obj_name = f"teams_test_{obj_no}"
-                            candela_apis.teams_obj_dict["series"][obj_name] = manager.dict({"obj": None, "data": None})
+                            multi_traffic_obj.teams_obj_dict["series"][obj_name] = manager.dict({"obj": None, "data": None})
                             logging.debug("Adding teams_test object to parallel execution")
-                        series_threads.append(multiprocessing.Process(target=run_test_safe(func, f"{label} [Series {idx + 1}]", args, candela_apis, duration_dict[test_name])))
+                        series_threads.append(multiprocessing.Process(target=run_test_safe(func, f"{label} [Series {idx + 1}]", args, multi_traffic_obj, duration_dict[test_name])))
                     else:
                         series_threads.append(threading.Thread(
-                            target=run_test_safe(func, f"{label} [Series {idx + 1}]", args, candela_apis, duration_dict[test_name])
+                            target=run_test_safe(func, f"{label} [Series {idx + 1}]", args, multi_traffic_obj, duration_dict[test_name])
                         ))
                 else:
                     logging.warning(f"Unknown test '{test_name}' in --series_tests")
@@ -13213,24 +13626,24 @@ def main():
                     args.current = "parallel"
                     if test_name in ['rb_test', 'zoom_test', 'yt_test', 'teams_test']:
                         if test_name == "rb_test":
-                            candela_apis.rb_obj_dict["parallel"]["rb_test"] = manager.dict({"obj": None, "data": None})
+                            multi_traffic_obj.rb_obj_dict["parallel"]["rb_test"] = manager.dict({"obj": None, "data": None})
                             logging.debug("Adding rb_test object to parallel execution")
                         elif test_name == "yt_test":
-                            candela_apis.yt_obj_dict["parallel"]["yt_test"] = manager.dict({"obj": None, "data": None})
+                            multi_traffic_obj.yt_obj_dict["parallel"]["yt_test"] = manager.dict({"obj": None, "data": None})
                             logging.debug("Adding yt_test object to parallel execution")
                         elif test_name == "zoom_test":
-                            candela_apis.zoom_obj_dict["parallel"]["zoom_test"] = manager.dict({"obj": None, "data": None})
+                            multi_traffic_obj.zoom_obj_dict["parallel"]["zoom_test"] = manager.dict({"obj": None, "data": None})
                             logging.debug("Adding zoom_test object to parallel execution")
                         elif test_name == "teams_test":
-                            candela_apis.teams_obj_dict["parallel"]["teams_test"] = manager.dict({"obj": None, "data": None})
+                            multi_traffic_obj.teams_obj_dict["parallel"]["teams_test"] = manager.dict({"obj": None, "data": None})
                             logging.debug("Adding teams_test object to parallel execution")
 
                         parallel_threads.append(multiprocessing.Process(
-                            target=run_test_safe(func, f"{label} [Parallel {idx + 1}]", args, candela_apis, duration_dict[test_name])
+                            target=run_test_safe(func, f"{label} [Parallel {idx + 1}]", args, multi_traffic_obj, duration_dict[test_name])
                         ))
                     else:
                         parallel_threads.append(threading.Thread(
-                            target=run_test_safe(func, f"{label} [Parallel {idx + 1}]", args, candela_apis, duration_dict[test_name])
+                            target=run_test_safe(func, f"{label} [Parallel {idx + 1}]", args, multi_traffic_obj, duration_dict[test_name])
                         ))
                 else:
                     logging.warning(f"Unknown test '{test_name}' in --parallel_tests")
@@ -13239,44 +13652,44 @@ def main():
             """
             Initialize overall execution status and tracking CSV for Web GUI reporting.
             """
-            candela_apis.overall_status = {
+            multi_traffic_obj.overall_status = {
                 "ping": "notstarted", "qos": "notstarted", "ftp": "notstarted", "http": "notstarted",
                 "mc": "notstarted", "vs": "notstarted", "thput": "notstarted", "rb": "notstarted",
                 "zoom": "notstarted", "yt": "notstarted", "teams": "notstarted",
                 "time": datetime.datetime.now().strftime("%Y %d %H:%M:%S"),
                 "status": "running", "current_mode": "tbd", "current_test_name": "tbd"
             }
-            candela_apis.overall_csv.append(candela_apis.overall_status.copy())
-            df1 = pd.DataFrame(candela_apis.overall_csv)
+            multi_traffic_obj.overall_csv.append(multi_traffic_obj.overall_status.copy())
+            df1 = pd.DataFrame(multi_traffic_obj.overall_csv)
             df1.to_csv(f'{args.result_dir}/overall_status.csv', index=False)
 
         """
         Execute scheduled test scenarios sequentially and/or in parallel according to priority.
         """
         if args.order_priority == 'series':
-            candela_apis.current_exec = "series"
+            multi_traffic_obj.current_exec = "series"
             for t in series_threads:
                 t.start()
                 t.join()
-                candela_apis.series_index += 1
+                multi_traffic_obj.series_index += 1
 
             # Then run parallel tests
             if parallel_threads:
-                candela_apis.misc_clean_up(layer3=True, layer4=True, generic=True, port_5000=iszoom, port_5002=isyt, port_5003=isrb)
+                multi_traffic_obj.misc_clean_up(layer3=True, layer4=True, generic=True, port_5000=iszoom, port_5002=isyt, port_5003=isrb)
                 logging.info('Starting parallel tests...')
                 time.sleep(10)
 
-            candela_apis.current_exec = "parallel"
+            multi_traffic_obj.current_exec = "parallel"
             for t in parallel_threads:
                 t.start()
 
-            candela_apis.parallel_index = 0
+            multi_traffic_obj.parallel_index = 0
             for t in parallel_threads:
                 t.join()
-                candela_apis.parallel_index += 1
+                multi_traffic_obj.parallel_index += 1
 
         else:
-            candela_apis.current_exec = "parallel"
+            multi_traffic_obj.current_exec = "parallel"
             for t in parallel_threads:
                 t.start()
 
@@ -13284,11 +13697,11 @@ def main():
                 t.join()
 
             if series_threads:
-                candela_apis.misc_clean_up(layer3=True, layer4=True, generic=True, port_5000=iszoom, port_5002=isyt, port_5003=isrb)
+                multi_traffic_obj.misc_clean_up(layer3=True, layer4=True, generic=True, port_5000=iszoom, port_5002=isyt, port_5003=isrb)
                 logging.info('Starting series tests...')
                 time.sleep(5)
 
-            candela_apis.current_exec = "series"
+            multi_traffic_obj.current_exec = "series"
             for t in series_threads:
                 t.start()
                 t.join()
@@ -13300,27 +13713,27 @@ def main():
     Finalize test execution: perform cleanup, save logs, generate the overall report,
     and update the Web GUI status if applicable.
     """
-    candela_apis.misc_clean_up(layer3=True, layer4=True, generic=True, port_5000=iszoom, port_5002=isyt, port_5003=isrb)
+    multi_traffic_obj.misc_clean_up(layer3=True, layer4=True, generic=True, port_5000=iszoom, port_5002=isyt, port_5003=isrb)
     log_file = save_logs()
     logging.info(f"Logs saved to: {log_file}")
 
     test_results_df = pd.DataFrame(list(test_results_list))
-    candela_apis.generate_overall_report(test_results_df=test_results_df, args_dict=args_dict)
+    multi_traffic_obj.generate_overall_report(test_results_df=test_results_df, args_dict=args_dict)
 
-    if candela_apis.dowebgui:
+    if multi_traffic_obj.dowebgui:
         try:
-            candela_apis.overall_status["status"] = "completed"
-            candela_apis.overall_status["time"] = datetime.datetime.now().strftime("%Y %d %H:%M:%S")
-            candela_apis.overall_csv.append(candela_apis.overall_status.copy())
-            df1 = pd.DataFrame(candela_apis.overall_csv)
-            df1.to_csv(f'{candela_apis.result_dir}/overall_status.csv', index=False)
+            multi_traffic_obj.overall_status["status"] = "completed"
+            multi_traffic_obj.overall_status["time"] = datetime.datetime.now().strftime("%Y %d %H:%M:%S")
+            multi_traffic_obj.overall_csv.append(multi_traffic_obj.overall_status.copy())
+            df1 = pd.DataFrame(multi_traffic_obj.overall_csv)
+            df1.to_csv(f'{multi_traffic_obj.result_dir}/overall_status.csv', index=False)
         except Exception as e:
             logging.error(f"Error while writing status file for webui: {e}")
 
     logging.info(f"\nTest Results Summary:\n{test_results_df}")
 
 
-def run_test_safe(test_func, test_name, args, candela_apis, duration):
+def run_test_safe(test_func, test_name, args, multi_traffic_obj, duration):
     """
     Creates a safe wrapper around a test function to capture execution status and exceptions.
 
@@ -13328,7 +13741,7 @@ def run_test_safe(test_func, test_name, args, candela_apis, duration):
         test_func (callable): The test function to execute.
         test_name (str): The name of the test being executed.
         args (object): The arguments passed to the test function.
-        candela_apis (object): The Candela APIs instance passed to the test function.
+        multi_traffic_obj (object): The MultiTraffic instance passed to the test function.
         duration (int/str): The duration of the test run.
 
     Returns:
@@ -13341,7 +13754,7 @@ def run_test_safe(test_func, test_name, args, candela_apis, duration):
         global error_logs  # noqa: F824
 
         try:
-            result = test_func(args, candela_apis)
+            result = test_func(args, multi_traffic_obj)
             if not result:
                 status = "NOT EXECUTED"
                 logger.error(f"{test_name} NOT EXECUTED")
@@ -13400,9 +13813,9 @@ def save_logs():
     return log_filename
 
 
-def run_ping_test(args, candela_apis: Candela):
-    """Executes a ping test using the provided arguments and Candela APIs."""
-    return candela_apis.run_ping_test(
+def run_ping_test(args, multi_traffic_obj: MultiTraffic):
+    """Executes a ping test using the provided arguments."""
+    return multi_traffic_obj.run_ping_test(
         real=True,
         target=args.ping_target,
         ping_interval=args.ping_interval,
@@ -13435,7 +13848,7 @@ def run_ping_test(args, candela_apis: Candela):
         pk_passwd=args.ping_pk_passwd,
         pac_file=args.ping_pac_file,
         wait_time=args.ping_wait_time,
-        local_lf_report_dir=candela_apis.result_path if not args.dowebgui else args.result_dir,
+        local_lf_report_dir=multi_traffic_obj.result_path if not args.dowebgui else args.result_dir,
         do_bandsteering=args.do_bandsteering,
         cycles=args.cycles,
         bssids=args.bssids,
@@ -13444,9 +13857,9 @@ def run_ping_test(args, candela_apis: Candela):
     )
 
 
-def run_http_test(args, candela_apis: Candela):
-    """Executes a http test using the provided arguments and Candela APIs."""
-    return candela_apis.run_http_test(
+def run_http_test(args, multi_traffic_obj: MultiTraffic):
+    """Executes a http test using the provided arguments."""
+    return multi_traffic_obj.run_http_test(
         upstream_port=args.upstream_port,
         bands=args.http_bands,
         duration=args.http_duration,
@@ -13489,9 +13902,9 @@ def run_http_test(args, candela_apis: Candela):
     )
 
 
-def run_ftp_test(args, candela_apis: Candela):
-    """Executes a ftp test using the provided arguments and Candela APIs."""
-    return candela_apis.run_ftp_test(
+def run_ftp_test(args, multi_traffic_obj: MultiTraffic):
+    """Executes a ftp test using the provided arguments."""
+    return multi_traffic_obj.run_ftp_test(
         device_list=args.ftp_device_list,
         file_sizes=[args.ftp_file_size],
         traffic_duration=args.ftp_duration,
@@ -13534,9 +13947,9 @@ def run_ftp_test(args, candela_apis: Candela):
     )
 
 
-def run_qos_test(args, candela_apis: Candela):
-    """Executes a qos test using the provided arguments and Candela APIs."""
-    return candela_apis.run_qos_test(
+def run_qos_test(args, multi_traffic_obj: MultiTraffic):
+    """Executes a qos test using the provided arguments."""
+    return multi_traffic_obj.run_qos_test(
         upstream_port=args.upstream_port,
         test_duration=args.qos_duration,
         download=args.qos_download,
@@ -13581,9 +13994,9 @@ def run_qos_test(args, candela_apis: Candela):
     )
 
 
-def run_vs_test(args, candela_apis: Candela):
-    """Executes a video streaming test using the provided arguments and Candela APIs."""
-    return candela_apis.run_vs_test1(
+def run_vs_test(args, multi_traffic_obj: MultiTraffic):
+    """Executes a video streaming test using the provided arguments."""
+    return multi_traffic_obj.run_vs_test1(
         url=args.vs_url,
         media_source=args.vs_media_source,
         media_quality=args.vs_media_quality,
@@ -13627,14 +14040,14 @@ def run_vs_test(args, candela_apis: Candela):
     )
 
 
-def run_thput_test(args, candela_apis: Candela):
-    """Executes a throughput test using the provided arguments and Candela APIs."""
+def run_thput_test(args, multi_traffic_obj: MultiTraffic):
+    """Executes a throughput test using the provided arguments."""
     if args.thput_do_interopability and args.thput_config:
         args.thput_default_config = False
         args.thput_config = False
     elif args.thput_do_interopability:
         args.thput_default_config = True
-    return candela_apis.run_throughput_test(
+    return multi_traffic_obj.run_throughput_test(
         upstream_port=args.upstream_port,
         test_duration=args.thput_test_duration,
         download=args.thput_download,
@@ -13682,9 +14095,9 @@ def run_thput_test(args, candela_apis: Candela):
     )
 
 
-def run_mcast_test(args, candela_apis: Candela):
-    """Executes a mukticast test using the provided arguments and Candela APIs."""
-    return candela_apis.run_mc_test1(
+def run_mcast_test(args, multi_traffic_obj: MultiTraffic):
+    """Executes a mukticast test using the provided arguments."""
+    return multi_traffic_obj.run_mc_test1(
         test_duration=args.mcast_test_duration,
         upstream_port=args.upstream_port,
         endp_type=args.mcast_endp_type,
@@ -13724,9 +14137,9 @@ def run_mcast_test(args, candela_apis: Candela):
     )
 
 
-def run_yt_test(args, candela_apis: Candela):
-    """Executes a Youtube test using the provided arguments and Candela APIs."""
-    return candela_apis.run_yt_test(
+def run_yt_test(args, multi_traffic_obj: MultiTraffic):
+    """Executes a Youtube test using the provided arguments."""
+    return multi_traffic_obj.run_yt_test(
         url=args.yt_url,
         duration=args.yt_duration,
         res=args.yt_res,
@@ -13765,9 +14178,9 @@ def run_yt_test(args, candela_apis: Candela):
     )
 
 
-def run_rb_test(args, candela_apis: Candela):
-    """Executes a real browser test using the provided arguments and Candela APIs."""
-    return candela_apis.run_rb_test(
+def run_rb_test(args, multi_traffic_obj: MultiTraffic):
+    """Executes a real browser test using the provided arguments."""
+    return multi_traffic_obj.run_rb_test(
         url=args.rb_url,
         upstream_port=args.upstream_port,
         device_list=args.rb_device_list,
@@ -13808,9 +14221,9 @@ def run_rb_test(args, candela_apis: Candela):
     )
 
 
-def run_zoom_test(args, candela_apis: Candela):
-    """Executes a zoom test using the provided arguments and Candela APIs."""
-    return candela_apis.run_zoom_test(
+def run_zoom_test(args, multi_traffic_obj: MultiTraffic):
+    """Executes a zoom test using the provided arguments."""
+    return multi_traffic_obj.run_zoom_test(
         duration=args.zoom_duration,
         signin_email=args.zoom_signin_email,
         signin_passwd=args.zoom_signin_passwd,
@@ -13859,10 +14272,10 @@ def run_zoom_test(args, candela_apis: Candela):
     )
 
 
-def run_teams_test(args, candela_apis: Candela):
-    """Executes a teams test using the provided arguments and Candela APIs."""
+def run_teams_test(args, multi_traffic_obj: MultiTraffic):
+    """Executes a teams test using the provided arguments."""
     is_robot = args.robot_test and not args.do_bandsteering
-    return candela_apis.run_teams_test(
+    return multi_traffic_obj.run_teams_test(
         duration=args.teams_duration,
         resources=args.teams_device_list,
         audio=args.teams_audio,
