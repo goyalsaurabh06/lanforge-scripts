@@ -83,6 +83,30 @@
         python3 lf_interop_throughput.py --mgr 192.168.207.78 --mgr_port 8080 --upstream_port eth1 --test_duration 1m --download 1000000 --traffic_type lf_udp
         --robot_ip 192.168.204.144 --coordinate 3,4 --do_bandsteering --total_cycles 2 --bssids 94:A6:7E:74:26:33,94:A6:7E:74:26:22
 
+        EXAMPLE-17:
+        Command Line Interface to run download scenario with desired resources by using Virtual
+        python lf_interop_throughput.py --lfmgr 192.168.207.78 --mgr_port 8080 --upstream_port eth1 --radio 'radio==wiphy0 stations==2 ssid==NETGEAR_2G_wpa2 ssid_pw==Password@123 security==wpa2' --sta_start_offset 1000 --test_duration 30s --download 1000000 --traffic_type lf_udp --client_type virtual
+
+        EXAMPLE-18:
+        Command Line Interface to run download scenario with desired resources by using Existing Stations
+        python lf_interop_throughput.py --lfmgr 192.168.207.78 --mgr_port 8080 --upstream_port eth1 --test_duration 30s --download 1000000 --traffic_type lf_udp --use_existing_station_list --existing_station_list '1.1.sta1000,1.1.sta1001'
+
+        EXAMPLE-19:
+        Command Line Interface to run download scenario with desired resources by using Real + Virtual
+        python lf_interop_throughput.py --lfmgr 192.168.207.78 --mgr_port 8080 --upstream_port eth1 --radio 'radio==wiphy0 stations==2 ssid==NETGEAR_2G_wpa2 ssid_pw==Password@123 security==wpa2' --sta_start_offset 1000 --test_duration 30s --download 1000000 --traffic_type lf_udp --client_type both 
+
+        EXAMPLE-20:
+        Command Line Interface to run download scenario with desired resources by using Real + Existing
+        python3 lf_interop_throughput.py --mgr 192.168.207.78 --mgr_port 8080 --upstream_port eth1 --test_duration 1m --download 1000000 --traffic_type lf_udp --client_type real --use_existing_station_list --existing_station_list '1.1.sta1000,1.1.sta1001'
+
+        EXAMPLE-21:
+        Command Line Interface to run download scenario with desired resources by using Virtual + Existing
+        python lf_interop_throughput.py --lfmgr 192.168.207.78 --mgr_port 8080 --upstream_port eth1 --radio 'radio==wiphy0 stations==2 ssid==NETGEAR_2G_wpa2 ssid_pw==Password@123 security==wpa2' --sta_start_offset 2000 --test_duration 30s --download 1000000 --traffic_type lf_udp --client_type virtual --use_existing_station_list --existing_station_list '1.1.sta1000,1.1.sta1001'
+
+        EXAMPLE-22:
+        Command Line Interface to run download scenario with desired resources by using Real + Exisitng + Virtual
+        python lf_interop_throughput.py --lfmgr 192.168.207.78 --mgr_port 8080 --upstream_port eth1 --radio 'radio==wiphy0 stations==2 ssid==NETGEAR_2G_wpa2 ssid_pw==Password@123 security==wpa2' --sta_start_offset 2000 --test_duration 30s --download 1000000 --traffic_type lf_udp --use_existing_station_list --existing_station_list '1.1.sta1000,1.1.sta1001' --client_type both
+
     TO PERFORM INTEROPABILITY TEST:
 
         EXAMPLE-1:
@@ -127,6 +151,30 @@
         python3 lf_interop_throughput.py --mgr 192.168.204.74 --mgr_port 8080 --upstream_port eth0 --test_duration 30s --traffic_type lf_udp --ssid NETGEAR_2G_wpa2
         --passwd Password@123 --security wpa2 --do_interopability --device_list 1.15,1.400 --download 10000000 --interopability_config
 
+        EXAMPLE-10:
+        Command Line Interface to run download scenario with desired resources by using Virtual
+        python lf_interop_throughput.py --lfmgr 192.168.207.78 --mgr_port 8080 --upstream_port eth1 --radio 'radio==wiphy0 stations==2 ssid==NETGEAR_2G_wpa2 ssid_pw==Password@123 security==wpa2' --sta_start_offset 1000 --test_duration 30s --download 1000000 --traffic_type lf_udp --client_type virtual --do_interopability
+
+        EXAMPLE-11:
+        Command Line Interface to run download scenario with desired resources by using Existing Stations
+        python3 lf_interop_throughput.py --mgr 192.168.207.78 --mgr_port 8080 --upstream_port eth1 --test_duration 1m --download 1000000 --traffic_type lf_udp --use_existing_station_list --existing_station_list '1.1.sta1000,1.1.sta1001' --do_interopability
+
+        EXAMPLE-12:
+        Command Line Interface to run download scenario with desired resources by using Real + Virtual
+        python lf_interop_throughput.py --lfmgr 192.168.207.78 --mgr_port 8080 --upstream_port eth1 --radio 'radio==wiphy0 stations==2 ssid==NETGEAR_2G_wpa2 ssid_pw==Password@123 security==wpa2' --sta_start_offset 1000 --test_duration 30s --download 1000000 --traffic_type lf_udp --client_type both --do_interopability
+
+        EXAMPLE-13:
+        Command Line Interface to run download scenario with desired resources by using Real + Existing
+        python3 lf_interop_throughput.py --mgr 192.168.207.78 --mgr_port 8080 --upstream_port eth1 --test_duration 1m --download 1000000 --traffic_type lf_udp --client_type real --use_existing_station_list --existing_station_list '1.1.sta1000,1.1.sta1001' --do_interopability
+
+        EXAMPLE-14:
+        Command Line Interface to run download scenario with desired resources by using Virtual + Existing
+        python lf_interop_throughput.py --lfmgr 192.168.207.78 --mgr_port 8080 --upstream_port eth1 --radio 'radio==wiphy0 stations==2 ssid==NETGEAR_2G_wpa2 ssid_pw==Password@123 security==wpa2' --sta_start_offset 2000 --test_duration 30s --download 1000000 --traffic_type lf_udp --client_type virtual --use_existing_station_list --existing_station_list '1.1.sta1000,1.1.sta1001' --do_interopability
+
+        EXAMPLE-15:
+        Command Line Interface to run download scenario with desired resources by using Real + Exisitng+ Virtual
+        python lf_interop_throughput.py --lfmgr 192.168.207.78 --mgr_port 8080 --upstream_port eth1 --radio 'radio==wiphy0 stations==2 ssid==NETGEAR_2G_wpa2 ssid_pw==Password@123 security==wpa2' --sta_start_offset 2000 --test_duration 30s --download 1000000 --traffic_type lf_udp --use_existing_station_list --existing_station_list '1.1.sta1000,1.1.sta1001' --client_type both --do_interopability
+        
     TO PERFORM TEST WITH IOT:
         EXAMPLE-1:
         Command Line Interface to run the Test along with IOT without device list
@@ -215,13 +263,29 @@ if os.path.exists(iot_scripts_path):
 
 class Throughput(Realm):
     def __init__(self,
-                 tos,
+                 tos="BE",
+                 radio_name_list=None,
+                 number_of_stations_per_radio_list=0,
+                 ssid_list=None,
+                 ssid_password_list=None,
+                 ssid_security_list=None,
+                 wifi_mode_list=None,
+                 enable_flags_list=None,
+                 station_lists=None,
+                 reset_port_enable_list=None,
+                 reset_port_time_min_list=None,
+                 reset_port_time_max_list=None,
+                 client_type=None,
+                 use_existing_station_list=False,
+                 existing_station_list=None,
+                 wait_for_ip_sec="120s",
+                 exit_on_ip_acquired=False,
                  ssid=None,
                  security=None,
                  password=None,
                  name_prefix=None,
                  upstream=None,
-                 num_stations=10,
+                 num_stations=0,
                  host="localhost",
                  port=8080,
                  test_name=None,
@@ -275,13 +339,47 @@ class Throughput(Realm):
                  user_list=None, real_client_list=None, real_client_list1=None, hw_list=None, laptop_list=None, android_list=None, mac_list=None, windows_list=None, linux_list=None,
                  total_resources_list=None, working_resources_list=None, hostname_list=None, username_list=None, eid_list=None,
                  devices_available=None, input_devices_list=None, mac_id1_list=None, mac_id_list=None, overall_avg_rssi=None,
-                 coordinate_list=None, rotation_enabled=None, robo_ip=None, angle_list=None, do_bandsteering=False, total_cycles=1, bssids=None, duration_to_skip=None):
+                 coordinate_list=None, rotation_enabled=None, robo_ip=None, angle_list=None, do_bandsteering=False, total_cycles=1, bssids=None, duration_to_skip=None,
+                 # wifi extra configuration
+                 key_mgmt_list=None,
+                 pairwise_list=None,
+                 group_list=None,
+                 psk_list=None,
+                 wep_key_list=None,
+                 ca_cert_list=None,
+                 eap_list=None,
+                 identity_list=None,
+                 anonymous_identity_list=None,
+                 phase1_list=None,
+                 phase2_list=None,
+                 passwd_list=None,
+                 pin_list=None,
+                 pac_file_list=None,
+                 private_key_list=None,
+                 pk_password_list=None,
+                 hessid_list=None,
+                 realm_list=None,
+                 client_cert_list=None,
+                 imsi_list=None,
+                 milenage_list=None,
+                 domain_list=None,
+                 roaming_consortium_list=None,
+                 venue_group_list=None,
+                 network_type_list=None,
+                 ipaddr_type_avail_list=None,
+                 network_auth_type_list=None,
+                 anqp_3gpp_cell_net_list=None,
+                 ieee80211w_list=None,
+                 interopt_mode=False,
+                 outfile=None,
+                 ):
         super().__init__(lfclient_host=host,
                          lfclient_port=port)
         self.ssid_list = []
         self.signal_list = []
         self.channel_list = []
         self.mode_list = []
+        self.ap = []
         self.link_speed_list = []
         self.background_run = None
         self.stop_test = False
@@ -386,6 +484,66 @@ class Throughput(Realm):
         self.do_bandsteering = do_bandsteering
         self.total_cycles = total_cycles
         self.bssids = bssids if bssids else []
+        self.client_type = client_type
+        self.use_existing_station_list = use_existing_station_list
+        self.existing_station_list=existing_station_list
+        self.radio_name_list = radio_name_list
+        self.number_of_stations_per_radio_list = number_of_stations_per_radio_list
+        self.ssid_list = ssid_list
+        self.ssid_password_list = ssid_password_list
+        self.wifi_mode_list = wifi_mode_list
+        self.ssid_security_list = ssid_security_list
+        self.reset_port_enable_list = reset_port_enable_list
+        self.reset_port_time_min_list = reset_port_time_min_list
+        self.reset_port_time_max_list = reset_port_time_max_list
+        self.enable_flags_list = enable_flags_list
+        self.station_lists = station_lists
+        self.wait_for_ip_sec = self.duration_time_to_seconds(wait_for_ip_sec)
+        self.exit_on_ip_acquired = exit_on_ip_acquired
+        self.station_names_list = []
+        self.virtual_cx_list = []
+        self.interopt_mode = interopt_mode
+        # wifi extra configuration
+        self.key_mgmt_list = key_mgmt_list if key_mgmt_list else []
+        self.pairwise_list = pairwise_list if pairwise_list else []
+        self.group_list = group_list if group_list else []
+        self.psk_list = psk_list if psk_list else []
+        self.wep_key_list = wep_key_list if wep_key_list else []
+        self.ca_cert_list = ca_cert_list if ca_cert_list else []
+        self.eap_list = eap_list if eap_list else []
+        self.identity_list = identity_list if identity_list else []
+        self.anonymous_identity_list = anonymous_identity_list if anonymous_identity_list else []
+        self.phase1_list = phase1_list if phase1_list else []
+        self.phase2_list = phase2_list if phase2_list else []
+        self.passwd_list = passwd_list if passwd_list else []
+        self.pin_list = pin_list if pin_list else []
+        self.pac_file_list = pac_file_list if pac_file_list else []
+        self.private_key_list = private_key_list if private_key_list else []
+        self.pk_password_list = pk_password_list if pk_password_list else []
+        self.hessid_list = hessid_list if hessid_list else []
+        self.realm_list = realm_list if realm_list else []
+        self.client_cert_list = client_cert_list if client_cert_list else []
+        self.imsi_list = imsi_list if imsi_list else []
+        self.milenage_list = milenage_list if milenage_list else []
+        self.domain_list = domain_list if domain_list else []
+        self.roaming_consortium_list = roaming_consortium_list if roaming_consortium_list else []
+        self.venue_group_list = venue_group_list if venue_group_list else []
+        self.network_type_list = network_type_list if network_type_list else []
+        self.ipaddr_type_avail_list = ipaddr_type_avail_list if ipaddr_type_avail_list else []
+        self.network_auth_type_list = network_auth_type_list if network_auth_type_list else []
+        self.anqp_3gpp_cell_net_list = anqp_3gpp_cell_net_list if anqp_3gpp_cell_net_list else []
+        self.ieee80211w_list = ieee80211w_list if ieee80211w_list else []
+
+        #for individual csv naming
+        self.outfile=outfile
+
+        #Variables for the individual csv's
+        self.epoch_time =int(time.time())
+        
+        # Lookup key is port-eid name
+        self.dl_port_csv_files = {}
+        self.dl_port_csv_writers = {}
+
         # Variables related to Robo
         self.robo_ip = robo_ip
         self.angle_list = angle_list if angle_list else [0]
@@ -401,7 +559,277 @@ class Throughput(Realm):
             self.robot.time_to_reach = int(duration_to_skip) * 60
             self.robot.coordinate_list = self.coordinate_list
             self.robot.total_cycles = self.total_cycles
+        self.station_profiles=[]
+        self.virtual_clients=[]
 
+        if self.use_existing_station_list:
+            station_profile=self.new_station_profile()
+            station_profile.station_names.extend(existing_station_list)
+            self.station_profiles.append(station_profile)
+            self.virtual_clients.extend(station_profile.station_names)
+        if self.client_type == 'virtual' or self.client_type == 'both':
+            for (
+                    _radio_,
+                    ssid_,
+                    ssid_password_,
+                    ssid_security_,
+                    mode_,
+                    enable_flags_,
+                    reset_port_enable_,
+                    reset_port_time_min_,
+                    reset_port_time_max_,
+                    key_mgmt_,
+                    pairwise_,
+                    group_,
+                    psk_,
+                    wep_key_,
+                    ca_cert_,
+                    eap_,
+                    identity_,
+                    anonymous_identity_,
+                    phase1_,
+                    phase2_,
+                    passwd_,
+                    pin_,
+                    pac_file_,
+                    private_key_,
+                    pk_password_,
+                    hessid_,
+                    realm_,
+                    client_cert_,
+                    imsi_,
+                    milenage_,
+                    domain_,
+                    roaming_consortium_,
+                    venue_group_,
+                    network_type_,
+                    ipaddr_type_avail_,
+                    network_auth_type_,
+                    anqp_3gpp_cell_net_,
+                    ieee80211w_) in zip(
+                    self.radio_name_list,
+                    self.ssid_list,
+                    self.ssid_password_list,
+                    self.ssid_security_list,
+                    self.wifi_mode_list,
+                    self.enable_flags_list,
+                    self.reset_port_enable_list,
+                    self.reset_port_time_min_list,
+                    self.reset_port_time_max_list,
+                    self.key_mgmt_list,
+                    self.pairwise_list,
+                    self.group_list,
+                    self.psk_list,
+                    self.wep_key_list,
+                    self.ca_cert_list,
+                    self.eap_list,
+                    self.identity_list,
+                    self.anonymous_identity_list,
+                    self.phase1_list,
+                    self.phase2_list,
+                    self.passwd_list,
+                    self.pin_list,
+                    self.pac_file_list,
+                    self.private_key_list,
+                    self.pk_password_list,
+                    self.hessid_list,
+                    self.realm_list,
+                    self.client_cert_list,
+                    self.imsi_list,
+                    self.milenage_list,
+                    self.domain_list,
+                    self.roaming_consortium_list,
+                    self.venue_group_list,
+                    self.network_type_list,
+                    self.ipaddr_type_avail_list,
+                    self.network_auth_type_list,
+                    self.anqp_3gpp_cell_net_list,
+                    self.ieee80211w_list
+                ):
+                    station_profile = self.new_station_profile()
+                    station_profile.lfclient_url = self.lfclient_url
+                    station_profile.ssid = ssid_
+                    station_profile.ssid_pass = ssid_password_
+                    station_profile.security = ssid_security_
+                    station_profile.number_template = self.number_template
+                    station_profile.mode = mode_
+                    station_profile.desired_add_sta_flags = enable_flags_.copy()
+                    station_profile.desired_add_sta_flags_mask = enable_flags_.copy()
+
+                    # set_wifi_extra
+                    if key_mgmt_ != '[BLANK]':
+                        station_profile.set_wifi_extra(key_mgmt=key_mgmt_,
+                        pairwise=pairwise_,
+                        group=group_,
+                        psk=psk_,
+                        wep_key=wep_key_,
+                        ca_cert=ca_cert_,
+                        eap=eap_,
+                        identity=identity_,
+                        anonymous_identity=anonymous_identity_,
+                        phase1=phase1_,
+                        phase2=phase2_,
+                        passwd=passwd_,
+                        pin=pin_,
+                        pac_file=pac_file_,
+                        private_key=private_key_,
+                        pk_password=pk_password_,
+                        hessid=hessid_,
+                        realm=realm_,
+                        client_cert=client_cert_,
+                        imsi=imsi_,
+                        milenage=milenage_,
+                        domain=domain_,
+                        roaming_consortium=roaming_consortium_,
+                        venue_group=venue_group_,
+                        network_type=network_type_,
+                        ipaddr_type_avail=ipaddr_type_avail_,
+                        network_auth_type=network_auth_type_,
+                        anqp_3gpp_cell_net=anqp_3gpp_cell_net_)
+
+                        # Configure protected management frames (PMF)
+                        if ieee80211w_.lower() == 'disabled':
+                            station_profile.set_command_param("add_sta", "ieee80211w", 0)
+                        elif ieee80211w_.lower() == 'required':
+                            station_profile.set_command_param("add_sta", "ieee80211w", 2)
+                        else:
+                            # may want to set an error if not optional yet for now default to optional
+                            station_profile.set_command_param("add_sta", "ieee80211w", 1)
+                    
+                    # place the enable and disable flags
+                    # station_profile.desired_add_sta_flags = self.enable_flags
+                    # station_profile.desired_add_sta_flags_mask = self.enable_flags
+                    test_duration_sec = self.test_duration
+                    reset_port_min_time_sec = self.duration_time_to_seconds(reset_port_time_min_)
+                    reset_port_max_time_sec = self.duration_time_to_seconds(reset_port_time_max_)
+
+                    station_profile.set_reset_extra(reset_port_enable=reset_port_enable_,
+                                                    test_duration=test_duration_sec,
+                                                    reset_port_min_time=reset_port_min_time_sec,
+                                                    reset_port_max_time=reset_port_max_time_sec)
+                    self.station_profiles.append(station_profile)
+
+    def _set_ports_up(self):
+        """Set all test ports up.
+
+        NOTE: This assumes the 'build()' function has successfully completed.
+              Gathering station names requires the stations to have already been
+              created, given the design of the StationProfile logic.
+        """
+        logger.info(f"Admin up upstream port and station port(s): {self.gather_port_eids()}")
+
+        # Admin up upstream port
+        self.admin_up(self.upstream)
+
+        # Admin up created station port(s)
+        #
+        # NOTE: Could use common 'self.station_names_list' here,
+        #       but there's benefit to up'ing and logging
+        #       created vs. existing stations separately
+        # Admin up real port(s)
+        if self.input_devices_list:
+            for device in self.input_devices_list:
+                logger.debug(f"Admin up Real station {device}")
+                self.admin_up(device)
+
+        # Admin up existing station port(s)
+        if self.use_existing_station_list:
+            for existing_station in self.existing_station_list:
+                logger.debug(f"Bringing up existing stations {existing_station}")
+                self.admin_up(existing_station)
+        
+        for i,station_profile in enumerate(self.station_profiles):
+            if i==0 and self.use_existing_station_list:
+                continue
+            for sta in station_profile.station_names:
+                logger.debug(f"Admin up station {sta}")
+                self.admin_up(sta)
+
+    def _wait_ports_connected(self) -> int:
+        """Check that all test ports connect to the DUT.
+
+        Check includes phantom state, admin state, and IPv4 configured.
+
+        NOTE: This assumes the 'build()' function has successfully completed.
+              Gathering station names requires the stations to have already been
+              created, given the design of the StationProfile logic.
+
+        Returns:
+            int: 0 on success, non-zero on failure
+        """
+        success = self.wait_for_ip([self.upstream] + self.station_names_list,
+                                   timeout_sec=self.wait_for_ip_sec)
+        if success:
+            logger.info("All ports connected successfully")
+            if self.exit_on_ip_acquired:
+                logger.info("Configured to exit on successful IPv4 configuration")
+                exit(1)
+        elif self.interopt_mode:
+            logger.warning("Running in InterOp mode, ignoring IPv4 configuration failure and continuing")
+        else:
+            logger.critical("One or more test ports did not receive an IPv4 address "
+                            f"in {self.wait_for_ip_sec} seconds")
+
+        return 0 if success else -1
+
+    # Common code to generate timestamp for CSV files.
+    def time_stamp(self):
+        return time.strftime('%m_%d_%Y_%H_%M_%S',time.localtime(self.epoch_time))
+    
+    def csv_generate_dl_port_column_headers(self):
+        csv_rx_headers = [
+            'Time epoch',
+            'Time',
+            'Name',
+            'Download',
+            'Upload',
+            'Rx % Drop',
+            'Tx % Drop',
+            'Average RTT',
+            'RSSI',
+            'Tx-Link-Rate',
+            'Rx-Link-Rate',
+            'AP',
+            'Mode',
+            'Channel',
+        ]
+        return csv_rx_headers
+    # Write initial headers to port csv file.
+    def csv_add_port_column_headers(self, port_eid, headers,iter=0):
+        # if self.csv_file is not None:
+        fname = self.outfile[:-4]  # Strip '.csv' from file name
+        dir = self.csv_direction.split("_")[2] # for getting the direction
+        fname=f"{fname}_{dir}_{port_eid}_iteration-{iter}.csv"
+        pfile = open(fname, "w")
+        port_csv_writer = csv.writer(pfile, delimiter=",")
+        self.dl_port_csv_files[f"{port_eid}_iter-{iter}"] = pfile
+        self.dl_port_csv_writers[f"{port_eid}_iter-{iter}"] = port_csv_writer
+
+        port_csv_writer.writerow(headers)
+        pfile.flush()
+
+    def write_dl_port_csv(
+            self,
+            port_eid,
+            download,
+            upload,
+            rx_drop,
+            tx_drop,
+            avg_rtt,
+            rssi,
+            tx_rate,
+            rx_rate,
+            ap,
+            mode,
+            channel,
+            iter,
+            ):
+        row = [self.epoch_time, self.time_stamp(),port_eid,download,upload,rx_drop,tx_drop,avg_rtt,rssi,rx_rate,tx_rate,ap,mode,channel]
+
+        writer = self.dl_port_csv_writers[f"{port_eid}_iter-{iter}"]
+        writer.writerow(row)
+        self.dl_port_csv_files[f"{port_eid}_iter-{iter}"].flush()
+    
     def perform_robo(self, args, clients_to_run):
         """
         Execute robot-assisted throughput testing across multiple coordinates and angles.
@@ -594,6 +1022,7 @@ class Throughput(Realm):
 
                     # Start specific connections for the current iteration
                     self.start_specific(created_cx_lists_keys[:incremental_capacity_list[i]])
+                    self.cx_profile.refresh_cx()
                 else:
                     if args.do_interopability and i != 0:
                         self.stop_specific(to_run_cxs[i - 1])
@@ -608,6 +1037,7 @@ class Throughput(Realm):
                             is_device_configured = self.configure_specific([device_to_run_resource])
                     if is_device_configured:
                         self.start_specific(to_run_cxs[i])
+                        self.cx_profile.refresh_cx()
 
                 # Determine device names based on the current iteration
                 device_names = created_cx_lists_keys[:to_run_cxs_len[i][-1]]
@@ -972,6 +1402,7 @@ class Throughput(Realm):
                 if eid in ports_m:
                     self.input_devices_list.append(ports_m)
         logger.info("INPUT DEVICES LIST {}".format(self.input_devices_list))
+        self.station_names_list.extend(self.input_devices_list)
 
         for i in resource_eid_list2:
             for j in range(len(self.user_list)):
@@ -1004,23 +1435,23 @@ class Throughput(Realm):
                     "configuration_status": "configured"
                 }
                 self.updating_webui_runningjson(obj)
-
+        return True,self.real_client_list
         # Check if incremental_capacity is provided and ensure selected devices are sufficient
-        if (len(self.incremental_capacity) > 0 and int(self.incremental_capacity.split(',')[-1]) > len(self.mac_id_list)):
-            if not self.config and not self.interopability_config:
-                logger.error("Devices selected is less than given incremental capacity")
-                return False, self.real_client_list
-            elif (self.config and not self.do_interopability):
-                configured_devices = len(self.mac_id_list)
-                given_capacity = list(map(int, self.incremental_capacity.split(",")))
-                adjusted_capacity = [cap for cap in given_capacity if cap <= configured_devices]
-                if configured_devices not in adjusted_capacity:
-                    adjusted_capacity.append(configured_devices)
+        # if (len(self.incremental_capacity) > 0 and int(self.incremental_capacity.split(',')[-1]) > len(self.mac_id_list)):
+        #     if not self.config and not self.interopability_config:
+        #         logger.error("Devices selected is less than given incremental capacity")
+        #         return False, self.real_client_list
+        #     elif (self.config and not self.do_interopability):
+        #         configured_devices = len(self.mac_id_list)
+        #         given_capacity = list(map(int, self.incremental_capacity.split(",")))
+        #         adjusted_capacity = [cap for cap in given_capacity if cap <= configured_devices]
+        #         if configured_devices not in adjusted_capacity:
+        #             adjusted_capacity.append(configured_devices)
 
-                self.incremental_capacity = ",".join(map(str, adjusted_capacity))
-                return True, self.real_client_list
-        else:
-            return True, self.real_client_list
+        #         self.incremental_capacity = ",".join(map(str, adjusted_capacity))
+        #         return True, self.real_client_list
+        # else:
+        #     return True, self.real_client_list
 
     # Updates the status in the running.json file while running a test from the Web UI
     def updating_webui_runningjson(self, obj):
@@ -1040,7 +1471,7 @@ class Throughput(Realm):
 
         """
 
-        signal_list, channel_list, mode_list, link_speed_list, rx_rate_list, bssid_list = [], [], [], [], [], []
+        signal_list, ap_list, channel_list, mode_list, link_speed_list, rx_rate_list, bssid_list = [], [], [], [], [], [], []
         interfaces_dict = dict()
         try:
             port_data = self.json_get('/ports/all/')['interfaces']
@@ -1076,14 +1507,16 @@ class Throughput(Realm):
         for sta in station_names:
             if sta in interfaces_dict:
                 rx_rate_list.append(interfaces_dict[sta]['rx-rate'])
+                ap_list.append(interfaces_dict[sta]['ap'])
             else:
                 rx_rate_list.append('-')
+                ap_list.append('-')
         for sta in station_names:
             if sta in interfaces_dict:
                 bssid_list.append(interfaces_dict[sta]['ap'])
             else:
                 bssid_list.append('-')
-        return signal_list, channel_list, mode_list, link_speed_list, rx_rate_list, bssid_list
+        return signal_list,ap_list, channel_list, mode_list, link_speed_list, rx_rate_list, bssid_list
 
     def get_ssid_list(self, station_names):
         """
@@ -1107,8 +1540,48 @@ class Throughput(Realm):
             else:
                 ssid_list.append('-')
         return ssid_list
+    
+    def gather_port_eids(self) -> list:
+        """Query test object for list of ports used in test.
+
+        This includes the both the station(s) and the upstream.
+
+        NOTE: This assumes the 'build()' function has successfully completed.
+              Gathering station names requires the stations to have already been
+              created, given the design of the StationProfile logic.
+        """
+        rv = [self.upstream]
+        rv+=self.input_devices_list
+
+        for station_profile in self.station_profiles:
+            rv = rv + station_profile.station_names
+
+        return rv
 
     def build(self):
+        if self.precleanup is True:
+            self.pre_cleanup(True)
+        index = 0
+        for i,station_profile in enumerate(self.station_profiles):
+            # The first station profile object is for existing staion list if we specify the exisitng stations so no need to create the stations again
+            if i==0 and self.use_existing_station_list:
+                continue
+            station_profile.use_security(
+                station_profile.security,
+                station_profile.ssid,
+                station_profile.ssid_pass)
+            station_profile.set_number_template(
+                station_profile.number_template)
+            logger.debug(f"Creating station port(s) on radio {self.radio_name_list[index]}")
+
+            station_profile.create(
+                radio=self.radio_name_list[index],
+                sta_names_=self.station_lists[index],
+                debug=self.debug,
+                sleep_time=0)
+            index += 1
+            self.virtual_clients.extend(station_profile.station_names)
+        self.station_names_list.extend(self.virtual_clients)
         """
         Builds and creates the connection profile.
 
@@ -1132,19 +1605,29 @@ class Throughput(Realm):
                 self.direction = "Upload"
                 direction = 'UL'
         traffic_type = (self.traffic_type.strip("lf_")).upper()
-        traffic_direction_list, cx_list, traffic_type_list = [], [], []
-        for _ in range(len(self.real_client_list)):
-            traffic_direction_list.append(direction)
-            traffic_type_list.append(traffic_type)
+        cx_list= []
+        # for _ in range(len(self.real_client_list)):
+        #     traffic_direction_list.append(direction)
+        #     traffic_type_list.append(traffic_type)
 
         # Construct connection names
+        # There is a benefit of creating the cx's for real and virtual separately 
+        # While perfroming the interopability config we are filtering by cx's by the help of these virtual cx's
+        # For real
         for _ in self.tos:
             for i in self.real_client_list1:
-                for j in traffic_direction_list:
-                    for k in traffic_type_list:
-                        cxs = "%s_%s_%s" % (i, k, j)
-                        cx_names = cxs.replace(" ", "")
+                cxs = "%s_%s_%s" % (i, traffic_type, direction)
+                cx_names = cxs.replace(" ", "")
                 cx_list.append(cx_names)
+        # print("Real cx_list",cx_list)
+        # For virtual
+        for _ in self.tos:
+            for i in self.virtual_clients:
+                cxs = "%s_%s_%s" % (i, traffic_type, direction)
+                cx_names = cxs.replace(" ", "")
+                cx_list.append(cx_names)
+                self.virtual_cx_list.append(cx_names)
+        # print("Virtual cx_list",self.virtual_cx_list)
         logger.info('cx_list{}'.format(cx_list))
         count = 0
 
@@ -1154,11 +1637,11 @@ class Throughput(Realm):
             self.pre_cleanup()
 
         # for ip_tos in range(len(self.tos)):
-        for device in range(len(self.input_devices_list)):
+        # print("tos",self.tos)
+        for device in range(len(self.station_names_list)):
             logger.info("Creating connections for endpoint type: %s cx-count: %s" % (
                 self.traffic_type, self.cx_profile.get_cx_count()))
-            self.cx_profile.create(endp_type=self.traffic_type, side_a=[self.input_devices_list[device]],
-                                   side_b=self.upstream, sleep_time=0, cx_name="%s" % (cx_list[count]))
+            self.cx_profile.create(endp_type=self.traffic_type, side_a=[self.station_names_list[device]],side_b=self.upstream, sleep_time=0, cx_name="%s" % (cx_list[count]),tos=self.tos[0])
             count += 1
         logger.info("cross connections with created")
 
@@ -1217,12 +1700,22 @@ class Throughput(Realm):
         self.cx_profile.stop_cx()
         self.station_profile.admin_down()
 
-    def pre_cleanup(self):
+    def pre_cleanup(self,staclean=False):
         self.cx_profile.cleanup()
-
+        if staclean:
+            # Make sure virtual stations are gone
+            for station_list in self.station_lists:
+                for sta in station_list:
+                    self.rm_port(sta, check_exists=True)
+            time.sleep(5)
     def cleanup(self):
         logger.info("cleanup done")
         self.cx_profile.cleanup()
+        # Make sure virtual stations are gone
+        for station_list in self.station_lists:
+            for sta in station_list:
+                self.rm_port(sta, check_exists=True)
+        time.sleep(5)
 
     def get_layer3_endp_data(self):
         """
@@ -1311,11 +1804,22 @@ class Throughput(Realm):
             runtime_dir = self.result_dir
         previous_time = datetime.now()
         time_break = 0
+
+        # for indiviual csv's
+        if self.do_interopability :
+            for i in range(incremental_capacity_list[iteration]-1,incremental_capacity_list[iteration]):
+                self.csv_add_port_column_headers(
+                self.station_names_list[i], self.csv_generate_dl_port_column_headers(),iteration)
+        else :
+            for i in range(incremental_capacity_list[iteration]):
+                self.csv_add_port_column_headers(
+                self.station_names_list[i], self.csv_generate_dl_port_column_headers(),iteration)
+
         # Continuously collect data until end time is reached
         while datetime.now() < end_time:
             index += 1
             current_time = datetime.now()
-            signal_list, channel_list, mode_list, link_speed_list, rx_rate_list, bssid_list = self.get_signal_and_channel_data(self.input_devices_list)
+            signal_list, ap, channel_list, mode_list, link_speed_list, rx_rate_list, bssid_list = self.get_signal_and_channel_data(self.station_names_list)
             signal_list = [int(i) if i != "" else 0 for i in signal_list]
             throughput[index] = self.get_layer3_endp_data()
             # Check if next sleep would overshoot the end_time
@@ -1455,8 +1959,7 @@ class Throughput(Realm):
                 time.sleep(self.report_timer)
 
                 # Aggregate data from throughput
-
-                for _, key in enumerate(throughput):
+                for  key in range(index,len(throughput.keys())):
                     for i in range(len(throughput[key])):
                         upload[i], download[i], drop_a[i], drop_b[i], avg_rtt[i] = [], [], [], [], []
                         if throughput[key][i][4] != 'Run':
@@ -1490,8 +1993,7 @@ class Throughput(Realm):
                     remaining_minutes_instrf = str(overall_time_difference).split(".")[0]
                 # Storing individual device throughput data(download, upload, Rx % drop , Tx % drop) to dataframe
                 for i in range(len(download_throughput)):
-                    individual_df_data.extend([download_throughput[i], upload_throughput[i], drop_a_per[i], drop_b_per[i], avg_rtt[i][0],
-                                              int(signal_list[i]), link_speed_list[i], rx_rate_list[i], bssid_list[i], channel_list[i]])
+                    individual_df_data.extend([download_throughput[i], upload_throughput[i], drop_a_per[i], drop_b_per[i], avg_rtt[i][0], int(signal_list[i]), link_speed_list[i], rx_rate_list[i], bssid_list[i], channel_list[i]])
 
                 # Storing Overall throughput data for all devices and also start time, end time, remaining time and status of test running
                 individual_df_data.extend([round(sum(download_throughput),
@@ -1514,6 +2016,15 @@ class Throughput(Realm):
                 individual_df.to_csv('throughput_data.csv', index=False)
                 if self.do_bandsteering:
                     return individual_df, test_stopped_by_user
+                # for individual csv's
+                if self.do_interopability :
+                    for i in range(incremental_capacity_list[iteration]-1,incremental_capacity_list[iteration]):
+                        self.write_dl_port_csv(
+                        self.station_names_list[i],download_throughput[i],upload_throughput[i],drop_a_per[i],drop_b_per[i],avg_rtt[i][0],int(signal_list[i]),link_speed_list[i],rx_rate_list[i],ap[i],mode_list[i],channel_list[i],iteration)
+                else :
+                    for i in range(incremental_capacity_list[iteration]):
+                        self.write_dl_port_csv(
+                        self.station_names_list[i],download_throughput[i],upload_throughput[i],drop_a_per[i],drop_b_per[i],avg_rtt[i][0],int(signal_list[i]),link_speed_list[i],rx_rate_list[i],ap[i],mode_list[i],channel_list[i],iteration)
 
             if self.stop_test:
                 test_stopped_by_user = True
@@ -1526,7 +2037,7 @@ class Throughput(Realm):
 
         # individual_df = individual_df[1:-1]
         # individual_df_for_webui = individual_df_for_webui[1:-1]
-        for _, key in enumerate(throughput):
+        for key in range(index,len(throughput.keys())):
             for i in range(len(throughput[key])):
                 upload[i], download[i], drop_a[i], drop_b[i], avg_rtt[i] = [], [], [], [], []
                 if throughput[key][i][4] != 'Run':
@@ -1547,13 +2058,12 @@ class Throughput(Realm):
         download_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in download]
         drop_a_per = [float(round(sum(i) / len(i), 2)) for i in drop_a]
         drop_b_per = [float(round(sum(i) / len(i), 2)) for i in drop_b]
-        signal_list, channel_list, mode_list, link_speed_list, rx_rate_list, bssid_list = self.get_signal_and_channel_data(self.input_devices_list)
+        signal_list, ap, channel_list, mode_list, link_speed_list, rx_rate_list, bssid_list = self.get_signal_and_channel_data(self.station_names_list)
         signal_list = [int(i) if i != "" else 0 for i in signal_list]
 
         # Storing individual device throughput data(download, upload, Rx % drop , Tx % drop) to dataframe after test stopped
         for i in range(len(download_throughput)):
-            individual_df_data.extend([download_throughput[i], upload_throughput[i], drop_a_per[i], drop_b_per[i], avg_rtt[i][0],
-                                      int(signal_list[i]), link_speed_list[i], rx_rate_list[i], bssid_list[i], channel_list[i]])
+            individual_df_data.extend([download_throughput[i], upload_throughput[i], drop_a_per[i], drop_b_per[i], avg_rtt[i][0], int(signal_list[i]), link_speed_list[i], rx_rate_list[i], bssid_list[i], channel_list[i]])
         timestamp = datetime.now().strftime("%d/%m %I:%M:%S %p")
 
         # If it's the last iteration, append final metrics and 'Stopped' status
@@ -1686,6 +2196,7 @@ class Throughput(Realm):
             # start and stop of cx for each rotation
             if j != 0:
                 self.start_specific(self.cx_profile.created_cx)
+                self.cx_profile.refresh_cx()
 
             # Perform rotation only when rotation is enabled
             if self.rotation_enabled:
@@ -1699,7 +2210,7 @@ class Throughput(Realm):
             while datetime.now() < end_time:
                 index += 1
                 current_time = datetime.now()
-                signal_list, channel_list, mode_list, link_speed_list, rx_rate_list, bssid_list = self.get_signal_and_channel_data(self.input_devices_list)
+                signal_list, ap, channel_list, mode_list, link_speed_list, rx_rate_list, bssid_list = self.get_signal_and_channel_data(self.input_devices_list)
                 signal_list = [int(i) if i != "" else 0 for i in signal_list]
                 throughput[index] = self.get_layer3_endp_data()
                 # Check if next sleep would overshoot the end_time
@@ -1736,6 +2247,7 @@ class Throughput(Realm):
                         else:
                             self.battery_log[self.current_coordinate] = timestamp
                         self.start_specific(self.cx_profile.created_cx)
+                        self.cx_profile.refresh_cx()
                         pause_end = datetime.now()
                         charge_pause = pause_end - pause_start
                         end_time += charge_pause
@@ -1987,7 +2499,7 @@ class Throughput(Realm):
         download_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in download]
         drop_a_per = [float(round(sum(i) / len(i), 2)) for i in drop_a]
         drop_b_per = [float(round(sum(i) / len(i), 2)) for i in drop_b]
-        signal_list, channel_list, mode_list, link_speed_list, rx_rate_list, bssid_list = self.get_signal_and_channel_data(self.input_devices_list)
+        signal_list, ap, channel_list, mode_list, link_speed_list, rx_rate_list, bssid_list = self.get_signal_and_channel_data(self.input_devices_list)
         signal_list = [int(i) if i != "" else 0 for i in signal_list]
 
         # Storing individual device throughput data(download, upload, Rx % drop , Tx % drop) to dataframe after test stopped
@@ -2144,7 +2656,22 @@ class Throughput(Realm):
 
         cx_incremental_capacity_lists = []
         incremental_capacity_list_values = []
-        device_list_length = len(self.mac_id_list)
+        created_cx_lists_keys = list(self.cx_profile.created_cx.keys())
+        device_list_length = len(created_cx_lists_keys)
+        not_supported=[]
+        supported=[]
+        if (len(self.incremental_capacity) > 0 and int(self.incremental_capacity.split(',')[-1]) > device_list_length):
+            given_capacity = list(map(int, self.incremental_capacity.split(",")))
+            for cap in given_capacity:
+                if cap<=device_list_length:
+                    supported.append(cap)
+                else:
+                    not_supported.append(cap)
+            if device_list_length not in supported:
+                supported.append(device_list_length)
+            self.incremental_capacity = ",".join(map(str,supported))
+            if not_supported:
+                logger.info(f"Incremental Capacity is not possible for these lengths {",".join(map(str, not_supported))}")
 
         # Check if 'incremental_capacity' is not specified
 
@@ -2152,7 +2679,7 @@ class Throughput(Realm):
             incremental_capacity_1 = [device_list_length]
 
         elif device_list_length != 0 and len(self.incremental_capacity.split(",")) > 0:
-            device_list_length = len(self.mac_id_list)
+            device_list_length = len(created_cx_lists_keys)
             incremental_capacity_length = len(self.incremental_capacity.split(","))
 
             # Handle single incremental capacity specification
@@ -2178,7 +2705,6 @@ class Throughput(Realm):
             else:
                 incremental_capacity_1 = self.incremental_capacity.split(",")
         # Generate lists of incremental capacities
-
         for i in range(len(incremental_capacity_1)):
             new_cx_list = []
             if i == 0:
@@ -2482,12 +3008,12 @@ class Throughput(Realm):
         if self.do_interopability:
             result_dir_name = "Interopability_Test_report"
 
-        self.ssid_list = self.get_ssid_list(self.input_devices_list)
-        self.signal_list, self.channel_list, self.mode_list, self.link_speed_list, rx_rate_list, self.bssid_list = self.get_signal_and_channel_data(self.input_devices_list)
+        self.ssid_list = self.get_ssid_list(self.station_names_list)
+        self.signal_list, self.ap, self.channel_list, self.mode_list, self.link_speed_list, rx_rate_list, self.bssid_list = self.get_signal_and_channel_data(self.station_names_list)
 
         if selected_real_clients_names is not None:
             self.num_stations = selected_real_clients_names
-
+        self.add_mac_id(self.virtual_clients)
         # Initialize the report object
         if self.do_interopability is False:
             report = lf_report(_output_pdf="throughput.pdf", _output_html="throughput.html", _path=report_path,
@@ -2504,6 +3030,11 @@ class Throughput(Realm):
                 shutil.move('throughput_data.csv', report_path_date_time)
             logger.info("path: {}".format(report_path))
             logger.info("path_date_time: {}".format(report_path_date_time))
+            # for individual csv's moving into the report directory
+            for file_obj in self.dl_port_csv_files.values():
+                filename = file_obj.name
+                file_obj.close()
+                shutil.move(filename,report_path_date_time)
             report.set_title("Throughput Test")
             report.build_banner()
 
@@ -2536,9 +3067,10 @@ class Throughput(Realm):
             report.build_objective()
 
             # Initialize counts and lists for device types
-            android_devices, windows_devices, linux_devices, mac_devices, ios_devices = 0, 0, 0, 0, 0
+            android_devices, windows_devices, linux_devices, mac_devices, ios_devices, virtual_devices = 0, 0, 0, 0, 0, 0
             all_devices_names = []
             device_type = []
+            type_of_client = []
             packet_size_text = ''
             total_devices = ""
             if self.cx_profile.side_a_min_pdu == -1:
@@ -2550,8 +3082,10 @@ class Throughput(Realm):
                 load_type_name = "Intended Load"
             else:
                 load_type_name = "Per Client Load"
+            # For real devices
             for i in self.real_client_list:
                 split_device_name = i.split(" ")
+                type_of_client.append("Real")
                 if 'android' in split_device_name:
                     all_devices_names.append(split_device_name[2] + ("(Android)"))
                     device_type.append("Android")
@@ -2572,7 +3106,12 @@ class Throughput(Realm):
                     all_devices_names.append(split_device_name[2] + ("(iOS)"))
                     device_type.append("iOS")
                     ios_devices += 1
-
+            # For virtual devices
+            for i in self.virtual_clients:
+                all_devices_names.append(i + ("(Virtual)"))
+                device_type.append("Virtual Station")
+                virtual_devices+=1
+                type_of_client.append("Virtual")
             # Build total_devices string based on counts
             if android_devices > 0:
                 total_devices += f" Android({android_devices})"
@@ -2584,7 +3123,12 @@ class Throughput(Realm):
                 total_devices += f" Mac({mac_devices})"
             if ios_devices > 0:
                 total_devices += f" iOS({ios_devices})"
+            if virtual_devices > 0:
+                total_devices += f" Virtual({virtual_devices})"
 
+            # If virtual clients are there then we need to update the num_stations
+            if virtual_devices >0:
+                self.num_stations+=virtual_devices
             # Determine incremental_capacity_data based on self.incremental_capacity
             if self.gave_incremental:
                 incremental_capacity_data = "No Incremental values provided"
@@ -2594,8 +3138,7 @@ class Throughput(Realm):
                 else:
                     incremental_capacity_data = ','.join(map(str, incremental_capacity_list))
             elif (len(self.incremental_capacity) > 1):
-                self.incremental_capacity = self.incremental_capacity.split(',')
-                incremental_capacity_data = ', '.join(self.incremental_capacity)
+                incremental_capacity_data = ', '.join(self.incremental_capacity.split(','))
             else:
                 incremental_capacity_data = "None"
 
@@ -2642,6 +3185,64 @@ class Throughput(Realm):
                 test_setup_info = with_iot_params_in_table(test_setup_info, iot_summary)
             report.test_setup_table(test_setup_data=test_setup_info, value="Test Configuration")
 
+            if  (self.client_type == 'virtual' or self.client_type == 'both') and self.radio_name_list:
+                report.set_table_title("Radio Configuration")
+                report.build_table_title()
+
+            wifi_mode_dict = {
+                0: 'AUTO',  # 802.11g
+                1: '802.11a',  # 802.11a
+                2: '802.11b',  # 802.11b
+                3: '802.11g',  # 802.11g
+                4: '802.11abg',  # 802.11abg
+                5: '802.11abgn',  # 802.11abgn
+                6: '802.11bgn',  # 802.11bgn
+                7: '802.11bg',  # 802.11bg
+                8: '802.11abgnAC',  # 802.11abgn-AC
+                9: '802.11anAC',  # 802.11an-AC
+                10: '802.11an',  # 802.11an
+                11: '802.11bgnAC',  # 802.11bgn-AC
+                12: '802.11abgnAX',  # 802.11abgn-A+
+                #     a/b/g/n/AC/AX (dual-band AX) support
+                13: '802.11bgnAX',  # 802.11bgn-AX
+                14: '802.11anAX',  # 802.11an-AX
+                15: '802.11aAX',  # 802.11a-AX (6E disables /n and /ac)
+                16: '802.11abgnEHT',  # 802.11abgn-EHT  a/b/g/n/AC/AX/EHT (dual-band AX) support
+                17: '802.11bgnEHT',  # 802.11bgn-EHT
+                18: '802.11anEHT',  # 802.11an-ETH
+                19: '802.11aBE',  # 802.11a-EHT (6E disables /n and /ac)
+            }
+
+            for (
+                    radio_,
+                    ssid_,
+                    _ssid_password_,  # do not print password
+                    ssid_security_,
+                    mode_,
+                    wifi_enable_flags_list_,
+                    _reset_port_enable_,
+                    _reset_port_time_min_,
+                    _reset_port_time_max_) in zip(
+                    self.radio_name_list,
+                    self.ssid_list,
+                    self.ssid_password_list,
+                    self.ssid_security_list,
+                    self.wifi_mode_list,
+                    self.enable_flags_list,
+                    self.reset_port_enable_list,
+                    self.reset_port_time_min_list,
+                    self.reset_port_time_max_list):
+
+                mode_value = wifi_mode_dict[int(mode_)]
+
+                radio_info = {
+                    "SSID": ssid_,
+                    "Security": ssid_security_,
+                    "Wifi mode set": mode_value,
+                    'Wifi Enable Flags': wifi_enable_flags_list_
+                }
+                report.test_setup_table(value=radio_, test_setup_data=radio_info)
+
             # Loop through iterations and build graphs, tables for each iteration
             for i in range(len(iterations_before_test_stopped_by_user)):
                 # rssi_signal_data=[]
@@ -2663,9 +3264,10 @@ class Throughput(Realm):
                 #     signal_data.append(int(sig)*(-1))
                 # rssi_signal_data.append(signal_data)
 
-                # Fetch devices_on_running from real_client_list
+                # Fetch devices_on_running, from self.real_client_list + self.virtual_clients
+                all_devices=self.real_client_list+self.virtual_clients
                 for j in range(data1[i][-1]):
-                    devices_on_running.append(self.real_client_list[j].split(" ")[-1])
+                    devices_on_running.append(all_devices[j].split(" ")[-1])
 
                 # Fetch download_data and upload_data based on load_type and direction
                 for k in devices_on_running:
@@ -2934,6 +3536,7 @@ class Throughput(Realm):
                             dataframe = self.generate_dataframe(val,
                                                                 device_type[0:int(incremental_capacity_list[i])],
                                                                 devices_on_running[0:int(incremental_capacity_list[i])],
+                                                                type_of_client[0:int(incremental_capacity_list[i])],
                                                                 self.ssid_list[0:int(incremental_capacity_list[i])],
                                                                 self.mac_id_list[0:int(incremental_capacity_list[i])],
                                                                 self.channel_list[0:int(incremental_capacity_list[i])],
@@ -2956,6 +3559,7 @@ class Throughput(Realm):
                             dataframe = self.generate_dataframe(val,
                                                                 device_type[0:int(incremental_capacity_list[i])],
                                                                 devices_on_running[0:int(incremental_capacity_list[i])],
+                                                                type_of_client[0:int(incremental_capacity_list[i])],
                                                                 self.ssid_list[0:int(incremental_capacity_list[i])],
                                                                 self.mac_id_list[0:int(incremental_capacity_list[i])],
                                                                 self.channel_list[0:int(incremental_capacity_list[i])],
@@ -2983,6 +3587,7 @@ class Throughput(Realm):
                     bk_dataframe = {
                         " Device Type ": device_type[0:int(incremental_capacity_list[i])],
                         " Username": devices_on_running[0:int(incremental_capacity_list[i])],
+                        " Client Type ": type_of_client[0:int(incremental_capacity_list[i])],
                         " SSID ": self.ssid_list[0:int(incremental_capacity_list[i])],
                         " MAC ": self.mac_id_list[0:int(incremental_capacity_list[i])],
                         " Channel ": self.channel_list[0:int(incremental_capacity_list[i])],
@@ -3031,6 +3636,11 @@ class Throughput(Realm):
 
             logger.info("path: {}".format(report_path))
             logger.info("path_date_time: {}".format(report_path_date_time))
+            # for individual csv's moving in to the report directory
+            for file_obj in self.dl_port_csv_files.values():
+                filename = file_obj.name
+                file_obj.close()
+                shutil.move(filename,report_path_date_time)
             report.set_title("Interoperability Test")
             report.build_banner()
             # objective title and description
@@ -3047,13 +3657,15 @@ class Throughput(Realm):
             report.build_objective()
 
             # Initialize counts and lists for device types
-            android_devices, windows_devices, linux_devices, mac_devices, ios_devices = 0, 0, 0, 0, 0
+            android_devices, windows_devices, linux_devices, mac_devices, ios_devices , virtual_devices = 0, 0, 0, 0, 0, 0
             all_devices_names = []
             device_type = []
+            type_of_client = []
             total_devices = ""
-
+            # For real devices
             for i in self.real_client_list:
                 split_device_name = i.split(" ")
+                type_of_client.append("Real")
                 if 'android' in split_device_name:
                     all_devices_names.append(split_device_name[2] + ("(Android)"))
                     device_type.append("Android")
@@ -3074,7 +3686,12 @@ class Throughput(Realm):
                     all_devices_names.append(split_device_name[2] + ("(iOS)"))
                     device_type.append("iOS")
                     ios_devices += 1
-
+            # For virtual devices
+            for i in self.virtual_clients:
+                all_devices_names.append(i + ("(Virtual)"))
+                device_type.append("Virtual Station")
+                virtual_devices+=1
+                type_of_client.append("Virtual")
             # Build total_devices string based on counts
             if android_devices > 0:
                 total_devices += f" Android({android_devices})"
@@ -3086,7 +3703,12 @@ class Throughput(Realm):
                 total_devices += f" Mac({mac_devices})"
             if ios_devices > 0:
                 total_devices += f" iOS({ios_devices})"
+            if virtual_devices > 0:
+                total_devices+=f" Virtual({virtual_devices})"
 
+            # If virtual clients are there then we need to update the num_stations
+            if virtual_devices >0:
+                self.num_stations+=virtual_devices    
             # Construct test_setup_info dictionary for test setup table
             test_setup_info = {
                 "Test name": self.test_name,
@@ -3111,6 +3733,64 @@ class Throughput(Realm):
                 dataframe1 = pd.DataFrame(configured_dataframe)
                 report.set_table_dataframe(dataframe1)
                 report.build_table()
+            
+            if  (self.client_type == 'Virtual' or self.client_type == 'both') and self.radio_name_list:
+                report.set_table_title("Radio Configuration")
+                report.build_table_title()
+
+            wifi_mode_dict = {
+                0: 'AUTO',  # 802.11g
+                1: '802.11a',  # 802.11a
+                2: '802.11b',  # 802.11b
+                3: '802.11g',  # 802.11g
+                4: '802.11abg',  # 802.11abg
+                5: '802.11abgn',  # 802.11abgn
+                6: '802.11bgn',  # 802.11bgn
+                7: '802.11bg',  # 802.11bg
+                8: '802.11abgnAC',  # 802.11abgn-AC
+                9: '802.11anAC',  # 802.11an-AC
+                10: '802.11an',  # 802.11an
+                11: '802.11bgnAC',  # 802.11bgn-AC
+                12: '802.11abgnAX',  # 802.11abgn-A+
+                #     a/b/g/n/AC/AX (dual-band AX) support
+                13: '802.11bgnAX',  # 802.11bgn-AX
+                14: '802.11anAX',  # 802.11an-AX
+                15: '802.11aAX',  # 802.11a-AX (6E disables /n and /ac)
+                16: '802.11abgnEHT',  # 802.11abgn-EHT  a/b/g/n/AC/AX/EHT (dual-band AX) support
+                17: '802.11bgnEHT',  # 802.11bgn-EHT
+                18: '802.11anEHT',  # 802.11an-ETH
+                19: '802.11aBE',  # 802.11a-EHT (6E disables /n and /ac)
+            }
+
+            for (
+                    radio_,
+                    ssid_,
+                    _ssid_password_,  # do not print password
+                    ssid_security_,
+                    mode_,
+                    wifi_enable_flags_list_,
+                    _reset_port_enable_,
+                    _reset_port_time_min_,
+                    _reset_port_time_max_) in zip(
+                    self.radio_name_list,
+                    self.ssid_list,
+                    self.ssid_password_list,
+                    self.ssid_security_list,
+                    self.wifi_mode_list,
+                    self.enable_flags_list,
+                    self.reset_port_enable_list,
+                    self.reset_port_time_min_list,
+                    self.reset_port_time_max_list):
+
+                mode_value = wifi_mode_dict[int(mode_)]
+
+                radio_info = {
+                    "SSID": ssid_,
+                    "Security": ssid_security_,
+                    "Wifi mode set": mode_value,
+                    'Wifi Enable Flags': wifi_enable_flags_list_
+                }
+                report.test_setup_table(value=radio_, test_setup_data=radio_info)
 
             # Loop through iterations and build graphs, tables for each device
             for i in range(len(iterations_before_test_stopped_by_user)):
@@ -3129,8 +3809,9 @@ class Throughput(Realm):
                 data_iter = data[data['Iteration'] == i + 1]
                 avg_rtt_data = []
 
-                # Fetch devices_on_running from real_client_list
-                devices_on_running.append(self.real_client_list[data1[i][-1] - 1].split(" ")[-1])
+                # Fetch devices_on_running, from self.real_client_list + self.virtual_clients
+                all_devices=self.real_client_list+self.virtual_clients
+                devices_on_running.append(all_devices[data1[i][-1] - 1].split(" ")[-1])
                 # If the device fails to configure, skip its data in the report
                 if self.interopability_config and devices_on_running[0] in self.configured_devices_check and not self.configured_devices_check[devices_on_running[0]]:
                     continue
@@ -3332,6 +4013,7 @@ class Throughput(Realm):
 
                 bk_dataframe[" Device Type "] = device_type[int(incremental_capacity_list[i]) - 1]
                 bk_dataframe[" Username"] = devices_on_running[-1]
+                bk_dataframe[" Client Type "] = type_of_client[int(incremental_capacity_list[i]) - 1]
                 bk_dataframe[" SSID "] = self.ssid_list[int(incremental_capacity_list[i]) - 1]
                 bk_dataframe[" MAC "] = self.mac_id_list[int(incremental_capacity_list[i]) - 1]
                 bk_dataframe[" Channel "] = self.channel_list[int(incremental_capacity_list[i]) - 1]
@@ -3401,7 +4083,7 @@ class Throughput(Realm):
             result_dir_name = "Interopability_Test_report"
 
         self.ssid_list = self.get_ssid_list(self.input_devices_list)
-        self.signal_list, self.channel_list, self.mode_list, self.link_speed_list, rx_rate_list, self.bssid_list = self.get_signal_and_channel_data(self.input_devices_list)
+        self.signal_list, self.ap, self.channel_list, self.mode_list, self.link_speed_list, rx_rate_list, self.bssid_list = self.get_signal_and_channel_data(self.input_devices_list)
 
         if selected_real_clients_names is not None:
             self.num_stations = selected_real_clients_names
@@ -3436,6 +4118,7 @@ class Throughput(Realm):
             android_devices, windows_devices, linux_devices, mac_devices, ios_devices = 0, 0, 0, 0, 0
             all_devices_names = []
             device_type = []
+            type_of_client = []
             packet_size_text = ''
             total_devices = ""
             if self.cx_profile.side_a_min_pdu == -1:
@@ -3449,6 +4132,7 @@ class Throughput(Realm):
                 load_type_name = "Per Client Load"
             for i in self.real_client_list:
                 split_device_name = i.split(" ")
+                type_of_client.append("Real")
                 if 'android' in split_device_name:
                     all_devices_names.append(split_device_name[2] + ("(Android)"))
                     device_type.append("Android")
@@ -3491,8 +4175,7 @@ class Throughput(Realm):
                 else:
                     incremental_capacity_data = ','.join(map(str, incremental_capacity_list))
             elif (len(self.incremental_capacity) > 1):
-                self.incremental_capacity = self.incremental_capacity.split(',')
-                incremental_capacity_data = ', '.join(self.incremental_capacity)
+                incremental_capacity_data = ', '.join(self.incremental_capacity.split(','))
             else:
                 incremental_capacity_data = "None"
 
@@ -3856,6 +4539,7 @@ class Throughput(Realm):
                                     dataframe = self.generate_dataframe(val,
                                                                         device_type[0:int(incremental_capacity_list[i])],
                                                                         devices_on_running[0:int(incremental_capacity_list[i])],
+                                                                        type_of_client[0:int(incremental_capacity_list[i])],
                                                                         self.ssid_list[0:int(incremental_capacity_list[i])],
                                                                         self.mac_id_list[0:int(incremental_capacity_list[i])],
                                                                         self.channel_list[0:int(incremental_capacity_list[i])],
@@ -3878,6 +4562,7 @@ class Throughput(Realm):
                                     dataframe = self.generate_dataframe(val,
                                                                         device_type[0:int(incremental_capacity_list[i])],
                                                                         devices_on_running[0:int(incremental_capacity_list[i])],
+                                                                        type_of_client[0:int(incremental_capacity_list[i])],
                                                                         self.ssid_list[0:int(incremental_capacity_list[i])],
                                                                         self.mac_id_list[0:int(incremental_capacity_list[i])],
                                                                         self.channel_list[0:int(incremental_capacity_list[i])],
@@ -3956,8 +4641,7 @@ class Throughput(Realm):
 
     # Creates a separate DataFrame for each group of devices.
 
-    def generate_dataframe(self, groupdevlist, typeofdevice, devusername, devssid, devmac, devchannel, devmode, devdirection, devofdownload, devrtt, devobsdownload,
-                           devoffupload, devobsupload, devrssi, devExpected, devlinkspeed, devpacketsize, devstatus, upload_drop, download_drop):
+    def generate_dataframe(self, groupdevlist, typeofdevice, devusername, typeofclient,devssid, devmac, devchannel, devmode, devdirection, devofdownload, devrtt, devobsdownload,devoffupload, devobsupload, devrssi, devExpected, devlinkspeed, devpacketsize, devstatus, upload_drop, download_drop):
         """
         Creates a separate DataFrame for each group of devices.
 
@@ -3968,6 +4652,7 @@ class Throughput(Realm):
 
         device_type = []
         username = []
+        type_of_client = []
         ssid = []
         mac = []
         channel = []
@@ -3991,6 +4676,7 @@ class Throughput(Realm):
                 if j == devusername[i] and typeofdevice[i] != 'Android':
                     device_type.append(typeofdevice[i])
                     username.append(devusername[i])
+                    type_of_client.append(typeofclient[i])
                     ssid.append(devssid[i])
                     mac.append(devmac[i])
                     channel.append(devchannel[i])
@@ -4019,6 +4705,7 @@ class Throughput(Realm):
                             if item['user-name'] == devusername[i] and j == item['name'].split('.')[2]:
                                 device_type.append(typeofdevice[i])
                                 username.append(devusername[i])
+                                type_of_client.append(typeofclient[i])
                                 ssid.append(devssid[i])
                                 mac.append(devmac[i])
                                 channel.append(devchannel[i])
@@ -4045,6 +4732,7 @@ class Throughput(Realm):
                 dataframe = {
                     " Device Type ": device_type,
                     " Username": username,
+                    " Client Type ": type_of_client,
                     " SSID ": ssid,
                     " MAC ": mac,
                     " Channel ": channel,
@@ -4082,6 +4770,7 @@ class Throughput(Realm):
                 dataframe = {
                     " Device Type ": device_type,
                     " Username": username,
+                    " Client Type ": type_of_client,
                     " SSID ": ssid,
                     " MAC ": mac,
                     " Channel ": channel,
@@ -4398,10 +5087,37 @@ class Throughput(Realm):
                 report.set_custom_html('<hr>')
                 report.build_custom()
 
+    def add_mac_id(self,devices):
+        # Retrieve all ports from the endpoint
+        response_port = self.json_get("/port/all")
+        if "interfaces" not in response_port.keys():
+            logger.error("Error: 'interfaces' key not found in port data")
+            exit(1)
+        # Iterate over port information to filter and get the macid's
+        for i in devices:
+            found = False
+            for interface in response_port['interfaces']:
+                for port, port_data in interface.items():
+                    if i == port:
+                        self.mac_id_list.append(port_data['mac'])
+                        found = True
+                        break
+            if not found:
+                self.mac_id_list.append("-")
+                    
+
 # To validate the input args
 
 
 def validate_args(args):
+    # Validate existing station list configuration if specified before starting test
+    if not args.use_existing_station_list and args.existing_station_list:
+        logger.error("Existing stations specified, but argument \'--use_existing_station_list\' not specified")
+        exit(1)
+    elif args.use_existing_station_list and not args.existing_station_list:
+        logger.error(
+            "Argument \'--use_existing_station_list\' specified, but no existing stations provided. See \'--existing_station_list\'")
+        exit(1)
     if args.group_name:
         selected_groups = args.group_name.split(',')
     else:
@@ -4675,13 +5391,16 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
     required.add_argument('--report_timer', help='--duration to collect data', default="5s")
     required.add_argument('--ap_name', help="AP Model Name", default="Test-AP")
     required.add_argument('--dowebgui', help="If true will execute script for webgui", action='store_true')
-    required.add_argument('--tos', default="Best_Efforts")
+    required.add_argument('--tos', default="BE")
     required.add_argument('--packet_size', help='Determine the size of the packet in which Packet Size Should be Greater than 16B or less than 64KB(65507)', default="-1")
     required.add_argument('--incremental_capacity',
                           help='Specify the incremental values for network load testing as a comma-separated list (e.g., 10,20,30). This defines the increments in bandwidth to evaluate performance under varying load conditions.',  # noqa: E501
                           default=[])
     required.add_argument('--load_type', help="Determine the type of load: < wc_intended_load | wc_per_client_load >", default="wc_per_client_load")
     required.add_argument('--do_interopability', action='store_true', help='Ensures test on devices run sequentially, capturing each device’s data individually for plotting in the final report.')
+    required.add_argument('--client_type',
+                          default='',
+                          help='used for specifying the type of cliens to run a test (e.g "both", "real" or "virtual")') 
 
     # optional.add_argument('--no_postcleanup', help="Cleanup the cross connections after test is stopped", action = 'store_true')
     # optional.add_argument('--no_precleanup', help="Cleanup the cross connections before test is started", action = 'store_true')
@@ -4762,6 +5481,37 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
     optional.add_argument('--coordinate', help="Points at which the robot pauses")
     optional.add_argument('--rotation', help="The set of angles to rotate at a particular point")
     optional.add_argument('--bssids', type=str, help='Comma separated list of BSSIDs to be used for the test', default="")
+    optional.add_argument(
+        '--sta_start_offset', help='Station start offset for building stations',default='0')
+    optional.add_argument('-r', '--radio',
+                            action='append',
+                            nargs=1,
+                            help=(' --radio'
+                                ' "radio==<number_of_wiphy stations==<number of stations>'
+                                ' ssid==<ssid> ssid_pw==<ssid password> security==<security> '
+                                ' wifi_settings==True wifi_mode==<wifi_mode>'
+                                ' enable_flags==<enable_flags> '
+                                ' reset_port_enable==True reset_port_time_min==<min>s'
+                                ' reset_port_time_max==<max>s" '),
+                            default=[])
+    optional.add_argument('--use_existing_station_list', 
+                            help='--use_station_list ,full eid must be given,'
+                            'the script will use stations from the list, no configuration on the list, also prevents pre_cleanup',
+                            action='store_true')
+
+    # TODO pass in the station list
+    optional.add_argument('--existing_station_list',
+                            action='append',
+                            nargs=1,
+                            help='--station_list [list of stations] , use the stations in the list , multiple station lists may be entered')
+    # Wait for IP made configurable
+    optional.add_argument(
+        '--wait_for_ip_sec', help='--wait_for_ip_sec <seconds>  default : 120s ', default="120s")
+    optional.add_argument(
+        '--exit_on_ip_acquired', help='--exit_on_ip_acquired store true', action='store_true')
+    
+    optional.add_argument(
+        '--interopt_mode',help="For Interopt continue to try running even if some clients do not get an IP.",action='store_true')
 
     args = parser.parse_args()
 
@@ -4813,6 +5563,9 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
         csv_direction = 'L3_' + args.traffic_type.split('_')[1].upper() + '_DL'
 
     validate_args(args)
+    # for default we are specifying the client_type as real
+    if args.client_type not in ["virtual","real","both"] and not args.use_existing_station_list:
+        args.client_type = "real"
     if args.incremental_capacity == 'no_increment' and args.dowebgui:
         args.incremental_capacity = str(len(args.device_list.split(",")))
         gave_incremental = True
@@ -4843,7 +5596,7 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
     elif args.report_timer.endswith('h') or args.report_timer.endswith('H'):
         args.report_timer = int(args.report_timer[0:-1]) * 60 * 60
 
-    elif args.test_duration.endswith(''):
+    elif args.report_timer.endswith(''):
         args.report_timer = int(args.report_timer)
 
     if (int(args.packet_size) < 16 or int(args.packet_size) > 65507) and int(args.packet_size) != -1:
@@ -4857,6 +5610,452 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
         iot_device_list = args.iot_device_list
         iot_testname = args.iot_testname
         iot_increment = args.iot_increment
+ 
+    if args.radio:
+        radios = args.radio
+    else:
+        radios = None
+
+    MAX_NUMBER_OF_STATIONS = 1000
+
+    # Lists to help with station creation
+    radio_name_list = []
+    number_of_stations_per_radio_list = []
+    ssid_list = []
+    ssid_password_list = []
+    ssid_security_list = []
+    station_lists = []
+    existing_station_lists = []
+
+    # wifi settings configuration
+    wifi_mode_list = []
+    wifi_enable_flags_list = []
+
+    # optional radio configuration
+    reset_port_enable_list = []
+    reset_port_time_min_list = []
+    reset_port_time_max_list = []
+
+    # wifi extra configuration
+    key_mgmt_list = []
+    pairwise_list = []
+    group_list = []
+    psk_list = []
+    wep_key_list = []
+    ca_cert_list = []
+    eap_list = []
+    identity_list = []
+    anonymous_identity_list = []
+    phase1_list = []
+    phase2_list = []
+    passwd_list = []
+    pin_list = []
+    pac_file_list = []
+    private_key_list = []
+    pk_password_list = []
+    hessid_list = []
+    realm_list = []
+    client_cert_list = []
+    imsi_list = []
+    milenage_list = []
+    domain_list = []
+    roaming_consortium_list = []
+    venue_group_list = []
+    network_type_list = []
+    ipaddr_type_avail_list = []
+    network_auth_type_list = []
+    anqp_3gpp_cell_net_list = []
+    ieee80211w_list = []
+    
+    logger.debug("Parse radio arguments used for station configuration")
+    if radios is not None:
+        logger.info("radios {}".format(radios))
+        for radio_ in radios:
+            radio_keys = ['radio', 'stations', 'ssid', 'ssid_pw', 'security']
+            logger.info("radio_dict before format {}".format(radio_))
+            radio_info_dict = dict(
+                map(
+                    lambda x: x.split('=='),
+                    str(radio_).replace(
+                        '"',
+                        '').replace(
+                        '[',
+                        '').replace(
+                        ']',
+                        '').replace(
+                        "'",
+                        "").replace(
+                            ",",
+                        " ").split()))
+
+            logger.debug("radio_dict {}".format(radio_info_dict))
+
+            for key in radio_keys:
+                if key not in radio_info_dict:
+                    logger.critical(
+                        "missing config, for the {}, all of the following need to be present {} ".format(
+                            key, radio_keys))
+                    exit(1)
+
+            radio_name_list.append(radio_info_dict['radio'])
+            number_of_stations_per_radio_list.append(
+                radio_info_dict['stations'])
+            ssid_list.append(radio_info_dict['ssid'])
+            ssid_password_list.append(radio_info_dict['ssid_pw'])
+            ssid_security_list.append(radio_info_dict['security'])
+
+            # check for set_wifi_extra
+            # check for wifi_settings
+            wifi_extra_keys = ['wifi_extra']
+            wifi_extra_found = False
+            for wifi_extra_key in wifi_extra_keys:
+                if wifi_extra_key in radio_info_dict:
+                    logger.info("wifi_extra_keys found")
+                    wifi_extra_found = True
+                    break
+
+            if wifi_extra_found:
+                logger.debug("wifi_extra: {extra}".format(
+                    extra=radio_info_dict['wifi_extra']))
+
+                wifi_extra_dict = dict(
+                    map(
+                        lambda x: x.split('&&'),
+                        str(radio_info_dict['wifi_extra']).replace(
+                            '"',
+                            '').replace(
+                            '[',
+                            '').replace(
+                            ']',
+                            '').replace(
+                            "'",
+                            "").replace(
+                            ",",
+                            " ").replace(
+                            "!!",
+                            " "
+                        )
+                        .split()))
+
+                logger.info("wifi_extra_dict: {wifi_extra}".format(
+                    wifi_extra=wifi_extra_dict))
+
+                if 'key_mgmt' in wifi_extra_dict:
+                    key_mgmt_list.append(wifi_extra_dict['key_mgmt'])
+                else:
+                    key_mgmt_list.append('[BLANK]')
+
+                if 'pairwise' in wifi_extra_dict:
+                    pairwise_list.append(wifi_extra_dict['pairwise'])
+                else:
+                    pairwise_list.append('[BLANK]')
+
+                if 'group' in wifi_extra_dict:
+                    group_list.append(wifi_extra_dict['group'])
+                else:
+                    group_list.append('[BLANK]')
+
+                if 'psk' in wifi_extra_dict:
+                    psk_list.append(wifi_extra_dict['psk'])
+                else:
+                    psk_list.append('[BLANK]')
+
+                if 'wep_key' in wifi_extra_dict:
+                    wep_key_list.append(wifi_extra_dict['wep_key'])
+                else:
+                    wep_key_list.append('[BLANK]')
+
+                if 'ca_cert' in wifi_extra_dict:
+                    ca_cert_list.append(wifi_extra_dict['ca_cert'])
+                else:
+                    ca_cert_list.append('[BLANK]')
+
+                if 'eap' in wifi_extra_dict:
+                    eap_list.append(wifi_extra_dict['eap'])
+                else:
+                    eap_list.append('[BLANK]')
+
+                if 'identity' in wifi_extra_dict:
+                    identity_list.append(wifi_extra_dict['identity'])
+                else:
+                    identity_list.append('[BLANK]')
+
+                if 'anonymous' in wifi_extra_dict:
+                    anonymous_identity_list.append(
+                        wifi_extra_dict['anonymous'])
+                else:
+                    anonymous_identity_list.append('[BLANK]')
+
+                if 'phase1' in wifi_extra_dict:
+                    phase1_list.append(wifi_extra_dict['phase1'])
+                else:
+                    phase1_list.append('[BLANK]')
+
+                if 'phase2' in wifi_extra_dict:
+                    phase2_list.append(wifi_extra_dict['phase2'])
+                else:
+                    phase2_list.append('[BLANK]')
+
+                if 'passwd' in wifi_extra_dict:
+                    passwd_list.append(wifi_extra_dict['passwd'])
+                else:
+                    passwd_list.append('[BLANK]')
+
+                if 'pin' in wifi_extra_dict:
+                    pin_list.append(wifi_extra_dict['pin'])
+                else:
+                    pin_list.append('[BLANK]')
+
+                if 'pac_file' in wifi_extra_dict:
+                    pac_file_list.append(wifi_extra_dict['pac_file'])
+                else:
+                    pac_file_list.append('[BLANK]')
+
+                if 'private_key' in wifi_extra_dict:
+                    private_key_list.append(wifi_extra_dict['private_key'])
+                else:
+                    private_key_list.append('[BLANK]')
+
+                if 'pk_password' in wifi_extra_dict:
+                    pk_password_list.append(wifi_extra_dict['pk_password'])
+                else:
+                    pk_password_list.append('[BLANK]')
+
+                if 'hessid' in wifi_extra_dict:
+                    hessid_list.append(wifi_extra_dict['hessid'])
+                else:
+                    hessid_list.append("00:00:00:00:00:00")
+
+                if 'realm' in wifi_extra_dict:
+                    realm_list.append(wifi_extra_dict['realm'])
+                else:
+                    realm_list.append('[BLANK]')
+
+                if 'client_cert' in wifi_extra_dict:
+                    client_cert_list.append(wifi_extra_dict['client_cert'])
+                else:
+                    client_cert_list.append('[BLANK]')
+
+                if 'imsi' in wifi_extra_dict:
+                    imsi_list.append(wifi_extra_dict['imsi'])
+                else:
+                    imsi_list.append('[BLANK]')
+
+                if 'milenage' in wifi_extra_dict:
+                    milenage_list.append(wifi_extra_dict['milenage'])
+                else:
+                    milenage_list.append('[BLANK]')
+
+                if 'domain' in wifi_extra_dict:
+                    domain_list.append(wifi_extra_dict['domain'])
+                else:
+                    domain_list.append('[BLANK]')
+
+                if 'roaming_consortium' in wifi_extra_dict:
+                    roaming_consortium_list.append(
+                        wifi_extra_dict['roaming_consortium'])
+                else:
+                    roaming_consortium_list.append('[BLANK]')
+
+                if 'venue_group' in wifi_extra_dict:
+                    venue_group_list.append(wifi_extra_dict['venue_group'])
+                else:
+                    venue_group_list.append('[BLANK]')
+
+                if 'network_type' in wifi_extra_dict:
+                    network_type_list.append(wifi_extra_dict['network_type'])
+                else:
+                    network_type_list.append('[BLANK]')
+
+                if 'ipaddr_type_avail' in wifi_extra_dict:
+                    ipaddr_type_avail_list.append(
+                        wifi_extra_dict['ipaddr_type_avail'])
+                else:
+                    ipaddr_type_avail_list.append('[BLANK]')
+
+                if 'network_auth_type' in wifi_extra_dict:
+                    network_auth_type_list.append(
+                        wifi_extra_dict['network_auth_type'])
+                else:
+                    network_auth_type_list.append('[BLANK]')
+
+                if 'anqp_3gpp_cell_net' in wifi_extra_dict:
+                    anqp_3gpp_cell_net_list.append(
+                        wifi_extra_dict['anqp_3gpp_cell_net'])
+                else:
+                    anqp_3gpp_cell_net_list.append('[BLANK]')
+
+                if 'ieee80211w' in wifi_extra_dict:
+                    ieee80211w_list.append(wifi_extra_dict['ieee80211w'])
+                else:
+                    ieee80211w_list.append('Optional')
+
+                '''
+                # wifi extra configuration
+                key_mgmt_list.append(key_mgmt)
+                pairwise_list.append(pairwise)
+                group_list.append(group)
+                psk_list.append(psk)
+                eap_list.append(eap)
+                identity_list.append(identity)
+                anonymous_identity_list.append(anonymous_identity)
+                phase1_list.append(phase1)
+                phase2_list.append(phase2)
+                passwd_list.append(passwd)
+                pin_list.append(pin)
+                pac_file_list.append(pac_file)
+                private_key_list.append(private)
+                pk_password_list.append(pk_password)
+                hessid_list.append(hssid)
+                realm_list.append(realm)
+                client_cert_list.append(client_cert)
+                imsi_list.append(imsi)
+                milenage_list.append(milenage)
+                domain_list.append(domain)
+                roaming_consortium_list.append(roaming_consortium)
+                venue_group_list.append(venue_group)
+                network_type_list.append(network_type)
+                ipaddr_type_avail_list.append(ipaddr_type_avail)
+                network_auth_type_list.append(network_ath_type)
+                anqp_3gpp_cell_net_list.append(anqp_3gpp_cell_net)
+
+                '''
+            # no wifi extra for this station
+            else:
+                key_mgmt_list.append('[BLANK]')
+                pairwise_list.append('[BLANK]')
+                group_list.append('[BLANK]')
+                psk_list.append('[BLANK]')
+                # for testing
+                # psk_list.append(radio_info_dict['ssid_pw'])
+                wep_key_list.append('[BLANK]')
+                ca_cert_list.append('[BLANK]')
+                eap_list.append('[BLANK]')
+                identity_list.append('[BLANK]')
+                anonymous_identity_list.append('[BLANK]')
+                phase1_list.append('[BLANK]')
+                phase2_list.append('[BLANK]')
+                passwd_list.append('[BLANK]')
+                pin_list.append('[BLANK]')
+                pac_file_list.append('[BLANK]')
+                private_key_list.append('[BLANK]')
+                pk_password_list.append('[BLANK]')
+                hessid_list.append("00:00:00:00:00:00")
+                realm_list.append('[BLANK]')
+                client_cert_list.append('[BLANK]')
+                imsi_list.append('[BLANK]')
+                milenage_list.append('[BLANK]')
+                domain_list.append('[BLANK]')
+                roaming_consortium_list.append('[BLANK]')
+                venue_group_list.append('[BLANK]')
+                network_type_list.append('[BLANK]')
+                ipaddr_type_avail_list.append('[BLANK]')
+                network_auth_type_list.append('[BLANK]')
+                anqp_3gpp_cell_net_list.append('[BLANK]')
+                ieee80211w_list.append('Optional')
+
+            # check for wifi_settings
+            wifi_settings_keys = ['wifi_settings']
+            wifi_settings_found = True
+            for key in wifi_settings_keys:
+                if key not in radio_info_dict:
+                    logger.debug("wifi_settings_keys not enabled")
+                    wifi_settings_found = False
+                    break
+
+            if wifi_settings_found:
+                # Check for additional flags
+                if {'wifi_mode', 'enable_flags'}.issubset(
+                        radio_info_dict.keys()):
+                    logger.debug("wifi_settings flags set")
+                else:
+                    logger.debug("wifi_settings is present wifi_mode, enable_flags need to be set "
+                                 "or remove the wifi_settings or set wifi_settings==False flag on "
+                                 "the radio for defaults")
+                    exit(1)
+                wifi_mode_list.append(radio_info_dict['wifi_mode'])
+                enable_flags_str = radio_info_dict['enable_flags'].replace(
+                    '(', '').replace(')', '').replace('|', ',').replace('&&', ',')
+                enable_flags_list = list(enable_flags_str.split(","))
+                wifi_enable_flags_list.append(enable_flags_list)
+            else:
+                wifi_mode_list.append(0)
+                wifi_enable_flags_list.append(
+                    ["wpa2_enable", "80211u_enable", "create_admin_down"])
+                # 8021x_radius is the same as Advanced/8021x on the gui
+
+            # check for optional radio key , currently only reset is enabled
+            # update for checking for reset_port_time_min, reset_port_time_max
+            optional_radio_reset_keys = ['reset_port_enable']
+            radio_reset_found = True
+            for key in optional_radio_reset_keys:
+                if key not in radio_info_dict:
+                    # logger.debug("port reset test not enabled")
+                    radio_reset_found = False
+                    break
+
+            if radio_reset_found:
+                reset_port_enable_list.append(
+                    radio_info_dict['reset_port_enable'])
+                reset_port_time_min_list.append(
+                    radio_info_dict['reset_port_time_min'])
+                reset_port_time_max_list.append(
+                    radio_info_dict['reset_port_time_max'])
+            else:
+                reset_port_enable_list.append(False)
+                reset_port_time_min_list.append('0s')
+                reset_port_time_max_list.append('0s')
+
+        index = 0
+        for (radio_name_, number_of_stations_per_radio_) in zip(
+                radio_name_list, number_of_stations_per_radio_list):
+            number_of_stations = int(number_of_stations_per_radio_)
+            if number_of_stations > MAX_NUMBER_OF_STATIONS:
+                logger.critical("number of stations per radio exceeded max of : {}".format(
+                    MAX_NUMBER_OF_STATIONS))
+                quit(1)
+            station_list = LFUtils.portNameSeries(
+                prefix_="sta",
+                start_id_=0 + index * 1000 + int(args.sta_start_offset),
+                end_id_=number_of_stations - 1 + index *
+                1000 + int(args.sta_start_offset),
+                padding_number_=10000,
+                radio=radio_name_)
+            station_lists.append(station_list)
+            index += 1
+
+    # create a secondary station_list
+    if args.use_existing_station_list:
+        if args.existing_station_list is not None:
+            # these are entered stations
+            for existing_sta_list in args.existing_station_list:
+                existing_stations = str(existing_sta_list).replace(
+                    '"',
+                    '').replace(
+                    '[',
+                    '').replace(
+                    ']',
+                    '').replace(
+                    "'",
+                    "").replace(
+                        ",",
+                    " ").split()
+
+                for existing_sta in existing_stations:
+                    existing_station_lists.append(existing_sta)
+        else:
+            logger.error(
+                "--use_station_list set true, --station_list is None Exiting")
+            raise Exception(
+                "--use_station_list is used in conjunction with a --station_list")
+
+        logger.info("existing_station_lists: {sta}".format(
+        sta=existing_station_lists))
+    
+    #for csv files
+    current_time = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
+    outfile = "{}-throughput.csv".format(current_time)
+
     for index in range(len(loads_data)):
         throughput = Throughput(host=args.mgr,
                                 ip=args.mgr,
@@ -4921,14 +6120,67 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
                                 do_bandsteering=args.do_bandsteering,
                                 total_cycles=args.total_cycles,
                                 bssids=args.bssids.split(",") if args.bssids else [],
-                                duration_to_skip=args.duration_to_skip
+                                duration_to_skip=args.duration_to_skip,
+                                radio_name_list=radio_name_list,
+                                number_of_stations_per_radio_list=number_of_stations_per_radio_list,
+                                ssid_list=ssid_list,
+                                ssid_password_list=ssid_password_list,
+                                ssid_security_list=ssid_security_list,
+                                wifi_mode_list=wifi_mode_list,
+                                enable_flags_list=wifi_enable_flags_list,
+                                station_lists=station_lists,
+                                reset_port_enable_list=reset_port_enable_list,
+                                reset_port_time_min_list=reset_port_time_min_list,
+                                reset_port_time_max_list=reset_port_time_max_list,
+                                use_existing_station_list=args.use_existing_station_list,
+                                existing_station_list=existing_station_lists,
+                                wait_for_ip_sec=args.wait_for_ip_sec,
+                                exit_on_ip_acquired=args.exit_on_ip_acquired,
+                                client_type=args.client_type,
+                                interopt_mode=args.interopt_mode,
+                                # wifi extra configuration
+                                key_mgmt_list=key_mgmt_list,
+                                pairwise_list=pairwise_list,
+                                group_list=group_list,
+                                psk_list=psk_list,
+                                wep_key_list=wep_key_list,
+                                ca_cert_list=ca_cert_list,
+                                eap_list=eap_list,
+                                identity_list=identity_list,
+                                anonymous_identity_list=anonymous_identity_list,
+                                phase1_list=phase1_list,
+                                phase2_list=phase2_list,
+                                passwd_list=passwd_list,
+                                pin_list=pin_list,
+                                pac_file_list=pac_file_list,
+                                private_key_list=private_key_list,
+                                pk_password_list=pk_password_list,
+                                hessid_list=hessid_list,
+                                realm_list=realm_list,
+                                client_cert_list=client_cert_list,
+                                imsi_list=imsi_list,
+                                milenage_list=milenage_list,
+                                domain_list=domain_list,
+                                roaming_consortium_list=roaming_consortium_list,
+                                venue_group_list=venue_group_list,
+                                network_type_list=network_type_list,
+                                ipaddr_type_avail_list=ipaddr_type_avail_list,
+                                network_auth_type_list=network_auth_type_list,
+                                anqp_3gpp_cell_net_list=anqp_3gpp_cell_net_list,
+                                ieee80211w_list=ieee80211w_list,
+                                outfile=outfile,
                                 )
 
         if gave_incremental:
             throughput.gave_incremental = True
         throughput.os_type()
 
-        check_condition, clients_to_run = throughput.phantom_check()
+        clients_to_run= []
+        if throughput.client_type == 'real' or throughput.client_type == 'both':
+            check_condition,clients_to_run = throughput.phantom_check()
+            if check_condition is False:
+                return
+
         if args.iot_test:
             if args.iot_iterations > 1:
                 thread = threading.Thread(target=trigger_iot, args=(iot_ip, iot_port, iot_iterations, iot_delay, iot_device_list, iot_testname, iot_increment))
@@ -4949,9 +6201,11 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
                     ),
                     daemon=True
                 )
-                iot_thread.start()
-        if check_condition is False:
-            return
+                iot_thread.start()       
+
+        created_cxs = throughput.build()
+        time.sleep(10)
+        created_cxs = list(created_cxs.keys())
 
         check_increment_condition = throughput.check_incremental_list()
 
@@ -4963,11 +6217,7 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
             logger.error("Incremental values given for selected devices are incorrect")
             return
 
-        created_cxs = throughput.build()
-        time.sleep(10)
-        created_cxs = list(created_cxs.keys())
-
-        if args.robot_ip:
+        if args.client_type == 'real' and args.robot_ip:
             # Execute Robo test execution when robot IP is provided
             throughput.perform_robo(args, clients_to_run)
             exit(1)
@@ -4976,12 +6226,15 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
 
         to_run_cxs, to_run_cxs_len, created_cx_lists_keys, incremental_capacity_list = throughput.get_incremental_capacity_list()
 
-        for i in range(len(clients_to_run)):
+        throughput._set_ports_up()
+        throughput._wait_ports_connected()
+        all_devices=clients_to_run+throughput.virtual_clients
+        for i in range(len(all_devices)):
 
             # Extend individual_dataframe_column with dynamically generated column names
-            individual_dataframe_column.extend([f'Download{clients_to_run[i]}', f'Upload{clients_to_run[i]}', f'Rx % Drop  {clients_to_run[i]}',
-                                                f'Tx % Drop{clients_to_run[i]}', f'Average RTT {clients_to_run[i]}', f'RSSI {clients_to_run[i]}',
-                                                f'Tx-Rate {clients_to_run[i]} ', f'Rx-Rate {clients_to_run[i]}', f'BSSID {clients_to_run[i]}', f'Channel {clients_to_run[i]}'])
+            individual_dataframe_column.extend([f'Download{all_devices[i]}', f'Upload{all_devices[i]}', f'Rx % Drop  {all_devices[i]}',
+                                                f'Tx % Drop{all_devices[i]}', f'Average RTT {all_devices[i]}', f'RSSI {all_devices[i]}',
+                                                f'Tx-Rate {all_devices[i]} ', f'Rx-Rate {all_devices[i]}', f'BSSID {all_devices[i]}', f'Channel {all_devices[i]}'])
 
         individual_dataframe_column.extend(['Overall Download', 'Overall Upload', 'Overall Rx % Drop ', 'Overall Tx % Drop', 'Iteration',
                                            'TIMESTAMP', 'Start_time', 'End_time', 'Remaining_Time', 'Incremental_list', 'status'])
@@ -5001,17 +6254,27 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
                 # Perform intended load for the current iteration
                 throughput.perform_intended_load(i, incremental_capacity_list)
                 if i != 0:
-
-                    # Stop throughput testing if not the first iteration
-                    throughput.stop()
+                    # Stop throughput test cx's if not the first iteration
+                    throughput.stop_specific(created_cx_lists_keys[:incremental_capacity_list[i-1]])
 
                 # Start specific connections for the current iteration
                 throughput.start_specific(created_cx_lists_keys[:incremental_capacity_list[i]])
+                throughput.cx_profile.refresh_cx()
+            #Checking if not the interopability
+            elif not args.do_interopability :
+                if i!=0:
+                    # Stop throughput test cx's if not the first iteration
+
+                    throughput.stop_specific(created_cx_lists_keys[:incremental_capacity_list[i-1]])
+                    time.sleep(5)
+                # Start specific connections for the current iteration
+                throughput.start_specific(created_cx_lists_keys[:incremental_capacity_list[i]])
+                throughput.cx_profile.refresh_cx()
             else:
                 if args.do_interopability and i != 0:
                     throughput.stop_specific(to_run_cxs[i - 1])
                     time.sleep(5)
-                if args.interopability_config:
+                if args.interopability_config and to_run_cxs[i][0] not in throughput.virtual_cx_list :
                     if args.do_interopability and i == 0:
                         # To disconnect all the selected devices at the starting selected
                         throughput.disconnect_all_devices()
@@ -5021,6 +6284,7 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
                         is_device_configured = throughput.configure_specific([device_to_run_resource])
                 if is_device_configured:
                     throughput.start_specific(to_run_cxs[i])
+                    throughput.cx_profile.refresh_cx()
 
             # Determine device names based on the current iteration
             device_names = created_cx_lists_keys[:to_run_cxs_len[i][-1]]
@@ -5054,8 +6318,7 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
         if os.path.exists(p):
             with open(p) as f:
                 iot_summary = json.load(f)
-    throughput.generate_report(list(set(iterations_before_test_stopped_by_user)), incremental_capacity_list, data=all_dataframes, data1=to_run_cxs_len, report_path=throughput.result_dir,
-                               iot_summary=iot_summary)
+    throughput.generate_report(list(set(iterations_before_test_stopped_by_user)), incremental_capacity_list, data=all_dataframes, data1=to_run_cxs_len, report_path=throughput.result_dir,iot_summary=iot_summary)
     if throughput.dowebgui:
         # copying to home directory i.e home/user_name
         throughput.copy_reports_to_home_dir()
