@@ -79,6 +79,21 @@ Command Line Interface to run download scenario for Real clients with Timebreak 
 python3 lf_webpage.py --ap_name "Cisco" --mgr 192.168.200.165 --ssid Cisco-5g --security wpa2 --passwd sharedsecret
 --upstream_port eth1 --duration 10m --bands 5G --client_type Real --file_size 2MB --time_break 10s
 
+EXAMPLE-16:
+Command Line Interface to run download scenario for Virtual Clients with TimeBreak for monitoring.
+python3 lf_webpage.py --ap_name "Cisco" --mgr 192.168.207.78 --fiveg_ssid NETGEAR_5G_wpa2 --fiveg_security wpa2 --fiveg_passwd Password@123
+--fiveg_radio wiphy1 --upstream_port eth1 --duration 1m --bands 5G --client_type Virtual --file_size 2MB --num_stations 3 --time_break 10s
+
+EXAMPLE-17:
+Command Line Interface to run download scenario in Both Real and Virtual Clients simultaneously with TimeBreak for monitoring.
+python3 lf_webpage.py --client_type Both --ssid "NETGEAR_5G_wpa2" --security wpa2 --passwd Password@123 --fiveg_ssid "NETGEAR_5G_wpa2" --fiveg_security wpa2 --fiveg_passwd Password@123
+--fiveg_radio wiphy1 --num_stations 3 --bands 5G --duration 1m --file_size 2MB --time_break 10s --upstream_port eth1 --mgr 192.168.207.78
+
+EXAMPLE-18:
+Command Line Interface to run download scenario in Virtual Clients by using Existing Virtual Stations List
+python3 lf_webpage.py --client_type Virtual --bands 5G --duration 1m --file_size 2MB --mgr 192.168.207.78 --upstream eth1 
+--use_existing_station_list --existing_station_list 1.1.sta9090,1.1.sta8888,1.1.sta0000,1.1.sta0001,1.1.sta0002,1.1.sta0003,1.1.sta1000,1.1.sta1001,1.1.sta00000,1.1.sta00001,1.1.sta00002
+
 SCRIPT_CLASSIFICATION : Test
 
 SCRIPT_CATEGORIES:   Performance,  Functional,  Report Generation
@@ -159,7 +174,7 @@ class HttpDownload(Realm):
                  device_list=None, get_url_from_file=None, file_path=None, device_csv_name='', expected_passfail_value=None, file_name=None, group_name=None, profile_name=None, eap_method=None,
                  eap_identity=None, ieee80211=None, ieee80211u=None, ieee80211w=None, enable_pkc=None, bss_transition=None, power_save=None, disable_ofdma=None, roam_ft_ds=None, key_management=None,
                  pairwise=None, private_key=None, ca_cert=None, client_cert=None, pk_passwd=None, pac_file=None, config=False, wait_time=60, get_live_view=False, total_floors=0, robot_test=False,
-                 robot_ip=None, coordinate=None, rotation=None, duration=None, do_bandsteering=False, cycles=None, bssids=None, duration_to_skip=None, time_break=None):
+                 robot_ip=None, coordinate=None, rotation=None, duration=None , do_bandsteering=False, cycles=None, bssids=None, duration_to_skip=None, time_break=None):
         # super().__init__(lfclient_host=lfclient_host,
         #                  lfclient_port=lfclient_port)
         self.ssid_list = []
@@ -273,6 +288,9 @@ class HttpDownload(Realm):
         self.bssid_list = []
         self.client_type_list = []
         self.device_type_list = []
+
+        self.existing_station_list = []
+
 
         self.individual_device_data = {}
         self.rx_rate_val = []
@@ -619,6 +637,85 @@ class HttpDownload(Realm):
         self.device_list = filtered_list
         return filtered_list
 
+    def validate_existing_stations(self, raw_existing_list):
+        """
+        Validate each EID in raw_existing_list against LANforge port manager.
+
+        Accepts the argparse value which may be:
+          - a list of lists  (nargs=1, action='append' produces [[eid1], [eid2]])
+          - a plain list of strings
+          - a comma-separated string
+
+        Returns a deduplicated list of short port names (e.g. ['1.1.sta00000', ...])
+        that are confirmed present in LANforge.  Ports that are absent are logged
+        as warnings and silently dropped.
+        """
+        # Normalise whatever argparse hands us into a flat list of strings
+        if not raw_existing_list:
+            return []
+
+        flat = []
+        if isinstance(raw_existing_list, str):
+            flat = [s.strip() for s in raw_existing_list.split(',') if s.strip()]
+        elif isinstance(raw_existing_list, list):
+            for item in raw_existing_list:
+                if isinstance(item, list):
+                    for sub in item:
+                        flat.extend([s.strip() for s in sub.split(',') if s.strip()])
+                else:
+                    flat.extend([s.strip() for s in item.split(',') if s.strip()])
+
+        if not flat:
+            logger.warning("validate_existing_stations: no EIDs found after parsing.")
+            return []
+
+        validated = []
+        seen = set()
+        
+        # Fetch port/all to check IPs
+        port_data = {}
+        try:
+            port_resp = self.local_realm.json_get("/port/all")
+            if port_resp and "interfaces" in port_resp:
+                for iface in port_resp["interfaces"]:
+                    for port_name, pdata in iface.items():
+                        port_data[port_name] = pdata
+        except Exception as e:
+            logger.warning(f"Failed to fetch /port/all for IP validation: {e}")
+
+        for eid in flat:
+            if eid in seen:
+                continue
+            seen.add(eid)
+            # port_exists() from Realm accepts shelf.resource.port or short name 
+            if self.local_realm.port_exists(eid):
+                # Check if it has an IP address
+                has_ip = False
+                for p_name, p_info in port_data.items():
+                    if eid in p_name:
+                        ip = p_info.get("ip", "0.0.0.0")
+                        if ip and ip != "0.0.0.0":
+                            has_ip = True
+                        break
+                
+                if has_ip:
+                    validated.append(eid)
+                    logger.info(f"validate_existing_stations: confirmed port '{eid}' with IP")
+                else:
+                    logger.warning(f"validate_existing_stations: port '{eid}' found but has no IP — skipping.")
+            else:
+                logger.warning(
+                    f"validate_existing_stations: port '{eid}' NOT found in LANforge — skipping.")
+
+        if not validated:
+            logger.error(
+                "validate_existing_stations: none of the supplied existing stations "
+                "exist in LANforge.  Aborting.")
+            exit(1)
+
+        logger.info(f"validate_existing_stations: {len(validated)} valid port(s): {validated}")
+        return validated
+
     def set_values(self):
         # This method will set values according user input
         if self.bands == "5G":
@@ -638,7 +735,7 @@ class HttpDownload(Realm):
             self.station_list = LFUtils.portNameSeries(prefix_="http_sta", start_id_=self.sta_start_id,
                                                         end_id_=self.sta_start_id + self.num_sta - 1, padding_number_=10000,
                                                         radio=self.twog_radio)
-            self.station_lists_per_radio = [self.station_list]     
+            self.station_lists_per_radio = [self.station_list]
         elif self.bands == "Both":
             self.radio = [self.twog_radio, self.fiveg_radio]
             # self.num_sta = self.num_sta // 2
@@ -771,6 +868,7 @@ class HttpDownload(Realm):
         )
         all_port_list = []
         if self.client_type in ["Virtual", "Both"]:
+            if not self.existing_station_list:
                 if self.bands == "2.4G":
                     self.station_profile.mode = 13
                 elif self.bands == "5G":
@@ -778,7 +876,7 @@ class HttpDownload(Realm):
                 elif self.bands == "6G":
                     self.station_profile.mode = 15
 
-                print(f"Printing aall test radios : {self.radio}")
+                logger.info(f"Printing all test radios : {self.radio}")
                 for rad in range(len(self.radio)):
                     self.station_profile.use_security(
                         self.security[rad],
@@ -804,6 +902,11 @@ class HttpDownload(Realm):
                     all_port_list.extend(self.station_list)
                     if self.count == 2:
                         self.station_profile.mode = 6
+            elif self.existing_station_list:
+                self.station_profile.station_names = self.existing_station_list    # this else block is for existing stations list
+                logger.info(f"Printing Station Names from Station Profile Creation only when existing specified : {self.existing_station_list}")
+                logger.info(f"Self . Station List : {self.station_list}")
+                all_port_list.extend(self.station_list)
 
         if self.client_type in ["Real", "Both"]:
             logger.info(f"Port List for Real devices : {self.port_list}")
@@ -870,7 +973,7 @@ class HttpDownload(Realm):
     
     def start(self):
         self.http_profile.start_cx()
-        logger.info(f"We are printing current cx names : {self.http_profile.created_cx.keys()}")
+        logger.info(f"Printing current cx names : {self.http_profile.created_cx.keys()}")
         try:
             for i in self.http_profile.created_cx.keys():
                 while self.local_realm.json_get("/cx/" + i).get(i).get('state') != 'Run':
@@ -1023,11 +1126,10 @@ class HttpDownload(Realm):
         max_bytes_rd = []
         rx_rate_val = []
         individual_device_data = {}
-        self.individual_device_data = {}
         # Creating individual Dataframe for each device
         individual_device_csv_names=[]
-        print("start time", starttime)
-        print("end time", endtime)
+        logger.info(f"start time : {starttime}")
+        logger.info(f"end time : {endtime}")
         for port in devices_names:
             columns = ['TIMESTAMP', 'Bytes-rd', 'total urls', 'download_rate', 'rx_rate', 'tx_rate', 'RSSI','Mode','Channel','BSSID','MAC']
             if self.do_bandsteering:
@@ -3094,6 +3196,10 @@ def main():
     optional.add_argument('--twog_radio', help='specify radio for 2.4G clients')
     optional.add_argument('--fiveg_radio', help='specify radio for 5 GHz client')
     optional.add_argument('--sixg_radio', help='Specify radio for 6GHz client')
+    optional.add_argument('--use_existing_station_list', help='--use_station_list ,full eid must be given,'
+                                                              'for multiple station list use commas(1.1.sta00000,1.1.sta00001)', action='store_true')
+    optional.add_argument('--existing_station_list', action='append', nargs=1,
+                          help='Specify the existing station list. E.g., --existing_station_list 1.1.sta00000')
     optional.add_argument('--twog_security', help='WiFi Security protocol: {open|wep|wpa2|wpa3} for 2.4G clients')
     optional.add_argument('--twog_ssid', help='WiFi SSID for script object to associate for 2.4G clients')
     optional.add_argument('--twog_passwd', help='WiFi passphrase/password/key for 2.4G clients')
@@ -3257,6 +3363,12 @@ times the file is downloaded.
         iot_device_list = args.iot_device_list
         iot_testname = args.iot_testname
         iot_increment = args.iot_increment
+
+    # Validate --existing_station_list requires --use_existing_station_list flag
+    has_existing_stations = bool(getattr(args, 'use_existing_station_list', False))
+    if getattr(args, 'existing_station_list', None) and not has_existing_stations:
+        logger.error("Error: --existing_station_list provided but --use_existing_station_list flag is missing.")
+        exit(1)
 
     validate_args(args)
     if args.duration.endswith('s') or args.duration.endswith('S'):
@@ -3454,11 +3566,34 @@ times the file is downloaded.
         
         if args.num_stations:
             http.set_values()
-        station_list = http.station_list
+
+        # Existing-station validation (--use_existing_station_list)
+        existing_sta_list = []
+        if args.client_type in ("Virtual", "Both") and getattr(args, 'use_existing_station_list', False):
+            raw = getattr(args, 'existing_station_list', None)
+            if raw:
+                existing_sta_list = http.validate_existing_stations(raw)
+                logger.info(f"Existing stations after validation: {existing_sta_list}")
+            else:
+                logger.warning("--use_existing_station_list set but --existing_station_list is empty — ignoring.")
+        
+        # Merge existing stations into the global station list
+        for eid in existing_sta_list:
+            if eid not in http.station_list:
+                http.station_list.append(eid)
+                http.existing_station_list.append(eid)  # Store Existing Station List.
+
+        if has_existing_stations:
+            station_list = http.existing_station_list
+        else:
+            station_list = http.station_list
         logger.info(f"We are Printing Station List : {station_list}")
         
         if args.client_type == "Virtual":
-            args.num_stations = len(http.station_list)
+            if has_existing_stations:
+                args.num_stations = len(http.existing_station_list)
+            else:
+                args.num_stations = len(http.station_list)
 
         all_client_list = []
         if args.client_type == "Real":
@@ -3486,7 +3621,7 @@ times the file is downloaded.
     
         print("We are printing all client list : ",all_client_list)
 
-        if args.num_stations:
+        if args.num_stations and not has_existing_stations:   # Ensuring No Cleanup if existing station list is provided.
             http.precleanup()
 
         if args.iot_test:
@@ -3931,7 +4066,10 @@ times the file is downloaded.
                          dut_sw_version=args.dut_sw_version, dut_model_num=args.dut_model_num,
                          dut_serial_num=args.dut_serial_num, test_id=args.test_id,
                          test_input_infor=test_input_infor, csv_outfile=args.csv_outfile, iot_summary=iot_summary)
-    http.postcleanup()
+    if not has_existing_stations:
+        http.postcleanup()
+    
+    http.http_profile.cleanup() # To ensure l4 endpoints cleanup only (to still again maintain existing virtual stations)
     # FOR WEBGUI, filling csv at the end to get the last terminal logs
     if args.dowebgui:
         http.copy_reports_to_home_dir()
