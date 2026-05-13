@@ -210,7 +210,6 @@ DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
 iot_scripts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../local/interop-webGUI/IoT/scripts/"))
 if os.path.exists(iot_scripts_path):
     sys.path.insert(0, iot_scripts_path)
-    # pyrefly: ignore [missing-import]
     from test_automation import Automation  # noqa: E402
 
 
@@ -468,7 +467,8 @@ class ThroughputQOS(Realm):
         self.report_ssid_list = []
         self.report_mac_list = []
         self.report_channel_list = []
-
+        self._existing_sta_list = []
+        
         # Initializing robot test parameters
         self.robot_test = robot_test
         self.cycles = cycles
@@ -757,16 +757,23 @@ class ThroughputQOS(Realm):
 
     def pre_cleanup(self):
         """Clean up CX profiles and virtual stations (if any).
+        Stations listed in self._existing_sta_list are NOT deleted — they were
+        pre-existing and should be left intact.
         """
         self.cx_profile.cleanup_prefix()
         self.cx_profile.cleanup()               # Added this to support throughput_qos script i.e for Virtual Station
         if self.create_sta and self.sta_list:
+            existing = set(getattr(self, '_existing_sta_list', []))
             for sta in self.sta_list:
-                self.rm_port(sta, check_exists=True)
+                if sta not in existing:
+                    self.rm_port(sta, check_exists=True)
 
     def cleanup(self):
         self.cx_profile.cleanup()
-        new_stas = [s for s in (self.sta_list or []) if s is not None]
+        existing = set(getattr(self, '_existing_sta_list', []))
+        # Only clean up stations that were freshly created by this run —
+        # never delete pre-existing stations supplied via --existing_station_list.
+        new_stas = [s for s in (self.sta_list or []) if s not in existing]
         if self.create_sta and new_stas:
             original_names = self.station_profile.station_names
             self.station_profile.station_names = new_stas
@@ -784,7 +791,7 @@ class ThroughputQOS(Realm):
             self.create_cx_real()
 
         if self.client_type in ("Virtual", "Both"):
-            self.create_cx_virtual()
+                self.create_cx_virtual()
 
     def build(self, client_type="Real"):
         """
@@ -798,6 +805,17 @@ class ThroughputQOS(Realm):
 
         if self.client_type in ("Virtual", "Both"):
             self.build_virtual_stations()
+
+            # Merge existing stations into sta_list after build_virtual_stations
+            existing_stas = getattr(self, '_existing_sta_list', [])
+            for eid in existing_stas:
+                if eid not in self.sta_list:
+                    self.sta_list.append(eid)
+            if existing_stas:
+                logger.info(
+                    f"Final sta_list after merging existing stations "
+                    f"({len(existing_stas)} existing + {len(self.sta_list) - len(existing_stas)} new): "
+                    f"{self.sta_list}")
 
         logger.info(f"We are Printing Virtual Stations after build from Station Profile : {self.station_profile.station_names}")
 
@@ -985,6 +1003,10 @@ class ThroughputQOS(Realm):
             else:
                 self._fail("Virtual stations failed to get IPs")
                 self.exit_fail()
+
+        # Existing stations (--use_existing_station_list) have already been validated 
+        # to exist and have IPs in validate_existing_stations(). We intentionally do 
+        # NOT admin_up() them here to avoid altering their existing configuration.
 
         # Collect MAC and channel info for virtual stations
         response_port = self.json_get("/port/all")
@@ -1567,11 +1589,6 @@ class ThroughputQOS(Realm):
             if write_now:
                 last_write = now
                 for client_name, qrow in qos_map.items():
-                    # port_stats for virtual stations is keyed by the full sta name
-                    # (e.g. "1.1.sta0000") while qos_map / client_name uses the
-                    # short form returned by resolve_client_key() (e.g. "sta0000").
-                    # Try direct lookup first; if it misses, scan sta_list for a
-                    # full name that ends with the short client_name.
                     ps = port_stats.get(client_name)
                     if ps is None and self.sta_list:
                         for full_sta in self.sta_list:
@@ -2129,8 +2146,13 @@ class ThroughputQOS(Realm):
         # Test Configuration table —
         if client_type == 'Virtual':
             # Virtual: per-band SSID and Security exactly like throughput_qos.py
+            _existing_stas = getattr(self, '_existing_sta_list', [])
+            _new_stas = [s for s in self.sta_list if s not in set(_existing_stas)]
+            _sta_count_label = str(len(self.sta_list))
+            if _existing_stas:
+                _sta_count_label += f" ({len(_new_stas)} new + {len(_existing_stas)} existing)"
             test_setup_info = {
-                "Number of Virtual Stations": len(self.sta_list),
+                "Number of Virtual Stations": _sta_count_label,
                 "Virtual Stations List": ", ".join(self.sta_list),
                 "AP Model": self.ap_name,
                 "SSID_2.4GHz": self.ssid_2g,
@@ -2145,6 +2167,8 @@ class ThroughputQOS(Realm):
                 "TOS": self.tos,
                 "Per TOS Load in Mbps": load,
             }
+            if _existing_stas:
+                test_setup_info["Existing Stations Used"] = ", ".join(_existing_stas)
         elif client_type == "Real":
             # Real: device-type breakdown
             android_devices = windows_devices = linux_devices = ios_devices = ios_mob_devices = 0
@@ -2243,10 +2267,15 @@ class ThroughputQOS(Realm):
                 total_devices += f" iOS({ios_mob_devices})"
 
             if config_devices == "":
+                _existing_stas_both = getattr(self, '_existing_sta_list', [])
+                _new_stas_both = [s for s in self.sta_list if s not in set(_existing_stas_both)]
+                _vsta_label = "Total " + f"{len(self.sta_list)}"
+                if _existing_stas_both:
+                    _vsta_label += f" ({len(_new_stas_both)} new + {len(_existing_stas_both)} existing)"
                 test_setup_info = {
                     "Number of Real Devices": "Total " + f"({self.num_stations})" + total_devices,
-                    "Number of Virtual Stations": len(self.sta_list),
-                    "Real Device List": ", ".join(all_devices_names),
+                    "Number of Virtual Stations": _vsta_label,
+                    "Real Device List":        ", ".join(all_devices_names),
                     "Virtual Stations List": ", ".join(self.sta_list),
                     "AP Model": self.ap_name,
                     "SSID": self.ssid,
@@ -2394,6 +2423,12 @@ class ThroughputQOS(Realm):
                 res, report,
                 connections_download_avg, connections_upload_avg,
                 avg_drop_a, avg_drop_b)
+
+        # Bandsteering stats section (only when do_bandsteering is enabled)
+        if getattr(self, 'do_bandsteering', False):
+            self.get_bandsteering_stats(report=report, data=self.band_steering_df)
+
+        report.test_setup_table(test_setup_data=input_setup_info, value="Information")
 
         if client_type == 'Virtual':
             report.build_custom()
@@ -4353,6 +4388,76 @@ class ThroughputQOS(Realm):
             else:
                 print(f"{file_name} does not exist.")
 
+    def validate_existing_stations(self, raw_existing_list):
+        """
+        Validate each EID in raw_existing_list against LANforge port manager.
+        """
+        # Normalise whatever argparse hands us into a flat list of strings
+        if not raw_existing_list:
+            return []
+
+        flat = []
+        if isinstance(raw_existing_list, str):
+            flat = [s.strip() for s in raw_existing_list.split(',') if s.strip()]
+        elif isinstance(raw_existing_list, list):
+            for item in raw_existing_list:
+                if isinstance(item, list):
+                    for sub in item:
+                        flat.extend([s.strip() for s in sub.split(',') if s.strip()])
+                else:
+                    flat.extend([s.strip() for s in item.split(',') if s.strip()])
+
+        if not flat:
+            logger.warning("validate_existing_stations: no EIDs found after parsing.")
+            return []
+
+        validated = []
+        seen = set()
+        
+        # Fetch port/all to check IPs
+        port_data = {}
+        try:
+            port_resp = self.json_get("/port/all")
+            if port_resp and "interfaces" in port_resp:
+                for iface in port_resp["interfaces"]:
+                    for port_name, pdata in iface.items():
+                        port_data[port_name] = pdata
+        except Exception as e:
+            logger.warning(f"Failed to fetch /port/all for IP validation: {e}")
+
+        for eid in flat:
+            if eid in seen:
+                continue
+            seen.add(eid)
+            # port_exists() from Realm accepts shelf.resource.port or short name 
+            if self.port_exists(eid):
+                # Check if it has an IP address
+                has_ip = False
+                for p_name, p_info in port_data.items():
+                    if eid in p_name:
+                        ip = p_info.get("ip", "0.0.0.0")
+                        if ip and ip != "0.0.0.0":
+                            has_ip = True
+                        break
+                
+                if has_ip:
+                    validated.append(eid)
+                    logger.info(f"validate_existing_stations: confirmed port '{eid}' with IP")
+                else:
+                    logger.warning(f"validate_existing_stations: port '{eid}' found but has no IP — skipping.")
+            else:
+                logger.warning(
+                    f"validate_existing_stations: port '{eid}' NOT found in LANforge — skipping.")
+
+        if not validated:
+            logger.error(
+                "validate_existing_stations: none of the supplied existing stations "
+                "exist in LANforge.  Aborting.")
+            exit(1)
+
+        logger.info(f"validate_existing_stations: {len(validated)} valid port(s): {validated}")
+        return validated
+
     def parse_timebreak(self, tb_str):
         if not tb_str:
             return None
@@ -4380,6 +4485,7 @@ def validate_args(args):
     # Calculate total new virtual stations and check for custom stations
     total_new_stations = args.num_stations_2g + args.num_stations_5g + args.num_stations_6g
     has_custom_stations = bool(getattr(args, 'sta_names', None))
+    has_existing_stations = bool(getattr(args, 'use_existing_station_list', False))
 
     # Real-device specific validation
     if hasattr(args, 'client_type') and args.client_type in ("Real", "Both"):
@@ -4407,13 +4513,22 @@ def validate_args(args):
                 if args.security is None:
                     logger.error('Security must be provided when SSID and Password specified')
                     exit(1)
+
+    # Validate --existing_station_list requires --use_existing_station_list flag
+    if getattr(args, 'existing_station_list', None) and not has_existing_stations:
+        logger.error("Error: --existing_station_list provided but --use_existing_station_list flag is missing.")
+        exit(1)
+
+    # Virtual device validation for station counts
+    # Any of: create_sta, sta_names, use_existing_station_list satisfies the requirement
     if args.client_type in ("Virtual", "Both"):
-        if not getattr(args, 'create_sta', False) and not has_custom_stations:
+        if not getattr(args, 'create_sta', False) and not has_custom_stations and not has_existing_stations:
             logger.error("Error: No stations specified for the test.\n"
-                         "You must either create new stations with '--create_sta',\n"
-                         "OR provide custom station names (e.g., '--sta_names sta000,sta001'),\n")
+                  "You must either create new stations with '--create_sta',\n"
+                  "OR provide custom station names (e.g., '--sta_names sta000,sta001'),\n"
+                  "OR use existing stations (e.g., '--use_existing_station_list --existing_station_list 1.1.sta00000').")
             exit(1)
-        if getattr(args, 'create_sta', False) and total_new_stations == 0 and not has_custom_stations:
+        if getattr(args, 'create_sta', False) and total_new_stations == 0 and not has_custom_stations and not has_existing_stations:
             logger.error("Error: --create_sta was passed but station counts are 0 and no station names provided.")
             exit(1)
     if args.device_csv_name and args.expected_passfail_value:
@@ -4681,8 +4796,13 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
                           '--key',
                           default="[BLANK]",
                           help='WiFi passphrase/password/key')
-
-    optional.add_argument('--ssid_2g', help='WiFi SSID for script objects to associate with Virtual Clients', default=None)
+    optional.add_argument('--use_existing_station_list', help='--use_station_list ,full eid must be given,'
+                                'the script will use stations from the list, no configuration on the list, also prevents pre_cleanup',
+                                action='store_true')
+    # TODO pass in the existing station list
+    optional.add_argument('--existing_station_list',action='append',nargs=1,
+                                help='--station_list [list of stations] , use the stations in the list , multiple station lists may be entered')
+    optional.add_argument('--ssid_2g',help='WiFi SSID for script objects to associate with Virtual Clients',default=None)
     optional.add_argument('--password_2g', '--passwd_2g', default="[BLANK]", help='WiFi passphrase/password/key for 2.4GHz', dest='password_2g')
     optional.add_argument('--security_2g', default='Open', help='WiFi Security Protocol : < open | wep | wpa | wpa2 | wpa3>')
     optional.add_argument('--ssid_5g', help='WiFi SSID for script objects to associate with Virtual Clients', default=None)
@@ -5047,6 +5167,18 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
         throughput_qos.bssids = getattr(args, 'bssids', '').split(',') if getattr(args, 'bssids', '') else []
         if throughput_qos.robot_test and throughput_qos.do_bandsteering:
             throughput_qos.get_live_view = False
+
+        # Existing-station validation (--use_existing_station_list) - here we use port_exists() method of realm class inorder to validate.
+        existing_sta_list = []
+        if args.client_type in ("Virtual", "Both") and getattr(args, 'use_existing_station_list', False):
+            raw = getattr(args, 'existing_station_list', None)
+            if raw:
+                existing_sta_list = throughput_qos.validate_existing_stations(raw)
+                logger.info(f"Existing stations after validation: {existing_sta_list}")
+            else:
+                logger.warning("--use_existing_station_list set but --existing_station_list is empty — ignoring.")
+
+        throughput_qos._existing_sta_list = existing_sta_list
 
         # Inorder to run the test on Real Devices in --client_type 'Real and Both' Scenarios.
         if args.client_type in ("Real", "Both"):
