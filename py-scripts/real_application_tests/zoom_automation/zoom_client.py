@@ -464,8 +464,6 @@ if __name__ == "__main__":
         os.environ[arg[0]] = arg[1]
     print(os.environ)
 
-    args = parser.parse_args()
-
     # Example usage:
     zoom_client = ZoomClient(server_ip=args.ip)  # Replace with your actual server IP
     zoom_client.start_zoom()
