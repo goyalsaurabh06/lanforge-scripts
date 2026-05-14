@@ -1,6 +1,4 @@
 import time
-# import paramiko
-import csv
 import re
 import sys
 import pytz
