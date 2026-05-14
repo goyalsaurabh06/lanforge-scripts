@@ -590,6 +590,20 @@ class TeamsClient:
         except Exception as e:
             logger.error(f"Exception during upload: {e}")
 
+    def update_participation(self):
+
+        endpoint_url = f"{self.base_url}/set_participants_joined"
+        try:
+            response = requests.get(endpoint_url)
+            if response.status_code == 200:
+                logger.info("Device participation status updated successfully.")
+            else:
+                logger.warning(
+                    f"Failed to update device participation status. Status code: {response.status_code}"
+                )
+        except requests.RequestException as e:
+            logger.error(f"Request error: {e}")
+
 
 def main():
 
@@ -617,6 +631,7 @@ def main():
         team.login()
         time.sleep(10)
         team.enterMetting()
+        team.update_participation()
         while team.start_time is None or team.end_time is None:
             team.get_start_and_end_time()
             time.sleep(2)
