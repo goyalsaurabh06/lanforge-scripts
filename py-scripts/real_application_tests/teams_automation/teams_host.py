@@ -16,6 +16,7 @@ from datetime import datetime
 import socket
 import pytz
 import pyautogui
+
 pyautogui.FAILSAFE = False
 
 logger = logging.getLogger(__name__)
@@ -550,9 +551,7 @@ class TeamsHost:
                 self.email = data["email"].strip()
                 self.passwd = data["password"].strip()
             else:
-                logger.error(
-                    f"Failed to get credentials: {response.json().get('log')}"
-                )
+                logger.error(f"Failed to get credentials: {response.json().get('log')}")
                 self.email = None
                 self.passwd = None
         except requests.exceptions.RequestException as e:
