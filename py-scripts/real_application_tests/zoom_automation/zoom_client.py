@@ -292,7 +292,7 @@ class ZoomClient:
         packet_loss = re.sub(r'\s*\(.*?\)', '', pack)
         packet_loss_ = packet_loss.replace('%', '')
         pack_rec = self.wait.until(EC.presence_of_element_located((By.XPATH,
-                                                                   "//*[@id='Audio-tab']/div/table/tbody/tr[4]/td[2]"))).text
+                                                                   "//*[@id='Audio-tab']/div/table/tbody/tr[4]/td[3]"))).text
         packet_rec = re.sub(r'\s*\(.*?\)', '', pack_rec)
         packet_rec_ = packet_rec.replace('%', '')
         return [freq if freq != "-" else "0", lat if lat != "-" else "0", jitt if jitt != "-" else "0", packet_loss_ if packet_loss_ != "-" else "0", freq_rec if freq_rec != "-" else "0",
