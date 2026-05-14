@@ -364,7 +364,7 @@ class ZoomClient:
         endpoint_url = f"{self.base_url}/upload_stats"
         data = {
             self.hostname: {
-                "timestamp": self.time,
+                "timestamp": self.get_formated_time(datetime.now(self.tz).isoformat()),
                 "audio_stats": {
                     "frequency_sent": audio_stats[0],
                     "latency_sent": audio_stats[1],
