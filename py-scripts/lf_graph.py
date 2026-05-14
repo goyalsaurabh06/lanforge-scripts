@@ -313,6 +313,8 @@ class lf_bar_graph_horizontal:
                 else:
                     yaxis_visable = True
                 ax.yaxis.set_visible(yaxis_visable)
+        max_val = max(max(d) for d in self.data_set) if self.data_set else 1
+        offset = max_val * 0.01
 
         def show_value(rectangles):
             for rect in rectangles:
@@ -320,9 +322,9 @@ class lf_bar_graph_horizontal:
                 # y = rect.get_y()
                 # h = rect.get_height()
                 # x = rect.get_x()
-                # adding 1 may not always work based on the x axis scale may need to be configurable
-                plt.text(w + 1, rect.get_y() + rect.get_height() / 4., w,
-                         ha='center', va='bottom', rotation=self.text_rotation, fontsize=self.text_font)
+                # Use dynamic offset based on dataset scale for bar value positioning
+                plt.text(w + offset, rect.get_y() + rect.get_height() / 2., w,
+                         ha='left', va='center', rotation=self.text_rotation, fontsize=self.text_font)
         br1 = None
         for _ in self.data_set:
             if i > 0:
@@ -360,6 +362,8 @@ class lf_bar_graph_horizontal:
         plt.suptitle(self.title, fontsize=self.title_size)
         plt.title(self.grp_title)
         plt.gcf()
+        # Expand x-axis so value labels outside bars fit
+        plt.xlim(0, max_val * 1.1)
         plt.savefig("%s.png" % self.graph_image_name, dpi=96)
         plt.close()
         logger.debug("{}.png".format(self.graph_image_name))
