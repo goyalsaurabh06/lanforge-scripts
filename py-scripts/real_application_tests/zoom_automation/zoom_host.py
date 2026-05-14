@@ -405,17 +405,16 @@ class ZoomHost:
     def wait_for_exit(self):
         print("waiting for clients to disconnect")
         tries = 0
-        print(self.monitor_client_count(), "participent count", self.monitor_client_count() > 1)
-        print("sdfsdfgvsdvgsdvsd")
-        print(self.monitor_client_count() > 1)
-        while self.monitor_client_count() > 1:
-            print(self.monitor_client_count(), "participent count")
+        count = self.monitor_client_count()
+        print(count, "participent count")
+        while count > 1:
+            print(count, "participent count")
             time.sleep(2)
             tries += 1
             if tries > 20:
                 print("max tries reach for client disconnection wait")
                 break
-        print(self.monitor_client_count(), self.monitor_client_count() > 1)
+            count = self.monitor_client_count()
 
     # To download the csv
     def download_csv(self):
