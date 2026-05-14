@@ -2,7 +2,6 @@ import time
 import csv
 import sys
 import re
-import pyperclip
 import pytz
 from datetime import datetime, timedelta
 from selenium import webdriver
@@ -16,10 +15,6 @@ import socket
 import argparse
 import json
 import pickle
-if sys.platform.lower() == "darwin":
-    pyperclip.set_clipboard('pbcopy')
-else:
-    print("This is not macOS.")
 
 
 class ZoomHost:
