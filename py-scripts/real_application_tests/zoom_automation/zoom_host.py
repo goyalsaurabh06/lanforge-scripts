@@ -148,6 +148,27 @@ class ZoomHost:
         self.update_login_completed()
         time.sleep(1)
 
+    def keep_footer_visible(self):
+        print("[INFO] Disabling Zoom's auto-hide footer...")
+        try:
+            # Injects a background script that fires a fake mouse movement every 2 seconds
+            js_script = """
+                if (!window.keepZoomActiveInterval) {
+                    window.keepZoomActiveInterval = setInterval(() => {
+                        document.dispatchEvent(new MouseEvent('mousemove', {
+                            bubbles: true,
+                            cancelable: true,
+                            clientX: 100,
+                            clientY: 100
+                        }));
+                    }, 2000);
+                }
+            """
+            self.driver.execute_script(js_script)
+            print("[INFO] Footer is now locked to visible.")
+        except Exception as e:
+            print(f"[ERROR] Failed to lock footer visibility: {e}")
+
     def zoom_login(self):
         print("getting host email and password")
         self.login_email = self.get_host_email()
