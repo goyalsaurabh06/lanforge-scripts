@@ -929,7 +929,6 @@ class ZoomHost:
 
 
 if __name__ == "__main__":
-    zoom_host = ZoomHost()  # Replace with your actual server IP
     parser = argparse.ArgumentParser(description="Zoom Automation Script")
     parser.add_argument('--ip', required=True, help="Server endpoint ip")
     parser.add_argument('--env', action='extend', nargs='+', default=[])
@@ -942,7 +941,6 @@ if __name__ == "__main__":
 
     zoom_host = ZoomHost(server_ip=args.ip)  # Replace with your actual server IP
 
-    # zoom_host.read_credentials()
     zoom_host.start_zoom()
     wait_limit = datetime.now() + timedelta(seconds=120)
     zoom_host.get_stats_flags()
@@ -957,34 +955,43 @@ if __name__ == "__main__":
             zoom_host.set_start_test(flag=True)
             break
         time.sleep(5)
+    count = 0
     while zoom_host.start_time is None or zoom_host.end_time is None:
+        count += 1
+        if count > 24:
+            print("start and end time is not set from server even after 2 minutes. Exiting the test")
+            zoom_host.driver.quit()
+            sys.exit(1)
+        print("waiting for start and end time from server")
         zoom_host.get_start_and_end_time()
         time.sleep(5)
-    print("end_time and srtrt time is", zoom_host.start_time, zoom_host.end_time)
-    while zoom_host.start_time > datetime.now(zoom_host.tz).isoformat():
+    print("end_time and start time is", zoom_host.start_time, zoom_host.end_time)
+    try:
+        start_dt = datetime.fromisoformat(zoom_host.start_time.replace("Z", "+00:00"))
+        end_dt = datetime.fromisoformat(zoom_host.end_time.replace("Z", "+00:00"))
+        if start_dt.tzinfo is None:
+            start_dt = zoom_host.tz.localize(start_dt)
+        else:
+            start_dt = start_dt.astimezone(zoom_host.tz)
+        if end_dt.tzinfo is None:
+            end_dt = zoom_host.tz.localize(end_dt)
+        else:
+            end_dt = end_dt.astimezone(zoom_host.tz)
+    except Exception as e:
+        print(f"Invalid start/end time format from server: {e}")
+        zoom_host.driver.quit()
+        sys.exit(1)
+
+    while start_dt > datetime.now(zoom_host.tz):
         time.sleep(2)
         print("waiting for the start time")
-    header = ["timestamp",
-              "Sent Audio Frequency (khz)", "Sent Audio Latency (ms)", "Sent Audio Jitter (ms)", "Sent Audio Packet loss (%)",
-              "Receive Audio Frequency (khz)", "Receive Audio Latency (ms)", "Receive Audio Jitter (ms)", "Receive Audio Packet loss (%)",
-              "Sent Video Latency (ms)", "Sent Video Jitter (ms)", "Sent Video Packet loss (%)", "Sent Video Resolution (khz)",
-              "Sent Video Frames ps (khz)", "Receive Video Latency (ms)", "Receive Video Jitter (ms)", "Receive Video Packet loss (%)",
-              "Receive Video Resolution (khz)", "Receive Video Frames ps (khz)"
-              ]
 
-    with open(f'{zoom_host.hostname}.csv', 'w+', encoding='utf-8', errors='replace', newline='') as file:
-        csv_writer = csv.writer(file)
-        csv_writer.writerow(header)
-        while zoom_host.end_time > datetime.now(zoom_host.tz).isoformat():
-            print("monitoring the test")
-            print(header)
-            print(len(header))
-            if zoom_host.check_stop_signal():
-                break
-            stats = zoom_host.collecting_stats()
-            csv_writer.writerow(stats)
-            zoom_host.send_stats_to_api(zoom_host.audio_stats, zoom_host.video_stats)
-            # time.sleep(5)
+    while end_dt > datetime.now(zoom_host.tz):
+        print("monitoring the test")
+        if zoom_host.check_stop_signal():
+            break
+        zoom_host.send_stats_to_api(zoom_host.audio_stats, zoom_host.video_stats)
+        time.sleep(2)
     print("test has been completed")
     zoom_host.wait_for_exit()
     zoom_host.stop_zoom()
