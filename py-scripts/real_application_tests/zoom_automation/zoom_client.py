@@ -96,36 +96,46 @@ class ZoomClient:
         # After starting Zoom, retrieve new_login_url and new_password
         self.get_stats_flags()
         time.sleep(5)
+        count = 0
         while self.start_time is None or self.end_time is None:
+            count += 1
+            if count > 60:
+                print(
+                    "Failed to retrieve start and end time from the server after 5 minutes."
+                )
+                self.stop_zoom()
+                sys.exit(1)
             self.get_start_and_end_time()
             time.sleep(5)
         print("end_time and srtrt time is", self.start_time, self.end_time)
-        while self.start_time > datetime.now(self.tz).isoformat():
+        try:
+            start_dt = datetime.fromisoformat(self.start_time.replace("Z", "+00:00"))
+            end_dt = datetime.fromisoformat(self.end_time.replace("Z", "+00:00"))
+            if start_dt.tzinfo is None:
+                start_dt = self.tz.localize(start_dt)
+            else:
+                start_dt = start_dt.astimezone(self.tz)
+            if end_dt.tzinfo is None:
+                end_dt = self.tz.localize(end_dt)
+            else:
+                end_dt = end_dt.astimezone(self.tz)
+        except Exception as e:
+            print(f"Invalid start/end time format from server: {e}")
+            self.stop_zoom()
+            sys.exit(1)
+
+        while start_dt > datetime.now(self.tz):
             time.sleep(2)
             print("waiting for the start time")
 
-        header = ["timestamp",
-                  "Sent Audio Frequency (khz)", "Sent Audio Latency (ms)", "Sent Audio Jitter (ms)", "Sent Audio Packet loss (%)",
-                  "Receive Audio Frequency (khz)", "Receive Audio Latency (ms)", "Receive Audio Jitter (ms)", "Receive Audio Packet loss (%)",
-                  "Sent Video Latency (ms)", "Sent Video Jitter (ms)", "Sent Video Packet loss (%)", "Sent Video Resolution (khz)",
-                  "Sent Video Frames ps (khz)", "Receive Video Latency (ms)", "Receive Video Jitter (ms)", "Receive Video Packet loss (%)",
-                  "Receive Video Resolution (khz)", "Receive Video Frames ps (khz)"
-                  ]
-        with open(f'{self.hostname}.csv', 'w+', encoding='utf-8', errors='replace', newline='') as file:
-            csv_writer = csv.writer(file)
-            csv_writer.writerow(header)
-            while self.end_time > datetime.now(self.tz).isoformat():
-                print("monitoring the test", "time remaining is")
-                print(self.start_time, self.end_time)
-                print()
-                if self.check_stop_signal():
-                    break
-                stats = self.collecting_stats()
-                csv_writer.writerow(stats)
-                self.send_stats_to_api(self.audio_stats, self.video_stats)
-                # time.sleep(5)
+        while end_dt > datetime.now(self.tz):
+            print("monitoring the test")
+            if self.check_stop_signal():
+                break
+            # stats = self.collecting_stats()
+            self.send_stats_to_api(self.audio_stats, self.video_stats)
+            time.sleep(1)
         print("test has been completed")
-        # self.transfer_files(f"{self.hostname}.csv")
         self.stop_zoom()
 
     def stop_zoom(self):
