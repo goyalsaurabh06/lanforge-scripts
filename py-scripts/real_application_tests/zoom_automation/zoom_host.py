@@ -76,6 +76,44 @@ class ZoomHost:
         self.driver.maximize_window()
         self.wait = WebDriverWait(self.driver, 90)
 
+    def share_screen(self):
+        print("sharing screen now")
+        try:
+            # Wait for the Zoom share button to be present in the DOM
+            self.wait.until(
+                EC.presence_of_element_located(
+                    (
+                        By.CSS_SELECTOR,
+                        ".footer-button-base__button.sharing-entry-button-container",
+                    )
+                )
+            )
+
+            # Click the Zoom share button
+            self.driver.execute_script(
+                "document.querySelector('.footer-button-base__button.sharing-entry-button-container').click()"
+            )
+            print("[INFO] Share Screen clicked in Zoom UI.")
+
+            # Give the WebRTC connection a moment to establish
+            time.sleep(2)
+
+            print("[INFO] Entire Screen shared successfully via Chrome flags")
+
+            # We use a short wait here because if it's not there, we don't want to wait 90 seconds
+            pause_audio_btn = WebDriverWait(self.driver, 5).until(
+                EC.element_to_be_clickable(
+                    (By.CSS_SELECTOR, "button[aria-label='Pause Audio Share']")
+                )
+            )
+
+            # Click it to pause the audio sharing
+            self.driver.execute_script("arguments[0].click();", pause_audio_btn)
+            print("[INFO] Screen share audio has been muted/paused.")
+
+        except Exception as e:
+            print(f"Error in sharing screen: {e}")
+
     def saveCookies(self):
         # Save cookies to a file
         cookies = self.driver.get_cookies()
