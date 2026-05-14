@@ -551,8 +551,24 @@ class ZoomHost:
         self.driver.quit()
 
     def monitor_client_count(self):
-        no_of_participants = self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".footer-button__number-counter"))).text
-        return int(no_of_participants)
+        try:
+            counter_text = self.wait.until(
+                EC.presence_of_element_located(
+                    (By.CSS_SELECTOR, ".footer-button__number-counter")
+                )
+            ).text.strip()
+
+            if not counter_text:
+                return 1
+
+            if not counter_text.isdigit():
+                print(f"Unexpected participant counter value: {counter_text!r}")
+                return 1
+
+            return int(counter_text)
+        except Exception as e:
+            print(f"Error reading participant count: {e}")
+            return 1
 
     def set_start_test(self, flag=False):
         try:
