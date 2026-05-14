@@ -14,10 +14,23 @@ import pytz
 import logging
 import traceback
 import pyautogui
+pyautogui.FAILSAFE = False
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+_log_fmt = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+
+_console_handler = logging.StreamHandler()
+_console_handler.setFormatter(_log_fmt)
+logger.addHandler(_console_handler)
+
+_file_handler = logging.FileHandler(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "teams_client.log"),
+    mode="w",
 )
+_file_handler.setFormatter(_log_fmt)
+logger.addHandler(_file_handler)
 
 
 class TeamsClient:
@@ -91,7 +104,7 @@ class TeamsClient:
 
         except Exception as e:
             self.driver.quit()
-            logging.error(f"An error occurred: {e}")
+            logger.error(f"An error occurred: {e}")
             traceback.print_exc()
             sys.exit(1)
 
@@ -108,13 +121,13 @@ class TeamsClient:
                 # Only update if the server's stop signal is True
                 if stop_signal_from_server:
                     self.stop_signal = True
-                    print("Stop signal received from the server. Exiting the loop.")
+                    logger.info("Stop signal received from the server. Exiting the loop.")
                 else:
 
-                    print("No stop signal received from the server. Continuing.")
+                    logger.info("No stop signal received from the server. Continuing.")
             return self.stop_signal
         except Exception as e:
-            print(f"Error checking stop signal: {e}")
+            logger.error(f"Error checking stop signal: {e}")
 
     def wait_for_element(self, xpathvalue):
         try:
@@ -122,7 +135,7 @@ class TeamsClient:
                 EC.visibility_of_element_located((By.XPATH, xpathvalue))
             )
         except Exception as e:
-            print(f"Element not found: {xpathvalue}. Error: {e}")
+            logger.warning(f"Element not found: {xpathvalue}. Error: {e}")
             return None
 
     def get_meeting_link(self):
@@ -132,15 +145,15 @@ class TeamsClient:
                 data = response.json()
                 self.meeting_link = data.get("meet_link")
                 if not self.meeting_link:
-                    logging.error("Meeting link not found in the response.")
+                    logger.error("Meeting link not found in the response.")
                     sys.exit(1)
             else:
-                logging.error(
+                logger.error(
                     f"Failed to fetch meeting link. Status code: {response.status_code}"
                 )
                 sys.exit(1)
         except requests.RequestException as e:
-            logging.error(f"Request error: {e}")
+            logger.error(f"Request error: {e}")
             sys.exit(1)
 
     def wait_for_element_with_time(self, xpathvalue, timeout=60):
@@ -149,7 +162,7 @@ class TeamsClient:
                 EC.visibility_of_element_located((By.XPATH, xpathvalue))
             )
         except Exception as e:
-            print(f"Element not found: {xpathvalue}. Error: {e}")
+            logger.warning(f"Element not found: {xpathvalue}. Error: {e}")
             return None
 
     def enterMetting(
@@ -200,7 +213,7 @@ class TeamsClient:
 
         except Exception as e:
             self.driver.quit()
-            logging.error(f"An error occurred: {e}")
+            logger.error(f"An error occurred: {e}")
             traceback.print_exc()
             sys.exit(1)
 
@@ -251,7 +264,7 @@ class TeamsClient:
 
         except Exception as e:
             self.driver.quit()
-            logging.error(f"An error occurred: {e}")
+            logger.error(f"An error occurred: {e}")
             traceback.print_exc()
             sys.exit(1)
 
@@ -360,13 +373,13 @@ class TeamsClient:
             }
 
             # print(audio_stats_data)
-            print("checking au_recevied jitter")
-            print(self.au_recv_jitter)
+            logger.info("checking au_recevied jitter")
+            logger.info(self.au_recv_jitter)
             return audio_stats_data
 
         except Exception as e:
             self.driver.quit()
-            logging.error(f"An error occurred: {e}")
+            logger.error(f"An error occurred: {e}")
             traceback.print_exc()
             sys.exit(1)
 
@@ -472,9 +485,6 @@ class TeamsClient:
                 self.vi_sent_codec,
                 self.vi_processing,
             ]
-            print("video stats data")
-            print(video_stats_data)
-
             video_stats_data = {
                 "vi_sent_bitrate": self.vi_sent_bitrate,
                 "vi_recv_bitrate": self.vi_recv_bitrate,
@@ -489,7 +499,7 @@ class TeamsClient:
 
         except Exception as e:
             self.driver.quit()
-            logging.error(f"An error occurred: {e}")
+            logger.error(f"An error occurred: {e}")
             traceback.print_exc()
             sys.exit(1)
 
@@ -502,11 +512,11 @@ class TeamsClient:
                 self.audio = data.get("audio_stats")
                 self.video = data.get("video_stats")
             else:
-                print(
+                logger.warning(
                     f"Failed to fetch stats flag. Status code: {response.status_code}"
                 )
         except requests.RequestException as e:
-            print(f"Request error: {e}")
+            logger.error(f"Request error: {e}")
         return None
 
     def get_credentials(self):
@@ -519,13 +529,13 @@ class TeamsClient:
                 self.email = data["email"].strip()
                 self.passwd = data["password"].strip()
             else:
-                logging.error(
-                    f"❌ Failed to get credentials: {response.json().get('log')}"
+                logger.error(
+                    f"Failed to get credentials: {response.json().get('log')}"
                 )
                 self.email = None
                 self.passwd = None
         except requests.exceptions.RequestException as e:
-            logging.error(f"❌ Error during credential request: {e}")
+            logger.error(f"Error during credential request: {e}")
             self.email = None
             self.passwd = None
 
@@ -538,11 +548,11 @@ class TeamsClient:
                 self.start_time = data.get("start_time")
                 self.end_time = data.get("end_time")
             else:
-                print(
+                logger.warning(
                     f"Failed to fetch new login URL. Status code: {response.status_code}"
                 )
         except requests.RequestException as e:
-            print(f"Request error: {e}")
+            logger.error(f"Request error: {e}")
         return None
 
     def send_stats_to_server(self, hostname, audio_stats, video_stats):
@@ -572,13 +582,13 @@ class TeamsClient:
         try:
             response = requests.post(f"{self.base_url}/upload_stats", json=payload)
             if response.status_code == 200:
-                print(f"Stats uploaded for {hostname}")
+                logger.info(f"Stats uploaded for {hostname}")
             else:
-                print(
+                logger.warning(
                     f"Failed to upload stats: {response.status_code} - {response.text}"
                 )
         except Exception as e:
-            print(f"Exception during upload: {e}")
+            logger.error(f"Exception during upload: {e}")
 
 
 def main():
@@ -598,7 +608,7 @@ def main():
         for argument in args.env:
             arg = argument.split("=")
             os.environ[arg[0]] = arg[1]
-        print(os.environ)
+        logger.info(os.environ)
 
         team = TeamsClient(server_ip=args.ip)
         team.get_meeting_link()
@@ -612,13 +622,13 @@ def main():
             time.sleep(2)
         while team.start_time > datetime.now(team.tz).isoformat():
             time.sleep(2)
-            print("waiting for the start time")
+            logger.info("waiting for the start time")
 
         while team.end_time > datetime.now(team.tz).isoformat():
-            print("monitoring the test")
+            logger.info("monitoring the test")
             team.check_stop_signal()
             if team.stop_signal:
-                print("Stop signal received. Exiting the loop.")
+                logger.info("Stop signal received. Exiting the loop.")
                 break
             if team.audio:
                 audio_stats = team.audio_stats()
@@ -636,7 +646,7 @@ def main():
 
     except Exception as e:
         team.driver.quit()
-        logging.error(f"An error occurred: {e}")
+        logger.error(f"An error occurred: {e}")
         traceback.print_exc()
         sys.exit(1)
 
