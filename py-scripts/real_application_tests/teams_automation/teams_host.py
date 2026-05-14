@@ -168,23 +168,18 @@ class TeamsHost:
 
         try:
 
-            self.driver.execute_script("window.open('');")
+            calendar_button = WebDriverWait(self.driver, 120).until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//button[contains(@aria-label, 'Calendar')]")
+                )
+            )
 
-            windows = self.driver.window_handles
-            original_window = self.driver.current_window_handle
-            new_window = windows[1]
+            logger.info("Calendar button found! App is fully loaded.")
 
-            self.driver.switch_to.window(windows[1])
-            self.driver.get("https://teams.microsoft.com/_#/calendarv2")
+            self.driver.execute_script("arguments[0].click();", calendar_button)
+            logger.info("Calendar button clicked via JavaScript.")
 
-            # Close the original window
-            self.driver.switch_to.window(original_window)
-            self.driver.close()
-
-            # Switch back to the new window
-            self.driver.switch_to.window(new_window)
-
-            meet_now = WebDriverWait(self.driver, 60).until(
+            meet_now = WebDriverWait(self.driver, 180).until(
                 EC.element_to_be_clickable(
                     (
                         By.CSS_SELECTOR,
@@ -233,31 +228,6 @@ class TeamsHost:
             camera_button.click()
 
             time.sleep(3)
-
-            # show_more=self.wait_for_element('//button[@id="callingButtons-showMoreBtn"]')
-
-            # show_more.click()
-
-            # time.sleep(3)
-
-            # settings=self.wait_for_element('//div[@id="SettingsMenuControl-id"]')
-
-            # settings.click()
-
-            # meeting_options=self.wait_for_element('//div[@role="menuitemcheckbox" and @aria-label="Meeting options" and @id="meeting-options-ubar"]')
-            # meeting_options.click()
-
-            # bypass_option=self.wait_for_element("//button[@id='AutoAdmittedUsers']")
-            # bypass_option.click()
-
-            # everyone=self.wait_for_element("//div[@id='option1' and @role='option' and @data-tid='Everyone']")
-
-            # everyone.click()
-
-            # apply_button = WebDriverWait(self.driver, 60).until(
-            #     EC.element_to_be_clickable((By.CSS_SELECTOR, "button[title='Apply']"))
-            # )
-            # apply_button.click()
 
         except Exception as e:
             self.driver.quit()
