@@ -764,10 +764,9 @@ class ZoomHost:
 
     def update_login_completed(self):
         endpoint_url = f"{self.base_url}/login_completed"
-        data = {"login_completed": 1}  # Assuming you want to mark login as completed
 
         try:
-            response = requests.post(endpoint_url, json=data)
+            response = requests.get(endpoint_url)
             if response.status_code == 200:
                 print("Login completed status updated successfully.")
             else:
