@@ -34,10 +34,11 @@ class ZoomHost:
         self.end_time = None
         self.tz = pytz.timezone('Asia/Kolkata')
         self.hostname = socket.gethostname()
-        self.path = "/home/lanforge/lanforge-scripts/py-scripts/zoom_automation/test_results/"
         self.audio = True
         self.video = True
         self.stop_signal = False
+        self.audio_stats = ["0", "0", "0", "0", "0", "0", "0", "0"]
+        self.video_stats = ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0"]
 
     def setupdriver(self):
         chrome_options = Options()
