@@ -358,8 +358,7 @@ class ZoomClient:
             self.video_stats = self.capture_video_stats()
         else:
             self.video_stats = ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0"]
-        self.time = self.get_formated_time(datetime.now(self.tz).isoformat())
-        return [self.time] + self.audio_stats + self.video_stats
+        return self.audio_stats + self.video_stats
 
     def send_stats_to_api(self, audio_stats, video_stats):
         endpoint_url = f"{self.base_url}/upload_stats"
