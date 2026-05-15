@@ -178,7 +178,9 @@ class Ping(Realm):
                  get_live_view=None, robo_ip=None, angle_list=None, coordinate_list=None, rotation_enabled=None, local_lf_report_dir=None, do_bandsteering=False, total_cycles=1, bssids=None,
                  duration_to_skip=None,
                  configure=False,
-                 clients_type=""):
+                 clients_type="",
+                 use_existing_sta_list=False,
+                 existing_sta_list=""):
         super().__init__(lfclient_host=host,
                          lfclient_port=port)
         self.host = host
@@ -263,6 +265,45 @@ class Ping(Realm):
         self.do_bandsteering = do_bandsteering
         self.total_cycles = total_cycles
         self.bssids = bssids if bssids else []
+
+        self.sta_list = []
+        if use_existing_sta_list:
+            logger.info(f"Using existing stations provided in --existing_sta_list: {existing_sta_list}")
+            lis = existing_sta_list.split(',') if existing_sta_list else []
+            logger.info(lis)
+            valid_stations = []
+            for station in lis:
+                logger.info(f"Verifying station {station} from the provided --existing_sta_list")
+                station = station.strip()
+                rv = station.split('.')
+                response = self.json_get(f"/port/{rv[0]}/{rv[1]}/{rv[2]}")
+
+                try:
+                    if (response['interface']
+                        and response['interface']['ip'] != "0.0.0.0"
+                        and str(response['interface']['down']).lower() == "false"
+                        and str(response['interface']['phantom']).lower() == "false"
+                        and response['interface']['parent dev'] != ""):
+
+                        logger.info(f"Station {station} exists and will be used for the test")
+                        valid_stations.append(station)
+                    else:
+                        logger.info(f"Station {station} is not up and running")
+
+                except Exception:
+                    logger.warning(f"Station {station} does not exist")
+
+            lis = valid_stations
+            if lis == []:
+                if not self.real:
+                    logger.info("No valid stations found in the provided --existing_sta_list, exiting the test")
+                    exit(1)
+                else:
+                    logger.info(f"no valid stations so proceding with the real clients only")
+                    self.virtual = False
+            self.sta_list = lis
+            logger.info(f"final station list {self.sta_list}")
+        self.use_existing_sta_list = use_existing_sta_list
 
     def generate_real_time_csv(self):
     
@@ -392,7 +433,7 @@ class Ping(Realm):
 
     def cleanup(self):
 
-        if self.virtual:
+        if self.virtual :
             # removing virtual stations if existing
             for station in self.sta_list:
                 logging.info('Removing the station {} if exists'.format(station))
@@ -400,12 +441,13 @@ class Ping(Realm):
                     'CX_generic-{}'.format(station.split('.')[2]))
                 self.generic_endps_profile.created_endp.append(
                     'generic-{}'.format(station.split('.')[2]))
-                self.rm_port(station, check_exists=True)
-
-            if not LFUtils.wait_until_ports_disappear(base_url=self.host, port_list=self.sta_list, debug=self.debug):
-                logging.info('All stations are not removed or a timeout occured.')
-                logging.error('Aborting the test.')
-                exit(0)
+                if not self.use_existing_sta_list:
+                    self.rm_port(station, check_exists=True)
+            if not self.use_existing_sta_list:
+                if not LFUtils.wait_until_ports_disappear(base_url=self.host, port_list=self.sta_list, debug=self.debug):
+                    logging.info('All stations are not removed or a timeout occured.')
+                    logging.error('Aborting the test.')
+                    exit(0)
 
         if self.real:
             # removing generic endpoints for real devices if existing
@@ -2965,15 +3007,34 @@ def validate_args(args):
     if args.clients_type == "" and not args.real and not args.virtual:
         logger.error('either --clients_type or --real or --virtual')
         exit(1)
+    if args.clients_type in ["virtual", "both"]:
+        if not args.use_existing_sta_list and not args.num_sta:
+            if args.clients_type == "virtual" and not args.clients_type == "both":
+                logger.error("Number of stations must be provided for virtual clients configuration when not using existing stations")
+                exit(1)
+            else:
+                logger.info("No virtual stations exists proceeding with only real clients")
+                args.clients_type = "real"
+        if args.use_existing_sta_list and args.existing_sta_list == "":
+            logger.error("Existing station list must be specified when using existing stations")
+            exit(1)
     if (args.clients_type == "virtual" or args.clients_type == "both" or args.virtual) and args.radio is None:
-        logger.error('--radio required')
-        exit(1)
+        if not args.use_existing_sta_list:    
+            logger.error('--radio required')
+            exit(1)
     if (args.clients_type == "virtual" or args.clients_type == "both" or args.virtual) and args.ssid is None:
-        logger.error('--ssid required for virtual stations')
-        exit(1)
-    if args.security != 'open' and args.passwd == '[BLANK]':
+        if not args.use_existing_sta_list:
+            logger.error('--ssid required for virtual stations')
+            exit(1)
+        else:
+            if args.use_default_config is False:
+                logger.error('--ssid required for Wi-Fi configuration or enable --use_default_config')
+                exit(1)
+
+    if not args.use_existing_sta_list and args.security != 'open' and args.passwd == '[BLANK]':
         logger.error('--passwd required')
         exit(1)
+
 
     if args.device_csv_name and args.expected_passfail_value:
         logger.error("Enter either --device_csv_name or --expected_passfail_value")
@@ -2984,19 +3045,22 @@ def validate_args(args):
             exit(1)
     if args.use_default_config is False and args.group_name is None and args.file_name is None and args.profile_name is None:
         if args.ssid is None:
-            logger.error('--ssid required for Wi-Fi configuration')
-            exit(1)
+            if not args.use_existing_sta_list:
+                logger.error('--ssid required for Wi-Fi configuration')
+                exit(1)
 
         if args.security.lower() != 'open' and args.passwd == '[BLANK]':
-            logger.error('--passwd required for Wi-Fi configuration')
-            exit(1)
+            if not args.use_existing_sta_list:
+                logger.error('--passwd required for Wi-Fi configuration')
+                exit(1)
 
         if args.server_ip is None:
             logger.error('--server_ip or upstream ip required for Wi-fi configuration')
             exit(1)
     elif args.use_default_config is False and args.resources and (args.ssid is None or args.passwd is None or args.security is None):
-        logger.error("Please provide ssid password and security when device list is given")
-        exit(1)
+        if not args.use_existing_sta_list:    
+            logger.error("Please provide ssid password and security when device list is given")
+            exit(1)
 
     if args.group_name:
         selected_groups = args.group_name.split(',')
@@ -3110,6 +3174,11 @@ connectivity problems.
         python3 lf_interop_ping_plotter.py --mgr 192.168.207.78 --real --target 8.8.8.8 --ping_interval 1 --ping_duration 1m --use_default_config
         --robot_ip 192.168.204.76 --coordinate 3,4 --do_bandsteering --total_cycles 3 --bssids 94:A6:7E:74:26:33,94:A6:7E:74:26:22
 
+        EXAMPLE-17:
+        Command Line Interface to run ping plotter test for both real and virtual(Existing Stations)
+        python3 lf_interop_ping_plotter.py --mgr 192.168.207.78 --target www.google.com --clients_type both --ping_interval 5 --ping_duration 60s
+        --server_ip 192.168.204.60 --use_existing_sta_list --existing_sta_list 1.1.sta1000,1.1.sta1001,1.1.sta1002,1.1.sta1003 --use_default_config
+
 
 
         SCRIPT_CLASSIFICATION : Test
@@ -3218,6 +3287,13 @@ connectivity problems.
     optional.add_argument('--clients_type',
                           type=str,
                           help='specify the client type example: real or virtual or both')
+    optional.add_argument('--existing_sta_list',
+                          type=str,
+                          default="",
+                          help="List of existing stations to be passed when creating cross connections, example: 1.1.sta001,1.1.sta002")
+    optional.add_argument('--use_existing_sta_list',
+                          action="store_true",
+                          help="Whether to use existing stations for cross connections if provided in --existing_sta_list", default=False)
 
 
 
@@ -3413,10 +3489,10 @@ connectivity problems.
                 ui_report_dir=ui_report_dir, csv_name=args.device_csv_name, expected_passfail_val=args.expected_passfail_value, wait_time=args.wait_time, group_name=group_name,
                 floors=args.floors, get_live_view=args.get_live_view, robo_ip=robo_ip, rotation_enabled=rotation_enabled, coordinate_list=coord_list, angle_list=angle_list,
                 local_lf_report_dir=args.local_lf_report_dir, do_bandsteering=args.do_bandsteering, total_cycles=args.total_cycles, bssids=args.bssids.split(",") if args.bssids else [],
-                duration_to_skip=args.duration_to_skip,configure=configure,clients_type=args.clients_type)
+                duration_to_skip=args.duration_to_skip,configure=configure,clients_type=args.clients_type,use_existing_sta_list=args.use_existing_sta_list, existing_sta_list=args.existing_sta_list)
     ping.pingduration = duration
     # creating virtual stations if --virtual flag is specified
-    if ping.virtual:
+    if ping.virtual and not args.use_existing_sta_list:
         logging.info('Proceeding to create {} virtual stations on {}'.format(num_sta, radio))
         station_list = LFUtils.portNameSeries(
             prefix_='sta', start_id_=0, end_id_=num_sta - 1, padding_number_=100000, radio=radio)
@@ -3517,7 +3593,10 @@ connectivity problems.
 
     # building station if virtual
     if ping.virtual:
-        ping.buildstation()
+        if not args.use_existing_sta_list:
+            ping.buildstation()
+        else:
+            logger.info(f"Skipping virtual station build as existing stalist specified {ping.sta_list}")
 
     # check if generic tab is enabled or not
     if not ping.check_tab_exists():
