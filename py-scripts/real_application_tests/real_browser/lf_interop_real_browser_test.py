@@ -128,6 +128,9 @@ lf_horizontal_stacked_graph = lf_graph.lf_horizontal_stacked_graph
 
 DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
 port_utils = importlib.import_module("py-json.port_utils")
+LFUtils = importlib.import_module("py-json.LANforge.LFUtils")
+station_profile_module = importlib.import_module("py-json.station_profile")
+StationProfile = station_profile_module.StationProfile
 PortUtils = port_utils.PortUtils
 
 # Set up logging configuration for the script
@@ -199,7 +202,11 @@ class RealBrowserTest(Realm):
                  current_cord="",
                  current_angle=None,
                  rotations_enabled=False,
-                 duration_to_skip=None
+                 duration_to_skip=None,
+                 radio=None,
+                 clients_type=None,
+                 debug=True,
+                 num_sta=0
                  ):
         super().__init__(lfclient_host=host, lfclient_port=8080)
         # Initialize attributes with provided parameters
@@ -223,6 +230,7 @@ class RealBrowserTest(Realm):
         self.no_precleanup = no_precleanup
         self.direction = "dl"
         self.dest = "/dev/null"
+        self.clients_type = clients_type
 
         self.app = Flask(__name__)
         self.app.logger.setLevel(logging.WARNING)
@@ -239,7 +247,9 @@ class RealBrowserTest(Realm):
         self.linux = 0
         self.android = 0
         self.iteration_value = 0
-
+        # while creating layer 4 cross connections real cross connections are created ahead of virtual
+        # this offset varible skips already created maps in ip_map to avoid duplications in cross connection names
+        self.offset = 0
         self.webui_hostnames = []
         self.webui_ostypes = []
         self.webui_devices = None
@@ -292,11 +302,30 @@ class RealBrowserTest(Realm):
         self.selected_groups = selected_groups
         self.selected_profiles = selected_profiles
         self.config_obj = None
+        self.radio = radio
+        self.num_sta = num_sta
+
+        # setting the real and virtual flags according to client type
+
+        if self.clients_type.lower() == "both":
+            self.real = True
+            self.virtual = True
+        elif self.clients_type.lower() == "virtual":
+            self.real = False
+            self.virtual = True
+        elif self.clients_type.lower() == "real":
+            self.real = True
+            self.virtual = False
+        # Initialize virtual station list
+        self.sta_list = []
+
         # Initialize RealDevice instance
         self.devices = base_RealDevice(manager_ip=self.host, selected_bands=[])
         # Initialize local realm
         self.local_realm = realm.Realm(lfclient_host=self.host, lfclient_port=8080)
         self.port_util = PortUtils(self.local_realm)
+        # Initialize station profile
+        self.station_profile = self.local_realm.new_station_profile()
         # Initialize HTTP profile for testing
         self.http_profile = self.local_realm.new_http_profile()
         # Initialize interoperability instance for WiFi testing
@@ -339,6 +368,17 @@ class RealBrowserTest(Realm):
             self.robo_csv_files = []
             self.robo_mobile_data = {}
 
+        # setting up virtual station list
+        if self.virtual:
+            logging.info('Proceeding to create {} virtual stations on {}'.format(num_sta, self.radio))
+            station_list = LFUtils.portNameSeries(
+                prefix_='sta', start_id_=0, end_id_=num_sta - 1, padding_number_=100000, radio=self.radio)
+            self.sta_list = station_list
+            logger.info(self.sta_list)
+            if (debug):
+                logging.info('Virtual Stations: {}'.format(station_list).replace(
+                    '[', '').replace(']', '').replace('\'', ''))
+
     def get_test_results_data(self, test_results, group):
         groups_devices_map = self.config_obj.get_groups_devices(data=self.selected_groups, groupdevmap=True)
         group_hostnames = groups_devices_map.get(group, [])
@@ -346,13 +386,46 @@ class RealBrowserTest(Realm):
 
         for key in test_results:
             group_test_results[key] = []
+        # for reporting purpose as virtual clients not called as devices
+        field = ""
+        if (self.real and self.virtual) or self.virtual:
+            field = "Type"
+        elif self.real:
+            field = "Device Type"
 
         for idx, hostname in enumerate(test_results["Hostname"]):
-            if hostname in group_hostnames or hostname in self.serial_list:
-                for key in test_results:
-                    group_test_results[key].append(test_results[key][idx])
+            # for mobiles we have both serial and username but for laptops we only have hostname
+            if test_results[field][idx] != "mobile":
+                if hostname in group_hostnames or hostname in self.serial_list:
+                    for key in test_results:
+                        group_test_results[key].append(test_results[key][idx])
+            else:
+                if self.user_to_serial_map[hostname] in group_hostnames:
+                    for k in test_results:
+                        group_test_results[k].append(test_results[k][idx])
 
         return group_test_results
+
+    # building the virtual stations
+
+    def buildstation(self):
+        logging.info('Creating Stations {}'.format(self.sta_list))
+        shelf, resource, port = self.sta_list[0].split('.')
+        logging.info('{} {} {}'.format(shelf, resource, port))
+        station_object = StationProfile(lfclient_url='http://{}:{}'.format(self.host, 8080), local_realm=self, ssid=self.ssid,
+                                        ssid_pass=self.passwd, security=self.encryp, number_template_='200', up=True, resource=resource, shelf=shelf)
+
+        station_object.use_security(
+            security_type=self.encryp, ssid=self.ssid, passwd=self.passwd)
+
+        station_object.create(radio=self.radio, sta_names_=self.sta_list)
+
+        station_object.admin_up()
+        if self.wait_for_ip(self.sta_list):
+            self._pass("All stations got IPs", print_=True)
+        else:
+            self._fail(
+                "Stations failed to get IPs", print_=True)
 
     def build(self):
         """
@@ -389,57 +462,85 @@ class RealBrowserTest(Realm):
         self.formatted_endtime_str = ""
         self.test_setup_info_incremental_values = None
 
-        # Retrieve resource data for phones
-        self.phone_data, self.laptops, self.laptop_os_types, self.user_name, self.mac_list = self.get_resource_data()
+        if self.real:
+            # Retrieve resource data for phones and laptops
+            self.phone_data, self.laptops, self.laptop_os_types, self.user_name, self.mac_list = self.get_resource_data()
 
         self.direction = 'dl'
         self.dest = '/dev/null'
         self.max_speed = self.max_speed
         self.requests_per_ten = 100
-        self.created_cx = self.http_profile.created_cx = self.convert_to_dict(self.phone_data)
-        if not self.no_precleanup:
-            self.precleanup()
-        self.http_profile.created_cx.clear()
 
-        self.new_port_list = [item.split('.')[2] for item in self.laptops]
-
-        if self.generic_endps_profile.create(ports=self.laptops, sleep_time=.5, real_client_os_types=self.laptop_os_types,):
-
-            logging.info('Real client generic endpoint creation completed.')
+        if self.real and self.virtual:
+            self.created_cx = self.http_profile.created_cx = self.convert_to_dict(self.phone_data + self.sta_list)
+        elif self.real:
+            self.created_cx = self.http_profile.created_cx = self.convert_to_dict(self.phone_data)
         else:
-            logging.error('Real client generic endpoint creation failed.')
-            exit(0)
+            self.created_cx = self.http_profile.created_cx = self.convert_to_dict(self.sta_list)
 
-        for i in range(0, len(self.laptop_os_types)):
-            if self.laptop_os_types[i] == 'windows':
-                cmd = "real_browser.bat --url %s --server %s --duration %s" % (self.url, self.upstream_port, self.duration)
-                self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
-            elif self.laptop_os_types[i] == 'linux':
-                cmd = "su -l lanforge  ctrb.bash %s %s %s %s" % (self.new_port_list[i], self.url, self.upstream_port, self.duration)
-                self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
-            elif self.laptop_os_types[i] == 'macos':
-                cmd = "sudo bash ctrb.bash --url %s --server %s  --duration %s" % (self.url, self.upstream_port, self.duration)
-                self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
+        self.http_profile.created_cx.clear()
+        url = self.url
 
-        if len(self.phone_data) != 0:
+        if self.real:
+            self.new_port_list = [item.split('.')[2] for item in self.laptops]
+            if self.generic_endps_profile.create(ports=self.laptops, sleep_time=.5, real_client_os_types=self.laptop_os_types,):
+                logging.info('Real client generic endpoint creation completed.')
+            else:
+                logging.error('Real client generic endpoint creation failed.')
+                exit(0)
+
+            if not self.url.startswith(("http://", "https://")):
+                self.url = "http://" + self.url
+
+            for i in range(0, len(self.laptop_os_types)):
+                if self.laptop_os_types[i] == 'windows':
+                    cmd = "real_browser.bat --url %s --server %s --duration %s" % (self.url, self.upstream_port, self.duration)
+                    self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
+                elif self.laptop_os_types[i] == 'linux':
+                    cmd = "su -l lanforge  ctrb.bash %s %s %s %s" % (self.new_port_list[i], self.url, self.upstream_port, self.duration)
+                    self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
+                elif self.laptop_os_types[i] == 'macos':
+                    cmd = "sudo bash ctrb.bash --url %s --server %s  --duration %s" % (self.url, self.upstream_port, self.duration)
+                    self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
+
+            if len(self.phone_data) != 0:
+                logging.info("Creating Layer-4 endpoints from the user inputs as test parameters")
+                upload_name = self.phone_data[-1].split('.')[-1]
+
+                if 'https' in self.url:
+                    self.url = self.url.replace("http://", "").replace("https://", "")
+                    self.create_real(ports=self.phone_data, sleep_time=.5,
+                                     suppress_related_commands_=None, https=True,
+                                     https_ip=self.url, interop=True, timeout=1000, media_source='1', media_quality='0', upload_name=upload_name)
+                elif 'http' in self.url:
+                    self.url = self.url.replace("http://", "").replace("https://", "")
+                    self.create_real(ports=self.phone_data, sleep_time=.5,
+                                     suppress_related_commands_=None, http=True,
+                                     http_ip=self.url, interop=True, timeout=1000, media_source='1', media_quality='0', upload_name=upload_name)
+                else:
+                    self.create_real(ports=self.phone_data, sleep_time=.5,
+                                     suppress_related_commands_=None, real=True,
+                                     http_ip=self.url, interop=True, timeout=1000, media_source='1', media_quality='0', upload_name=upload_name)
+
+        if self.virtual:
             logging.info("Creating Layer-4 endpoints from the user inputs as test parameters")
-            upload_name = self.phone_data[-1].split('.')[-1]
-
+            if self.real:  # Again getting back the original url as self.url will be modified in the above self.real condition when clients type both are mentioned
+                self.url = url
+            logger.info(f"self.url before creating cx {self.url}")
             if 'https' in self.url:
                 self.url = self.url.replace("http://", "").replace("https://", "")
-                self.create_real(ports=self.phone_data, sleep_time=.5,
+                self.create_real(ports=self.sta_list, sleep_time=.5,
                                  suppress_related_commands_=None, https=True,
-                                 https_ip=self.url, interop=True, timeout=1000, media_source='1', media_quality='0', upload_name=upload_name)
+                                 https_ip=self.url, timeout=1000, media_source='1', media_quality='0')
             elif 'http' in self.url:
                 self.url = self.url.replace("http://", "").replace("https://", "")
-                self.create_real(ports=self.phone_data, sleep_time=.5,
+                self.create_real(ports=self.sta_list, sleep_time=.5,
                                  suppress_related_commands_=None, http=True,
-                                 http_ip=self.url, interop=True, timeout=1000, media_source='1', media_quality='0', upload_name=upload_name)
-
+                                 http_ip=self.url, timeout=1000, media_source='1', media_quality='0')
             else:
-                self.create_real(ports=self.phone_data, sleep_time=.5,
-                                 suppress_related_commands_=None, real=True,
-                                 http_ip=self.url, interop=True, timeout=1000, media_source='1', media_quality='0', upload_name=upload_name)
+                self.create_real(ports=self.sta_list, sleep_time=.5,
+                                 suppress_related_commands_=None, virtual=True,
+                                 http_ip=self.url, timeout=1000, media_source='1', media_quality='0')
 
     def map_sta_ips_real(self, sta_list=None):
         if sta_list is None:
@@ -451,7 +552,7 @@ class RealBrowserTest(Realm):
                 eid_key = "{eid0}.{eid1}.{eid2}".format(eid0=eid[0], eid1=eid[1], eid2=eid[2])
                 self.ip_map[eid_key] = sta_list['interface']['ip']
 
-    def create_real(self, ports=None, sleep_time=.5, debug_=False, suppress_related_commands_=None, http=False, ftp=False, real=False,
+    def create_real(self, ports=None, sleep_time=.5, debug_=False, suppress_related_commands_=None, http=False, ftp=False, real=False, virtual=False,
                     https=False, user=None, passwd=None, source=None, ftp_ip=None, upload_name=None, http_ip=None,
                     https_ip=None, interop=None, media_source=None, media_quality=None, timeout=10, proxy_auth_type=0x2200, windows_list=None, get_url_from_file=False):
         if windows_list is None:
@@ -462,7 +563,8 @@ class RealBrowserTest(Realm):
         self.map_sta_ips_real(ports)
         logger.info("Create HTTP CXs..." + __name__)
 
-        for i in range(len(list(self.ip_map))):
+        for i in range(self.offset, len(list(self.ip_map))):
+
             url = None
             if i != len(list(self.ip_map)) - 1:
                 port_name = list(self.ip_map)[i]
@@ -514,7 +616,7 @@ class RealBrowserTest(Realm):
                     self.port_util.set_http(port_name=name, resource=resource, on=True)
                     url = "%s https://%s/ %s" % (self.direction, ip_addr, self.dest)
 
-            if real:
+            if real or virtual:
                 if http_ip is not None:
                     if get_url_from_file:
                         self.port_util.set_http(port_name=name, resource=resource, on=True)
@@ -522,11 +624,11 @@ class RealBrowserTest(Realm):
                         logger.info("HTTP url:{}".format(url))
                     else:
                         self.port_util.set_http(port_name=name, resource=resource, on=True)
-                        url = "%s %s %s" % (self.direction, http_ip, self.dest)
+                        url = "%s http://%s %s" % (self.direction, http_ip, self.dest)
                         logger.info("HTTP url:{}".format(url))
                 else:
                     self.port_util.set_http(port_name=name, resource=resource, on=True)
-                    url = "%s %s/ %s" % (self.direction, ip_addr, self.dest)
+                    url = "%s http://%s/ %s" % (self.direction, ip_addr, self.dest)
                     logger.info("HTTP url:{}".format(url))
 
             if ftp:
@@ -538,7 +640,7 @@ class RealBrowserTest(Realm):
                     logger.info("###### url:{}".format(url))
                 else:
                     raise ValueError("user: %s, passwd: %s, and source: %s must all be set" % (user, passwd, source))
-            if not http and not ftp and not https and not real:
+            if not http and not ftp and not https and not real and not virtual:
                 raise ValueError("Please specify ftp and/or http")
 
             if (url is None) or (url == ""):
@@ -662,6 +764,7 @@ class RealBrowserTest(Realm):
                 cx_post_data.append(endp_data)
                 self.created_cx[cx_name + str(resource) + "_l4"] = "CX_" + cx_name + str(resource) + "_l4"
         self.http_profile.created_cx = self.created_cx
+        self.offset += len(self.ip_map)  # for skipping already mapped ip's for clients_type both scenario
 
         for cx_data in cx_post_data:
             url = "/cli-json/add_cx"
@@ -786,10 +889,25 @@ class RealBrowserTest(Realm):
         time.sleep(10)
 
     def precleanup(self):
+        if self.virtual:
+            for station in self.sta_list:
+                self.rm_port(station, check_exists=True)
+            if (not LFUtils.wait_until_ports_disappear(base_url=self.host, port_list=self.sta_list, debug=self.debug)):
+                logging.info('All stations are not removed or a timeout occured.')
+                logging.error('Aborting the test.')
+                exit(0)
+
         self.http_profile.cleanup()
         self.generic_endps_profile.cleanup()
 
     def postcleanup(self):
+        if self.virtual:
+            for station in self.sta_list:
+                self.rm_port(station, check_exists=True)
+            if (not LFUtils.wait_until_ports_disappear(base_url=self.host, port_list=self.sta_list, debug=self.debug)):
+                logging.info('All stations are not removed or a timeout occured.')
+                logging.error('Aborting the test.')
+                exit(0)
         self.http_profile.cleanup()
         self.generic_endps_profile.cleanup()
 
@@ -811,111 +929,107 @@ class RealBrowserTest(Realm):
             4. Filters and collects station names based on specific criteria, appending them to 'station_name'.
             5. Returns 'station_name', a list containing station names of Real devices connected to LANforge.
         """
-        # Gets the list of Real devices connected to LANforge
-        resource_id_list = []
         mac_address = []
         user_name = []
         station_name = []
-        laptops = []
-        laptop_os_types = []
         ssid = []
-
-        webui_android = 0
-        webui_windows = 0
-        webui_linux = 0
-        webui_mac = 0
-
         # Retrieve data from LANforge port Manager tab including alias, MAC address, mode, parent device, RX rate, TX rate, SSID, and signal strength
-        eid_data = self.json_get("ports?fields=alias,mac,mode,Parent Dev,ssid,signal,phantom,down,ip")
-        resource_ids = []
-        if self.resource_ids:
+        eid_data = self.json_get("ports?fields=alias,mac,mode,Parent Dev,ssid,signal,phantom,down,ip,port")
 
-            resource_ids = list(map(int, self.resource_ids.split(',')))
+        if self.real:
+            # Gets the list of Real devices connected to LANforge
+            resource_id_list = []
+            laptops = []
+            laptop_os_types = []
 
-        for item in resource_ids:
-            item = str(item)
+            webui_android = 0
+            webui_windows = 0
+            webui_linux = 0
+            webui_mac = 0
 
-            for alias in eid_data["interfaces"]:
-                for i in alias:
+            resource_ids = []
 
-                    resource_id = i.split('.')[1]
-                    if resource_id == item:
+            if self.resource_ids:
+                resource_ids = list(map(int, self.resource_ids.split(',')))
+            for item in resource_ids:
+                item = str(item)
+                for alias in eid_data["interfaces"]:
+                    for i in alias:
+                        resource_id = i.split('.')[1]
+                        if resource_id == item:
+                            resource_id_list.append(i.split(".")[1])
+                            resource_hw_data = self.json_get("/resource/" + i.split(".")[0] + "/" + i.split(".")[1])
+                            hw_version = resource_hw_data['resource']['hw version']
+                            # Check if the hardware version does not start with ('Win', 'Linux', 'Apple') and the resource ID is in resource_ids
+                            if not hw_version.startswith(('Win', 'Linux', 'Apple')) and alias[i]["parent dev"] == 'wiphy0' and not alias[i]["down"] and alias[i]['ip'] != '0.0.0.0':
+                                station_name.append(i)
+                                mac_address.append(alias[i].get("mac", "NA"))
+                                ssid.append(alias[i].get("ssid", "NA"))
+                                user_name.append(resource_hw_data['resource'].get('user', '').strip())
+                                self.webui_hostnames.append(resource_hw_data['resource'].get('user', 'NA'))
+                                self.webui_ostypes.append("Android")
+                                webui_android += 1
+                            elif hw_version.startswith('Win') and alias[i]["parent dev"] == 'wiphy0' and not alias[i]["down"] and alias[i]['ip'] != '0.0.0.0':
+                                laptops.append(i)
+                                laptop_os_types.append("windows")
+                                mac_address.append(alias[i].get("mac", "NA"))
+                                ssid.append(alias[i].get("ssid", "NA"))
+                                user_name.append(resource_hw_data['resource'].get('user', '').strip())
+                                self.webui_hostnames.append(resource_hw_data['resource'].get('hostname', 'NA'))
+                                self.webui_ostypes.append("windows")
+                                webui_windows += 1
+                            elif hw_version.startswith('Linux') and alias[i]["parent dev"] == 'wiphy0' and not alias[i]["down"] and alias[i]['ip'] != '0.0.0.0':
+                                laptops.append(i)
+                                laptop_os_types.append("linux")
+                                mac_address.append(alias[i].get("mac", "NA"))
+                                ssid.append(alias[i].get("ssid", "NA"))
+                                user_name.append(resource_hw_data['resource'].get('user', '').strip())
+                                self.webui_hostnames.append(resource_hw_data['resource'].get('hostname', 'NA'))
+                                self.webui_ostypes.append("Linux")
+                                webui_linux += 1
+                            elif hw_version.startswith('Apple') and alias[i]["parent dev"] == 'wiphy0' and not alias[i]["down"] and alias[i]['ip'] != '0.0.0.0':
+                                laptops.append(i)
+                                laptop_os_types.append("macos")
+                                mac_address.append(alias[i].get("mac", "NA"))
+                                ssid.append(alias[i].get("ssid", "NA"))
+                                user_name.append(resource_hw_data['resource'].get('user', '').strip())
+                                self.webui_hostnames.append(resource_hw_data['resource'].get('hostname', 'NA'))
+                                self.webui_ostypes.append("Mac")
+                                webui_mac += 1
+            self.webui_devices = f'Total({len(self.webui_ostypes)}) : A({webui_android}), W({webui_windows}),L({webui_linux}),M({webui_mac})'
+            self.hostname_os_combination = [
+                f"{hostname} ({os_type})"
+                for hostname, os_type in zip(self.webui_hostnames, self.webui_ostypes)
+            ]
 
-                        resource_id_list.append(i.split(".")[1])
-                        resource_hw_data = self.json_get("/resource/" + i.split(".")[0] + "/" + i.split(".")[1])
-                        hw_version = resource_hw_data['resource']['hw version']
-                        # Check if the hardware version does not start with ('Win', 'Linux', 'Apple') and the resource ID is in resource_ids
-                        if not hw_version.startswith(('Win', 'Linux', 'Apple')) and alias[i]["parent dev"] == 'wiphy0' and not alias[i]["down"] and alias[i]['ip'] != '0.0.0.0':
-                            station_name.append(i)
-                            mac_address.append(alias[i].get("mac", "NA"))
-                            ssid.append(alias[i].get("ssid", "NA"))
-                            user_name.append(resource_hw_data['resource'].get('user', '').strip())
-                            self.webui_hostnames.append(resource_hw_data['resource'].get('user', 'NA'))
-                            self.webui_ostypes.append("Android")
-                            webui_android += 1
+            for os_type in self.webui_ostypes:
+                if os_type == "windows":
+                    self.windows = self.windows + 1
+                elif os_type == "Linux":
+                    self.linux = self.linux + 1
+                elif os_type == "Mac":
+                    self.mac = self.mac + 1
+                elif os_type == "Android":
+                    self.android = self.android + 1
 
-                        elif hw_version.startswith('Win') and alias[i]["parent dev"] == 'wiphy0' and not alias[i]["down"] and alias[i]['ip'] != '0.0.0.0':
-                            laptops.append(i)
-                            laptop_os_types.append("windows")
-                            mac_address.append(alias[i].get("mac", "NA"))
-                            ssid.append(alias[i].get("ssid", "NA"))
-                            user_name.append(resource_hw_data['resource'].get('user', '').strip())
-                            self.webui_hostnames.append(resource_hw_data['resource'].get('hostname', 'NA'))
-                            self.webui_ostypes.append("windows")
-                            webui_windows += 1
+            interop_data = self.json_get('/adb')
+            interop_mobile_data = interop_data.get('devices', {})
 
-                        elif hw_version.startswith('Linux') and alias[i]["parent dev"] == 'wiphy0' and not alias[i]["down"] and alias[i]['ip'] != '0.0.0.0':
-                            laptops.append(i)
-                            laptop_os_types.append("linux")
-                            mac_address.append(alias[i].get("mac", "NA"))
-                            ssid.append(alias[i].get("ssid", "NA"))
-                            user_name.append(resource_hw_data['resource'].get('user', '').strip())
-                            self.webui_hostnames.append(resource_hw_data['resource'].get('hostname', 'NA'))
-                            self.webui_ostypes.append("Linux")
-                            webui_linux += 1
-                        elif hw_version.startswith('Apple') and alias[i]["parent dev"] == 'wiphy0' and not alias[i]["down"] and alias[i]['ip'] != '0.0.0.0':
-                            laptops.append(i)
-                            laptop_os_types.append("macos")
-                            mac_address.append(alias[i].get("mac", "NA"))
-                            ssid.append(alias[i].get("ssid", "NA"))
-                            user_name.append(resource_hw_data['resource'].get('user', '').strip())
-                            self.webui_hostnames.append(resource_hw_data['resource'].get('hostname', 'NA'))
-                            self.webui_ostypes.append("Mac")
-                            webui_mac += 1
-        self.webui_devices = f'Total({len(self.webui_ostypes)}) : A({webui_android}), W({webui_windows}),L({webui_linux}),M({webui_mac})'
-        self.hostname_os_combination = [
-            f"{hostname} ({os_type})"
-            for hostname, os_type in zip(self.webui_hostnames, self.webui_ostypes)
-        ]
-
-        for os_type in self.webui_ostypes:
-            if os_type == "windows":
-                self.windows = self.windows + 1
-            elif os_type == "Linux":
-                self.linux = self.linux + 1
-            elif os_type == "Mac":
-                self.mac = self.mac + 1
-            elif os_type == "Android":
-                self.android = self.android + 1
-
-        interop_data = self.json_get('/adb')
-        interop_mobile_data = interop_data.get('devices', {})
-
-        for user in user_name:
-            if user == '':
-                self.serial_list.append('')
-            else:
-                if isinstance(interop_mobile_data, dict):
-                    serial_no = interop_mobile_data.get("name").split('.')[2]
-                    self.serial_list.append(serial_no)
+            for user in user_name:
+                if user == '':
+                    self.serial_list.append('')
                 else:
-                    for mobile_device in interop_mobile_data:
-                        for serial, device_data in mobile_device.items():
-                            if device_data.get('user-name') == user:
-                                serial_no = serial.split('.')[2]
-                                self.serial_list.append(serial_no)
-                                break
-        return station_name, laptops, laptop_os_types, user_name, mac_address,
+                    if isinstance(interop_mobile_data, dict):
+                        serial_no = interop_mobile_data.get("name").split('.')[2]
+                        self.serial_list.append(serial_no)
+                    else:
+                        for mobile_device in interop_mobile_data:
+                            for serial, device_data in mobile_device.items():
+                                if device_data.get('user-name') == user:
+                                    serial_no = serial.split('.')[2]
+                                    self.serial_list.append(serial_no)
+                                    break
+            return station_name, laptops, laptop_os_types, user_name, mac_address,
 
     def start_flask_server(self):
 
@@ -1036,7 +1150,7 @@ class RealBrowserTest(Realm):
         """
         if self.incremental or self.dowebgui:
             incremental_capacity_list_values = self.get_incremental_capacity_list()
-            if incremental_capacity_list_values[-1] != len(available_resources):
+            if incremental_capacity_list_values[-1] != (len(available_resources) + len(self.sta_list)):
                 logger.error("Incremental capacity doesn't match available devices")
                 if not self.no_postcleanup:
                     self.postcleanup()
@@ -1620,9 +1734,16 @@ class RealBrowserTest(Realm):
         Runs the test with calculated parameters.
         """
         logging.info("Initiating Test...")
-        available_resources.sort()
-        self.set_available_resources_ids(",".join(map(str, available_resources)))
+        if not self.no_precleanup:
+            self.precleanup()
+        if self.real:
+            available_resources.sort()
+            self.set_available_resources_ids(",".join(map(str, available_resources)))
+        if self.virtual:
+            self.buildstation()
+            logger.info(f"virtual station build is completed {self.sta_list}")
         self.build()
+
         self.process_incremental_values(available_resources)
         if not self.update_webui_json():
             sys.exit(1)
@@ -1675,20 +1796,57 @@ class RealBrowserTest(Realm):
                     except Exception as e:
                         logging.error(f"Error while monitoring stats {e}", exc_info=True)
         else:
+            self.set_maps()
             for i, cx_batch in enumerate(cx_order_list):
                 self.start_specific(cx_batch)
-                logging.info(f"Test started on Devices with resource Ids : {cx_batch}")
                 try:
                     self.get_stats(self.duration, "webBrowser.csv", i, available_resources, cx_batch, i, self.count)
                 except Exception as e:
                     logging.error(f"Error while monitoring stats {e}", exc_info=True)
+
+    def set_maps(self):
+        if self.real and self.virtual:
+            clients = self.laptops + self.sta_list + self.phone_data
+        elif self.real:
+            clients = self.laptops + self.phone_data
+        else:
+            clients = self.sta_list
+
+        self.result_json = {}
+        self.key_to_device_name(clients)
+
+        for client in clients:
+            device_name = self.key_to_device_name_map.get(client, "")
+            if self.result_json.get(device_name, False):
+                pass
+            else:
+                self.result_json[device_name] = {
+                    "linkspeed": 0,
+                    "mac": 0,
+                    "ssid": 0,
+                    "mode": 0,
+                    "channel": 0,
+                    "bssid": 0,
+                    "rssi": 0
+                }
 
     def calculate_cx_order_list(self):
         """
         Calculate and manage cx_order_list (list of cross connections to run) based on incremental values.
         """
         cx_order_list = []
+        # logger.info(f"this is the createdcx keys {self.created_cx.keys()}")
+        # logger.info(f"this is the generic endps profile created cx {self.generic_endps_profile.created_cx}")
         keys = list(self.created_cx.keys()) + self.generic_endps_profile.created_cx
+        if self.real and self.virtual:
+            if self.android and (self.windows or self.linux or self.mac):
+                androids = keys[:self.android]
+                virtual = keys[self.android:self.android + len(self.sta_list)]
+                laptops = keys[self.android + len(self.sta_list):]
+                androids.extend(laptops)
+                androids.extend(virtual)
+                keys = androids
+
         index = 0
 
         if self.resource_ids:
@@ -1710,6 +1868,25 @@ class RealBrowserTest(Realm):
                     index = num
                 if index < len(keys):
                     cx_order_list.append(keys[index:])
+        else:
+            if self.virtual:
+                if not self.incremental:
+                    self.incremental = [len(keys)]
+                if len(self.incremental) == 1 and self.incremental[0] == len(keys):
+                    cx_order_list.append(keys[index:])
+                elif len(self.incremental) == 1 and len(keys) > 1:
+                    incremental_value = self.incremental[0]
+                    max_index = len(keys)
+                    while index < max_index:
+                        next_index = min(index + incremental_value, max_index)
+                        cx_order_list.append(keys[index:next_index])
+                        index = next_index
+                else:
+                    for num in self.incremental:
+                        cx_order_list.append(keys[index:num])
+                        index = num
+                    if index < len(keys):
+                        cx_order_list.append(keys[index:])
 
         return cx_order_list
 
@@ -1747,8 +1924,9 @@ class RealBrowserTest(Realm):
             os._exit(1)
 
         if self.ssid and self.profile_name:
-            logging.error("Either ssid or profile name should be given")
-            exit(1)
+            if not (self.real and self.virtual):
+                logging.error("Either ssid or profile name should be given")
+                exit(1)
 
         if self.file_name and (self.group_name is None or self.profile_name is None):
             logging.error("Please enter the correct set of arguments")
@@ -1894,10 +2072,10 @@ class RealBrowserTest(Realm):
                 obj.incremental = incremental
         if (obj.incremental and obj.resource_ids) or args.webgui_incremental:
             # Check if the last incremental value is valid
-            if obj.incremental[-1] > len(available_resources):
+            if obj.incremental[-1] > (len(available_resources) + len(self.sta_list)):
                 logging.info("Exiting the program as incremental values are greater than the resource ids provided")
                 exit()
-            elif obj.incremental[-1] < len(available_resources) and len(obj.incremental) > 1:
+            elif obj.incremental[-1] < (len(available_resources) + len(self.sta_list)) and len(obj.incremental) > 1:
                 logging.info("Exiting the program as the last incremental value must be equal to selected devices")
                 exit()
 
@@ -1915,6 +2093,87 @@ class RealBrowserTest(Realm):
         logging.error("❌ Flask server did not start within 10 seconds. Exiting.")
         sys.exit(1)
 
+    def generate_real_time_csv(self, last_data):
+        current_time = datetime.now()
+        for data in last_data:
+            csv_name = data['device_name'] + ".csv"
+            if not os.path.exists(csv_name):
+                with open(csv_name, 'w') as file:
+                    header = ['timestamp', 'iteration', 'device_type', 'total_urls', 'uc_min', 'uc_avg', 'uc_max', 'total_err',
+                              'time_to_target_urls', 'cx_name', 'Link_speed', 'Mac', 'bssid', 'Rssi', 'Mode', 'Channel', 'Ssid']
+                    writer = csv.writer(file)
+                    writer.writerow(header)
+
+            with open(csv_name, 'a') as file:
+                writer = csv.writer(file)
+                row = [current_time.strftime("%d/%m/%Y %H:%M:%S"),
+                       self.iteration_value,
+                       data['device_type'],
+                       data['total_urls'],
+                       data['uc_min'],
+                       data['uc_avg'],
+                       data['uc_max'],
+                       data['total_err'],
+                       data['time_to_target_urls'],
+                       data['cx_name'],
+                       data['Link_speed'],
+                       data['Mac'],
+                       data['Bssid'],
+                       data['Rssi'],
+                       data['Mode'],
+                       data['Channel'],
+                       data['Ssid']
+                       ]
+                writer.writerow(row)
+
+    def key_to_device_name(self, clients):
+        self.key_to_device_name_map = {}
+
+        for client in clients:
+            rv = client.split(".")
+            if client in self.sta_list:
+                self.key_to_device_name_map[client] = rv[2]
+            else:
+                data = self.json_get(f"resource/{rv[0]}/{rv[1]}/{rv[2]}")
+                try:
+                    if data["resource"]["user"] == "":
+                        self.key_to_device_name_map[client] = data["resource"]["hostname"]
+                    else:
+                        self.key_to_device_name_map[client] = data["resource"]["user"]
+                except Exception as e:
+                    logger.info(f"there is an exception occured : {e}")
+
+        # logger.info(f" ================= {self.key_to_device_name_map} ")
+
+    def set_port_data(self, clients):
+
+        try:
+            port_data = self.local_realm.json_get('/ports/all/')['interfaces']
+        except KeyError:
+            logger.error("Error: 'interfaces' key not found in port data")
+            exit(1)
+
+        for port in port_data:
+            for key, data in port.items():
+                if key in clients:
+                    # Normalize signal
+                    device_name = self.key_to_device_name_map.get(key, "NA")
+                    signal = str(data.get('signal', '')).strip()
+                    if "dBm" in signal:
+                        formatted_signal = signal
+                    elif signal:
+                        formatted_signal = signal + " dBm"
+                    else:
+                        formatted_signal = '-'
+                    # Store in result_json
+                    self.result_json[device_name]["rssi"] = formatted_signal
+                    self.result_json[device_name]["linkspeed"] = data.get('tx-rate', '-')
+                    self.result_json[device_name]["channel"] = data.get('channel', '-')
+                    self.result_json[device_name]["mode"] = data.get('mode', '-')
+                    self.result_json[device_name]["ssid"] = data.get('ssid', '-')
+                    self.result_json[device_name]["bssid"] = data.get('ap', '-')
+                    self.result_json[device_name]["mac"] = data.get('mac', '-')
+
     def get_stats(self, duration, file_path, iteration_number, resource_list_sorted, cx_order_list, i, initial_target_urls):
 
         try:
@@ -1923,7 +2182,23 @@ class RealBrowserTest(Realm):
             est_end_time = end_time + timedelta(minutes=1)
             logging.info(f"End time of the Test {end_time}")
             logging.info(f"Estimated End time of the Test {est_end_time}")
-            headers = ['device_type', 'device_name', 'total_urls', 'uc_min', 'uc_avg', 'uc_max', 'total_err', 'time_to_target_urls', 'cx_name']
+            headers = [
+                'device_type',
+                'device_name',
+                'total_urls',
+                'uc_min',
+                'uc_avg',
+                'uc_max',
+                'total_err',
+                'time_to_target_urls',
+                'cx_name',
+                'Link_speed',
+                'Mac',
+                'Bssid',
+                'Rssi',
+                'Mode',
+                'Channel',
+                'Ssid']
             last_data = []
             mobile_data = {}
             time_taken = {}
@@ -1932,9 +2207,17 @@ class RealBrowserTest(Realm):
                 os.chdir(self.result_dir)
 
             start_time = datetime.now()
-            while datetime.now() <= end_time or not self.check_gen_cx():
-                try:
 
+            if self.real and self.virtual:
+                clients = self.laptops + self.sta_list + self.phone_data
+            elif self.real:
+                clients = self.laptops + self.phone_data
+            else:
+                clients = self.sta_list
+
+            while datetime.now() <= end_time or not self.check_gen_cx():
+                self.set_port_data(clients)
+                try:
                     if datetime.now() > est_end_time:
                         break
                     if datetime.now() > end_time and self.stop_mobile_cx:
@@ -1951,6 +2234,7 @@ class RealBrowserTest(Realm):
                                 # Check if the device reaches the current target URL count
                                 if stats.get('total_urls', 0) >= self.device_targets[laptop] and laptop not in time_taken:
                                     time_taken[laptop] = (datetime.now() - datetime.fromisoformat(stats.get("start_time", start_time.isoformat()))).total_seconds()
+                                device_name = stats.get('name', 'NA')
                                 row = {
                                     'device_type': 'laptop',
                                     'device_name': stats.get('name', 'NA'),
@@ -1961,7 +2245,16 @@ class RealBrowserTest(Realm):
                                     'total_err': stats.get('total_err', 0),
                                     'time_to_target_urls': time_taken.get(laptop, 0.0),
                                     'cx_name': "NA",
+                                    "Link_speed": self.result_json[device_name]["linkspeed"],
+                                    "Mac": self.result_json[device_name]["mac"],
+                                    "Bssid": self.result_json[device_name]["bssid"],
+                                    "Rssi": self.result_json[device_name]["rssi"],
+                                    "Mode": self.result_json[device_name]["mode"],
+                                    "Channel": self.result_json[device_name]["channel"],
+                                    "Ssid": self.result_json[device_name]["ssid"]
                                 }
+
+                                # logger.info(f"laptop\n {row}\n")
                                 # Check if the device reaches the current target URL count
                                 if stats.get('total_urls', 0) >= self.device_targets[laptop] and laptop not in time_taken:
                                     time_taken[laptop] = (datetime.now() - datetime.fromisoformat(stats.get("start_time", start_time.isoformat()))).total_seconds()
@@ -1970,7 +2263,7 @@ class RealBrowserTest(Realm):
                                 last_data.append(row)
                         # Collect data for mobile devices
                         if True:
-                            mobile_data = self.local_realm.json_get("layer4/%s/list?fields=name,status,total-urls,uc-min,uc-avg,uc-max,total-err,bad-url" %
+                            layer4_data = self.local_realm.json_get("layer4/%s/list?fields=name,status,total-urls,uc-min,uc-avg,uc-max,total-err,bad-url" %
                                                                     (','.join(self.created_cx.keys())))
                             total_urls = []
                             uc_min = []
@@ -1981,15 +2274,25 @@ class RealBrowserTest(Realm):
                             cx_names = []
                             # Check if multiple CX endpoints are created
                             if len(self.created_cx.keys()) > 1:
-                                data = mobile_data['endpoint']
+                                data = layer4_data['endpoint']
                                 for endpoint in data:
                                     for _key, value in endpoint.items():
                                         if True:
                                             cx_name = value.get('name', 'NA')
                                             match = re.search(r'http(\d+)', cx_name)
-                                            res_no = match.group(1) if match else 'NA'
-                                            hostname = self.local_realm.json_get("resource/1/%s/list?fields=user" % (res_no))
-                                            hostname = hostname["resource"]["user"]
+                                            if self.real:
+                                                res_no = match.group(1) if match else 'NA'
+                                                # logging.info("resource/1/%s/list?fields=user" % (res_no))
+                                                hostname = self.local_realm.json_get("resource/1/%s/list?fields=user" % (res_no))
+                                                # logger.info(f"this si the hostname : {hostname}")
+                                                try:
+                                                    hostname = hostname["resource"]["user"]
+                                                    if hostname == '':
+                                                        hostname = hostname["resource"]["hostname"]
+                                                except Exception:
+                                                    hostname = cx_name.split('_')[1]
+                                            else:
+                                                hostname = cx_name.split('_')[1]
                                             pass_url = value.get('total-urls', 0)
                                             total_urls.append(pass_url)
                                             uc_min.append(value.get('uc-min', 0.0))
@@ -2005,8 +2308,10 @@ class RealBrowserTest(Realm):
                                                 time_taken[hostname] = (datetime.now() - start_time).total_seconds()
                                 # Save each mobile device's data to the CSV
                                 for i in range(len(total_urls)):
+                                    device_name = hostnames[i]
+
                                     row = {
-                                        'device_type': 'mobile',
+                                        'device_type': 'mobile' if not hostnames[i].startswith('sta') else "Virtual Station",
                                         'device_name': hostnames[i],
                                         'total_urls': total_urls[i],
                                         'uc_min': float(uc_min[i]) / 1000,
@@ -2015,18 +2320,30 @@ class RealBrowserTest(Realm):
                                         'total_err': total_err[i],
                                         'time_to_target_urls': time_taken.get(hostnames[i], 0.0),
                                         'cx_name': cx_names[i],
+                                        "Link_speed": self.result_json[device_name]["linkspeed"],
+                                        "Mac": self.result_json[device_name]["mac"],
+                                        "Bssid": self.result_json[device_name]["bssid"],
+                                        "Rssi": self.result_json[device_name]["rssi"],
+                                        "Mode": self.result_json[device_name]["mode"],
+                                        "Channel": self.result_json[device_name]["channel"],
+                                        "Ssid": self.result_json[device_name]["ssid"]
                                     }
                                     writer.writerow(row)
                                     last_data.append(row)
                             # Handle the case where only one CX endpoint is created
                             elif len(self.created_cx.keys()) == 1:
-                                endpoint = mobile_data.get('endpoint', {})
+                                endpoint = layer4_data.get('endpoint', {})
                                 if True:
                                     cx_name = endpoint.get('name', 'NA')
                                     match = re.search(r'http(\d+)', cx_name)
                                     res_no = match.group(1) if match else 'NA'
                                     hostname = self.local_realm.json_get("resource/1/%s/list?fields=user" % (res_no))
-                                    hostname = hostname["resource"]["user"]
+                                    try:
+                                        hostname = hostname["resource"]["user"]
+                                        if hostname == '':
+                                            hostname = hostname["resource"]["hostname"]
+                                    except Exception:
+                                        hostname = cx_name.split('_')[1]
                                     if hostname not in self.device_targets:
                                         self.device_targets[hostname] = initial_target_urls
                                     # Check if the mobile device reaches the current target URL count
@@ -2035,7 +2352,7 @@ class RealBrowserTest(Realm):
                                         if hostname not in time_taken:
                                             time_taken[hostname] = (datetime.now() - start_time).total_seconds()
                                     row = {
-                                        'device_type': 'mobile',
+                                        'device_type': 'mobile' if not hostname.startswith('sta') else "Virtual Station",
                                         'device_name': hostname,
                                         'total_urls': pass_url,
                                         'uc_min': float(endpoint.get('uc-min', 0.0)) / 1000,
@@ -2043,10 +2360,19 @@ class RealBrowserTest(Realm):
                                         'uc_max': float(endpoint.get('uc-max', 0.0)) / 1000,
                                         'total_err': endpoint.get('total-err', 0),
                                         'time_to_target_urls': time_taken.get(hostname, 0.0),
-                                        'cx_name': cx_name
+                                        'cx_name': cx_name,
+                                        "Link_speed": self.result_json[hostname]["linkspeed"],
+                                        "Mac": self.result_json[hostname]["mac"],
+                                        "Bssid": self.result_json[hostname]["bssid"],
+                                        "Rssi": self.result_json[hostname]["rssi"],
+                                        "Mode": self.result_json[hostname]["mode"],
+                                        "Channel": self.result_json[hostname]["channel"],
+                                        "Ssid": self.result_json[hostname]["ssid"]
                                     }
                                     writer.writerow(row)
                                     last_data.append(row)
+
+                    self.generate_real_time_csv(last_data)
                     time.sleep(1)
                 except Exception as e:
                     logging.exception(f"Error in get_stats function {e}", exc_info=True)
@@ -2069,6 +2395,8 @@ class RealBrowserTest(Realm):
 
             # Append the file name to the csv_file_names list
             self.csv_file_names.append(last_file_name)
+            for data in last_data:
+                self.csv_file_names.append(data['device_name'] + ".csv")
 
             self.iteration_value = self.iteration_value + 1
         except Exception as e:
@@ -2210,16 +2538,42 @@ class RealBrowserTest(Realm):
             dict: Test setup information.
         """
         if self.config:
-            test_setup_info = {
-                'Configured Devies': self.hostname_os_combination,
-                'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac}), A({self.android})',
-                # 'Incremental Values': self.test_setup_info_incremental_values,
-                'Required URL Count': self.count,
-                'URL': self.url,
-                'Test Duration (min)': self.duration,
-                'SSID': self.report_ssid,
-                "Security": self.encryp
-            }
+            if self.real and self.virtual:
+                test_setup_info = {
+                    'Configured Devies(Real)': self.hostname_os_combination,
+                    'Virtual Stations': ','.join(self.sta_list),
+                    'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac}), A({self.android}), V({len(self.sta_list)})',
+                    # 'Incremental Values': self.test_setup_info_incremental_values,
+                    'Required URL Count': self.count,
+                    'URL': self.url,
+                    'Test Duration (min)': self.duration,
+                    'SSID': self.report_ssid,
+                    "Security": self.encryp
+                }
+
+            elif self.real:
+                test_setup_info = {
+                    'Configured Devies': self.hostname_os_combination,
+                    'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac}), A({self.android})',
+                    # 'Incremental Values': self.test_setup_info_incremental_values,
+                    'Required URL Count': self.count,
+                    'URL': self.url,
+                    'Test Duration (min)': self.duration,
+                    'SSID': self.report_ssid,
+                    "Security": self.encryp
+                }
+            else:
+                test_setup_info = {
+                    'Virtual Stations': ','.join(self.sta_list),
+                    'No of Virtual Stations': f'V({len(self.sta_list)})',
+                    # 'Incremental Values': self.test_setup_info_incremental_values,
+                    'Required URL Count': self.count,
+                    'URL': self.url,
+                    'Test Duration (min)': self.duration,
+                    'SSID': self.report_ssid,
+                    "Security": self.encryp
+                }
+
         elif len(self.selected_groups) > 0 and len(self.selected_profiles) > 0:
             # Map each group with a profile
             gp_pairs = zip(self.selected_groups, self.selected_profiles)
@@ -2227,24 +2581,70 @@ class RealBrowserTest(Realm):
             # Create a string by joining the mapped pairs
             gp_map = ", ".join(f"{group} -> {profile}" for group, profile in gp_pairs)
 
-            test_setup_info = {
-                'Configuration': gp_map,
-                'Configured Devies': self.hostname_os_combination,
-                'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac}), A({self.android})',
-                # 'Incremental Values': self.test_setup_info_incremental_values,
-                'Required URL Count': self.count,
-                'URL': self.url,
-                'Test Duration (min)': self.duration,
-            }
+            if self.real and self.virtual:
+                test_setup_info = {
+                    'Real clients Configuration map': gp_map,
+                    'Configured Devices(Real)': ", ".join(self.hostname_os_combination),
+                    'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac}), A({self.android}), V({len(self.sta_list)})',
+                    "Virtual Clients": ", ".join(self.sta_list),
+                    "Virtual Clients SSID": self.report_ssid,
+                    "Virtual Clients Security": self.encryp,
+                    # 'Incremental Values': self.test_setup_info_incremental_values,
+                    'Required URL Count': self.count,
+                    'URL': self.url,
+                    'Test Duration (min)': self.duration,
+                }
+
+            else:
+                test_setup_info = {
+                    'Configuration': gp_map,
+                    'Configured Devies': self.hostname_os_combination,
+                    'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac}), A({self.android})',
+                    # 'Incremental Values': self.test_setup_info_incremental_values,
+                    'Required URL Count': self.count,
+                    'URL': self.url,
+                    'Test Duration (min)': self.duration,
+                }
         else:
-            test_setup_info = {
-                'Configured Devies': self.hostname_os_combination,
-                'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac}), A({self.android})',
-                # 'Incremental Values': self.test_setup_info_incremental_values,
-                'Required URL Count': self.count,
-                'URL': self.url,
-                'Test Duration (min)': self.duration,
-            }
+            if self.real and self.virtual:
+                test_setup_info = {
+                    'Configured Devies(Real)': ', '.join(self.hostname_os_combination),
+                    'Virtual Stations': ','.join(self.sta_list),
+                    'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac}), A({self.android}), V({len(self.sta_list)})',
+                    # 'Incremental Values': self.test_setup_info_incremental_values,
+                    'Required URL Count': self.count,
+                    'URL': self.url,
+                    'Test Duration (min)': self.duration,
+                    'Virtual clients SSID': self.report_ssid,
+                    'Virtual clients Security': self.encryp,
+                    'Real clients SSID': "Test configured(default)",
+                    'Real clients Security': "Test configured(default)"
+                }
+
+            elif self.real:
+                test_setup_info = {
+                    'Configured Devies': self.hostname_os_combination,
+                    'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac}), A({self.android})',
+                    # 'Incremental Values': self.test_setup_info_incremental_values,
+                    'Required URL Count': self.count,
+                    'URL': self.url,
+                    'Test Duration (min)': self.duration,
+                    'SSID': "Test configured(default)",
+                    'Security': "Test configured(default)"
+                }
+
+            else:
+                test_setup_info = {
+                    'Virtual Stations': ','.join(self.sta_list),
+                    'No of Virtual Stations': f'V({len(self.sta_list)})',
+                    # 'Incremental Values': self.test_setup_info_incremental_values,
+                    'Required URL Count': self.count,
+                    'URL': self.url,
+                    'Test Duration (min)': self.duration,
+                    'SSID': self.report_ssid,
+                    'Security': self.encryp
+                }
+
         if self.do_bandsteering and 'Test Duration (min)' in test_setup_info:
             del test_setup_info['Test Duration (min)']
         return test_setup_info
@@ -2265,11 +2665,11 @@ class RealBrowserTest(Realm):
         test_input_list = []
 
         if not self.expected_passfail_value:
-            interop_tab_data = self.json_get('/adb/')["devices"]
-            user_to_serial_map = {}
-            for dev in interop_tab_data:
-                for item in dev.values():
-                    user_to_serial_map[item['user-name']] = item['name'].split('.')[2]
+            # interop_tab_data = self.json_get('/adb/')["devices"]
+            # user_to_serial_map = {}
+            # for dev in interop_tab_data:
+            #     for item in dev.values():
+            #         user_to_serial_map[item['user-name']] = item['name'].split('.')[2]
 
             if self.dowebgui:
                 os.chdir(self.original_dir)
@@ -2284,8 +2684,8 @@ class RealBrowserTest(Realm):
 
             for i, device in enumerate(device_names):
                 name_to_lookup = device
-                if device_type_data[i] == 'Android' and device in user_to_serial_map:
-                    name_to_lookup = user_to_serial_map[device]
+                if device_type_data[i] == 'Android' and device in self.user_to_serial_map:
+                    name_to_lookup = self.user_to_serial_map[device]
 
                 found = False
                 for row in rows:
@@ -2311,6 +2711,47 @@ class RealBrowserTest(Realm):
 
         return pass_fail_list, test_input_list
 
+    def get_standard_stats(self, csv_name):
+        data = pd.read_csv(csv_name)
+
+        device_names = data["device_name"].tolist()
+        device_type_data = data["device_type"].tolist()
+        mac_data = data["Mac"].tolist()
+        bssid_data = data["Bssid"].tolist()
+        channel_data = data["Channel"].tolist()
+        mode_data = data["Mode"].tolist()
+        ssid_data = data["Ssid"].tolist()
+
+        return device_names, device_type_data, mac_data, bssid_data, channel_data, mode_data, ssid_data
+
+    def get_avg_data(self):
+        avg_rssi, avg_link_speed = [], []
+
+        for csv_name in self.csv_file_names:
+            if 'iteration' in csv_name or csv_name == "real_time_data.csv":
+                continue
+
+            data = pd.read_csv(csv_name)
+
+            # Extract numeric values from strings like "-21 dBm"
+            rssi = data["Rssi"].astype(str).apply(
+                lambda x: float(re.search(r'-?\d+\.?\d*', x).group()) if re.search(r'-?\d+\.?\d*', x) else None
+            ).dropna()
+
+            # Extract numeric values from "11 Mbps"
+            link_speed = data["Link_speed"].astype(str).apply(
+                lambda x: float(re.search(r'\d+\.?\d*', x).group()) if re.search(r'\d+\.?\d*', x) else None
+            ).dropna()
+
+            # Calculate averages (only if data exists)
+            if not rssi.empty:
+                avg_rssi.append(str(round(rssi.mean(), 2)) + " dBm")
+
+            if not link_speed.empty:
+                avg_link_speed.append(str((round(link_speed.mean(), 2))) + " Mbps")
+
+        return avg_rssi, avg_link_speed
+
     def create_report(self, iot_summary=None):
         try:
             if self.dowebgui:
@@ -2321,7 +2762,7 @@ class RealBrowserTest(Realm):
                 self.report_path_date_time = report.get_path_date_time()
             else:
 
-                report = lf_report(_output_pdf='Real_Browser_Report',
+                report = lf_report(_output_pdf='Real_Browser_Report.pdf',  # For saving in pdf format
                                    _output_html='Real_Browser_Report.html',
                                    _results_dir_name="Real_Browser_Report",
                                    _path='')
@@ -2350,10 +2791,10 @@ class RealBrowserTest(Realm):
             else:
                 report.set_text(
                     "The Candela Web browser test is designed to measure the Access Point performance and stability by browsing "
-                    "multiple websites in real clients like Android, Linux, Windows, and iOS which are connected to the access "
-                    "point. This test allows the user to choose options such as website link, the number of times the page has to "
-                    "be browsed, and the time taken to browse the page. The expected behavior is for the AP to handle several "
-                    "stations (within the limitations of the AP specs) while ensuring all clients can browse the page."
+                    "multiple websites using LANforge clients which are connected to the access point. This test allows the user to "
+                    "choose options such as website links, the number of browsing iterations, and the time taken to browse each page. "
+                    "The expected behavior is for the AP to handle multiple stations (within the limitations of the AP specifications) "
+                    "while ensuring all clients can successfully browse the webpages."
                 )
 
             report.build_text_simple()
@@ -2361,12 +2802,12 @@ class RealBrowserTest(Realm):
             report.set_table_title("Test Parameters:")
             report.build_table_title()
 
-            final_eid_data = []
+            # final_eid_data = []
             mac_data = []
             channel_data = []
-            signal_data = []
+            # signal_data = []
             ssid_data = []
-            tx_rate_data = []
+            # tx_rate_data = []
             device_type_data = []
             device_names = []
             total_urls = []
@@ -2376,7 +2817,10 @@ class RealBrowserTest(Realm):
             uc_avg_data = []
             total_err_data = []
 
-            final_eid_data, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = self.extract_device_data('real_time_data.csv')
+            # final_eid_data, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = self.extract_device_data('real_time_data.csv')
+
+            device_names, device_type_data, mac_data, bssid_data, channel_data, mode_data, ssid_data = self.get_standard_stats("real_time_data.csv")
+            avg_rssi, avg_link_speed = self.get_avg_data()
 
             test_setup_info = self.generate_test_setup_info()
             if iot_summary:
@@ -2389,13 +2833,16 @@ class RealBrowserTest(Realm):
                 self.csv_file_names.insert(0, "real_time_data.csv")
 
             # Keep only last iteration for normal full run
-            if not self.webui_stop_clicked and not self.do_bandsteering:
-                if len(self.csv_file_names) > 1:
-                    self.csv_file_names = [self.csv_file_names[-1]]
+            # if not self.webui_stop_clicked and not self.do_bandsteering:
+            #     if len(self.csv_file_names) > 1:
+            #         self.csv_file_names = [self.csv_file_names[-1]]
 
             for i in range(0, len(self.csv_file_names)):
+                if ('iteration' not in self.csv_file_names[i]):
+                    continue
 
-                final_eid_data, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = self.extract_device_data(self.csv_file_names[i])
+                # final_eid_data, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = self.extract_device_data(self.csv_file_names[i])
+                device_names, device_type_data, mac_data, bssid_data, channel_data, mode_data, ssid_data = self.get_standard_stats(self.csv_file_names[i])
                 report.set_graph_title("Successful URL's per Device")
                 report.build_graph_title()
 
@@ -2513,118 +2960,191 @@ class RealBrowserTest(Realm):
                     )
                     report.build_objective()
 
-            report.set_table_title("Final Test Results")
-            report.build_table_title()
-            if self.selected_groups and self.selected_profiles:
-                if self.expected_passfail_value or self.device_csv_name:
-
-                    if self.webui_stop_clicked:
-                        logging.info("[REPORT] WebUI stop detected. Skipping PASS/FAIL evaluation.")
-                        pass_fail_list = ["NA"] * len(device_names)
-                        test_input_list = ["NA"] * len(device_names)
-                    else:
-                        pass_fail_list, test_input_list = self.generate_pass_fail_list(
-                            device_type_data, device_names, total_urls)
-
-                    final_test_results = {
-
-                        "Device Type": device_type_data,
-                        "Hostname": device_names,
-                        "SSID": ssid_data,
-                        "MAC": mac_data,
-                        "Channel": channel_data,
-                        "UC-MIN (ms)": uc_min_data,
-                        "UC-MAX (ms)": uc_max_data,
-                        "UC-AVG (ms)": uc_avg_data,
-                        "Total Successful URLs": total_urls,
-                        "Expected URLS": test_input_list,
-                        "Total Erros": total_err_data,
-                        "RSSI": signal_data,
-                        "Link Speed": tx_rate_data,
-                        "Status ": pass_fail_list
-
-                    }
+            if self.selected_groups or self.selected_profiles:
+                if (self.real and self.virtual) or (self.real):
+                    # As in groups and profiles we get individual table for each group
+                    report.set_table_title("Group Specific Test Results")
                 else:
-                    final_test_results = {
-
-                        "Device Type": device_type_data,
-                        "Hostname": device_names,
-                        "SSID": ssid_data,
-                        "MAC": mac_data,
-                        "Channel": channel_data,
-                        "UC-MIN (ms)": uc_min_data,
-                        "UC-MAX (ms)": uc_max_data,
-                        "UC-AVG (ms)": uc_avg_data,
-                        "Total Successful URLs": total_urls,
-                        "Total Erros": total_err_data,
-                        "RSSI": signal_data,
-                        "Link Speed": tx_rate_data,
-
-                    }
-
-                for group in self.selected_groups:
-                    group_specific_test_results = self.get_test_results_data(final_test_results, group)
-                    if not group_specific_test_results['Hostname']:
-                        continue
-                    report.set_table_title(f"{group} Test Results")
-                    report.build_table_title()
-                    # Ensure all columns have equal length
-                    max_len = max(len(v) for v in final_test_results.values())
-
-                    for key in final_test_results:
-                        if len(final_test_results[key]) < max_len:
-                            diff = max_len - len(final_test_results[key])
-                            final_test_results[key].extend(["NA"] * diff)
-
-                    test_results_df = pd.DataFrame(group_specific_test_results)
-                    report.set_table_dataframe(test_results_df)
-                    report.build_table()
-
+                    report.set_table_title("Final Test Results")
+                report.build_table_title()
             else:
-                if self.expected_passfail_value or self.device_csv_name:
-                    if self.webui_stop_clicked:
-                        logging.info("[REPORT] WebUI stop detected. Skipping PASS/FAIL evaluation.")
-                        pass_fail_list = ["NA"] * len(device_names)
-                        test_input_list = ["NA"] * len(device_names)
-                    else:
-                        pass_fail_list, test_input_list = self.generate_pass_fail_list(
-                            device_type_data, device_names, total_urls)
+                report.set_table_title("Final Test Results")
+                report.build_table_title()
 
+            if self.expected_passfail_value or self.device_csv_name:
+                if self.webui_stop_clicked:
+                    logging.info("[REPORT] WebUI stop detected. Skipping PASS/FAIL evaluation.")
+                    pass_fail_list = ["NA"] * len(device_names)
+                    test_input_list = ["NA"] * len(device_names)
+                else:
+                    pass_fail_list, test_input_list = self.generate_pass_fail_list(
+                        device_type_data, device_names, total_urls)
+            if self.real and self.virtual:
+                if self.selected_groups and self.selected_profiles:
                     final_test_results = {
+                        "Hostname": device_names,
+                        "Type": device_type_data,
+                        "SSID": ssid_data,
+                        "MAC": mac_data,
+                        "AP-BSSID": bssid_data,
+                        "Channel": channel_data,
+                        "Mode": mode_data,
+                        "RSSI": avg_rssi,
+                        "Link Speed": avg_link_speed,
+                        "UC-MIN (ms)": uc_min_data,
+                        "UC-MAX (ms)": uc_max_data,
+                        "UC-AVG (ms)": uc_avg_data,
+                        "Total Successful URLs": total_urls,
+                        "Total Erros": total_err_data,
 
+                    }
+                    if self.expected_passfail_value or self.device_csv_name:
+                        final_test_results["Expected URLS"] = test_input_list
+                        final_test_results["Status"] = pass_fail_list
+
+                    logger.info(f"this is the selected groups {self.selected_groups} and profiles {self.selected_profiles}")
+
+                    for group in self.selected_groups:
+                        group_specific_test_results = self.get_test_results_data(final_test_results, group)
+                        if not group_specific_test_results['Hostname']:
+                            continue
+                        report.set_table_title(f"{group} Test Results")
+                        report.build_table_title()
+                        test_results_df = pd.DataFrame(group_specific_test_results)
+                        report.set_table_dataframe(test_results_df)
+                        report.build_table()
+
+                    report.set_table_title("Final Test Results")
+                    report.build_table_title()
+                else:
+                    final_test_results = {
+                        "Hostname": device_names,
+                        "Type": device_type_data,
+                        "SSID": ssid_data,
+                        "MAC": mac_data,
+                        "AP-BSSID": bssid_data,
+                        "Channel": channel_data,
+                        "Mode": mode_data,
+                        "RSSI": avg_rssi,
+                        "Link Speed": avg_link_speed,
+                        "UC-MIN (ms)": uc_min_data,
+                        "UC-MAX (ms)": uc_max_data,
+                        "UC-AVG (ms)": uc_avg_data,
+                        "Total Successful URLs": total_urls,
+                        "Total Erros": total_err_data,
+                    }
+                    if self.expected_passfail_value:
+                        final_test_results["Expected URLS"] = test_input_list
+                        final_test_results["Status"] = pass_fail_list
+                test_results_df = pd.DataFrame(final_test_results)
+                report.set_table_dataframe(test_results_df)
+
+                report.build_table()
+
+            elif self.real:
+                if self.selected_groups and self.selected_profiles:
+                    final_test_results = {
                         "Device Type": device_type_data,
                         "Hostname": device_names,
                         "SSID": ssid_data,
                         "MAC": mac_data,
+                        "AP-BSSID": bssid_data,
                         "Channel": channel_data,
+                        "Mode": mode_data,
+                        "RSSI": avg_rssi,
+                        "Link Speed": avg_link_speed,
+                        "UC-MIN (ms)": uc_min_data,
+                        "UC-MAX (ms)": uc_max_data,
+                        "UC-AVG (ms)": uc_avg_data,
+                        "Total Successful URLs": total_urls,
+                        "Total Erros": total_err_data,
+
+                    }
+                    if self.expected_passfail_value or self.device_csv_name:
+                        final_test_results["Expected URLS"] = test_input_list
+                        final_test_results["Status"] = pass_fail_list
+
+                    for group in self.selected_groups:
+                        group_specific_test_results = self.get_test_results_data(final_test_results, group)
+                        if not group_specific_test_results['Hostname']:
+                            continue
+                        report.set_table_title(f"{group} Test Results")
+                        report.build_table_title()
+                        # Ensure all columns have equal length
+                        max_len = max(len(v) for v in final_test_results.values())
+
+                        for key in final_test_results:
+                            if len(final_test_results[key]) < max_len:
+                                diff = max_len - len(final_test_results[key])
+                                final_test_results[key].extend(["NA"] * diff)
+
+                        test_results_df = pd.DataFrame(group_specific_test_results)
+                        report.set_table_dataframe(test_results_df)
+                        report.build_table()
+                    report.set_table_title("Final Test Results")
+                    report.build_table_title()
+
+                else:
+                    final_test_results = {
+                        "Device Name": device_names,
+                        "Device Type": device_type_data,
+                        "SSID": ssid_data,
+                        "MAC": mac_data,
+                        "AP-BSSID": bssid_data,
+                        "Channel": channel_data,
+                        "Mode": mode_data,
+                        "RSSI": avg_rssi,
+                        "Link Speed": avg_link_speed,
+                        "UC-MIN (ms)": uc_min_data,
+                        "UC-MAX (ms)": uc_max_data,
+                        "UC-AVG (ms)": uc_avg_data,
+                        "Total Successful URLs": total_urls,
+                        "Total Erros": total_err_data,
+                    }
+                test_results_df = pd.DataFrame(final_test_results)
+                report.set_table_dataframe(test_results_df)
+
+                report.build_table()
+
+            elif self.virtual:
+                if self.expected_passfail_value or self.device_csv_name:
+                    pass_fail_list, test_input_list = self.generate_pass_fail_list(device_type_data, device_names, total_urls)
+                    final_test_results = {
+                        "Station Name": device_names,
+                        "Type": device_type_data,
+                        "SSID": ssid_data,
+                        "MAC": mac_data,
+                        "AP-BSSID": bssid_data,
+                        "Channel": channel_data,
+                        "Mode": mode_data,
+                        "RSSI": avg_rssi,
+                        "Link Speed": avg_link_speed,
                         "UC-MIN (ms)": uc_min_data,
                         "UC-MAX (ms)": uc_max_data,
                         "UC-AVG (ms)": uc_avg_data,
                         "Total Successful URLs": total_urls,
                         "Expected URLS": test_input_list,
                         "Total Erros": total_err_data,
-                        "RSSI": signal_data,
-                        "Link Speed": tx_rate_data,
                         "Status ": pass_fail_list
 
                     }
                 else:
 
                     final_test_results = {
-
-                        "Device Type": device_type_data,
-                        "Hostname": device_names,
+                        "Station Name": device_names,
+                        "Type": device_type_data,
                         "SSID": ssid_data,
                         "MAC": mac_data,
+                        "AP-BSSID": bssid_data,
                         "Channel": channel_data,
+                        "Mode": mode_data,
+                        "RSSI": avg_rssi,
+                        "Link Speed": avg_link_speed,
                         "UC-MIN (ms)": uc_min_data,
                         "UC-MAX (ms)": uc_max_data,
                         "UC-AVG (ms)": uc_avg_data,
                         "Total Successful URLs": total_urls,
                         "Total Erros": total_err_data,
-                        "RSSI": signal_data,
-                        "Link Speed": tx_rate_data,
-
                     }
                 # Ensure all columns have equal length
                 max_len = max(len(v) for v in final_test_results.values())
@@ -3383,6 +3903,21 @@ def main():
             python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "https://google.com" --duration 1m --debug --upstream_port 192.168.200.198
             --coordinates 1 --do_robo --robo_ip 192.168.200.140 --rotations 30 --device_list 1.5,1.11
 
+            Example-7:
+            Command Line Interface to run the Real Browser Test with real and virtual clients both
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "www.google.com" --duration 1m  --debug --upstream_port 1.1.eth1
+            --ssid NETGEAR_5G_wpa2 --passwd Password@123 --encryp wpa2 --clients_type both --num_sta 4 --radio wiphy0
+
+            Example-8:
+            Command Line Interface to run the Real Browser Test with Virtual clients
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "www.google.com" --duration 1m  --debug --upstream_port 1.1.eth1 --ssid NETGEAR_5G_wpa2
+            --passwd Password@123 --encryp wpa2 --clients_type virtual --num_sta 4 --radio wiphy0
+
+            Example-9:
+            Command Line to Run real with groups and profiles and virtual with ssid and encryption
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "www.google.com" --duration 1m  --upstream_port 1.1.eth1 --clients_type both --file_name rb1 --group_name gro1,gro2
+            --profile_name Openx,Openy --expected_passfail_value 8 --num_sta 3 --radio wiphy1 --ssid NETGEAR_2G_Open --encryp open --passwd NA
+
 
             SCRIPT CLASSIFICATION: Test
 
@@ -3409,6 +3944,9 @@ def main():
             ''')
 
         optional = parser.add_argument_group('Optional arguments to run lf_interop_real_browser_test.py')
+        parser.add_argument('--clients_type', help="specify the clients type on which you want to run the test eg: virtual or real or both", default="real")
+        parser.add_argument('--radio', help="specify the radio for running virtual clients")
+        parser.add_argument('--num_sta', type=int, help="specify the number of stations")
         # Define robo specific arguments group
         robo = parser.add_argument_group('robo arguments')
         parser.add_argument("--host", "--mgr", required=True, help='specify the GUI to connect to, assumes port '
@@ -3585,7 +4123,10 @@ def main():
                               cycles=args.cycles,
                               bssids=args.bssids,
                               rotations_enabled=rotations_enabled,
-                              duration_to_skip=args.duration_to_skip
+                              duration_to_skip=args.duration_to_skip,
+                              clients_type=args.clients_type,
+                              radio=args.radio,
+                              num_sta=args.num_sta
                               )
         obj.change_port_to_ip()
         obj.validate_and_process_args()
@@ -3595,46 +4136,57 @@ def main():
         obj.run_flask_server()
         if args.iot_test:
             start_iot_thread(args)
-        if obj.group_name and obj.profile_name and obj.file_name:
-            available_resources = obj.process_group_profiles()
-        else:
-            # --- Build configuration dictionary for WiFi parameters ---
-            config_dict = {
-                'ssid': args.ssid,
-                'passwd': args.passwd,
-                'enc': args.encryp,
-                'eap_method': args.eap_method,
-                'eap_identity': args.eap_identity,
-                'ieee80211': args.ieee80211,
-                'ieee80211u': args.ieee80211u,
-                'ieee80211w': args.ieee80211w,
-                'enable_pkc': args.enable_pkc,
-                'bss_transition': args.bss_transition,
-                'power_save': args.power_save,
-                'disable_ofdma': args.disable_ofdma,
-                'roam_ft_ds': args.roam_ft_ds,
-                'key_management': args.key_management,
-                'pairwise': args.pairwise,
-                'private_key': args.private_key,
-                'ca_cert': args.ca_cert,
-                'client_cert': args.client_cert,
-                'pk_passwd': args.pk_passwd,
-                'pac_file': args.pac_file,
-                'server_ip': obj.upstream_port,
-            }
-            available_resources = obj.process_resources(config_dict)
-        if len(available_resources) != 0:
-            available_resources = obj.filter_ios_devices(available_resources)
-        if len(available_resources) == 0:
-            logging.error("No devices available to run the test. Exiting...")
-            exit(1)
+        available_resources = []
 
-        # --- Print available resources ---
-        logging.info("Devices available: {}".format(available_resources))
-        if obj.expected_passfail_value or obj.device_csv_name:
-            obj.update_passfail_value(available_resources)
-        # --- Handle incremental values ---
-        obj.handle_incremental(args, obj, available_resources, available_resources)
+        if obj.real:
+            if obj.group_name and obj.profile_name and obj.file_name:
+                available_resources = obj.process_group_profiles()
+                obj.user_to_serial_map = {}
+                for data in obj.config_obj.selected_devices:
+                    logger.info(f"Device info from config: {data}")
+                    try:
+                        obj.user_to_serial_map[data['user-name']] = data['serial']
+                    except Exception:
+                        obj.user_to_serial_map[data['hostname']] = data['hostname']
+                # {'Oppo503':'LFQ84PDI7HAYZH79'}
+            else:
+                # --- Build configuration dictionary for WiFi parameters ---
+                config_dict = {
+                    'ssid': args.ssid,
+                    'passwd': args.passwd,
+                    'enc': args.encryp,
+                    'eap_method': args.eap_method,
+                    'eap_identity': args.eap_identity,
+                    'ieee80211': args.ieee80211,
+                    'ieee80211u': args.ieee80211u,
+                    'ieee80211w': args.ieee80211w,
+                    'enable_pkc': args.enable_pkc,
+                    'bss_transition': args.bss_transition,
+                    'power_save': args.power_save,
+                    'disable_ofdma': args.disable_ofdma,
+                    'roam_ft_ds': args.roam_ft_ds,
+                    'key_management': args.key_management,
+                    'pairwise': args.pairwise,
+                    'private_key': args.private_key,
+                    'ca_cert': args.ca_cert,
+                    'client_cert': args.client_cert,
+                    'pk_passwd': args.pk_passwd,
+                    'pac_file': args.pac_file,
+                    'server_ip': obj.upstream_port,
+                }
+                available_resources = obj.process_resources(config_dict)
+                if len(available_resources) != 0:
+                    available_resources = obj.filter_ios_devices(available_resources)
+                if len(available_resources) == 0:
+                    logging.error("No devices available to run the test. Exiting...")
+                    exit(1)
+                # --- Print available resources ---
+                logging.info("Devices available: {}".format(available_resources))
+                if obj.expected_passfail_value or obj.device_csv_name:
+                    obj.update_passfail_value(available_resources)
+            # --- Handle incremental values ---
+            obj.handle_incremental(args, obj, available_resources, available_resources)
+
         obj.handle_duration()
         obj.run_test(available_resources)
         iot_summary = None
