@@ -577,7 +577,9 @@ class FtpTest(LFCliBase):
             self.radio = [self.twog_radio]
         elif self.band == "Both":
             self.radio = [self.fiveg_radio, self.twog_radio]
-
+            if self.num_sta == 1:
+                logger.warning("Number of stations can't be 1 for Both band, Exiting the test")
+                exit(1)
             # if Both then number of stations are half for 2.4G and half for 5G
             self.num_sta = self.num_sta // 2
 
