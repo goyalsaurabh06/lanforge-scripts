@@ -114,6 +114,11 @@ Command Line Interface to run download scenario for existing stations
 python3 lf_ftp.py --file_sizes 1MB --mgr 192.168.207.78 --traffic_duration 1m --directions Download --bands 2.4G
 --use_existing_sta_list --existing_sta_list 1.1.sta00000,1.1.sta00001,1.1.sta00002
 
+EXAMPLE-22:
+Command Line Interface to run download scenario for Real clients with timebreak
+python3 lf_ftp.py --ssid Netgear-5g --passwd sharedsecret --file_sizes 10MB --mgr 192.168.200.165 --traffic_duration 1m --security wpa2 --directions Download
+--clients_type Real --ap_name Netgear --bands 5G --upstream_port eth1 --timebreak 5
+
 SCRIPT_CLASSIFICATION : Test
 
 SCRIPT_CATEGORIES:   Performance,  Functional,  Report Generation
@@ -223,6 +228,7 @@ class FtpTest(LFCliBase):
                  robot_ip=None,
                  coordinate=None,
                  rotation=None,
+                 timebreak=None,
                  existing_sta_list="",
                  use_existing_sta_list=False,
                  do_bandsteering=False,
@@ -336,6 +342,7 @@ class FtpTest(LFCliBase):
         self.api_url = 'http://{}:{}'.format(self.host, self.port)
         self.get_live_view = get_live_view
         self.total_floors = total_floors
+        self.timebreak = timebreak
         # Robot related variables
         self.robot_test = robot_test
         self.robot_ip = robot_ip
@@ -1393,7 +1400,7 @@ class FtpTest(LFCliBase):
             # No sleep is added here for band steering, as we need to capture data every second.
             # The per-second sleep interval is already handled in lf_base_robo.
             if not self.do_bandsteering:
-                time.sleep(5)
+                time.sleep(self.timebreak)
             if self.dowebgui == "True":
                 with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host,
                                                                                                  self.test_name),
@@ -3822,6 +3829,11 @@ Command Line Interface to run download scenario for existing stations
 python3 lf_ftp.py --file_sizes 1MB --mgr 192.168.207.78 --traffic_duration 1m --directions Download --bands 2.4G
 --use_existing_sta_list --existing_sta_list 1.1.sta00000,1.1.sta00001,1.1.sta00002
 
+EXAMPLE-19:
+Command Line Interface to run download scenario for Real clients with timebreak
+python3 lf_ftp.py --ssid Netgear-5g --passwd sharedsecret --file_sizes 10MB --mgr 192.168.200.165 --traffic_duration 1m --security wpa2 --directions Download
+--clients_type Real --ap_name Netgear --bands 5G --upstream_port eth1 --timebreak 5
+
 SCRIPT_CLASSIFICATION : Test
 
 SCRIPT_CATEGORIES:   Performance,  Functional,  Report Generation
@@ -3895,6 +3907,7 @@ INCLUDE_IN_README: False
     optional.add_argument('--device_csv_name', type=str, help='Enter the csv name to store expected url values', default=None)
     optional.add_argument('--wait_time', type=int, help='Enter the maximum wait time for configurations to apply', default=60)
     optional.add_argument('--config', action="store_true", help='Specify for configuring the devices')
+    optional.add_argument('--timebreak', type=int, help="time break to get the ftp results", default=5)
     optional.add_argument("--existing_sta_list", type=str, default="", help="List of existing stations to be passed when creating cross connections, example: 1.1.sta001,1.1.sta002")
     optional.add_argument("--use_existing_sta_list", action="store_true", help="Whether to use existing stations for cross connections if provided in --existing_sta_list", default=False)
     # kpi_csv arguments
@@ -4164,6 +4177,7 @@ some amount of file data from the FTP server while measuring the time taken by c
                               cycles=args.cycles,
                               bssids=args.bssids,
                               duration_to_skip=args.duration_to_skip,
+                              timebreak=args.timebreak if args.timebreak is not None else 5,
                               use_existing_sta_list=args.use_existing_sta_list,
                               existing_sta_list=args.existing_sta_list,
                               )
