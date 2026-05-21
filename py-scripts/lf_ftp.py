@@ -962,46 +962,45 @@ class FtpTest(LFCliBase):
         if not self.use_existing_sta_list:
             self.station_profile.admin_down()
         # To update status of devices and remaining_time in ftp_datavalues.csv file to stopped and 0 respectively.
-        if self.clients_type == 'real':
-            if not self.robot_test:
-                self.data["status"] = ["STOPPED"] * len(self.mac_id_list)
-            self.data["remaining_time"] = ["0"] * len(self.mac_id_list)
-            df1 = pd.DataFrame(self.data)
-            df1.to_csv("ftp_datavalues.csv", index=False)
-            if self.robot_test:
-                # Storing data in robot_data dictionary for each coordinate and angle
-                if self.rotation_enabled:
-                    self.robot_data.setdefault(self.current_coordinate, {})[self.current_angle] = {
-                        "mac_id_list": self.mac_id_list,
-                        "channel_list": self.channel_list,
-                        "ssid_list": self.ssid_list,
-                        "mode_list": self.mode_list,
-                        "url_data": self.url_data,
-                        "uc_avg": self.uc_avg,
-                        "bytes_rd": self.bytes_rd,
-                        "rx_rate": self.rx_rate,
-                        "total_err": self.total_err,
-                        "uc_min": self.uc_min,
-                        "uc_max": self.uc_max,
-                    }
-                else:
-                    self.robot_data[self.current_coordinate] = {
-                        "mac_id_list": self.mac_id_list,
-                        "channel_list": self.channel_list,
-                        "ssid_list": self.ssid_list,
-                        "mode_list": self.mode_list,
-                        "url_data": self.url_data,
-                        "uc_avg": self.uc_avg,
-                        "bytes_rd": self.bytes_rd,
-                        "rx_rate": self.rx_rate,
-                        "total_err": self.total_err,
-                        "uc_min": self.uc_min,
-                        "uc_max": self.uc_max
-                    }
-                if self.dowebgui:
-                    df1.to_csv(f"{self.result_dir}/{self.current_coordinate}_ftp_datavalues.csv", index=False)
-                else:
-                    df1.to_csv(f"{self.current_coordinate}_ftp_datavalues.csv", index=False)
+        if not self.robot_test:
+            self.data["status"] = ["STOPPED"] * len(self.mac_id_list)
+        self.data["remaining_time"] = ["0"] * len(self.mac_id_list)
+        df1 = pd.DataFrame(self.data)
+        df1.to_csv("ftp_datavalues.csv", index=False)
+        if self.robot_test:
+            # Storing data in robot_data dictionary for each coordinate and angle
+            if self.rotation_enabled:
+                self.robot_data.setdefault(self.current_coordinate, {})[self.current_angle] = {
+                    "mac_id_list": self.mac_id_list,
+                    "channel_list": self.channel_list,
+                    "ssid_list": self.ssid_list,
+                    "mode_list": self.mode_list,
+                    "url_data": self.url_data,
+                    "uc_avg": self.uc_avg,
+                    "bytes_rd": self.bytes_rd,
+                    "rx_rate": self.rx_rate,
+                    "total_err": self.total_err,
+                    "uc_min": self.uc_min,
+                    "uc_max": self.uc_max,
+                }
+            else:
+                self.robot_data[self.current_coordinate] = {
+                    "mac_id_list": self.mac_id_list,
+                    "channel_list": self.channel_list,
+                    "ssid_list": self.ssid_list,
+                    "mode_list": self.mode_list,
+                    "url_data": self.url_data,
+                    "uc_avg": self.uc_avg,
+                    "bytes_rd": self.bytes_rd,
+                    "rx_rate": self.rx_rate,
+                    "total_err": self.total_err,
+                    "uc_min": self.uc_min,
+                    "uc_max": self.uc_max
+                }
+            if self.dowebgui:
+                df1.to_csv(f"{self.result_dir}/{self.current_coordinate}_ftp_datavalues.csv", index=False)
+            else:
+                df1.to_csv(f"{self.current_coordinate}_ftp_datavalues.csv", index=False)
 
     def update_stop_status_robot(self):
         # To update status of devices in csv file to stopped.
@@ -1192,6 +1191,10 @@ class FtpTest(LFCliBase):
     # FOR WEB-UI // function usd to fetch runtime values and fill the csv.
 
     def monitor_for_runtime_csv(self):
+        band = self.band
+        direction = self.direction
+        file_size = self.file_size
+        indv_device_csv_list = self.indv_device_csv_list
 
         time_now = datetime.now()
         start_time = time_now.strftime("%d/%m %I:%M:%S %p")
@@ -1204,7 +1207,10 @@ class FtpTest(LFCliBase):
         self.data["url_data"] = []
         client_id_list = []
         test_stopped_by_user = False
+        main_csv_file = 'ftp_datavalues.csv'
+
         comb_list = []
+
         if self.clients_type == "both":
             comb_list.extend(self.station_list)
             comb_list.extend(self.input_devices_list)
@@ -1212,13 +1218,13 @@ class FtpTest(LFCliBase):
             comb_list = self.input_devices_list
         else:
             comb_list = self.station_list
-        test_stopped_by_user = False
+
         for port in comb_list:
             # Added this check to handle multiple external monitor calls for band steering.
             # This is common to both cases and does not affect the current execution.
             # It simply ensures safe handling when the monitor is invoked from lf_base_robo.
-            if port not in self.individual_device_data:
-                columns = ['TIMESTAMP', 'Bytes-rd', 'total urls', 'download_rate', 'rx_rate', 'tx_rate', 'RSSI', 'BSSID', 'Channel']
+            if port not in comb_list:
+                columns = ['TIMESTAMP', 'Bytes-rd', 'total urls', 'download_rate', 'rx_rate', 'tx_rate', 'RSSI', 'Channel', 'Mode', 'SSID', 'BSSID', 'MAC', 'Band', 'Direction', 'File Size']
                 if self.do_bandsteering:
                     columns.append('From Coordinate')
                     columns.append('To Coordinate')
@@ -1286,11 +1292,38 @@ class FtpTest(LFCliBase):
 
             for i, port in enumerate(comb_list):
                 try:
-                    row_data = [current_time, self.bytes_rd[i], self.url_data[i], self.rx_rate[i], self.port_rx_rate[i], self.tx_rate[i], self.rssi_list[i], self.bssid_list[i], self.channel_list[i]]
+                    row_data = [
+                        current_time.strftime("%d/%m/%Y %H:%M:%S"),
+                        self.bytes_rd[i],
+                        self.url_data[i],
+                        self.rx_rate[i],
+                        self.port_rx_rate[i],
+                        self.tx_rate[i],
+                        self.rssi_list[i],
+                        self.channel_list[i],
+                        self.mode_list[i],
+                        self.ssid_list[i],
+                        self.bssid_list[i],
+                        self.mac_id_list[i],
+                        band,
+                        direction,
+                        file_size
+                    ]
                     if self.do_bandsteering:
                         robo_x, robo_y, from_coord, to_coord = self.robot_obj.get_robot_pose()
                         row_data.extend([from_coord, to_coord, robo_x, robo_y])
-                    self.individual_device_data[port].loc[len(self.individual_device_data[port])] = row_data
+                    # Append to in-memory dataframe (original logic)
+                    self.individual_device_data[port].loc[
+                        len(self.individual_device_data[port])
+                    ] = row_data
+                    # ALSO append real-time data to CSV
+                    device_csv = f"ftp-{port.replace('.', '-')}.csv"
+                    pd.DataFrame([row_data], columns=self.individual_device_data[port].columns).to_csv(
+                        device_csv,
+                        mode='a',
+                        header=not os.path.exists(device_csv),
+                        index=False
+                    )
                 except Exception:
                     # Fail-safe: if any list index/key mismatch occurs while adding row_data,
                     # stop execution to avoid inconsistent results.
@@ -1317,7 +1350,6 @@ class FtpTest(LFCliBase):
             #                     temp_data[created_cx] = cx[CX]['total-urls']
 
             if self.url_data != []:
-
                 self.data["status"] = ["RUNNING"] * len(self.url_data)
                 # self.data["url_data"] = list(temp_data.values())
                 self.data["url_data"] = self.url_data
@@ -1351,10 +1383,13 @@ class FtpTest(LFCliBase):
                 if not self.do_bandsteering and self.robot_test:
                     # Save FTP data values for the current coordinate when in robot test
                     df1.to_csv(f"{self.result_dir}/{self.current_coordinate}_ftp_datavalues.csv", index=False)
-            if self.clients_type == 'real':
-                df1.to_csv("ftp_datavalues.csv", index=False)
-                if not self.do_bandsteering and self.robot_test:
-                    df1.to_csv(f"{self.current_coordinate}_ftp_datavalues.csv", index=False)
+            df1.to_csv(
+                main_csv_file,
+                header=True,
+                index=False
+            )
+            if not self.do_bandsteering and self.robot_test:
+                df1.to_csv(f"{self.current_coordinate}_ftp_datavalues.csv", index=False)
             # No sleep is added here for band steering, as we need to capture data every second.
             # The per-second sleep interval is already handled in lf_base_robo.
             if not self.do_bandsteering:
@@ -1376,14 +1411,36 @@ class FtpTest(LFCliBase):
                 break
             current_time = datetime.now()
         individual_device_csv_names = []
-        for port, df in self.individual_device_data.items():
-            df.to_csv(f"{endtime}-ftp-{port}.csv", index=False)
-            individual_device_csv_names.append(f'{endtime}-ftp-{port}')
-        self.individual_device_csv_names = individual_device_csv_names
+        for port in self.individual_device_data.keys():
+            safe_port = port.replace('.', '-')
+            csv_name = f"ftp-{safe_port}"
+            individual_device_csv_names.append(csv_name)
+        indv_device_csv_list.extend(individual_device_csv_names)
+
+        self.individual_device_csv_list = indv_device_csv_list
+        # Final L4 dump
         try:
             all_l4_data = self.get_all_l4_data()
             df = pd.DataFrame(all_l4_data)
-            df.to_csv("all_l4_data.csv", index=False)
+
+            df.insert(0, "band", band)
+            df.insert(1, "direction", direction)
+            df.insert(2, "filesize", file_size)
+
+            df1.insert(0, "band", band)
+            df1.insert(1, "direction", direction)
+            df1.insert(2, "filesize", file_size)
+
+            df.to_csv("all_l4_data.csv",
+                      mode='a',
+                      header=not os.path.exists("all_l4_data.csv"),
+                      index=False)
+            df1.to_csv(
+                "all_" + main_csv_file,
+                mode='a',
+                header=not os.path.exists("all_" + main_csv_file),
+                index=False
+            )
         except Exception:
             logger.error("All l4 data not found")
 
@@ -2478,14 +2535,24 @@ class FtpTest(LFCliBase):
 
         # To move ftp_datavalues.csv in report folder
         report_path_date_time = self.report.get_path_date_time()
-        if self.clients_type == "real":
-            shutil.move('ftp_datavalues.csv', report_path_date_time)
-            try:
-                shutil.move('all_l4_data.csv', report_path_date_time)
-            except Exception:
-                logger.error("failed to create all layer 4 csv")
-            for csv_name in self.individual_device_csv_names:
+        try:
+            for csv_name in list(set(self.individual_device_csv_list)):
                 shutil.move(f"{csv_name}.csv", report_path_date_time)
+        except Exception as e:
+            logger.error(f"failed to create individual device csv {e}")
+        try:
+            shutil.move('all_l4_data.csv', report_path_date_time)
+        except Exception as e:
+            logger.error(f"failed to create all layer 4 csv {e}")
+        try:
+            shutil.move('ftp_datavalues.csv', report_path_date_time)
+        except Exception as e:
+            logger.error(f"failed to create ftp_datavalues csv {e}")
+        try:
+            shutil.move('all_ftp_datavalues.csv', report_path_date_time)
+        except Exception as e:
+            logger.error(f"failed to create all dtpdatavlues csv {e}")
+
         self.report.set_title("FTP Test Including IoT Devices" if iot_summary else "FTP Test")
         self.report.set_date(date)
         self.report.build_banner()
@@ -2730,18 +2797,47 @@ class FtpTest(LFCliBase):
                         self.report.set_table_dataframe(dataframe1)
                         self.report.build_table()
             else:
-                dataframe = {
-                    " Clients": client_list,
-                    " MAC ": self.mac_id_list,
-                    " Channel": self.channel_list,
-                    " SSID ": self.ssid_list,
-                    " Mode": self.mode_list,
-                    " No of times File downloaded ": self.url_data,
-                    " Time Taken to Download file (ms)": self.uc_avg,
-                    " Bytes-rd (Mega Bytes)": self.bytes_rd,
-                    " RX RATE (Mbps) ": self.rx_rate,
-                    "Failed Urls": self.total_err
-                }
+                dataframe = {}
+                if self.clients_type == "both":
+                    types = []
+                    for _ in range(len(self.station_list)):
+                        types.append("Virtual")
+                    for _ in range(len(self.input_devices_list)):
+                        types.append("Real")
+                    dataframe = {
+                        " Clients": client_list,
+                        " Client Type": types,
+                        " OS Type": device_type,
+                        " MAC ": self.mac_id_list,
+                        " RSSI": self.rssi_list,
+                        " BSSID": self.bssid_list,
+                        " Channel": self.channel_list,
+                        " SSID ": self.ssid_list,
+                        " Mode": self.mode_list,
+                        " No of times File downloaded ": self.url_data,
+                        " Time Taken to Download file (ms)": self.uc_avg,
+                        " Bytes-rd (Mega Bytes)": self.bytes_rd,
+                        " RX RATE (Mbps) ": self.rx_rate,
+                        " Failed Urls": self.total_err
+                    }
+
+                else:
+                    dataframe = {
+                        " Clients": client_list,
+                        " Client Type": ["Real"] * len(client_list),
+                        " OS Type": device_type,
+                        " MAC ": self.mac_id_list,
+                        " RSSI": self.rssi_list,
+                        " BSSID": self.bssid_list,
+                        " Channel": self.channel_list,
+                        " SSID ": self.ssid_list,
+                        " Mode": self.mode_list,
+                        " No of times File downloaded ": self.url_data,
+                        " Time Taken to Download file (ms)": self.uc_avg,
+                        " Bytes-rd (Mega Bytes)": self.bytes_rd,
+                        " RX RATE (Mbps) ": self.rx_rate,
+                        " Failed Urls": self.total_err
+                    }
                 if self.expected_passfail_val or self.csv_name:
                     dataframe[" Expected output "] = self.test_input_list
                     dataframe[" Status "] = self.pass_fail_list
@@ -2753,7 +2849,11 @@ class FtpTest(LFCliBase):
         else:
             dataframe = {
                 " Clients": client_list,
+                " Client Type": ["Virtual"] * len(client_list),
+                " OS Type": device_type,
                 " MAC ": self.mac_id_list,
+                " RSSI": self.rssi_list,
+                " BSSID": self.bssid_list,
                 " Channel": self.channel_list,
                 " SSID ": self.ssid_list,
                 " Mode": self.mode_list,
@@ -3068,6 +3168,9 @@ class FtpTest(LFCliBase):
         statuslist = []
         rate_rx = []
         urls_failed = []
+        bssids = []
+        rssis = []
+        os_type = []
         interop_tab_data = self.json_get('/adb/')["devices"]
         for i in range(len(clients_list)):
             for j in groupdevlist:
@@ -3078,9 +3181,12 @@ class FtpTest(LFCliBase):
                 if j == clients_list[i].split(" ")[2] and clients_list[i].split(" ")[1] != 'android':
                     clients.append(clients_list[i])
                     macids.append(mac[i])
+                    bssids.append(self.bssid_list[i])
+                    rssis.append(self.rssi_list[i])
                     channels.append(channel[i])
                     ssids.append(ssid[i])
                     modes.append(mode[i])
+                    os_type.append(self.df_device_type[i])
                     downloadtimes.append(file_download[i])
                     avgtimes.append(averagetime[i])
                     readbytes.append(bytes_read[i])
@@ -3099,7 +3205,10 @@ class FtpTest(LFCliBase):
                             if item['user-name'] == clients_list[i].split(' ')[2] and j == item['name'].split('.')[2]:
                                 clients.append(clients_list[i])
                                 macids.append(mac[i])
+                                bssids.append(self.bssid_list[i])
+                                rssis.append(self.rssi_list[i])
                                 channels.append(channel[i])
+                                os_type.append(self.df_device_type[i])
                                 ssids.append(ssid[i])
                                 modes.append(mode[i])
                                 downloadtimes.append(file_download[i])
@@ -3113,7 +3222,11 @@ class FtpTest(LFCliBase):
         if len(clients) != 0:
             dataframe = {
                 " Clients": clients,
+                " Client Type": ["Real"] * len(clients),
+                " OS Type": os_type,
                 " MAC ": macids,
+                " RSSI": rssis,
+                " BSSID": bssids,
                 " Channel": channels,
                 " SSID ": ssids,
                 " Mode": modes,
@@ -3986,7 +4099,8 @@ some amount of file data from the FTP server while measuring the time taken by c
         args.traffic_duration = int(args.traffic_duration[0:-1]) * 60 * 60
     elif args.traffic_duration.endswith(''):
         args.traffic_duration = int(args.traffic_duration)
-
+    # For saving the csv files created for devices for each specified iteration like (2.4GHZ, Download,1MB),(2.4GHZ, Download,2MB) etc if multiple file sizes 1MB 2MB are specififed
+    indv_device_csv_list = []
     # For all combinations ftp_data of directions, file size and client counts, run the test
     for band in args.bands:
         for direction in args.directions:
@@ -4087,6 +4201,7 @@ some amount of file data from the FTP server while measuring the time taken by c
                 if not obj.passes():
                     logger.info(obj.get_fail_message())
                     exit(1)
+                obj.indv_device_csv_list = indv_device_csv_list
 
                 obj.monitor_cx()
                 logger.info(f'Test started on the devices : {obj.station_list + obj.input_devices_list}')
