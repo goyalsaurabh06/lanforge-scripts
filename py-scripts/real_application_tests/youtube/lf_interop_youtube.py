@@ -91,11 +91,16 @@
     --coordinates c1,c2,c3 \
     --rotations 0,90,180,270
 
-    Example-9:
+    Example-10:
     Command Line Interface to run the Test with Robo bandsteering
     python3 lf_interop_youtube.py --mgr 192.168.207.78 --url "https://youtu.be/BHACKCNDMW8?si=mjPduPJ5a7KmCUAS" --duration 1  --upstream_port 192.168.204.90 --res 144p
     --do_robo --robo_ip 192.168.200.101 --coordinates 3,2,1 --rotations "" --robot_wait_duration 1 --do_bandsteering --cycles 2
     --bssids 94:A6:7E:74:26:22,94:A6:7E:74:26:31
+
+    Example-11:
+    Command Line Interface to run the test with virtual clients
+    python3 lf_interop_youtube.py --mgr 192.168.207.78 --url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" --duration 1 --res 1080p
+    --upstream_port 1.1.eth1 --clients_type virtual --num_sta 3 --ssid NETGEAR_2G_Open --passwd NA  --encryp open --radio wiphy0
 
 
 
@@ -128,6 +133,7 @@ from threading import Thread
 import traceback
 import threading
 from collections import Counter
+import re
 
 logger = logging.getLogger(__name__)
 log = logging.getLogger('werkzeug')
@@ -137,6 +143,12 @@ log.setLevel(logging.ERROR)
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
+
+port_utils = importlib.import_module("py-json.port_utils")
+LFUtils = importlib.import_module("py-json.LANforge.LFUtils")
+station_profile_module = importlib.import_module("py-json.station_profile")
+StationProfile = station_profile_module.StationProfile
+PortUtils = port_utils.PortUtils
 
 
 # Import LANforge-related modules
@@ -209,9 +221,13 @@ class Youtube(Realm):
                  do_bandsteering=False,
                  current_cord="",
                  current_angle="NA",
-                 rotations_enabled=False
-
-
+                 rotations_enabled=False,
+                 clients_type="",
+                 num_sta=0,
+                 passwd=None,
+                 radio="wiphy0",
+                 existing_sta_list="",
+                 use_existing_sta_list=False
                  ):
         """
         Initialize the YouTube streaming test parameters.
@@ -229,10 +245,40 @@ class Youtube(Realm):
         """
         super().__init__(lfclient_host=host,
                          lfclient_port=port)
+
+        if clients_type == "both":
+            self.real = True
+            self.virtual = True
+        elif clients_type == "real":
+            self.real = True
+            self.virtual = False
+        elif clients_type == "virtual":
+            self.real = False
+            self.virtual = True
+        else:
+            logger.info("No clients_type specified to preoceeding with default Virtual type")
+            self.virtual = True
+
+        # Initialize virtual station list
+        self.sta_list = []
+        self.ip_map = {}
+
         self.host = host
         self.lanforge_password = lanforge_password
         self.port = port
         self.url = url
+        self.local_realm = realm.Realm(lfclient_host=self.host, lfclient_port=8080)
+        self.http_profile = self.local_realm.new_http_profile()
+        self.port_util = PortUtils(self.local_realm)
+        self.radio = radio
+        self.max_buffer = {}
+        self.min_buffer = {}
+
+        # Initialize station profile
+        self.station_profile = self.local_realm.new_station_profile()
+        self.use_existing_sta_list = use_existing_sta_list
+        self.existing_sta_list = existing_sta_list
+
         self.duration = duration
         self.lfclient_host = host
         self.lfclient_port = port
@@ -262,6 +308,7 @@ class Youtube(Realm):
         self.ap_name = ap_name
         self.ssid = ssid
         self.security = security
+        self.passwd = passwd
         self.band = band
         self.start_time = None,
         self.est_end_time = None,
@@ -296,8 +343,56 @@ class Youtube(Realm):
             "Instance Name", "TimeStamp", "Viewport", "DroppedFrames",
             "TotalFrames", "CurrentRes", "OptimalRes", "BufferHealth",
             "VideoCodec", "AudioCodec", "ConnectionSpeedKbps",
-            "NetworkActivityKB", "LiveLatency(sec)"
+            "NetworkActivityKB", "LiveLatency(sec)", "MAC", "BSSID", "RSSI", "Channel", "Mode", "SSID", "Link Rate",
         ]
+
+        if self.virtual and not self.use_existing_sta_list:
+            logging.info('Proceeding to create {} virtual stations on {}'.format(num_sta, self.radio))
+            station_list = LFUtils.portNameSeries(
+                prefix_='sta', start_id_=0, end_id_=num_sta - 1, padding_number_=100000, radio=self.radio)
+            self.sta_list = station_list
+            logger.info(self.sta_list)
+            if (debug):
+                logging.info('Virtual Stations: {}'.format(station_list).replace(
+                    '[', '').replace(']', '').replace('\'', ''))
+
+        if self.virtual and self.use_existing_sta_list:
+            logger.info(f"Using existing stations provided in --existing_sta_list: {existing_sta_list}")
+            lis = existing_sta_list.split(',') if existing_sta_list else []
+            logger.info(lis)
+            valid_stations = []
+            for station in lis:
+                logger.info(f"Verifying station {station} from the provided --existing_sta_list")
+                station = station.strip()
+                rv = station.split('.')
+                response = self.json_get(f"/port/{rv[0]}/{rv[1]}/{rv[2]}")
+
+                try:
+                    if (response['interface']
+                        and response['interface']['ip'] != "0.0.0.0"
+                        and str(response['interface']['down']).lower() == "false"
+                        and str(response['interface']['phantom']).lower() == "false"
+                            and response['interface']['parent dev'] != ""):
+
+                        logger.info(f"Station {station} exists and will be used for the test")
+                        valid_stations.append(station)
+                    else:
+                        logger.info(f"Station {station} is not up and running")
+
+                except Exception:
+                    logger.warning(f"Station {station} does not exist")
+
+            lis = valid_stations
+            if lis == []:
+                if not self.real:
+                    logger.info("No valid stations found in the provided --existing_sta_list, exiting the test")
+                    exit(1)
+                else:
+                    logger.info("no valid stations so proceding with the real clients only")
+                    self.virtual = False
+            self.sta_list = lis
+            logger.info(f"final station list {self.sta_list}")
+
         if do_robo and not do_bandsteering:
             self.csv_headers.append("Angle")
         if do_bandsteering:
@@ -320,7 +415,12 @@ class Youtube(Realm):
                 angle_list=angles_list
             )
 
+        self.virtual_ip_map = {}  # Map of ip -> station name
+
     def stop(self):
+        if self.virtual:
+            self.http_profile.stop_cx()
+
         self.stop_signal = True
 
     def cleanup(self):
@@ -333,6 +433,14 @@ class Youtube(Realm):
         these endpoints and clears the lists afterwards.
 
         """
+        # precleanup for virtual stations
+        if self.virtual and not self.use_existing_sta_list:
+            for station in self.sta_list:
+                self.rm_port(station, check_exists=True)
+            if (not LFUtils.wait_until_ports_disappear(base_url=self.host, port_list=self.sta_list, debug=self.debug)):
+                logging.info('All stations are not removed or a timeout occured.')
+                logging.error('Aborting the test.')
+                exit(0)
         # Append CX and endpoint names for each real station to be cleaned up
         for station in self.real_sta_list:
             self.generic_endps_profile.created_cx.append(
@@ -432,6 +540,332 @@ class Youtube(Realm):
 
             logging.info(f"Setting command for Android devices: {cmd}")
             self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[-(i + 1)], cmd)
+
+    # for building layer4 cross connections
+    def build_l4(self):
+        if self.virtual:
+            logging.info("Creating Layer-4 endpoints from the user inputs as test parameters")
+            if 'https' in self.url:
+                url = self.url.replace("https://", "")
+                self.create_l4(ports=self.sta_list, sleep_time=.5,
+                               suppress_related_commands_=None, https=True,
+                               https_ip=url, interop=False, timeout=1000, media_source='1', media_quality='0')
+            elif 'http' in self.url:
+                url = self.url.replace("http://", "")
+                self.create_l4(ports=self.sta_list, sleep_time=.5,
+                               suppress_related_commands_=None, http=True,
+                               http_ip=url, interop=False, timeout=1000, media_source='1', media_quality='0')
+            else:
+                url = self.url
+                self.create_l4(ports=self.sta_list, sleep_time=.5,
+                               suppress_related_commands_=None, http=True,
+                               http_ip=url, interop=False, timeout=1000, media_source='1', media_quality='0')
+
+    def map_sta_ips_real(self, sta_list=None):
+        if sta_list is None:
+            sta_list = []
+        for sta_eid in sta_list:
+            eid = self.name_to_eid(sta_eid)
+            logger.info(f"eid ==== {eid}")
+            sta_list = self.json_get("/port/%s/%s/%s?fields=alias,ip" % (eid[0], eid[1], eid[2]))
+            if sta_list['interface'] is not None:
+                eid_key = "{eid0}.{eid1}.{eid2}".format(eid0=eid[0], eid1=eid[1], eid2=eid[2])
+                self.ip_map[eid_key] = sta_list['interface']['ip']
+
+    def convert_to_dict(self, input_list):
+        """
+            Creating dictionary for devices for pre_cleanup
+        """
+        output_dict = {}
+        logger.info(f"this is the input list for convert to dict : {input_list}")
+        if self.real:
+            for item in input_list:
+                parts = item.split('.')
+                device = parts[2]
+                key = f"{device}_http{parts[1]}_l4"
+                value = f"CX_{device}_http{parts[1]}_l4"
+                output_dict[key] = value
+
+        if self.virtual:
+            for station in self.sta_list:
+                parts = station.split('.')
+                device = parts[2]
+                key = f"{device}_http{parts[1]}_l4"
+                value = f"CX_{device}_http{parts[1]}_l4"
+                output_dict[key] = value
+
+        return output_dict
+
+    def start_specific(self):
+        """
+            Starts the layer 4-7 traffic for specific CX endpoints.
+
+            Parameters:
+            - cx_start_list (list): List of CX endpoints to start.
+
+            performs the following actions:
+            1. Starts the specified CX endpoints using the provided list.
+            2. Sets the CX state to 'Running' for each specified CX endpoint.
+        """
+        # Start specific CX endpoints using the provided list
+        logging.info("Test started at : {0} ".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        logger.info("Starting CXs...")
+
+        for cx_name in self.created_cx.keys():
+            cx_name = cx_name.strip()
+
+            if "http" in cx_name:
+
+                self.json_post("/cli-json/set_cx_state", {
+                    "test_mgr": "default_tm",
+                    "cx_name": self.created_cx[cx_name],
+                    "cx_state": "RUNNING"
+                }, debug_=self.debug)
+            else:
+                self.json_post("/cli-json/set_cx_state", {
+                    "test_mgr": "default_tm",
+                    "cx_name": cx_name,
+                    "cx_state": "RUNNING"
+                }, debug_=self.debug)
+
+        logger.info("waiting for 20 secs for the video to start")
+        time.sleep(20)
+        logger.info("wait completed, now checking the CX stats to see if video has started streaming")
+
+    # For creating layer 4 cross connections
+    def create_l4(self, ports=None, sleep_time=.5, debug_=False, suppress_related_commands_=None, http=False, ftp=False, real=False, virtual=False,
+                  https=False, user=None, passwd=None, source=None, ftp_ip=None, upload_name=None, http_ip=None,
+                  https_ip=None, interop=None, media_source=None, media_quality=None, timeout=10, proxy_auth_type=0x12200, windows_list=None, get_url_from_file=False):
+        if windows_list is None:
+            windows_list = []
+        if ports is None:
+            ports = []
+        if self.virtual and not self.real:
+            self.created_cx = self.http_profile.created_cx = {}
+
+        cx_post_data = []
+        self.map_sta_ips_real(ports)
+
+        if self.virtual:
+            self.dest = "/dev/null"
+
+        for i in range(len(list(self.ip_map))):
+            url = None
+            if i != len(list(self.ip_map)) - 1:
+                port_name = list(self.ip_map)[i]
+                ip_addr = self.ip_map[list(self.ip_map)[i + 1]]
+            else:
+                port_name = list(self.ip_map)[i]
+                ip_addr = self.ip_map[list(self.ip_map)[0]]
+
+            if (ip_addr is None) or (ip_addr == ""):
+                raise ValueError("HTTPProfile::create encountered blank ip/hostname")
+            if interop:
+                if list(self.ip_map)[i] in windows_list:
+                    self.dest = 'NUL'
+                if list(self.ip_map)[i] not in windows_list:
+                    self.dest = '/dev/null'
+
+            rv = self.local_realm.name_to_eid(port_name)
+            '''
+            shelf = self.local_realm.name_to_eid(port_name)[0]
+            resource = self.local_realm.name_to_eid(port_name)[1]
+            name = self.local_realm.name_to_eid(port_name)[2]
+            '''
+            shelf = rv[0]
+            resource = rv[1]
+            name = rv[2]
+
+            if upload_name is not None:
+                name = upload_name
+
+            if http:
+                if http_ip is not None:
+                    if get_url_from_file:
+                        self.port_util.set_http(port_name=name, resource=resource, on=True)
+                        url = "%s %s %s" % ("", http_ip, "")
+                        logger.info("HTTP url:{}".format(url))
+                    else:
+                        self.port_util.set_http(port_name=name, resource=resource, on=True)
+                        url = "%s http://%s %s" % ("dl", http_ip, self.dest)
+                        logger.info("HTTP url:{}".format(url))
+                else:
+                    self.port_util.set_http(port_name=name, resource=resource, on=True)
+                    url = "%s http://%s/ %s" % ("dl", ip_addr, self.dest)
+                    logger.info("HTTP url:{}".format(url))
+            if https:
+                if https_ip is not None:
+                    self.port_util.set_http(port_name=name, resource=resource, on=True)
+                    url = "%s https://%s %s" % ("dl", https_ip, self.dest)
+                else:
+                    self.port_util.set_http(port_name=name, resource=resource, on=True)
+                    url = "%s https://%s/ %s" % ("dl", ip_addr, self.dest)
+
+            if real or virtual:
+                logger.info(f"this is the ip address for real/virtual : {ip_addr} and name and resorce are {name} and {resource}")
+                if http_ip is not None:
+                    if get_url_from_file:
+                        self.port_util.set_http(port_name=name, resource=resource, on=True)
+                        url = "%s %s %s" % ("", http_ip, "")
+                        logger.info("HTTP url:{}".format(url))
+                    else:
+                        self.port_util.set_http(port_name=name, resource=resource, on=True)
+                        url = "%s http://%s %s" % ("dl", http_ip, self.dest)
+                        logger.info("HTTP url:{}".format(url))
+                else:
+                    self.port_util.set_http(port_name=name, resource=resource, on=True)
+                    url = "%s http://%s/ %s" % ("dl", ip_addr, self.dest)
+                    logger.info("HTTP url:{}".format(url))
+
+            if ftp:
+                self.port_util.set_ftp(port_name=name, resource=resource, on=True)
+                if user is not None and passwd is not None and source is not None:
+                    if ftp_ip is not None:
+                        ip_addr = ftp_ip
+                    url = "%s ftp://%s:%s@%s%s %s" % ("dl", user, passwd, ip_addr, source, self.dest)
+                    logger.info("###### url:{}".format(url))
+                else:
+                    raise ValueError("user: %s, passwd: %s, and source: %s must all be set" % (user, passwd, source))
+            if not http and not ftp and not https and not real and not virtual:
+                raise ValueError("Please specify ftp and/or http")
+
+            logger.info(f"this is the url : {url}")
+
+            if (url is None) or (url == ""):
+                raise ValueError("HTTPProfile::create: url unset")
+            if ftp:
+                cx_name = 'yt_' + name + "_ftp"
+            else:
+
+                cx_name = 'yt_' + name + "_http"
+
+            if interop is None:
+                if upload_name is None:
+                    endp_data = {
+                        "alias": cx_name + "_l4",
+                        "shelf": shelf,
+                        "resource": resource,
+                        "port": name,
+                        "type": "l4_generic",
+                        "timeout": timeout,
+                        "url_rate": 100,
+                        "url": url,
+                        "proxy_auth_type": 0x2000,
+                        "quiesce_after": 0,
+                        "max_speed": 0
+                    }
+                else:
+                    endp_data = {
+                        "alias": cx_name + "_l4",
+                        "shelf": shelf,
+                        "resource": resource,
+                        # "port": ports[0],
+                        "port": rv[2],
+                        "type": "l4_generic",
+                        "timeout": timeout,
+                        "url_rate": 100,
+                        "url": url,
+                        "ssl_cert_fname": "ca-bundle.crt",
+                        "proxy_port": 0,
+                        "max_speed": 0,
+                        "proxy_auth_type": 0x2000,
+                        "quiesce_after": 0
+                    }
+                set_endp_data = {
+                    "alias": cx_name + str(resource) + "_l4",
+                    "media_source": media_source,
+                    "media_quality": media_quality,
+                    # "media_playbacks":'0'
+                }
+                url = "cli-json/add_l4_endp"
+                self.json_post(url, endp_data, debug_=debug_,
+                               suppress_related_commands_=suppress_related_commands_)
+                time.sleep(sleep_time)
+                # If media source and media quality is given then this code will set media source and media quality for CX
+                if media_source and media_quality:
+                    url1 = "cli-json/set_l4_endp"
+                    self.json_post(url1, set_endp_data, debug_=debug_,
+                                   suppress_related_commands_=suppress_related_commands_)
+
+                endp_data = {
+                    "alias": "CX_" + cx_name + "_l4",
+                    "test_mgr": "default_tm",
+                    "tx_endp": cx_name + "_l4",
+                    "rx_endp": "NA"
+                }
+                cx_post_data.append(endp_data)
+                self.created_cx[cx_name + "_l4"] = "CX_" + cx_name + "_l4"
+            else:  # If Interop is enabled then this code will work
+                if upload_name is None:
+                    endp_data = {
+                        "alias": cx_name + str(resource) + "_l4",
+                        "shelf": shelf,
+                        "resource": resource,
+                        "port": name,
+                        "type": "l4_generic",
+                        "timeout": timeout,
+                        "url_rate": 100,
+                        "url": url,
+                        "proxy_auth_type": proxy_auth_type,
+                        "quiesce_after": 0,
+                        "max_speed": 0
+                    }
+                else:
+                    endp_data = {
+                        "alias": cx_name + str(resource) + "_l4",
+                        "shelf": shelf,
+                        "resource": resource,
+                        # "port": ports[0],
+                        "port": rv[2],
+                        "type": "l4_generic",
+                        "timeout": timeout,
+                        "url_rate": 100,
+                        "url": url,
+                        "ssl_cert_fname": "ca-bundle.crt",
+                        "proxy_port": 0,
+                        "max_speed": 0,
+                        "proxy_auth_type": proxy_auth_type,
+                        "quiesce_after": 0
+                    }
+                set_endp_data = {
+                    "alias": cx_name + str(resource) + "_l4",
+                    "media_source": media_source,
+                    "media_quality": media_quality,
+                    # "media_playbacks":'0'
+                }
+                url = "cli-json/add_l4_endp"
+                self.json_post(url, endp_data, debug_=debug_,
+                               suppress_related_commands_=suppress_related_commands_)
+                time.sleep(sleep_time)
+                # If media source and media quality is given then this code will set media source and media quality for CX
+                if media_source and media_quality:
+                    url1 = "cli-json/set_l4_endp"
+                    self.json_post(url1, set_endp_data, debug_=debug_,
+                                   suppress_related_commands_=suppress_related_commands_)
+
+                endp_data = {  # Added resource id to alias and End point name as all real clients have same name(wlan0)
+                    "alias": "CX_" + cx_name + str(resource) + "_l4",
+                    "test_mgr": "default_tm",
+                    "tx_endp": cx_name + str(resource) + "_l4",
+                    "rx_endp": "NA"
+                }
+                cx_post_data.append(endp_data)
+                self.created_cx[cx_name + str(resource) + "_l4"] = "CX_" + cx_name + str(resource) + "_l4"
+        self.http_profile.created_cx = self.created_cx
+
+        for cx_data in cx_post_data:
+            url = "/cli-json/add_cx"
+            self.json_post(url, cx_data, debug_=debug_,
+                           suppress_related_commands_=suppress_related_commands_)
+            time.sleep(sleep_time)
+
+        # enabling geturl from file for each endpoint
+        if get_url_from_file:
+            for cx in list(self.created_cx.keys()):
+                self.json_post("/cli-json/set_endp_flag", {"name": cx,
+                                                           "flag": "GetUrlsFromFile",
+                                                           "val": 1
+                                                           }, suppress_related_commands_=True)
 
     def get_test_results_data(self, test_results, group):
         """
@@ -653,7 +1087,7 @@ class Youtube(Realm):
 
     def get_youtube_lf_wifi_stats(self):
         """
-        Returns dict: { sta_name : { BSSID, RSSI, channel, mode, tx_rate, rx_rate } }
+        Returns dict: { sta_name : { BSSID, RSSI, channel, mode, tx_rate, rx_rate, Ssid, Mac} }
         """
         lf_stats_map = {}
         interfaces_dict = {}
@@ -666,7 +1100,14 @@ class Youtube(Realm):
             logger.error(f"Error fetching port data: {e}")
             return lf_stats_map
 
-        for sta in self.real_sta_list:
+        if self.real and self.virtual:
+            clients = self.real_sta_list + self.sta_list
+        elif self.real:
+            clients = self.real_sta_list
+        elif self.virtual:
+            clients = self.sta_list
+
+        for sta in clients:
             lf_stats_map[sta] = {
                 "BSSID": "NA",
                 "RSSI": "NA",
@@ -674,6 +1115,8 @@ class Youtube(Realm):
                 "Mode": "NA",
                 "TxRate": "NA",
                 "RxRate": "NA",
+                "SSID": "NA",
+                "MAC": "NA"
             }
 
             if sta in interfaces_dict:
@@ -690,6 +1133,8 @@ class Youtube(Realm):
                 lf_stats_map[sta]["TxRate"] = data.get("tx-rate", "NA")
                 lf_stats_map[sta]["RxRate"] = data.get("rx-rate", "NA")
                 lf_stats_map[sta]["BSSID"] = data.get("ap", "NA")
+                lf_stats_map[sta]["SSID"] = data.get("ssid", "NA")
+                lf_stats_map[sta]["MAC"] = data.get("mac", "NA")
 
         return lf_stats_map
 
@@ -733,11 +1178,39 @@ class Youtube(Realm):
                 if data.get("clear_data"):
                     self.stats_api_response = {}
                     return jsonify({"message": "Data cleared"}), 200
+                if len(data) > 0:
+                    # extracting port manager data
+                    lf_port_data = self.get_youtube_lf_wifi_stats()
 
                 for key, value in data.items():
                     if key == "stop":
                         continue
-                    device_name = key
+                    device_name = ""
+
+                    if self.virtual:
+                        device_name = self.virtual_ip_map[key]
+                        eid = self.name_to_eid(device_name)
+                        eid = eid[:3]
+                        sta_str = ".".join(map(str, eid))
+                        value["RSSI"] = lf_port_data.get(sta_str, {}).get("RSSI", "NA")
+                        value["Channel"] = lf_port_data.get(sta_str, {}).get("Channel", "NA")
+                        value["BSSID"] = lf_port_data.get(sta_str, {}).get("BSSID", "NA")
+                        value["Mode"] = lf_port_data.get(sta_str, {}).get("Mode", "NA")
+                        value["TxRate"] = lf_port_data.get(sta_str, {}).get("TxRate", "NA")
+                        value["Link Rate"] = lf_port_data.get(sta_str, {}).get("RxRate", "NA")
+                        value["SSID"] = lf_port_data.get(sta_str, {}).get("SSID", "NA")
+                        value["MAC"] = lf_port_data.get(sta_str, {}).get("MAC", "NA")
+                    elif self.real:
+                        device_name = key
+                        eid_name = self.hostname_to_station_map.get(device_name)
+                        value["RSSI"] = lf_port_data.get(eid_name, {}).get("RSSI", "NA")
+                        value["Channel"] = lf_port_data.get(eid_name, {}).get("Channel", "NA")
+                        value["BSSID"] = lf_port_data.get(eid_name, {}).get("BSSID", "NA")
+                        value["Mode"] = lf_port_data.get(eid_name, {}).get("Mode", "NA")
+                        value["TxRate"] = lf_port_data.get(eid_name, {}).get("TxRate", "NA")
+                        value["Link Rate"] = lf_port_data.get(eid_name, {}).get("RxRate", "NA")
+                        value["SSID"] = lf_port_data.get(eid_name, {}).get("SSID", "NA")
+                        value["MAC"] = lf_port_data.get(eid_name, {}).get("MAC", "NA")
                     stats = value
                     buffer_val = stats.get("BufferHealth")
                     if buffer_val not in [None, "", "NA"]:
@@ -1077,6 +1550,62 @@ class Youtube(Realm):
                                 _obj="Robot did not went to charge during this test")
             report.build_objective()
 
+    # Gives list of average rssi and link_speed calculated from crated csv's
+    def get_avg_data(self):
+        avg_rssi, avg_link_speed = [], []
+
+        rssi_dict, link_speed_dict = {}, {}
+
+        for csv_name in self.devices_list:
+
+            if not os.path.isfile(csv_name) and "youtube_stats_report" not in csv_name:
+                continue
+
+            data = pd.read_csv(csv_name)
+
+            # Extract numeric values from strings like "-21 dBm"
+            rssi = data["RSSI"].astype(str).apply(
+                lambda x: float(re.search(r'-?\d+\.?\d*', x).group()) if re.search(r'-?\d+\.?\d*', x) else None
+            ).dropna()
+
+            # Extract numeric values from "11 Mbps"
+            link_speed = data["Link Rate"].astype(str).apply(
+                lambda x: float(re.search(r'\d+\.?\d*', x).group()) if re.search(r'\d+\.?\d*', x) else None
+            ).dropna()
+
+            # Calculate averages (only if data exists)
+            if not rssi.empty:
+                csv_name = csv_name.split("/")[-1].split("_")[0]
+                rssi_dict[csv_name] = str(round(rssi.mean(), 2)) + " dBm"
+
+            if not link_speed.empty:
+                csv_name = csv_name.split("/")[-1].split("_")[0]
+                link_speed_dict[csv_name] = str((round(link_speed.mean(), 2))) + " Mbps"
+
+        logger.info(f"RSSI dict: {rssi_dict} Link Speed dict: {link_speed_dict} stalist: {self.sta_list}")
+
+        if self.real:
+            for hostname in self.real_sta_hostname:
+                if hostname in self.mydatajson:
+                    avg_rssi.append(rssi_dict.get(hostname, "NA"))
+                    avg_link_speed.append(link_speed_dict.get(hostname, "NA"))
+                else:
+                    avg_rssi.append("NA")
+                    avg_link_speed.append("NA")
+
+        if self.virtual:
+            for station in self.sta_list:
+                hostname = station.split(".")[2]
+
+                if hostname in self.mydatajson:
+                    avg_rssi.append(rssi_dict.get(hostname, "NA"))
+                    avg_link_speed.append(link_speed_dict.get(hostname, "NA"))
+                else:
+                    avg_rssi.append("NA")
+                    avg_link_speed.append("NA")
+
+        return avg_rssi, avg_link_speed
+
     def create_report(self, data=None, ui_report_dir=None, iot_summary=None):
         data = data or self.stats_api_response
         ui_report_dir = ui_report_dir or self.ui_report_dir
@@ -1091,6 +1620,14 @@ class Youtube(Realm):
                 "OptimalRes": stats.get("OptimalRes", ""),
                 "BufferHealth": stats.get("BufferHealth", "0.0"),
                 "Timestamp": stats.get("Timestamp", ""),
+                "RSSI": stats.get("RSSI", "NA"),
+                "Channel": stats.get("Channel", "NA"),
+                "BSSID": stats.get("BSSID", "NA"),
+                "Mode": stats.get("Mode", "NA"),
+                "TxRate": stats.get("TxRate", "NA"),
+                "Link Rate": stats.get("Link Rate", "NA"),
+                "SSID": stats.get("SSID", "NA"),
+                "MAC": stats.get("MAC", "NA")
             })
 
         if self.do_webUI:
@@ -1131,54 +1668,68 @@ class Youtube(Realm):
             self.report.set_obj_html(
                 _obj_title='Objective',
                 _obj=(
-                    "The Objective is to conduct automated Youtube Video Streaming test across multiple laptops to gather "
-                    "statistics. The test will collect these statistics. Additionally, automated graphs will be generated "
-                    "using the collected data."
+                    "The objective of this test is to conduct automated YouTube video streaming using LANforge to collect detailed performance statistics."
+                    "The test captures key streaming metrics and generates automated graphs based on the collected data to enable clear analysis and insights into streaming performance."
                 )
             )
         self.report.build_objective()
+        test_setup_info = {}
 
-        if self.config:
+        if self.real:
 
+            if self.config:
+
+                # Test setup info
+                test_setup_info = {
+                    'Test Name': 'YouTube Streaming Test',
+                    'Duration (in Minutes)': self.duration,
+                    'Resolution': self.resolution,
+                    'Configured Devices': self.hostname_os_combination,
+                    'No of Devices :': f' Total({len(self.real_sta_os_types)}) : W({self.windows}),L({self.linux}),M({self.mac}),A({self.android})',
+                    "Video URL": self.url,
+                    "SSID": self.ssid,
+                    "Security": self.security,
+
+                }
+
+            elif len(self.selected_groups) > 0 and len(self.selected_profiles) > 0:
+                gp_pairs = zip(self.selected_groups, self.selected_profiles)
+                gp_map = ", ".join(f"{group} -> {profile}" for group, profile in gp_pairs)
+
+                # Test setup info
+                test_setup_info = {
+                    'Test Name': 'YouTube Streaming Test',
+                    'Duration (in Minutes)': self.duration,
+                    'Resolution': self.resolution,
+                    "Configuration": gp_map,
+                    'Configured Devices': self.hostname_os_combination,
+                    'No of Devices :': f' Total({len(self.real_sta_os_types)}) : W({self.windows}),L({self.linux}),M({self.mac}),A({self.android})',
+                    "Video URL": self.url,
+
+                }
+            else:
+                # Test setup info
+                test_setup_info = {
+                    'Test Name': 'YouTube Streaming Test',
+                    'Duration (in Minutes)': self.duration,
+                    'Resolution': self.resolution,
+                    'Configured Devices': self.hostname_os_combination,
+                    'No of Devices :': f' Total({len(self.real_sta_os_types)}) : W({self.windows}),L({self.linux}),M({self.mac}),A({self.android})',
+                    "Video URL": self.url,
+
+                }
+
+        if self.virtual:
             # Test setup info
             test_setup_info = {
                 'Test Name': 'YouTube Streaming Test',
                 'Duration (in Minutes)': self.duration,
                 'Resolution': self.resolution,
-                'Configured Devices': self.hostname_os_combination,
-                'No of Devices :': f' Total({len(self.real_sta_os_types)}) : W({self.windows}),L({self.linux}),M({self.mac}),A({self.android})',
+                'No of Stations': len(self.sta_list),
+                'Virtual clients': ",".join(self.sta_list),
                 "Video URL": self.url,
-                "SSID": self.ssid,
-                "Security": self.security,
-
             }
 
-        elif len(self.selected_groups) > 0 and len(self.selected_profiles) > 0:
-            gp_pairs = zip(self.selected_groups, self.selected_profiles)
-            gp_map = ", ".join(f"{group} -> {profile}" for group, profile in gp_pairs)
-
-            # Test setup info
-            test_setup_info = {
-                'Test Name': 'YouTube Streaming Test',
-                'Duration (in Minutes)': self.duration,
-                'Resolution': self.resolution,
-                "Configuration": gp_map,
-                'Configured Devices': self.hostname_os_combination,
-                'No of Devices :': f' Total({len(self.real_sta_os_types)}) : W({self.windows}),L({self.linux}),M({self.mac}),A({self.android})',
-                "Video URL": self.url,
-
-            }
-        else:
-            # Test setup info
-            test_setup_info = {
-                'Test Name': 'YouTube Streaming Test',
-                'Duration (in Minutes)': self.duration,
-                'Resolution': self.resolution,
-                'Configured Devices': self.hostname_os_combination,
-                'No of Devices :': f' Total({len(self.real_sta_os_types)}) : W({self.windows}),L({self.linux}),M({self.mac}),A({self.android})',
-                "Video URL": self.url,
-
-            }
         if iot_summary:
             test_setup_info['Test Name'] = 'YouTube Streaming Test with IoT Devices'
             test_setup_info = with_iot_params_in_table(test_setup_info, iot_summary)
@@ -1195,34 +1746,101 @@ class Youtube(Realm):
         max_buffer_health_list = []
         min_buffer_health_list = []
 
-        for hostname in self.real_sta_hostname:
-            if hostname in self.mydatajson:
-                stats = self.mydatajson[hostname]
-                viewport_list.append(stats.get("Viewport", ""))
-                current_res_list.append(stats.get("CurrentRes", ""))
-                optimal_res_list.append(stats.get("OptimalRes", ""))
+        mac_list = []
+        bssid_list = []
+        ssid_list = []
+        mode_list = []
+        channel_list = []
+        rssi_list = []
+        link_rate_list = []
 
-                dropped_frames = stats.get("DroppedFrames", "0")
-                total_frames = stats.get("TotalFrames", "0")
-                max_buffer_health_list.append(self.max_buffer.get(hostname, 0.0))
-                min_buffer_health_list.append(self.min_buffer.get(hostname, 0.0))
-                try:
-                    dropped_frames_list.append(int(dropped_frames))
-                except ValueError:
+        if self.real:
+            for hostname in self.real_sta_hostname:
+                if hostname in self.mydatajson:
+                    stats = self.mydatajson[hostname]
+                    viewport_list.append(stats.get("Viewport", ""))
+                    current_res_list.append(stats.get("CurrentRes", ""))
+                    optimal_res_list.append(stats.get("OptimalRes", ""))
+
+                    dropped_frames = stats.get("DroppedFrames", "0")
+                    total_frames = stats.get("TotalFrames", "0")
+
+                    max_buffer_health_list.append(self.max_buffer.get(hostname, 0.0))
+                    min_buffer_health_list.append(self.min_buffer.get(hostname, 0.0))
+                    mac_list.append(stats.get("MAC", "NA"))
+                    bssid_list.append(stats.get("BSSID", "NA"))
+                    ssid_list.append(stats.get("SSID", "NA"))
+                    mode_list.append(stats.get("Mode", "NA"))
+                    channel_list.append(stats.get("Channel", "NA"))
+
+                    try:
+                        dropped_frames_list.append(int(dropped_frames))
+                    except ValueError:
+                        dropped_frames_list.append(0)
+
+                    try:
+                        total_frames_list.append(int(total_frames))
+                    except ValueError:
+                        total_frames_list.append(0)
+                else:
+                    viewport_list.append("NA")
+                    current_res_list.append("NA")
+                    optimal_res_list.append("NA")
                     dropped_frames_list.append(0)
-
-                try:
-                    total_frames_list.append(int(total_frames))
-                except ValueError:
                     total_frames_list.append(0)
-            else:
-                viewport_list.append("NA")
-                current_res_list.append("NA")
-                optimal_res_list.append("NA")
-                dropped_frames_list.append(0)
-                total_frames_list.append(0)
-                max_buffer_health_list.append(0.0)
-                min_buffer_health_list.append(0.0)
+                    max_buffer_health_list.append(0.0)
+                    min_buffer_health_list.append(0.0)
+                    mac_list.append("NA")
+                    bssid_list.append("NA")
+                    ssid_list.append("NA")
+                    mode_list.append("NA")
+                    channel_list.append("NA")
+
+        if self.virtual:
+
+            for station in self.sta_list:
+                hostname = station.split(".")[2]
+
+                if hostname in self.mydatajson:
+                    stats = self.mydatajson[hostname]
+                    viewport_list.append(stats.get("Viewport", ""))
+                    current_res_list.append(stats.get("CurrentRes", ""))
+                    optimal_res_list.append(stats.get("OptimalRes", ""))
+                    dropped_frames = stats.get("DroppedFrames", "0")
+                    total_frames = stats.get("TotalFrames", "0")
+                    max_buffer_health_list.append(self.max_buffer.get(hostname, 0.0))
+                    min_buffer_health_list.append(self.min_buffer.get(hostname, 0.0))
+                    mac_list.append(stats.get("MAC", "NA"))
+                    bssid_list.append(stats.get("BSSID", "NA"))
+                    ssid_list.append(stats.get("SSID", "NA"))
+                    mode_list.append(stats.get("Mode", "NA"))
+                    channel_list.append(stats.get("Channel", "NA"))
+
+                    try:
+                        dropped_frames_list.append(int(dropped_frames))
+                    except ValueError:
+                        dropped_frames_list.append(0)
+
+                    try:
+                        total_frames_list.append(int(total_frames))
+                    except ValueError:
+                        total_frames_list.append(0)
+
+                else:
+                    viewport_list.append("NA")
+                    current_res_list.append("NA")
+                    optimal_res_list.append("NA")
+                    dropped_frames_list.append(0)
+                    total_frames_list.append(0)
+                    mac_list.append("NA")
+                    bssid_list.append("NA")
+                    ssid_list.append("NA")
+                    mode_list.append("NA")
+                    channel_list.append("NA")
+                    max_buffer_health_list.append(0.0)
+                    min_buffer_health_list.append(0.0)
+
+        rssi_list, link_rate_list = self.get_avg_data()
 
         # graph of frames dropped
         self.report.set_graph_title("Total Frames vs Frames dropped")
@@ -1232,8 +1850,8 @@ class Youtube(Realm):
 
         graph = lf_bar_graph_horizontal(_data_set=[dropped_frames_list, total_frames_list],
                                         _xaxis_name="No of Frames",
-                                        _yaxis_name="Devices",
-                                        _yaxis_categories=self.real_sta_hostname,
+                                        _yaxis_name="Devices" if self.real else "Stations",
+                                        _yaxis_categories=self.real_sta_hostname if self.real else self.sta_list,
                                         _graph_image_name="Dropped Frames vs Total Frames",
                                         _label=["dropped Frames", "Total Frames"],
                                         _color=None,
@@ -1251,27 +1869,66 @@ class Youtube(Realm):
         self.report.move_graph_image()
         self.report.build_graph()
 
+        self.report.set_obj_html('Note',
+                                 "<ul>"
+                                 "<li><b> Max Buffer Health (Seconds):</b>  Represents the maximum amount of video (in seconds) preloaded in the playback buffer during the session."
+                                 "Higher values indicate better buffering capacity and smoother playback.</li>"
+                                 "<li><b> Min Buffer Health (Seconds):</b>  Represents the minimum buffer level observed during playback."
+                                 "Lower values may indicate potential buffering issues or risk of video stalls.</li>"
+                                 "<li><b> Total Frames:</b>  Total number of video frames received and processed during the streaming session."
+                                 " Used to evaluate overall playback continuity and data delivery.</li>"
+                                 "<li><b> Dropped Frames:</b>  Number of video frames that were not rendered/displayed during playback."
+                                 " Higher dropped frames may indicate network instability, insufficient bandwidth, or device performance issues.</li>"
+                                 "<li> <b> ViewPort:</b>  Indicates the video player window size (width x height in pixels) used during streaming,"
+                                 " which can influence the selected video quality.</li>"
+                                 "</ul>"
+                                 )
+        self.report.build_objective()
+
         self.report.set_table_title('Test Results')
         self.report.build_table_title()
 
-        test_results = {
-            "Hostname": self.real_sta_hostname,
-            "OS Type": self.real_sta_os_types,
-            "MAC": self.mac_list,
-            "RSSI": self.rssi_list,
-            "Link Rate": self.link_rate_list,
-            "ViewPort": viewport_list,
-            "SSID": self.ssid_list,
-            "Video Resoultion": current_res_list,
-            "Max Buffer Health (Seconds)": max_buffer_health_list,
-            "Min Buffer health (Seconds)": min_buffer_health_list,
-            "Total Frames": total_frames_list,
-            "Dropped Frames": dropped_frames_list,
+        if self.real:
 
+            test_results = {
+                "Hostname": self.real_sta_hostname,
+                "OS Type": self.real_sta_os_types,
+                "MAC": mac_list,
+                "AP-BSSID": bssid_list,
+                "SSID": ssid_list,
+                "Mode": mode_list,
+                "Channel": channel_list,
+                "RSSI": rssi_list,
+                "Link Rate": link_rate_list,
+                "ViewPort": viewport_list,
+                "Video Resoultion": current_res_list,
+                "Max Buffer Health (Seconds)": max_buffer_health_list,
+                "Min Buffer health (Seconds)": min_buffer_health_list,
+                "Total Frames": total_frames_list,
+                "Dropped Frames": dropped_frames_list,
+            }
+        else:
 
-        }
+            test_results = {
+                "Station Eid": self.sta_list,
+                "Type": ["Virtual Station"] * len(self.sta_list),
+                "MAC": mac_list,
+                "AP-BSSID": bssid_list,
+                "SSID": ssid_list,
+                "Mode": mode_list,
+                "Channel": channel_list,
+                "RSSI": rssi_list,
+                "Link Rate": link_rate_list,
+                "ViewPort": viewport_list,
+                "Video Resoultion": current_res_list,
+                "Max Buffer Health (Seconds)": max_buffer_health_list,
+                "Min Buffer health (Seconds)": min_buffer_health_list,
+                "Total Frames": total_frames_list,
+                "Dropped Frames": dropped_frames_list,
+            }
+
         # If both groups and profiles are selected, generate separate result tables per group.
-        if self.selected_groups and self.selected_profiles:
+        if self.real and self.selected_groups and self.selected_profiles:
             for group in self.selected_groups:
                 group_specific_test_results = self.get_test_results_data(test_results, group)
                 if not group_specific_test_results['Hostname']:
@@ -1298,6 +1955,11 @@ class Youtube(Realm):
         else:
             csv_files = [f for f in os.listdir(self.report_path_date_time) if f.endswith('.csv')]
             os.chdir(self.report_path_date_time)
+
+        try:
+            shutil.move("Dropped Frames vs Total Frames.csv", self.report_path_date_time)
+        except Exception:
+            logger.info("No dropped frames vs total frames")
 
         for file_name in csv_files:
             data = pd.read_csv(file_name)
@@ -2080,6 +2742,25 @@ class Youtube(Realm):
         for key, value in result_dict.items():
             logging.info(f"{key}: {value}")
 
+    def buildstation(self):
+        logging.info('Creating Stations {}'.format(self.sta_list))
+        for station_index in range(len(self.sta_list)):
+            shelf, resource, port = self.sta_list[station_index].split('.')
+            logging.info('{} {} {}'.format(shelf, resource, port))
+            station_object = StationProfile(lfclient_url='http://{}:{}'.format(self.host, 8080), local_realm=self, ssid=self.ssid,
+                                            ssid_pass=self.passwd, security=self.security, number_template_='200', up=True, resource=resource, shelf=shelf)
+            station_object.use_security(
+                security_type=self.security, ssid=self.ssid, passwd=self.passwd)
+
+            station_object.create(radio=self.radio, sta_names_=[
+                self.sta_list[station_index]])
+        station_object.admin_up()
+        if self.wait_for_ip([self.sta_list[station_index]]):
+            self._pass("All stations got IPs", print_=True)
+        else:
+            self._fail(
+                "Stations failed to get IPs", print_=True)
+
     def add_live_view_images_to_report(self):
         """
         This function looks for live view images for each floor
@@ -2115,6 +2796,60 @@ class Youtube(Realm):
             logging.info("WebUI test status updated to Completed.")
         except Exception as e:
             logging.error(f"Error in stop_webui_test function {e}", exc_info=True)
+
+
+def stop_specific(self):
+    self.http_profile.stop_cx()
+
+
+def validate_args(args):
+    if args.expected_passfail_value is not None and args.device_csv_name is not None:
+        logging.error("Specify either expected_passfail_value or device_csv_name")
+        exit(1)
+    if args.group_name is not None:
+        args.group_name = args.group_name.strip()
+        selected_groups = args.group_name.split(',')
+    else:
+        selected_groups = []
+    if args.profile_name is not None:
+        args.profile_name = args.profile_name.strip()
+        selected_profiles = args.profile_name.split(',')
+    else:
+        selected_profiles = []
+    if len(selected_groups) != len(selected_profiles):
+        logging.error("Number of groups should match number of profiles")
+        exit(0)
+    elif args.group_name is not None and args.profile_name is not None and args.file_name is not None and args.resources is not None:
+        logging.error("Either group name or device list should be entered not both")
+        exit(0)
+    elif args.ssid is not None and args.profile_name is not None:
+        logging.error("Either ssid or profile name should be given")
+        exit(0)
+    elif args.file_name is not None and (args.group_name is None or args.profile_name is None):
+        logging.error("Please enter the correct set of arguments")
+        exit(0)
+    elif args.config and ((args.ssid is None or (args.passwd is None and args.security.lower() != 'open') or (args.passwd is None and args.security is None))):
+        logging.error("Please provide ssid password and security for configuration of devices")
+        exit(0)
+
+    if not args.clients_type:
+        logging.error("Please provide the client type to run the test")
+        exit(0)
+    else:
+        args.clients_type = args.clients_type.strip().lower()
+        if args.clients_type not in ['real', 'virtual']:
+            logging.error("Invalid client type. Please specify either 'real' or 'virtual'.")
+            exit(0)
+
+    if args.clients_type == "virtual" and not args.use_existing_sta_list and not args.num_sta:
+        if args.clients_type == "virtual" and not args.clients_type == "both":
+            logger.error("Number of stations must be provided for virtual clients configuration when not using existing stations")
+            exit(1)
+        else:
+            logger.info("No virtual stations exists proceeding with only real clients")
+    if args.use_existing_sta_list and not isinstance(args.existing_sta_list, str):
+        logger.error("Existing station list must be specified when using existing stations")
+        exit(1)
 
 
 def main():
@@ -2192,6 +2927,12 @@ python3 py-scripts/real_application_tests/youtube/lf_interop_youtube.py \
 --robo_ip 192.168.50.10 \
 --coordinates c1,c2,c3 \
 --rotations 0,90,180,270
+
+Example-8:
+Command Line Interface to run the test with virtual clients
+
+python3 lf_interop_youtube.py --mgr 192.168.207.78 --url "https://youtu.be/BHACKCNDMW8?si=psTEUzrc77p38aU1" --duration 1 --res 1080p
+--upstream_port 1.1.eth1 --clients_type virtual --num_sta 3 --ssid NETGEAR_2G_Open --passwd NA  --encryp open --radio wiphy0
 
 
 SCRIPT CLASSIFICATION: Test
@@ -2271,6 +3012,11 @@ NOTES:
         parser.add_argument("--device_csv_name", type=str, help="Specify the device csv name for pass/fail", default=None)
         parser.add_argument('--config', action='store_true', help='specify this flag whether to config devices or not')
         parser.add_argument("--wait_time", type=int, help="Specify the time for configuration", default=60)
+        parser.add_argument('--clients_type', type=str, help='Specify the client type to run the test. Possible values are real or virtual')
+        parser.add_argument('--num_sta', type=int, help='Number of stations to connect per device')
+        parser.add_argument('--radio', type=str, help="the radio on which we create the virtual clients")
+        parser.add_argument("--existing_sta_list", type=str, default="", help="List of existing stations to be passed when creating cross connections, example: 1.1.sta001,1.1.sta002")
+        parser.add_argument("--use_existing_sta_list", action="store_true", help="Whether to use existing stations for cross connections if provided in --existing_sta_list", default=False)
         # IOT ARGS
         parser.add_argument('--iot_test', help="If true will execute script for iot", action='store_true')
 
@@ -2342,41 +3088,47 @@ NOTES:
             debug:                    {}
             '''.format(mgr_ip, mgr_port, duration, debug))
 
-        if True:
+        validate_args(args)
 
-            if args.expected_passfail_value is not None and args.device_csv_name is not None:
-                logging.error("Specify either expected_passfail_value or device_csv_name")
-                exit(1)
+        # Create a YouTube object with the specified parameters
+        youtube = Youtube(
+            host=mgr_ip,
+            port=mgr_port,
+            url=url,
+            duration=args.duration,
+            lanforge_password='lanforge',
+            sta_list=[],
+            do_webUI=args.do_webUI,
+            ui_report_dir=ui_report_dir,
+            debug=debug,
+            resolution=args.res,
+            ap_name=args.ap_name,
+            ssid=args.ssid,
+            security=args.encryp,
+            passwd=args.passwd,
+            band=args.band,
+            test_name=args.test_name,
+            upstream_port=args.upstream_port,
+            config=args.config,
+            selected_groups=[],
+            selected_profiles=[],
+            robo_ip=args.robo_ip,
+            coordinates_list=args.coordinates,
+            angles_list=args.rotations,
+            do_robo=args.do_robo,
+            cycles=args.cycles,
+            do_bandsteering=args.do_bandsteering,
+            bssids=bssids,
+            rotations_enabled=rotations_enabled,
+            clients_type=args.clients_type,
+            num_sta=args.num_sta,
+            radio=args.radio,
+            use_existing_sta_list=args.use_existing_sta_list,
+            existing_sta_list=args.existing_sta_list)
+        youtube.start_flask_server()
+        args.upstream_port = youtube.change_port_to_ip(args.upstream_port)
 
-            if args.group_name is not None:
-                args.group_name = args.group_name.strip()
-                selected_groups = args.group_name.split(',')
-            else:
-                selected_groups = []
-
-            if args.profile_name is not None:
-                args.profile_name = args.profile_name.strip()
-                selected_profiles = args.profile_name.split(',')
-            else:
-                selected_profiles = []
-
-            if len(selected_groups) != len(selected_profiles):
-                logging.error("Number of groups should match number of profiles")
-                exit(0)
-
-            elif args.group_name is not None and args.profile_name is not None and args.file_name is not None and args.resources is not None:
-                logging.error("Either group name or device list should be entered not both")
-                exit(0)
-            elif args.ssid is not None and args.profile_name is not None:
-                logging.error("Either ssid or profile name should be given")
-                exit(0)
-            elif args.file_name is not None and (args.group_name is None or args.profile_name is None):
-                logging.error("Please enter the correct set of arguments")
-                exit(0)
-            elif args.config and ((args.ssid is None or (args.passwd is None and args.security.lower() != 'open') or (args.passwd is None and args.security is None))):
-                logging.error("Please provide ssid password and security for configuration of devices")
-                exit(0)
-
+        if youtube.real:
             Devices = RealDevice(manager_ip=mgr_ip,
                                  server_ip='192.168.1.61',
                                  ssid_2g='Test Configured',
@@ -2390,39 +3142,6 @@ NOTES:
                                  encryption_6g='',
                                  selected_bands=['5G'])
             Devices.get_devices()
-
-            # Create a YouTube object with the specified parameters
-
-            youtube = Youtube(
-                host=mgr_ip,
-                port=mgr_port,
-                url=url,
-                duration=args.duration,
-                lanforge_password='lanforge',
-                sta_list=[],
-                do_webUI=args.do_webUI,
-                ui_report_dir=ui_report_dir,
-                debug=debug,
-                resolution=args.res,
-                ap_name=args.ap_name,
-                ssid=args.ssid,
-                security=args.encryp,
-                band=args.band,
-                test_name=args.test_name,
-                upstream_port=args.upstream_port,
-                config=args.config,
-                selected_groups=selected_groups,
-                selected_profiles=selected_profiles,
-                robo_ip=args.robo_ip,
-                coordinates_list=args.coordinates,
-                angles_list=args.rotations,
-                do_robo=args.do_robo,
-                cycles=args.cycles,
-                do_bandsteering=args.do_bandsteering,
-                bssids=bssids,
-                rotations_enabled=rotations_enabled)
-            youtube.start_flask_server()
-            args.upstream_port = youtube.change_port_to_ip(args.upstream_port)
 
             resources = []
             youtube.Devices = Devices
@@ -2466,6 +3185,8 @@ NOTES:
                                 elif j in all_res.keys():
                                     eid_list.append(all_res[j])
                 args.resources = ",".join(id for id in eid_list)
+                youtube.selected_groups = selected_groups
+                youtube.selected_profiles = selected_profiles
             else:
                 config_dict = {
                     'ssid': args.ssid,
@@ -2513,85 +3234,124 @@ NOTES:
                     dev1_list = args.resources.split(',')
                     if args.config:
                         asyncio.run(config_obj.connectivity(device_list=dev1_list, wifi_config=config_dict))
-
-            if not do_webUI:
-                if args.resources:
-                    resources = [r.strip() for r in args.resources.split(',')]
-                    resources = [r for r in resources if len(r.split('.')) > 1]
-
-                    youtube.select_real_devices(real_devices=Devices, real_sta_list=resources, base_interop_obj=Devices)
-
-                else:
-                    youtube.select_real_devices(real_devices=Devices)
+        # Perform pre-test cleanup if not skipped
+        if not args.no_pre_cleanup:
+            youtube.cleanup()
+        if not do_webUI and not youtube.virtual:
+            if args.resources:
+                resources = [r.strip() for r in args.resources.split(',')]
+                resources = [r for r in resources if len(r.split('.')) > 1]
+                youtube.select_real_devices(real_devices=Devices, real_sta_list=resources, base_interop_obj=Devices)
             else:
+                youtube.select_real_devices(real_devices=Devices)
+        else:
+            if youtube.real:
                 resources = [r.strip() for r in args.resources.split(',')]
 
                 extracted_parts = [res.split('.')[:2] for res in resources]
                 formatted_parts = ['.'.join(parts) for parts in extracted_parts]
                 youtube.select_real_devices(real_devices=Devices, real_sta_list=formatted_parts, base_interop_obj=Devices)
+            if youtube.virtual:
+                if not youtube.use_existing_sta_list:
+                    youtube.buildstation()
+                    print("waiting for 20sec for ensuring all stations getting ip")
+                    time.sleep(20)
+                youtube.sum_link_rate = [0] * len(youtube.sta_list)
+                youtube.sum_rssi = [0] * len(youtube.sta_list)
+                for sta in youtube.sta_list:
 
-            if args.iot_test:
-                start_iot_thread(args)
+                    rv = sta.split(".")
+                    logger.info(f"======{rv}")
 
-            # Perform pre-test cleanup if not skipped
-            if not args.no_pre_cleanup:
-                youtube.cleanup()
+                    ip = ""
+                    flag = True
+                    number_of_tries = 0
 
-            # Check if the required tab exists, and exit if not
-            if not youtube.check_tab_exists():
-                logging.error('Generic Tab is not available.\nAborting the test.')
-                exit(0)
+                    while flag:
+                        url = f"/port/{rv[0]}/{rv[1]}/{rv[2]}?fields=ip,alias"
 
-            if len(youtube.real_sta_list) > 0:
-                logging.info(f"checking real sta list while creating endpionts {youtube.real_sta_list}")
-                youtube.create_generic_endp()
-            else:
+                        response = youtube.json_get(url)
+
+                        ip = response["interface"]["ip"]
+                        if str(ip) != "0.0.0.0":
+                            flag = False
+                        else:
+                            logger.info(f"{rv[2]} didn't get the ip in the try number {number_of_tries}")
+                            time.sleep(1)
+                            number_of_tries += 1
+
+                    alias = response["interface"]["alias"]
+                    youtube.virtual_ip_map[ip] = alias
+                print(f"========{youtube.virtual_ip_map}")
+        if args.iot_test:
+            start_iot_thread(args)
+
+        #  for virtual clients
+        if youtube.virtual:
+            youtube.build_l4()
+
+        # Check if the required tab exists, and exit if not
+        if not youtube.check_tab_exists():
+            logging.error('Generic Tab is not available.\nAborting the test.')
+            exit(0)
+
+        if len(youtube.real_sta_list) > 0:
+            logging.info(f"checking real sta list while creating endpionts {youtube.real_sta_list}")
+            youtube.create_generic_endp()
+        else:
+            if not youtube.virtual:
                 logging.info(f"checking real sta list while creating endpionts {youtube.real_sta_list}")
                 logging.error("No Real Devies Available")
                 exit(0)
 
-            if args.do_webUI:
-                youtube.update_webui()
+        if args.do_webUI:
+            youtube.update_webui()
 
-            logging.info("TEST STARTED")
+        logging.info("TEST STARTED")
+        if args.do_bandsteering:
+            logging.info('Running the Youtube Streaming until robo finishes all the cycles')
+        else:
+            logging.info('Running the Youtube Streaming test for {} minutes'.format(duration))
+
+        time.sleep(10)
+
+        youtube.start_time = datetime.now()
+        if args.do_robo:
             if args.do_bandsteering:
-                logging.info('Running the Youtube Streaming until robo finishes all the cycles')
+                youtube.perform_robo_bandsteering_test()
             else:
-                logging.info('Running the Youtube Streaming test for {} minutes'.format(duration))
-
-            time.sleep(10)
-
-            youtube.start_time = datetime.now()
-            if args.do_robo:
-                if args.do_bandsteering:
-                    youtube.perform_robo_bandsteering_test()
-                else:
-                    youtube.perform_robo_test()
-            else:
+                youtube.perform_robo_test()
+        else:
+            if youtube.real:
                 youtube.start_generic()
-
-                duration = args.duration
-                end_time = datetime.now() + timedelta(minutes=duration)
-
+            if youtube.virtual and len(youtube.created_cx) > 0:
+                youtube.start_specific()
+            duration = args.duration
+            youtube.duration = duration
+            end_time = datetime.now() + timedelta(minutes=duration)
+            if youtube.virtual:
+                while datetime.now() < end_time:
+                    time.sleep(1)
+            if youtube.real:
                 while datetime.now() < end_time or not youtube.check_gen_cx():
                     time.sleep(1)
-
                 youtube.generic_endps_profile.stop_cx()
-                logging.info("Duration ended")
-
-            iot_summary = None
-            if args.iot_test and args.iot_testname:
-                base = os.path.join("results", args.iot_testname)
-                p = os.path.join(base, "iot_summary.json")
-                if os.path.exists(p):
-                    with open(p) as f:
-                        iot_summary = json.load(f)
-
-            logging.info('Stopping the test')
-
-            # Perform post-test cleanup if not skipped
-            if not args.no_post_cleanup:
-                youtube.generic_endps_profile.cleanup()
+            logging.info("Duration ended")
+        iot_summary = None
+        if args.iot_test and args.iot_testname:
+            base = os.path.join("results", args.iot_testname)
+            p = os.path.join(base, "iot_summary.json")
+            if os.path.exists(p):
+                with open(p) as f:
+                    iot_summary = json.load(f)
+        logging.info('Stopping the test')
+        # Perform post-test cleanup if not skipped
+        if not args.no_post_cleanup:
+            youtube.generic_endps_profile.cleanup()
+            if youtube.virtual:
+                youtube.http_profile.cleanup()
+                if not youtube.use_existing_sta_list:
+                    youtube.station_profile.cleanup()
     except Exception as e:
         logging.error(f"Error occured {e}")
         tb_str = traceback.format_exc()  # capture traceback as string
