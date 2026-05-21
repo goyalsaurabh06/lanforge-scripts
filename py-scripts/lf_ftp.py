@@ -181,7 +181,7 @@ class FtpTest(LFCliBase):
                  profile_name=None, group_name=None,
                  sixg_radio=None, fiveg_radio=None, upstream="eth1", _debug_on=False, _exit_on_error=False, _exit_on_fail=False, ap_name="",
                  direction=None, duration=None, traffic_duration=None, ssh_port=None, kpi_csv=None, kpi_results=None,
-                 lf_username="lanforge", lf_password="lanforge", clients_type="Virtual", dowebgui=False, device_list=None, test_name=None, result_dir=None,
+                 lf_username="lanforge", lf_password="lanforge", clients_type="virtual", dowebgui=False, device_list=None, test_name=None, result_dir=None,
                  eap_method=None,
                  eap_identity=None,
                  ieee80211=None,
@@ -678,7 +678,7 @@ class FtpTest(LFCliBase):
         # list of upstream port
         eth_list.append(self.upstream)
 
-        if (self.clients_type == "Virtual"):
+        if (self.clients_type == "virtual"):
             if self.band == "2.4G":
                 self.station_profile.mode = 13
             elif self.band == "5G":
@@ -770,7 +770,7 @@ class FtpTest(LFCliBase):
             # if Both band then another 20 stations will connects to 2.4G
             self.station_profile.mode = 6
 
-        if self.clients_type == "Real":
+        if self.clients_type == "real":
             if self.direction == "Download":
                 # data from GUI for find out ip addr of upstream port
                 data = self.json_get("ports/list?fields=IP")
@@ -859,7 +859,7 @@ class FtpTest(LFCliBase):
         self.cx_profile.stop_cx()
         self.station_profile.admin_down()
         # To update status of devices and remaining_time in ftp_datavalues.csv file to stopped and 0 respectively.
-        if self.clients_type == 'Real':
+        if self.clients_type == 'real':
             if not self.robot_test:
                 self.data["status"] = ["STOPPED"] * len(self.mac_id_list)
             self.data["remaining_time"] = ["0"] * len(self.mac_id_list)
@@ -1238,7 +1238,7 @@ class FtpTest(LFCliBase):
                 if not self.do_bandsteering and self.robot_test:
                     # Save FTP data values for the current coordinate when in robot test
                     df1.to_csv(f"{self.result_dir}/{self.current_coordinate}_ftp_datavalues.csv", index=False)
-            if self.clients_type == 'Real':
+            if self.clients_type == 'real':
                 df1.to_csv("ftp_datavalues.csv", index=False)
                 if not self.do_bandsteering and self.robot_test:
                     df1.to_csv(f"{self.current_coordinate}_ftp_datavalues.csv", index=False)
@@ -1335,7 +1335,7 @@ class FtpTest(LFCliBase):
         dataset = []
         self.channel_list, self.mode_list, self.ssid_list, self.uc_avg, self.uc_max, self.url_data, self.uc_min, self.bytes_rd, self.rx_rate, self.bssid_list = [], [], [], [], [], [], [], [], [], []
         self.total_err = []
-        if self.clients_type == "Real":
+        if self.clients_type == "real":
             self.get_port_data()
         # data in json format
         # data = self.json_get("layer4/list?fields=bytes-rd")
@@ -1423,7 +1423,7 @@ class FtpTest(LFCliBase):
     def my_monitor(self):
         dataset = []
         self.channel_list, self.mode_list, self.ssid_list, self.uc_avg, self.uc_max, self.url_data, self.uc_min, self.bytes_rd = [], [], [], [], [], [], [], []
-        if self.clients_type == "Virtual":
+        if self.clients_type == "virtual":
             response_port = self.json_get("/port/all")
             for interface in response_port['interfaces']:
                 for port, port_data in interface.items():
@@ -1432,7 +1432,7 @@ class FtpTest(LFCliBase):
                         self.mode_list.append(str(port_data['mode']))
                         self.mac_id_list.append(str(port_data['mac']))
                         self.ssid_list.append(str(port_data['ssid']))
-        elif self.clients_type == "Real":
+        elif self.clients_type == "real":
             response_port = self.json_get("/port/all")
             for interface in response_port['interfaces']:
                 for port, port_data in interface.items():
@@ -2301,7 +2301,7 @@ class FtpTest(LFCliBase):
         '''Method for generate the report'''
         # print(self.real_client_list,self.station_list,self.url_data,self.uc_avg,self.mac_id_list,self.channel_list,self.mode_list)
         client_list = []
-        if self.clients_type == "Real":
+        if self.clients_type == "real":
             client_list = self.real_client_list1
             android_devices, windows_devices, linux_devices, mac_devices = 0, 0, 0, 0
             all_devices_names = []
@@ -2336,7 +2336,7 @@ class FtpTest(LFCliBase):
             if mac_devices > 0:
                 total_devices += f" Mac({mac_devices})"
         else:
-            if self.clients_type == "Virtual":
+            if self.clients_type == "virtual":
                 client_list = self.station_list
         self.report = lf_report.lf_report(_results_dir_name="ftp_test", _output_html="ftp_test.html", _output_pdf="ftp_test.pdf", _path=report_path)
         if self.dowebgui == "True" and report_path == '':
@@ -2348,7 +2348,7 @@ class FtpTest(LFCliBase):
 
         # To move ftp_datavalues.csv in report folder
         report_path_date_time = self.report.get_path_date_time()
-        if self.clients_type == "Real":
+        if self.clients_type == "real":
             shutil.move('ftp_datavalues.csv', report_path_date_time)
             try:
                 shutil.move('all_l4_data.csv', report_path_date_time)
@@ -2362,12 +2362,12 @@ class FtpTest(LFCliBase):
         self.report.set_table_title("Test Setup Information")
         self.report.build_table_title()
 
-        if self.clients_type == "Virtual":
+        if self.clients_type == "virtual":
             no_of_stations = str(len(self.station_list))
         else:
             no_of_stations = str(len(self.input_devices_list))
 
-        if self.clients_type == "Real":
+        if self.clients_type == "real":
             # Test setup information table for devices in device list
             if config_devices == "":
                 test_setup_info = {
@@ -2557,7 +2557,7 @@ class FtpTest(LFCliBase):
         self.report.set_table_title("Overall Results")
         self.report.build_table_title()
         # self.report.test_setup_table(value="Information", test_setup_data=input_setup_info)
-        if self.clients_type == 'Real':
+        if self.clients_type == 'real':
             # Calculating the pass/fail criteria when either expected_passfail_val or csv_name is provided
             if self.expected_passfail_val or self.csv_name:
                 self.get_pass_fail_list(client_list)
@@ -3250,6 +3250,7 @@ class FtpTest(LFCliBase):
 
 def validate_args(args):
     """Validate CLI arguments."""
+    args.clients_type = args.clients_type.lower()
     # Get group and profile values from arguments and convert comma-separated strings into lists
     if args.group_name:
         selected_groups = args.group_name.split(',')
@@ -3263,7 +3264,7 @@ def validate_args(args):
     if args.device_csv_name and args.expected_passfail_value:
         logger.error("Enter either --device_csv_name or --expected_passfail_value")
         exit(1)
-    if args.clients_type == 'Real' and args.config and args.group_name is None:
+    if args.clients_type == 'real' and args.config and args.group_name is None:
         if args.ssid and args.security and args.security.lower() == 'open' and (args.passwd is None or args.passwd == ''):
             args.passwd = '[BLANK]'
         if args.ssid is None:
@@ -3566,7 +3567,7 @@ INCLUDE_IN_README: False
     # parser.add_argument('--fiveg_duration', nargs="+", help='Pass and Fail duration for 5G band in minutes')
     # parser.add_argument('--both_duration', nargs="+", help='Pass and Fail duration for Both band in minutes')
     required.add_argument('--traffic_duration', help='duration for layer 4 traffic running in minutes or seconds or hours. Example : 30s,3m,48h')
-    required.add_argument('--clients_type', help='Enter the type of clients on which the test is to be run. Example: "Virtual","Real"')
+    required.add_argument('--clients_type', help='Enter the type of clients on which the test is to be run. Example: "Virtual","Real"', default="virtual")
     # webGUI ARGS
     required.add_argument('--dowebgui', help="If true will execute script for webgui", default=False)
     # allow for test run as seconds, minutes, etc
@@ -3859,7 +3860,7 @@ some amount of file data from the FTP server while measuring the time taken by c
 
                 interation_num = interation_num + 1
                 obj.file_create()
-                if args.clients_type == "Real":
+                if args.clients_type == "real":
                     if not isinstance(args.device_list, list):
                         obj.device_list = obj.filter_iOS_devices(args.device_list)
                         if len(obj.device_list) == 0:
@@ -3891,7 +3892,7 @@ some amount of file data from the FTP server while measuring the time taken by c
                     logger.info(obj.get_fail_message())
                     exit(1)
 
-                if obj.clients_type == 'Real':
+                if obj.clients_type == 'real':
                     obj.monitor_cx()
                     logger.info(f'Test started on the devices : {obj.input_devices_list}')
                 # First time stamp
@@ -3903,7 +3904,7 @@ some amount of file data from the FTP server while measuring the time taken by c
                 else:
                     obj.start(False, False)
                     # to fetch runtime values during the execution and fill the csv.
-                    if args.dowebgui or args.clients_type == "Real":
+                    if args.dowebgui or args.clients_type == "real":
                         obj.monitor_for_runtime_csv()
                         obj.my_monitor_for_real_devices()
                     else:
