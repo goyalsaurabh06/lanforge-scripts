@@ -97,7 +97,8 @@ from station_profile import StationProfile
 import interop_connectivity
 from LANforge import LFUtils
 
-iot_scripts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../local/interop-webGUI/IoT/scripts/"))
+#iot_scripts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../local/interop-webGUI/IoT/scripts/"))
+iot_scripts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../local1/interop-webGUI/IoT/scripts/"))
 if os.path.exists(iot_scripts_path):
     sys.path.insert(0, iot_scripts_path)
     from test_automation import Automation 
@@ -143,6 +144,7 @@ class Candela(Realm):
                  sniff_channel='AUTO',
                  pcap_name=None,
                  moni_name=None,
+                 iot_increment=None,
                  args=None):
 
         """
@@ -194,6 +196,7 @@ class Candela(Realm):
         self.password = passwd
         self.security = security
         self.upstream_port = upstream_port
+        self.iot_increment= iot_increment
         self.device_list = device_list if device_list else []
         self.http_obj_dict = {"parallel":{},"series":{}}
         self.ftp_obj_dict = {"parallel":{},"series":{}}
@@ -271,6 +274,7 @@ class Candela(Realm):
         self.pcap_name = pcap_name
         self.tshark_process = None
         self.args = args
+        self.automation = None
         self.test_map = {
         "ping_test":   (run_ping_test, "PING TEST"),
         "http_test":   (run_http_test, "HTTP TEST"),
@@ -310,6 +314,7 @@ class Candela(Realm):
         print("Waiting until {} radio switches the channel to {}".format(radio,channel))
         query = '.'.join([str(shelf), str(resource_id), str(port_name)])
         while current_retries <= total_retries:
+            current_retries+=1
             logger.debug(f'retrying for {query}')
             logger.debug(f"Waiting for station {query} to appear in port list...")
             # ports_all_data = self.json_get('/ports')
@@ -385,6 +390,7 @@ class Candela(Realm):
     def stop_sniff(self):
         try:
             self.tshark_process.terminate()
+            self.tshark_process.wait(timeout=5)
         except Exception as e:
             print(e, "In stop_sniff Exception")
         try:
@@ -412,6 +418,68 @@ class Candela(Realm):
         response = requests.get(url=self.api_url + endp)
         data = response.json()
         return response, data
+
+
+    # def build_real_device_map(self):
+    #     """
+    #     Fetch real devices from LANforge using /resource/all
+    #     """
+    #     response, data = self.api_get("/resource/all")
+
+    #     real_device_map = {}
+
+    #     if response.status_code != 200:
+    #         logger.error("Failed to fetch resource data")
+    #         return real_device_map
+
+    #     resources = data.get("resources", [])
+
+    #     for resource in resources:
+    #         res_data = list(resource.values())[0]
+
+    #         # Skip phantom devices
+    #         if res_data.get("phantom"):
+    #             continue
+
+    #         ip = res_data.get("ctrl-ip")
+    #         os_type = res_data.get("device type", "Unknown")
+
+    #         if not ip or ip == "0.0.0.0":
+    #             continue
+
+    #         # Skip gateway
+    #         if ip.endswith(".1"):
+    #             continue
+
+    #         real_device_map[ip] = os_type
+
+    #     return real_device_map
+
+
+    # def classify_nmap_devices(self, nmap_ips):
+    #     """
+    #     Classify NMAP IPs into Real vs IoT
+    #     """
+    #     real_map = self.build_real_device_map()
+
+    #     classified = []
+
+    #     for ip in nmap_ips:
+    #         if ip in real_map:
+    #             classified.append({
+    #                 "ip": ip,
+    #                 "type": "Real Device",
+    #                 "os": real_map[ip]
+    #             })
+    #         else:
+    #             classified.append({
+    #                 "ip": ip,
+    #                 "type": "IoT ",
+    #                 "os": "Not Applicable"
+    #             })
+
+    #     return classified
+
 
     def api_post(self, endp: str, payload: dict):
         """
@@ -930,7 +998,7 @@ class Candela(Realm):
                 iot_testname = args.iot_testname
                 iot_increment = args.iot_increment
                 if args.iot_iterations > 1:
-                    thread = threading.Thread(target=trigger_iot, args=(iot_ip, iot_port, iot_iterations, iot_delay, iot_device_list, iot_testname, iot_increment))
+                    thread = threading.Thread(target=trigger_iot, args=(iot_ip, iot_port, iot_iterations, iot_delay, iot_device_list, iot_testname, iot_increment,self))
                     thread.start()
                 else:
                     total_secs = 9999
@@ -944,7 +1012,8 @@ class Candela(Realm):
                             args.iot_delay,
                             args.iot_device_list,
                             args.iot_testname,
-                            args.iot_increment
+                            args.iot_increment,
+                            self
                         ),
                         daemon=True
                     )
@@ -964,6 +1033,8 @@ class Candela(Realm):
                     t.start()
                     t.join()
                     self.series_index += 1
+                    self.automation_none()
+                
                 # Then run parallel tests
                 if len(parallel_threads) != 0:
                     # self.misc_clean_up(layer3=False,layer4=False,generic=True)
@@ -978,6 +1049,8 @@ class Candela(Realm):
                 for t in parallel_threads:
                     t.join()
                     self.parallel_index += 1
+                self.automation_none()
+                
             
             else:
                 self.current_exec="parallel"
@@ -988,7 +1061,7 @@ class Candela(Realm):
 
                 for t in parallel_threads:
                     t.join()
-
+                self.automation_none()
                 if len(series_threads) != 0:
                     rb_test = 'rb_test' in tests_to_run_parallel
                     yt_test = 'yt_test' in tests_to_run_parallel
@@ -999,6 +1072,8 @@ class Candela(Realm):
                 for t in series_threads:
                     t.start()
                     t.join()
+                self.automation_none()
+                
         else:
             logger.error("provide either --paralell_tests or --series_tests")
             exit(1)
@@ -1029,6 +1104,7 @@ class Candela(Realm):
 
         print("\nTest Results Summary:")
         print(test_results_df)
+    
     def create_duration_dict_and_validate(self):
         args=self.args
         duration_flag = False
@@ -1132,6 +1208,8 @@ class Candela(Realm):
                 print('{} is in phantom state or down state, data may not be accurate.'.format(device))
             connection_details[device] = device_data
         return connection_details
+
+
 
     def filter_iOS_devices(self, device_list):
         modified_device_list = device_list
@@ -1360,6 +1438,7 @@ class Candela(Realm):
                         'pac_file': pac_file,
                         'server_ip': server_ip,
                     }
+                    print("all devices", all_devices)
                     for device in all_devices:
                         if device["type"] == 'laptop':
                             device_list.append(device["shelf"] + '.' + device["resource"] + " " + device["hostname"])
@@ -1691,7 +1770,11 @@ class Candela(Realm):
                                     logging.error('Failed parsing the result for the station {}'.format(station))
 
         logging.info(self.ping_obj_dict[ce][obj_name]["obj"].result_json)
-
+        ping_obj = self.ping_obj_dict[ce][obj_name]["obj"]
+        if ping_obj.sta_to_res:
+            ping_obj.classified_map = ping_obj.classify_nmap_devices(ping_obj.res_ip_list)
+        else:
+            ping_obj.classified_map = {}
         # station post cleanup
         self.ping_obj_dict[ce][obj_name]["obj"].cleanup() #12 change
         if self.dowebgui:
@@ -5279,8 +5362,8 @@ class Candela(Realm):
                 laptops = realdevice.get_devices()
                 print('CHECKING PORT AVAILBILITY for ZOOM TEST')
                 self.port_clean_up(5000)
-                if zoom_host not in self.device_list:
-                    return False
+                #if zoom_host not in self.device_list:
+                    #return False
                 if file_name:
                     new_filename = file_name.removesuffix(".csv")
                 else:
@@ -5587,8 +5670,8 @@ class Candela(Realm):
                                                             encryption_6g='',
                                                             selected_bands=['5G'])
                 # self.teams_test_obj.select_real_devices(real_sta_list=resource_list)
-                if teams_host not in self.device_list:
-                    return False
+                #if teams_host not in self.device_list:
+                   # return False
                 if config and group_name is None and file_name is None and profile_name is None:
                     self.teams_test_obj.select_real_devices(real_sta_list=resources)
                 if group_name and profile_name and file_name:
@@ -6124,8 +6207,7 @@ class Candela(Realm):
                 "Max Latency (ms)": stats.get("max_latency"),
                 "Total Iterations": stats.get("total_iterations"),
                 "Success Iters": stats.get("success_iterations"),
-                "Failed Iters": stats.get("failed_iterations"),
-                "No-Response Iters": stats.get("no_response_iterations"),
+                "Failed Iters": stats.get("failed_iterations")
             } for dev, stats in ort.items()]
 
             df_overall = pd.DataFrame(rows).round(2)
@@ -6149,20 +6231,21 @@ class Candela(Realm):
 
                 report.set_custom_html(f'<h4><u>{step_name.replace("_", " ")}</u></h4>')
                 report.build_custom()
+                if self.iot_increment:
 
-                # Latency graph
-                lat_png = copy_into_report(rep.get("latency_graph"), f"iot_{step_name}_latency.png")
-                if lat_png:
-                    report.build_chart_title("Average Latency")
-                    report.set_custom_html(f'<img src="{lat_png}" style="width:100%; height:auto;">')
-                    report.build_custom()
+                    # Latency graph
+                    lat_png = copy_into_report(rep.get("latency_graph"), f"iot_{step_name}_latency.png")
+                    if lat_png:
+                        report.build_chart_title("Average Latency")
+                        report.set_custom_html(f'<img src="{lat_png}" style="width:100%; height:auto;">')
+                        report.build_custom()
 
-                # Success count graph
-                res_png = copy_into_report(rep.get("result_graph"), f"iot_{step_name}_results.png")
-                if res_png:
-                    report.build_chart_title("Success Count")
-                    report.set_custom_html(f'<img src="{res_png}" style="width:100%; height:auto;">')
-                    report.build_custom()
+                    # Success count graph
+                    res_png = copy_into_report(rep.get("result_graph"), f"iot_{step_name}_results.png")
+                    if res_png:
+                        report.build_chart_title("Success Count")
+                        report.set_custom_html(f'<img src="{res_png}" style="width:100%; height:auto;">')
+                        report.build_custom()
 
                 # Tabular data for detailed iteration-level results
                 data_rows = rep.get("data") or []
@@ -6175,7 +6258,7 @@ class Candela(Realm):
                     if "Result" in df.columns:
                         df["Result"] = df["Result"].map(lambda x: "Success" if bool(x) else "Failure")
 
-                    desired_cols = ["Iteration", "Device", "Current State", "Latency_ms", "Result"]
+                    desired_cols = ["Iteration", "Device", "Current State", "latency (ms)", "Result"]
                     df = df[[c for c in desired_cols if c in df.columns]]
 
                     report.set_table_dataframe(df)
@@ -7567,9 +7650,14 @@ class Candela(Realm):
                         self.overall_report.build_objective()
                         # Test setup information table for devices in device list
                         if config_devices == '':
+                            obj = self.ping_obj_dict[ce][obj_name]["obj"]
+
+                            ssid_val = obj.ssid if obj.ssid else "Your_SSID_Name"
+                            security_val = obj.security if obj.security else "wpa2"
+
                             test_setup_info = {
-                                'SSID': self.ping_obj_dict[ce][obj_name]["obj"].ssid,
-                                'Security': self.ping_obj_dict[ce][obj_name]["obj"].security,
+                                'SSID': ssid_val,
+                                'Security': security_val,
                                 'Website / IP': self.ping_obj_dict[ce][obj_name]["obj"].target,
                                 'No of Devices': '{} (V:{}, A:{}, W:{}, L:{}, M:{})'.format(len(self.ping_obj_dict[ce][obj_name]["obj"].sta_list), len(self.ping_obj_dict[ce][obj_name]["obj"].sta_list) - len(self.ping_obj_dict[ce][obj_name]["obj"].real_sta_list), self.ping_obj_dict[ce][obj_name]["obj"].android, self.ping_obj_dict[ce][obj_name]["obj"].windows, self.ping_obj_dict[ce][obj_name]["obj"].linux, self.ping_obj_dict[ce][obj_name]["obj"].mac),
                                 'Duration (in minutes)': self.ping_obj_dict[ce][obj_name]["obj"].duration
@@ -7587,14 +7675,43 @@ class Candela(Realm):
                             }
                         if self.ping_obj_dict[ce][obj_name]["obj"].sta_to_res:
                             del test_setup_info["Website / IP"]
+                            del test_setup_info["No of Devices"]
+                            del test_setup_info["SSID"]
+                            del test_setup_info["Security"]
                             test_setup_info["Ips"] = self.ping_obj_dict[ce][obj_name]["obj"].res_ip_list
                         self.overall_report.test_setup_table(
                             test_setup_data=test_setup_info, value='Test Setup Information')
-
+                        
+                        # Device Summary Table (only for sta_to_res mode)
+                        if self.ping_obj_dict[ce][obj_name]["obj"].sta_to_res:
+                            real_count = 0
+                            iot_count = 0
+                            android_count = 0
+                            windows_count = 0
+                            linux_count = 0
+                            mac_count = 0
+                            classified_map = getattr(self.ping_obj_dict[ce][obj_name]["obj"], "classified_map", {})
+                            for ip in self.ping_obj_dict[ce][obj_name]["obj"].ip_list if hasattr(self.ping_obj_dict[ce][obj_name]["obj"], 'ip_list') and self.ping_obj_dict[ce][obj_name]["obj"].ip_list else []:
+                                info = classified_map.get(ip, {})
+                                client_type = info.get("type", "IOT")
+                                os_type_val = info.get("os", "IOT")
+                                if client_type == "Real":
+                                    real_count += 1
+                                    if "android" in os_type_val.lower():
+                                        android_count += 1
+                                    elif "windows" in os_type_val.lower():
+                                        windows_count += 1
+                                    elif "linux" in os_type_val.lower():
+                                        linux_count += 1
+                                    elif "mac" in os_type_val.lower():
+                                        mac_count += 1
+                                else:
+                                    iot_count += 1
+                            
                         # packets sent vs received vs dropped
-                        self.overall_report.set_table_title(
-                            'Packets sent vs packets received vs packets dropped')
-                        self.overall_report.build_table_title()
+                        # self.overall_report.set_table_title(
+                        #     'Packets sent vs packets received vs packets dropped')
+                        # self.overall_report.build_table_title()
                         # graph for the above
                         self.ping_obj_dict[ce][obj_name]["obj"].packets_sent = []
                         self.ping_obj_dict[ce][obj_name]["obj"].packets_received = []
@@ -7611,27 +7728,65 @@ class Candela(Realm):
                         self.ping_obj_dict[ce][obj_name]["obj"].report_names = []
                         self.ping_obj_dict[ce][obj_name]["obj"].remarks = []
                         self.ping_obj_dict[ce][obj_name]["obj"].device_ssid = []
+                        self.ping_obj_dict[ce][obj_name]["obj"].os_type_list = []
+                        self.ping_obj_dict[ce][obj_name]["obj"].client_type_list = []
+                        self.ping_obj_dict[ce][obj_name]["obj"].ip_list = []
+                        self.ping_obj_dict[ce][obj_name]["obj"].real_count = 0
+                        self.ping_obj_dict[ce][obj_name]["obj"].iot_count = 0
+                        self.ping_obj_dict[ce][obj_name]["obj"].android_count = 0
+                        self.ping_obj_dict[ce][obj_name]["obj"].windows_count = 0
+                        self.ping_obj_dict[ce][obj_name]["obj"].linux_count = 0
+                        self.ping_obj_dict[ce][obj_name]["obj"].mac_count = 0
                         # packet_count_data = {}
                         os_type = []
                         for device, device_data in self.ping_obj_dict[ce][obj_name]["obj"].result_json.items():
                             logging.info('Device data: {} {}'.format(device, device_data))
                             if self.ping_obj_dict[ce][obj_name]["obj"].sta_to_res:
+                                ip = self.ping_obj_dict[ce][obj_name]["obj"].cx_ip_map.get(device, "Unknown")
+                                # Skip gateway and server IPs
+                                if ip == "192.168.1.1":
+                                    continue
+                                if self.ping_obj_dict[ce][obj_name]["obj"].server_ip and ip == self.ping_obj_dict[ce][obj_name]["obj"].server_ip:
+                                    continue
+
                                 self.ping_obj_dict[ce][obj_name]["obj"].packets_sent.append(int(device_data['sent']))
                                 self.ping_obj_dict[ce][obj_name]["obj"].packets_received.append(int(device_data['recv']))
                                 self.ping_obj_dict[ce][obj_name]["obj"].packets_dropped.append(int(device_data['dropped']))
-
                                 self.ping_obj_dict[ce][obj_name]["obj"].device_min.append(float(device_data['min_rtt']))
                                 self.ping_obj_dict[ce][obj_name]["obj"].device_avg.append(float(device_data['avg_rtt']))
                                 self.ping_obj_dict[ce][obj_name]["obj"].device_max.append(float(device_data['max_rtt']))
-                                # print("device",device)
-                                # device_key = device.split('-')[0]
+
                                 print(self.ping_obj_dict[ce][obj_name]["obj"].cx_dev_map)
                                 print(self.ping_obj_dict[ce][obj_name]["obj"].cx_ip_map)
-                                if device in self.ping_obj_dict[ce][obj_name]["obj"].cx_dev_map and self.ping_obj_dict[ce][obj_name]["obj"].cx_dev_map[device] != "":
-                                    device_name = "{}/{}".format(self.ping_obj_dict[ce][obj_name]["obj"].cx_dev_map[device],self.ping_obj_dict[ce][obj_name]["obj"].cx_ip_map[device])
+
+                                classified_map = getattr(self.ping_obj_dict[ce][obj_name]["obj"], "classified_map", {})
+
+                                info = classified_map.get(ip, {})
+                                client_type = info.get("type", "IOT")
+                                os_type_val = info.get("os", "IOT")
+
+                                if client_type == "Real":
+                                    self.ping_obj_dict[ce][obj_name]["obj"].real_count += 1
+                                    if "android" in os_type_val.lower():
+                                        self.ping_obj_dict[ce][obj_name]["obj"].android_count += 1
+                                    elif "windows" in os_type_val.lower():
+                                        self.ping_obj_dict[ce][obj_name]["obj"].windows_count += 1
+                                    elif "linux" in os_type_val.lower():
+                                        self.ping_obj_dict[ce][obj_name]["obj"].linux_count += 1
+                                    elif "mac" in os_type_val.lower():
+                                        self.ping_obj_dict[ce][obj_name]["obj"].mac_count += 1
                                 else:
-                                    device_name = self.ping_obj_dict[ce][obj_name]["obj"].cx_ip_map[device]
-                                self.ping_obj_dict[ce][obj_name]["obj"].device_names.append(device_name)      # endpoint key only
+                                    self.ping_obj_dict[ce][obj_name]["obj"].iot_count += 1
+
+                                self.ping_obj_dict[ce][obj_name]["obj"].os_type_list.append(os_type_val)
+                                self.ping_obj_dict[ce][obj_name]["obj"].client_type_list.append(client_type)
+                                self.ping_obj_dict[ce][obj_name]["obj"].ip_list.append(ip)
+
+                                if device in self.ping_obj_dict[ce][obj_name]["obj"].cx_dev_map and self.ping_obj_dict[ce][obj_name]["obj"].cx_dev_map[device] != "":
+                                    device_name = "{}/{}".format(self.ping_obj_dict[ce][obj_name]["obj"].cx_dev_map[device], ip)
+                                else:
+                                    device_name = ip
+                                self.ping_obj_dict[ce][obj_name]["obj"].device_names.append(device_name)
                                 self.ping_obj_dict[ce][obj_name]["obj"].report_names.append(device_name)
                             else:
                                 os_type.append(device_data['os'])
@@ -7654,6 +7809,20 @@ class Candela(Realm):
                                     self.ping_obj_dict[ce][obj_name]["obj"].device_names_with_errors.append(device_data['name'])
                                     self.ping_obj_dict[ce][obj_name]["obj"].devices_with_errors.append(device)
                                     self.ping_obj_dict[ce][obj_name]["obj"].remarks.append(','.join(device_data['remarks']))
+                        if self.ping_obj_dict[ce][obj_name]["obj"].sta_to_res:
+                            summary2_data = {
+                                "Total Devices": self.ping_obj_dict[ce][obj_name]["obj"].real_count + self.ping_obj_dict[ce][obj_name]["obj"].iot_count,
+                                "Android Devices": self.ping_obj_dict[ce][obj_name]["obj"].android_count,
+                                "Windows Devices": self.ping_obj_dict[ce][obj_name]["obj"].windows_count,
+                                "Linux Devices": self.ping_obj_dict[ce][obj_name]["obj"].linux_count,
+                                "Mac Devices": self.ping_obj_dict[ce][obj_name]["obj"].mac_count,
+                                "IOT Devices": self.ping_obj_dict[ce][obj_name]["obj"].iot_count
+                            }
+                            self.overall_report.set_table_title("Device Summary")
+                            self.overall_report.build_table_title()
+                            df_summary = pd.DataFrame(list(summary2_data.items()), columns=["Metric", "Count"])
+                            self.overall_report.set_table_dataframe(df_summary)
+                            self.overall_report.build_table()
                         x_fig_size = 15
                         y_fig_size = len(self.ping_obj_dict[ce][obj_name]["obj"].device_names) * .5 + 4
                         graph = lf_bar_graph_horizontal(_data_set=[self.ping_obj_dict[ce][obj_name]["obj"].packets_dropped, self.ping_obj_dict[ce][obj_name]["obj"].packets_received, self.ping_obj_dict[ce][obj_name]["obj"].packets_sent],
@@ -7720,9 +7889,13 @@ class Candela(Realm):
                                         self.overall_report.build_table()
 
                             else:
+                                self.overall_report.set_table_title("Packets sent vs packets received vs packets dropped")
+                                self.overall_report.build_table_title()
                                 if self.ping_obj_dict[ce][obj_name]["obj"].sta_to_res:
                                     dataframe1 = pd.DataFrame({
-                                        'Endpoint': self.ping_obj_dict[ce][obj_name]["obj"].device_names,
+                                        'Client Type': self.ping_obj_dict[ce][obj_name]["obj"].client_type_list,
+                                        'OS Type': self.ping_obj_dict[ce][obj_name]["obj"].os_type_list,
+                                        'IP Address': self.ping_obj_dict[ce][obj_name]["obj"].ip_list,
                                         'Packets Sent': self.ping_obj_dict[ce][obj_name]["obj"].packets_sent,
                                         'Packets Received': self.ping_obj_dict[ce][obj_name]["obj"].packets_received,
                                         'Packets Loss': self.ping_obj_dict[ce][obj_name]["obj"].packets_dropped,
@@ -7759,45 +7932,51 @@ class Candela(Realm):
                             self.overall_report.build_table()
 
                         # packets latency graph
-                        self.overall_report.set_table_title('Ping Latency Graph')
+                        if not self.ping_obj_dict[ce][obj_name]["obj"].sta_to_res:
+                            self.overall_report.set_table_title('Ping Latency Graph')
+                            self.overall_report.build_table_title()
+
+                            graph = lf_bar_graph_horizontal(_data_set=[self.ping_obj_dict[ce][obj_name]["obj"].device_min, self.ping_obj_dict[ce][obj_name]["obj"].device_avg, self.ping_obj_dict[ce][obj_name]["obj"].device_max],
+                                                            _xaxis_name='Time (ms)',
+                                                            _yaxis_name='Wireless Clients',
+                                                            _label=[
+                                                                'Min Latency (ms)', 'Average Latency (ms)', 'Max Latency (ms)'],
+                                                            _graph_image_name=f'Ping Latency per client {obj_no}',
+                                                            _yaxis_label=self.ping_obj_dict[ce][obj_name]["obj"].report_names,
+                                                            _yaxis_categories=self.ping_obj_dict[ce][obj_name]["obj"].report_names,
+                                                            _yaxis_step=1,
+                                                            _yticks_font=8,
+                                                            _graph_title='Ping Latency per client',
+                                                            _title_size=16,
+                                                            _color=['lightgrey',
+                                                                    'orange', 'steelblue'],
+                                                            _color_edge='black',
+                                                            _bar_height=0.15,
+                                                            _figsize=(x_fig_size, y_fig_size),
+                                                            _legend_loc="best",
+                                                            _legend_box=(1.0, 1.0),
+                                                            _dpi=96,
+                                                            _show_bar_value=False,
+                                                            _enable_csv=True,
+                                                            _color_name=['lightgrey', 'orange', 'steelblue'])
+
+                            graph_png = graph.build_bar_graph_horizontal()
+                            logging.info('graph name {}'.format(graph_png))
+                            self.overall_report.set_graph_image(graph_png)
+                            # need to move the graph image to the results directory
+                            self.overall_report.move_graph_image()
+                            self.overall_report.set_csv_filename(graph_png)
+                            self.overall_report.move_csv_file()
+                            self.overall_report.build_graph()
+                        
+                        self.overall_report.set_table_title('Ping Latency Per Client')
                         self.overall_report.build_table_title()
-
-                        graph = lf_bar_graph_horizontal(_data_set=[self.ping_obj_dict[ce][obj_name]["obj"].device_min, self.ping_obj_dict[ce][obj_name]["obj"].device_avg, self.ping_obj_dict[ce][obj_name]["obj"].device_max],
-                                                        _xaxis_name='Time (ms)',
-                                                        _yaxis_name='Wireless Clients',
-                                                        _label=[
-                                                            'Min Latency (ms)', 'Average Latency (ms)', 'Max Latency (ms)'],
-                                                        _graph_image_name=f'Ping Latency per client {obj_no}',
-                                                        _yaxis_label=self.ping_obj_dict[ce][obj_name]["obj"].report_names,
-                                                        _yaxis_categories=self.ping_obj_dict[ce][obj_name]["obj"].report_names,
-                                                        _yaxis_step=1,
-                                                        _yticks_font=8,
-                                                        _graph_title='Ping Latency per client',
-                                                        _title_size=16,
-                                                        _color=['lightgrey',
-                                                                'orange', 'steelblue'],
-                                                        _color_edge='black',
-                                                        _bar_height=0.15,
-                                                        _figsize=(x_fig_size, y_fig_size),
-                                                        _legend_loc="best",
-                                                        _legend_box=(1.0, 1.0),
-                                                        _dpi=96,
-                                                        _show_bar_value=False,
-                                                        _enable_csv=True,
-                                                        _color_name=['lightgrey', 'orange', 'steelblue'])
-
-                        graph_png = graph.build_bar_graph_horizontal()
-                        logging.info('graph name {}'.format(graph_png))
-                        self.overall_report.set_graph_image(graph_png)
-                        # need to move the graph image to the results directory
-                        self.overall_report.move_graph_image()
-                        self.overall_report.set_csv_filename(graph_png)
-                        self.overall_report.move_csv_file()
-                        self.overall_report.build_graph()
-
                         if self.ping_obj_dict[ce][obj_name]["obj"].sta_to_res:
+
                             dataframe2 = pd.DataFrame({
-                            'Endpoint': self.ping_obj_dict[ce][obj_name]["obj"].device_names,
+                            'Client Type': self.ping_obj_dict[ce][obj_name]["obj"].client_type_list,
+                            'OS Type': self.ping_obj_dict[ce][obj_name]["obj"].os_type_list,
+                            'IP Address': self.ping_obj_dict[ce][obj_name]["obj"].ip_list,
                             'Min Latency (ms)': self.ping_obj_dict[ce][obj_name]["obj"].device_min,
                             'Average Latency (ms)': self.ping_obj_dict[ce][obj_name]["obj"].device_avg,
                             'Max Latency (ms)': self.ping_obj_dict[ce][obj_name]["obj"].device_max
@@ -10151,18 +10330,21 @@ class Candela(Realm):
                 #     series_df = self.update_duration(series_df)
 
         return series_df,parallel_df
-
+    def automation_none(self):
+        if self.automation is not None:
+            self.automation.stop_test = True
     def run_series(self,series_threads):
         for t in series_threads:
             t.start()
             t.join()   # sequential execution
         self.stop_all_tests = True  # signal to stop all tests after series execution is done
-
+        self.automation_none()
     def run_parallel(self,parallel_threads):
         for t in parallel_threads:
             t.start()
         for t in parallel_threads:
             t.join()
+        self.automation_none()
     def get_list(self, dev_list):
         print("dev_list", dev_list)
         all_devices = self.resource_stats.get_all_devices()
@@ -10178,7 +10360,8 @@ class Candela(Realm):
                 if port["os"] == "Android":
                     dev_sta = "wlan0"
                 else:
-                    dev_sta = str(port["sta_name"])
+                    if port["os"] != "iOS":
+                        dev_sta = str(port["sta_name"])
                 if dev_shelf == str(shelf) and dev_res == str(res):
                     print("control came here")
                     full_name = ".".join([dev_shelf,dev_res,dev_sta])
@@ -10242,6 +10425,11 @@ class Candela(Realm):
     
 
     async def configure_devices(self):
+        # all_devices = self.resource_stats.get_all_devices()
+        # print("DEBUG: get_all_devices output ↓↓↓")
+        # print("all devices list is this ",all_devices)
+
+        # exit(0)
         device_list = []
         if self.config:
             device_list = self.query_devices()
@@ -10283,6 +10471,35 @@ class Candela(Realm):
 
             # Configure devices in the selected group with the selected profile
             device_list = await self.resource_stats.connectivity(config=config_devices, upstream=self.upstream_ip)
+            all_devices = self.resource_stats.get_all_devices()
+
+            # dev_list_withos = []
+
+            # for dev in device_list:
+            #     os_type = "Unknown"
+
+            #     for d in all_devices:
+            #         eid = d.get("eid") or f"{d.get('shelf')}.{d.get('resource')}"
+
+            #         if eid == dev:
+            #             os_type = d.get("os", "Unknown")
+
+            #             # Normalize
+            #             if os_type == "Win":
+            #                 os_type = "Windows"
+            #             elif os_type == "Lin":
+            #                 os_type = "Linux"
+            #             elif os_type == "Apple":
+            #                 os_type = "Mac"
+
+            #             break
+
+            #     dev_list_withos.append({
+            #         "resource_id": dev,
+            #         "os": os_type
+            #     })
+
+            # device_list = dev_list_withos
         # Case 2: Device list is already provided
         elif device_list != []:
             all_devices = self.resource_stats.get_all_devices()
@@ -10292,13 +10509,44 @@ class Candela(Realm):
                 # If config is True, attempt to bring up all devices in the list and perform tests on those that become active
                 # Configure devices in the device list with the provided SSID, Password and Security
                 device_list = await self.resource_stats.connectivity(device_list=self.device_list, wifi_config=config_dict)
+                # all_devices = self.resource_stats.get_all_devices()
+
+                # dev_list_withos = []
+
+                # for dev in device_list:
+                #     os_type = "Unknown"
+
+                #     for d in all_devices:
+                #         eid = d.get("eid") or f"{d.get('shelf')}.{d.get('resource')}"
+
+                #         if eid == dev:
+                #             os_type = d.get("os", "Unknown")
+
+                #             # Normalize
+                #             if os_type == "Win":
+                #                 os_type = "Windows"
+                #             elif os_type == "Lin":
+                #                 os_type = "Linux"
+                #             elif os_type == "Apple":
+                #                 os_type = "Mac"
+
+                #             break
+
+                #     dev_list_withos.append({
+                #         "resource_id": dev,
+                #         "os": os_type
+                #     })
+
+                # device_list = dev_list_withos
+
         else:
             logger.error("give correct set of configurations")
         return device_list
 
-    def generate_overall_report(self,test_results_df='',args_dict={},iot_summary=None):
+    def generate_overall_report(self,test_results_df='',args_dict=None,iot_summary=None):
         self.overall_report = lf_report.lf_report(_results_dir_name="Base_Class_Test_Overall_report", _output_html="base_class_overall.html",
                                          _output_pdf="base_class_overall.pdf", _path=self.result_path if not self.dowebgui else self.result_dir)
+        args_dict = args_dict if args_dict else {}
         self.report_path_date_time = self.overall_report.get_path_date_time()
         self.overall_report.set_title("Candela Base Class")
         self.overall_report.set_date(datetime.datetime.now())
@@ -10546,17 +10794,27 @@ def update_device_list(args,tests,candela_apis):
     name_to_res = {}
     res_to_name = {}
     include_tests = []
+    print("all devices",all_devices)
     for device in all_devices:
         if device["type"] == 'laptop':
             name_to_res[device["hostname"]] = device["shelf"] + '.' + device["resource"]
             res_to_name[device["shelf"] + '.' + device["resource"]] = device["hostname"]
         else:
-            name_to_res[device["serial"]] =  device["shelf"] + '.' + device["resource"]
-            res_to_name[device["shelf"] + '.' + device["resource"]] = device["serial"]
+            name_to_res[device["serial"]] =  device["eid"]
+            res_to_name[device["eid"]] = device["serial"]
     group_resource_list = {}
-    for key,value in candela_apis.group_device_map.copy().items():
-        r_list = [name_to_res[val] for val in value]
-        group_resource_list[key] = r_list.copy()
+    for key, value in candela_apis.group_device_map.copy().items():
+        r_list = []
+        for val in value:
+            if val in name_to_res:
+                r_list.append(name_to_res[val])
+            else:
+                # Device is phantom, offline, or not found  skip it
+                logger.warning(
+                    f"Device '{val}' in group '{key}' not found in active device list "
+                    f"(likely phantom or offline). Skipping from test execution."
+                )
+        group_resource_list[key] = r_list
     print(group_resource_list)
     for test in tests:
 
@@ -11493,6 +11751,7 @@ def main():
                             passwd=args.passwd,
                             security=args.security,
                             result_path=args.result_path,
+                            iot_increment=args.iot_increment,
                             args=args)
 
     if (args.config and args.device_list) or (args.file_name and args.group_name and args.profile_name):
@@ -11536,6 +11795,9 @@ def convert_kwargs_to_cli_list(kwargs):
 
 
 def initialize_base_class_obj(**kwargs):
+    global test_results_list
+    test_results_list = manager.list()
+    print("test_results_list",test_results_list)
     cli_list = None
     cli = False
     print("kwargs",kwargs)
@@ -11653,13 +11915,13 @@ def save_logs():
     logger.info(f"Test logs saved to {log_filename}")
     return log_filename
 
-def trigger_iot(ip, port, iterations, delay, device_list, testname, increment):
+def trigger_iot(ip, port, iterations, delay, device_list, testname, increment, candela_apis):
     """
     Entry point to start the IoT test in a separate thread.
     This function is called from the throughput test script when IoT testing
     is enabled. It wraps the asynchronous `run_iot()`.
     """
-    asyncio.run(run_iot(ip, port, iterations, delay, device_list, testname, increment))
+    asyncio.run(run_iot(ip, port, iterations, delay, device_list, testname, increment, candela_apis))
 
 
 async def run_iot(ip: str = '127.0.0.1',
@@ -11668,7 +11930,8 @@ async def run_iot(ip: str = '127.0.0.1',
                   delay: int = 5,
                   device_list: str = '',
                   testname: str = '',
-                  increment: str = ''):
+                  increment: str = '',
+                  candela_apis: Candela = None):
     try:
 
         if delay < 5:
@@ -11694,10 +11957,10 @@ async def run_iot(ip: str = '127.0.0.1',
         testname = testname
 
         # Ensure test name is unique (avoid overwriting previous results)
-        if testname in os.listdir('../../local/interop-webGUI/IoT/scripts/results/'):
+        if testname in os.listdir('../../../../local1/interop-webGUI/IoT/scripts/results/'):
             logger.error('Test with same name already existing. Please give a different testname.')
             exit(1)
-        automation = Automation(ip=ip,
+        candela_apis.automation = Automation(ip=ip,
                                 port=port,
                                 iterations=iterations,
                                 delay=delay,
@@ -11706,26 +11969,26 @@ async def run_iot(ip: str = '127.0.0.1',
                                 increment=increment)
 
         # fetch the available iot devices
-        automation.devices = await automation.fetch_iot_devices()
+        candela_apis.automation.devices = await candela_apis.automation.fetch_iot_devices()
 
         # select the iot devices for testing
-        automation.select_iot_devices()
+        candela_apis.automation.select_iot_devices()
 
         # run the iot test on selected devices
-        automation.run_test()
+        candela_apis.automation.run_test()
 
         # generate the iot report
-        automation.generate_report()
+        candela_apis.automation.generate_report()
 
     except Exception as e:
         logger.error(f"Iot Test failed: {str(e)}")
         raise
 
-    await automation.session.close()
+    await candela_apis.automation.session.close()
 
     logger.info('Iot Test Completed.')
 
-def run_ping_test(args, candela_apis):
+def run_ping_test(args, candela_apis:Candela):
     return candela_apis.run_ping_test(
         real=True,
         target=args.ping_target,
@@ -11762,7 +12025,8 @@ def run_ping_test(args, candela_apis):
         local_lf_report_dir = candela_apis.result_path if not args.dowebgui else args.result_dir,
         sta_to_res=args.ping_sta_to_res,
         sta_port=args.ping_sta_port,
-        res_ip=args.ping_res_ip
+        res_ip=args.ping_res_ip,
+        
     )
 
 def run_http_test(args, candela_apis):
@@ -12159,7 +12423,7 @@ def run_teams_test(args, candela_apis):
     return candela_apis.run_teams_test(
         upstream_port=args.upstream_port,
         duration=args.teams_duration,
-        participants_req=args.teams_participants,
+        #participants_req=args.teams_participants,
         audio=args.teams_audio,
         video=args.teams_video,
         resources=args.teams_device_list,

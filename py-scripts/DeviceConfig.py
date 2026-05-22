@@ -123,7 +123,6 @@ class ADB_DEVICES(Realm):
 
         command = 'shell am force-stop com.candela.wecan'
         for port_data in port_list:
-
             data = {
                 'shelf': 1,
                 'resource': port_data["shelf"],
@@ -155,7 +154,6 @@ class ADB_DEVICES(Realm):
 
         data_list = []
         for port_data in port_list:
-
             data = {
                 'shelf': 1,
                 'resource': port_data["shelf"],
@@ -183,7 +181,6 @@ class ADB_DEVICES(Realm):
 
         data_list = []
         for port_data in port_list:
-
             data = {
                 'shelf': 1,
                 'resource': port_data["shelf"],
@@ -209,7 +206,8 @@ class ADB_DEVICES(Realm):
         data_list_1 = []
 
         for port_data in port_list:
-            curr_ssid, curr_passwd, curr_encryption, curr_eap_method, curr_eap_identity, server_ip = port_data["ssid"], port_data[
+            curr_ssid, curr_passwd, curr_encryption, curr_eap_method, curr_eap_identity, server_ip = port_data["ssid"], \
+            port_data[
                 "passwd"], port_data["enc"], port_data["eap_method"], port_data["eap_identity"], port_data["server_ip"]
 
             username = port_data["user-name"]
@@ -227,7 +225,8 @@ class ADB_DEVICES(Realm):
             if (username is None):
                 # logger.warning('The device with serial {} not found'.format(serial))
                 username = \
-                    self.get('http://{}:{}/adb/1/1/{}'.format(self.lanforge_ip, self.port, port_data["serial"])).json()['devices'][
+                    self.get('http://{}:{}/adb/1/1/{}'.format(self.lanforge_ip, self.port, port_data["serial"])).json()[
+                        'devices'][
                         'user-name']
             # check if the encryption is personal
 
@@ -240,18 +239,16 @@ class ADB_DEVICES(Realm):
                 if curr_encryption == "wpa3_enterprise":
                     curr_encryption = "wpa3-ent"
                 adb_cmd = (
-                    'shell am start -n com.candela.wecan/com.candela.wecan.StartupActivity '
-                    '--es auto_start 1 '
-                    '--es username {} '
-                    '--es serverip {} '
-                    '--es ssid \\"{}\\" '
-                    '--es password \\"{}\\" '
-                    '--es encryption {} '
-                    '--es eap_method {} '
-                    '--es eap_user {} '
-                    '--es eap_passwd {} '
-                    '--es app_flags 1 '
-                    '--es auto_wifi 1'.format(
+                    "shell am start -n com.candela.wecan/com.candela.wecan.StartupActivity "
+                    "--es auto_start 1 "
+                    "--es username {} "
+                    "--es serverip {} "
+                    "--es ssid {} "
+                    "--es password {} "
+                    "--es encryption {} "
+                    "--es eap_method {} "
+                    "--es eap_user {} "
+                    "--es eap_passwd {}".format(
                         username, server_ip, curr_ssid, curr_passwd, curr_encryption,
                         curr_eap_method, curr_eap_identity, curr_passwd
                     )
@@ -264,15 +261,18 @@ class ADB_DEVICES(Realm):
                     'adb_cmd': adb_cmd
                 }
             else:
+                if curr_encryption == "sae-mixed":
+                    curr_encryption = "wpa2|wpa3"
+                elif curr_encryption == "sae":
+                    curr_encryption = "wpa3"
                 adb_cmd = (
-                    'shell am start -n com.candela.wecan/com.candela.wecan.StartupActivity '
-                    '--es auto_start 1 '
-                    '--es username {} '
-                    '--es serverip {} '
-                    '--es ssid \\"{}\\" '
-                    '--es password \\"{}\\" '
-                    '--es encryption {} '
-                    '--es auto_wifi 1'.format(
+                    "shell am start -n com.candela.wecan/com.candela.wecan.StartupActivity "
+                    "--es auto_start 1 "
+                    "--es username {} "
+                    "--es serverip {} "
+                    "--es ssid {} "
+                    "--es password {} "
+                    "--es encryption {}".format(
                         username, server_ip, curr_ssid, curr_passwd, curr_encryption
                     )
                 )
@@ -359,7 +359,7 @@ class ADB_DEVICES(Realm):
             for device_data in interop_tab_data:
                 device = {}
                 for name, data in device_data.items():
-                    #print(f"\nDEVICE DATA: {data}")
+                    # print(f"\nDEVICE DATA: {data}")
                     if (str(data['phantom']) == 'true'):
                         logger.warning(
                             '{} is in phantom state. Please make sure debugging is enabled in developer settings.'.format(
@@ -464,7 +464,7 @@ class LAPTOPS(Realm):
             enc = 1099545182208
         elif (encryption == "owe_advanced"):
             enc = 564049498603520
-        elif encryption=="psk2|psk3" or encryption == "sae-mixed":
+        elif encryption == "psk2|psk3" or encryption == "sae-mixed":
             enc = 1099511628800
         if encryption == "wpa_enterprise" or encryption == "wpa2_enterprise" or encryption == "wpa3_enterprise" or encryption == "owe_advanced":
             if obj.get("ieee80211u"):
@@ -545,7 +545,6 @@ class LAPTOPS(Realm):
                         'mac': 'xx:xx:xx:*:*:xx',
                         "ieee80211w": enable_80211w,
 
-
                     }
                 else:
                     data = {
@@ -571,7 +570,6 @@ class LAPTOPS(Realm):
                         'ssid': curr_ssid,
                         "ieee80211w": enable_80211w,
 
-
                     }
                 else:
                     data = {
@@ -595,6 +593,7 @@ class LAPTOPS(Realm):
         results = await asyncio.gather(*tasks)
         logger.info(results)
         time.sleep(2)
+
     # Set Wifi Extra
 
     async def set_wifi_extra(self, port_list=None):
@@ -630,7 +629,6 @@ class LAPTOPS(Realm):
             if eap_method == "EAP-PEAP":
                 eap_method = "PEAP"
             if (enterprise_status and os == 'Lin'):
-
                 data = {
                     'shelf': shelf,
                     'resource': resource,
@@ -907,12 +905,14 @@ class LAPTOPS(Realm):
                 station_name, station_details = list(station.keys())[0], list(station.values())[0]
                 if (station_details['parent dev'] != '' and not station_details['phantom']):
                     wiphy_non_phantom_found = True
-                    return {"station_name": station_name.split('.')[2], "sta_down": station_details['down'], "radio_up": True}
+                    return {"station_name": station_name.split('.')[2], "sta_down": station_details['down'],
+                            "radio_up": True}
 
             if not wiphy_non_phantom_found:
                 for station in stations:
                     station_name, station_details = list(station.keys())[0], list(station.values())[0]
-                    if (station_details['parent dev'] == '' and not station_details['phantom'] and station_details['alias'] == 'wiphy0'):
+                    if (station_details['parent dev'] == '' and not station_details['phantom'] and station_details[
+                        'alias'] == 'wiphy0'):
                         return {"station_name": None, "sta_down": None, "radio_up": True}
                 return {"station_name": None, "sta_down": None, "radio_up": False}
         else:
@@ -990,19 +990,23 @@ class DeviceConfig(Realm):
             logger.error("CSV is empty or malformed")
             return {}
         df = df.where(pd.notna(df), None)
-        data = {col: df[col].dropna().apply(lambda x: str(int(x)) if isinstance(x, float) else str(x)).tolist() for col in df.columns}
+        data = {col: df[col].dropna().apply(lambda x: str(int(x)) if isinstance(x, float) else str(x)).tolist() for col
+                in df.columns}
         return data
 
     def get_all_available_devices(self):
         dataset = self.groups
+        print(f"DATASET: {dataset}")
         already_added = {}
         not_added_mapped_devices = {}
         for g_name, g_values in dataset.items():
             for val in g_values:
                 if not already_added.get(val):
+                    print(f"VAL: {val}")
                     already_added[val] = [g_name]
                 else:
-                    already_added[val].append()
+                    print("in else, adding val")
+                    already_added[val].append(val)
 
         idx = 1
         for obj in self.all_mapped_devices.values():
@@ -1048,8 +1052,10 @@ class DeviceConfig(Realm):
 
     def device_csv_file(self, csv_name='device.csv'):
         file_name = csv_name
-        columns = ['DeviceList', 'PingPacketLoss %', 'L3_TCP_UL Mbps', 'L3_TCP_DL Mbps', 'L3_TCP_BiDi Mbps', 'L3_UDP_UL Mbps', 'L3_UDP_DL Mbps', 'L3_UDP_BiDi Mbps',
-                   'Videostreaming URLcount', 'RealBrowser URLcount', 'HTTP URLcount', 'FTP URLcount', 'PortReset No_of_connections', 'Roaming No_of_Successful Roams']
+        columns = ['DeviceList', 'PingPacketLoss %', 'L3_TCP_UL Mbps', 'L3_TCP_DL Mbps', 'L3_TCP_BiDi Mbps',
+                   'L3_UDP_UL Mbps', 'L3_UDP_DL Mbps', 'L3_UDP_BiDi Mbps',
+                   'Videostreaming URLcount', 'RealBrowser URLcount', 'HTTP URLcount', 'FTP URLcount',
+                   'PortReset No_of_connections', 'Roaming No_of_Successful Roams']
 
         if not os.path.exists(file_name):
             with open(file_name, mode='w', newline='') as file:
@@ -1142,7 +1148,12 @@ class DeviceConfig(Realm):
                             inserted.append(index)
                             already_added[self.all_available_devices[index]['serial']] = [g_name]
                         else:
-                            logger.info("{} is already inserted in {} hence not inculded in group {}".format(index, already_added[self.all_available_devices[index]['serial']], g_name))
+                            logger.info("{} is already inserted in {} hence not inculded in group {}".format(index,
+                                                                                                             already_added[
+                                                                                                                 self.all_available_devices[
+                                                                                                                     index][
+                                                                                                                     'serial']],
+                                                                                                             g_name))
                     else:
                         logger.info("{} S.No is not found in the list.Excluding it from group {}".format(index, g_name))
                         notinserted.append(index)
@@ -1190,7 +1201,12 @@ class DeviceConfig(Realm):
                             inserted.append(index)
                             already_added[self.all_available_devices[index]['serial']] = [g_name]
                         else:
-                            logger.info("{} is already inserted in {} hence not inculded in group {}".format(index, already_added[self.all_available_devices[index]['serial']], g_name))
+                            logger.info("{} is already inserted in {} hence not inculded in group {}".format(index,
+                                                                                                             already_added[
+                                                                                                                 self.all_available_devices[
+                                                                                                                     index][
+                                                                                                                     'serial']],
+                                                                                                             g_name))
                     else:
                         logger.info("{} S.No is not found in the list.Excluding it from group {}".format(index, g_name))
                         notinserted.append(index)
@@ -1312,7 +1328,8 @@ class DeviceConfig(Realm):
                 details["pk_passwd"] = pk_passwd_match[0] if ("<pk_passwd " in profile_details) else ''
                 details["pac_file"] = pac_file_match[0] if ("<pac_file " in profile_details) else ''
 
-                details["key_management"] = key_management_match[0] if ("<key_management " in profile_details) else 'DEFAULT'
+                details["key_management"] = key_management_match[0] if (
+                            "<key_management " in profile_details) else 'DEFAULT'
                 details["ieee80211w"] = ieee80211w_match[0] if ("<ieee80211w " in profile_details) else int(1)
                 details["eap_identity"] = eap_identity_match[0] if ("<eap_identity " in profile_details) else ''
                 details["eap_method"] = eap_method_match[0] if ("<eap_method " in profile_details) else 'DEFAULT'
@@ -1396,8 +1413,10 @@ class DeviceConfig(Realm):
         file_path = os.path.join(py_scripts_dir, 'profile.csv')
 
         # Initialize the CSV file with headers if it does not exist
-        headers = ['Profile', 'Lanforge', 'bss_transition', 'ca_cert', 'client_cert', 'disable_ofdma', 'eap_identity', 'eap_method', 'enable_pkc', 'enc', 'ieee80211',
-                   'ieee80211u', 'ieee80211w', 'key_management', 'pac_file', 'pairwise', 'passwd', 'pk_passwd', 'power_save', 'private_key', 'roam_ft_ds', 'server_ip', 'ssid']
+        headers = ['Profile', 'Lanforge', 'bss_transition', 'ca_cert', 'client_cert', 'disable_ofdma', 'eap_identity',
+                   'eap_method', 'enable_pkc', 'enc', 'ieee80211',
+                   'ieee80211u', 'ieee80211w', 'key_management', 'pac_file', 'pairwise', 'passwd', 'pk_passwd',
+                   'power_save', 'private_key', 'roam_ft_ds', 'server_ip', 'ssid']
         # Check if the CSV file exists
         if not os.path.isfile(file_path):
             # Create the CSV file with predefined headers
@@ -1427,7 +1446,8 @@ class DeviceConfig(Realm):
             filtered_profiles = {key: json_data[key] for key in data if key in json_data}
             return filtered_profiles or None
 
-    async def connectivity(self, config=None, disconnect=False, reboot=False, device_list=None, wifi_config=None, flag=0, upstream=None):
+    async def connectivity(self, config=None, disconnect=False, reboot=False, device_list=None, wifi_config=None,
+                           flag=0, upstream=None):
 
         group_device = []
         selected_adb_devices = []
@@ -1488,8 +1508,10 @@ class DeviceConfig(Realm):
                 device_obj["ssid"] = wifi_config.get("ssid")
                 device_obj["passwd"] = wifi_config.get("passwd")
                 device_obj["enc"] = wifi_config.get("enc")
-                if device_obj.get("serial") in device_list or device_obj.get("hostname") in device_list or (device_obj.get(
-                        "shelf") + '.' + device_obj.get("resource")) in device_list or device_obj.get("eid") in device_list:
+                if device_obj.get("serial") in device_list or device_obj.get("hostname") in device_list or (
+                        device_obj.get(
+                                "shelf") + '.' + device_obj.get("resource")) in device_list or device_obj.get(
+                    "eid") in device_list:
 
                     device_obj["ieee80211"] = wifi_config.get("ieee80211")
                     device_obj["eap_method"] = wifi_config.get("eap_method")
@@ -1517,7 +1539,7 @@ class DeviceConfig(Realm):
                     else:
                         device_obj["server_ip"] = wifi_config.get("server_ip")
                         selected_adb_devices.append(device_obj)
-        
+
         else:
             logger.info("No devices are slected for operation")
             return
@@ -1527,7 +1549,8 @@ class DeviceConfig(Realm):
         logger.info(selected_laptop_devices)
         logger.info("Following are the devices available for configuration")
         for device_obj in selected_adb_devices + selected_laptop_devices:
-            logger.info(device_obj.get("serial")) if device_obj["type"] == "adb" else logger.info(device_obj.get("hostname"))
+            logger.info(device_obj.get("serial")) if device_obj["type"] == "adb" else logger.info(
+                device_obj.get("hostname"))
 
         if reboot:
             if (selected_adb_devices != []):
@@ -1615,7 +1638,8 @@ class DeviceConfig(Realm):
 
             curr_ssid = android["ssid"]
 
-            current_android_port_data = get_device_data(port_data=all_ports, port_key=resource_id + ".wlan0", resource_data=all_resources, resource_key=resource_id)
+            current_android_port_data = get_device_data(port_data=all_ports, port_key=resource_id + ".wlan0",
+                                                        resource_data=all_resources, resource_key=resource_id)
 
             if (current_android_port_data is None):
                 exclude_androids.append(android)
@@ -1632,7 +1656,8 @@ class DeviceConfig(Realm):
                 continue
             # checking if the android is active or down
             if (current_android_port_data['ip'] == '0.0.0.0'):
-                logger.warning('The android with serial {} is down. Excluding it from testing'.format(android["serial"]))
+                logger.warning(
+                    'The android with serial {} is down. Excluding it from testing'.format(android["serial"]))
                 exclude_androids.append(android)
                 continue
 
@@ -1734,7 +1759,8 @@ class DeviceConfig(Realm):
                 target_port_ip = self.json_get(f'/port/{shelf}/{resource}/{port}?fields=ip')['interface']['ip']
                 upstream_port = target_port_ip
             except BaseException:
-                logging.warning(f'The upstream port is not an ethernet port. Proceeding with the given upstream_port {upstream_port}.')
+                logging.warning(
+                    f'The upstream port is not an ethernet port. Proceeding with the given upstream_port {upstream_port}.')
             logging.info(f"Upstream port IP {upstream_port}")
         else:
             logging.info(f"Upstream port IP {upstream_port}")
@@ -1746,9 +1772,9 @@ class DeviceConfig(Realm):
         final_df = pd.DataFrame(columns=['Res_Id/serial', 'remarks'])
 
         phantom_entries = (
-            self.laptop_obj.laptop_phantom_list +
-            self.laptop_obj.laptop_wiphy_down_list +
-            self.adb_obj.adb_phantom_list
+                self.laptop_obj.laptop_phantom_list +
+                self.laptop_obj.laptop_wiphy_down_list +
+                self.adb_obj.adb_phantom_list
         )
 
         phantom_lookup = set()
@@ -1777,7 +1803,7 @@ class DeviceConfig(Realm):
                 final_df = pd.concat([
                     final_df,
                     pd.DataFrame([[dev_str, remark]],
-                                columns=['Res_Id/serial', 'remarks'])
+                                 columns=['Res_Id/serial', 'remarks'])
                 ], ignore_index=True)
 
                 continue
@@ -1787,21 +1813,21 @@ class DeviceConfig(Realm):
                 final_df = pd.concat([
                     final_df,
                     pd.DataFrame([[dev_str, 'Not found in LANforge']],
-                                columns=['Res_Id/serial', 'remarks'])
+                                 columns=['Res_Id/serial', 'remarks'])
                 ], ignore_index=True)
 
             else:
                 if dev not in final_dev_list and \
-                res_to_name.get(dev, None) not in final_dev_list and \
-                name_to_res.get(dev, None) not in final_dev_list:
+                        res_to_name.get(dev, None) not in final_dev_list and \
+                        name_to_res.get(dev, None) not in final_dev_list:
 
                     final_dev_list.append(dev)
 
                     final_df = pd.concat([
                         final_df,
                         pd.DataFrame([[dev_str,
-                                    'Found in LANforge and ready to configure']],
-                                    columns=['Res_Id/serial', 'remarks'])
+                                       'Found in LANforge and ready to configure']],
+                                     columns=['Res_Id/serial', 'remarks'])
                     ], ignore_index=True)
 
                 else:
@@ -1815,12 +1841,12 @@ class DeviceConfig(Realm):
                     final_df = pd.concat([
                         final_df,
                         pd.DataFrame([[dev_str, msg]],
-                                    columns=['Res_Id/serial', 'remarks'])
+                                     columns=['Res_Id/serial', 'remarks'])
                     ], ignore_index=True)
 
         return final_dev_list, final_df
 
-    def display_available_devices(self,all_devices):
+    def display_available_devices(self, all_devices):
 
         rows = []
 
@@ -1841,16 +1867,15 @@ class DeviceConfig(Realm):
             })
 
         rows.extend(self.laptop_obj.laptop_wiphy_down_list)
-        # ✅ Add Phantom Laptops
+        # ? Add Phantom Laptops
         rows.extend(self.laptop_obj.laptop_phantom_list)
 
-        # ✅ Add Wiphy Down Laptops
+        # ? Add Wiphy Down Laptops
 
-        # ✅ Add ADB Phantom Devices
+        # ? Add ADB Phantom Devices
         rows.extend(self.adb_obj.adb_phantom_list)
 
         return pd.DataFrame(rows)
-
 
 
 if __name__ == "__main__":
@@ -1904,18 +1929,22 @@ if __name__ == "__main__":
     parser.add_argument("--create_group", help='flag to use script to create a group', action="store_true")
     parser.add_argument("--get_groups", help='flag to use script to get the groups created', action="store_true")
     parser.add_argument('--remove_group', help='flags to use script to remove form groups', action="store_true")
-    parser.add_argument("--update_group", help='flag to use script to update a group in group file', action="store_true")
+    parser.add_argument("--update_group", help='flag to use script to update a group in group file',
+                        action="store_true")
 
     parser.add_argument("--profile_config", help="flag to use script to create a ssid profile file example\
                         'profilename1=<ssid=candela tech><passwd Openwiff><enc wpa2>',profilename2<ssid=Client_Connectivity>\
                         <passwd=Something><enc=wpa3><eap_method=PEAP><eap_passwd=something>", type=str)
-    parser.add_argument("--delete_profiles", type=str, help="To mention if any profile needs to be deleted, Ex=> --delete_profiles p1,p2,p3", default="")
+    parser.add_argument("--delete_profiles", type=str,
+                        help="To mention if any profile needs to be deleted, Ex=> --delete_profiles p1,p2,p3",
+                        default="")
     parser.add_argument("--create_profile", action="store_true")
     parser.add_argument("--connect_profile", action="store_true")
     parser.add_argument("--create_csv", action="store_true")
     parser.add_argument('--csv_name', type=str, default='', help='')
     parser.add_argument('--help_summary', help='Show summary of what this script does', action='store_true')
-    parser.add_argument('--wait_time', type=int, help='Enter the maximum wait time for configurations to apply', default=60)
+    parser.add_argument('--wait_time', type=int, help='Enter the maximum wait time for configurations to apply',
+                        default=60)
 
     args = parser.parse_args()
 
@@ -1945,12 +1974,12 @@ if __name__ == "__main__":
                 duplicates = {dev: groups for dev, groups in device_tracker.items() if len(groups) > 1}
 
                 if duplicates:
-                    logger.warning("⚠️  Duplicate device(s) found in multiple groups:")
+                    logger.warning("??  Duplicate device(s) found in multiple groups:")
                     for device, groups in duplicates.items():
                         logger.warning(f" - Device '{device}' found in groups: {', '.join(groups)}")
-                    sys.exit("❌ Exiting script due to duplicate group assignments.")
+                    sys.exit("? Exiting script due to duplicate group assignments.")
                 else:
-                    logger.info("✅ All device assignments are unique across groups.")
+                    logger.info("? All device assignments are unique across groups.")
                 obj.update_groups_file(edit_inp, "add", extra_obj=displayed_dataframe)
         else:
             logger.warning(f"'{args.file_name}' The csv file name already exists.")
@@ -1970,10 +1999,10 @@ if __name__ == "__main__":
                     device_tracker[device].append(group_name)
             duplicates = {dev: groups for dev, groups in device_tracker.items() if len(groups) > 1}
             if duplicates:
-                logger.warning("⚠️  Duplicate device(s) found in multiple groups:")
+                logger.warning("??  Duplicate device(s) found in multiple groups:")
                 for device, groups in duplicates.items():
                     logger.warning(f" - Device '{device}' found in groups: {', '.join(groups)}")
-                sys.exit("❌ Exiting script due to duplicate group assignments.")
+                sys.exit("? Exiting script due to duplicate group assignments.")
 
             obj.update_groups_file(edit_inp, "add", extra_obj=displayed_dataframe)
     elif args.remove_group:

@@ -55,6 +55,7 @@ import logging
 import json
 import asyncio
 import sys
+import time
 import traceback
 import textwrap
 from requests.auth import HTTPBasicAuth
@@ -594,26 +595,47 @@ class ZoomAutomation(Realm):
             self.end_time = self.start_time + timedelta(minutes=self.duration)
         return [self.start_time, self.end_time]
 
+    # def check_gen_cx(self):
+    #     try:
+
+    #         for gen_endp in self.generic_endps_profile.created_endp:
+    #             generic_endpoint = self.json_get(f"/generic/{gen_endp}")
+
+    #             if not generic_endpoint or "endpoint" not in generic_endpoint:
+    #                 logger.info(f"Error fetching endpoint data for {gen_endp}")
+    #                 return False
+
+    #             endp_status = generic_endpoint["endpoint"].get("status", "")
+
+    #             if endp_status not in ["Stopped", "WAITING", "NO-CX"]:
+    #                 return False
+
+    #         return True
+    #     except Exception as e:
+    #         logger.error(f"Error in check_gen_cx function {e}", exc_info=True)
+    #         logger.info(f"generic endpoint data {generic_endpoint}")
+
+    
+
     def check_gen_cx(self):
         try:
-
             for gen_endp in self.generic_endps_profile.created_endp:
                 generic_endpoint = self.json_get(f"/generic/{gen_endp}")
 
                 if not generic_endpoint or "endpoint" not in generic_endpoint:
                     logger.info(f"Error fetching endpoint data for {gen_endp}")
-                    return False
+                    continue
 
                 endp_status = generic_endpoint["endpoint"].get("status", "")
 
-                if endp_status not in ["Stopped", "WAITING", "NO-CX"]:
+                if endp_status not in ["Stopped", "WAITING", "NO-CX", "PHANTOM", "FTM_WAIT"]:
                     return False
 
             return True
+
         except Exception as e:
             logger.error(f"Error in check_gen_cx function {e}", exc_info=True)
-            logger.info(f"generic endpoint data {generic_endpoint}")
-
+            return False
     def wait_for_flask(self, url="http://127.0.0.1:5000/get_latest_stats", timeout=10):
         """Wait until the Flask server is up, but exit if it takes longer than `timeout` seconds."""
         start_time = time.time()  # Record the start time
@@ -3857,11 +3879,11 @@ and downstream traffic"""
                 if endp_status == "Stopped":
                     logger.error("Failed to Start the Host Device")
                     self.generic_endps_profile.cleanup()
-                    sys.exit(1)
                 time.sleep(5)
             except Exception as e:
                 logger.error(f"Error while checking login_completed status: {e}")
                 time.sleep(5)
+                break
 
         self.meet_link = f"https://us04web.zoom.us/j/{self.remote_login_url}?pwd={self.remote_login_passwd}"
         print("checking meet link for android devices", self.meet_link)
@@ -3933,9 +3955,14 @@ and downstream traffic"""
 
     def wait_for_test_start(self):
         # Wait for the test to be started
+        check_count = 0
         while not self.test_start:
             logger.info("WAITING FOR THE TEST TO BE STARTED")
             time.sleep(5)
+            check_count += 1
+            if check_count > 36:
+                logger.warning("Waited for 3 minutes but test did not start. Proceeding anyway.")
+                break
         self.test_start = False
 
         self.set_start_time()

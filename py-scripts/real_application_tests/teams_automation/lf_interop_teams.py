@@ -322,7 +322,6 @@ class TeamsAutomation(Realm):
 
         while not self.login_completed:
             try:
-
                 generic_endpoint = self.json_get(
                     f"/generic/{self.generic_endps_profile.created_endp[0]}"
                 )
@@ -335,6 +334,7 @@ class TeamsAutomation(Realm):
             except Exception as e:
                 logging.info(f"Error while checking login_completed status: {e}")
                 time.sleep(5)
+                break
 
     def create_android(
         self,
