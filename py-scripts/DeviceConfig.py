@@ -324,7 +324,7 @@ class ADB_DEVICES(Realm):
 
         # fetching all devices from interop tab
         interop_tab_data = self.json_get(self.adb_url)["devices"]
-        print(f"INTEROP TAB DATA: {interop_tab_data}")
+        # print(f"INTEROP TAB DATA: {interop_tab_data}")
         devices_data = []
         # checking if there is only one device in interop tab. The value would be a dictionary instead of a list
         if (type(interop_tab_data) is dict):
@@ -900,6 +900,7 @@ class LAPTOPS(Realm):
         # resource=503
         url = '/ports/{}/{}/?fields=parent dev,phantom,down,alias'.format(shelf, resource)
         station_response = self.json_get(url)
+        print(f"station_response in get_sta:{station_response}")
         wiphy_non_phantom_found = False
         if ('interfaces' in station_response.keys()):
             stations = station_response['interfaces']
@@ -957,8 +958,10 @@ class DeviceConfig(Realm):
         adb_devices = []
         laptop_devices = []
         if adb:
+            print("getting dev for adb")
             adb_devices = self.adb_obj.get_devices()
         if laptops:
+            print("getting dev for laptops")
             laptop_devices = self.laptop_obj.get_devices()
         self.all_devices = adb_devices + laptop_devices
         return (adb_devices + laptop_devices)
@@ -1221,10 +1224,11 @@ class DeviceConfig(Realm):
         data_object = []
         if data:
             selected_group = {}
-
+            logger.info("selfalldevices : {}".format(self.all_devices))
             for g_name, g_values in self.groups.items():
                 if g_name in data:
                     selected_group[g_name] = g_values
+                    logger.info("selected_group : {}".format(selected_group))
                     for obj in self.all_devices:
                         if obj["type"] == "adb" and obj["serial"] in g_values:
                             temp = obj.copy()
@@ -1722,6 +1726,7 @@ class DeviceConfig(Realm):
 
         pd.DataFrame(data=selected_t_devices).transpose()
         config_dev_list = []
+        print(f"selected_devices in monitor connection:{selected_devices}")
         for dev in selected_devices:
             config_dev_list.append(dev['eid'])
         return config_dev_list

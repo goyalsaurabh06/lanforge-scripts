@@ -229,6 +229,66 @@ class Ping(Realm):
         self.res_ip_dict = {}
         self.cx_dev_map = {}
         self.cx_ip_map = {}
+        self.all_res_to_ip = {}
+        self.get_all_res_ip()
+
+    
+    def get_all_res_ip(self):
+        Devices = RealDevice(manager_ip=self.host, selected_bands=[])
+        all_devices =Devices.get_devices()
+        for device in all_devices:
+            res_key = device.split('.')[0] + '.' + device.split('.')[1]
+            self.all_res_to_ip[res_key] = self.change_port_to_ip(upstream_port=device,skip_info_logs=True)
+    def build_real_device_map(self):
+        response = self.json_get("/resource/all")
+
+        real_device_map = {}
+
+        if not response or "resources" not in response:
+            logging.error("Failed to fetch resource data")
+            return real_device_map
+
+        for resource in response.get("resources", []):
+            res_data = list(resource.values())[0]
+
+            if res_data.get("phantom"):
+                continue
+
+            eid = res_data.get("eid") or res_data.get("eid", "")
+            os_type = res_data.get("device type", "Unknown")
+            real_device_map[eid.strip()] = os_type
+        new_map = {}
+        print("real device map is ",real_device_map)
+        print("all_res_ip is ",self.all_res_to_ip)
+        for res, os in real_device_map.items():
+            new_map[self.all_res_to_ip.get(res, "")] = os
+        print("eids are ",list(new_map.keys()))
+        print("real device map is ",new_map)
+        return new_map
+
+
+    def classify_nmap_devices(self, nmap_ips):
+        real_map = self.build_real_device_map()
+
+        classified = {}
+
+        for ip in nmap_ips:
+            ip = ip.strip()
+
+            if ip in real_map:
+                classified[ip] = {
+                    "type": "Real",
+                    "os": real_map[ip]
+                }
+            else:
+                classified[ip] = {
+                    "type": "IOT",
+                    "os": "IOT"
+                }
+
+        return classified
+
+
     def change_target_to_ip(self):
 
         # checking if target is an IP or a port
@@ -470,7 +530,7 @@ class Ping(Realm):
     def update_ip_lists(self):
         for dev in self.real_sta_list:
             ip = self.change_port_to_ip(upstream_port=dev,skip_info_logs=True)
-            if ip != "":
+            if ip != "" and ip not in self.res_ip_list:
                 self.res_ip_list.append(ip)
                 self.res_ip_dict[ip] = dev
     # Converts an upstream port name to its corresponding IP address if it's not already in IP format.
@@ -630,6 +690,9 @@ class Ping(Realm):
             }
         if self.sta_to_res:
             del test_setup_info["Website / IP"]
+            del test_setup_info["No of Devices"]
+            del test_setup_info["SSID"]
+            del test_setup_info["Security"]
             test_setup_info["Ips"] = self.res_ip_list
         report.test_setup_table(
             test_setup_data=test_setup_info, value='Test Setup Information')
@@ -644,9 +707,9 @@ class Ping(Realm):
         report.build_objective()
 
         # packets sent vs received vs dropped
-        report.set_table_title(
-            'Packets sent vs packets received vs packets dropped')
-        report.build_table_title()
+        # report.set_table_title(
+        #     'Packets sent vs packets received vs packets dropped')
+        # report.build_table_title()
         # graph for the above
         self.packets_sent = []
         self.packets_received = []
@@ -663,11 +726,32 @@ class Ping(Realm):
         self.report_names = []
         self.remarks = []
         self.device_ssid = []
+        self.os_type_list = []
+        self.client_type_list = []
+        self.ip_list = []
+        # ---- Device Counters ----
+        real_count = 0
+        iot_count = 0
+        # gateway_count = 0
+        # upstream_count = 0
+        # ---- OS COUNTS ----
+        android_count = 0
+        windows_count = 0
+        linux_count = 0
+        mac_count = 0
         # packet_count_data = {}
         os_type = []
         for device, device_data in self.result_json.items():
             logging.info('Device data: {} {}'.format(device, device_data))
             if self.sta_to_res:
+                ip = self.cx_ip_map.get(device, "Unknown")
+
+                # ---- Classification with Gateway & Upstream ----
+                if ip == "192.168.1.1":
+                    continue
+
+                elif self.server_ip and ip == self.server_ip:
+                    continue
                 self.packets_sent.append(int(device_data['sent']))
                 self.packets_received.append(int(device_data['recv']))
                 self.packets_dropped.append(int(device_data['dropped']))
@@ -679,11 +763,42 @@ class Ping(Realm):
                 # device_key = device.split('-')[0]
                 print(self.cx_dev_map)
                 print(self.cx_ip_map)
-                if device in self.cx_dev_map and self.cx_dev_map[device] != "":
-                    device_name = "{}/{}".format(self.cx_dev_map[device],self.cx_ip_map[device])
+                
+                if hasattr(self, "classified_map") and ip in self.classified_map:
+                    os_type_val = self.classified_map[ip]["os"]
+                    client_type = self.classified_map[ip]["type"]
+
+                    if client_type == "Real":
+                        real_count += 1
+
+                        # ---- OS COUNTING ----
+                        if "android" in os_type_val.lower():
+                            android_count += 1
+                        elif "windows" in os_type_val.lower():
+                            windows_count += 1
+                        elif "linux" in os_type_val.lower():
+                            linux_count += 1
+                        elif "mac" in os_type_val.lower():
+                            mac_count += 1
+
+                    else:
+                        iot_count += 1
+
                 else:
-                    device_name = self.cx_ip_map[device]
-                self.device_names.append(device_name)      # endpoint key only
+                    client_type = "IOT"
+                    os_type_val = "IOT"
+                    iot_count += 1
+
+                self.os_type_list.append(os_type_val)
+                self.client_type_list.append(client_type)
+                self.ip_list.append(ip)
+
+                if device in self.cx_dev_map and self.cx_dev_map[device] != "":
+                    device_name = "{}/{}".format(self.cx_dev_map[device], ip)
+                else:
+                    device_name = ip
+
+                self.device_names.append(device_name)
                 self.report_names.append(device_name)
             else:
                 os_type.append(device_data['os'])
@@ -721,6 +836,36 @@ class Ping(Realm):
             #     'Packets Received': device_data['recv'],
             #     'Packets Loss': device_data['dropped'],
             # }
+        # ---- Device Summary Table ----
+        if self.sta_to_res:
+            summary2_data = {
+                "Total Devices" : real_count + iot_count,
+                "Android Devices": android_count,
+                "Windows Devices": windows_count,
+                "Linux Devices": linux_count,
+                "Mac Devices": mac_count,
+                "IOT Devices": iot_count
+            }
+            report.set_table_title("Device Summary")
+            report.build_table_title()
+
+            df_summary = pd.DataFrame(list(summary2_data.items()), columns=["Metric", "Count"])
+            report.set_table_dataframe(df_summary)
+            report.build_table()
+        # Guard: if no devices recorded results, skip graph generation entirely.
+        # Passing empty lists to matplotlib's barh causes:
+        #   AttributeError: 'NoneType' object has no attribute 'copy'
+        if not self.device_names:
+            logging.warning(
+                "generate_report: No device results to plot. "
+                "Skipping graph and table generation."
+            )
+            report.build_custom()
+            report.build_footer()
+            report.write_html()
+            report.write_pdf()
+            return report_path
+
         x_fig_size = 15
         y_fig_size = len(self.device_names) * .5 + 4
         graph = lf_bar_graph_horizontal(_data_set=[self.packets_dropped, self.packets_received, self.packets_sent],
@@ -783,17 +928,22 @@ class Ping(Realm):
                     if dataframe:
                         report.set_obj_html("", "Group: {}".format(key))
                         report.build_objective()
+
                         dataframe1 = pd.DataFrame(dataframe)
                         report.set_table_dataframe(dataframe1)
                         report.build_table()
 
             else:
+                report.set_table_title("Packets sent vs packets received vs packets dropped'")
+                report.build_table_title()
                 if self.sta_to_res:
                     dataframe1 = pd.DataFrame({
-                        'Endpoint': self.device_names,
-                        'Packets Sent': self.packets_sent,
-                        'Packets Received': self.packets_received,
-                        'Packets Loss': self.packets_dropped,
+                        "Client Type": self.client_type_list,
+                        "OS Type": self.os_type_list,
+                        "IP Address": self.ip_list,
+                        "Packets Sent": self.packets_sent,
+                        "Packets Received": self.packets_received,
+                        "Packets Loss": self.packets_dropped,
                     })
                 else:
                     dataframe1 = pd.DataFrame({
@@ -828,46 +978,50 @@ class Ping(Realm):
             })
             report.set_table_dataframe(dataframe1)
             report.build_table()
+        if not self.sta_to_res:
+            # packets latency graph
+            report.set_table_title('Ping Latency Graph')
+            report.build_table_title()
 
-        # packets latency graph
-        report.set_table_title('Ping Latency Graph')
+            graph = lf_bar_graph_horizontal(_data_set=[self.device_min, self.device_avg, self.device_max],
+                                            _xaxis_name='Time (ms)',
+                                            _yaxis_name='Wireless Clients',
+                                            _label=[
+                                                'Min Latency (ms)', 'Average Latency (ms)', 'Max Latency (ms)'],
+                                            _graph_image_name='Ping Latency per client',
+                                            _yaxis_label=self.report_names,
+                                            _yaxis_categories=self.report_names,
+                                            _yaxis_step=1,
+                                            _yticks_font=8,
+                                            _graph_title='Ping Latency per client',
+                                            _title_size=16,
+                                            _color=['lightgrey',
+                                                    'orange', 'steelblue'],
+                                            _color_edge='black',
+                                            _bar_height=0.15,
+                                            _figsize=(x_fig_size, y_fig_size),
+                                            _legend_loc="best",
+                                            _legend_box=(1.0, 1.0),
+                                            _dpi=96,
+                                            _show_bar_value=False,
+                                            _enable_csv=True,
+                                            _color_name=['lightgrey', 'orange', 'steelblue'])
+
+            graph_png = graph.build_bar_graph_horizontal()
+            logging.info('graph name {}'.format(graph_png))
+            report.set_graph_image(graph_png)
+            # need to move the graph image to the results directory
+            report.move_graph_image()
+            report.set_csv_filename(graph_png)
+            report.move_csv_file()
+            report.build_graph()
+        report.set_table_title("Ping Latency per Client")
         report.build_table_title()
-
-        graph = lf_bar_graph_horizontal(_data_set=[self.device_min, self.device_avg, self.device_max],
-                                        _xaxis_name='Time (ms)',
-                                        _yaxis_name='Wireless Clients',
-                                        _label=[
-                                            'Min Latency (ms)', 'Average Latency (ms)', 'Max Latency (ms)'],
-                                        _graph_image_name='Ping Latency per client',
-                                        _yaxis_label=self.report_names,
-                                        _yaxis_categories=self.report_names,
-                                        _yaxis_step=1,
-                                        _yticks_font=8,
-                                        _graph_title='Ping Latency per client',
-                                        _title_size=16,
-                                        _color=['lightgrey',
-                                                'orange', 'steelblue'],
-                                        _color_edge='black',
-                                        _bar_height=0.15,
-                                        _figsize=(x_fig_size, y_fig_size),
-                                        _legend_loc="best",
-                                        _legend_box=(1.0, 1.0),
-                                        _dpi=96,
-                                        _show_bar_value=False,
-                                        _enable_csv=True,
-                                        _color_name=['lightgrey', 'orange', 'steelblue'])
-
-        graph_png = graph.build_bar_graph_horizontal()
-        logging.info('graph name {}'.format(graph_png))
-        report.set_graph_image(graph_png)
-        # need to move the graph image to the results directory
-        report.move_graph_image()
-        report.set_csv_filename(graph_png)
-        report.move_csv_file()
-        report.build_graph()
         if self.sta_to_res:
-             dataframe2 = pd.DataFrame({
-            'Endpoint': self.device_names,
+            dataframe2 = pd.DataFrame({
+            "Client Type": self.client_type_list,
+            "OS Type": self.os_type_list,
+            "IP Address": self.ip_list,
             'Min Latency (ms)': self.device_min,
             'Average Latency (ms)': self.device_avg,
             'Max Latency (ms)': self.device_max
@@ -907,8 +1061,8 @@ class Ping(Realm):
     def generate_dataframe(self, groupdevlist: List[str], device_names: List[str], device_mac: List[str], device_channels: List[str], device_ssid: List[str], device_modes: List[str],
                            packets_sent: List[int], packets_received: List[int], packets_dropped: List[int], percent_pac_loss: List[float], test_input_list: List[str],
                            pass_fail_list: List[str]) -> Optional[pd.DataFrame]:
-        """
-        Creates a separate DataFrame for each group of devices.
+        
+        """ Creates a separate DataFrame for each group of devices.
 
         Returns:
             DataFrame: A DataFrame for each device group.
@@ -1683,8 +1837,13 @@ effectively over the network and pinpoint potential issues affecting connectivit
 
     logging.info(ping.result_json)
     # exit(0)
-    # station post cleanup
+    # station post 
+    if ping.sta_to_res:
+        ping.classified_map = ping.classify_nmap_devices(ping.res_ip_list)
+    else:
+        ping.classified_map = {}
     ping.cleanup()
+    
     # if args.sta_to_res:
     #     ping.generate_generic_report()
     if args.local_lf_report_dir == "":

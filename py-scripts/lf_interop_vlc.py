@@ -186,54 +186,70 @@ class VLCStream(Realm):
         def is_android(device_id):
             return self.devices_data[device_id]['device type'].lower() == "android"
 
-        while True:
-            if self.host_res:
-                for dev_id in device_ids:
-                    if dev_id.startswith(self.host_res + '.'):
-                        if is_android(dev_id):
-                            print("Android device cannot be selected as HOST.")
-                            self.host_res = None
-                            break
+        def is_laptop(device_id):
+            """Return True for Linux/Windows/Mac devices (non-Android)."""
+            return not is_android(device_id)
+
+        # ---------------------------------------------------------------
+        # HOST SELECTION — no interactive prompts; always picks a laptop.
+        # Priority:
+        #   1. Use configured host_res if that device is in the configured
+        #      list and is NOT Android.
+        #   2. Fall back automatically to the first non-Android (laptop)
+        #      device from the configured list.
+        #   3. If no laptops exist at all, exit with a clear error.
+        # ---------------------------------------------------------------
+        if self.host_res:
+            # Try to find the configured host_res in the configured device list
+            for dev_id in device_ids:
+                if dev_id.startswith(self.host_res + '.') or dev_id == self.host_res:
+                    if is_android(dev_id):
+                        print(f"[VLC] Configured host_res '{self.host_res}' is an Android device — "
+                              "Android cannot be host. Will auto-select a laptop instead.")
+                        self.host_res = None
+                    else:
                         host_id = dev_id
                         self.host_res = host_id
-                        break
-
-            elif self.video_name:
-                # Default host is first NON-Android device
-                non_android_hosts = [d for d in device_ids if not is_android(d)]
-
-                if not non_android_hosts:
-                    print("No valid non-Android devices available to act as host.")
-                    sys.exit(1)
-
-                host_id = non_android_hosts[0]
-                self.host_res = host_id
-                print(f"Using first non-Android device as host: {host_id}")
-
+                        print(f"[VLC] Using configured host_res device as host: {host_id}")
+                    break
             else:
-                print("No host specified and no video stream — all devices are clients")
-                break
+                # host_res was set but no matching device found in the configured list
+                print(f"[VLC] Configured host_res '{self.host_res}' is NOT in the configured device list. "
+                      "Will auto-select a laptop from the configured list instead.")
+                self.host_res = None
 
-            if host_id:
-                break
+        if host_id is None:
+            # Auto-select: first non-Android (laptop) device from the configured list
+            laptop_candidates = [d for d in device_ids if is_laptop(d)]
+            if not laptop_candidates:
+                print("[VLC] No non-Android (laptop) device found in the configured list. "
+                      "Cannot proceed without a host. Exiting.")
+                sys.exit(1)
+            host_id = laptop_candidates[0]
+            self.host_res = host_id
+            print(f"[VLC] Auto-selected laptop as host: {host_id} "
+                  f"({self.devices_data[host_id]['device type']})")
 
-            # Prompt reselection
-            print("\nAvailable NON-Android devices:")
-            for idx, dev_id in enumerate(device_ids):
-                if not is_android(dev_id):
-                    info = self.devices_data[dev_id]
-                    print(f"{idx}: {dev_id} ({info['device type']})")
+        # ---------------------------------------------------------------
+        # Auto-set video_name path based on the selected host's OS so the
+        # correct path is used regardless of what was configured.
+        # ---------------------------------------------------------------
+        host_os = self.devices_data[host_id]['device type'].lower()
+        if "windows" in host_os:
+            auto_video_name = r"C:\Program Files (x86)\LANforge-Server\testvideo.mp4"
+        else:
+            # Linux/Interop, Mac OS, or anything else → Linux path
+            auto_video_name = "/home/lanforge/testvideo.mp4"
 
-            try:
-                idx = int(input("Select a NON-Android device index to use as host: "))
-                candidate = device_ids[idx]
-                if is_android(candidate):
-                    print("Android device cannot be host. Try again.")
-                else:
-                    host_id = candidate
-                    self.host_res = host_id
-            except Exception:
-                print("Invalid selection. Try again.")
+        if not self.video_name:
+            self.video_name = auto_video_name
+            print(f"[VLC] video_name not set; using OS-appropriate default: {self.video_name}")
+        else:
+            # Override with OS-correct path regardless of what was configured,
+            # because the configured path might not match the actual host OS.
+            self.video_name = auto_video_name
+            print(f"[VLC] video_name overridden to OS-appropriate path for host "
+                  f"({self.devices_data[host_id]['device type']}): {self.video_name}")
 
 
         # Step 5: Assign vlc streaming command by OS
@@ -393,6 +409,7 @@ class VLCStream(Realm):
 
 
     def create(self):
+        print("devices data", self.devices_data)
         device_types = [device['device type'] for device in self.devices_data.values()]
         print(device_types)
         self.generic_endps_profile.name_prefix = "vlc"
