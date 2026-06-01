@@ -1779,21 +1779,35 @@ class Ping(Realm):
         Waits up to 60 seconds for each set of images to be generated.
         """
         if self.do_webUI and self.get_live_view:
-            test_name = os.path.basename(self.ui_report_dir)
+            # Strip any trailing slash so os.path.basename always returns the directory name,
+            # not an empty string (which happens when the path ends with '/').
+            report_dir = self.ui_report_dir.rstrip('/')
+            test_name = os.path.basename(report_dir)
+            live_view_dir = os.path.join(report_dir, "live_view_images")
 
             for floor in range(int(self.floors)):
+
                 # Construct expected image paths
-                packet_sent_image = os.path.join(self.ui_report_dir, "live_view_images", f"{test_name}_ping_packet_sent_{floor + 1}.png")
-                packet_recv_image = os.path.join(self.ui_report_dir, "live_view_images", f"{test_name}_ping_packet_recv_{floor + 1}.png")
-                packet_loss_image = os.path.join(self.ui_report_dir, "live_view_images", f"{test_name}_ping_packet_loss_{floor + 1}.png")
+                packet_sent_image = os.path.join(live_view_dir, f"{test_name}_ping_packet_sent_{floor + 1}.png")
+                packet_recv_image = os.path.join(live_view_dir, f"{test_name}_ping_packet_recv_{floor + 1}.png")
+                packet_loss_image = os.path.join(live_view_dir, f"{test_name}_ping_packet_loss_{floor + 1}.png")
+
+                logging.info(f"[add_ping_packet_images] floor {floor + 1}: looking for:")
+                logging.info(f"  sent : {packet_sent_image}")
+                logging.info(f"  recv : {packet_recv_image}")
+                logging.info(f"  loss : {packet_loss_image}")
 
                 # Wait for all required images to be generated (up to timeout)
-                timeout = 60  # seconds
+                timeout = 180  # seconds
                 start_time = time.time()
 
                 while not (os.path.exists(packet_sent_image) and os.path.exists(packet_recv_image) and os.path.exists(packet_loss_image)):
                     if time.time() - start_time > timeout:
-                        print(f"Timeout: Heatmap images for floor {floor + 1} not found within {timeout} seconds.")
+                        logging.warning(f"Timeout: Heatmap images for floor {floor + 1} not found within {timeout} seconds.")
+
+                        # List what IS in live_view_images to help diagnose filename mismatches
+                        if os.path.isdir(live_view_dir):
+                            logging.warning(f"  files in {live_view_dir}: {os.listdir(live_view_dir)}")
                         break
                     time.sleep(1)
 
@@ -2245,7 +2259,8 @@ class Ping(Realm):
             self.robot.nav_data_path = nav_data
             self.robot.runtime_dir = self.ui_report_dir
             self.robot.ip = self.host
-            self.robot.testname = self.ui_report_dir.split("/")[-1]
+            # Use rstrip('/') so a trailing slash on ui_report_dir never produces an empty testname
+            self.robot.testname = self.ui_report_dir.rstrip('/').split("/")[-1]
 
         initial_duration = self.pingduration
         stop_test = False
@@ -2368,7 +2383,10 @@ class Ping(Realm):
 
             if self.do_webUI:
                 self.copy_reports_to_home_dir()
-                self.set_webUI_stop()
+
+        if self.do_webUI:
+            self.set_webUI_stop()
+
         # Generate the final report
         if self.local_lf_report_dir == "":
             if self.group_name:
@@ -2380,6 +2398,9 @@ class Ping(Realm):
                 self.generate_report_robo(config_devices=config_devices, group_device_map=group_device_map, report_path=self.local_lf_report_dir)
             else:
                 self.generate_report_robo(report_path=self.local_lf_report_dir)
+
+        if self.do_webUI:
+            self.copy_reports_to_home_dir()
 
     def track_resultjson(self):
         """
