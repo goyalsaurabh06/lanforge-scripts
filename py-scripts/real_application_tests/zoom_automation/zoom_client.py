@@ -135,8 +135,8 @@ class ZoomClient:
             # stats = self.collecting_stats()
             self.send_stats_to_api(self.audio_stats, self.video_stats)
             time.sleep(1)
-        print("test has been completed")
         self.stop_zoom()
+        print("test has been completed")
 
     def stop_zoom(self):
         self.wait.until(
