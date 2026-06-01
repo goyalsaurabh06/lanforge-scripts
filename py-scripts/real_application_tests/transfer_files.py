@@ -31,6 +31,7 @@ class TransferFiles:
             # Set remote directory based on OS type
             if os_type.lower() == 'windows':
                 remote_dir = r'C:\\Program Files (x86)\\LANforge-Server'
+                path_sep = '\\'
                 files_to_transfer = ['./zoom_automation/zoom_client.py',
                                      './zoom_automation/zoom_host.py',
                                      './install_dependencies.py',
@@ -38,9 +39,12 @@ class TransferFiles:
                                      './real_browser/real_browser.bat',
                                      './youtube/youtube_stream.bat',
                                      './youtube/youtube.py',
-                                     './speed_test/ookla.py']
+                                     './speed_test/ookla.py',
+                                     './teams_automation/teams_client.py',
+                                     './teams_automation/teams_host.py',]
             elif os_type.lower() == 'linux':
                 remote_dir = '/home/lanforge'
+                path_sep = '/'
                 files_to_transfer = ['./zoom_automation/zoom_client.py',
                                      './zoom_automation/zoom_host.py',
                                      './zoom_automation/ctzoom.bash',
@@ -49,9 +53,13 @@ class TransferFiles:
                                      './youtube/youtube.py',
                                      './real_browser/real_browser.py',
                                      './real_browser/ctrb.bash',
-                                     './speed_test/ookla.py']
+                                     './speed_test/ookla.py',
+                                     './teams_automation/teams_client.py',
+                                     './teams_automation/teams_host.py',
+                                     './teams_automation/ctteams.bash']
             elif os_type.lower() == 'mac':
                 remote_dir = '/Users/lanforge'
+                path_sep = '/'
                 files_to_transfer = ['./zoom_automation/zoom_client.py',
                                      './zoom_automation/zoom_host.py',
                                      './zoom_automation/ctzoom.bash',
@@ -60,7 +68,10 @@ class TransferFiles:
                                      './youtube/youtube.py',
                                      './real_browser/real_browser.py',
                                      './real_browser/ctrb.bash',
-                                     './speed_test/ookla.py']
+                                     './speed_test/ookla.py',
+                                     './teams_automation/teams_client.py',
+                                     './teams_automation/teams_host.py',
+                                     './teams_automation/ctteams.bash']
             else:
                 error_msg = f"Unsupported OS type: {os_type}"
                 logging.error(error_msg)
@@ -73,19 +84,25 @@ class TransferFiles:
             # Transfer the relevant files
             for file in files_to_transfer:
                 local_path = os.path.join(os.path.dirname(__file__), file)
-                remote_path = os.path.join(remote_dir, os.path.basename(file))
+                remote_path = remote_dir + path_sep + os.path.basename(file)
                 logging.info(f"Transferring {local_path} to {remote_path}")
 
                 # Transfer the file via SFTP
                 try:
                     sftp.put(local_path, remote_path)
                     logging.info(f"  - Successfully transferred '{file}' to {ip_address}:{remote_path}")
+                except (paramiko.SSHException, EOFError, OSError) as ssh_err:
+                    # SSH session issue — no point trying remaining files
+                    error_msg = f"SSH error transferring {file} to {ip_address}: {ssh_err}"
+                    logging.error(error_msg)
+                    self.failed_hosts[ip_address]["file_errors"].append((file, str(ssh_err)))
+                    break
                 except Exception as file_transfer_error:
+                    # File-specific error — try remaining files
                     error_msg = f"Failed to transfer {file} to {ip_address}: {file_transfer_error}"
                     logging.error(error_msg)
-                    # Store the failed file details
                     self.failed_hosts[ip_address]["file_errors"].append((file, str(file_transfer_error)))
-                    break
+                    continue
             # Host is successful only if BOTH conditions are clean:
             if (
                 self.failed_hosts[ip_address]["host_error"] is None
@@ -100,22 +117,28 @@ class TransferFiles:
             self.failed_hosts[ip_address]["host_error"] = error_msg
 
         finally:
-            if client:
-                client.close()
             if sftp:
                 sftp.close()
+            if client:
+                client.close()
 
     def read_data_from_csv(self, csv_file):
-        with open(csv_file, mode='r') as file:
-            csv_reader = csv.DictReader(file)
-            for row in csv_reader:
-                ip_address = row['ip_address'].strip()
-                username = row['username'].strip()
-                password = row['password'].strip()
-                os_type = row['os_type'].strip()
-                device_status = int(row['device_status'])
-
-                self.ssh_and_transfer_files(ip_address, username, password, os_type, device_status)
+        try:
+            with open(csv_file, mode='r') as file:
+                csv_reader = csv.DictReader(file)
+                for row in csv_reader:
+                    try:
+                        ip_address = row['ip_address'].strip()
+                        username = row['username'].strip()
+                        password = row['password'].strip()
+                        os_type = row['os_type'].strip()
+                        device_status = int(row['device_status'])
+                    except (KeyError, ValueError) as e:
+                        logging.error(f"Skipping invalid row in CSV: {row} — {e}")
+                        continue
+                    self.ssh_and_transfer_files(ip_address, username, password, os_type, device_status)
+        except FileNotFoundError:
+            logging.error(f"CSV file not found: {csv_file}")
 
     def print_transfer_results(self):
         print("\n===================== 📦 TRANSFER SUMMARY =====================\n")
