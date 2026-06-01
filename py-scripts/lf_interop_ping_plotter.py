@@ -82,6 +82,16 @@
     python3 lf_interop_ping_plotter.py --mgr 192.168.207.78 --real --target 8.8.8.8 --ping_interval 1 --ping_duration 1m --use_default_config
     --robot_ip 192.168.204.76 --coordinate 3,4 --do_bandsteering --total_cycles 3 --bssids 94:A6:7E:74:26:33,94:A6:7E:74:26:22
 
+    EXAMPLE-17:
+    Command Line Interface to run ping plotter test for both real and virtual(Existing Stations)
+    python3 lf_interop_ping_plotter.py --mgr 192.168.207.78 --target www.google.com --clients_type both --ping_interval 5 --ping_duration 60s
+    --server_ip 192.168.204.60 --use_existing_sta_list --existing_sta_list 1.1.sta1000,1.1.sta1001,1.1.sta1002,1.1.sta1003 --use_default_config
+
+    Example-18:
+    Command Line Interface to run ping plotter test for both real and virtual clients
+    python3 lf_interop_ping_plotter.py --mgr 192.168.207.78  --target 142.250.76.206  --radio 1.1.wiphy0  --num_sta 3 --ping_interval 5 --ping_duration 1m --debug
+    --ssid NETGEAR_2G_Open --passwd NA --security open --expected_passfail_value 5 --clients_type both --server_ip 192.168.204.60 --use_default_config
+
 
     SCRIPT_CLASSIFICATION : Test
 
@@ -176,7 +186,11 @@ class Ping(Realm):
                  wait_time=60,
                  floors=None,
                  get_live_view=None, robo_ip=None, angle_list=None, coordinate_list=None, rotation_enabled=None, local_lf_report_dir=None, do_bandsteering=False, total_cycles=1, bssids=None,
-                 duration_to_skip=None):
+                 duration_to_skip=None,
+                 configure=False,
+                 clients_type="",
+                 use_existing_sta_list=False,
+                 existing_sta_list=""):
         super().__init__(lfclient_host=host,
                          lfclient_port=port)
         self.host = host
@@ -223,6 +237,21 @@ class Ping(Realm):
         self.wait_time = wait_time
         self.floors = floors
         self.get_live_view = get_live_view
+        self.last_written_seq = {}
+
+        self.configure = configure
+
+        if clients_type == "both" or (real and virtual):
+            self.real = True
+            self.virtual = True
+        elif clients_type == "virtual" or virtual:
+            self.virtual = True
+            self.real = False
+        elif clients_type == "real" or real:
+            self.real = True
+            self.virtual = False
+        else:
+            self.real = True
 
         # variables related to robot
         self.coordinate_list = coordinate_list if coordinate_list is not None else []
@@ -245,6 +274,83 @@ class Ping(Realm):
         self.do_bandsteering = do_bandsteering
         self.total_cycles = total_cycles
         self.bssids = bssids if bssids else []
+
+        # Exisiting stations validation
+        self.sta_list = []
+        self.use_existing_sta_list = use_existing_sta_list
+        self.existing_sta_list = existing_sta_list
+
+    def generate_real_time_csv(self):
+        """To generate real-time csvs for devices under test"""
+        csv_dir = "csv_reports"
+
+        os.makedirs(csv_dir, exist_ok=True)
+        interval = timedelta(seconds=int(self.interval))
+        for device_name, device_data in self.result_json.items():
+            # Skip the 'status' metadata key injected by store_csv (value is a string, not a device dict)
+            if not isinstance(device_data, dict):
+                continue
+            if device_data['os'] == "Virtual":
+                csv_file = os.path.join(csv_dir, f"sta_{device_name.replace('.', '_')}.csv")
+            else:
+                csv_file = os.path.join(csv_dir, f"device_{device_name.replace('.', '_')}.csv")
+
+            file_exists = os.path.exists(csv_file)
+            with open(csv_file, 'a', newline='') as file:
+                writer = csv.writer(file)
+
+                if not file_exists or os.path.getsize(csv_file) == 0:
+                    writer.writerow(['Time', 'RTT (ms)', 'Sent', 'Received', 'Dropped', 'Status', 'Rssi', 'Channel', 'Mode', 'Ssid', 'Bssid', 'Mac'])
+                if not device_data['rtts']:
+                    seq = int(len(device_data['ping_stats']['sent']) / int(self.interval))
+                    timestamp = 0
+                    if seq == 0:
+                        timestamp = self.start_time.strftime("%d/%m/%Y %H:%M:%S")
+                    elif device_data['os'] == "Windows" and device_data['last_result'] != "":
+                        timestamp = (
+                            (seq - 1) * timedelta(seconds=1) + self.start_time
+                        ).strftime("%d/%m/%Y %H:%M:%S")
+                    else:
+                        timestamp = (
+                            (seq - 1) * interval + self.start_time
+                        ).strftime("%d/%m/%Y %H:%M:%S")
+                    try:
+                        if "dBm" in device_data['rssi']:
+                            device_data['rssi'] = device_data['rssi'].split(" ")[0]
+                    except Exception:
+                        device_data['rssi'] = "NA"
+
+                    if (seq == 0 and self.last_written_seq == {}) or seq > self.last_written_seq.get(device_name, 0):
+                        writer.writerow([timestamp, 0, device_data['sent'], device_data['recv'], device_data['dropped'], 'Running', device_data['rssi'],
+                                        device_data['channel'], device_data['mode'], device_data['ssid'], device_data['bssid'], device_data['mac']])
+                        self.last_written_seq[device_name] = seq
+                    continue
+
+                sorted_seqs = sorted(device_data['rtts'].keys(), key=int)
+                last_written_seq = self.last_written_seq.get(device_name, 0)
+
+                for seq in sorted_seqs:
+                    seq = int(seq)
+                    if seq <= last_written_seq:
+                        continue
+                    rtt = device_data['rtts'][seq]
+
+                    timestamp = 0
+                    if device_data['os'] == "Windows":
+                        timestamp = (
+                            (seq - 1) * timedelta(seconds=1) + self.start_time
+                        ).strftime("%d/%m/%Y %H:%M:%S")
+                    else:
+                        timestamp = (
+                            (seq - 1) * interval + self.start_time
+                        ).strftime("%d/%m/%Y %H:%M:%S")
+
+                    # if device_data['os'] == "Windows" and rtt != 0.11:
+                    if "dBm" in device_data['rssi']:
+                        device_data['rssi'] = device_data['rssi'].split(" ")[0]
+                    writer.writerow([timestamp, rtt, device_data['sent'], device_data['recv'], device_data['dropped'], 'Running', device_data['rssi'],
+                                    device_data['channel'], device_data['mode'], device_data['ssid'], device_data['bssid'], device_data['mac']])
+                    self.last_written_seq[device_name] = seq
 
     def change_target_to_ip(self):
 
@@ -308,7 +414,7 @@ class Ping(Realm):
 
     def cleanup(self):
 
-        if self.enable_virtual:
+        if self.virtual:
             # removing virtual stations if existing
             for station in self.sta_list:
                 logging.info('Removing the station {} if exists'.format(station))
@@ -316,14 +422,15 @@ class Ping(Realm):
                     'CX_generic-{}'.format(station.split('.')[2]))
                 self.generic_endps_profile.created_endp.append(
                     'generic-{}'.format(station.split('.')[2]))
-                self.rm_port(station, check_exists=True)
+                if not self.use_existing_sta_list:
+                    self.rm_port(station, check_exists=True)
+            if not self.use_existing_sta_list:
+                if not LFUtils.wait_until_ports_disappear(base_url=self.host, port_list=self.sta_list, debug=self.debug):
+                    logging.info('All stations are not removed or a timeout occured.')
+                    logging.error('Aborting the test.')
+                    exit(0)
 
-            if not LFUtils.wait_until_ports_disappear(base_url=self.host, port_list=self.sta_list, debug=self.debug):
-                logging.info('All stations are not removed or a timeout occured.')
-                logging.error('Aborting the test.')
-                exit(0)
-
-        if self.enable_real:
+        if self.real:
             # removing generic endpoints for real devices if existing
             for station in self.real_sta_list:
                 self.generic_endps_profile.created_cx.append(
@@ -411,14 +518,14 @@ class Ping(Realm):
         # in order to create generic endpoints for just the virtual stations
         virtual_stations = list(set(self.sta_list).difference(set(self.real_sta_list)))
 
-        if self.enable_virtual:
+        if self.virtual:
             if self.generic_endps_profile.create(ports=virtual_stations, sleep_time=.5):
                 logging.info('Virtual client generic endpoint creation completed.')
             else:
                 logging.error('Virtual client generic endpoint creation failed.')
                 exit(0)
 
-        if self.enable_real:
+        if self.real:
             real_sta_os_types = [self.real_sta_data_dict[real_sta_name]['ostype'] for real_sta_name in self.real_sta_data_dict]
 
             if self.generic_endps_profile.create(ports=self.real_sta_list, sleep_time=.5, real_client_os_types=real_sta_os_types):
@@ -901,11 +1008,20 @@ class Ping(Realm):
         self.devices_with_errors = []
         self.report_names = []
         self.remarks = []
+        self.types = []
+        self.rssi = []
+        os_type = []
         # packet_count_data = {}
         if self.do_webUI and 'status' in self.result_json.keys():
             del self.result_json['status']
 
         for device, device_data in self.result_json.items():
+            if device_data['os'] == "Virtual":
+                self.types.append("Virtual")
+            else:
+                self.types.append("Real")
+            os_type.append(device_data['os'])
+            self.rssi.append(device_data.get('rssi', 'NA'))
             self.packets_sent.append(int(device_data['ping_stats']['sent'][-1]))
             self.packets_received.append(int(device_data['ping_stats']['received'][-1]))
             self.packets_dropped.append(int(device_data['ping_stats']['dropped'][-1]))
@@ -1000,14 +1116,41 @@ class Ping(Realm):
                 else:
                     logging.warning('Malformed response for hw version query on resource manager.')
         # Test setup information table for devices in device list
+        test_setup_info = {}
         if config_devices == '':
-            test_setup_info = {
-                'SSID': [self.ssid if self.ssid else 'TEST CONFIGURED'][0],
-                'Security': [self.security if self.ssid else 'TEST CONFIGURED'][0],
-                'Website / IP': self.target,
-                'No of Devices': '{} (V:{}, A:{}, W:{}, L:{}, M:{})'.format(len(self.sta_list), len(self.sta_list) - len(self.real_sta_list), self.android, self.windows, self.linux, self.mac),
-                'Duration': self.duration
-            }
+            if self.real and self.virtual:
+                test_setup_info = {
+                    'Real Clients SSID': [self.ssid if self.configure else 'TEST CONFIGURED'][0],
+                    'Virtual Clients SSID': [self.ssid if self.ssid else 'TEST CONFIGURED'][0],
+                    'Real Clients Security': [self.security if self.ssid and self.configure else 'TEST CONFIGURED'][0],
+                    'Virtual Clients Security': [self.security if self.ssid else 'TEST CONFIGURED'][0],
+                    'Website / IP': self.target,
+                    'No of Devices': 'Total - {} (Virtual:{}, Android:{}, Windows:{}, Linux:{}, Mac:{})'.format(len(self.sta_list), len(self.sta_list) - len(self.real_sta_list),
+                                                                                                                self.android, self.windows, self.linux, self.mac),
+                    'Real Clients': ', '.join(self.real_sta_list),
+                    'Virtual Clients': ', '.join(list(set(self.sta_list).difference(set(self.real_sta_list)))),
+                    'Duration': self.duration
+                }
+            elif self.real:
+                test_setup_info = {
+                    'SSID': [self.ssid if self.configure else 'TEST CONFIGURED'][0],
+                    'Security': [self.security if self.ssid and self.configure else 'TEST CONFIGURED'][0],
+                    'Website / IP': self.target,
+                    'No of Devices': 'Total - {} (Virtual:{}, Android:{}, Windows:{}, Linux:{}, Mac:{})'.format(len(self.sta_list), len(self.sta_list) - len(self.real_sta_list),
+                                                                                                                self.android, self.windows, self.linux, self.mac),
+                    'Real Clients': ', '.join(self.real_sta_list),
+                    'Duration': self.duration
+                }
+            else:
+                test_setup_info = {
+                    'SSID': [self.ssid if self.ssid else 'TEST CONFIGURED'][0],
+                    'Security': [self.security if self.ssid else 'TEST CONFIGURED'][0],
+                    'Website / IP': self.target,
+                    'No of Devices': 'Total - {} (Virtual:{}, Android:{}, Windows:{}, Linux:{}, Mac:{})'.format(len(self.sta_list), len(self.sta_list) - len(self.real_sta_list),
+                                                                                                                self.android, self.windows, self.linux, self.mac),
+                    'Virtual Clients': ', '.join(list(set(self.sta_list).difference(set(self.real_sta_list)))),
+                    'Duration': self.duration
+                }
             # if bandsteering is enabled
             if self.do_bandsteering:
                 del test_setup_info["Duration"]
@@ -1019,12 +1162,26 @@ class Ping(Realm):
             group_names = ', '.join(config_devices.keys())
             profile_names = ', '.join(config_devices.values())
             configmap = "Groups:" + group_names + " -> Profiles:" + profile_names
-            test_setup_info = {
-                'Configuration': configmap,
-                'Website / IP': self.target,
-                'No of Devices': '{} (V:{}, A:{}, W:{}, L:{}, M:{})'.format(len(self.sta_list), len(self.sta_list) - len(self.real_sta_list), self.android, self.windows, self.linux, self.mac),
-                'Duration': self.duration
-            }
+
+            if self.real and self.virtual:
+                test_setup_info = {
+                    'Configuration': configmap,
+                    'Website / IP': self.target,
+                    'No of Devices': 'Total - {} (Virtual:{}, Android:{}, Windows:{}, Linux:{}, Mac:{})'.format(len(self.sta_list), len(self.sta_list) - len(self.real_sta_list),
+                                                                                                                self.android, self.windows, self.linux, self.mac),
+                    'Real Clients': ', '.join(self.real_sta_list),
+                    'Virtual Clients': ', '.join(list(set(self.sta_list).difference(set(self.real_sta_list)))),
+                    'Duration': self.duration
+                }
+            else:
+                test_setup_info = {
+                    'Configuration': configmap,
+                    'Website / IP': self.target,
+                    'No of Devices': 'Total - {} (Virtual:{}, Android:{}, Windows:{}, Linux:{}, Mac:{})'.format(len(self.sta_list), len(self.sta_list) - len(self.real_sta_list),
+                                                                                                                self.android, self.windows, self.linux, self.mac),
+                    'Real Clients': ', '.join(self.real_sta_list),
+                    'Duration': self.duration
+                }
         report.test_setup_table(
             test_setup_data=test_setup_info, value='Test Setup Information')
 
@@ -1059,10 +1216,116 @@ class Ping(Realm):
             'Individual client table report:'
         )
         report.build_table_title()
-        if self.real:
-            # Calculating the pass/fail criteria when either expected_passfail_val or csv_name is provided
+        # Calculating the pass/fail criteria when either expected_passfail_val or csv_name is provided
+        if self.expected_passfail_val or self.csv_name:
+            pass_fail_list, test_input_list = self.get_pass_fail_list()
+
+        if self.real and self.virtual:
+            if self.group_name:
+                for key, val in group_device_map.items():
+                    if self.expected_passfail_val or self.csv_name:
+                        dataframe = self.generate_dataframe(
+                            val,
+                            self.report_names,
+                            self.device_ips,
+                            self.device_mac,
+                            self.device_bssid,
+                            self.device_ssid,
+                            self.device_channels,
+                            self.packets_sent,
+                            self.packets_received,
+                            self.packet_loss_percent,
+                            test_input_list,
+                            self.device_avg,
+                            pass_fail_list,
+                            self.types,
+                            os_type,
+                            self.rssi,
+                            self.device_modes)
+                    else:
+                        dataframe = self.generate_dataframe(
+                            val,
+                            self.report_names,
+                            self.device_ips,
+                            self.device_mac,
+                            self.device_bssid,
+                            self.device_ssid,
+                            self.device_channels,
+                            self.packets_sent,
+                            self.packets_received,
+                            self.packet_loss_percent,
+                            [],
+                            self.device_avg,
+                            [],
+                            self.types,
+                            os_type,
+                            self.rssi,
+                            self.device_modes)
+                    if dataframe:
+                        report.set_obj_html("", "Group: {}".format(key))
+                        report.build_objective()
+                        dataframe1 = pd.DataFrame(dataframe)
+                        report.set_table_dataframe(dataframe1)
+                        report.build_table()
+
+                report.set_table_title(
+                    'Virtual clients table report:'
+                )
+                report.build_table_title()
+
+                start = 0
+                end = len(self.sta_list) - len(self.real_sta_list)
+
+                # As real devices tables already generated we only display the virtual clients data
+
+                individual_report_df = pd.DataFrame({
+                    key: value[start:end] if isinstance(value, list) else value
+                    for key, value in {
+                        'Wireless Client': self.report_names,
+                        'Client Type': self.types,
+                        'OS Type': ["Virtual Station" if x == "Virtual" else x for x in os_type],
+                        'IP Address': self.device_ips,
+                        'MAC': self.device_mac,
+                        'BSSID': self.device_bssid,
+                        'RSSI': self.rssi,
+                        'SSID': self.device_ssid,
+                        'Channel': self.device_channels,
+                        'Mode': self.device_modes,
+                        'Packets Sent': self.packets_sent,
+                        'Packets Received': self.packets_received,
+                        'Packet Loss %': self.packet_loss_percent,
+                        'AVG RTT (ms)': self.device_avg,
+                    }.items()
+                })
+
+                if self.expected_passfail_val or self.csv_name:
+                    individual_report_df['Expected Packet loss %'] = test_input_list[start:end]
+                    individual_report_df['Status '] = pass_fail_list[start:end]
+
+            else:
+                individual_report_df = pd.DataFrame({
+                    'Wireless Client': self.report_names,
+                    'Client Type': self.types,
+                    'OS Type': os_type,
+                    'IP Address': self.device_ips,
+                    'MAC': self.device_mac,
+                    'BSSID': self.device_bssid,
+                    'RSSI': self.rssi,
+                    'SSID': self.device_ssid,
+                    'Channel': self.device_channels,
+                    'Mode': self.device_modes,
+                    'Packets Sent': self.packets_sent,
+                    'Packets Received': self.packets_received,
+                    'Packet Loss %': self.packet_loss_percent,
+                    'AVG RTT (ms)': self.device_avg,
+                })
             if self.expected_passfail_val or self.csv_name:
-                pass_fail_list, test_input_list = self.get_pass_fail_list()
+                individual_report_df['Expected Packet loss %'] = test_input_list
+                individual_report_df['Status '] = pass_fail_list
+
+            report.set_table_dataframe(individual_report_df)
+            report.build_table()
+        elif self.real:
             # When groups are provided a seperate table will be generated for each group using generate_dataframe
             if self.group_name:
                 for key, val in group_device_map.items():
@@ -1080,7 +1343,11 @@ class Ping(Realm):
                             self.packet_loss_percent,
                             test_input_list,
                             self.device_avg,
-                            pass_fail_list)
+                            pass_fail_list,
+                            self.types,
+                            os_type,
+                            self.rssi,
+                            self.device_modes)
                     else:
                         dataframe = self.generate_dataframe(
                             val,
@@ -1095,7 +1362,11 @@ class Ping(Realm):
                             self.packet_loss_percent,
                             [],
                             self.device_avg,
-                            [])
+                            [],
+                            self.types,
+                            os_type,
+                            self.rssi,
+                            self.device_modes)
                     if dataframe:
                         report.set_obj_html("", "Group: {}".format(key))
                         report.build_objective()
@@ -1105,11 +1376,15 @@ class Ping(Realm):
             else:
                 individual_report_df = pd.DataFrame({
                     'Wireless Client': self.report_names,
+                    'Client Type': self.types,
+                    'OS Type': os_type,
                     'IP Address': self.device_ips,
                     'MAC': self.device_mac,
                     'BSSID': self.device_bssid,
+                    'RSSI': self.rssi,
                     'SSID': self.device_ssid,
                     'Channel': self.device_channels,
+                    'Mode': self.device_modes,
                     'Packets Sent': self.packets_sent,
                     'Packets Received': self.packets_received,
                     'Packet Loss %': self.packet_loss_percent,
@@ -1121,19 +1396,44 @@ class Ping(Realm):
                 report.set_table_dataframe(individual_report_df)
                 report.build_table()
         else:
-            individual_report_df = pd.DataFrame({
-                'Wireless Client': self.report_names,
-                'IP Address': self.device_ips,
-                'MAC': self.device_mac,
-                'BSSID': self.device_bssid,
-                'SSID': self.device_ssid,
-                'Channel': self.device_channels,
-                'Packets Sent': self.packets_sent,
-                'Packets Received': self.packets_received,
-                'Packet Loss %': self.packet_loss_percent,
-                'AVG RTT (ms)': self.device_avg,
-                # 'Client Unrechability %': self.client_unrechability_percent
-            })
+            if self.real:
+                individual_report_df = pd.DataFrame({
+                    'Wireless Client': self.report_names,
+                    'IP Address': self.device_ips,
+                    'Client Type': self.types,
+                    'OS Type': ["Virtual Station" if x == "Virtual" else x for x in os_type],
+                    'MAC': self.device_mac,
+                    'RSSI': self.rssi,
+                    'Channel': self.device_channels,
+                    'SSID ': self.device_ssid,
+                    'BSSID': self.device_bssid,
+                    'Mode': self.device_modes,
+                    'Packets Sent': self.packets_sent,
+                    'Packets Received': self.packets_received,
+                    'Packet Loss %': self.packet_loss_percent,
+                    'AVG RTT (ms)': self.device_avg,
+                })
+
+            else:
+                individual_report_df = pd.DataFrame({
+                    'Wireless Client': self.report_names,
+                    'IP Address': self.device_ips,
+                    'Client Type': self.types,
+                    'MAC': self.device_mac,
+                    'BSSID': self.device_bssid,
+                    'RSSI': self.rssi,
+                    'SSID': self.device_ssid,
+                    'Channel': self.device_channels,
+                    'Mode': self.device_modes,
+                    'Packets Sent': self.packets_sent,
+                    'Packets Received': self.packets_received,
+                    'Packet Loss %': self.packet_loss_percent,
+                    'AVG RTT (ms)': self.device_avg,
+                    # 'Client Unrechability %': self.client_unrechability_percent
+                })
+            if self.expected_passfail_val or self.csv_name:
+                individual_report_df['Expected Packet loss %'] = test_input_list
+                individual_report_df['Status '] = pass_fail_list
             report.set_table_dataframe(individual_report_df)
             report.build_table()
         # Extract bandsteering graphs
@@ -1180,15 +1480,55 @@ class Ping(Realm):
         report.build_graph()
         if self.do_webUI and self.get_live_view:
             self.add_ping_packet_images(report=report)
-        dataframe1 = pd.DataFrame({
-            'Wireless Client': self.device_names,
-            'MAC': self.device_mac,
-            'Channel': self.device_channels,
-            'Mode': self.device_modes,
-            'Packets Sent': self.packets_sent,
-            'Packets Received': self.packets_received,
-            'Packets Loss': self.packets_dropped
-        })
+
+        dataframe1 = {}
+
+        if self.real and self.virtual:
+            dataframe1 = pd.DataFrame({
+                'Wireless Client': self.device_names,
+                'Client Type': self.types,
+                'OS Type': ["Virtual Station" if x == "Virtual" else x for x in os_type],
+                'BSSID': self.device_bssid,
+                'MAC': self.device_mac,
+                'RSSI': self.rssi,
+                'Channel': self.device_channels,
+                'SSID ': self.device_ssid,
+                'Mode': self.device_modes,
+                'Packets Sent': self.packets_sent,
+                'Packets Received': self.packets_received,
+                'Packets Loss': self.packets_dropped
+            })
+        else:
+            if self.real:
+                dataframe1 = pd.DataFrame({
+                    'Wireless Client': self.device_names,
+                    'Client Type': self.types,
+                    'OS Type': os_type,
+                    'BSSID': self.device_bssid,
+                    'MAC': self.device_mac,
+                    'RSSI': self.rssi,
+                    'Channel': self.device_channels,
+                    'SSID ': self.device_ssid,
+                    'Mode': self.device_modes,
+                    'Packets Sent': self.packets_sent,
+                    'Packets Received': self.packets_received,
+                    'Packets Loss': self.packets_dropped
+                })
+            else:
+                dataframe1 = pd.DataFrame({
+                    'Wireless Client': self.device_names,
+                    'Client Type': self.types,
+                    'BSSID': self.device_bssid,
+                    'MAC': self.device_mac,
+                    'RSSI': self.rssi,
+                    'Channel': self.device_channels,
+                    'SSID ': self.device_ssid,
+                    'Mode': self.device_modes,
+                    'Packets Sent': self.packets_sent,
+                    'Packets Received': self.packets_received,
+                    'Packets Loss': self.packets_dropped
+                })
+
         report.set_table_dataframe(dataframe1)
         report.build_table()
 
@@ -1229,15 +1569,54 @@ class Ping(Realm):
         report.move_csv_file()
         report.build_graph()
 
-        dataframe2 = pd.DataFrame({
-            'Wireless Client': self.device_names,
-            'MAC': self.device_mac,
-            'Channel': self.device_channels,
-            'Mode': self.device_modes,
-            'Min RTT (ms)': self.device_min,
-            'Average RTT (ms)': self.device_avg,
-            'Max RTT (ms)': self.device_max
-        })
+        dataframe2 = {}
+
+        if self.real and self.virtual:
+            dataframe2 = pd.DataFrame({
+                'Wireless Client': self.device_names,
+                'Client Type': self.types,
+                'OS Type': ["Virtual Station" if x == "Virtual" else x for x in os_type],
+                'BSSID': self.device_bssid,
+                'MAC': self.device_mac,
+                'RSSI': self.rssi,
+                'Channel': self.device_channels,
+                'SSID ': self.device_ssid,
+                'Mode': self.device_modes,
+                'Min Latency (ms)': self.device_min,
+                'Average Latency (ms)': self.device_avg,
+                'Max Latency (ms)': self.device_max
+            })
+        else:
+            if self.real:
+                dataframe2 = pd.DataFrame({
+                    'Wireless Client': self.device_names,
+                    'Client Type': self.types,
+                    'OS Type': os_type,
+                    'BSSID': self.device_bssid,
+                    'MAC': self.device_mac,
+                    'RSSI': self.rssi,
+                    'Channel': self.device_channels,
+                    'SSID ': self.device_ssid,
+                    'Mode': self.device_modes,
+                    'Min Latency (ms)': self.device_min,
+                    'Average Latency (ms)': self.device_avg,
+                    'Max Latency (ms)': self.device_max
+                })
+            else:
+                dataframe2 = pd.DataFrame({
+                    'Wireless Client': self.device_names,
+                    'Client Type': self.types,
+                    'BSSID': self.device_bssid,
+                    'MAC': self.device_mac,
+                    'RSSI': self.rssi,
+                    'Channel': self.device_channels,
+                    'SSID ': self.device_ssid,
+                    'Mode': self.device_modes,
+                    'Min Latency (ms)': self.device_min,
+                    'Average Latency (ms)': self.device_avg,
+                    'Max Latency (ms)': self.device_max
+                })
+
         report.set_table_dataframe(dataframe2)
         report.build_table()
 
@@ -1264,6 +1643,17 @@ class Ping(Realm):
         # closing
         report.build_footer()
         report.write_html()
+
+        csv_dir = "csv_reports"
+
+        if os.path.exists(csv_dir):
+            destination = os.path.join(report_path_date_time, "csv_reports")
+
+            if os.path.exists(destination):
+                shutil.rmtree(destination)
+
+            shutil.move(csv_dir, destination)
+            logging.info(f"Moved runtime CSVs to {destination}")
         report.write_pdf()
 
         if self.do_webUI:
@@ -1286,7 +1676,7 @@ class Ping(Realm):
 
     def generate_dataframe(self, groupdevlist: List[str], report_names: List[str], device_ips: List[str], device_mac: List[str], device_bssid: List[str], device_ssid: List[str],
                            device_channels: List[str], packets_sent: List[int], packets_received: List[int], packet_loss_percent: List[float], test_input_list: List[str],
-                           device_avg: List[float], status: List[str]) -> Optional[pd.DataFrame]:
+                           device_avg: List[float], status: List[str], types: List[str], os_type: List[str], rssis: List[str], device_modes: List[str]) -> Optional[pd.DataFrame]:
         """
         Creates a separate DataFrame for each group of devices.
 
@@ -1300,6 +1690,7 @@ class Ping(Realm):
         device_ip = []
         bssid = []
         dev_ssid = []
+        dev_modes = []
         dev_channels = []
         packet_sent = []
         packet_received = []
@@ -1307,8 +1698,12 @@ class Ping(Realm):
         input_test_list = []
         dev_avg = []
         statuslist = []
+        dev_rssi = []
+        device_type = []
         interop_tab_data = self.json_get('/adb/')["devices"]
         for i in range(len(report_names)):
+            if os_type[i] == 'Virtual':
+                continue
             for j in groupdevlist:
                 # For a string like "1.360 Lin test3":
                 # - report_names[i].split(" ")[2] gives 'test3' (device name)
@@ -1318,7 +1713,10 @@ class Ping(Realm):
                     report_name.append(report_names[i])
                     macids.append(device_mac[i])
                     device_ip.append(device_ips[i])
+                    dev_modes.append(device_modes[i])
                     bssid.append(device_bssid[i])
+                    dev_rssi.append(rssis[i])
+                    device_type.append(os_type[i])
                     dev_ssid.append(device_ssid[i])
                     dev_channels.append(device_channels[i])
                     packet_sent.append(packets_sent[i])
@@ -1338,7 +1736,10 @@ class Ping(Realm):
                                 report_name.append(report_names[i])
                                 macids.append(device_mac[i])
                                 device_ip.append(device_ips[i])
+                                dev_modes.append(device_modes[i])
                                 bssid.append(device_bssid[i])
+                                dev_rssi.append(rssis[i])
+                                device_type.append(os_type[i])
                                 dev_ssid.append(device_ssid[i])
                                 dev_channels.append(device_channels[i])
                                 packet_sent.append(packets_sent[i])
@@ -1351,11 +1752,15 @@ class Ping(Realm):
         if len(report_name) != 0:
             dataframe = {
                 'Wireless Client': report_name,
-                'IP Address': macids,
-                'MAC': device_ip,
+                'Client Type': ["Real"] * len(report_name),
+                'OS Type': device_type,
+                'IP Address': device_ip,
+                'MAC': macids,
                 'BSSID': bssid,
+                'RSSI': dev_rssi,
                 'SSID': dev_ssid,
                 'Channel': dev_channels,
+                'Mode': dev_modes,
                 'Packets Sent': packet_sent,
                 'Packets Received': packet_received,
                 'Packet Loss %': loss_percent,
@@ -1374,21 +1779,35 @@ class Ping(Realm):
         Waits up to 60 seconds for each set of images to be generated.
         """
         if self.do_webUI and self.get_live_view:
-            test_name = os.path.basename(self.ui_report_dir)
+            # Strip any trailing slash so os.path.basename always returns the directory name,
+            # not an empty string (which happens when the path ends with '/').
+            report_dir = self.ui_report_dir.rstrip('/')
+            test_name = os.path.basename(report_dir)
+            live_view_dir = os.path.join(report_dir, "live_view_images")
 
             for floor in range(int(self.floors)):
+
                 # Construct expected image paths
-                packet_sent_image = os.path.join(self.ui_report_dir, "live_view_images", f"{test_name}_ping_packet_sent_{floor + 1}.png")
-                packet_recv_image = os.path.join(self.ui_report_dir, "live_view_images", f"{test_name}_ping_packet_recv_{floor + 1}.png")
-                packet_loss_image = os.path.join(self.ui_report_dir, "live_view_images", f"{test_name}_ping_packet_loss_{floor + 1}.png")
+                packet_sent_image = os.path.join(live_view_dir, f"{test_name}_ping_packet_sent_{floor + 1}.png")
+                packet_recv_image = os.path.join(live_view_dir, f"{test_name}_ping_packet_recv_{floor + 1}.png")
+                packet_loss_image = os.path.join(live_view_dir, f"{test_name}_ping_packet_loss_{floor + 1}.png")
+
+                logging.info(f"[add_ping_packet_images] floor {floor + 1}: looking for:")
+                logging.info(f"  sent : {packet_sent_image}")
+                logging.info(f"  recv : {packet_recv_image}")
+                logging.info(f"  loss : {packet_loss_image}")
 
                 # Wait for all required images to be generated (up to timeout)
-                timeout = 60  # seconds
+                timeout = 180  # seconds
                 start_time = time.time()
 
                 while not (os.path.exists(packet_sent_image) and os.path.exists(packet_recv_image) and os.path.exists(packet_loss_image)):
                     if time.time() - start_time > timeout:
-                        print(f"Timeout: Heatmap images for floor {floor + 1} not found within {timeout} seconds.")
+                        logging.warning(f"Timeout: Heatmap images for floor {floor + 1} not found within {timeout} seconds.")
+
+                        # List what IS in live_view_images to help diagnose filename mismatches
+                        if os.path.isdir(live_view_dir):
+                            logging.warning(f"  files in {live_view_dir}: {os.listdir(live_view_dir)}")
                         break
                     time.sleep(1)
 
@@ -1565,6 +1984,7 @@ class Ping(Realm):
                                 'mac': current_device_data['mac'],
                                 'ip': current_device_data['ip'],
                                 'bssid': current_device_data['ap'],
+                                'rssi': current_device_data.get('signal', 'NA'),
                                 'ssid': current_device_data['ssid'],
                                 'channel': current_device_data['channel'],
                                 'mode': current_device_data['mode'],
@@ -1689,6 +2109,7 @@ class Ping(Realm):
                                     'mac': current_device_data['mac'],
                                     'ip': current_device_data['ip'],
                                     'bssid': current_device_data['ap'],
+                                    'rssi': current_device_data.get('signal', 'NA'),
                                     'ssid': current_device_data['ssid'],
                                     'channel': current_device_data['channel'],
                                     'mode': current_device_data['mode'],
@@ -1838,7 +2259,8 @@ class Ping(Realm):
             self.robot.nav_data_path = nav_data
             self.robot.runtime_dir = self.ui_report_dir
             self.robot.ip = self.host
-            self.robot.testname = self.ui_report_dir.split("/")[-1]
+            # Use rstrip('/') so a trailing slash on ui_report_dir never produces an empty testname
+            self.robot.testname = self.ui_report_dir.rstrip('/').split("/")[-1]
 
         initial_duration = self.pingduration
         stop_test = False
@@ -1961,7 +2383,10 @@ class Ping(Realm):
 
             if self.do_webUI:
                 self.copy_reports_to_home_dir()
-                self.set_webUI_stop()
+
+        if self.do_webUI:
+            self.set_webUI_stop()
+
         # Generate the final report
         if self.local_lf_report_dir == "":
             if self.group_name:
@@ -1973,6 +2398,9 @@ class Ping(Realm):
                 self.generate_report_robo(config_devices=config_devices, group_device_map=group_device_map, report_path=self.local_lf_report_dir)
             else:
                 self.generate_report_robo(report_path=self.local_lf_report_dir)
+
+        if self.do_webUI:
+            self.copy_reports_to_home_dir()
 
     def track_resultjson(self):
         """
@@ -2584,19 +3012,116 @@ class Ping(Realm):
             report.set_table_dataframe(table_df)
             report.build_table()
 
+    def create_csvs(self):
+        """This method appends real-time ping stats into individual device csv's."""
+        # for writting the stopped status data into csv
+        h, m, s = map(int, self.duration.split(":"))
+        duration = timedelta(hours=h, minutes=m, seconds=s)
+        timestamp = (self.start_time + duration).strftime("%d/%m/%Y %H:%M:%S")
+
+        csv_dir = "csv_reports"
+
+        # print(ping.result_json)
+        # print(type(os), os)
+
+        for device_name, device_data in self.result_json.items():
+            # Skip the 'status' metadata key injected by store_csv (value is a string, not a device dict)
+            if not isinstance(device_data, dict):
+                continue
+            if device_data['os'] == "Virtual":
+                csv_file = os.path.join(csv_dir, f"sta_{device_name.replace('.', '_')}.csv")
+            else:
+                csv_file = os.path.join(csv_dir, f"device_{device_name.replace('.', '_')}.csv")
+            sent = device_data['sent']
+            received = device_data['recv']
+            dropped = device_data['dropped']
+            status = "Stopped"
+            siz = len(device_data['rtts'])
+            rtt = 0
+            try:
+                rtt = device_data['rtts'][siz]
+            except KeyError:
+                logger.info(f"rtts of the device {device_name} not found")
+            if "dBm" in device_data['rssi']:
+                device_data['rssi'] = device_data['rssi'].split(" ")[0]
+
+            with open(csv_file, 'a', newline='') as file:
+                writer = csv.writer(file)
+                writer.writerow([timestamp, rtt, sent, received, dropped, status, device_data['rssi'], device_data['channel'],
+                                device_data['mode'], device_data['ssid'], device_data['bssid'], device_data['mac']])
+
+    def validate_existing_stations(self):
+        if self.use_existing_sta_list:
+            # Exisiting stations validation
+            logger.info(f"Using existing stations provided in --existing_sta_list: {self.existing_sta_list}")
+            lis = self.existing_sta_list.split(',') if self.existing_sta_list else []
+            logger.info(lis)
+            valid_stations = []
+            for station in lis:
+                logger.info(f"Verifying station {station} from the provided --existing_sta_list")
+                station = station.strip()
+                rv = station.split('.')
+                response = self.json_get(f"/port/{rv[0]}/{rv[1]}/{rv[2]}")
+
+                try:
+                    if (response['interface']
+                        and response['interface']['ip'] != "0.0.0.0"
+                        and str(response['interface']['down']).lower() == "false"
+                        and str(response['interface']['phantom']).lower() == "false"
+                            and response['interface']['parent dev'] != ""):
+
+                        logger.info(f"Station {station} exists and will be used for the test")
+                        valid_stations.append(station)
+                    else:
+                        logger.info(f"Station {station} is not up and running")
+
+                except Exception:
+                    logger.warning(f"Station {station} does not exist")
+
+            lis = valid_stations
+            if lis == []:
+                if not self.real:
+                    logger.info("No valid stations found in the provided --existing_sta_list, exiting the test")
+                    exit(1)
+                else:
+                    logger.info("no valid stations so proceding with the real clients only")
+                    self.virtual = False
+            self.sta_list = lis
+            logger.info(f"final station list {self.sta_list}")
+
 
 def validate_args(args):
     # input sanity
-    if args.virtual is False and args.real is False:
-        logger.error('Atleast one of --real or --virtual is required')
+    if args.clients_type:
+        args.clients_type = args.clients_type.lower()
+    if args.clients_type == "" and not args.real and not args.virtual:
+        logger.error('either --clients_type or --real or --virtual')
         exit(1)
-    if args.virtual is True and args.radio is None:
-        logger.error('--radio required')
-        exit(1)
-    if args.virtual is True and args.ssid is None:
-        logger.error('--ssid required for virtual stations')
-        exit(1)
-    if args.security != 'open' and args.passwd == '[BLANK]':
+    if args.clients_type in ["virtual", "both"]:
+        if not args.use_existing_sta_list and not args.num_sta:
+            if args.clients_type == "virtual" and not args.clients_type == "both":
+                logger.error("Number of stations must be provided for virtual clients configuration when not using existing stations")
+                exit(1)
+            else:
+                logger.info("No virtual stations exists proceeding with only real clients")
+                args.clients_type = "real"
+        if args.use_existing_sta_list and args.existing_sta_list == "":
+            logger.error("Existing station list must be specified when using existing stations")
+            exit(1)
+    if (args.clients_type == "virtual" or args.clients_type == "both" or args.virtual) and args.radio is None:
+        if not args.use_existing_sta_list:
+            logger.error('--radio required')
+            exit(1)
+    if (args.clients_type == "virtual" or args.clients_type == "both" or args.virtual) and args.ssid is None:
+        if not args.use_existing_sta_list:
+            logger.error('--ssid required for virtual stations')
+            exit(1)
+        else:
+            if args.use_default_config is False:
+                logger.error('--ssid required for Wi-Fi configuration or enable --use_default_config')
+                exit(1)
+
+    if not args.use_existing_sta_list and args.security != 'open' and args.passwd == '[BLANK]':
         logger.error('--passwd required')
         exit(1)
 
@@ -2604,23 +3129,27 @@ def validate_args(args):
         logger.error("Enter either --device_csv_name or --expected_passfail_value")
         exit(1)
     if args.ssid and args.passwd and args.group_name and args.profile_name:
-        logger.error('either --ssid,--password or --profile_name,--group_name should be given')
-        exit(1)
+        if not args.clients_type == "both" and not (args.real and args.virtual):
+            logger.error('either --ssid,--password or --profile_name,--group_name should be given')
+            exit(1)
     if args.use_default_config is False and args.group_name is None and args.file_name is None and args.profile_name is None:
         if args.ssid is None:
-            logger.error('--ssid required for Wi-Fi configuration')
-            exit(1)
+            if not args.use_existing_sta_list:
+                logger.error('--ssid required for Wi-Fi configuration')
+                exit(1)
 
         if args.security.lower() != 'open' and args.passwd == '[BLANK]':
-            logger.error('--passwd required for Wi-Fi configuration')
-            exit(1)
+            if not args.use_existing_sta_list:
+                logger.error('--passwd required for Wi-Fi configuration')
+                exit(1)
 
         if args.server_ip is None:
             logger.error('--server_ip or upstream ip required for Wi-fi configuration')
             exit(1)
     elif args.use_default_config is False and args.resources and (args.ssid is None or args.passwd is None or args.security is None):
-        logger.error("Please provide ssid password and security when device list is given")
-        exit(1)
+        if not args.use_existing_sta_list:
+            logger.error("Please provide ssid password and security when device list is given")
+            exit(1)
 
     if args.group_name:
         selected_groups = args.group_name.split(',')
@@ -2734,6 +3263,16 @@ connectivity problems.
         python3 lf_interop_ping_plotter.py --mgr 192.168.207.78 --real --target 8.8.8.8 --ping_interval 1 --ping_duration 1m --use_default_config
         --robot_ip 192.168.204.76 --coordinate 3,4 --do_bandsteering --total_cycles 3 --bssids 94:A6:7E:74:26:33,94:A6:7E:74:26:22
 
+        EXAMPLE-17:
+        Command Line Interface to run ping plotter test for both real and virtual(Existing Stations)
+        python3 lf_interop_ping_plotter.py --mgr 192.168.207.78 --target www.google.com --clients_type both --ping_interval 5 --ping_duration 60s
+        --server_ip 192.168.204.60 --use_existing_sta_list --existing_sta_list 1.1.sta1000,1.1.sta1001,1.1.sta1002,1.1.sta1003 --use_default_config
+
+        EXAMPLE-18:
+        Command Line Interface to run ping plotter test for both real and virtual clients
+        python3 lf_interop_ping_plotter.py --mgr 192.168.207.78  --target 142.250.76.206  --radio 1.1.wiphy0  --num_sta 3 --ping_interval 5 --ping_duration 1m --debug
+        --ssid NETGEAR_2G_Open --passwd NA --security open --expected_passfail_value 5 --clients_type both --server_ip 192.168.204.60 --use_default_config
+
 
 
         SCRIPT_CLASSIFICATION : Test
@@ -2839,6 +3378,16 @@ connectivity problems.
     optional.add_argument('--no_cleanup',
                           action="store_true",
                           help='specify this flag to stop cleaning up generic cxs after the test')
+    optional.add_argument('--clients_type', '--client_type',
+                          type=str,
+                          help='specify the client type example: real or virtual or both', dest='clients_type')
+    optional.add_argument('--existing_sta_list',
+                          type=str,
+                          default="",
+                          help="List of existing stations to be passed when creating cross connections, example: 1.1.sta001,1.1.sta002")
+    optional.add_argument('--use_existing_sta_list',
+                          action="store_true",
+                          help="Whether to use existing stations for cross connections if provided in --existing_sta_list", default=False)
 
     # webUI arguments
     webUI_args.add_argument('--do_webUI',
@@ -3024,7 +3573,8 @@ connectivity problems.
               radio:                    {}
               real:                     {}
               debug:                    {}
-              '''.format(mgr_ip, mgr_port, ssid, security, password, target, interval, duration, args.virtual, num_sta, radio, args.real, debug))
+              '''.format(mgr_ip, mgr_port, ssid, security, password, target, interval, duration, args.virtual or args.clients_type == "both" or args.clients_type == "virtual",
+                         num_sta, radio, args.real or args.clients_type == "both" or args.clients_type == "real", debug))
 
     # ping object creation
     ping = Ping(host=mgr_ip, port=mgr_port, ssid=ssid, security=security, password=password, radio=radio,
@@ -3032,11 +3582,15 @@ connectivity problems.
                 ui_report_dir=ui_report_dir, csv_name=args.device_csv_name, expected_passfail_val=args.expected_passfail_value, wait_time=args.wait_time, group_name=group_name,
                 floors=args.floors, get_live_view=args.get_live_view, robo_ip=robo_ip, rotation_enabled=rotation_enabled, coordinate_list=coord_list, angle_list=angle_list,
                 local_lf_report_dir=args.local_lf_report_dir, do_bandsteering=args.do_bandsteering, total_cycles=args.total_cycles, bssids=args.bssids.split(",") if args.bssids else [],
-                duration_to_skip=args.duration_to_skip)
+                duration_to_skip=args.duration_to_skip, configure=configure, clients_type=args.clients_type, use_existing_sta_list=args.use_existing_sta_list, existing_sta_list=args.existing_sta_list)
     ping.pingduration = duration
-    # creating virtual stations if --virtual flag is specified
-    if args.virtual:
 
+    # Validate existing if specified
+    if ping.use_existing_sta_list:
+        ping.validate_existing_stations()
+
+    # creating virtual stations if --virtual flag is specified
+    if ping.virtual and not args.use_existing_sta_list:
         logging.info('Proceeding to create {} virtual stations on {}'.format(num_sta, radio))
         station_list = LFUtils.portNameSeries(
             prefix_='sta', start_id_=0, end_id_=num_sta - 1, padding_number_=100000, radio=radio)
@@ -3048,7 +3602,7 @@ connectivity problems.
     # selecting real clients if --real flag is specified
     config_devices = {}
     group_device_map = {}
-    if args.real:
+    if ping.real:
         Devices = RealDevice(manager_ip=mgr_ip, selected_bands=[])
         Devices.get_devices()
         ping.Devices = Devices
@@ -3136,8 +3690,11 @@ connectivity problems.
     ping.cleanup()
 
     # building station if virtual
-    if args.virtual:
-        ping.buildstation()
+    if ping.virtual:
+        if not args.use_existing_sta_list:
+            ping.buildstation()
+        else:
+            logger.info(f"Skipping virtual station build as existing stalist specified {ping.sta_list}")
 
     # check if generic tab is enabled or not
     if not ping.check_tab_exists():
@@ -3198,7 +3755,7 @@ connectivity problems.
             logger.error(e)
             exit(0)
         # logging.info(result_data)
-        if args.virtual:
+        if ping.virtual:
             ports_data_dict = ping.json_get('/ports/all/')['interfaces']
             ports_data = {}
             for ports in ports_data_dict:
@@ -3209,6 +3766,14 @@ connectivity problems.
                     if station not in ping.real_sta_list:
                         current_device_data = ports_data[station]
                         if station.split('.')[2] in result_data['name']:
+                            if len(result_data['last results']) != 0:
+                                result = result_data['last results'].split('\n')
+                                if len(result) > 1:
+                                    last_result = result[-2]
+                                else:
+                                    last_result = result[-1]
+                            else:
+                                last_result = ""
                             ping.result_json[station] = {
                                 'command': result_data['command'],
                                 'sent': result_data['tx pkts'],
@@ -3217,13 +3782,14 @@ connectivity problems.
                                 'mac': current_device_data['mac'],
                                 'ip': current_device_data['ip'],
                                 'bssid': current_device_data['ap'],
+                                'rssi': current_device_data['signal'],
                                 'ssid': current_device_data['ssid'],
                                 'channel': current_device_data['channel'],
                                 'mode': current_device_data['mode'],
                                 'name': station,
                                 'os': 'Virtual',
                                 'remarks': [],
-                                'last_result': [result_data['last results'].split('\n')[-2] if len(result_data['last results']) != 0 else ""][0]
+                                'last_result': [last_result][0]
                             }
                             ping_stats[station]['sent'].append(result_data['tx pkts'])
                             ping_stats[station]['received'].append(result_data['rx pkts'])
@@ -3291,6 +3857,16 @@ connectivity problems.
                             ping_endp, ping_data = list(ping_device.keys())[
                                 0], list(ping_device.values())[0]
                             if station.split('.')[2] in ping_endp:
+                                # print(f"this is the last results : {str(ping_data['last results'])}")
+                                if len(ping_data['last results']) != 0:
+                                    result = ping_data['last results'].split('\n')
+                                    if len(result) > 1:
+                                        last_result = result[-2]
+                                    else:
+                                        last_result = result[-1]
+                                else:
+                                    last_result = ""
+
                                 ping.result_json[station] = {
                                     'command': ping_data['command'],
                                     'sent': ping_data['tx pkts'],
@@ -3299,13 +3875,14 @@ connectivity problems.
                                     'mac': current_device_data['mac'],
                                     'ip': current_device_data['ip'],
                                     'bssid': current_device_data['ap'],
+                                    'rssi': current_device_data['signal'],
                                     'ssid': current_device_data['ssid'],
                                     'channel': current_device_data['channel'],
                                     'mode': current_device_data['mode'],
                                     'name': station,
                                     'os': 'Virtual',
                                     'remarks': [],
-                                    'last_result': [ping_data['last results'].split('\n')[-2] if len(ping_data['last results']) != 0 else ""][0]
+                                    'last_result': [last_result][0]  # [ping_data['last results'].split('\n')[-2] if len(ping_data['last results']) != 0 else ""]
                                 }
                                 ping_stats[station]['sent'].append(ping_data['tx pkts'])
                                 ping_stats[station]['received'].append(ping_data['rx pkts'])
@@ -3330,8 +3907,11 @@ connectivity problems.
                                                 seq_number = int(t_data.strip('icmp_seq='))
                                             if 'time=' in t_data:
                                                 rtt = float(t_data.strip('time='))
-                                        rtts[station][seq_number] = rtt
-                                        rtts_list.append(rtt)
+                                        try:
+                                            rtts[station][seq_number] = rtt
+                                            rtts_list.append(rtt)
+                                        except Exception:
+                                            continue
 
                                         # finding dropped packets
                                         t_fail = t_fail.split()  # [' drop:', '0', '(0, 0.000)', 'rx:', '28', 'fail:', '0', 'bytes:', '1792', 'min/avg/max:', '2.160/3.422/5.190']
@@ -3363,9 +3943,10 @@ connectivity problems.
                                     ping.result_json[station]['rtts'] = {}
                                 ping.result_json[station]['rtts'] = rtts[station]
                                 ping.result_json[station]['remarks'] = ping.generate_remarks(ping.result_json[station])
-                                # ping.result_json[station]['dropped_packets'] = dropped_packets
+            ping.generate_real_time_csv()
+            # ping.result_json[station]['dropped_packets'] = dropped_packets
 
-        if args.real:
+        if ping.real:
             if isinstance(result_data, dict):
                 for station in ping.real_sta_list:
                     current_device_data = Devices.devices_data[station]
@@ -3399,6 +3980,7 @@ connectivity problems.
                             'mac': current_device_data['mac'],
                             'ip': current_device_data['ip'],
                             'bssid': current_device_data['ap'],
+                            'rssi': current_device_data['signal'],
                             'ssid': current_device_data['ssid'],
                             'channel': current_device_data['channel'],
                             'mode': current_device_data['mode'],
@@ -3517,6 +4099,7 @@ connectivity problems.
                                 'mac': current_device_data['mac'],
                                 'ip': current_device_data['ip'],
                                 'bssid': current_device_data['ap'],
+                                'rssi': current_device_data['signal'],
                                 'ssid': current_device_data['ssid'],
                                 'channel': current_device_data['channel'],
                                 'mode': current_device_data['mode'],
@@ -3591,7 +4174,7 @@ connectivity problems.
                             ping.result_json[station]['rtts'] = rtts[station]
                             ping.result_json[station]['remarks'] = ping.generate_remarks(ping.result_json[station])
                             # ping.result_json[station]['dropped_packets'] = dropped_packets
-
+            ping.generate_real_time_csv()
         if ping.do_webUI:
             if not ping.store_csv():
                 logging.info('Aborted test from webUI')
@@ -3607,6 +4190,9 @@ connectivity problems.
 
     logging.info('Stopping the test')
     ping.stop_generic()
+
+    # Generate per_device / per_station csvs
+    ping.create_csvs()
 
     logging.info(ping.result_json)
 
