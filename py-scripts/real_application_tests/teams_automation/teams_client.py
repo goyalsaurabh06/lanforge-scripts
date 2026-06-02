@@ -63,6 +63,7 @@ class TeamsClient:
         # self.opt.add_argument("--use-fake-ui-for-media-stream")
         # self.opt.add_argument("--use-fake-device-for-media-stream")
         # self.opt.add_experimental_option("debuggerAddress","localhost:8989")
+        self.opt.add_argument("--no-sandbox")
         self.opt.add_argument("--disable-extensions")
         self.opt.add_argument("--disable-infobars")
         self.opt.add_argument("--disable-popup-blocking")
@@ -607,7 +608,7 @@ class TeamsClient:
 
 
 def main():
-
+    team = None
     try:
 
         hostname = socket.gethostname()
@@ -661,7 +662,8 @@ def main():
         team.driver.quit()
 
     except Exception as e:
-        team.driver.quit()
+        if team is not None:
+            team.driver.quit()
         logger.error(f"An error occurred: {e}")
         traceback.print_exc()
         sys.exit(1)
