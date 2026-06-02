@@ -93,6 +93,7 @@ class YouTubeAutomation:
             'label CONTAINS[c] "conn speed" OR '
             'label CONTAINS[c] "framedrop" OR '
             'label CONTAINS[c] "readahead" OR '
+            'label CONTAINS[c] "view" OR '
             'label CONTAINS[c] "net activity" OR '
             'label CONTAINS[c] "video" OR '
             'label CONTAINS[c] "audio" OR '
@@ -104,6 +105,7 @@ class YouTubeAutomation:
             'label CONTAINS[c] "conn speed" OR '
             'label CONTAINS[c] "framedrop" OR '
             'label CONTAINS[c] "readahead" OR '
+            'label CONTAINS[c] "view" OR '
             'label CONTAINS[c] "net activity" OR '
             'label CONTAINS[c] "video" OR '
             'label CONTAINS[c] "audio" OR '
@@ -115,6 +117,7 @@ class YouTubeAutomation:
             'name CONTAINS[c] "conn speed" OR '
             'name CONTAINS[c] "framedrop" OR '
             'name CONTAINS[c] "readahead" OR '
+            'name CONTAINS[c] "view" OR '
             'name CONTAINS[c] "net activity" OR '
             'name CONTAINS[c] "video" OR '
             'name CONTAINS[c] "audio" OR '
@@ -128,6 +131,7 @@ class YouTubeAutomation:
     _STAT_KEYS = [
         ("conn_speed",   "conn speed"),
         ("readahead",    "readahead"),
+        ("viewport",     "view"),
         ("framedrop",    "framedrop"),
         ("video",        "video"),
         ("audio",        "audio"),
@@ -429,7 +433,7 @@ class YouTubeAutomation:
             / f"youtube_stats_{safe_udid}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         )
         self.stats_csv_file = csv_path
-        headers = ["timestamp", "elapsed_sec", "conn_speed", "readahead",
+        headers = ["timestamp", "elapsed_sec", "conn_speed", "readahead", "viewport",
                    "framedrop", "video", "audio", "net_activity", "cpn"]
         with open(csv_path, "w", newline="", encoding="utf-8") as f:
             csv_mod.DictWriter(f, fieldnames=headers).writeheader()
@@ -461,7 +465,7 @@ class YouTubeAutomation:
                     row = {"timestamp": datetime.now().isoformat(),
                            "elapsed_sec": f"{elapsed:.1f}",
                            **{k: stats.get(k, "") for k in
-                              ["conn_speed", "readahead", "framedrop",
+                              ["conn_speed", "readahead", "viewport", "framedrop",
                                "video", "audio", "net_activity", "cpn"]}}
                     with open(csv_path, "a", newline="", encoding="utf-8") as f:
                         csv_mod.DictWriter(f, fieldnames=headers).writerow(row)
@@ -811,6 +815,14 @@ def parse_ios_stats(raw: Dict[str, str]) -> Dict[str, str]:
         if val:
             result["BufferHealth"] = val
 
+    viewport = raw.get("viewport", "")
+    if viewport:
+        value = re.sub(r"^\s*View(?:port)?:\s*", "", viewport, flags=re.IGNORECASE).strip()
+        value = re.sub(r"\bSBDL\b", "", value, flags=re.IGNORECASE).strip()
+        value = re.sub(r"\s*/\s*$", "", value).strip()
+        if value:
+            result["Viewport"] = value
+
     framedrop = raw.get("framedrop", "")
     if framedrop:
         m = re.search(r"(\d+)\s*/\s*(\d+)", framedrop)
@@ -905,7 +917,7 @@ class iOSYouTubeAutomation(YouTubeAutomation):
             / f"youtube_stats_{safe_udid}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         )
         self.stats_csv_file = csv_path
-        raw_headers = ["timestamp", "elapsed_sec", "conn_speed", "readahead",
+        raw_headers = ["timestamp", "elapsed_sec", "conn_speed", "readahead", "viewport",
                        "framedrop", "video", "audio", "net_activity", "cpn"]
         with open(csv_path, "w", newline="", encoding="utf-8") as fh:
             csv_mod.DictWriter(fh, fieldnames=raw_headers).writeheader()
@@ -946,7 +958,7 @@ class iOSYouTubeAutomation(YouTubeAutomation):
                     row = {"timestamp": datetime.now().isoformat(),
                            "elapsed_sec": f"{elapsed:.1f}",
                            **{k: raw_stats.get(k, "") for k in
-                              ["conn_speed", "readahead", "framedrop",
+                              ["conn_speed", "readahead", "viewport", "framedrop",
                                "video", "audio", "net_activity", "cpn"]}}
                     with open(csv_path, "a", newline="", encoding="utf-8") as fh:
                         csv_mod.DictWriter(fh, fieldnames=raw_headers).writerow(row)
