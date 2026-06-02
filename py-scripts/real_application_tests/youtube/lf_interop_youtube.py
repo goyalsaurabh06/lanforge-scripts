@@ -291,6 +291,7 @@ class Youtube(Realm):
         self.android = 0
         self.ios = 0
         self.ios_udid_map = {}
+        self.ios_resource_udid_map = {}
         self.ios_udid_list = []
         self.ios_hostname_list = []
         self.ios_lanforge_port_list = []
@@ -675,6 +676,13 @@ class Youtube(Realm):
                     serial_idx += 1  # advance only for Androids
                 else:
                     self.real_sta_hostname.append("NA")
+            elif os_type.lower() == "ios":
+                self.real_sta_hostname.append(
+                    self.ios_resource_udid_map.get(
+                        base_device,
+                        self.ios_udid_map.get(base_device, sta_info.get('hostname', 'NA'))
+                    )
+                )
             else:
                 self.real_sta_hostname.append(sta_info.get('hostname', 'NA'))
 
@@ -758,7 +766,7 @@ class Youtube(Realm):
             p = subprocess.Popen(cmd)
             self.ios_processes.append(p)
             logging.info(
-                "Started iOS automation for %s (UDID: %s), PID: %d",
+                "Started iOS automation for report device %s (UDID: %s), PID: %d",
                 hostname, udid, p.pid,
             )
 
@@ -868,6 +876,11 @@ class Youtube(Realm):
                         continue
                     device_name = key
                     stats = value
+                    if isinstance(stats, dict) and stats.get("stop") is True and len(stats) == 1:
+                        if device_name not in self.stats_api_response:
+                            self.stats_api_response[device_name] = {}
+                        self.stats_api_response[device_name]["stop"] = True
+                        continue
                     buffer_val = stats.get("BufferHealth")
                     if buffer_val not in [None, "", "NA"]:
                         try:
@@ -1440,9 +1453,18 @@ class Youtube(Realm):
             self.report.build_graph_title()
 
             try:
-                data['TimeStamp'] = pd.to_datetime(data['TimeStamp'], format="%H:%M:%S").dt.time
+                data['TimeStamp'] = pd.to_datetime(data['TimeStamp'], format="%H:%M:%S", errors="coerce").dt.time
             except Exception as e:
                 logging.error(f"Error in timestamp conversion for {file_name}: {e}")
+                continue
+
+            invalid_timestamp_rows = data['TimeStamp'].isna().sum()
+            if invalid_timestamp_rows:
+                logging.warning(f"Skipping {invalid_timestamp_rows} rows with invalid timestamps in {file_name}")
+                data = data.dropna(subset=['TimeStamp'])
+
+            if data.empty:
+                logging.warning(f"Skipping buffer health graph for {file_name}: no valid timestamp rows")
                 continue
 
             data = data.drop_duplicates(subset='TimeStamp', keep='first')
@@ -1696,7 +1718,7 @@ class Youtube(Realm):
 
         Side Effects:
         - Populates self.ios_udid_list with UDIDs for each iOS device
-        - Populates self.ios_hostname_list with hostnames for each iOS device
+        - Populates self.ios_hostname_list with iOS report names for each iOS device
         - Populates self.ios_lanforge_port_list with eth0 LANforge ports
         - Sets self.ios_os_type to 'Linux' for all discovered iOS devices
 
@@ -1706,6 +1728,7 @@ class Youtube(Realm):
         self.ios_udid_list = []
         self.ios_hostname_list = []
         self.ios_lanforge_port_list = []
+        self.ios_resource_udid_map = {}
 
         # Build shelf.resource → real Apple UDID mapping from DeviceConfig,
         # which uses the same "serial" field shown in the device-selection list.
@@ -1742,6 +1765,7 @@ class Youtube(Realm):
             # Prefer the serial from DeviceConfig (Apple UDID format) over
             # app-id (a numeric LANforge internal identifier, not the UDID).
             udid = resource_to_udid.get(base) or self.ios_udid_map[base]
+            self.ios_resource_udid_map[base] = udid
 
             resp = self.json_get(f'/resource/{shelf}/{resource}')
             hostname = 'NA'
@@ -1750,7 +1774,7 @@ class Youtube(Realm):
 
             logging.info("iOS device %s → UDID: %s, hostname: %s", base, udid, hostname)
             self.ios_udid_list.append(udid)
-            self.ios_hostname_list.append(hostname)
+            self.ios_hostname_list.append(udid)
             self.ios_lanforge_port_list.append(f"{shelf}.{resource}.eth0")
 
         self.ios_os_type = ['Linux'] * len(self.ios_lanforge_port_list)
@@ -2125,9 +2149,18 @@ class Youtube(Realm):
                         continue
 
         try:
-            combined_data['TimeStamp'] = pd.to_datetime(combined_data['TimeStamp'], format="%H:%M:%S").dt.time
+            combined_data['TimeStamp'] = pd.to_datetime(combined_data['TimeStamp'], format="%H:%M:%S", errors="coerce").dt.time
         except Exception as e:
             logging.error(f"Error converting timestamps for hostname {hostname} while creating buffer health graph: {e}")
+            return
+
+        invalid_timestamp_rows = combined_data['TimeStamp'].isna().sum()
+        if invalid_timestamp_rows:
+            logging.warning(f"Skipping {invalid_timestamp_rows} rows with invalid timestamps for hostname {hostname}")
+            combined_data = combined_data.dropna(subset=['TimeStamp'])
+
+        if combined_data.empty:
+            logging.warning(f"Skipping buffer health graph for hostname {hostname}: no valid timestamp rows")
             return
 
         combined_data = combined_data.drop_duplicates(subset='TimeStamp', keep='first')
