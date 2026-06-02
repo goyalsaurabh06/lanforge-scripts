@@ -54,6 +54,7 @@ class TeamsHost:
         # self.opt.add_argument("--use-fake-device-for-media-stream")
         # self.opt.add_experimental_option("debuggerAddress","localhost:8989")
         self.opt.add_argument("--disable-extensions")
+        self.opt.add_argument("--no-sandbox")
         self.opt.add_argument("--disable-popup-blocking")
         self.opt.add_argument("--disable-blink-features=AutomationControlled")
         self.opt.add_experimental_option("excludeSwitches", ["enable-automation"])
@@ -653,6 +654,7 @@ class TeamsHost:
 
 
 def main():
+    team = None
 
     try:
 
@@ -712,7 +714,8 @@ def main():
         if team.driver:
             team.driver.quit()
     except Exception as e:
-        team.driver.quit()
+        if team and team.driver:
+            team.driver.quit()
         logger.error(f"An error occurred: {e}")
         traceback.print_exc()
         sys.exit(1)
