@@ -203,12 +203,14 @@ class ZoomClient:
         else:
             meeting_id.send_keys(formatted_login_url)
 
-        self.wait.until(
+        btn_join = self.wait.until(
             EC.presence_of_element_located(
                 (By.CSS_SELECTOR, "#joinMeeting ~ footer button.btn-join")
             )
-        ).click()
-        # self.driver.execute_script("document.getElementById('joinMeeting ~ footer button.btn-join').click()")
+        )
+        # Wait until button is no longer disabled, then JS-click to bypass footer overlay
+        self.wait.until(lambda d: not btn_join.get_attribute("disabled"))
+        self.driver.execute_script("arguments[0].click();", btn_join)
         time.sleep(1)
         vel = self.wait.until(
             EC.presence_of_element_located((By.XPATH, '//*[@id="webclient"]'))
