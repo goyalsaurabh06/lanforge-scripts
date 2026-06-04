@@ -15,6 +15,23 @@ import socket
 import argparse
 import json
 import pickle
+import logging
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+_log_fmt = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+
+_console_handler = logging.StreamHandler()
+_console_handler.setFormatter(_log_fmt)
+logger.addHandler(_console_handler)
+
+_file_handler = logging.FileHandler(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "zoom_host.log"),
+    mode="w",
+)
+_file_handler.setFormatter(_log_fmt)
+logger.addHandler(_file_handler)
 
 
 class ZoomHost:
@@ -22,8 +39,8 @@ class ZoomHost:
         self.server_ip = server_ip
         self.base_url = f"http://{self.server_ip}:5000"
         # self.base_url = "http://10.253.8.108:5000"
-        self.new_login_url = None
-        self.new_login_passwd = None
+        self.meeting_id = None
+        self.meeting_passwd = None
         self.login_email = None
         self.login_passwd = None
         self.meeting_link = None
@@ -79,7 +96,7 @@ class ZoomHost:
         self.wait = WebDriverWait(self.driver, 90)
 
     def share_screen(self):
-        print("sharing screen now")
+        logger.info("sharing screen now")
         try:
             # Wait for the Zoom share button to be present in the DOM
             self.wait.until(
@@ -95,12 +112,12 @@ class ZoomHost:
             self.driver.execute_script(
                 "document.querySelector('.footer-button-base__button.sharing-entry-button-container').click()"
             )
-            print("[INFO] Share Screen clicked in Zoom UI.")
+            logger.info("Share Screen clicked in Zoom UI.")
 
             # Give the WebRTC connection a moment to establish
             time.sleep(2)
 
-            print("[INFO] Entire Screen shared successfully via Chrome flags")
+            logger.info("Entire Screen shared successfully via Chrome flags")
 
             # We use a short wait here because if it's not there, we don't want to wait 90 seconds
             pause_audio_btn = WebDriverWait(self.driver, 5).until(
@@ -111,17 +128,17 @@ class ZoomHost:
 
             # Click it to pause the audio sharing
             self.driver.execute_script("arguments[0].click();", pause_audio_btn)
-            print("[INFO] Screen share audio has been muted/paused.")
+            logger.info("Screen share audio has been muted/paused.")
 
         except Exception as e:
-            print(f"Error in sharing screen: {e}")
+            logger.error(f"Error in sharing screen: {e}")
 
     def saveCookies(self):
         # Save cookies to a file
         cookies = self.driver.get_cookies()
         with open("cookies.pkl", "wb") as file:
             pickle.dump(cookies, file)
-        print("Cookies saved.")
+        logger.info("Cookies saved.")
 
     def loadCookies(self):
         # Load cookies from a file
@@ -131,13 +148,15 @@ class ZoomHost:
                     cookies = pickle.load(file)
                     for cookie in cookies:
                         self.driver.add_cookie(cookie)
-                    print("Cookies loaded.")
+                    logger.info("Cookies loaded.")
                 else:
-                    print("Cookies file is empty. Proceeding with new login.")
+                    logger.warning("Cookies file is empty. Proceeding with new login.")
         except FileNotFoundError:
-            print("No cookies file found. Proceeding with new login.")
+            logger.warning("No cookies file found. Proceeding with new login.")
         except EOFError:
-            print("Cookies file is corrupted or empty. Proceeding with new login.")
+            logger.warning(
+                "Cookies file is corrupted or empty. Proceeding with new login."
+            )
 
     def dynamic_wait(self, waittime):
         return WebDriverWait(self.driver, waittime)
@@ -146,12 +165,12 @@ class ZoomHost:
         self.setupdriver()
         self.participants_required = self.get_required_participants()
         self.zoom_login()
-        # After starting Zoom, retrieve new_login_url and new_password
+        # After starting Zoom, retrieve meeting ID and meeting password
         self.update_login_completed()
         time.sleep(1)
 
     def keep_footer_visible(self):
-        print("[INFO] Disabling Zoom's auto-hide footer...")
+        logger.info("Disabling Zoom's auto-hide footer...")
         try:
             # Injects a background script that fires a fake mouse movement every 2 seconds
             js_script = """
@@ -167,19 +186,21 @@ class ZoomHost:
                 }
             """
             self.driver.execute_script(js_script)
-            print("[INFO] Footer is now locked to visible.")
+            logger.info("Footer is now locked to visible.")
         except Exception as e:
-            print(f"[ERROR] Failed to lock footer visibility: {e}")
+            logger.error(f"Failed to lock footer visibility: {e}")
 
     def zoom_login(self):
-        print("getting host email and password")
+        logger.info("getting host email and password")
         self.login_email = self.get_host_email()
         self.login_passwd = self.get_host_password()
         self.login_email = self.login_email.strip()
         self.login_passwd = self.login_passwd.strip()
 
-        print(self.login_email)
-        print(self.login_passwd)
+        if not self.login_email or not self.login_passwd:
+            logger.error("Failed to Fetch login credentials from the server.")
+            self.driver.quit()
+            sys.exit(1)
 
         # Create a dictionary with the login details
         login_data = {
@@ -226,13 +247,11 @@ class ZoomHost:
                 )
             )
             self.driver.execute_script("arguments[0].click();", element)
-            print("clicked sign in button")
+            logger.info("clicked sign in button")
         except Exception:
-            print("Loaded session through cookies")
+            logger.info("Loaded session through cookies")
 
         if "signin" in self.driver.current_url:
-            print(self.login_email)
-            print(self.login_passwd)
 
             # if sys.platform.lower()=="linux":
             #     email_field=self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input#email")))
@@ -274,7 +293,7 @@ class ZoomHost:
             self.saveCookies()
 
         else:
-            print("previous session loaded")
+            logger.info("previous session loaded")
 
         self.wait.until(
             EC.presence_of_element_located((By.CSS_SELECTOR, "button.main__action-btn"))
@@ -293,69 +312,28 @@ class ZoomHost:
                 )
                 element.click()
 
-                print("User was already in the meeting.")
+                logger.info(
+                    "User was already in the meeting and has been removed to start a new session."
+                )
             except Exception:
-                print("new user login")
+                logger.info("new user login")
 
             self.driver.switch_to.default_content()
-            print("Clicked the element inside the iframe.")
+            logger.info("Clicked the element inside the iframe.")
         except Exception as e:
-            print(f"Error clicking the element inside the iframe: {str(e)}")
+            logger.error(f"Error clicking the element inside the iframe: {str(e)}")
 
-        # time.sleep(20000)
         time.sleep(2)
-        print("after 2 sec sleep")
         vel = self.wait.until(
             EC.presence_of_element_located((By.XPATH, '//*[@id="webclient"]'))
         )
         self.driver.switch_to.frame(vel)
-        print("after 2 switching to iframe")
         time.sleep(2)
-        print("after 2 sec sleep")
         action = webdriver.ActionChains(self.driver)
 
         action.move_by_offset(10, 20).perform()
-        # self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#participant button")))
-        # self.driver.execute_script("document.querySelector('#participant button').click()")
-        # try:
-        #     print("trying opening participants section")
-        #     self.dynamic_wait(20).until(EC.presence_of_element_located((By.CSS_SELECTOR, ".participants-section-container__participants-footer-bottom")))
-        #     participent_column = self.driver.find_elements(By.CSS_SELECTOR,".participants-section-container__participants-footer-bottom button")
-        #     print("after clicking participants columns")
-        # except:
-        #     print("except in opening participants section")
-        #     action.move_by_offset(10, 20).perform()
-        #     self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#participant button")))
-        #     self.driver.execute_script("document.querySelector('#participant button').click()")
-        #     self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".participants-section-container__participants-footer-bottom")))
-        #     participent_column = self.driver.find_elements(By.CSS_SELECTOR,".participants-section-container__participants-footer-bottom button")
-        #     print("after clicking participants columns")
-        # for btn in participent_column:
-        #     print(btn.text)
-        #     if btn.text == "Invite":
-        #         btn.click()
-        #         break
-        # self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".invite-footer__button-group")))
-        # invite_column = self.driver.find_elements(By.CSS_SELECTOR,".invite-footer__button-group button")
-        # for btn in invite_column:
-        #     print(btn.text)
-        #     if btn.text == "Copy URL":
-        #         btn.click()
-        #         break
-        # time.sleep(2)
-        # for btn in invite_column:
-        #     print(btn.text)
-        #     if btn.text == "Cancel":
-        #         btn.click()
-        #         break
 
         self.meeting_link = self.driver.current_url
-        # self.android_meet_link = pyperclip.paste()
-        print("+++++++++++++++++++++++++++++++++++++++++")
-        print("========================================")
-        print("checking meeting link")
-        # print(self.android_meet_link)
-        # self.send_meet_link()
         action.move_by_offset(10, 20).perform()
         time.sleep(1)
         audio_join_btn = self.wait.until(
@@ -372,19 +350,19 @@ class ZoomHost:
         )
         time.sleep(1)
         if audio_join_btn.text.lower() == "join audio":
-            print("audio not joined")
+            logger.info("audio not joined")
             self.driver.execute_script(
                 "document.querySelector('button.footer-button-base__button.join-audio-container__btn').click()"
             )
 
         elif audio_join_btn.text.lower() == "unmute":
-            print("it is muted")
+            logger.info("it is muted")
             self.driver.execute_script(
                 "document.querySelector('button.footer-button-base__button.join-audio-container__btn').click()"
             )
 
         elif audio_join_btn.text.lower() == "mute":
-            print("already unmuted")
+            logger.info("already unmuted")
         self.wait.until(
             EC.presence_of_element_located((By.XPATH, "//*[@id='audioOptionMenu']"))
         )
@@ -397,9 +375,9 @@ class ZoomHost:
             By.CSS_SELECTOR, "#audioOptionMenu a"
         )
         for el in setting_options:
-            print(el.text)
+            logger.info(el.text)
             if el.text == "Audio Settings":
-                print(el.text)
+                logger.info(el.text)
                 el.click()
                 break
         time.sleep(1)
@@ -422,67 +400,43 @@ class ZoomHost:
             video_join_btn.text.lower() == "join video"
             or video_join_btn.text.lower() == "start video"
         ):
-            print("video not joined")
+            logger.info("video not Turned on")
             self.driver.execute_script(
                 "document.querySelector('button.footer-button-base__button.send-video-container__btn').click()"
             )
 
         elif video_join_btn.text.lower() == "stop video":
-            print("already video on")
+            logger.info("already video on")
 
         self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#stats")))
         self.driver.execute_script("document.querySelector('#stats').click()")
         time.sleep(1)
-        self.send_meetin_link_and_password()
-
-    def send_meet_link(self):
-        # Call Flask endpoint to send meeting link
-        endpoint_url = f"{self.base_url}/meeting_link"
-        data = {"meet_link": self.android_meet_link}
-
-        try:
-            response = requests.post(endpoint_url, json=data)
-            if response.status_code == 200:
-                print("Meeting link sent successfully.")
-            else:
-                print(
-                    f"Failed to send meeting link. Status code: {response.status_code}"
-                )
-        except requests.RequestException as e:
-            print(f"Request error: {e}")
+        self.send_meeting_link_and_password()
 
     def wait_for_exit(self):
-        print("waiting for clients to disconnect")
+        logger.info("waiting for clients to left the meeting...")
         tries = 0
         count = self.monitor_client_count()
-        print(count, "participent count")
         while count > 1:
-            print(count, "participent count")
+            logger.info(f"{count} Devices in the Meeting")
             time.sleep(2)
             tries += 1
             if tries > 20:
-                print("max tries reach for client disconnection wait")
+                logger.warning("max tries reached for clients to leave the meeting.")
                 break
             count = self.monitor_client_count()
 
     # To download the csv
     def download_csv(self):
         # redirecting to dashboard
-        print("meeting link is", self.new_login_url)
         self.driver.get(
             "https://www.zoom.us/account/metrics/dashboard/home/#/pastMeetings"
         )
 
         # get meeting id formated
         cleaned_id = (
-            self.new_login_url[:3]
-            + " "
-            + self.new_login_url[3:7]
-            + " "
-            + self.new_login_url[7:]
+            self.meeting_id[:3] + " " + self.meeting_id[3:7] + " " + self.meeting_id[7:]
         )
-        print(self.new_login_url, "cleaned id idcscdsc", cleaned_id)
-        # XPath to find the <a> link associated with the meeting ID
 
         xpath = (
             f"//p[contains(@class, 'ellipsis') and contains(text(), '{cleaned_id}')]"
@@ -492,13 +446,11 @@ class ZoomHost:
         current_elem = self.wait.until(
             EC.presence_of_element_located((By.XPATH, xpath))
         )
-        print("current outer", current_elem.get_attribute("outerHTML"))
-        print("current text", current_elem.text)
         parent = current_elem.find_element(By.XPATH, "..")
         try:
             anchor = parent.find_element(By.TAG_NAME, "a")
         except BaseException:
-            print("coudlnt find anchro tag refreshing in 15 seconds..")
+            logger.warning("coudlnt find anchor tag refreshing in 15 seconds..")
             time.sleep(15)
             try:
                 self.driver.refresh()
@@ -508,16 +460,14 @@ class ZoomHost:
                 parent = current_elem.find_element(By.XPATH, "..")
                 anchor = parent.find_element(By.TAG_NAME, "a")
             except BaseException:
-                print("still link soes not appear...on last refresh")
+                logger.warning("still link Does not appear...on last refresh")
                 time.sleep(60)
                 self.driver.refresh()
                 current_elem = self.wait.until(
                     EC.presence_of_element_located((By.XPATH, xpath))
                 )
                 parent = current_elem.find_element(By.XPATH, "..")
-        print("parent outer", parent.get_attribute("outerHTML"))
         anchor = parent.find_element(By.TAG_NAME, "a")
-        print(anchor.get_attribute("href"))
 
         # redirecting to meeting dashboard
         self.driver.get(anchor.get_attribute("href"))
@@ -528,7 +478,7 @@ class ZoomHost:
             EC.element_to_be_clickable((By.XPATH, export_xpath))
         )
         export_btn.click()
-        print("Clicked Export button.")
+        logger.info("Clicked Export button.")
         try:
             # Wait for modal and click "Go to Downloads Page"
             modal_btn = self.dynamic_wait(25).until(
@@ -540,7 +490,7 @@ class ZoomHost:
                 )
             )
             modal_btn.click()
-            print("Clicked 'Go to Downloads Page'.")
+            logger.info("Clicked 'Go to Downloads Page'.")
         except BaseException:
             # did not get the download popup refresh here"
             self.driver.refresh()
@@ -549,7 +499,7 @@ class ZoomHost:
                 EC.element_to_be_clickable((By.XPATH, export_xpath))
             )
             export_btn.click()
-            print("Clicked Export button.")
+            logger.info("Clicked Export button.")
             modal_btn = self.wait.until(
                 EC.element_to_be_clickable(
                     (
@@ -559,10 +509,10 @@ class ZoomHost:
                 )
             )
             modal_btn.click()
-            print("Clicked 'Go to Downloads Page'.")
+            logger.info("Clicked 'Go to Downloads Page'.")
 
         # Wait for download to start
-        print("Waiting for download to complete...")
+        logger.info("Waiting for download to complete...")
         time.sleep(15)
         all_handles = self.driver.window_handles
         self.driver.switch_to.window(all_handles[-1])
@@ -576,7 +526,7 @@ class ZoomHost:
                 )
             )
         ).text
-        print(f"download file is {filename}")
+        logger.info(f"download file is {filename}")
         button__dd = self.wait.until(
             EC.presence_of_element_located(
                 (
@@ -586,14 +536,14 @@ class ZoomHost:
             )
         )
         self.driver.execute_script("arguments[0].click();", button__dd)
-        print("Clicked 'Download' button")
+        logger.info("Clicked 'Download' button")
         self.wait_for_download(filename, download_dir=os.getcwd(), timeout=45)
 
     def wait_for_download(self, dlname, download_dir, timeout=60):
         seconds = 0
         dl_wait = True
         final_file_path = None
-        print(dlname, download_dir, timeout, "<====directories")
+        logger.info(f"{dlname} {download_dir} {timeout} <====directories")
         while dl_wait and seconds < timeout:
             time.sleep(1)
             dl_wait = False
@@ -606,16 +556,16 @@ class ZoomHost:
             seconds += 1
 
         if final_file_path and os.path.isfile(final_file_path):
-            print(f"File downloaded: {final_file_path}")
+            logger.info(f"File downloaded: {final_file_path}")
             try:
                 with open(final_file_path, newline="") as csvfile:
                     reader = csv.reader(csvfile)
                     rows = list(reader)
                     endpoint_url = f"{self.base_url}/upload_csv"
-                    print(endpoint_url)
+                    logger.info(endpoint_url)
 
                     dd = {"filename": os.path.basename(final_file_path), "rows": rows}
-                    print(dd)
+                    logger.info(dd)
                     requests.post(
                         endpoint_url,
                         json={
@@ -624,9 +574,9 @@ class ZoomHost:
                         },
                     )
             except Exception as e:
-                print("Error reading file:", e)
+                logger.error(f"Error reading file: {e}")
         else:
-            print("File was not downloaded in time or not found.")
+            logger.warning("File was not downloaded in time or not found.")
 
     def stop_zoom(self):
         self.wait.until(
@@ -649,7 +599,6 @@ class ZoomHost:
         self.driver.execute_script(
             "document.querySelector('.leave-meeting-options__btn.leave-meeting-options__btn--default').click()"
         )
-        print("waiting for some time to let the dashboard have past meeting")
         download_csv = self.get_download_csv_flag()
         if download_csv:
             time.sleep(100)
@@ -668,19 +617,23 @@ class ZoomHost:
                 return 1
 
             if not counter_text.isdigit():
-                print(f"Unexpected participant counter value: {counter_text!r}")
+                logger.warning(
+                    f"Unexpected participant counter value: {counter_text!r}"
+                )
                 return 1
 
             return int(counter_text)
         except Exception as e:
-            print(f"Error reading participant count: {e}")
+            logger.error(f"Error reading participant count: {e}")
             return 1
 
     def set_start_test(self, flag=False):
         try:
             self.participants = self.monitor_client_count()
             self.set_participants()
-            print(self.participants_required, self.participants)
+            logger.info(
+                f"{self.participants_required} is the participants required and {self.participants} are currently in the meeting"
+            )
             if self.participants_required == self.participants:
                 self.update_start_test()
 
@@ -688,7 +641,7 @@ class ZoomHost:
                 self.update_start_test()
 
         except Exception as e:
-            print("error in seting start test", e)
+            logger.error(f"error in setting start test {e}")
 
     def get_download_csv_flag(self):
         try:
@@ -702,7 +655,7 @@ class ZoomHost:
 
             return False
         except Exception as e:
-            print(f"Error checking stop signal: {e}")
+            logger.error(f"Error checking get download csv flag: {e}")
             return False
 
     def check_stop_signal(self):
@@ -718,30 +671,28 @@ class ZoomHost:
                 # Only update if the server's stop signal is True
                 if stop_signal_from_server:
                     self.stop_signal = True
-                    print("Stop signal received from the server. Exiting the loop.")
-                else:
-
-                    print("No stop signal received from the server. Continuing.")
+                    logger.info(
+                        "Stop signal received from the Flask Server. Exiting the test."
+                    )
             return self.stop_signal
         except Exception as e:
-            print(f"Error checking stop signal: {e}")
+            logger.error(f"Error checking stop signal from the Flask Server: {e}")
 
-    def send_meetin_link_and_password(self):
-
-        # pattern = r'https://\S+?\.zoom\.us/(?:j|wc)/(?P<meeting_id>\d+)(?:\S*?pwd=(?P<password>[^\s&]+))?'
-
+    def send_meeting_link_and_password(self):
         pattern = r"https://\S+?\.zoom\.us/(?:j|wc)/(?P<meeting_id>\d+)\S*?pwd=(?P<password>[^\s&]+)"
 
         match = re.search(pattern, self.meeting_link)
         if match:
-            self.new_login_url = match.group("meeting_id")
-            self.new_login_passwd = match.group("password")
-            print("password and meeting id:", self.new_login_url, self.new_login_passwd)
-            if self.new_login_url:
-                self.update_login_email(self.new_login_url)
-            if self.new_login_passwd:
-                self.update_login_passwd(self.new_login_passwd)
-            print("pasword and email updated succesfuly for login")
+            self.meeting_id = match.group("meeting_id")
+            self.meeting_passwd = match.group("password")
+            logger.info(
+                f"meeting id: {self.meeting_id} meeting password: {self.meeting_passwd}"
+            )
+            if self.meeting_id:
+                self.update_meeting_id(self.meeting_id)
+            if self.meeting_passwd:
+                self.update_meeting_passwd(self.meeting_passwd)
+            logger.info("Meeting ID and password updated successfully")
 
     def capture_audio_stats(self):
         self.wait.until(
@@ -888,19 +839,18 @@ class ZoomHost:
         ]
 
     def get_host_email(self):
-        # Call Flask endpoint to get new_login_url
+        # Call Flask endpoint to get host email
         endpoint_url = f"{self.base_url}/get_host_email"
-        print(endpoint_url, "sdfsdf")
         try:
             response = requests.get(endpoint_url)
             if response.status_code == 200:
                 return response.json().get("host_email", None)
             else:
-                print(
-                    f"Failed to fetch new login URL. Status code: {response.status_code}"
+                logger.warning(
+                    f"Failed to fetch Login Email. Status code: {response.status_code}"
                 )
         except requests.RequestException as e:
-            print(f"Request error: {e}")
+            logger.error(f"Request error while getting login email: {e}")
         return None
 
     def get_host_password(self):
@@ -911,42 +861,42 @@ class ZoomHost:
             if response.status_code == 200:
                 return response.json().get("host_passwd", None)
             else:
-                print(
-                    f"Failed to fetch new password. Status code: {response.status_code}"
+                logger.warning(
+                    f"Failed to fetch login Password. Status code: {response.status_code}"
                 )
         except requests.RequestException as e:
-            print(f"Request error: {e}")
+            logger.error(f"Request error while getting login password: {e}")
         return None
 
-    def update_login_email(self, new_login_url):
+    def update_meeting_id(self, meeting_id):
         endpoint_url = f"{self.base_url}/login_url"
-        data = {"login_url": new_login_url}
+        data = {"login_url": meeting_id}
 
         try:
             response = requests.post(endpoint_url, json=data)
             if response.status_code == 200:
-                print("Remote login URL updated successfully.")
+                logger.info("Meeting ID updated successfully to Flask Server.")
             else:
-                print(
-                    f"Failed to update remote login URL. Status code: {response.status_code}"
+                logger.warning(
+                    f"Failed to update meeting ID to Flask Server. Status code: {response.status_code}"
                 )
         except requests.RequestException as e:
-            print(f"Request error: {e}")
+            logger.error(f"Request error: {e}")
 
-    def update_login_passwd(self, new_login_passwd):
+    def update_meeting_passwd(self, meeting_passwd):
         endpoint_url = f"{self.base_url}/login_passwd"
-        data = {"login_passwd": new_login_passwd}
+        data = {"login_passwd": meeting_passwd}
 
         try:
             response = requests.post(endpoint_url, json=data)
             if response.status_code == 200:
-                print("Remote login password updated successfully.")
+                logger.info("Meeting password updated successfully to Flask Server.")
             else:
-                print(
-                    f"Failed to update remote login password. Status code: {response.status_code}"
+                logger.warning(
+                    f"Failed to update meeting password to Flask Server. Status code: {response.status_code}"
                 )
         except requests.RequestException as e:
-            print(f"Request error: {e}")
+            logger.error(f"Request error: {e}")
 
     def update_login_completed(self):
         endpoint_url = f"{self.base_url}/login_completed"
@@ -954,13 +904,15 @@ class ZoomHost:
         try:
             response = requests.get(endpoint_url)
             if response.status_code == 200:
-                print("Login completed status updated successfully.")
+                logger.info(
+                    "Login completed status updated successfully to Flask Server."
+                )
             else:
-                print(
-                    f"Failed to update login completed status. Status code: {response.status_code}"
+                logger.warning(
+                    f"Failed to update login completed status to Flask Server. Status code: {response.status_code}"
                 )
         except requests.RequestException as e:
-            print(f"Request error: {e}")
+            logger.error(f"Request error while updating login completed status: {e}")
 
     def update_start_test(self):
 
@@ -969,13 +921,15 @@ class ZoomHost:
         try:
             response = requests.post(endpoint_url, json=data)
             if response.status_code == 200:
-                print("test started status updated successfully.")
+                logger.info("test started status updated successfully to Flask Server.")
             else:
-                print(
-                    f"Failed to update test started status. Status code: {response.status_code}"
+                logger.warning(
+                    f"Failed to update test started status to Flask Server. Status code: {response.status_code}"
                 )
         except requests.RequestException as e:
-            print(f"Request error: {e}")
+            logger.error(
+                f"Request error while updating test started status to Flask Server: {e}"
+            )
 
     def set_participants(self):
         endpoint_url = f"{self.base_url}/set_participants_joined"
@@ -983,13 +937,17 @@ class ZoomHost:
         try:
             response = requests.post(endpoint_url, json=data)
             if response.status_code == 200:
-                print("test participents joned updated successfully.")
+                logger.info(
+                    "test participants joined status updated successfully to Flask Server."
+                )
             else:
-                print(
-                    f"Failed to update particiupants status. Status code: {response.status_code}"
+                logger.warning(
+                    f"Failed to update participants status to Flask Server. Status code: {response.status_code}"
                 )
         except requests.RequestException as e:
-            print(f"Request error: {e}")
+            logger.error(
+                f"Request error while updating participants status to Flask Server: {e}"
+            )
 
     def get_required_participants(self):
         endpoint_url = f"{self.base_url}/get_participants_req"
@@ -998,11 +956,13 @@ class ZoomHost:
             if response.status_code == 200:
                 return response.json().get("participants", None)
             else:
-                print(
-                    f"Failed to fetch required participants. Status code: {response.status_code}"
+                logger.warning(
+                    f"Failed to fetch required participants from the Flask Server. Status code: {response.status_code}"
                 )
         except requests.RequestException as e:
-            print(f"Request error: {e}")
+            logger.error(
+                f"Request error while getting required participants from the Flask Server: {e}"
+            )
             return None
         return None
 
@@ -1015,11 +975,13 @@ class ZoomHost:
                 self.start_time = data.get("start_time")
                 self.end_time = data.get("end_time")
             else:
-                print(
-                    f"Failed to fetch new login URL. Status code: {response.status_code}"
+                logger.warning(
+                    f"Failed to fetch start and end time from the Flask Server. Status code: {response.status_code}"
                 )
         except requests.RequestException as e:
-            print(f"Request error: {e}")
+            logger.error(
+                f"Request error while fetching start and end time from the Flask Server: {e}"
+            )
         return None
 
     def send_client_disconnection(self):
@@ -1028,30 +990,17 @@ class ZoomHost:
         try:
             response = requests.post(endpoint_url, json=data)
             if response.status_code == 200:
-                print("test participents disconnection updated successfully.")
+                logger.info(
+                    "test participants disconnection updated successfully to Flask Server."
+                )
             else:
-                print(
-                    f"Failed to update particiupants disconnection. Status code: {response.status_code}"
+                logger.warning(
+                    f"Failed to update participants disconnection to Flask Server. Status code: {response.status_code}"
                 )
         except requests.RequestException as e:
-            print(f"Request error: {e}")
-
-    def read_credentials(self):
-        # Read credentials.txt in the current directory
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        credentials_file = os.path.join(current_dir, "credentials.txt")
-
-        try:
-            with open(credentials_file, "r") as file:
-                lines = file.readlines()
-                if lines:
-                    self.server_ip = lines[0].strip().split("=")[1]
-                    self.base_url = f"http://{self.server_ip}"
-                    print(f"Server IP set to {self.server_ip}")
-                else:
-                    print("Error: credentials.txt is empty.")
-        except IOError:
-            print(f"Error: Unable to read {credentials_file}")
+            logger.error(
+                f"Request error while updating participants disconnection to Flask Server: {e}"
+            )
 
     def get_stats_flags(self):
         endpoint_url = f"{self.base_url}/stats_opt"
@@ -1062,11 +1011,13 @@ class ZoomHost:
                 self.audio = data.get("audio_stats")
                 self.video = data.get("video_stats")
             else:
-                print(
-                    f"Failed to fetch stats flag. Status code: {response.status_code}"
+                logger.warning(
+                    f"Failed to fetch stats flag from the Flask Server. Status code: {response.status_code}"
                 )
         except requests.RequestException as e:
-            print(f"Request error: {e}")
+            logger.error(
+                f"Request error while fetching stats flag from the Flask Server: {e}"
+            )
         return None
 
     def collecting_stats(self):
@@ -1121,11 +1072,13 @@ class ZoomHost:
         try:
             response = requests.post(endpoint_url, json=data)
             if response.status_code == 200:
-                print("Stats sent successfully.")
+                logger.info("Stats sent successfully to Flask Server.")
             else:
-                print(f"Failed to send stats. Status code: {response.status_code}")
+                logger.warning(
+                    f"Failed to send stats to Flask Server. Status code: {response.status_code}"
+                )
         except requests.RequestException as e:
-            print(f"Request error: {e}")
+            logger.error(f"Request error while sending stats to Flask Server: {e}")
 
 
 if __name__ == "__main__":
@@ -1137,7 +1090,6 @@ if __name__ == "__main__":
     for argument in args.env:
         arg = argument.split("=")
         os.environ[arg[0]] = arg[1]
-    print(os.environ)
 
     zoom_host = ZoomHost(server_ip=args.ip)  # Replace with your actual server IP
 
@@ -1150,16 +1102,17 @@ if __name__ == "__main__":
             zoom_host.participants_required is not None
             and zoom_host.participants_required == zoom_host.participants
         ):
-            print(
-                zoom_host.participants_required,
+            logger.info(
+                f"participants required is {zoom_host.participants_required} and current participants in meeting is {zoom_host.participants}"
             )
-            print("required participants are connected", zoom_host.participants)
+            logger.info(
+                f"required participants are Joined the meeting. Starting the test."
+            )
             break
         elif datetime.now() > wait_limit:
-            print(
-                "wait limit is reached. Starting the test with available clients",
-                zoom_host.participants_required,
-                zoom_host.participants,
+            logger.warning(
+                f"wait limit is reached. Starting the test with available clients "
+                f"{zoom_host.participants_required} {zoom_host.participants}"
             )
             zoom_host.set_start_test(flag=True)
             break
@@ -1168,15 +1121,17 @@ if __name__ == "__main__":
     while zoom_host.start_time is None or zoom_host.end_time is None:
         count += 1
         if count > 24:
-            print(
+            logger.error(
                 "start and end time is not set from server even after 2 minutes. Exiting the test"
             )
             zoom_host.driver.quit()
             sys.exit(1)
-        print("waiting for start and end time from server")
+        logger.info("waiting for start and end time from server")
         zoom_host.get_start_and_end_time()
         time.sleep(5)
-    print("end_time and start time is", zoom_host.start_time, zoom_host.end_time)
+    logger.info(
+        f"End time and Start time of the test is {zoom_host.start_time} {zoom_host.end_time}"
+    )
     try:
         start_dt = datetime.fromisoformat(zoom_host.start_time.replace("Z", "+00:00"))
         end_dt = datetime.fromisoformat(zoom_host.end_time.replace("Z", "+00:00"))
@@ -1189,21 +1144,21 @@ if __name__ == "__main__":
         else:
             end_dt = end_dt.astimezone(zoom_host.tz)
     except Exception as e:
-        print(f"Invalid start/end time format from server: {e}")
+        logger.error(f"Invalid start/end time format from server: {e}")
         zoom_host.driver.quit()
         sys.exit(1)
 
     while start_dt > datetime.now(zoom_host.tz):
         time.sleep(2)
-        print("waiting for the start time")
+        logger.info("Waiting until the Start time of the test reached")
 
     while end_dt > datetime.now(zoom_host.tz):
-        print("monitoring the test")
+        logger.info("monitoring the test")
         if zoom_host.check_stop_signal():
             break
         zoom_host.send_stats_to_api(zoom_host.audio_stats, zoom_host.video_stats)
         time.sleep(2)
-    print("test has been completed")
+    logger.info("Test has been completed")
     zoom_host.wait_for_exit()
     zoom_host.stop_zoom()
     zoom_host.send_client_disconnection()
