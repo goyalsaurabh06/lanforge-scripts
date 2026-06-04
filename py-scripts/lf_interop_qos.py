@@ -1129,13 +1129,18 @@ class ThroughputQOS(Realm):
 
     def monitor_cx(self):
         """
-        This function waits for up to 20 iterations to allow all CXs (connections) to be created.
-
-        If some CXs are still not created after 20 iterations, then the CXs related to that device are removed,
+        This function waits for all CXs (connections) to be created on the server.
+        The retry count scales with the number of CXes (min 20, +1 per 5 CXes) so large
+        client counts get enough time.  Any CXs still missing after the wait are removed,
         along with their associated client and MAC entries from all relevant lists.
         """
 
-        max_retry = 20
+        created_cx_list = list(self.cx_profile.created_cx.keys())
+        # Scale max_retry with the number of CXes: allow ~0.25s per CX, minimum 20 retries.
+        # With 200 clients × 4 TOS = 800 CXes this gives 160 retries (320 s) instead of
+        # the old hardcoded 40 s, which caused all CXes to be reported as "not created" and
+        # removed when client count was ≥ 200.
+        max_retry = max(20, len(created_cx_list) // 5)
         current_retry = 0
         while current_retry < max_retry:
             not_running_cx = []
@@ -1153,7 +1158,7 @@ class ThroughputQOS(Realm):
                     not_running_cx.append(created_cxs.split('_')[0])   # CX was not created
             if count_of_cx == len(created_cx_list):
                 break
-            logger.info(f"Try {current_retry + 1} out of 20: Waiting for the cross-connection to be created.")
+            logger.info(f"Try {current_retry + 1} out of {max_retry}: Waiting for the cross-connection to be created.")
             time.sleep(2)
             current_retry += 1
         cxs_to_remove = set()
@@ -1331,19 +1336,31 @@ class ThroughputQOS(Realm):
             index += 1
             now = datetime.now()
             current_time = now
-            # This API Call to get All the running l3 endpoints data.
-            try:
-                l3_endp_data = self.json_get(
-                    '/endp/{}/list?fields=name,rx rate (last),rx drop %25,tos'.format(
-                        ','.join(cx_list_endp))
-                )
-                if l3_endp_data is None or 'endpoint' not in l3_endp_data:
-                    logger.warning("Endpoint data query returned None or missing 'endpoint' key. Retrying...")
-                    time.sleep(1)
-                    continue
-                endp_data = list(l3_endp_data['endpoint'])
-            except Exception as e:
-                logger.error(f"Failed to fetch endpoint data: {e}")
+            # Fetch endpoint data in batches of 50 to avoid exceeding the LANforge
+            # server's URL length limit when there are many CXes (e.g. 200+ stations
+            # × 4 TOS × 2 sides = 1600+ endpoint names would overflow a single URL).
+            _ENDP_BATCH = 50
+            endp_data = []
+            _batch_error = False
+            for _bi in range(0, len(cx_list_endp), _ENDP_BATCH):
+                _chunk = cx_list_endp[_bi:_bi + _ENDP_BATCH]
+                try:
+                    _resp = self.json_get(
+                        '/endp/{}/list?fields=name,rx rate (last),rx drop %25,tos'.format(
+                            ','.join(_chunk))
+                    )
+                    if _resp is None or 'endpoint' not in _resp:
+                        logger.warning(
+                            "Endpoint batch %d returned no data; retrying cycle.",
+                            _bi // _ENDP_BATCH)
+                        _batch_error = True
+                        break
+                    endp_data.extend(_resp['endpoint'])
+                except Exception as _e:
+                    logger.error("Failed to fetch endpoint batch %d: %s", _bi // _ENDP_BATCH, _e)
+                    _batch_error = True
+                    break
+            if _batch_error:
                 time.sleep(1)
                 continue
 
@@ -1551,7 +1568,8 @@ class ThroughputQOS(Realm):
             if getattr(self, "do_bandsteering", False):
                 self.band_steering_df.append(overall_entry)
                 df_bs = pd.DataFrame(self.band_steering_df)
-                df_bs.to_csv('overall_throughput.csv', index=False)
+                _bs_csv_dir = self.result_dir if self.result_dir else "."
+                df_bs.to_csv(os.path.join(_bs_csv_dir, 'overall_throughput.csv'), index=False)
                 self.throughput_data.append({
                     cx: [t_response[cx][0], t_response[cx][1],
                          t_response[cx][2], t_response[cx][3]]
@@ -1600,7 +1618,8 @@ class ThroughputQOS(Realm):
             else:
                 if self.do_bandsteering:
                     df1 = pd.DataFrame(self.band_steering_df)
-                    df1.to_csv('overall_throughput.csv', index=False)
+                    _bs_csv_dir = self.result_dir if self.result_dir else "."
+                    df1.to_csv(os.path.join(_bs_csv_dir, 'overall_throughput.csv'), index=False)
                 time_break = 1
 
             write_now = True
@@ -1648,6 +1667,12 @@ class ThroughputQOS(Realm):
                     if client_name in sta_rows:
                         sta_rows[client_name].append(row)
 
+            # Cache the latest port_stats snapshot so get_portmgr_data() can
+            # use association data (SSID, BSSID, channel, RSSI, mode) that was
+            # captured while stations were actively transmitting.
+            if port_stats:
+                self._last_port_stats = dict(port_stats)
+
             time.sleep(1)
         # This is for Robo from WebGui
         if self.robot_test and webgui_mode and self.df_for_webui:
@@ -1658,6 +1683,7 @@ class ThroughputQOS(Realm):
             last_e["end_time"] = last_e["timestamp"]
             self.df_for_webui.append(last_e)
             df1 = pd.DataFrame(self.df_for_webui)
+            os.makedirs(runtime_dir, exist_ok=True)
             df1.to_csv('{}/overall_throughput_{}.csv'.format(runtime_dir, curr_coordinate), index=False)
 
         # This is for Normal WebGui QOS Test.
@@ -1700,7 +1726,7 @@ class ThroughputQOS(Realm):
             self.generated_station_csv_files.append(fname)
 
         logger.info("connections download {}".format(connections_download))
-        logger.info("connections {}".format(connections_upload))
+        logger.info("connections upload{}".format(connections_upload))
         self.connections_download = connections_download
         self.connections_upload = connections_upload
         self.drop_a_per = drop_a_per
@@ -2052,6 +2078,9 @@ class ThroughputQOS(Realm):
     def get_portmgr_data(self, device_list):
         """This method is used to collect Port Manager Tab Data for reporting."""
         ssid_list, mac_list, mode_list, bssid_list, channel_list, rssi_list = [], [], [], [], [], []
+        cached = getattr(self, "_last_port_stats", {})  # while monitoring these are the last stats obtained.
+
+        # Always fetch /port/all —
         port_json = self.json_get('/port/all')['interfaces']
 
         # Flatten port_json to easily search
@@ -2060,19 +2089,37 @@ class ThroughputQOS(Realm):
             interfaces_dict.update(block)
 
         for target_dev in device_list:
-            found = False
-            for dev, data in interfaces_dict.items():
-                if target_dev in dev:
-                    ssid_list.append(data.get("ssid", "-"))
-                    mac_list.append(data.get("mac", "-"))
-                    bssid_list.append(data.get("ap", "-"))
-                    channel_list.append(data.get("channel", "-"))
-                    mode_list.append(data.get("mode", "-"))
-                    rssi_list.append(data.get("signal", "-"))
-                    found = True
+            # Search cache for association fields captured during live traffic
+            cached_entry = None
+            for key in cached:
+                if target_dev in key or key in target_dev:
+                    cached_entry = cached[key]
                     break
-            if not found:
-                # Add default padding so lengths always precisely match device_list
+
+            # Search /port/all for mac (and fallback data)
+            port_entry = None
+            for dev, pdata in interfaces_dict.items():
+                if target_dev in dev:
+                    port_entry = pdata
+                    break
+
+            if cached_entry is not None:
+                mac = port_entry.get("mac", "-") if port_entry else "-"
+                ssid_list.append(cached_entry.get("ssid", "-") or "-")
+                mac_list.append(mac)
+                bssid_list.append(cached_entry.get("bssid", "-") or "-")
+                channel_list.append(cached_entry.get("channel", "-") or "-")
+                mode_list.append(cached_entry.get("mode", "-") or "-")
+                rssi_list.append(cached_entry.get("rssi", "-") or "-")
+            elif port_entry is not None:
+                # Fall back to live /port/all data
+                ssid_list.append(port_entry.get("ssid", "-"))
+                mac_list.append(port_entry.get("mac", "-"))
+                bssid_list.append(port_entry.get("ap", "-"))
+                channel_list.append(port_entry.get("channel", "-"))
+                mode_list.append(port_entry.get("mode", "-"))
+                rssi_list.append(port_entry.get("signal", "-"))
+            else:
                 ssid_list.append("-")
                 mac_list.append("-")
                 bssid_list.append("-")
@@ -2639,6 +2686,12 @@ class ThroughputQOS(Realm):
 
             print(f"{client_list} : {client_list_1} : {macid_list} : {n_clients} : {n_ports}")
 
+        macid_lists = self.macid_list
+        ssid_lists = self.ssid_list
+        bssid_lists = self.bssid_list
+        channel_lists = self.channels_list
+        rssi_lists = self.rssi_list
+
         load = ""
         upload_list, download_list, individual_upload_list, individual_download_list = [], [], [], []
         individual_set, colors, labels = [], [], []
@@ -2881,11 +2934,11 @@ class ThroughputQOS(Realm):
                     else:
                         bk_dataframe = {
                             " Client Name ": client_list,
-                            " MAC ": self.macid_list,
-                            " SSID ": self.ssid_list,
-                            " BSSID ": self.bssid_list,
-                            " Channel ": self.channels_list,
-                            " RSSI ": self.rssi_list,
+                            " MAC ": macid_lists,
+                            " SSID ": ssid_lists,
+                            " BSSID ": bssid_lists,
+                            " Channel ": channel_lists,
+                            " RSSI ": rssi_lists,
                             " Type of traffic ": bk_tos_list,
                             " Offered upload rate ": upload_list,
                             " Offered download rate ": download_list,
@@ -3013,11 +3066,11 @@ class ThroughputQOS(Realm):
                     else:
                         be_dataframe = {
                             " Client Name ": client_list,
-                            " MAC ": self.macid_list,
-                            " SSID ": self.ssid_list,
-                            " BSSID ": self.bssid_list,
-                            " Channel ": self.channels_list,
-                            " RSSI ": self.rssi_list,
+                            " MAC ": macid_lists,
+                            " SSID ": ssid_lists,
+                            " BSSID ": bssid_lists,
+                            " Channel ": channel_lists,
+                            " RSSI ": rssi_lists,
                             " Type of traffic ": be_tos_list,
                             " Offered upload rate ": upload_list,
                             " Offered download rate ": download_list,
@@ -3144,11 +3197,11 @@ class ThroughputQOS(Realm):
                     else:
                         vi_dataframe = {
                             " Client Name ": client_list,
-                            " MAC ": self.macid_list,
-                            " SSID ": self.ssid_list,
-                            " BSSID ": self.bssid_list,
-                            " Channel ": self.channels_list,
-                            " RSSI ": self.rssi_list,
+                            " MAC ": macid_lists,
+                            " SSID ": ssid_lists,
+                            " BSSID ": bssid_lists,
+                            " Channel ": channel_lists,
+                            " RSSI ": rssi_lists,
                             " Type of traffic ": vi_tos_list,
                             " Offered upload rate ": upload_list,
                             " Offered download rate ": download_list,
@@ -3277,11 +3330,11 @@ class ThroughputQOS(Realm):
                     else:
                         vo_dataframe = {
                             " Client Name ": client_list,
-                            " MAC ": self.macid_list,
-                            " SSID ": self.ssid_list,
-                            " BSSID ": self.bssid_list,
-                            " Channel ": self.channels_list,
-                            " RSSI ": self.rssi_list,
+                            " MAC ": macid_lists,
+                            " SSID ": ssid_lists,
+                            " BSSID ": bssid_lists,
+                            " Channel ": channel_lists,
+                            " RSSI ": rssi_lists,
                             " Type of traffic ": vo_tos_list,
                             " Offered upload rate ": upload_list,
                             " Offered download rate ": download_list,
@@ -3713,6 +3766,14 @@ class ThroughputQOS(Realm):
         coordinate into one document.
         """
         self.ssid_list = self.get_ssid_list(self.input_devices_list)
+        # Populate all port-manager lists so generate_individual_graph has real data
+        _s, _m, _mo, _b, _ch, _rs = self.get_portmgr_data(self.input_devices_list)
+        self.ssid_list = _s
+        self.macid_list = _m
+        self.mode_list = _mo
+        self.bssid_list = _b
+        self.channels_list = _ch
+        self.rssi_list = _rs
         load = ''
         rate_down = str(str(int(self.cx_profile.side_b_min_bps) / 1000000) + ' ' + 'Mbps')
         rate_up = str(str(int(self.cx_profile.side_a_min_bps) / 1000000) + ' ' + 'Mbps')
@@ -4084,16 +4145,18 @@ class ThroughputQOS(Realm):
             connections_upload_avg = dict.fromkeys(list(self.cx_profile.created_cx.keys()), float(0))
             connections_download_avg = dict.fromkeys(list(self.cx_profile.created_cx.keys()), float(0))
             # # rx_rate list is calculated
+            # thpt is a dict: {cx_name: [ul, dl, drop_a, drop_b], ...}
+            # enumerate gives (int_index, cx_name); use cx_name to index the dict.
             for thpt in self.throughput_data:
                 for ind, _k in enumerate(thpt):
-                    avg_upload[ind].append(thpt[ind][1])
-                    avg_download[ind].append(thpt[ind][0])
-                    avg_drop_a[ind].append(thpt[ind][2])
-                    avg_drop_b[ind].append(thpt[ind][3])
-                    upload[ind].append(thpt[ind][1])
-                    download[ind].append(thpt[ind][0])
-                    drop_a[ind].append(thpt[ind][2])
-                    drop_b[ind].append(thpt[ind][3])
+                    avg_upload[ind].append(thpt[_k][1])
+                    avg_download[ind].append(thpt[_k][0])
+                    avg_drop_a[ind].append(thpt[_k][2])
+                    avg_drop_b[ind].append(thpt[_k][3])
+                    upload[ind].append(thpt[_k][1])
+                    download[ind].append(thpt[_k][0])
+                    drop_a[ind].append(thpt[_k][2])
+                    drop_b[ind].append(thpt[_k][3])
 
             # Rounding of the results upto 2 decimals
             upload_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in upload]
@@ -4119,7 +4182,7 @@ class ThroughputQOS(Realm):
             for i in range(len(avg_drop_b_per)):
                 dropb_connections.update({keys[i]: avg_drop_b_per[i]})
             logger.info("connections download {}".format(connections_download))
-            logger.info("connections {}".format(connections_upload))
+            logger.info("connections upload{}".format(connections_upload))
             test_results = {'test_results': []}
             data = {}
             test_results['test_results'].append(self.evaluate_qos(connections_download, connections_upload, drop_a_per, drop_b_per))
@@ -4138,6 +4201,18 @@ class ThroughputQOS(Realm):
                 )
                 df1 = pd.DataFrame(self.band_steering_df)
                 df1.to_csv('{}/overall_throughput.csv'.format(self.result_dir, ), index=False)
+            # Populate port-manager lists so report tables show real MAC/SSID/BSSID/Channel/RSSI data.
+            # In the bandsteering path get_portmgr_data() is never called elsewhere, so call it here.
+            _pm_devices = self.input_devices_list if self.input_devices_list else []
+            if _pm_devices:
+                (_s, _m, _mo, _b, _ch, _rs) = self.get_portmgr_data(_pm_devices)
+                self.ssid_list = _s
+                self.macid_list = _m
+                self.mode_list = _mo
+                self.bssid_list = _b
+                self.channels_list = _ch
+                self.rssi_list = _rs
+
             self.generate_report(
                 data=data,
                 input_setup_info=input_setup_info,
@@ -4177,7 +4252,8 @@ class ThroughputQOS(Realm):
                         self.start(False, False)
                         time.sleep(10)
                         connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b = self.monitor(
-                            curr_coordinate=coordinate)
+                            curr_coordinate=coordinate,
+                            runtime_dir=self.result_dir if self.result_dir else "per_client_csv")
                         logger.info("connections download {}".format(connections_download))
                         logger.info("connections upload {}".format(connections_upload))
                         self.stop()
@@ -4242,7 +4318,9 @@ class ThroughputQOS(Realm):
                             self.start(False, False)
                             monitor_charge_time = datetime.now()
                             connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b = self.monitor(
-                                curr_coordinate=coordinate, curr_rotation=self.current_angle, monitor_charge_time=monitor_charge_time)
+                                curr_coordinate=coordinate, curr_rotation=self.current_angle,
+                                monitor_charge_time=monitor_charge_time,
+                                runtime_dir=self.result_dir if self.result_dir else "per_client_csv")
                             logger.info("connections download {}".format(connections_download))
                             logger.info("connections upload {}".format(connections_upload))
                             self.stop()
