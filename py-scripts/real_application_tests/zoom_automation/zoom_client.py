@@ -13,6 +13,23 @@ import os
 import requests
 import socket
 import pyautogui
+import logging
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+_log_fmt = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+
+_console_handler = logging.StreamHandler()
+_console_handler.setFormatter(_log_fmt)
+logger.addHandler(_console_handler)
+
+_file_handler = logging.FileHandler(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "zoom_client.log"),
+    mode="w",
+)
+_file_handler.setFormatter(_log_fmt)
+logger.addHandler(_file_handler)
 
 
 class ZoomClient:
@@ -80,13 +97,12 @@ class ZoomClient:
                 # Only update if the server's stop signal is True
                 if stop_signal_from_server:
                     self.stop_signal = True
-                    print("Stop signal received from the server. Exiting the loop.")
-                else:
-
-                    print("No stop signal received from the server. Continuing.")
+                    logger.info(
+                        "Stop signal received from the server. Exiting the Test."
+                    )
             return self.stop_signal
         except Exception as e:
-            print(f"Error checking stop signal: {e}")
+            logger.error(f"Error checking stop signal: {e}")
 
     def start_zoom(self):
         self.setupdriver()
@@ -100,14 +116,14 @@ class ZoomClient:
         while self.start_time is None or self.end_time is None:
             count += 1
             if count > 60:
-                print(
+                logger.error(
                     "Failed to retrieve start and end time from the server after 5 minutes."
                 )
                 self.stop_zoom()
                 sys.exit(1)
             self.get_start_and_end_time()
             time.sleep(5)
-        print("end_time and srtrt time is", self.start_time, self.end_time)
+        logger.info(f"end_time and start time is {self.start_time} {self.end_time}")
         try:
             start_dt = datetime.fromisoformat(self.start_time.replace("Z", "+00:00"))
             end_dt = datetime.fromisoformat(self.end_time.replace("Z", "+00:00"))
@@ -120,23 +136,23 @@ class ZoomClient:
             else:
                 end_dt = end_dt.astimezone(self.tz)
         except Exception as e:
-            print(f"Invalid start/end time format from server: {e}")
+            logger.error(f"Invalid start/end time format from server: {e}")
             self.stop_zoom()
             sys.exit(1)
 
         while start_dt > datetime.now(self.tz):
             time.sleep(2)
-            print("waiting for the start time")
+            logger.info("waiting for the start time")
 
         while end_dt > datetime.now(self.tz):
-            print("monitoring the test")
+            logger.info("monitoring the test")
             if self.check_stop_signal():
                 break
             # stats = self.collecting_stats()
             self.send_stats_to_api(self.audio_stats, self.video_stats)
             time.sleep(1)
         self.stop_zoom()
-        print("test has been completed")
+        logger.info("test has been completed")
 
     def stop_zoom(self):
         self.wait.until(
@@ -166,24 +182,6 @@ class ZoomClient:
 
         self.driver.get("https://app.zoom.us/wc/join")
 
-        # print("checking self.meeting_link",self.meeting_link)
-
-        # self.driver.get(str(self.meeting_link))
-        # time.sleep(200)
-
-        # self.wait.until(EC.presence_of_element_located(
-        #     (By.CSS_SELECTOR, "#joinMeeting input.join-meetingId"))).send_keys(Keys.CONTROL + 'v')
-        # time.sleep(200)
-        # Assuming testInputValue is your meeting ID or the value you want to input
-        # script = """
-        # var joinMeetingInput = document.querySelector('#joinMeeting input.join-meetingId');
-        # joinMeetingInput.click();
-        # joinMeetingInput.value = arguments[0];
-        # joinMeetingInput.dispatchEvent(new Event('change'));
-        # joinMeetingInput.dispatchEvent(new Event('input'));
-        # joinMeetingInput.dispatchEvent(new Event('blur'));
-
-        # """
         formatted_login_url = (
             self.new_login_url[:3]
             + " "
@@ -238,10 +236,6 @@ class ZoomClient:
             )
         ).click()
         time.sleep(1)
-        # self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR,
-        #                                              "#voip-tab button.join-audio-by-voip__join-btn")))
-        # self.driver.execute_script("document.querySelector('#voip-tab button.join-audio-by-voip__join-btn').click()")
-        # time.sleep(1)
         action = webdriver.ActionChains(self.driver)
         action.move_by_offset(10, 20).perform()
         time.sleep(1)
@@ -258,24 +252,20 @@ class ZoomClient:
         )
         time.sleep(1)
         if audio_join_btn.text.lower() == "join audio":
-            print("audio not joined")
-            # self.driver.execute_script("document.querySelector('button.footer-button-base__button.join-audio-container__btn').click()")
-            # self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR,
-            #                                          "#voip-tab button.join-audio-by-voip__join-btn")))
-            # self.driver.execute_script("document.querySelector('#voip-tab button.join-audio-by-voip__join-btn').click()")
-            # time.sleep(3)
+            logger.info("audio not joined")
             self.driver.execute_script(
                 "document.querySelector('button.footer-button-base__button.join-audio-container__btn').click()"
             )
 
         elif audio_join_btn.text.lower() == "unmute":
-            print("it is muted")
+            logger.info("Audio already joined but muted")
             self.driver.execute_script(
                 "document.querySelector('button.footer-button-base__button.join-audio-container__btn').click()"
             )
+            logger.info("audio unmuted")
 
         elif audio_join_btn.text.lower() == "mute":
-            print("already unmuted")
+            logger.info("Audio already unmuted")
         self.wait.until(
             EC.presence_of_element_located((By.XPATH, "//*[@id='audioOptionMenu']"))
         )
@@ -311,13 +301,14 @@ class ZoomClient:
             video_join_btn.text.lower() == "join video"
             or video_join_btn.text.lower() == "start video"
         ):
-            print("video not joined")
+            logger.info("video not joined")
             self.driver.execute_script(
                 "document.querySelector('button.footer-button-base__button.send-video-container__btn').click()"
             )
+            logger.info("Enabled video")
 
         elif video_join_btn.text.lower() == "stop video":
-            print("already video on")
+            logger.info("already video Enabled")
         self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#stats")))
         self.driver.execute_script("document.querySelector('#stats').click()")
         time.sleep(1)
@@ -326,9 +317,11 @@ class ZoomClient:
         try:
             self.get_login_id()
             self.get_login_passwd()
-            print("pasword and email fetched succesfuly for login")
+            logger.info(
+                "Meeting ID and Password fetched successfully for Joining the meeting."
+            )
         except Exception as e:
-            print("error in gettig password and meeting id", e)
+            logger.error(f"error in getting password and meeting id {e}")
 
     def capture_audio_stats(self):
         self.wait.until(
@@ -483,11 +476,13 @@ class ZoomClient:
                 self.audio = data.get("audio_stats")
                 self.video = data.get("video_stats")
             else:
-                print(
-                    f"Failed to fetch stats flag. Status code: {response.status_code}"
+                logger.error(
+                    f"Failed to fetch stats flag from the Flask Server. Status code: {response.status_code}"
                 )
         except requests.RequestException as e:
-            print(f"Request error: {e}")
+            logger.error(
+                f"Request error while fetching stats flag from flask server: {e}"
+            )
         return None
 
     def collecting_stats(self):
@@ -534,11 +529,13 @@ class ZoomClient:
         try:
             response = requests.post(endpoint_url, json=data)
             if response.status_code == 200:
-                print("Stats sent successfully.")
+                logger.info("Stats sent successfully.")
             else:
-                print(f"Failed to send stats. Status code: {response.status_code}")
+                logger.error(
+                    f"Failed to send stats to Flask Server. Status code: {response.status_code}"
+                )
         except requests.RequestException as e:
-            print(f"Request error: {e}")
+            logger.error(f"Request error While sending stats to Flask Server: {e}")
 
     def get_formated_time(self, timestamp_str):
         timestamp = datetime.fromisoformat(timestamp_str)
@@ -550,38 +547,42 @@ class ZoomClient:
 
     def get_login_id(self):
         endpoint_url = f"{self.base_url}/login_url"
-        print(endpoint_url)
+        logger.info(endpoint_url)
         try:
             response = requests.get(endpoint_url)
             if response.status_code == 200:
-                print("Remote login URL fetched successfully.")
+                logger.info("Remote login URL fetched successfully.")
                 data = response.json()
-                print(data, str(data))
-                print(type(data))
+                logger.info(f"{data} {str(data)}")
+                logger.info(str(type(data)))
                 self.new_login_url = data.get("login_url")
-                print("checking self.new_login_url", self.new_login_url)
+                logger.info(f"checking self.new_login_url {self.new_login_url}")
             else:
-                print(
-                    f"Failed to fetch remote login URL. Status code: {response.status_code}"
+                logger.error(
+                    f"Failed to fetch remote login URL from Flask Server. Status code: {response.status_code}"
                 )
         except requests.RequestException as e:
-            print(f"Request error: {e}")
+            logger.error(
+                f"Request error while fetching remote login URL from Flask Server: {e}"
+            )
 
     def get_login_passwd(self):
         endpoint_url = f"{self.base_url}/login_passwd"
         try:
             response = requests.get(endpoint_url)
             if response.status_code == 200:
-                print("Remote login password fetched successfully.")
+                logger.info("Remote login password fetched successfully.")
                 data = response.json()
                 self.new_login_passwd = data.get("login_passwd")
-                print("checking self.new_login_passwd", self.new_login_passwd)
+                logger.info(f"checking self.new_login_passwd {self.new_login_passwd}")
             else:
-                print(
-                    f"Failed to fetch remote login password. Status code: {response.status_code}"
+                logger.error(
+                    f"Failed to fetch remote login password from Flask Server. Status code: {response.status_code}"
                 )
         except requests.RequestException as e:
-            print(f"Request error: {e}")
+            logger.error(
+                f"Request error while fetching remote login password from Flask Server: {e}"
+            )
 
     def get_start_and_end_time(self):
         endpoint_url = f"{self.base_url}/get_start_end_time"
@@ -592,11 +593,13 @@ class ZoomClient:
                 self.start_time = data.get("start_time")
                 self.end_time = data.get("end_time")
             else:
-                print(
-                    f"Failed to fetch new login URL. Status code: {response.status_code}"
+                logger.error(
+                    f"Failed to fetch start and end time from Flask Server. Status code: {response.status_code}"
                 )
         except requests.RequestException as e:
-            print(f"Request error: {e}")
+            logger.error(
+                f"Request error while fetching start and end time from Flask Server: {e}"
+            )
         return None
 
 
@@ -609,8 +612,6 @@ if __name__ == "__main__":
     for argument in args.env:
         arg = argument.split("=")
         os.environ[arg[0]] = arg[1]
-    print(os.environ)
 
-    # Example usage:
-    zoom_client = ZoomClient(server_ip=args.ip)  # Replace with your actual server IP
+    zoom_client = ZoomClient(server_ip=args.ip)
     zoom_client.start_zoom()
