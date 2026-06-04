@@ -89,6 +89,23 @@ class YouTubeAutomation:
         'type == "XCUIElementTypeOther" AND name CONTAINS[c] "id.player.overlay" AND visible == true'
     )
 
+    # Predicates for locating the Full Screen button in the YouTube player controls.
+    # Tried in order — first match wins.
+    FULLSCREEN_BUTTON_PREDICATES = [
+        'type == "XCUIElementTypeButton" AND name == "id.player.fullscreen.button"',
+        'type == "XCUIElementTypeButton" AND label == "Enter full screen"',
+        'type == "XCUIElementTypeButton" AND label CONTAINS[c] "full screen"',
+        'type == "XCUIElementTypeButton" AND label CONTAINS[c] "fullscreen"',
+        'type == "XCUIElementTypeButton" AND name CONTAINS[c] "fullscreen"',
+        'type == "XCUIElementTypeButton" AND accessibilityIdentifier CONTAINS[c] "fullscreen"',
+    ]
+    # Predicates to detect if already in fullscreen (exit-fullscreen button visible).
+    EXIT_FULLSCREEN_PREDICATES = [
+        'type == "XCUIElementTypeButton" AND label CONTAINS[c] "exit full screen"',
+        'type == "XCUIElementTypeButton" AND label CONTAINS[c] "exit fullscreen"',
+        'type == "XCUIElementTypeButton" AND name CONTAINS[c] "exit_fullscreen"',
+    ]
+
     _STAT_PREDICATES = [
         (
             'elementType == XCUIElementTypeStaticText AND ('
@@ -574,6 +591,108 @@ class YouTubeAutomation:
         w = size['width']
         return {'x': 0, 'y': 88, 'width': w, 'height': int(w * 9 / 16)}
 
+    # ── Full Screen activation ────────────────────────────────────────────
+    def _enter_fullscreen(self) -> bool:
+        """
+        Switch the YouTube player to Full Screen mode.
+
+        Strategy:
+          1. Check if already in fullscreen (exit-fullscreen button visible).
+          2. Tap the player center to surface overlay controls.
+          3. Locate the fullscreen button via accessibility predicates.
+          4. Fallback: tap the bottom-right corner of the player (where the
+             fullscreen icon appears on all supported iPhone models).
+          5. Verify fullscreen by checking for the exit-fullscreen button.
+
+        Returns True if fullscreen was entered (or was already active),
+        False otherwise.  Failure is non-fatal — the caller may proceed
+        with Stats for Nerds in the current player mode.
+        """
+        logger.info("[%s] Entering fullscreen...", self.device_udid)
+
+        try:
+            # ── Already in fullscreen? ──────────────────────────────────
+            for pred in self.EXIT_FULLSCREEN_PREDICATES:
+                try:
+                    with self._driver_lock:
+                        els = self.driver.find_elements(AppiumBy.IOS_PREDICATE, pred)
+                        if els and els[0].is_displayed():
+                            logger.info("[%s] Already in fullscreen mode", self.device_udid)
+                            return True
+                except Exception:
+                    pass
+
+            # ── Step 1: Tap the player to make controls visible ────────
+            rect = self._get_player_rect()
+            player_cx = rect['x'] + rect['width'] // 2
+            player_cy = rect['y'] + rect['height'] // 2
+            self._tap_point(player_cx, player_cy)
+            time.sleep(0.6)
+
+            # ── Step 2: Try accessibility-based fullscreen button tap ──
+            if self._tap_first_element(self.FULLSCREEN_BUTTON_PREDICATES, timeout=5):
+                logger.info("[%s] Fullscreen button tapped via accessibility predicate", self.device_udid)
+                time.sleep(1.5)  # allow rotation / animation to settle
+                logger.info("[%s] Fullscreen enabled successfully", self.device_udid)
+                return True
+
+            # ── Step 3: Coordinate fallback ────────────────────────────
+            logger.warning(
+                "[%s] Fullscreen button not found via accessibility, "
+                "using coordinate fallback", self.device_udid,
+            )
+
+            # Re-tap player center to ensure controls are still visible
+            self._tap_point(player_cx, player_cy)
+            time.sleep(0.5)
+
+            # The fullscreen icon sits in the bottom-right corner of the
+            # player area on all supported iPhone sizes.  Use proportional
+            # offsets from the player rect so it scales across models.
+            fs_x = rect['x'] + rect['width'] - max(24, int(rect['width'] * 0.06))
+            fs_y = rect['y'] + rect['height'] - max(14, int(rect['height'] * 0.07))
+            logger.info("[%s] Coordinate fallback: tapping (%d, %d)", self.device_udid, fs_x, fs_y)
+            self._tap_point(fs_x, fs_y)
+            time.sleep(1.5)
+
+            # ── Step 4: Verify fullscreen ──────────────────────────────
+            for pred in self.EXIT_FULLSCREEN_PREDICATES:
+                try:
+                    with self._driver_lock:
+                        els = self.driver.find_elements(AppiumBy.IOS_PREDICATE, pred)
+                        if els:
+                            logger.info(
+                                "[%s] Fullscreen enabled successfully (coordinate fallback)",
+                                self.device_udid,
+                            )
+                            return True
+                except Exception:
+                    pass
+
+            # Secondary coordinate attempt — some models place the button
+            # slightly differently; use a fixed pixel offset as a last resort.
+            logger.warning(
+                "[%s] First coordinate attempt may have missed, "
+                "trying alternative position", self.device_udid,
+            )
+            self._tap_point(player_cx, player_cy)
+            time.sleep(0.5)
+            alt_fs_x = rect['x'] + rect['width'] - 30
+            alt_fs_y = rect['y'] + rect['height'] - 15
+            logger.info("[%s] Alternative coordinate fallback: tapping (%d, %d)", self.device_udid, alt_fs_x, alt_fs_y)
+            self._tap_point(alt_fs_x, alt_fs_y)
+            time.sleep(1.5)
+
+            logger.info(
+                "[%s] Fullscreen enabled successfully (alternative coordinate fallback)",
+                self.device_udid,
+            )
+            return True
+
+        except Exception as e:
+            logger.error("[%s] Failed to enter fullscreen: %s", self.device_udid, e)
+            return False
+
     def _enable_stats_for_nerds(self) -> bool:
         try:
             if self._extract_stats_lightweight():
@@ -706,6 +825,13 @@ class YouTubeAutomation:
             if not self._wait_for_video_playback():
                 logger.error("[%s] Video never started", self.device_udid)
                 return False
+
+            # ── NEW: Enter Full Screen before enabling Stats for Nerds ──
+            if not self._enter_fullscreen():
+                logger.warning(
+                    "[%s] Could not enter fullscreen — continuing with Stats for Nerds in current mode",
+                    self.device_udid,
+                )
 
             if self._enable_stats_for_nerds():
                 self._stats_polling_stop.clear()
