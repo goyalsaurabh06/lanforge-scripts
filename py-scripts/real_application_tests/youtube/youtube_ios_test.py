@@ -826,14 +826,16 @@ class YouTubeAutomation:
                 logger.error("[%s] Video never started", self.device_udid)
                 return False
 
-            # ── NEW: Enter Full Screen before enabling Stats for Nerds ──
-            if not self._enter_fullscreen():
+            # ── Enter Full Screen before enabling Stats for Nerds ──
+            fullscreen_ok = self._enter_fullscreen()
+            if not fullscreen_ok:
                 logger.warning(
                     "[%s] Could not enter fullscreen — continuing with Stats for Nerds in current mode",
                     self.device_udid,
                 )
 
-            if self._enable_stats_for_nerds():
+            stats_ok = self._enable_stats_for_nerds()
+            if stats_ok:
                 self._stats_polling_stop.clear()
                 self.stats_polling_thread = threading.Thread(
                     target=self._poll_stats_for_nerds,
@@ -842,8 +844,15 @@ class YouTubeAutomation:
                 )
                 self.stats_polling_thread.start()
 
+            # ── Duration timer starts HERE — only after fullscreen +
+            #    Stats for Nerds are ready.  The _video_started_event
+            #    also unblocks the stats poller's internal duration
+            #    countdown, so both timers are synchronised.  ──
             self._video_started_event.set()
-            logger.info("[%s] Keeping session active for %ds...", self.device_udid, self.duration)
+            logger.info(
+                "[%s] Fullscreen=%s | StatsForNerds=%s — starting %ds duration timer NOW",
+                self.device_udid, fullscreen_ok, stats_ok, self.duration,
+            )
             elapsed = 0
             last_keepalive = time.time()
             while elapsed < self.duration and not self._shutdown.is_set():
