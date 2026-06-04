@@ -212,7 +212,6 @@ class Youtube(Realm):
                  current_angle="NA",
                  rotations_enabled=False,
                  gads_hub=None,
-                 candela_run_testroom=False,
                  candela_bundle_id='com.candela.wecan.interop-ios',
                  candela_timeout=20,
                  ):
@@ -299,7 +298,6 @@ class Youtube(Realm):
         self.ios_os_type = []
         self.ios_processes = []
         self.gads_hub = gads_hub
-        self.candela_run_testroom = candela_run_testroom
         self.candela_bundle_id = candela_bundle_id
         self.candela_timeout = candela_timeout
         self.wifi_interface_list = []
@@ -767,10 +765,8 @@ class Youtube(Realm):
             if self.gads_hub:
                 cmd += ['--gads_hub', self.gads_hub]
 
-            if self.candela_run_testroom:
-                cmd += ['--candela_run_testroom',
-                        '--candela_bundle_id', self.candela_bundle_id,
-                        '--candela_timeout', str(self.candela_timeout)]
+            cmd += ['--candela_bundle_id', self.candela_bundle_id,
+                    '--candela_timeout', str(self.candela_timeout)]
 
             p = subprocess.Popen(cmd)
             self.ios_processes.append(p)
@@ -2569,11 +2565,6 @@ NOTES:
         )
 
         optional.add_argument(
-            '--candela_run_testroom', action='store_true',
-            help='After YouTube test, connect to Candela interop app and tap testroom button '
-                 '(forms are already pre-filled on the device). Applies to iOS devices only.'
-        )
-        optional.add_argument(
             '--candela_bundle_id', type=str, default='com.candela.wecan.interop-ios',
             help='Candela interop app bundle ID (default: com.candela.wecan.interop-ios)'
         )
@@ -2707,7 +2698,6 @@ NOTES:
                 bssids=bssids,
                 rotations_enabled=rotations_enabled,
                 gads_hub=args.gads_hub,
-                candela_run_testroom=args.candela_run_testroom,
                 candela_bundle_id=args.candela_bundle_id,
                 candela_timeout=args.candela_timeout)
             youtube.start_flask_server()

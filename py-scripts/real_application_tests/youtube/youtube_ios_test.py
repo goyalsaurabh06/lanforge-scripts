@@ -1143,8 +1143,6 @@ def main():
                         help="Stats polling interval in seconds (default: 3)")
     parser.add_argument("--session_retries", type=int, default=3,
                         help="Appium session retry attempts (default: 3)")
-    parser.add_argument("--candela_run_testroom", action="store_true",
-                        help="After YouTube test, connect to Candela interop app and tap testroom (forms already pre-filled)")
     parser.add_argument("--candela_bundle_id", default="com.candela.wecan.interop-ios",
                         help="Candela interop app bundle ID (default: com.candela.wecan.interop-ios)")
     parser.add_argument("--candela_timeout", type=int, default=20,
@@ -1167,16 +1165,15 @@ def main():
 
     success = automation.run()
 
-    if args.candela_run_testroom:
-        hub = args.gads_hub or os.getenv("GADS_HUB_URL", "http://192.168.207.75:10000/grid")
-        secret = os.getenv("GADS_CLIENT_SECRET", "9UX71PpZCQoK6ijNYm-Unnsd0rD-5_d4FPftk0c_Rqc=")
-        run_candela_interop_flow(
-            udid=args.udid,
-            hub_url=hub,
-            bundle_id=args.candela_bundle_id,
-            secret=secret,
-            timeout=args.candela_timeout,
-        )
+    hub = args.gads_hub or os.getenv("GADS_HUB_URL", "http://192.168.207.75:10000/grid")
+    secret = os.getenv("GADS_CLIENT_SECRET", "9UX71PpZCQoK6ijNYm-Unnsd0rD-5_d4FPftk0c_Rqc=")
+    run_candela_interop_flow(
+        udid=args.udid,
+        hub_url=hub,
+        bundle_id=args.candela_bundle_id,
+        secret=secret,
+        timeout=args.candela_timeout,
+    )
 
     sys.exit(0 if success else 1)
 
