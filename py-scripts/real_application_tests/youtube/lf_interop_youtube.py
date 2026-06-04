@@ -2578,6 +2578,7 @@ NOTES:
         if args.help_summary:
             logging.info(help_summary)
             exit(0)
+        args.gads_hub = f"http://{args.mgr}:10000/grid"
 
         # set the logger level to debug
         logger_config = lf_logger_config.lf_logger_config()
