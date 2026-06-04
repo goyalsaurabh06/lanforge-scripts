@@ -51,6 +51,8 @@ try:
         StaleElementReferenceException,
     )
     from appium.webdriver.common.appiumby import AppiumBy
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
 except ImportError:
     print("Appium/Selenium packages not installed. "
           "Run: pip install Appium-Python-Client selenium")
@@ -1011,6 +1013,112 @@ class iOSYouTubeAutomation(YouTubeAutomation):
 
 
 # ===========================================================================
+# Candela interop app flow — tap testroom button after YouTube test
+# ===========================================================================
+
+def _candela_connect(udid: str, hub_url: str, bundle_id: str, secret: str):
+    options = XCUITestOptions()
+    options.set_capability("udid", udid)
+    options.set_capability("platformName", "iOS")
+    options.set_capability("automationName", "XCUITest")
+    options.set_capability("bundleId", bundle_id)
+    options.set_capability("noReset", True)
+    options.set_capability("shouldUseSingletonTestManager", False)
+    options.set_capability("newCommandTimeout", 600)
+    if secret:
+        options.set_capability("gads:clientSecret", secret)
+    logger.info("[%s] Connecting to Candela interop app at %s", udid, hub_url)
+    return webdriver.Remote(hub_url, options=options)
+
+
+def _candela_find_testroom_button(driver, timeout: int):
+    wait = WebDriverWait(driver, timeout)
+    predicate = (
+        "type == 'XCUIElementTypeButton' AND visible == 1 AND enabled == 1 "
+        "AND (name == 'testroom' OR label == 'testroom')"
+    )
+    return wait.until(EC.element_to_be_clickable((AppiumBy.IOS_PREDICATE, predicate)))
+
+
+def _candela_handle_post_join_popups(driver, timeout: int):
+    join_labels = {"Join", "Join Network"}
+    location_labels = {"Always Allow"}
+    deadline = time.time() + max(8, timeout)
+    handled_join = False
+    handled_location = False
+    while time.time() < deadline:
+        try:
+            _ = driver.switch_to.alert
+        except Exception:
+            time.sleep(0.4)
+            continue
+        try:
+            buttons = driver.execute_script("mobile: alert", {"action": "getButtons"}) or []
+        except Exception:
+            time.sleep(0.4)
+            continue
+        if not isinstance(buttons, list) or not buttons:
+            time.sleep(0.4)
+            continue
+        button_set = set(buttons)
+        target = None
+        if not handled_location:
+            for lbl in location_labels:
+                if lbl in button_set:
+                    target = lbl
+                    break
+        if target is None and not handled_join:
+            for lbl in join_labels:
+                if lbl in button_set:
+                    target = lbl
+                    break
+        if target is None:
+            time.sleep(0.4)
+            continue
+        try:
+            driver.execute_script("mobile: alert", {"action": "accept", "buttonLabel": target})
+            if target in location_labels:
+                handled_location = True
+                logger.info("Handled location permission popup (Always Allow)")
+            if target in join_labels:
+                handled_join = True
+                logger.info("Handled network join popup (Join)")
+            time.sleep(0.5)
+        except Exception:
+            time.sleep(0.4)
+        if handled_join and handled_location:
+            break
+
+
+def run_candela_interop_flow(udid: str, hub_url: str, bundle_id: str, secret: str,
+                              timeout: int = 20) -> bool:
+    """Connect to Candela interop app and tap testroom (forms are already pre-filled)."""
+    driver = None
+    try:
+        driver = _candela_connect(udid, hub_url, bundle_id, secret)
+        button = _candela_find_testroom_button(driver, timeout)
+        button.click()
+        _candela_handle_post_join_popups(driver, timeout)
+        logger.info("[%s] Candela interop: tapped testroom button", udid)
+        return True
+    except TimeoutException as e:
+        logger.error("[%s] Candela interop timeout — element not found: %s", udid, e)
+        return False
+    except WebDriverException as e:
+        logger.error("[%s] Candela interop WebDriver error: %s", udid, e)
+        return False
+    except Exception as e:
+        logger.error("[%s] Candela interop unexpected error: %s", udid, e)
+        return False
+    finally:
+        if driver:
+            try:
+                driver.quit()
+            except Exception:
+                pass
+
+
+# ===========================================================================
 # Entry point
 # ===========================================================================
 
@@ -1035,6 +1143,12 @@ def main():
                         help="Stats polling interval in seconds (default: 3)")
     parser.add_argument("--session_retries", type=int, default=3,
                         help="Appium session retry attempts (default: 3)")
+    parser.add_argument("--candela_run_testroom", action="store_true",
+                        help="After YouTube test, connect to Candela interop app and tap testroom (forms already pre-filled)")
+    parser.add_argument("--candela_bundle_id", default="com.candela.wecan.interop-ios",
+                        help="Candela interop app bundle ID (default: com.candela.wecan.interop-ios)")
+    parser.add_argument("--candela_timeout", type=int, default=20,
+                        help="Element wait timeout in seconds for Candela flow (default: 20)")
     args = parser.parse_args()
 
     if args.gads_hub:
@@ -1052,6 +1166,18 @@ def main():
     )
 
     success = automation.run()
+
+    if args.candela_run_testroom:
+        hub = args.gads_hub or os.getenv("GADS_HUB_URL", "http://192.168.207.75:10000/grid")
+        secret = os.getenv("GADS_CLIENT_SECRET", "9UX71PpZCQoK6ijNYm-Unnsd0rD-5_d4FPftk0c_Rqc=")
+        run_candela_interop_flow(
+            udid=args.udid,
+            hub_url=hub,
+            bundle_id=args.candela_bundle_id,
+            secret=secret,
+            timeout=args.candela_timeout,
+        )
+
     sys.exit(0 if success else 1)
 
 

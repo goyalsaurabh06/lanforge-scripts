@@ -211,9 +211,10 @@ class Youtube(Realm):
                  current_cord="",
                  current_angle="NA",
                  rotations_enabled=False,
-                 gads_hub=None
-
-
+                 gads_hub=None,
+                 candela_run_testroom=False,
+                 candela_bundle_id='com.candela.wecan.interop-ios',
+                 candela_timeout=20,
                  ):
         """
         Initialize the YouTube streaming test parameters.
@@ -298,6 +299,9 @@ class Youtube(Realm):
         self.ios_os_type = []
         self.ios_processes = []
         self.gads_hub = gads_hub
+        self.candela_run_testroom = candela_run_testroom
+        self.candela_bundle_id = candela_bundle_id
+        self.candela_timeout = candela_timeout
         self.wifi_interface_list = []
         self.devices_list = []
         self.max_buffer = {}
@@ -762,6 +766,11 @@ class Youtube(Realm):
             ]
             if self.gads_hub:
                 cmd += ['--gads_hub', self.gads_hub]
+
+            if self.candela_run_testroom:
+                cmd += ['--candela_run_testroom',
+                        '--candela_bundle_id', self.candela_bundle_id,
+                        '--candela_timeout', str(self.candela_timeout)]
 
             p = subprocess.Popen(cmd)
             self.ios_processes.append(p)
@@ -2559,6 +2568,20 @@ NOTES:
                  '(overrides GADS_HUB_URL env var on the LANforge resource machine)'
         )
 
+        optional.add_argument(
+            '--candela_run_testroom', action='store_true',
+            help='After YouTube test, connect to Candela interop app and tap testroom button '
+                 '(forms are already pre-filled on the device). Applies to iOS devices only.'
+        )
+        optional.add_argument(
+            '--candela_bundle_id', type=str, default='com.candela.wecan.interop-ios',
+            help='Candela interop app bundle ID (default: com.candela.wecan.interop-ios)'
+        )
+        optional.add_argument(
+            '--candela_timeout', type=int, default=20,
+            help='Element wait timeout in seconds for the Candela interop flow (default: 20)'
+        )
+
         args = parser.parse_args()
 
         if args.help_summary:
@@ -2683,7 +2706,10 @@ NOTES:
                 do_bandsteering=args.do_bandsteering,
                 bssids=bssids,
                 rotations_enabled=rotations_enabled,
-                gads_hub=args.gads_hub)
+                gads_hub=args.gads_hub,
+                candela_run_testroom=args.candela_run_testroom,
+                candela_bundle_id=args.candela_bundle_id,
+                candela_timeout=args.candela_timeout)
             youtube.start_flask_server()
             args.upstream_port = youtube.change_port_to_ip(args.upstream_port)
 
@@ -2866,6 +2892,14 @@ NOTES:
             if args.do_webUI:
                 youtube.stop_webui_test()
             youtube.stop()
+            for p in youtube.ios_processes:
+                try:
+                    p.wait(timeout=180)
+                except subprocess.TimeoutExpired:
+                    logging.warning("iOS subprocess timed out, terminating")
+                    p.terminate()
+                except Exception:
+                    pass
             if args.do_robo and not args.do_bandsteering:
                 youtube.create_robo_report()
             elif args.do_webUI:
