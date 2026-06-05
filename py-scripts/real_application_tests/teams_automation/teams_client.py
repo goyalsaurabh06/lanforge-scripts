@@ -191,11 +191,13 @@ class TeamsClient:
             if self.joinfrombrowser:
                 self.joinfrombrowser.click()
             join_meeting = self.wait_for_element("//button[@id='prejoin-join-button']")
-
+            if join_meeting is None:
+                join_meeting = self.wait_for_element_with_time(
+                    "//button[@data-tid='prejoin-join-button']", timeout=60
+                )
+            if join_meeting is None:
+                raise Exception("Join meeting button (prejoin-join-button) not found")
             join_meeting.click()
-
-            # join_now=self.wait_for_element('//*[@id="prejoin-join-button"]')
-            # join_now.click()
 
             camera_button = self.wait_for_element('//*[@id="video-button"]')
             camera_button.click()
