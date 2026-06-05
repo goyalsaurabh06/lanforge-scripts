@@ -23,11 +23,11 @@ if [[ "$(uname)" == "Linux" ]]; then
 
     YTENV="--env SERVERS_CSV=$SERVERS_CSV --env LOCAL_DEV=$LOCAL_DEV --env LD_PRELOAD=$LD_PRELOAD"
     if [ "$TYPE" == "host" ]; then
-        DISPLAY=$DISPLAY ./vrf_exec.bash $IFACE "python3 zoom_host.py --ip $IP $YTENV" > zoom_host.log 2>&1
+        DISPLAY=$DISPLAY ./vrf_exec.bash $IFACE "python3 zoom_host.py --ip $IP $YTENV"
     
     elif [ "$TYPE" == "client" ]; then
 
-        DISPLAY=$DISPLAY ./vrf_exec.bash $IFACE "python3 zoom_client.py --ip $IP $YTENV" > zoom_client.log 2>&1
+        DISPLAY=$DISPLAY ./vrf_exec.bash $IFACE "python3 zoom_client.py --ip $IP $YTENV"
     else
         echo "Invalid TYPE specified. Please use 'host' or 'client'."
         exit 1
@@ -50,9 +50,9 @@ elif [[ "$(uname)" == "Darwin" ]]; then
     TYPE=$2
 
     if [ "$TYPE" == "host" ]; then
-        python3 zoom_host.py --ip $IP > zoom_host.log 2>&1
+        python3 zoom_host.py --ip $IP
     elif [ "$TYPE" == "client" ]; then
-        python3 zoom_client.py --ip $IP > zoom_client.log 2>&1
+        python3 zoom_client.py --ip $IP
     else
         echo "Invalid TYPE specified. Please use 'host' or 'client'."
         exit 1
