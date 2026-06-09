@@ -177,6 +177,7 @@ class YouTubeAutomation:
         keepalive_interval: int = 20,
         stats_miss_threshold: int = 8,
         stats_recovery_cooldown: int = 30,
+        target_resolution: str = "Auto",
     ):
         self.device_udid = device_udid
         self.output_dir = Path(output_dir)
@@ -199,6 +200,7 @@ class YouTubeAutomation:
         self.keepalive_interval = max(10, int(keepalive_interval or 30))
         self.stats_miss_threshold = max(1, int(stats_miss_threshold))
         self.stats_recovery_cooldown = max(10, int(stats_recovery_cooldown))
+        self.target_resolution = target_resolution or "Auto"
         self._reconnect_count_without_stats = 0
 
         self.recorder = None
@@ -387,6 +389,18 @@ class YouTubeAutomation:
         except Exception:
             pass
         return {"width": 390, "height": 844}
+
+    def _save_page_source(self, reason: str):
+        safe_r = re.sub(r"[^0-9A-Za-z_-]+", "_", reason).strip("_") or "dump"
+        safe_u = re.sub(r"[^0-9A-Za-z_-]+", "_", self.device_udid)
+        dump_path = self.output_dir / f"page_source_{safe_r}_{safe_u}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xml"
+        try:
+            with self._driver_lock:
+                source = self.driver.page_source
+            dump_path.write_text(source or "", encoding="utf-8")
+            logger.warning("[%s] Saved UI dump: %s", self.device_udid, dump_path)
+        except Exception as e:
+            logger.warning("[%s] Failed to save UI dump: %s", self.device_udid, e)
 
     def _dump_page_source_once(self, reason: str, source: Optional[str] = None):
         if self._stats_missing_dumped:
@@ -693,6 +707,149 @@ class YouTubeAutomation:
             logger.error("[%s] Failed to enter fullscreen: %s", self.device_udid, e)
             return False
 
+    def _set_resolution(self, target_res: str) -> bool:
+        """Set YouTube video quality via the player settings overlay."""
+        if not target_res or target_res.strip().lower() == "auto":
+            logger.info("[%s] Resolution: Auto (no change)", self.device_udid)
+            return True
+
+        logger.info("[%s] Setting resolution to: %s", self.device_udid, target_res)
+        try:
+            rect = self._get_player_rect()
+            player_cx = rect['x'] + rect['width'] // 2
+            player_cy = rect['y'] + rect['height'] // 2
+            gear_x, gear_y = 358, 77
+
+            self._tap_point(player_cx, player_cy)
+            time.sleep(0.5)
+
+            settings_preds = [
+                'type == "XCUIElementTypeButton" AND name == "id.player.overflow.button"',
+                'type == "XCUIElementTypeButton" AND label == "Player settings"',
+                'type == "XCUIElementTypeButton" AND name == "Player settings"',
+            ]
+            if not self._tap_first_element(settings_preds, timeout=3):
+                self._tap_point(gear_x, gear_y)
+            time.sleep(0.5)
+
+            quality_preds = [
+                'type == "XCUIElementTypeButton" AND (label CONTAINS[c] "quality" OR name CONTAINS[c] "quality")',
+                'type == "XCUIElementTypeCell" AND (label CONTAINS[c] "quality" OR name CONTAINS[c] "quality")',
+                'type == "XCUIElementTypeStaticText" AND (label CONTAINS[c] "quality" OR name CONTAINS[c] "quality")',
+            ]
+            if not self._tap_first_element(quality_preds, timeout=4):
+                logger.warning("[%s] Quality option not found via accessibility, trying menu index fallback",
+                            self.device_udid)
+
+                try:
+                    with self._driver_lock:
+                        menu_buttons = self.driver.find_elements(
+                            AppiumBy.CLASS_NAME,
+                            "XCUIElementTypeButton"
+                        )
+                        
+
+                    visible_buttons = []
+
+                    for btn in menu_buttons:
+                        try:
+                            rect = btn.rect
+                            if rect["width"] > 300 and rect["height"] > 40:
+                                visible_buttons.append(btn)
+                        except Exception:
+                            pass
+
+                    visible_buttons.sort(key=lambda b: b.rect["y"])
+                    print("vvvvv",visible_buttons)
+                    # if visible_buttons:
+                    #     logger.info("[%s] Clicking first menu item (Quality)", self.device_udid)
+                    #     visible_buttons[0].click()
+                    if visible_buttons:
+                        logger.info("[%s] Visible menu buttons:", self.device_udid)
+
+                        for idx, btn in enumerate(visible_buttons):
+                            try:
+                                logger.info(
+                                    "[%s] Button %d rect=%s",
+                                    self.device_udid,
+                                    idx,
+                                    btn.rect
+                                )
+                            except Exception:
+                                pass
+
+                        self._tap_point(422, 154)
+
+                        time.sleep(2)
+
+                        self._save_page_source("after_quality_click")
+                    else:
+                        logger.warning("[%s] No menu buttons found", self.device_udid)
+                        return False
+
+                except Exception as e:
+                    logger.error("[%s] Quality fallback failed: %s",
+                                self.device_udid, e)
+                    return False
+            time.sleep(1)
+            print("^^^^^")
+            self._save_page_source("before_advanced_click")
+
+            with self._driver_lock:
+                buttons = self.driver.find_elements(
+                    AppiumBy.CLASS_NAME,
+                    "XCUIElementTypeButton"
+                )
+
+            logger.info("[%s] Total buttons found: %d",
+                        self.device_udid,
+                        len(buttons))
+
+            for idx, btn in enumerate(buttons):
+                try:
+                    logger.info(
+                        "[%s] Button %d label=%s name=%s rect=%s",
+                        self.device_udid,
+                        idx,
+                        btn.get_attribute("label"),
+                        btn.get_attribute("name"),
+                        btn.rect
+                    )
+                except Exception:
+                    pass
+
+            self._save_page_source("after_button_dump")
+
+            time.sleep(2)
+
+            self._save_page_source("after_advanced_click")
+            time.sleep(0.6)
+
+            res_lower = target_res.strip().lower()
+            res_preds = [
+                f'type == "XCUIElementTypeButton" AND label CONTAINS[c] "{res_lower}"',
+                f'type == "XCUIElementTypeCell" AND label CONTAINS[c] "{res_lower}"',
+                f'type == "XCUIElementTypeStaticText" AND label CONTAINS[c] "{res_lower}"',
+                f'type == "XCUIElementTypeButton" AND name CONTAINS[c] "{res_lower}"',
+            ]
+            if not self._tap_first_element(res_preds, timeout=5):
+                logger.warning("[%s] Resolution '%s' not found in quality menu; skipping",
+                               self.device_udid, target_res)
+                self._save_page_source("res_label_not_found_before_dismiss")
+                self._tap_point(player_cx, player_cy)
+                time.sleep(0.5)
+                self._save_page_source("res_label_not_found_after_dismiss")
+                return False
+
+            time.sleep(1.0)
+            logger.info("[%s] Resolution set to: %s", self.device_udid, target_res)
+            return True
+
+        except Exception as e:
+            logger.error("[%s] Failed to set resolution: %s", self.device_udid, e)
+            self._save_page_source("res_exception")
+            return False
+
     def _enable_stats_for_nerds(self) -> bool:
         try:
             if self._extract_stats_lightweight():
@@ -832,6 +989,14 @@ class YouTubeAutomation:
                 logger.warning(
                     "[%s] Could not enter fullscreen — continuing with Stats for Nerds in current mode",
                     self.device_udid,
+                )
+            time.sleep(2)
+            # ── Set resolution if requested ──
+            res_ok = self._set_resolution(self.target_resolution)
+            if not res_ok and self.target_resolution.strip().lower() != "auto":
+                logger.warning(
+                    "[%s] Could not set resolution '%s' — continuing with current quality",
+                    self.device_udid, self.target_resolution,
                 )
 
             stats_ok = self._enable_stats_for_nerds()
@@ -1296,6 +1461,7 @@ def main():
         stats_poll_interval=args.stats_interval,
         enable_network_trace=False,
         session_retries=args.session_retries,
+        target_resolution=args.res,
     )
 
     success = automation.run()
