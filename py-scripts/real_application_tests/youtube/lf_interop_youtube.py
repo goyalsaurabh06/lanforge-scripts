@@ -242,6 +242,8 @@ class Youtube(Realm):
         self.sta_list = sta_list
         self.real_sta_list = []
         self.real_sta_data_dict = {}
+        self.real_sta_os_types = []
+        self.real_sta_hostname = []
         self.linux = 0
         self.windows = 0
         self.mac = 0
