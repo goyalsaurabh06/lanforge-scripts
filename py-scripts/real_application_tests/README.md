@@ -140,3 +140,59 @@ python3 lf_interop_speedtest.py --mgr 192.168.214.219 --device_list 1.10,1.23 --
 
 ## Notes:
 - **Please run the `install_dependencies.py` file on the client side before executing any tests.**
+
+---
+
+## Installing Dependencies
+
+### Windows
+Run the following command as an **Administrator** user:
+```cmd
+py install_dependencies.py
+```
+
+### Ubuntu
+Run the following command as **root** user:
+```bash
+python3 install_dependencies.py
+```
+
+### macOS
+Run the following command as **root** user:
+```bash
+python3 install_dependencies.py
+```
+
+### If Installation is Blocked (macOS / Ubuntu)
+If the system blocks the dependency installation, use the following command instead:
+```bash
+pip3 install selenium requests pyperclip pytz pyautogui clipboard --break-system-packages
+```
+
+---
+
+## Installing Dependencies for Teams Automation
+
+Teams automation requires a virtual environment. Follow the steps below for each platform.
+
+### Ubuntu
+Navigate to `/home/lanforge` and execute:
+```bash
+python3 -m venv venv
+source venv/bin/activate
+python3 install_dependencies.py
+```
+
+### macOS
+Navigate to `/Users/lanforge` and execute:
+```bash
+python3 -m venv venv
+source venv/bin/activate
+python3 install_dependencies.py
+```
+
+### Windows
+Run the following command as an **Administrator** user:
+```cmd
+py install_dependencies.py
+```
