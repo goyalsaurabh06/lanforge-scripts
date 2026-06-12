@@ -10,6 +10,8 @@ import sys
 import logging
 import requests
 import threading
+import signal
+import atexit
 
 # ---------------- LOGGING ----------------
 LOG_DIR = "logs"
@@ -37,6 +39,9 @@ class YouTubeShortsADB:
         self.adb_client = AdbClient(host=self.host, port=self.port)
         self.devices = {}
         self.u2_sessions = {}
+        self._stop_event = threading.Event()
+        self._cleanup_done = False
+        self._cleanup_lock = threading.Lock()
 
     # ---------------- COMMAND ----------------
     def execute_cmd(self, serial, command):
@@ -160,11 +165,38 @@ class YouTubeShortsADB:
 
     # ---------------- STOP CHECK ----------------
     def should_stop(self, flask_ip):
+        if self._stop_event.is_set():
+            return True
         try:
             r = requests.get(f"http://{flask_ip}:5002/check_stop", timeout=1)
-            return r.json().get("stop", False)
+            stop = r.json().get("stop", False)
+            if stop:
+                self._stop_event.set()
+            return stop
         except Exception:
             return False
+
+    # ---------------- FORCE STOP ALL DEVICES ----------------
+    def force_stop_all(self):
+        """Force-stop YouTube on ALL connected devices. Safe to call multiple times."""
+        with self._cleanup_lock:
+            if self._cleanup_done:
+                return
+            self._cleanup_done = True
+
+        self._stop_event.set()  # signal all threads to exit
+
+        for serial in list(self.devices.keys()):
+            try:
+                logger.info(f"[{serial}] Force-stopping YouTube (cleanup handler)")
+                self.devices[serial].shell("am force-stop com.google.android.youtube")
+                # Return to Candela interop app so device is ready for next test
+                self.devices[serial].shell(
+                    "am start -n com.candela.wecan/com.candela.wecan.StartupActivity"
+                )
+                logger.info(f"[{serial}] Returned to Candela interop app")
+            except Exception as e:
+                logger.warning(f"[{serial}] Cleanup force-stop failed: {e}")
 
     # ---------------- MAIN DEVICE LOOP ----------------
     def run_shorts_test(self, serial, duration, scroll_interval, flask_ip):
@@ -177,8 +209,10 @@ class YouTubeShortsADB:
             last_scroll = start
             iteration = 1
 
-        
-            while time.time() - start < duration and not self.should_stop(flask_ip):
+
+            while (time.time() - start < duration
+                   and not self._stop_event.is_set()
+                   and not self.should_stop(flask_ip)):
                 stats = self.fetch_stats_for_nerds(serial)
                 if stats:
                     self.post_stats(flask_ip, serial, stats, iteration)
@@ -194,6 +228,12 @@ class YouTubeShortsADB:
             logger.info(f"[{serial}] Stopping YouTube")
             try:
                 self.execute_cmd(serial, "am force-stop com.google.android.youtube")
+                # Return to Candela interop app so device is ready for next test
+                self.execute_cmd(
+                    serial,
+                    "am start -n com.candela.wecan/com.candela.wecan.StartupActivity"
+                )
+                logger.info(f"[{serial}] Returned to Candela interop app")
             except Exception:
                 pass
 
@@ -203,6 +243,16 @@ class YouTubeShortsADB:
     def run_parallel(self, serials, duration, scroll, flask_ip):
         threads = []
 
+        # Register signal + atexit handlers BEFORE starting threads
+        def _signal_handler(signum, frame):
+            logger.info(f"Received signal {signum} — force-stopping YouTube on all devices")
+            self.force_stop_all()
+            sys.exit(0)
+
+        signal.signal(signal.SIGTERM, _signal_handler)
+        signal.signal(signal.SIGINT, _signal_handler)
+        atexit.register(self.force_stop_all)
+
         for s in serials:
             self.devices[s] = self.adb_client.device(s)
             self.u2_sessions[s] = u2.connect(s)
@@ -210,13 +260,15 @@ class YouTubeShortsADB:
             t = threading.Thread(
                 target=self.run_shorts_test,
                 args=(s, duration, scroll, flask_ip),
-                daemon=False
+                daemon=True  # daemon so signal handler can exit quickly
             )
             threads.append(t)
             t.start()
 
+        # Wait for threads, but allow signal interruption
         for t in threads:
-            t.join()
+            while t.is_alive():
+                t.join(timeout=1.0)
 
 
 # ---------------- MAIN ----------------

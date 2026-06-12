@@ -886,9 +886,31 @@ class YouTubeShorts(Realm):
         test_start_time = None
         end_time = None
 
+        # Timeout for waiting for first stats (seconds)
+        stats_wait_timeout = 150
+        stats_wait_start = datetime.now()
+
         while True:
 
             if not self.stats_received:
+                elapsed_wait = (datetime.now() - stats_wait_start).total_seconds()
+
+                # Check if all CXs have already stopped (scripts exited without posting stats)
+                if self.cx_has_started and self.check_gen_cx():
+                    logging.error(
+                        "All generic endpoints stopped before any stats were received. "
+                        "Client scripts may have failed. Ending test."
+                    )
+                    break
+
+                # Timeout: no stats received within the allowed wait period
+                if elapsed_wait >= stats_wait_timeout:
+                    logging.error(
+                        f"No stats received after waiting {stats_wait_timeout} seconds. "
+                        "Client scripts may have failed to start or post stats. Ending test."
+                    )
+                    break
+
                 logging.info("Waiting for first stats from client...")
                 time.sleep(1)
                 continue
@@ -918,6 +940,11 @@ class YouTubeShorts(Realm):
                 break
 
             time.sleep(1)
+
+        # Grace period: let android/device scripts detect stop_signal via /check_stop
+        # and force-stop YouTube before we kill the CX process
+        logging.info("Waiting for device scripts to detect stop signal and clean up...")
+        time.sleep(5)
 
         try:
             self.generic_endps_profile.stop_cx()
