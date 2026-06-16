@@ -1065,6 +1065,21 @@ class Youtube(Realm):
         with open(file_path, 'w') as file:
             json.dump(data, file, indent=4)
 
+    def _add_ios_notes_to_report(self):
+        notes_html = (
+            "<h3>Notes</h3>"
+            "<ol>"
+            "<li>For iOS clients, the <strong>Total Frames</strong> metrics are currently not available "
+            "through the YouTube Stats for Nerds interface. Support for these metrics is under "
+            "investigation and will be added once the required data becomes available.</li>"
+            "<li>The <strong>Buffer Health</strong> metric is not exposed separately on iOS devices. "
+            "As an alternative, the <strong>Readahead</strong> value is being used as the Buffer Health "
+            "equivalent, as it is the closest available indicator of buffered content ahead of the "
+            "current playback position.</li>"
+            "</ol>"
+        )
+        self.report.set_custom_html(notes_html)
+
     def add_bandsteering_report_section(self, report=None):
         """
         Bandsteering reporting (Robo-style):
@@ -1291,6 +1306,7 @@ class Youtube(Realm):
                 )
             )
         self.report.build_objective()
+        self._add_ios_notes_to_report()
 
         if self.config:
 
@@ -2122,6 +2138,8 @@ class Youtube(Realm):
             self.add_live_view_images_to_report()
 
         os.chdir(original_dir)
+
+        # self._add_ios_notes_to_report()
 
         self.report.build_custom()
         self.report.build_footer()
