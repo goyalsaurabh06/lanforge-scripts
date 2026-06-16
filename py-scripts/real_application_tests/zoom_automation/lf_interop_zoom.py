@@ -2941,6 +2941,133 @@ class ZoomAutomation(Realm):
         self.device_list = filtered_list
         return filtered_list
 
+    def fetch_ios_devices_from_gads(self, hub_url, requested_udids=None):
+        """
+        Build the iOS device list directly from the provided UDIDs.
+        GADS does not expose a /devices listing API; devices are trusted as-is
+        from --udids and validated at connection time by Appium/XCUITest.
+
+        Args:
+            hub_url (str): GADS hub URL (e.g. http://host:10000/grid).
+            requested_udids (list|None): UDIDs to run the test on. If None or empty,
+                no iOS devices are added.
+
+        Returns:
+            list[dict]: Each dict contains 'udid' and 'name'.
+        """
+        if not requested_udids:
+            logger.warning("iOS device discovery: no UDIDs provided — skipping iOS device setup.")
+            return []
+
+        logger.info(
+            f"iOS device discovery: using {len(requested_udids)} provided UDID(s) directly "
+            f"(GADS /devices listing API is not available)."
+        )
+        devices = [{"udid": udid, "name": udid} for udid in requested_udids]
+        logger.info(f"iOS device discovery: prepared device(s) — {requested_udids}")
+        return devices
+
+    def inject_ios_devices(self, ios_device_infos):
+        """
+        Append discovered iOS devices into the participant device pool so they
+        flow through the existing participant assignment and creation logic.
+
+        Must be called after select_real_devices(), get_resource_data(),
+        get_ports_data(), and get_interop_data() have already run.
+
+        Args:
+            ios_device_infos (list[dict]): Device dicts from fetch_ios_devices_from_gads().
+        """
+        if not ios_device_infos:
+            logger.info("iOS device injection: no iOS devices to add.")
+            return
+
+        for device in ios_device_infos:
+            udid = device.get("udid", "unknown")
+            display_name = device.get("name", udid)
+
+            # Participant pools (mirror what select_real_devices() builds)
+            self.real_sta_list.append(udid)
+            self.real_sta_os_type.append("ios")
+            self.real_sta_hostname.append(display_name)
+            self.real_sta_data[udid] = {"ostype": "ios", "hostname": display_name, "user": display_name}
+
+            # LANforge port lists (iOS devices have no LANforge presence)
+            self.serial_list.append(udid)
+            self.lanforge_port_list.append("")
+
+            # Network-info lists (populated by get_ports_data — placeholder for iOS)
+            self.mac_list.append("-")
+            self.rssi_list.append("-")
+            self.link_rate_list.append("-")
+            self.ssid_list.append("-")
+
+            # Device name list used in report generation
+            self.device_names.append(display_name)
+
+            # Keep derived collections current
+            if isinstance(self.hostname_os_combination, list):
+                self.hostname_os_combination.append(f"{display_name} (ios)")
+            if hasattr(self, "hostname_to_station_map") and isinstance(
+                self.hostname_to_station_map, dict
+            ):
+                self.hostname_to_station_map[display_name] = udid
+
+            self.ios_device_infos.append(device)
+
+        logger.info(
+            f"iOS device injection: added {len(ios_device_infos)} iOS device(s) to the participant pool."
+        )
+        logger.info(
+            f"iOS device injection: total device count (including host) is now "
+            f"{len(self.real_sta_list)}."
+        )
+
+    def _launch_ios_participant(self, udid, display_name):
+        """
+        Start a ZoomAutomator thread for a single iOS participant device.
+        The thread connects to the device via GADS/Appium using the meeting link
+        that was set by wait_for_host_ready() before create_participants() runs.
+        """
+        if iOSZoomAutomator is None:
+            logger.error(
+                f"[{udid}] iOSZoomAutomator is not available (import failed). "
+                "Cannot launch iOS participant."
+            )
+            return
+
+        device_info = next(
+            (d for d in self.ios_device_infos if d.get("udid") == udid), {}
+        )
+        hub_url = device_info.get("hub_url") or self.gads_hub_url
+        client_secret = device_info.get("client_secret", "")
+
+        try:
+            automator = iOSZoomAutomator(
+                device_udid=udid,
+                invite_link=self.meet_link,
+                display_name=display_name,
+                hub_url=hub_url,
+                client_secret=client_secret,
+                enable_audio=self.audio,
+                enable_video=self.video,
+                duration_minutes=self.duration,
+                server_host=self.mgr_ip,
+                server_port=5000,
+            )
+        except Exception as e:
+            logger.error(f"[{udid}] Failed to create iOSZoomAutomator: {e}")
+            return
+
+        t = threading.Thread(
+            target=automator.run,
+            daemon=True,
+            name=f"ios-participant-{udid}",
+        )
+        t.start()
+        self.ios_threads.append(t)
+        logger.info(f"[{udid}] iOS participant thread started.")
+
     def add_bandsteering_report_section(self, report=None):
         try:
 
