@@ -1067,7 +1067,7 @@ class Youtube(Realm):
 
     def _add_ios_notes_to_report(self):
         notes_html = (
-            "<h3>Notes</h3>"
+            "<h3>Note:</h3>"
             "<ol>"
             "<li>For iOS clients, the <strong>Total Frames</strong> metrics are currently not available "
             "through the YouTube Stats for Nerds interface. Support for these metrics is under "
