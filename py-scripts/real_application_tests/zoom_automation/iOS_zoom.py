@@ -4,11 +4,14 @@ import atexit
 import logging
 import os
 import re
+import requests
 import signal
+import urllib.parse
 import sys
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta, timezone
 
 try:
     from appium import webdriver
@@ -85,6 +88,8 @@ class ZoomAutomator:
         duration_minutes=None,
         enable_audio=False,
         enable_video=False,
+        server_host=None,
+        server_port=5000,
     ):
         self.device_udid = device_udid
         self.bundle_id = bundle_id
@@ -95,6 +100,12 @@ class ZoomAutomator:
         self.duration_minutes = duration_minutes
         self.enable_audio = enable_audio
         self.enable_video = enable_video
+        self.start_time = None
+        self.end_time = None
+        self.stop_signal = False
+        self.base_url = (
+            f"http://{server_host}:{server_port}" if server_host else None
+        )
         self.hub_url = hub_url or os.getenv("GADS_HUB_URL", "http://localhost:10000/grid")
         self.client_secret = client_secret or os.getenv("GADS_CLIENT_SECRET", "")
         self.driver = None
@@ -266,10 +277,12 @@ class ZoomAutomator:
         Embeds meeting ID and URL-encoded pwd so Zoom skips the manual entry screen.
         """
         pwd_param = f"&pwd={self.url_pwd}" if self.url_pwd else ""
-        deep_link = f"zoomus://zoom.us/join?confno={self.meeting_id}{pwd_param}"
+        uname_param = f"&uname={urllib.parse.quote(self.display_name)}" if self.display_name else ""
+        deep_link = f"zoomus://zoom.us/join?confno={self.meeting_id}{pwd_param}{uname_param}"
         self.logger.info(
             f"[{self.device_udid}] Deep link: zoomus://zoom.us/join?confno={self.meeting_id}"
             + ("&pwd=***" if self.url_pwd else "")
+            + (f"&uname={self.display_name}" if self.display_name else "")
         )
 
         for method, script, payload in [
@@ -287,11 +300,11 @@ class ZoomAutomator:
         return False
 
     def _handle_display_name(self):
-        """Fill in display name if Zoom prompts for it."""
+        """Fill in display name if Zoom prompts for it (fallback — deep link sets name first)."""
         name_pred = (
             'type == "XCUIElementTypeTextField" AND visible == true AND enabled == true '
             'AND (label CONTAINS[c] "name" OR name CONTAINS[c] "name" '
-            'OR value CONTAINS[c] "name" OR placeholder CONTAINS[c] "name")'
+            'OR placeholder CONTAINS[c] "name")'
         )
         el = self._find(name_pred, timeout=5)
         if not el:
@@ -300,11 +313,15 @@ class ZoomAutomator:
             f"[{self.device_udid}] Display name prompt detected — entering: {self.display_name}"
         )
         el.click()
-        time.sleep(0.2)
+        time.sleep(0.3)
+        # Use XCUITest native clearText; fall back to el.clear() if unsupported.
         try:
-            el.clear()
+            self.driver.execute_script("mobile: clearText", {"element": el.id})
         except Exception:
-            pass
+            try:
+                el.clear()
+            except Exception:
+                pass
         el.send_keys(self.display_name)
         self._hide_keyboard()
         time.sleep(0.3)
@@ -741,6 +758,91 @@ class ZoomAutomator:
             self.logger.error(f"[{self.device_udid}] Error while enabling video: {e}")
             return False
 
+    def get_start_and_end_time(self):
+        """Fetch meeting start and end time from the Flask server."""
+        endpoint_url = f"{self.base_url}/get_start_end_time"
+        try:
+            response = requests.get(endpoint_url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                self.start_time = data.get("start_time")
+                self.end_time = data.get("end_time")
+            else:
+                self.logger.error(
+                    f"[{self.device_udid}] Failed to fetch start/end time. "
+                    f"Status: {response.status_code}"
+                )
+        except requests.RequestException as e:
+            self.logger.error(f"[{self.device_udid}] Request error: {e}")
+
+    def check_stop_signal(self):
+        """Check the stop signal from the Flask server."""
+        try:
+            endpoint_url = f"{self.base_url}/check_stop"
+            response = requests.get(endpoint_url, timeout=10)
+            if response.status_code == 200:
+                stop_signal_from_server = response.json().get("stop", False)
+                if stop_signal_from_server:
+                    self.stop_signal = True
+                    self.logger.info(
+                        f"[{self.device_udid}] Stop signal received from server. Exiting loop."
+                    )
+                else:
+                    self.logger.info(
+                        f"[{self.device_udid}] No stop signal from server. Continuing."
+                    )
+            return self.stop_signal
+        except Exception as e:
+            self.logger.error(f"[{self.device_udid}] Error checking stop signal: {e}")
+            return self.stop_signal
+
+    def _wait_server_controlled(self):
+        """
+        Stay in the meeting until the server's end_time or a stop signal is received.
+        Mirrors android_zoom.py's server-controlled meeting timing flow.
+        """
+        # Fetch end time from server, retrying up to 5 minutes.
+        count = 0
+        while self.end_time is None:
+            count += 1
+            if count > 60:
+                self.logger.error(
+                    f"[{self.device_udid}] Failed to retrieve meeting end time from server "
+                    "after 5 minutes. Leaving meeting."
+                )
+                return
+            try:
+                self.get_start_and_end_time()
+                time.sleep(5)
+            except Exception as e:
+                self.logger.error(f"[{self.device_udid}] Error fetching start/end time: {e}")
+                time.sleep(5)
+
+        self.logger.info(
+            f"[{self.device_udid}] Meeting scheduled from {self.start_time} to {self.end_time}"
+        )
+
+        try:
+            end_dt = datetime.fromisoformat(self.end_time.replace("Z", "+00:00"))
+            if end_dt.tzinfo is None:
+                end_dt = end_dt.replace(tzinfo=timezone.utc)
+            meeting_end_dt = end_dt - timedelta(seconds=10)
+        except Exception as e:
+            self.logger.error(
+                f"[{self.device_udid}] Invalid end_time received from server: {e}"
+            )
+            return
+
+        while datetime.now(timezone.utc) < meeting_end_dt:
+            if self.check_stop_signal():
+                self.logger.info(
+                    f"[{self.device_udid}] Stop signal received. Leaving meeting early."
+                )
+                break
+            time.sleep(2)
+
+        self.logger.info(f"[{self.device_udid}] Leaving meeting after server-controlled duration.")
+
     def _wait_for_duration(self):
         """Hold in the meeting for self.duration_minutes, logging remaining time every minute."""
         total_seconds = self.duration_minutes * 60
@@ -871,7 +973,12 @@ class ZoomAutomator:
                     )
 
             # 12. Hold meeting for configured duration
-            if self.duration_minutes is not None:
+            if self.base_url is not None:
+                self._wait_server_controlled()
+                self.logger.info(
+                    f"[{self.device_udid}] Leaving meeting after server-controlled duration..."
+                )
+            elif self.duration_minutes is not None:
                 self._wait_for_duration()
                 self.logger.info(f"[{self.device_udid}] Leaving meeting after duration...")
 
@@ -920,6 +1027,8 @@ def run_for_device(udid, args):
         duration_minutes=args.duration,
         enable_audio=args.audio,
         enable_video=args.video,
+        server_host=args.server_host,
+        server_port=args.server_port,
     )
     return automation.run()
 
@@ -1001,6 +1110,14 @@ Examples:
     parser.add_argument(
         "--video", action="store_true", default=False,
         help="Start camera (enable video) after successfully joining the meeting",
+    )
+    parser.add_argument(
+        "--server-host", dest="server_host", type=str, default=None,
+        help="IP/hostname of the LANforge Flask results server (enables server-controlled timing)",
+    )
+    parser.add_argument(
+        "--server-port", dest="server_port", type=int, default=5000,
+        help="Port of the LANforge Flask results server (default: 5000)",
     )
 
     args = parser.parse_args()

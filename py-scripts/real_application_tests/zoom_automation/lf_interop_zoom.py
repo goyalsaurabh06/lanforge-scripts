@@ -79,7 +79,6 @@ import subprocess
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 
 lfcli_base = importlib.import_module("py-json.LANforge.lfcli_base")
@@ -122,12 +121,6 @@ lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 
 robo_base_class = importlib.import_module("py-scripts.lf_base_robo")
 
-try:
-    from iOS_zoom import ZoomAutomator as iOSZoomAutomator
-except ImportError:
-    iOSZoomAutomator = None
-    logger.warning("iOS_zoom module not found; iOS device support will be unavailable.")
-
 
 class ZoomAutomation(Realm):
     def __init__(
@@ -166,6 +159,8 @@ class ZoomAutomation(Realm):
         wait_at_point=30,
         resource_ip=None,
         do_roam=False,
+        gads_hub_url=None,
+        gads_client_secret=None,
     ):
 
         super().__init__(lfclient_host=lanforge_ip)
@@ -177,6 +172,11 @@ class ZoomAutomation(Realm):
         self.linux = 0
         self.mac = 0
         self.android = 0
+        self.ios = 0
+        self.gads_hub_url = gads_hub_url
+        self.gads_client_secret = gads_client_secret
+        self._ios_participant_threads = []
+        self._ios_sta_info = {}  # Maps sta device string -> {hostname, udid} for iOS devices
         self.real_sta_os_type = []
         self.real_sta_hostname = []
         self.real_sta_list = []
@@ -282,9 +282,6 @@ class ZoomAutomation(Realm):
         self.is_csv_available = False
         self.wait_at_point = int(wait_at_point)
         self.resource_ip = resource_ip
-        self.ios_device_infos = []
-        self.ios_threads = []
-        self.gads_hub_url = None
 
     def stop_previous_flask_server(self):
         """
@@ -721,8 +718,6 @@ class ZoomAutomation(Realm):
         try:
 
             for gen_endp in self.generic_endps_profile.created_endp:
-                if str(gen_endp).startswith("ios_placeholder_"):
-                    continue
                 generic_endpoint = self.json_get(f"/generic/{gen_endp}")
 
                 if not generic_endpoint or "endpoint" not in generic_endpoint:
@@ -912,7 +907,8 @@ class ZoomAutomation(Realm):
             # Extract the eid and ctrl-ip from the current ports_list entry
             expected_eid = port_entry["eid"]
 
-            # Iterate over the port interfaces to find a matching port
+            # Iterate over the port interfaces to find a matching WiFi port
+            found_wifi = False
             for interface in response_port["interfaces"]:
                 for port, port_data in interface.items():
                     # Extract the first two segments of the port identifier to match with expected_eid
@@ -924,11 +920,18 @@ class ZoomAutomation(Realm):
                         self.rssi_list.append(port_data["signal"])
                         self.link_rate_list.append(port_data["rx-rate"])
                         self.ssid_list.append(port_data["ssid"])
-
+                        found_wifi = True
                         break
-                else:
-                    continue
-                break
+                if found_wifi:
+                    break
+
+            if not found_wifi:
+                # iOS and non-WiFi devices have no wiphy0 port; pad with empty values
+                self.mac_list.append("")
+                self.rssi_list.append("")
+                self.link_rate_list.append("")
+                self.ssid_list.append("")
+
         self.wifi_interface_list = [item.split(".")[2] for item in self.real_sta_list]
 
     def get_interop_data(self):
@@ -1054,8 +1057,58 @@ class ZoomAutomation(Realm):
 
         self.login_completed = False
 
+    def _start_ios_participant(self, udid, participant_name):
+        """Launch an iOS Zoom participant through GADS/Appium in a background thread."""
+        try:
+            ios_zoom_module = importlib.import_module("iOS_zoom")
+            iOSZoomAutomator = ios_zoom_module.ZoomAutomator
+        except (ImportError, SystemExit) as e:
+            logger.error(
+                f"Cannot start iOS participant '{participant_name}': iOS_zoom module "
+                f"not available ({e}). Ensure appium and selenium are installed."
+            )
+            return
+
+        if not udid:
+            logger.error(
+                f"Cannot start iOS participant '{participant_name}': UDID is empty. "
+                "Ensure the iOS device is registered in LANforge with its UDID as the user field."
+            )
+            return
+
+        automator = iOSZoomAutomator(
+            device_udid=udid,
+            invite_link=self.meet_link,
+            display_name=participant_name,
+            hub_url=self.gads_hub_url,
+            client_secret=self.gads_client_secret,
+            enable_audio=self.audio,
+            enable_video=self.video,
+            server_host=self.mgr_ip,
+            server_port=5000,
+        )
+
+        thread = threading.Thread(
+            target=automator.run,
+            name=f"ios_zoom_{participant_name}",
+            daemon=True,
+        )
+        thread.start()
+        self._ios_participant_threads.append(thread)
+        logger.info(
+            f"Started iOS participant thread for '{participant_name}' (UDID: {udid})"
+        )
+
     def create_participants(self):
+        # cx_idx tracks the position in created_endp/created_cx for non-iOS devices.
+        # Index 0 is the host; iOS devices do not consume a CX slot.
+        cx_idx = 1
+
+        # First pass: create LANforge CXs for non-iOS participants and set Android commands.
         for i in range(1, len(self.real_sta_os_type)):
+            if self.real_sta_os_type[i] == "ios":
+                continue  # iOS uses GADS; no LANforge CX created
+
             if self.real_sta_os_type[i] == "android":
                 status, created_cx, created_endp = self.create_android(
                     lanforge_res=self.lanforge_port_list[i],
@@ -1073,36 +1126,32 @@ class ZoomAutomation(Realm):
                     f"--server_port 5000"
                 )
                 self.generic_endps_profile.set_cmd(
-                    self.generic_endps_profile.created_endp[i], cmd
+                    self.generic_endps_profile.created_endp[cx_idx], cmd
                 )
-
-            elif self.real_sta_os_type[i] == "ios":
-                # iOS participants are driven directly via GADS/Appium — no LANforge endpoint.
-                # Placeholders keep created_endp/cx indices aligned with real_sta_os_type indices.
-                self.generic_endps_profile.created_endp.append(
-                    f"ios_placeholder_{self.serial_list[i]}"
-                )
-                self.generic_endps_profile.created_cx.append(
-                    f"ios_placeholder_cx_{self.serial_list[i]}"
-                )
-                self._launch_ios_participant(
-                    udid=self.serial_list[i],
-                    display_name=self.real_sta_hostname[i],
-                )
-
             else:
                 self.generic_endps_profile.create(
                     ports=[self.real_sta_list[i]],
                     real_client_os_types=[self.real_sta_os_type[i]],
                 )
 
+            cx_idx += 1
+
+        # Second pass: set commands for non-Android/non-iOS participants, start all non-iOS CXs,
+        # and launch iOS participants via GADS threads.
+        cx_idx = 1
         for i in range(1, len(self.real_sta_os_type)):
             if self.real_sta_os_type[i] == "ios":
-                continue  # iOS participants are managed by dedicated threads; no LANforge CX to start
+                ios_info = self._ios_sta_info.get(self.real_sta_list[i], {})
+                udid = ios_info.get("udid") or (
+                    self.user_list[i] if i < len(self.user_list) else ""
+                )
+                self._start_ios_participant(udid, self.real_sta_hostname[i])
+                continue
+
             if self.real_sta_os_type[i] == "windows":
                 cmd = f"py zoom_client.py --ip {self.upstream_port}"
                 self.generic_endps_profile.set_cmd(
-                    self.generic_endps_profile.created_endp[i], cmd
+                    self.generic_endps_profile.created_endp[cx_idx], cmd
                 )
             elif self.real_sta_os_type[i] == "linux":
                 cmd = "su -l lanforge ctzoom.bash %s %s %s" % (
@@ -1111,21 +1160,22 @@ class ZoomAutomation(Realm):
                     "client",
                 )
                 self.generic_endps_profile.set_cmd(
-                    self.generic_endps_profile.created_endp[i], cmd
+                    self.generic_endps_profile.created_endp[cx_idx], cmd
                 )
             elif self.real_sta_os_type[i] == "macos":
                 cmd = "sudo bash ctzoom.bash %s %s" % (self.upstream_port, "client")
                 self.generic_endps_profile.set_cmd(
-                    self.generic_endps_profile.created_endp[i], cmd
+                    self.generic_endps_profile.created_endp[cx_idx], cmd
                 )
 
-            cx_name = self.generic_endps_profile.created_cx[i]
+            cx_name = self.generic_endps_profile.created_cx[cx_idx]
             self.json_post(
                 "/cli-json/set_cx_state",
                 {"test_mgr": "default_tm", "cx_name": cx_name, "cx_state": "RUNNING"},
                 debug_=True,
             )
             logger.info(f"Sending running state to.. {cx_name}")
+            cx_idx += 1
 
     def wait_for_test_start(self):
         # Wait for the test to be started
@@ -1268,7 +1318,7 @@ class ZoomAutomation(Realm):
         """
         # Query and retrieve all user-defined real stations if `real_sta_list` is not provided
         if real_sta_list is None:
-            self.real_sta_list, _, _ = real_device_obj.query_user()
+            self.real_sta_list, _, _ = real_device_obj.query_user(flag=1)
         else:
             interface_data = self.json_get("/port/all")
             interfaces = interface_data["interfaces"]
@@ -1310,7 +1360,7 @@ class ZoomAutomation(Realm):
         if len(self.real_sta_list) == 0:
             logger.error("There are no real devices in this testbed. Aborting test")
             exit(0)
-        # Filter out iOS devices from the real_sta_list before proceeding
+        # Identify iOS devices and record their info; all devices (including iOS) are kept in the list
         self.real_sta_list = self.filter_ios_devices(self.real_sta_list)
 
         # Rebuild a clean, ordered and unique station list (avoid mutating while iterating)
@@ -1322,28 +1372,53 @@ class ZoomAutomation(Realm):
             if sta_name in seen_sta:
                 continue
             if sta_name not in real_device_obj.devices_data:
-                logger.error(
-                    "Real station not in devices data, ignoring it from testing"
-                )
-                continue
+                # iOS devices may not appear in devices_data; use info collected by filter_ios_devices
+                if sta_name in self._ios_sta_info:
+                    ios_info = self._ios_sta_info[sta_name]
+                    self.real_sta_data[sta_name] = {
+                        "ostype": "ios",
+                        "hostname": ios_info["hostname"],
+                        "user": ios_info["udid"],
+                    }
+                else:
+                    logger.error(
+                        "Real station not in devices data, ignoring it from testing"
+                    )
+                    continue
+            else:
+                self.real_sta_data[sta_name] = dict(real_device_obj.devices_data[sta_name])
+
+            # LANforge reports both macOS and iOS as "Apple/x86-64", so devices_data may
+            # label an iOS device as "macos". Override using the hardware-level check
+            # performed by filter_ios_devices (which queries the /resource API directly).
+            if sta_name in self._ios_sta_info:
+                self.real_sta_data[sta_name]["ostype"] = "ios"
+                if not self.real_sta_data[sta_name].get("hostname"):
+                    self.real_sta_data[sta_name]["hostname"] = self._ios_sta_info[sta_name]["hostname"]
+                if not self.real_sta_data[sta_name].get("user"):
+                    self.real_sta_data[sta_name]["user"] = self._ios_sta_info[sta_name]["udid"]
 
             seen_sta.add(sta_name)
             cleaned_sta_list.append(sta_name)
-            self.real_sta_data[sta_name] = real_device_obj.devices_data[sta_name]
 
         self.real_sta_list = cleaned_sta_list
         self.real_sta_os_type = [
             self.real_sta_data[real_sta_name]["ostype"]
             for real_sta_name in self.real_sta_data
         ]
-        self.real_sta_hostname = [
-            (
-                self.real_sta_data[real_sta_name]["hostname"]
-                if self.real_sta_data[real_sta_name]["ostype"] != "android"
-                else self.real_sta_data[real_sta_name]["user"]
-            )
-            for real_sta_name in self.real_sta_data
-        ]
+        self.real_sta_hostname = []
+        for real_sta_name in self.real_sta_data:
+            ostype = self.real_sta_data[real_sta_name]["ostype"]
+            if ostype == "android":
+                self.real_sta_hostname.append(self.real_sta_data[real_sta_name]["user"])
+            elif ostype == "ios":
+                # Use UDID as hostname for iOS, matching lf_interop_youtube.py process_device_data
+                ios_info = self._ios_sta_info.get(real_sta_name, {})
+                self.real_sta_hostname.append(
+                    ios_info.get("udid") or self.real_sta_data[real_sta_name]["hostname"]
+                )
+            else:
+                self.real_sta_hostname.append(self.real_sta_data[real_sta_name]["hostname"])
 
         self.zoom_host = self.real_sta_list[0]
         self.hostname_os_combination = [
@@ -1360,6 +1435,8 @@ class ZoomAutomation(Realm):
                 self.linux = self.linux + 1
             elif value["ostype"] == "android":
                 self.android = self.android + 1
+            elif value["ostype"] == "ios":
+                self.ios = self.ios + 1
 
         # Create mapping: { 'Hostname': 'Station_ID' }
         self.hostname_to_station_map = dict(
@@ -2032,7 +2109,7 @@ class ZoomAutomation(Realm):
         if self.config:
             test_parameters = pd.DataFrame([{
                 "Configured Devices": self.hostname_os_combination,
-                'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac})',
+                'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac}),A({self.android}),iOS({self.ios})',
                 'Test Duration(min)': self.duration,
                 'EMAIL ID': self.signin_email,
                 "PASSWORD": self.signin_passwd,
@@ -2052,7 +2129,7 @@ class ZoomAutomation(Realm):
             test_parameters = pd.DataFrame([{
                 "Configuration": gp_map,
                 "Configured Devices": self.hostname_os_combination,
-                'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac})',
+                'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac}),A({self.android}),iOS({self.ios})',
                 'Test Duration(min)': self.duration,
                 'EMAIL ID': self.signin_email,
                 "PASSWORD": self.signin_passwd,
@@ -2064,7 +2141,7 @@ class ZoomAutomation(Realm):
 
             test_parameters = pd.DataFrame([{
                 "Configured Devices": self.hostname_os_combination,
-                'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac})',
+                'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac}),A({self.android}),iOS({self.ios})',
                 'Test Duration(min)': self.duration,
                 'EMAIL ID': self.signin_email,
                 "PASSWORD": self.signin_passwd,
@@ -2681,11 +2758,15 @@ class ZoomAutomation(Realm):
 
     def filter_ios_devices(self, device_list):
         """
-        Filters out iOS devices from the given device list based on hardware and software identifiers.
+        Identifies iOS devices in the given device list and records their info.
 
-        This method accepts a list or comma-separated string of device identifiers and removes
+        This method accepts a list or comma-separated string of device identifiers and detects
         devices identified as iOS (Apple) based on their hardware version, app ID, and kernel info
         fetched via the `/resource/{shelf}/{resource}` API endpoint.
+
+        Detected iOS devices are recorded in `self._ios_sta_info` (keyed by the device string)
+        so that `create_participants` can later launch them through GADS without creating a
+        LANforge CX. All devices (iOS and non-iOS) are returned in the list.
 
         Supported input formats for each device:
         - "shelf.resource"
@@ -2697,15 +2778,15 @@ class ZoomAutomation(Realm):
         - `app-id` is not empty and is either non-zero or the kernel is empty
 
         Args:
-            device_list (Union[list[str], str]): A list or comma-separated string of devices to be filtered.
+            device_list (Union[list[str], str]): A list or comma-separated string of devices.
 
         Returns:
-            Union[list[int], str]: A list of valid (non-iOS) device IDs as integers,
+            Union[list[str], str]: The original device list unchanged (all devices retained),
                                 or a comma-separated string if the input was a string.
 
         Logs:
             - Warnings for invalid formats or missing device data.
-            - Info when an iOS device is skipped.
+            - Info when an iOS device is detected.
             - Exceptions if errors occur during processing.
 
         """
@@ -2721,7 +2802,7 @@ class ZoomAutomation(Realm):
                 if device.count('.') == 1:
                     shelf, resource = device.split('.')
                 elif device.count('.') == 2:
-                    shelf, resource, port = device.split('.')
+                    shelf, resource, _port = device.split('.')
                 elif device.count('.') == 0:
                     shelf, resource = 1, device
                 else:
@@ -2731,6 +2812,7 @@ class ZoomAutomation(Realm):
                 device_data_resp = self.json_get(f'/resource/{shelf}/{resource}')
                 if not device_data_resp or 'resource' not in device_data_resp:
                     logger.warning("Device data not found for %s", device)
+                    filtered_list.append(device)
                     continue
 
                 device_data = device_data_resp['resource']
@@ -2738,10 +2820,25 @@ class ZoomAutomation(Realm):
                 app_id = device_data.get('app-id', '')
                 kernel = device_data.get('kernel', '')
 
-                if 'Apple' in hw_version and app_id != '' and (app_id != '0' or kernel == ''):
-                    logger.info("%s is an iOS device. Currently, we do not support iOS devices.", device)
-                else:
-                    filtered_list.append(device)
+                # Distinguish iOS from macOS:
+                #   - Both share "Apple" in hw_version.
+                #   - macOS always exposes a Darwin kernel string (e.g. "20.6.0"); iOS leaves kernel empty.
+                #   - iOS devices managed via GADS carry a non-empty, non-zero app-id (the interop agent ID).
+                is_apple = 'Apple' in hw_version
+                is_ios_kernel = kernel == ''          # empty kernel → iOS, not macOS
+                has_agent = app_id not in ('', '0')  # GADS interop agent present
+
+                if is_apple and is_ios_kernel and has_agent:
+                    hostname = device_data.get('hostname', device)
+                    # app-id carries the UDID for iOS devices managed via GADS
+                    udid = app_id
+                    self._ios_sta_info[device] = {"hostname": hostname, "udid": udid}
+                    logger.info(
+                        "%s is an iOS device (hostname=%s, UDID=%s). Will join Zoom via GADS.",
+                        device, hostname, udid,
+                    )
+
+                filtered_list.append(device)
 
             except Exception as e:
                 logger.exception(f"Error processing device {device}: {e}")
@@ -2752,160 +2849,6 @@ class ZoomAutomation(Realm):
 
         self.device_list = filtered_list
         return filtered_list
-
-    def fetch_ios_devices_from_gads(self, hub_url, requested_udids=None):
-        """
-        Query GADS for available iOS devices and return matching device dicts.
-
-        Args:
-            hub_url (str): GADS hub URL (e.g. http://host:10000/grid).
-            requested_udids (list|None): If provided, only return devices whose UDID
-                appears in this list. UDIDs not found in GADS are logged as unavailable.
-
-        Returns:
-            list[dict]: Each dict contains at least 'udid'. May contain 'name', etc.
-        """
-        base_url = hub_url.rstrip("/")
-        if base_url.endswith("/grid"):
-            base_url = base_url[: -len("/grid")]
-
-        devices_url = f"{base_url}/api/v1/devices"
-        logger.info(f"iOS device discovery: querying GADS at {devices_url}")
-
-        try:
-            resp = requests.get(devices_url, timeout=10)
-            resp.raise_for_status()
-            all_devices = resp.json()
-        except Exception as e:
-            logger.error(f"iOS device discovery: failed to reach GADS ({devices_url}): {e}")
-            return []
-
-        ios_devices = [
-            d for d in all_devices
-            if str(d.get("os", d.get("platform", ""))).lower() == "ios"
-        ]
-        logger.info(
-            f"iOS device discovery: found {len(ios_devices)} iOS device(s) in GADS inventory."
-        )
-
-        if not ios_devices:
-            return []
-
-        if requested_udids:
-            logger.info(f"iOS device discovery: requested UDIDs — {requested_udids}")
-            available_udid_set = {d.get("udid") for d in ios_devices}
-            matched = [d for d in ios_devices if d.get("udid") in set(requested_udids)]
-            unavailable = [u for u in requested_udids if u not in available_udid_set]
-            if unavailable:
-                logger.warning(
-                    f"iOS device discovery: unavailable UDID(s) — {unavailable}"
-                )
-            logger.info(
-                f"iOS device discovery: matched {len(matched)} of {len(requested_udids)} "
-                f"requested UDID(s) — {[d.get('udid') for d in matched]}"
-            )
-            return matched
-
-        return ios_devices
-
-    def inject_ios_devices(self, ios_device_infos):
-        """
-        Append discovered iOS devices into the participant device pool so they
-        flow through the existing participant assignment and creation logic.
-
-        Must be called after select_real_devices(), get_resource_data(),
-        get_ports_data(), and get_interop_data() have already run.
-
-        Args:
-            ios_device_infos (list[dict]): Device dicts from fetch_ios_devices_from_gads().
-        """
-        if not ios_device_infos:
-            logger.info("iOS device injection: no iOS devices to add.")
-            return
-
-        for device in ios_device_infos:
-            udid = device.get("udid", "unknown")
-            display_name = device.get("name", udid)
-
-            # Participant pools (mirror what select_real_devices() builds)
-            self.real_sta_list.append(udid)
-            self.real_sta_os_type.append("ios")
-            self.real_sta_hostname.append(display_name)
-            self.real_sta_data[udid] = {"ostype": "ios", "hostname": display_name, "user": display_name}
-
-            # LANforge port lists (iOS devices have no LANforge presence)
-            self.serial_list.append(udid)
-            self.lanforge_port_list.append("")
-
-            # Network-info lists (populated by get_ports_data — placeholder for iOS)
-            self.mac_list.append("-")
-            self.rssi_list.append("-")
-            self.link_rate_list.append("-")
-            self.ssid_list.append("-")
-
-            # Device name list used in report generation
-            self.device_names.append(display_name)
-
-            # Keep derived collections current
-            if isinstance(self.hostname_os_combination, list):
-                self.hostname_os_combination.append(f"{display_name} (ios)")
-            if hasattr(self, "hostname_to_station_map") and isinstance(
-                self.hostname_to_station_map, dict
-            ):
-                self.hostname_to_station_map[display_name] = udid
-
-            self.ios_device_infos.append(device)
-
-        logger.info(
-            f"iOS device injection: added {len(ios_device_infos)} iOS device(s) to the participant pool."
-        )
-        logger.info(
-            f"iOS device injection: total device count (including host) is now "
-            f"{len(self.real_sta_list)}."
-        )
-
-    def _launch_ios_participant(self, udid, display_name):
-        """
-        Start a ZoomAutomator thread for a single iOS participant device.
-        The thread connects to the device via GADS/Appium using the meeting link
-        that was set by wait_for_host_ready() before create_participants() runs.
-        """
-        if iOSZoomAutomator is None:
-            logger.error(
-                f"[{udid}] iOSZoomAutomator is not available (import failed). "
-                "Cannot launch iOS participant."
-            )
-            return
-
-        device_info = next(
-            (d for d in self.ios_device_infos if d.get("udid") == udid), {}
-        )
-        hub_url = device_info.get("hub_url") or self.gads_hub_url
-        client_secret = device_info.get("client_secret", "")
-
-        try:
-            automator = iOSZoomAutomator(
-                device_udid=udid,
-                invite_link=self.meet_link,
-                display_name=display_name,
-                hub_url=hub_url,
-                client_secret=client_secret,
-                enable_audio=self.audio,
-                enable_video=self.video,
-                duration_minutes=self.duration,
-            )
-        except Exception as e:
-            logger.error(f"[{udid}] Failed to create iOSZoomAutomator: {e}")
-            return
-
-        t = threading.Thread(
-            target=automator.run,
-            daemon=True,
-            name=f"ios-participant-{udid}",
-        )
-        t.start()
-        self.ios_threads.append(t)
-        logger.info(f"[{udid}] iOS participant thread started.")
 
     def add_bandsteering_report_section(self, report=None):
         try:
@@ -3217,7 +3160,7 @@ class ZoomAutomation(Realm):
                         "Date": time.strftime("%d-%m-%Y", time.localtime()),
                         "Configured Devices": self.hostname_os_combination,
                         "Zoom Meeting ID": self.remote_login_url,
-                        "Devices Used": f"W({self.windows}),L({self.linux}),M({self.mac}),A({self.android})",
+                        "Devices Used": f"W({self.windows}),L({self.linux}),M({self.mac}),A({self.android}),iOS({self.ios})",
                         "Test Duration": to_hms(self.duration),
                         "EMAIL ID": self.signin_email,
                         "PASSWORD": self.signin_passwd,
@@ -3240,7 +3183,7 @@ class ZoomAutomation(Realm):
                         "Configuration": gp_map,
                         "Configured Devices": self.hostname_os_combination,
                         "Zoom Meeting ID": self.remote_login_url,
-                        "Devices Used": f"W({self.windows}),L({self.linux}),M({self.mac}),A({self.android})",
+                        "Devices Used": f"W({self.windows}),L({self.linux}),M({self.mac}),A({self.android}),iOS({self.ios})",
                         "Test Duration": to_hms(self.duration),
                         "EMAIL ID": self.signin_email,
                         "PASSWORD": self.signin_passwd,
@@ -3255,7 +3198,7 @@ class ZoomAutomation(Realm):
                 {
                     "Test Name": "Zoom Conference Call Test",
                     "Date": time.strftime("%d-%m-%Y", time.localtime()),
-                    "Devices Used": f"W({self.windows}),L({self.linux}),M({self.mac}),A({self.android})",
+                    "Devices Used": f"W({self.windows}),L({self.linux}),M({self.mac}),A({self.android}),iOS({self.ios})",
                     "EMAIL ID": self.signin_email,
                     "PASSWORD": self.signin_passwd,
                     "HOST": self.real_sta_list[0],
@@ -3909,7 +3852,7 @@ class ZoomAutomation(Realm):
         param_data = {
             "Test Name": "Zoom Conference Call Test",
             "Date": time.strftime("%d-%m-%Y", time.localtime()),
-            "Devices Used": f"W({self.windows}),L({self.linux}),M({self.mac}),A({self.android})",
+            "Devices Used": f"W({self.windows}),L({self.linux}),M({self.mac}),A({self.android}),iOS({self.ios})",
             "Zoom Meeting ID": (
                 self.remote_login_url if not self.do_robo else "Robo-Multi-Location"
             ),
@@ -4458,6 +4401,25 @@ def main():
             action="store_true",
         )
 
+        # Arguments related to iOS via GADS
+        ios_group = parser.add_argument_group(
+            "iOS Arguments", "Arguments for iOS participants joining via GADS/Appium"
+        )
+        ios_group.add_argument(
+            "--gads_hub_url",
+            type=str,
+            default=None,
+            help="GADS hub URL for iOS device automation (e.g. http://gads-host:10000/grid). "
+                 "Defaults to GADS_HUB_URL env variable or http://localhost:10000/grid.",
+        )
+        ios_group.add_argument(
+            "--gads_client_secret",
+            type=str,
+            default=None,
+            help="GADS client secret for iOS device authentication. "
+                 "Defaults to GADS_CLIENT_SECRET env variable.",
+        )
+
         # Arguments related to roaming
         roaming_group = parser.add_argument_group(
             "Roaming Arguments",
@@ -4504,43 +4466,13 @@ def main():
             default="",
         )
 
-        # Arguments related to iOS device integration via GADS
-        ios_group = parser.add_argument_group(
-            "iOS Arguments",
-            "Arguments for integrating iOS devices as participants via GADS",
-        )
-        ios_group.add_argument(
-            "--get_ios",
-            action="store_true",
-            help=(
-                "Fetch available iOS devices from GADS and add them to the participant pool. "
-                "iOS devices discovered here are not part of the --resources (LANforge) list."
-            ),
-        )
-        ios_group.add_argument(
-            "--udids",
-            nargs="+",
-            default=None,
-            metavar="UDID",
-            help=(
-                "One or more iOS device UDIDs to select from GADS (requires --get_ios). "
-                "Only matching devices are added; unmatched UDIDs are logged as unavailable."
-            ),
-        )
-        ios_group.add_argument(
-            "--gads_hub",
-            default=None,
-            metavar="URL",
-            help=(
-                "GADS hub URL used for iOS device discovery "
-                "(default: GADS_HUB_URL env var or http://localhost:10000/grid)."
-            ),
-        )
-
         args = parser.parse_args()
 
         # set the logger level to debug
         logger_config = lf_logger_config.lf_logger_config()
+
+        if args.gads_hub_url is None:
+            args.gads_hub_url = f"http://{args.lanforge_ip}:10000/grid"
 
         if args.log_level:
             logger_config.set_level(level=args.log_level)
@@ -4640,7 +4572,10 @@ def main():
             cycles=args.cycles,
             bssids=bssids,
             do_roam=args.do_roam,
+            gads_hub_url=args.gads_hub_url,
+            gads_client_secret=args.gads_client_secret,
         )
+
         if args.download_csv:
             zoom_automation.download_csv = True
         args.upstream_port = zoom_automation.change_port_to_ip(args.upstream_port)
@@ -4838,7 +4773,7 @@ def main():
                     obj = {
                         "configured_devices": zoom_automation.real_sta_hostname,
                         "configuration_status": "configured",
-                        "no_of_devices": f" Total({len(zoom_automation.real_sta_os_type)}) : W({zoom_automation.windows}),L({zoom_automation.linux}),M({zoom_automation.mac})",
+                        "no_of_devices": f" Total({len(zoom_automation.real_sta_os_type)}) : W({zoom_automation.windows}),L({zoom_automation.linux}),M({zoom_automation.mac}),A({zoom_automation.android}),iOS({zoom_automation.ios})",
                         "device_list": zoom_automation.hostname_os_combination,
                     }
                     zoom_automation.updating_webui_runningjson(obj)
@@ -4851,15 +4786,6 @@ def main():
         zoom_automation.get_resource_data()
         zoom_automation.get_ports_data()
         zoom_automation.get_interop_data()
-
-        if args.get_ios:
-            gads_hub = args.gads_hub or os.getenv("GADS_HUB_URL", "http://localhost:10000/grid")
-            zoom_automation.gads_hub_url = gads_hub
-            ios_devices = zoom_automation.fetch_ios_devices_from_gads(
-                hub_url=gads_hub,
-                requested_udids=args.udids,
-            )
-            zoom_automation.inject_ios_devices(ios_devices)
 
         if args.api_stats_collection:
             # load environment file if specified
