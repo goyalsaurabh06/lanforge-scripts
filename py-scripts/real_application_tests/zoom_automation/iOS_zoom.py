@@ -21,8 +21,11 @@ try:
         WebDriverException,
         NoSuchElementException,
         StaleElementReferenceException,
+        TimeoutException,
     )
     from selenium.webdriver.common.action_chains import ActionChains
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
 except ImportError:
     print("Required packages not installed. Run: pip install Appium-Python-Client selenium")
     sys.exit(1)
@@ -1031,6 +1034,117 @@ def run_for_device(udid, args):
         server_port=args.server_port,
     )
     return automation.run()
+
+
+def _candela_connect(udid: str, hub_url: str, bundle_id: str, secret: str):
+    """Create an Appium session for the Candela interop iOS app."""
+    options = XCUITestOptions()
+    options.set_capability("udid", udid)
+    options.set_capability("platformName", "iOS")
+    options.set_capability("automationName", "XCUITest")
+    options.set_capability("bundleId", bundle_id)
+    options.set_capability("noReset", True)
+    options.set_capability("shouldUseSingletonTestManager", False)
+    options.set_capability("newCommandTimeout", 600)
+    if secret:
+        options.set_capability("gads:clientSecret", secret)
+    logging.getLogger(__name__).info("[%s] Connecting to Candela interop app at %s", udid, hub_url)
+    return webdriver.Remote(hub_url, options=options)
+
+
+def _candela_find_testroom_button(driver, timeout: int):
+    """Wait for the testroom button to become clickable in the Candela interop app."""
+    wait = WebDriverWait(driver, timeout)
+    predicate = (
+        "type == 'XCUIElementTypeButton' AND visible == 1 AND enabled == 1 "
+        "AND (name == 'testroom' OR label == 'testroom')"
+    )
+    return wait.until(EC.element_to_be_clickable((AppiumBy.IOS_PREDICATE, predicate)))
+
+
+def _candela_handle_post_join_popups(driver, timeout: int):
+    """Dismiss iOS system alert dialogs that appear after tapping testroom."""
+    join_labels = {"Join", "Join Network"}
+    location_labels = {"Always Allow"}
+    deadline = time.time() + max(8, timeout)
+    handled_join = False
+    handled_location = False
+    while time.time() < deadline:
+        try:
+            _ = driver.switch_to.alert
+        except Exception:
+            time.sleep(0.4)
+            continue
+        try:
+            buttons = driver.execute_script("mobile: alert", {"action": "getButtons"}) or []
+        except Exception:
+            time.sleep(0.4)
+            continue
+        if not isinstance(buttons, list) or not buttons:
+            time.sleep(0.4)
+            continue
+        button_set = set(buttons)
+        target = None
+        if not handled_location:
+            for lbl in location_labels:
+                if lbl in button_set:
+                    target = lbl
+                    break
+        if target is None and not handled_join:
+            for lbl in join_labels:
+                if lbl in button_set:
+                    target = lbl
+                    break
+        if target is None:
+            time.sleep(0.4)
+            continue
+        try:
+            driver.execute_script("mobile: alert", {"action": "accept", "buttonLabel": target})
+            if target in location_labels:
+                handled_location = True
+                logging.getLogger(__name__).info("Handled location permission popup (Always Allow)")
+            if target in join_labels:
+                handled_join = True
+                logging.getLogger(__name__).info("Handled network join popup (Join)")
+            time.sleep(0.5)
+        except Exception:
+            time.sleep(0.4)
+        if handled_join and handled_location:
+            break
+
+
+def run_candela_interop_flow(udid: str, hub_url: str, bundle_id: str, secret: str,
+                              timeout: int = 20) -> bool:
+    """
+    Connect to the Candela interop app and tap the testroom button.
+
+    Called after the Zoom test completes to return the device to a known
+    ready state in the Candela app, mirroring the YouTube iOS post-test flow.
+    """
+    logger = logging.getLogger(__name__)
+    driver = None
+    try:
+        driver = _candela_connect(udid, hub_url, bundle_id, secret)
+        button = _candela_find_testroom_button(driver, timeout)
+        button.click()
+        _candela_handle_post_join_popups(driver, timeout)
+        logger.info("[%s] Candela interop: tapped testroom button", udid)
+        return True
+    except TimeoutException as e:
+        logger.error("[%s] Candela interop timeout — element not found: %s", udid, e)
+        return False
+    except WebDriverException as e:
+        logger.error("[%s] Candela interop WebDriver error: %s", udid, e)
+        return False
+    except Exception as e:
+        logger.error("[%s] Candela interop unexpected error: %s", udid, e)
+        return False
+    finally:
+        if driver:
+            try:
+                driver.quit()
+            except Exception:
+                pass
 
 
 def main():

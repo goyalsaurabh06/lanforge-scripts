@@ -161,6 +161,8 @@ class ZoomAutomation(Realm):
         do_roam=False,
         gads_hub_url=None,
         gads_client_secret=None,
+        candela_bundle_id="com.candela.wecan.interop-ios",
+        candela_timeout=20,
     ):
 
         super().__init__(lfclient_host=lanforge_ip)
@@ -175,8 +177,11 @@ class ZoomAutomation(Realm):
         self.ios = 0
         self.gads_hub_url = gads_hub_url
         self.gads_client_secret = gads_client_secret
+        self.candela_bundle_id = candela_bundle_id
+        self.candela_timeout = candela_timeout
         self._ios_participant_threads = []
         self._ios_sta_info = {}  # Maps sta device string -> {hostname, udid} for iOS devices
+        self.configobj = None   # Set by main() after DeviceConfig is constructed
         self.real_sta_os_type = []
         self.real_sta_hostname = []
         self.real_sta_list = []
@@ -1088,8 +1093,26 @@ class ZoomAutomation(Realm):
             server_port=5000,
         )
 
+        candela_bundle_id = self.candela_bundle_id
+        candela_timeout = self.candela_timeout
+        hub_url = self.gads_hub_url
+        secret = self.gads_client_secret or ""
+        run_candela_interop_flow = ios_zoom_module.run_candela_interop_flow
+
+        def _run_and_return_to_candela():
+            automator.run()
+            # After the Zoom test completes, re-join the Candela testroom —
+            # same post-test flow as lf_interop_youtube.py / youtube_ios_test.py.
+            run_candela_interop_flow(
+                udid=udid,
+                hub_url=hub_url,
+                bundle_id=candela_bundle_id,
+                secret=secret,
+                timeout=candela_timeout,
+            )
+
         thread = threading.Thread(
-            target=automator.run,
+            target=_run_and_return_to_candela,
             name=f"ios_zoom_{participant_name}",
             daemon=True,
         )
@@ -1098,6 +1121,69 @@ class ZoomAutomation(Realm):
         logger.info(
             f"Started iOS participant thread for '{participant_name}' (UDID: {udid})"
         )
+
+    def get_ios_device_data(self):
+        """
+        Resolve real Apple UDIDs for iOS devices detected by filter_ios_devices().
+
+        Mirrors lf_interop_youtube.py get_ios_device_data():
+          - Queries configobj.get_all_devices() for the "serial" field
+            (the value displayed in the device-selection list, e.g. 00008110-...).
+          - Falls back to querying /resource directly for the hostname when
+            configobj is unavailable.
+
+        Populates self._ios_sta_info[device]["udid"] with the real UDID so that
+        create_participants() can pass it to GADS/Appium.
+        """
+        # Build shelf.resource → real Apple UDID and display name from DeviceConfig
+        resource_to_udid = {}
+        resource_to_username = {}
+        if self.configobj is not None:
+            try:
+                for device in self.configobj.get_all_devices():
+                    if device.get("type") != "laptop":
+                        key = f"{device['shelf']}.{device['resource']}"
+                        serial = device.get("serial", "")
+                        if serial:
+                            resource_to_udid[key] = serial
+                        username = device.get("user-name", "")
+                        if username:
+                            resource_to_username[key] = username
+            except Exception as e:
+                logger.warning("Could not fetch device serials from DeviceConfig: %s", e)
+
+        for device, info in self._ios_sta_info.items():
+            parts = str(device).split(".")
+            base = f"{parts[0]}.{parts[1]}"
+            udid = resource_to_udid.get(base, "")
+            if udid:
+                self._ios_sta_info[device]["udid"] = udid
+                logger.info(
+                    "iOS device %s: resolved UDID %s from DeviceConfig serial.", device, udid
+                )
+            else:
+                logger.warning(
+                    "iOS device %s: UDID not found in DeviceConfig; "
+                    "ensure device serial is registered in LANforge.", device
+                )
+
+        # Update real_sta_hostname for iOS devices using the user-name from DeviceConfig
+        # (the friendly name set in GADS, e.g. "iPhone13"), falling back to the
+        # LANforge resource hostname when user-name is absent.
+        for i, (sta_name, ostype) in enumerate(zip(self.real_sta_list, self.real_sta_os_type)):
+            if ostype != "ios":
+                continue
+            parts = str(sta_name).split(".")
+            base = f"{parts[0]}.{parts[1]}"
+            display_name = resource_to_username.get(base, "")
+            if not display_name:
+                info = self._ios_sta_info.get(sta_name, {})
+                display_name = info.get("hostname", "")
+            if display_name:
+                self.real_sta_hostname[i] = display_name
+                logger.info(
+                    "iOS device %s: display name set to '%s'.", sta_name, display_name
+                )
 
     def create_participants(self):
         # cx_idx tracks the position in created_endp/created_cx for non-iOS devices.
@@ -1378,7 +1464,7 @@ class ZoomAutomation(Realm):
                     self.real_sta_data[sta_name] = {
                         "ostype": "ios",
                         "hostname": ios_info["hostname"],
-                        "user": ios_info["udid"],
+                        "user": ios_info.get("user") or ios_info["hostname"],
                     }
                 else:
                     logger.error(
@@ -1396,7 +1482,9 @@ class ZoomAutomation(Realm):
                 if not self.real_sta_data[sta_name].get("hostname"):
                     self.real_sta_data[sta_name]["hostname"] = self._ios_sta_info[sta_name]["hostname"]
                 if not self.real_sta_data[sta_name].get("user"):
-                    self.real_sta_data[sta_name]["user"] = self._ios_sta_info[sta_name]["udid"]
+                    self.real_sta_data[sta_name]["user"] = (
+                        self._ios_sta_info[sta_name].get("user") or self._ios_sta_info[sta_name]["hostname"]
+                    )
 
             seen_sta.add(sta_name)
             cleaned_sta_list.append(sta_name)
@@ -1412,11 +1500,11 @@ class ZoomAutomation(Realm):
             if ostype == "android":
                 self.real_sta_hostname.append(self.real_sta_data[real_sta_name]["user"])
             elif ostype == "ios":
-                # Use UDID as hostname for iOS, matching lf_interop_youtube.py process_device_data
-                ios_info = self._ios_sta_info.get(real_sta_name, {})
-                self.real_sta_hostname.append(
-                    ios_info.get("udid") or self.real_sta_data[real_sta_name]["hostname"]
-                )
+                # Use user field for iOS, matching the Android pattern exactly.
+                # Each iOS device has a unique user field from /resource (e.g. "John's iPhone"),
+                # ensuring distinct CSV filenames. UDID is retrieved separately from
+                # _ios_sta_info in create_participants() for GADS/Appium identification.
+                self.real_sta_hostname.append(self.real_sta_data[real_sta_name]["user"])
             else:
                 self.real_sta_hostname.append(self.real_sta_data[real_sta_name]["hostname"])
 
@@ -2829,13 +2917,16 @@ class ZoomAutomation(Realm):
                 has_agent = app_id not in ('', '0')  # GADS interop agent present
 
                 if is_apple and is_ios_kernel and has_agent:
+                    print(f"Device data for {device}: {device_data}")
                     hostname = device_data.get('hostname', device)
-                    # app-id carries the UDID for iOS devices managed via GADS
-                    udid = app_id
-                    self._ios_sta_info[device] = {"hostname": hostname, "udid": udid}
+                    user = device_data.get('user', '') or hostname
+                    # Record as iOS; real UDID is resolved later by get_ios_device_data()
+                    # via configobj.get_all_devices() → device["serial"].
+                    # app-id is a LANforge internal identifier, NOT the Apple device UDID.
+                    self._ios_sta_info[device] = {"hostname": hostname, "user": user, "udid": ""}
                     logger.info(
-                        "%s is an iOS device (hostname=%s, UDID=%s). Will join Zoom via GADS.",
-                        device, hostname, udid,
+                        "%s is an iOS device (hostname=%s). Will join Zoom via GADS.",
+                        device, hostname,
                     )
 
                 filtered_list.append(device)
@@ -4419,6 +4510,18 @@ def main():
             help="GADS client secret for iOS device authentication. "
                  "Defaults to GADS_CLIENT_SECRET env variable.",
         )
+        ios_group.add_argument(
+            "--candela_bundle_id",
+            type=str,
+            default="com.candela.wecan.interop-ios",
+            help="Candela interop app bundle ID (default: com.candela.wecan.interop-ios).",
+        )
+        ios_group.add_argument(
+            "--candela_timeout",
+            type=int,
+            default=20,
+            help="Element wait timeout in seconds for Candela post-test flow (default: 20).",
+        )
 
         # Arguments related to roaming
         roaming_group = parser.add_argument_group(
@@ -4574,6 +4677,8 @@ def main():
             do_roam=args.do_roam,
             gads_hub_url=args.gads_hub_url,
             gads_client_secret=args.gads_client_secret,
+            candela_bundle_id=args.candela_bundle_id,
+            candela_timeout=args.candela_timeout,
         )
 
         if args.download_csv:
@@ -4602,6 +4707,7 @@ def main():
         config_obj = DeviceConfig.DeviceConfig(
             lanforge_ip=args.lanforge_ip, file_name=new_filename
         )
+        zoom_automation.configobj = config_obj
 
         if not args.expected_passfail_value and args.device_csv_name is None:
             config_obj.device_csv_file(csv_name="device.csv")
@@ -4782,6 +4888,7 @@ def main():
             logger.error("Generic Tab is not available.\nAborting the test.")
             exit(0)
 
+        zoom_automation.get_ios_device_data()
         zoom_automation.handle_flask_server()
         zoom_automation.get_resource_data()
         zoom_automation.get_ports_data()
