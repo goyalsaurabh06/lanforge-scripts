@@ -99,6 +99,28 @@ class ZoomAutomator:
         d.click(*tap_coords)
         time.sleep(1)
 
+    def _log_available_controls(self, root):
+        """Helper to find and log UI elements that look like audio/video/leave controls for troubleshooting."""
+        if getattr(self, "_hierarchy_logged", False):
+            return
+        self._hierarchy_logged = True
+        self.logger.info(f"[{self.device_serial}] --- Inspecting visible UI nodes for candidate controls ---")
+        found = False
+        for node in root.iter("node"):
+            text = node.attrib.get("text", "")
+            content_desc = node.attrib.get("content-desc", "")
+            resource_id = node.attrib.get("resource-id", "")
+            bounds = node.attrib.get("bounds", "")
+            class_name = node.attrib.get("class", "")
+            lower_str = f"{text} {content_desc} {resource_id}".lower()
+            if any(term in lower_str for term in ["mute", "audio", "video", "cam", "mic", "leave", "button"]):
+                self.logger.info(
+                    f"[{self.device_serial}] Candidate Node -> Text: {text!r} | Desc: {content_desc!r} | ID: {resource_id!r} | Bounds: {bounds} | Class: {class_name}"
+                )
+                found = True
+        if not found:
+            self.logger.info(f"[{self.device_serial}] No matching candidate nodes found in UI hierarchy.")
+
     def get_audio_control_info(self, d):
         """Return audio state and bounds by parsing the current hierarchy dump."""
         try:
@@ -111,11 +133,22 @@ class ZoomAutomator:
 
         for node in root.iter("node"):
             content_desc = node.attrib.get("content-desc", "")
-            if content_desc == "Mute my audio, button":
-                return True, node.attrib.get("bounds"), content_desc
-            if content_desc == "Unmute my audio, button":
-                return False, node.attrib.get("bounds"), content_desc
+            resource_id = node.attrib.get("resource-id", "")
+            desc_lower = content_desc.lower()
+            res_lower = resource_id.lower()
 
+            # Flexible check for Unmute
+            if "unmute" in desc_lower or "unmute" in res_lower:
+                return False, node.attrib.get("bounds"), content_desc or resource_id
+
+            # Flexible check for Mute
+            if "mute" in desc_lower or "mute" in res_lower:
+                # Exclude buttons like 'Mute all' or 'Mute participants'
+                if "all" not in desc_lower and "participant" not in desc_lower:
+                    return True, node.attrib.get("bounds"), content_desc or resource_id
+
+        # If we couldn't find the buttons, inspect the hierarchy for candidates
+        self._log_available_controls(root)
         return None, None, None
 
     def get_video_control_info(self, d):
@@ -130,11 +163,24 @@ class ZoomAutomator:
 
         for node in root.iter("node"):
             content_desc = node.attrib.get("content-desc", "")
-            if content_desc == "Start my video, button":
-                return False, node.attrib.get("bounds"), content_desc
-            if content_desc == "Stop my video, button":
-                return True, node.attrib.get("bounds"), content_desc
+            resource_id = node.attrib.get("resource-id", "")
+            desc_lower = content_desc.lower()
+            res_lower = resource_id.lower()
 
+            # Flexible check for Start Video
+            if "start" in desc_lower and ("video" in desc_lower or "cam" in desc_lower):
+                return False, node.attrib.get("bounds"), content_desc or resource_id
+            if "start" in res_lower and ("video" in res_lower or "cam" in res_lower):
+                return False, node.attrib.get("bounds"), content_desc or resource_id
+
+            # Flexible check for Stop Video
+            if "stop" in desc_lower and ("video" in desc_lower or "cam" in desc_lower):
+                return True, node.attrib.get("bounds"), content_desc or resource_id
+            if "stop" in res_lower and ("video" in res_lower or "cam" in res_lower):
+                return True, node.attrib.get("bounds"), content_desc or resource_id
+
+        # If we couldn't find the buttons, inspect the hierarchy for candidates
+        self._log_available_controls(root)
         return None, None, None
 
     def get_leave_control_info(self, d):
@@ -149,8 +195,12 @@ class ZoomAutomator:
 
         for node in root.iter("node"):
             content_desc = node.attrib.get("content-desc", "")
-            if content_desc == "Leave, button":
-                return node.attrib.get("bounds"), content_desc
+            resource_id = node.attrib.get("resource-id", "")
+            desc_lower = content_desc.lower()
+            res_lower = resource_id.lower()
+
+            if "leave" in desc_lower or "leave" in res_lower:
+                return node.attrib.get("bounds"), content_desc or resource_id
 
         return None, None
 

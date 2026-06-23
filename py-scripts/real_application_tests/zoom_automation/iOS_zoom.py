@@ -239,13 +239,22 @@ class ZoomAutomator:
             time.sleep(0.4)
         return None
 
-    def _tap_button(self, labels, timeout=10):
-        """Tap the first visible button whose label or name matches any entry in labels."""
-        predicates = [
-            f'type == "XCUIElementTypeButton" AND visible == true '
-            f'AND (label == "{l}" OR name == "{l}")'
-            for l in labels
-        ]
+    def _tap_button(self, labels, timeout=10, exact=False):
+        """Tap the first visible button or static text matching any entry in labels."""
+        types = ["XCUIElementTypeButton", "XCUIElementTypeStaticText"]
+        predicates = []
+        for t in types:
+            for lab in labels:
+                if exact:
+                    predicates.append(
+                        f'type == "{t}" AND visible == true '
+                        f'AND (label == "{lab}" OR name == "{lab}")'
+                    )
+                else:
+                    predicates.append(
+                        f'type == "{t}" AND visible == true '
+                        f'AND (label CONTAINS[c] "{lab}" OR name CONTAINS[c] "{lab}")'
+                    )
         el = self._find_any(predicates, timeout=timeout)
         if el:
             label_str = el.get_attribute("label") or el.get_attribute("name") or "?"
@@ -290,7 +299,7 @@ class ZoomAutomator:
 
         for method, script, payload in [
             ("deepLink", "mobile: deepLink", {"url": deep_link, "bundleId": self.bundle_id}),
-            ("openUrl",  "mobile: openUrl",  {"url": deep_link}),
+            ("openUrl", "mobile: openUrl", {"url": deep_link}),
         ]:
             try:
                 self.driver.execute_script(script, payload)
@@ -401,8 +410,8 @@ class ZoomAutomator:
         self.logger.info(f"[{self.device_udid}] Waiting for audio join dialog...")
         predicates = [
             f'type == "XCUIElementTypeButton" AND visible == true '
-            f'AND (label == "{l}" OR name == "{l}")'
-            for l in self.AUDIO_JOIN_LABELS
+            f'AND (label == "{lab}" OR name == "{lab}")'
+            for lab in self.AUDIO_JOIN_LABELS
         ]
         el = self._find_any(predicates, timeout=20)
         if el:
@@ -514,14 +523,18 @@ class ZoomAutomator:
         return False
 
     def _ensure_controls_visible(self):
-        """Best-effort: tap center a few times so Zoom bottom controls appear."""
+        """Ensure Zoom bottom controls are visible, tapping only if hidden."""
+        more_pred = (
+            'type == "XCUIElementTypeButton" AND visible == true '
+            'AND (label == "More" OR name == "More")'
+        )
+        # Check if already visible first to avoid toggling them off
+        if self._find(more_pred, timeout=2):
+            return
+
         for _ in range(3):
             self._tap_meeting_center()
             time.sleep(0.8)
-            more_pred = (
-                'type == "XCUIElementTypeButton" AND visible == true '
-                'AND (label == "More" OR name == "More")'
-            )
             if self._find(more_pred, timeout=1):
                 return
 
@@ -710,10 +723,12 @@ class ZoomAutomator:
         try:
             self._ensure_controls_visible()
 
-            # Already unmuted — audio is active, nothing to do
+            # Already unmuted — audio is active, nothing to do (using flexible case-insensitive match)
             mute_pred = (
-                'type == "XCUIElementTypeButton" AND visible == true '
-                'AND (label == "Mute" OR name == "Mute")'
+                '(type == "XCUIElementTypeButton" OR type == "XCUIElementTypeStaticText") '
+                'AND visible == true '
+                'AND (label CONTAINS[c] "mute" OR name CONTAINS[c] "mute") '
+                'AND NOT (label CONTAINS[c] "unmute" OR name CONTAINS[c] "unmute")'
             )
             if self._find(mute_pred, timeout=3):
                 self.logger.info(f"[{self.device_udid}] Audio already enabled (microphone active).")
@@ -741,10 +756,11 @@ class ZoomAutomator:
         try:
             self._ensure_controls_visible()
 
-            # Already on — video is active, nothing to do
+            # Already on — video is active, nothing to do (using flexible case-insensitive match)
             stop_pred = (
-                'type == "XCUIElementTypeButton" AND visible == true '
-                'AND (label == "Stop Video" OR name == "Stop Video")'
+                '(type == "XCUIElementTypeButton" OR type == "XCUIElementTypeStaticText") '
+                'AND visible == true '
+                'AND (label CONTAINS[c] "stop video" OR name CONTAINS[c] "stop video")'
             )
             if self._find(stop_pred, timeout=3):
                 self.logger.info(f"[{self.device_udid}] Video already enabled (camera active).")
@@ -1114,7 +1130,7 @@ def _candela_handle_post_join_popups(driver, timeout: int):
 
 
 def run_candela_interop_flow(udid: str, hub_url: str, bundle_id: str, secret: str,
-                              timeout: int = 20) -> bool:
+                             timeout: int = 20) -> bool:
     """
     Connect to the Candela interop app and tap the testroom button.
 
