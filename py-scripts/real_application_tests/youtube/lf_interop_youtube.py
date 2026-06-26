@@ -998,6 +998,23 @@ class Youtube(Realm):
         def run_flask():
             app.run(host="0.0.0.0", port=5002, debug=False, use_reloader=False)
 
+        # Kill any existing process occupying port 5002 before starting Flask
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["lsof", "-ti", "tcp:5002"],
+                capture_output=True, text=True
+            )
+            pids = result.stdout.strip().split()
+            if pids:
+                for pid in pids:
+                    subprocess.run(["kill", "-9", pid], check=False)
+                    logging.info("Killed existing process %s on port 5002", pid)
+                import time as _time
+                _time.sleep(0.5)
+        except Exception as e:
+            logging.warning("Could not free port 5002: %s", e)
+
         # Run the Flask server in a separate thread to avoid blocking
         flask_thread = Thread(target=run_flask)
         flask_thread.daemon = True
