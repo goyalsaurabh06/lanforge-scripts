@@ -1073,7 +1073,7 @@ def _candela_find_testroom_button(driver, timeout: int):
     wait = WebDriverWait(driver, timeout)
     predicate = (
         "type == 'XCUIElementTypeButton' AND visible == 1 AND enabled == 1 "
-        "AND (name == 'testroom' OR label == 'testroom')"
+        "AND (name CONTAINS[c] 'testroom' OR label CONTAINS[c] 'testroom')"
     )
     return wait.until(EC.element_to_be_clickable((AppiumBy.IOS_PREDICATE, predicate)))
 

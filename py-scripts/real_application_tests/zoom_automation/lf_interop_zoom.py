@@ -703,13 +703,27 @@ class ZoomAutomation(Realm):
         """
         Gracefully shut down the application.
         """
-        if self.do_robo and self.api_stats_collection:
-            self.generate_report_from_data()
-        elif self.api_stats_collection:
-            self.generate_report_from_api()
-        self.generic_endps_profile.cleanup()
-        logger.info("Initiating graceful shutdown...")
-        os._exit(0)
+        try:
+            if self.do_robo and self.api_stats_collection:
+                self.generate_report_from_data()
+            elif self.api_stats_collection:
+                self.generate_report_from_api()
+            self.generic_endps_profile.cleanup()
+            # Wait for iOS participant threads to finish (Zoom cleanup + Candela interop flow)
+            # before tearing down the process; os._exit(0) would otherwise kill them mid-run.
+            if self._ios_participant_threads:
+                logger.info(
+                    "Waiting for %d iOS participant thread(s) to return to Candela app...",
+                    len(self._ios_participant_threads),
+                )
+                for t in self._ios_participant_threads:
+                    t.join(timeout=90)
+                logger.info("iOS participant threads finished.")
+        except Exception as e:
+            logger.error(f"Error during shutdown cleanup: {e}")
+        finally:
+            logger.info("Initiating graceful shutdown...")
+            os._exit(0)
 
     def set_start_time(self):
         self.start_time = datetime.now(self.tz) + timedelta(seconds=60)
@@ -1352,6 +1366,7 @@ class ZoomAutomation(Realm):
                         time.sleep(5)
 
         else:
+            logger.info("Monitoring the Test")
             while datetime.now(self.tz) < self.end_time or not self.check_gen_cx():
                 if self.do_robo:
                     pause, _ = self.robo_obj.wait_for_battery()
@@ -1369,7 +1384,6 @@ class ZoomAutomation(Realm):
                         self.wait_for_host_ready()
                         self.create_participants()
                         self.wait_for_test_start()
-                logger.info("Monitoring the Test")
                 time.sleep(5)
         if self.do_robo:
             self.generic_endps_profile.stop_cx()
