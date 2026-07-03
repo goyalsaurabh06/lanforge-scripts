@@ -212,6 +212,30 @@ class ZoomAutomator:
                 )
             self.driver = None
 
+    def _dump_debug_snapshot(self, tag):
+        """
+        Save page source + screenshot so device-specific UI differences
+        (e.g. iPad toolbar layout) can be diagnosed after the run instead
+        of guessing element labels blindly.
+        """
+        if not self.driver:
+            return
+        log_dir = os.path.join(os.getcwd(), "zoom_mobile_logs", "debug")
+        os.makedirs(log_dir, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        base = os.path.join(log_dir, f"{self.device_udid}_{tag}_{stamp}")
+        try:
+            with open(f"{base}.xml", "w") as f:
+                f.write(self.driver.page_source)
+            self.logger.info(f"[{self.device_udid}]    Debug page source saved to {base}.xml")
+        except Exception as e:
+            self.logger.warning(f"[{self.device_udid}]    Could not save debug page source: {e}")
+        try:
+            self.driver.save_screenshot(f"{base}.png")
+            self.logger.info(f"[{self.device_udid}]    Debug screenshot saved to {base}.png")
+        except Exception as e:
+            self.logger.warning(f"[{self.device_udid}]    Could not save debug screenshot: {e}")
+
     def _find(self, predicate, timeout=None):
         """Poll until first visible element matching predicate is found."""
         deadline = time.time() + (timeout or self.element_timeout)
@@ -502,40 +526,115 @@ class ZoomAutomator:
 
         return True
 
+    def _query_meeting_controls(self, labels):
+        """
+        Single-shot lookup for in-meeting toolbar controls (Mute, More, Leave, ...).
+
+        iPhone renders these as XCUIElementTypeButton. iPad renders the same
+        toolbar as a UICollectionView, so each control is an
+        XCUIElementTypeCell instead — matching only "Button".
+
+        Also searches XCUIElementTypeStaticText: the outer Button/Cell
+        label often has an extra word inserted (e.g. "Start my video"
+        instead of "Start Video"), which breaks CONTAINS matching on
+        multi-word phrases. The nested StaticText child keeps the plain
+        label ("Start video"), so it must be searched too.
+        """
+        predicates = []
+        for t in ("XCUIElementTypeButton", "XCUIElementTypeCell", "XCUIElementTypeStaticText"):
+            for lab in labels:
+                predicates.append(
+                    f'type == "{t}" AND (label CONTAINS[c] "{lab}" OR name CONTAINS[c] "{lab}")'
+                )
+        matches = []
+        for pred in predicates:
+            try:
+                for el in self.driver.find_elements(AppiumBy.IOS_PREDICATE, pred):
+                    size = el.size
+                    if size.get("width", 0) > 0 and size.get("height", 0) > 0:
+                        matches.append(el)
+            except Exception:
+                pass
+        return matches
+
+    def _find_meeting_control(self, labels, timeout=10):
+        """Poll until a matching in-meeting toolbar control appears."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            matches = self._query_meeting_controls(labels)
+            if matches:
+                return matches[0]
+            time.sleep(0.4)
+        return None
+
+    def _click_control(self, el):
+        """
+        Tap el via a raw coordinate tap on its frame center.
+
+        WDA's click() can silently no-op — no exception, no effect — on
+        elements it (incorrectly) reports as not visible, which is exactly
+        the case for iPad's collection-view toolbar cells. That made a
+        previous version of this code declare "video enabled" after a tap
+        that never actually landed. A coordinate tap on the element's own
+        (verified-accurate) frame is used unconditionally instead of
+        trusting click() to either work or report failure.
+        """
+        try:
+            rect = el.rect
+            cx = int(rect["x"] + rect["width"] / 2)
+            cy = int(rect["y"] + rect["height"] / 2)
+            if self._tap_at(cx, cy):
+                return True
+        except Exception as e:
+            self.logger.warning(f"[{self.device_udid}]    Could not read element frame: {e}")
+
+        # Fall back to native click() only if a coordinate tap wasn't possible.
+        try:
+            el.click()
+            return True
+        except Exception as e:
+            self.logger.warning(f"[{self.device_udid}]    click() fallback failed: {e}")
+            return False
+
+    def _wait_toggle_state(self, labels, off_word, timeout=5):
+        """
+        Poll until every matching toolbar control's label no longer contains
+        off_word (e.g. confirm "Start Video" flipped to "Stop Video" after a
+        tap). A tap can silently no-op (see _click_control), so this is used
+        to verify the toggle actually changed before declaring success.
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            controls = self._query_meeting_controls(labels)
+            if controls and all(
+                off_word not in (c.get_attribute("label") or c.get_attribute("name") or "").lower()
+                for c in controls
+            ):
+                return True
+            time.sleep(0.5)
+        return False
+
     def _is_in_meeting(self):
         """
         Return True if in-meeting controls are visible (Mute/Unmute/Leave).
         These elements are always present once you are inside a Zoom meeting.
         """
-        predicates = [
-            'type == "XCUIElementTypeButton" AND visible == true '
-            'AND (label == "Mute" OR label == "Unmute" OR name == "Mute" OR name == "Unmute")',
-            'type == "XCUIElementTypeButton" AND visible == true '
-            'AND (label == "Leave" OR name == "Leave" OR label == "End" OR name == "End")',
-        ]
-        for pred in predicates:
-            try:
-                els = self.driver.find_elements(AppiumBy.IOS_PREDICATE, pred)
-                if els and els[0].is_displayed():
-                    return True
-            except Exception:
-                pass
+        if self._query_meeting_controls(["mute", "unmute"]):
+            return True
+        if self._query_meeting_controls(["leave", "end"]):
+            return True
         return False
 
     def _ensure_controls_visible(self):
         """Ensure Zoom bottom controls are visible, tapping only if hidden."""
-        more_pred = (
-            'type == "XCUIElementTypeButton" AND visible == true '
-            'AND (label == "More" OR name == "More")'
-        )
         # Check if already visible first to avoid toggling them off
-        if self._find(more_pred, timeout=2):
+        if self._query_meeting_controls(["more"]) or self._is_in_meeting():
             return
 
         for _ in range(3):
             self._tap_meeting_center()
             time.sleep(0.8)
-            if self._find(more_pred, timeout=1):
+            if self._query_meeting_controls(["more"]) or self._is_in_meeting():
                 return
 
     def _tap_meeting_center(self):
@@ -583,19 +682,6 @@ class ZoomAutomator:
         """
         self.logger.info(f"[{self.device_udid}] Starting screen share flow")
 
-        more_pred = (
-            'type == "XCUIElementTypeButton" AND visible == true '
-            'AND (label == "More" OR name == "More")'
-        )
-        start_share_predicates = [
-            'type == "XCUIElementTypeButton" AND visible == true '
-            'AND (label == "Start share" OR name == "Start share" '
-            'OR label == "Start Share" OR name == "Start Share")',
-            'type == "XCUIElementTypeStaticText" AND visible == true '
-            'AND (label == "Start share" OR name == "Start share" '
-            'OR label == "Start Share" OR name == "Start Share")',
-        ]
-
         # Retry because toolbar auto-hides in meeting.
         for attempt in range(1, 5):
             self.logger.info(
@@ -604,7 +690,7 @@ class ZoomAutomator:
             self._tap_meeting_center()
             time.sleep(0.9)
 
-            more_btn = self._find(more_pred, timeout=2)
+            more_btn = self._find_meeting_control(["more"], timeout=2)
             if not more_btn:
                 self.logger.info(
                     f"[{self.device_udid}]    Attempt {attempt}: 'More' button not visible yet"
@@ -612,28 +698,20 @@ class ZoomAutomator:
                 continue
 
             self.logger.info(f"[{self.device_udid}]    Tapping 'More'")
-            more_btn.click()
+            self._click_control(more_btn)
             time.sleep(1.0)
 
-            target = self._find_any(start_share_predicates, timeout=4)
+            target = self._find_meeting_control(["start share"], timeout=4)
             if target:
                 self.logger.info(f"[{self.device_udid}]    Tapping 'Start share'")
-                target.click()
+                self._click_control(target)
                 time.sleep(1.0)
 
                 # Final confirmation sheet/button.
-                share_screen_preds = [
-                    'type == "XCUIElementTypeButton" AND visible == true '
-                    'AND (label == "Share screen" OR name == "Share screen" '
-                    'OR label == "Share Screen" OR name == "Share Screen")',
-                    'type == "XCUIElementTypeStaticText" AND visible == true '
-                    'AND (label == "Share screen" OR name == "Share screen" '
-                    'OR label == "Share Screen" OR name == "Share Screen")',
-                ]
-                confirm = self._find_any(share_screen_preds, timeout=6)
+                confirm = self._find_meeting_control(["share screen"], timeout=6)
                 if confirm:
                     self.logger.info(f"[{self.device_udid}]    Tapping final 'Share screen'")
-                    confirm.click()
+                    self._click_control(confirm)
                     time.sleep(1.0)
 
                     # ReplayKit overlay often requires one more tap: "Start Broadcast".
@@ -723,21 +801,26 @@ class ZoomAutomator:
         try:
             self._ensure_controls_visible()
 
-            # Already unmuted — audio is active, nothing to do (using flexible case-insensitive match)
-            mute_pred = (
-                '(type == "XCUIElementTypeButton" OR type == "XCUIElementTypeStaticText") '
-                'AND visible == true '
-                'AND (label CONTAINS[c] "mute" OR name CONTAINS[c] "mute") '
-                'AND NOT (label CONTAINS[c] "unmute" OR name CONTAINS[c] "unmute")'
-            )
-            if self._find(mute_pred, timeout=3):
-                self.logger.info(f"[{self.device_udid}] Audio already enabled (microphone active).")
-                return True
+            # Already unmuted — audio is active, nothing to do. The toolbar
+            # button shows "Mute" when currently unmuted (tap it to mute).
+            for el in self._query_meeting_controls(["mute"]):
+                label = (el.get_attribute("label") or el.get_attribute("name") or "").lower()
+                if "unmute" not in label:
+                    self.logger.info(f"[{self.device_udid}] Audio already enabled (microphone active).")
+                    return True
 
             # Muted — tap Unmute to enable
-            if self._tap_button(["Unmute"], timeout=5):
-                self.logger.info(f"[{self.device_udid}] Audio enabled successfully.")
-                return True
+            unmute_btn = self._find_meeting_control(["unmute"], timeout=5)
+            if unmute_btn:
+                self._click_control(unmute_btn)
+                if self._wait_toggle_state(["mute"], "unmute", timeout=5):
+                    self.logger.info(f"[{self.device_udid}] Audio enabled successfully.")
+                    return True
+                self.logger.warning(
+                    f"[{self.device_udid}] Tapped Unmute but audio did not turn on."
+                )
+                self._dump_debug_snapshot("enable_audio_tap_ineffective")
+                return False
 
             # Audio not joined at all — tap one of the join-audio dialog buttons
             if self._tap_button(self.AUDIO_JOIN_LABELS, timeout=5):
@@ -745,6 +828,7 @@ class ZoomAutomator:
                 return True
 
             self.logger.warning(f"[{self.device_udid}] Could not enable audio — button not found.")
+            self._dump_debug_snapshot("enable_audio_failed")
             return False
         except Exception as e:
             self.logger.error(f"[{self.device_udid}] Error while enabling audio: {e}")
@@ -756,22 +840,35 @@ class ZoomAutomator:
         try:
             self._ensure_controls_visible()
 
-            # Already on — video is active, nothing to do (using flexible case-insensitive match)
-            stop_pred = (
-                '(type == "XCUIElementTypeButton" OR type == "XCUIElementTypeStaticText") '
-                'AND visible == true '
-                'AND (label CONTAINS[c] "stop video" OR name CONTAINS[c] "stop video")'
-            )
-            if self._find(stop_pred, timeout=3):
-                self.logger.info(f"[{self.device_udid}] Video already enabled (camera active).")
-                return True
+            # The toolbar button label names the action you can take, so
+            # "Stop my video" means video is already on, "Start my video"
+            # means it's off. Matching bare "video" is too broad: the
+            # gallery view has unrelated "Expand video panels" / "Hide
+            # video panels" buttons that also contain "video" but never
+            # "start", which caused a false "already enabled" match before
+            # the real camera toggle was ever checked. "my video" only
+            # appears in the actual camera-toggle control's label.
+            for el in self._query_meeting_controls(["my video"]):
+                label = (el.get_attribute("label") or el.get_attribute("name") or "").lower()
+                if "start" not in label:
+                    self.logger.info(f"[{self.device_udid}] Video already enabled (camera active).")
+                    return True
 
             # Video off — tap Start Video to enable
-            if self._tap_button(["Start Video"], timeout=5):
-                self.logger.info(f"[{self.device_udid}] Video enabled successfully.")
-                return True
+            start_video_btn = self._find_meeting_control(["start my video"], timeout=5)
+            if start_video_btn:
+                self._click_control(start_video_btn)
+                if self._wait_toggle_state(["my video"], "start", timeout=5):
+                    self.logger.info(f"[{self.device_udid}] Video enabled successfully.")
+                    return True
+                self.logger.warning(
+                    f"[{self.device_udid}] Tapped Start Video but camera did not turn on."
+                )
+                self._dump_debug_snapshot("enable_video_tap_ineffective")
+                return False
 
             self.logger.warning(f"[{self.device_udid}] Could not enable video — button not found.")
+            self._dump_debug_snapshot("enable_video_failed")
             return False
         except Exception as e:
             self.logger.error(f"[{self.device_udid}] Error while enabling video: {e}")
@@ -970,6 +1067,7 @@ class ZoomAutomator:
                         "   The meeting may still be loading, or the UI changed.\n"
                         "   Proceeding to screen-share attempt anyway."
                     )
+                    self._dump_debug_snapshot("in_meeting_not_confirmed")
 
             # 10a. Enable audio if requested
             if self.enable_audio:
