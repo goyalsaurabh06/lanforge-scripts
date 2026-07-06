@@ -1049,18 +1049,21 @@ class Youtube(Realm):
         self.stop_signal = True
         time.sleep(10)
         self.generic_endps_profile.cleanup()
-        for p in self.ios_processes:
-            try:
-                p.terminate()
-            except Exception:
-                pass
-        logging.info("Application Closed sucessfully")
 
         if self.do_robo and not self.do_bandsteering:
             self.create_robo_report()
         else:
             report_dir = self.ui_report_dir if self.do_webUI else ''
             self.create_report(self.stats_api_response, report_dir)
+        for p in self.ios_processes:
+            try:
+                p.wait(timeout=180)
+            except subprocess.TimeoutExpired:
+                logging.warning("iOS subprocess timed out, terminating")
+                p.terminate()
+            except Exception:
+                pass
+        logging.info("Application Closed sucessfully")
 
         os._exit(0)
 
