@@ -826,7 +826,7 @@ class LFCliBase:
                     optional.add_argument(argument['name'], help=argument['help'])
 
         # Required Args
-        required.add_argument('--radio', default='wiphy0',
+        required.add_argument('--radio',
                               help='create stations in lanforge at this radio (by default: wiphy0)')
         # Silently support capitalized security types
         required.add_argument('--security',

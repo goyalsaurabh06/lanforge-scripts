@@ -612,15 +612,17 @@ INCLUDE_IN_README:
                         "--download_speed",
                         "--download_rate",
                         dest="speed",
-                        default="1Gbps",
-                        help="Select requested download rate.  Kbps, Mbps, Gbps units supported.  Default is 1Gbps")
+                        default="",
+                        help="Requested traffic rate used in test for selected traffic direction(s). "
+                             "Percentage of theoretical is also supported. Default: 85%%.")
     parser.add_argument("--opposite_speed",
                         "--opposite_rate",
                         "--upload_speed",
                         "--upload_rate",
                         dest="opposite_speed",
-                        default="10Mbps",
-                        help="Select requested upload rate.  Kbps, Mbps, Gbps units supported.  Default is 10Mbps")
+                        default="",
+                        help="Requested opposite traffic rate used in test for selected traffic direction(s). "
+                             "Percentage of theoretical is also supported. Default: 0")
 
     parser.add_argument("--duration",
                         default="",
