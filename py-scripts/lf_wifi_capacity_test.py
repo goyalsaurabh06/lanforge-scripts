@@ -455,7 +455,7 @@ INCLUDE_IN_README:
                              "The larger the number, the more verbose. Default: 5")
     parser.add_argument("--speed", "--rate", "--download_speed", "--download_rate", type=str, default="1Gbps",
                         help="Select requested download rate.  Kbps, Mbps, Gbps units supported.  Default is 1Gbps")
-    parser.add_argument("--opposite_speed", "--opposite_rate", "--upload_speed", "--upload_rate", type=str, default="10Mbps",
+    parser.add_argument("--opposite_speed", "--opposite_rate", "--upload_speed", "--upload_rate", dest="upload_rate", type=str, default="10Mbps",
                         help="Select requested upload rate.  Kbps, Mbps, Gbps units supported.  Default is 10Mbps")
     parser.add_argument("--sort", type=str, default="interleave",
                         help="Select station sorting behaviour:  none | interleave | linear  Default is interleave.")
