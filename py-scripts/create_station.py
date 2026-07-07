@@ -111,7 +111,7 @@ EXAMPLE:    # Create a single station
                 --passwd    <password> \
                 --security  wpa2 \
                 --num_stations 10 \
-                --initial_band_pref 5G
+                --initial_band_pref 5GHz
 
             # Create multiple stations
             ./create_station.py \
@@ -336,7 +336,7 @@ class CreateStation(Realm):
 
     def __init__(self,
                  mgr,
-                 mgr_port,
+                 port,
                  proxy,
                  debug,
                  up,
@@ -366,9 +366,9 @@ class CreateStation(Realm):
                  initial_band_pref,
                  **kwargs):
         super().__init__(mgr,
-                         mgr_port)
+                         port)
         self.host = mgr
-        self.port = mgr_port
+        self.port = port
         self.debug = debug
         self.up = up
         self.ssid = ssid
