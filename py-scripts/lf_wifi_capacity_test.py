@@ -80,6 +80,7 @@ EXAMPLE:    # Run 60 second default DL/UL-rate UDP IPv4 traffic-based test with
                     --upstream      1.1.eth1 \
                     --stations      1.1.sta0000,1.1.sta0001 \
                     --local_lf_report_dir /home/user/lf_reports \
+                        
             #Run test with custom download / upload rates for each station
                 ./lf_wifi_capacity_test.py \
                     --mgr           192.168.1.101 \
@@ -477,7 +478,7 @@ INCLUDE_IN_README:
     parser.add_argument("--graph_groups", help="Path to file to save graph_groups to on local system", default=None)
     parser.add_argument("--local_lf_report_dir", help="""--local_lf_report_dir <where to pull reports to>  default ''  means put in current working directory,
                          must also have --pull_report also set to pull reports.""", default="")
-    parser.add_argument("--lf_logger_config_json", dest="lf_logger_config_json", help="--lf_logger_config_json <json file> : Path to logger JSON configuration of logger")
+    parser.add_argument("--lf_logger_config_json", help="--lf_logger_config_json <json file> : Path to logger JSON configuration of logger")
     parser.add_argument("--num_stations", help="Specify the number of stations need to be create. Could use --start_id to specify the starting ID of the stations being used.", type=int,
                         default=None)
     parser.add_argument('--start_id', help='Specify the station starting id \n e.g: --start_id <value> default 0',
