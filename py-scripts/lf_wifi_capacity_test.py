@@ -141,7 +141,7 @@ class WiFiCapacityTest(cv_test):
                  upstream="eth1",
                  batch_size="1",
                  loop_iter="1",
-                 protocol="UDP-IPv4",
+                 traffic_type="UDP-IPv4",
                  duration="5000",
                  pull_report=False,
                  load_old_cfg=False,
@@ -190,7 +190,7 @@ class WiFiCapacityTest(cv_test):
         self.test_name = "WiFi Capacity"
         self.batch_size = batch_size
         self.loop_iter = loop_iter
-        self.traffic_types = protocol
+        self.traffic_type = traffic_type
         self.duration = duration
         self.upload_rate = upload_rate
         self.download_rate = download_rate
@@ -274,8 +274,8 @@ class WiFiCapacityTest(cv_test):
             cfg_options.append("batch_size: " + self.batch_size)
         if self.loop_iter != "":
             cfg_options.append("loop_iter: " + self.loop_iter)
-        if self.traffic_types != "":
-            cfg_options.append("traffic_types: " + str(self.traffic_types))
+        if self.traffic_type != "":
+            cfg_options.append("traffic_type: " + str(self.traffic_type))
         if self.duration != "":
             cfg_options.append("duration: " + self.duration)
         if self.upload_rate != "":
@@ -316,6 +316,21 @@ class WiFiCapacityTest(cv_test):
 
         self.rm_text_blob(self.config_name, "Wifi-Capacity-")  # To delete old config with same name
 
+def validate_args(args):
+    if args.create_stations:
+        if not args.num_stations and not args.stations:
+            logger.error("Either mention names to stations to be created(--stations) or number of stations to be created(--num_stations). [Same precedence order]")
+        if not args.ssid:
+            logger.error("Requires ssid to create station, mention with --ssid")
+            exit(1)
+    if args.ssid:
+        if not args.security:
+            logger.error("Requires secuirty to connect to wifi, mention with --security")
+            exit(1)
+    if args.security.lower != 'open':
+        if not args.paswd:
+            logger.error("Requires password to connect to wifi whose security is not open, mention with --password")
+            exit(1)    
 
 def main():
     help_summary = "The Candela WiFi Capacity test is designed to measure performance of an " \
@@ -441,16 +456,24 @@ INCLUDE_IN_README:
 
     cv_add_base_parser(parser)  # see cv_test_manager.py
 
-    parser.add_argument("-u", "--upstream", "--upstream_port", dest="upstream", type=str, default="",
-                        help="Upstream port used in test. Example: '1.1.eth2")
-    parser.add_argument("-b", "--batch_size", type=str, default="",
-                        help="Select number of stations to add per iteration.  Default is 1")
-    parser.add_argument("-l", "--loop_iter", type=str, default="",
-                        help="Loop iteration ex. 1")
-    parser.add_argument("-p", "--protocol", "--type", "--types", "--traffic_type", "--traffic_types", type=str, dest="traffic_types", default="",
-                        help="Protocol ex.TCP-IPv4")
-    parser.add_argument("-d", "--duration", type=str, default="",
-                        help="Duration of each traffic run")
+    parser.add_argument("-u", "--upstream", "--upstream_port", dest="upstream", type=str, default="eth1",
+                        help="""Upstream port used in test. Example: '1.1.eth2. This is the port of the A.P.
+                        that is connected to the LANforge system.  Default is eth1. All data being transmitted
+                        is done via this port.  This port is used to send and receive data
+                        to/from the A.P. that is being tested.""")
+    parser.add_argument("-b", "--batch_size", type=str, default="1",
+                        help="""Select number of stations to add per iteration.  Default is 1.
+                        This is the number of stations that will be added to the test for each iteration.
+                        For example, if you have 10 stations and a batch size of 2, then the test will
+                        run 5 iterations with 2 stations being added for each iteration.""")
+    parser.add_argument("-l", "--loop_iter", type=str, default="1",
+                        help="""Loop iteration ex. 1. This is the number of times the test will be run.
+                        For example, if you have 10 stations and a loop iteration of 2, then the test
+                        will run 2 times with all 10 stations being used for each iteration. Default is 1""")
+    parser.add_argument("-p", "--protocol", "--type", "--types", "--traffic_type", "--traffic_types", type=str, dest="traffic_type", default="UDP-IPv4",
+                        help="Protocol ex.TCP-IPv4. <TCP, UDP, layer 4-7, TCP&UDP>  Default is UDP-IPv4. Only one protocol can be selected at a time.")
+    parser.add_argument("-d", "--duration", type=str, default="5000",
+                        help="Duration of each traffic run. Default is 5s. <s, m, h>  Example: 5s, 1m, 2h. Each station is tested for this duration.")
     parser.add_argument("--verbosity", default="5", help="Verbosity of the report specified as single value in 1 - 11 range (whole numbers).\n"
                              "The larger the number, the more verbose. Default: 5")
     parser.add_argument("--speed", "--rate", "--download_speed", "--download_rate", type=str, default="1Gbps",
@@ -458,17 +481,18 @@ INCLUDE_IN_README:
     parser.add_argument("--opposite_speed", "--opposite_rate", "--upload_speed", "--upload_rate", dest="upload_rate", type=str, default="10Mbps",
                         help="Select requested upload rate.  Kbps, Mbps, Gbps units supported.  Default is 10Mbps")
     parser.add_argument("--sort", type=str, default="interleave",
-                        help="Select station sorting behaviour:  none | interleave | linear  Default is interleave.")
+                        help="Select station sorting behaviour:  none | interleave | linear  Default is interleave.") #enduku sort cheyali? enti use?
     parser.add_argument("-s", "--station", "--stations", dest="stations", type=str, default="",
-                        help="If specified, these stations will be used.  If not specified, all available stations will be selected.  Example: 1.1.sta001,1.1.wlan0,...")
+                        help="If specified, these stations will be used.  If not specified, all available stations will be selected.  Example: 1.1.sta001,1.1.wlan0,....\n"
+                            "Can also be used to specify custon names for the stations being created by --create_stations param")
     parser.add_argument("-cs", "--create_stations", default=False, action='store_true',
                         help="""create stations in lanforge (by default: False)
                         If specifed, either mention --num_stations or --stations to create stations in lanforge. If both are specified, --stations will be used to create stations
                         Also mention --radio, --ssid, --security and --password to create stations with these parameters""")
     parser.add_argument("-radio", "--radio", default="wiphy0",
-                        help="create stations in lanforge at this radio (by default: wiphy0)")
+                        help="create stations in lanforge at this radio (by default: wiphy0)")    #only one radio? or multiple radios possible?
     parser.add_argument("-ssid", "--ssid", default="",
-                        help="ssid name")
+                        help="ssid of the network to which stations should connect to. Required if --create_stations is specified")
     parser.add_argument("-security", "--security", default="open",
                         help="ssid Security type. If not open, then mention --password to create stations with this security type and password")
     parser.add_argument("-paswd", "--paswd", "-passwd", "--passwd", "--password", "--key", dest="paswd", default="[BLANK]",
@@ -501,6 +525,7 @@ INCLUDE_IN_README:
         exit(0)
 
     cv_base_adjust_parser(args)
+    validate_args(args)
 
     # set up logger
     logger_config = lf_logger_config.lf_logger_config()

@@ -855,7 +855,8 @@ INCLUDE_IN_README:
 """)
     parser.add_argument('--start_id',
                         type=int,
-                        help='Specify the station starting id \n e.g: --start_id <value> default 0',
+                        help='Specify the station starting id \n e.g: --start_id <value> default 0.\n'
+                        'All stations being created from --create_stations are named from this id, eg. sta<start_id>, sta<start_id + 1> ...',
                         default=0)
     parser.add_argument("--prefix",
                         type=str,
@@ -906,10 +907,11 @@ INCLUDE_IN_README:
                         default='AUTO')
     parser.add_argument("--country_code",
                         help='Radio Country Code:\n'
-                             'e.g: \t--country_code 840')
+                             'e.g: \t--country_code 840\n'
+                             'Could either mention the code, or the country itself')
     parser.add_argument("--eap_method",
                         type=str,
-                        help='Enter EAP method e.g: TLS')
+                        help='Enter EAP method e.g: TLS. If specified, also mention --eap_identitiy, --key_mgmt')
     parser.add_argument("--eap_identity",
                         "--radius_identity",
                         dest="eap_identity",
@@ -923,7 +925,7 @@ INCLUDE_IN_README:
                         "--radius_passwd",
                         dest="eap_password",
                         type=str,
-                        help="This is synonymous with the RADIUS user's password.")
+                        help="This is synonymous with the RADIUS user's password. Need to be specified when --eap_method is not TLS.",)
     parser.add_argument("--eap_phase1",
                         type=str,
                         help="EAP Phase 1 (outer authentication, i.e. TLS tunnel) parameters.\n"
@@ -937,13 +939,13 @@ INCLUDE_IN_README:
                         default="[BLANK]")  # TODO: Fix root cause of 'null' when not set issue (REST server-side issue)
     parser.add_argument("--pk_passwd",
                         type=str,
-                        help='Enter the private key password')
+                        help='Enter the private key password. Need to be mentioned when --eap_method is TLS')
     parser.add_argument("--ca_cert",
                         type=str,
-                        help='Enter path for certificate e.g: /home/lanforge/ca.pem')
+                        help='Enter path for certificate e.g: /home/lanforge/ca.pem. Need to be mentioned when --eap_method is TLS')
     parser.add_argument("--private_key",
                         type=str,
-                        help='Enter private key path e.g: /home/lanforge/client.p12')
+                        help='Enter private key path e.g: /home/lanforge/client.p12. Need to be mentioned when --eap_method is TLS')
     parser.add_argument("--key_mgmt",
                         type=str,
                         help="Authentication key management. Combinations are supported.\n")
@@ -957,7 +959,8 @@ INCLUDE_IN_README:
                              'CCMP-256\n'
                              'GCMP\n'
                              'GCMP-256\n'
-                             'CCMP/GCMP-256',
+                             'CCMP/GCMP-256\n'
+                             'Need to be specified when security is WPA3',
                              default='[BLANK]')
     parser.add_argument("--groupwise_cipher",
                         help='Groupwise Ciphers\n'
@@ -970,7 +973,8 @@ INCLUDE_IN_README:
                              'GCMP-256\n'
                              'CCMP-256\n'
                              'GCMP/CCMP-256\n'
-                             'ALL',
+                             'ALL\n'
+                             'Need to be specified when security is WPA3',
                         default='[BLANK]')
     parser.add_argument("--no_pre_cleanup",
                         help='Add this flag to stop cleaning up before station creation',

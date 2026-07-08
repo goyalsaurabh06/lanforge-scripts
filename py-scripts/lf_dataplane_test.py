@@ -190,7 +190,7 @@ class DataplaneTest(cv_test):
                  bandwidths=None,
                  channels=None,
                  traffic_directions=None,
-                 traffic_types=None,
+                 traffic_type=None,
                  opposite_speed="0",
                  speed="85%",
                  duration="15s",
@@ -256,7 +256,7 @@ class DataplaneTest(cv_test):
 
         # Traffic configuration
         self.traffic_directions = DataplaneTest._prepare_as_rawline(traffic_directions, self.TRAFFIC_DIRECTION_MAP)
-        self.traffic_types = DataplaneTest._prepare_as_rawline(traffic_types, self.TRAFFIC_TYPE_MAP)
+        self.traffic_type = DataplaneTest._prepare_as_rawline(traffic_type, self.TRAFFIC_TYPE_MAP)
 
         # Attenuator configuration
         self.attenuator = attenuator
@@ -386,8 +386,8 @@ class DataplaneTest(cv_test):
         # Traffic configuration
         if self.traffic_directions:
             cfg_options.append("directions: " + self.traffic_directions)
-        if self.traffic_types:
-            cfg_options.append("traffic_types: " + self.traffic_types)
+        if self.traffic_type:
+            cfg_options.append("traffic_type: " + self.traffic_type)
         if self.speed != "":
             cfg_options.append("speed: " + self.speed)
         if self.opposite_speed != "":
@@ -603,7 +603,7 @@ INCLUDE_IN_README:
                         "--types",
                         "--traffic_type",
                         "--traffic_types",
-                        dest="traffic_types",
+                        dest="traffic_type",
                         default=None,
                         type=str,
                         help="Type(s) of generated traffic")
@@ -749,8 +749,8 @@ def validate_args(args):
                 logger.error(f"Unexpected traffic direction {direction}, supported are: {DataplaneTest.TRAFFIC_DIRECTION_MAP.keys()}")
                 exit(1)
 
-    if args.traffic_types:
-        traffic_types = args.traffic_types.split(",")
+    if args.traffic_type:
+        traffic_types = args.traffic_type.split(",")
 
         for traffic_type in traffic_types:
             if traffic_type not in DataplaneTest.TRAFFIC_TYPE_MAP:
@@ -860,9 +860,9 @@ def apply_json_configuration(args):
         arg_value=args.traffic_directions,
         keys=["direction", "directions", "traffic_direction", "traffic_directions"]
     )
-    args.traffic_types = __apply_csv_json(
+    args.traffic_type = __apply_csv_json(
         json_data=json_data,
-        arg_value=args.traffic_types,
+        arg_value=args.traffic_type,
         keys=["type", "types", "traffic_type", "traffic_types"]
     )
 

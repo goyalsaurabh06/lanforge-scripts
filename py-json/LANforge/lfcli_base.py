@@ -710,11 +710,11 @@ class LFCliBase:
         required = parser.add_argument_group('arguments with NO PRE-DEFINED DEFAULTS, arguments & defaults defined by create_bare_argparse found in  /lanforge-scripts/py-json/LANforge/lfcli_base.py')
         optional.add_argument('--mgr', "--m", "lanforge_ip", dest="mgr",
                               default='localhost',
-                              help='hostname for where LANforge GUI is running')
+                              help='Hostname or IP address of the LANforge GUI machine (localhost is default, use when running script on lanforge)')
         optional.add_argument('--mgr_port', '--port', '--o', '--lanforge_port',
                               dest='port',
                               default=8080,
-                              help='port LANforge GUI HTTP service is running on')
+                              help='IP Port the LANforge GUI is listening on (8080 is default)')
         optional.add_argument('--debug',
                               '-d',
                               default=False,
@@ -825,6 +825,7 @@ class LFCliBase:
 
         # Required Args
         required.add_argument('--radio',
+                              default='wiphy0',
                               help='create stations in lanforge at this radio (by default: wiphy0)')
         # Silently support capitalized security types
         required.add_argument('--security',

@@ -37,7 +37,7 @@ def cv_add_base_parser(parser):
                         dest="mgr",
                         type=str,
                         default="localhost",
-                        help="Hostname or IP address of the LANforge GUI machine (localhost is default)")
+                        help="Hostname or IP address of the LANforge GUI machine (localhost is default, use when running script on lanforge)")
     parser.add_argument("-o", "--port", "--mgr_port", "--lanforge_port",
                         dest="port",
                         type=int,
@@ -69,8 +69,9 @@ def cv_add_base_parser(parser):
 
     parser.add_argument("-r", "--pull_report",
                         dest="pull_report",
+                        default=False,
                         action='store_true',
-                        help="Pull reports from LANforge system. Off by default")
+                        help="Pull reports from LANforge system into the current system. Off by default")
     parser.add_argument("--load_old_cfg",
                         action='store_true',
                         help="Load defaults from previous run of the test")
@@ -123,6 +124,7 @@ def cv_add_base_parser(parser):
 
     parser.add_argument("-f", "--force",
                         dest="force",
+                        default=False,
                         action="store_true",
                         help="Force removal of any conflicting test instances. "
                              "Exercise caution with this option, as it will ungracefully stop "
