@@ -887,7 +887,6 @@ INCLUDE_IN_README:
                         default="xx:xx:xx:*:*:xx")
     parser.add_argument("--radio_antenna",
                         help='Number of spatial streams: \n'
-                        ' default = -1 \n'
                         ' 0 Diversity (All) \n'
                         ' 1 Fixed-A (1x1) \n'
                         ' 4 AB (2x2) \n'

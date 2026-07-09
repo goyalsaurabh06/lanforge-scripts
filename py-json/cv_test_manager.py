@@ -71,7 +71,8 @@ def cv_add_base_parser(parser):
                         dest="pull_report",
                         default=False,
                         action='store_true',
-                        help="Pull reports from LANforge system into the current system. Off by default")
+                        help="Pull reports from LANforge system into the current system. Off by default.\n"
+                            "Can use --local_lf_report_dir to specify where these reports are stored. By default reports are stored in same dir as the script.")
     parser.add_argument("--load_old_cfg",
                         action='store_true',
                         help="Load defaults from previous run of the test")
@@ -552,13 +553,11 @@ class cv_test(Realm):
         kpi_csv_data_present = False
         kpi_csv = ''
 
-        if self.local_lf_report_dir is None or self.local_lf_report_dir == "":
-            logger.info("Local report directory not specified. No KPI results present.")
-            return False
-        else:
-            kpi_location = self.local_lf_report_dir + "/" + os.path.basename(self.lf_report_dir)
-            # the lf_report_dir is the parent directory,  need to get the directory name
-            kpi_csv = "{kpi_location}/kpi.csv".format(kpi_location=kpi_location)
+        if self.pull_report and (self.local_lf_report_dir is None or self.local_lf_report_dir == ""):
+            self.local_lf_report_dir = os.getcwd()
+        kpi_location = self.local_lf_report_dir + "/" + os.path.basename(self.lf_report_dir)
+        # the lf_report_dir is the parent directory,  need to get the directory name
+        kpi_csv = "{kpi_location}/kpi.csv".format(kpi_location=kpi_location)
 
         if os.path.isfile(kpi_csv):
             kpi_size = os.path.getsize(kpi_csv)

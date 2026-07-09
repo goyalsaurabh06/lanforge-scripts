@@ -758,14 +758,12 @@ class LFCliBase:
         # Optional Args
         optional.add_argument('--mgr',
                               '--lfmgr',
-                              '--m',
                               '--lanforge_ip',
                                 dest='mgr',
                               default='localhost',
                               help='Hostname or IP address of the LANforge GUI machine (localhost is default)')
         optional.add_argument('--mgr_port',
                               '--port',
-                              '--o',
                               '--lanforge_port',
                               dest='port',
                               default=8080,
@@ -816,6 +814,19 @@ class LFCliBase:
                               default=None,
                               action="store_true",
                               help='Show summary of what this script does')
+        optional.add_argument('--radio',
+                              default='wiphy0',
+                              help='create stations in lanforge at this radio (by default: wiphy0)')
+        optional.add_argument('--security',
+                              default="open",
+                              help='WiFi Security protocol: < open | wep | wpa | wpa2 | wpa3 >')
+        optional.add_argument('--paswd',
+                              '--passwd',
+                              '--password',
+                              '--key',
+                              dest='paswd',
+                              default="[BLANK]",
+                              help='WiFi passphrase/password/key')
         if more_optional is not None:
             for argument in more_optional:
                 if 'default' in argument.keys():
@@ -823,23 +834,10 @@ class LFCliBase:
                 else:
                     optional.add_argument(argument['name'], help=argument['help'])
 
-        # Required Args
-        required.add_argument('--radio',
-                              default='wiphy0',
-                              help='create stations in lanforge at this radio (by default: wiphy0)')
+        # Required Args        
         # Silently support capitalized security types
-        required.add_argument('--security',
-                              default="open",
-                              help='WiFi Security protocol: < open | wep | wpa | wpa2 | wpa3 >')
         required.add_argument('--ssid',
                               help='WiFi SSID for script objects to associate to')
-        required.add_argument('--paswd',
-                              '--passwd',
-                              '--password',
-                              '--key',
-                              dest='paswd',
-                              default="[BLANK]",
-                              help='WiFi passphrase/password/key')
         # please override this password argument using set_defaults(passwd='NA')
 
         if more_required is not None:

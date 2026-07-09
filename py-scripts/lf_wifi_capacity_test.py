@@ -275,7 +275,7 @@ class WiFiCapacityTest(cv_test):
         if self.loop_iter != "":
             cfg_options.append("loop_iter: " + self.loop_iter)
         if self.traffic_type != "":
-            cfg_options.append("traffic_type: " + str(self.traffic_type))
+            cfg_options.append("protocol: " + str(self.traffic_type))
         if self.duration != "":
             cfg_options.append("duration: " + self.duration)
         if self.upload_rate != "":
@@ -471,9 +471,10 @@ INCLUDE_IN_README:
                         For example, if you have 10 stations and a loop iteration of 2, then the test
                         will run 2 times with all 10 stations being used for each iteration. Default is 1""")
     parser.add_argument("-p", "--protocol", "--type", "--types", "--traffic_type", "--traffic_types", type=str, dest="traffic_type", default="UDP-IPv4",
-                        help="Protocol ex.TCP-IPv4. <TCP, UDP, layer 4-7, TCP&UDP>  Default is UDP-IPv4. Only one protocol can be selected at a time.")
+                        help="Protocol ex.TCP-IPv4. Default is UDP-IPv4. Only one protocol can be selected at a time.\n"
+                            "UDP, TCP, layer4-7, TCP&UDP are avialable options")
     parser.add_argument("-d", "--duration", type=str, default="5000",
-                        help="Duration of each traffic run. Default is 5s. <s, m, h>  Example: 5s, 1m, 2h. Each station is tested for this duration.")
+                        help="Duration of each traffic run. Default is 5s. Example: 5s, 1m, 2h. Each station is tested for this duration.")
     parser.add_argument("--verbosity", default="5", help="Verbosity of the report specified as single value in 1 - 11 range (whole numbers).\n"
                              "The larger the number, the more verbose. Default: 5")
     parser.add_argument("--speed", "--rate", "--download_speed", "--download_rate", type=str, default="1Gbps",
@@ -484,7 +485,8 @@ INCLUDE_IN_README:
                         help="Select station sorting behaviour:  none | interleave | linear  Default is interleave.") #enduku sort cheyali? enti use?
     parser.add_argument("-s", "--station", "--stations", dest="stations", type=str, default="",
                         help="If specified, these stations will be used.  If not specified, all available stations will be selected.  Example: 1.1.sta001,1.1.wlan0,....\n"
-                            "Can also be used to specify custon names for the stations being created by --create_stations param")
+                            "Can also be used to specify custon names for the stations being created by --create_stations param\n"
+                            "<shelf>.<resource>.<alias>")
     parser.add_argument("-cs", "--create_stations", default=False, action='store_true',
                         help="""create stations in lanforge (by default: False)
                         If specifed, either mention --num_stations or --stations to create stations in lanforge. If both are specified, --stations will be used to create stations
