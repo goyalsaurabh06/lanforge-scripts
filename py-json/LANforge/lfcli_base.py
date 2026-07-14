@@ -708,7 +708,7 @@ class LFCliBase:
             parser = argparse.ArgumentParser()
         optional = parser.add_argument_group('arguments with PRE-DEFINED DEFAULTS, arguments & defaults defined by create_bare_argparse found in /lanforge-scripts/py-json/LANforge/lfcli_base.py')
         required = parser.add_argument_group('arguments with NO PRE-DEFINED DEFAULTS, arguments & defaults defined by create_bare_argparse found in  /lanforge-scripts/py-json/LANforge/lfcli_base.py')
-        optional.add_argument('--mgr', "--m", "lanforge_ip", dest="mgr",
+        optional.add_argument('--mgr', "--m", "--lfmgr", "lanforge_ip", dest="mgr",
                               default='localhost',
                               help='Hostname or IP address of the LANforge GUI machine (localhost is default, use when running script on lanforge)')
         optional.add_argument('--mgr_port', '--port', '--o', '--lanforge_port',
@@ -759,7 +759,7 @@ class LFCliBase:
         optional.add_argument('--mgr',
                               '--lfmgr',
                               '--lanforge_ip',
-                                dest='mgr',
+                              dest='mgr',
                               default='localhost',
                               help='Hostname or IP address of the LANforge GUI machine (localhost is default)')
         optional.add_argument('--mgr_port',
@@ -773,7 +773,11 @@ class LFCliBase:
                               '--upstream',
                               dest='upstream',
                               default='1.eth1',
-                              help='non-station port that generates traffic: <resource>.<port>, e.g: 1.eth1')
+                              help="""Upstream port used in test. Example: '1.1.eth2. This is the port of the A.P.
+                            that is connected to the LANforge system.  Default is eth1. All data being transmitted
+                            is done via this port.  This port is used to send and receive data
+                            to/from the A.P. that is being tested.
+                            format: <resource><port>""")
         optional.add_argument('--num_stations',
                               type=int,
                               default=0,

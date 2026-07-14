@@ -48,9 +48,9 @@ EXAMPLE:    # Run 60 second default DL/UL-rate UDP IPv4 traffic-based test with
                     --upstream      1.1.eth1 \
                     --create_stations \
                     --radio         wiphy0 \
-                    --start_id      1000 \                          # starting index of station to be created
-                    --num_stations  10 \                            # create this number of stations starting from start_id
-                    --stations      1.1.sta1010,1.1.sta2020         # or create stations with these names if specified
+                    --start_id      1000 \
+                    --num_stations  10 \
+                    --stations      1.1.sta1010,1.1.sta2020 \
                     --ssid          test_ssid \
                     --security      WPA2 \
                     --paswd         test_password \
@@ -390,16 +390,16 @@ EXAMPLE:    # Run 60 second default DL/UL-rate UDP IPv4 traffic-based test with
                     --config_name   existing_wct_config
 
             # Run test with creating stations in lanforge starting from given index with specified ssid and security type
-            # with 10 stations and 1.1.eth1 as upstream port
+            # with 10 stations and 1.1.eth1 as upstream port, starting the id from a specifc value, (either create specific number of stations with this id, or create stations with given names)
                 ./lf_wifi_capacity_test.py \
                     --mgr           192.158.1.101\
                     --pull_report   \
                     --upstream      1.1.eth1 \
                     --create_stations \
                     --radio         wiphy0 \
-                    --start_id      1000 \                          # starting index of station to be created
-                    --num_stations  10 \                            # create this number of stations starting from start_id
-                    --stations      1.1.sta1010,1.1.sta2020         # or create stations with these names if specified
+                    --start_id      1000 \
+                    --num_stations  10 \         
+                    --stations      1.1.sta1010,1.1.sta2020
                     --ssid          test_ssid \
                     --security      WPA2 \
                     --paswd         test_password \
@@ -458,9 +458,10 @@ INCLUDE_IN_README:
 
     parser.add_argument("-u", "--upstream", "--upstream_port", dest="upstream", type=str, default="eth1",
                         help="""Upstream port used in test. Example: '1.1.eth2. This is the port of the A.P.
-                        that is connected to the LANforge system.  Default is eth1. All data being transmitted
-                        is done via this port.  This port is used to send and receive data
-                        to/from the A.P. that is being tested.""")
+                            that is connected to the LANforge system.  Default is eth1. All data being transmitted
+                            is done via this port.  This port is used to send and receive data
+                            to/from the A.P. that is being tested.
+                            format: <resource><port>""")
     parser.add_argument("-b", "--batch_size", type=str, default="1",
                         help="""Select number of stations to add per iteration.  Default is 1.
                         This is the number of stations that will be added to the test for each iteration.
@@ -482,7 +483,7 @@ INCLUDE_IN_README:
     parser.add_argument("--opposite_speed", "--opposite_rate", "--upload_speed", "--upload_rate", dest="upload_rate", type=str, default="10Mbps",
                         help="Select requested upload rate.  Kbps, Mbps, Gbps units supported.  Default is 10Mbps")
     parser.add_argument("--sort", type=str, default="interleave",
-                        help="Select station sorting behaviour:  none | interleave | linear  Default is interleave.") #enduku sort cheyali? enti use?
+                        help="Select station sorting behaviour:  none | interleave | linear  Default is interleave.")
     parser.add_argument("-s", "--station", "--stations", dest="stations", type=str, default="",
                         help="If specified, these stations will be used.  If not specified, all available stations will be selected.  Example: 1.1.sta001,1.1.wlan0,....\n"
                             "Can also be used to specify custon names for the stations being created by --create_stations param\n"
@@ -492,7 +493,7 @@ INCLUDE_IN_README:
                         If specifed, either mention --num_stations or --stations to create stations in lanforge. If both are specified, --stations will be used to create stations
                         Also mention --radio, --ssid, --security and --password to create stations with these parameters""")
     parser.add_argument("-radio", "--radio", default="wiphy0",
-                        help="create stations in lanforge at this radio (by default: wiphy0)")    #only one radio? or multiple radios possible?
+                        help="create stations in lanforge at this radio (by default: wiphy0)")
     parser.add_argument("-ssid", "--ssid", default="",
                         help="ssid of the network to which stations should connect to. Required if --create_stations is specified")
     parser.add_argument("-security", "--security", default="open",
