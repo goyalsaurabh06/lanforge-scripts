@@ -22,7 +22,7 @@ NOTES:      To best understand the Dataplane test, please review manual configur
 EXAMPLE:    # Run DUT transmit test. Configure UDP traffic at 70% calculated theoretical rate for one minute
             ./lf_dataplane_test.py \
                 --upstream          1.1.eth1 \
-                --stations           1.1.wlan0 \
+                --station           1.1.wlan0 \
                 --duration          1m \
                 --traffic_type      UDP \
                 --traffic_direction DUT-TX \
@@ -31,7 +31,7 @@ EXAMPLE:    # Run DUT transmit test. Configure UDP traffic at 70% calculated the
             # Run DUT receive test. Configure TCP traffic at 1 Gbps
             ./lf_dataplane_test.py \
                 --upstream          1.1.eth1 \
-                --stations           1.1.wlan0 \
+                --station           1.1.wlan0 \
                 --traffic_type      TCP \
                 --traffic_direction DUT-RX \
                 --rate              1Gbps
@@ -39,7 +39,7 @@ EXAMPLE:    # Run DUT transmit test. Configure UDP traffic at 70% calculated the
             # Run DUT transmit and receive test with multiple 250Mbps traffic configurations
             ./lf_dataplane_test.py \
                 --upstream          1.1.eth1 \
-                --stations           1.1.wlan0 \
+                --station           1.1.wlan0 \
                 --traffic_type      UDP,TCP \
                 --traffic_direction DUT-TX,DUT-RX \
                 --rate              250Mbps
@@ -48,7 +48,7 @@ EXAMPLE:    # Run DUT transmit test. Configure UDP traffic at 70% calculated the
             # Note that radio must support specified parameters. Recommended to first configure manually
             ./lf_dataplane_test.py \
                 --upstream          1.1.eth1 \
-                --stations          1.1.wlan0 \
+                --station          1.1.wlan0 \
                 --traffic_type      UDP \
                 --rate              100Mbps \
                 --nss               1,2,3,4 \
@@ -58,7 +58,7 @@ EXAMPLE:    # Run DUT transmit test. Configure UDP traffic at 70% calculated the
             # The values specified are *parsed as dB*
             ./lf_dataplane_test.py \
                 --upstream          1.1.eth1 \
-                --stations          1.1.wlan0 \
+                --station          1.1.wlan0 \
                 --rate              100Mbps \
                 --attenuator1       "1.1.3273" \
                 --atten1_min        10 \
@@ -70,7 +70,7 @@ EXAMPLE:    # Run DUT transmit test. Configure UDP traffic at 70% calculated the
             # Ensure attenuation values are separated by two periods, otherwise test will not parse properly
             ./lf_dataplane_test.py \
                 --upstream          1.1.eth1 \
-                --stations          1.1.wlan0 \
+                --station          1.1.wlan0 \
                 --rate              100Mbps \
                 --attenuator1       "1.1.3273" \
                 --attenuations1     "0..+100..955" \
@@ -190,7 +190,7 @@ class DataplaneTest(cv_test):
                  bandwidths=None,
                  channels=None,
                  traffic_directions=None,
-                 traffic_type=None,
+                 traffic_types=None,
                  opposite_speed="0",
                  speed="85%",
                  duration="15s",
@@ -240,7 +240,7 @@ class DataplaneTest(cv_test):
         self.test_name = "Dataplane"
 
         self.upstream = upstream
-        self.stations = station
+        self.station = station
         self.dut = dut
         self.opposite_speed = opposite_speed
         self.speed = speed
@@ -256,7 +256,7 @@ class DataplaneTest(cv_test):
 
         # Traffic configuration
         self.traffic_directions = DataplaneTest._prepare_as_rawline(traffic_directions, self.TRAFFIC_DIRECTION_MAP)
-        self.traffic_type = DataplaneTest._prepare_as_rawline(traffic_type, self.TRAFFIC_TYPE_MAP)
+        self.traffic_types = DataplaneTest._prepare_as_rawline(traffic_type, self.TRAFFIC_TYPE_MAP)
 
         # Attenuator configuration
         self.attenuator = attenuator
@@ -370,8 +370,8 @@ class DataplaneTest(cv_test):
         # General test configuration
         if self.upstream != "":
             cfg_options.append("upstream_port: " + self.upstream)
-        if self.stations != "":
-            cfg_options.append("traffic_port: " + self.stations)
+        if self.station != "":
+            cfg_options.append("traffic_port: " + self.station)
         if self.duration != "":
             cfg_options.append("duration: " + self.duration)
 
@@ -386,8 +386,8 @@ class DataplaneTest(cv_test):
         # Traffic configuration
         if self.traffic_directions:
             cfg_options.append("directions: " + self.traffic_directions)
-        if self.traffic_type:
-            cfg_options.append("traffic_type: " + self.traffic_type)
+        if self.traffic_types:
+            cfg_options.append("traffic_types: " + self.traffic_type)
         if self.speed != "":
             cfg_options.append("speed: " + self.speed)
         if self.opposite_speed != "":
@@ -470,7 +470,7 @@ NOTES:      To best understand the Dataplane test, please review manual configur
 EXAMPLE:    # Run DUT transmit test. Configure UDP traffic at 70% calculated theoretical rate for one minute
             ./lf_dataplane_test.py \
                 --upstream          1.1.eth1 \
-                --stations          1.1.wlan0 \
+                --station          1.1.wlan0 \
                 --duration          1m \
                 --traffic_type      UDP \
                 --traffic_direction DUT-TX \
@@ -479,7 +479,7 @@ EXAMPLE:    # Run DUT transmit test. Configure UDP traffic at 70% calculated the
             # Run DUT receive test. Configure TCP traffic at 1 Gbps
             ./lf_dataplane_test.py \
                 --upstream          1.1.eth1 \
-                --stations          1.1.wlan0 \
+                --station          1.1.wlan0 \
                 --traffic_type      TCP \
                 --traffic_direction DUT-RX \
                 --rate              1Gbps
@@ -487,7 +487,7 @@ EXAMPLE:    # Run DUT transmit test. Configure UDP traffic at 70% calculated the
             # Run DUT transmit and receive test with multiple 250Mbps traffic configurations
             ./lf_dataplane_test.py \
                 --upstream          1.1.eth1 \
-                --stations          1.1.wlan0 \
+                --station          1.1.wlan0 \
                 --traffic_type      UDP,TCP \
                 --traffic_direction DUT-TX,DUT-RX \
                 --rate              250Mbps
@@ -496,7 +496,7 @@ EXAMPLE:    # Run DUT transmit test. Configure UDP traffic at 70% calculated the
             # Note that radio must support specified parameters. Recommended to first configure manually
             ./lf_dataplane_test.py \
                 --upstream          1.1.eth1 \
-                --stations          1.1.wlan0 \
+                --station          1.1.wlan0 \
                 --traffic_type      UDP \
                 --rate              100Mbps \
                 --nss               1,2,3,4 \
@@ -506,7 +506,7 @@ EXAMPLE:    # Run DUT transmit test. Configure UDP traffic at 70% calculated the
             # Ensure attenuation values are separated by two periods, otherwise test will not parse properly
             ./lf_dataplane_test.py \
                 --upstream          1.1.eth1 \
-                --stations          1.1.wlan0 \
+                --station          1.1.wlan0 \
                 --rate              100Mbps \
                 --attenuator1       "1.1.3273" \
                 --attenuations1     "0..+100..955" \
@@ -518,7 +518,7 @@ EXAMPLE:    # Run DUT transmit test. Configure UDP traffic at 70% calculated the
 
             {
                 "upstream": "1.1.eth1",
-                "stations": "1.1.wlan0",
+                "station": "1.1.wlan0",
                 "rate": "1Gbps"
             }
 
@@ -544,13 +544,12 @@ INCLUDE_IN_README:
                         help="Path to JSON configuration file for test. When specified, JSON takes precedence over command line args.",
                         default="")
 
-    parser.add_argument("-u", "--upstream", "--upstream_port",
+    parser.add_argument("-u", "--upstream",
                         dest="upstream",
                         type=str,
                         default="",
                         help="Upstream port used in test. Example: '1.1.eth2'")
-    parser.add_argument("--s", "--station", "--stations",
-                        dest="stations",
+    parser.add_argument("--station",
                         type=str,
                         default="",
                         help="Station used in test. Example: '1.1.sta01500'")
@@ -598,12 +597,11 @@ INCLUDE_IN_README:
                         type=str,
                         help="Direction(s) of generated traffic, relative to DUT. Bi-directional traffic may be "
                              "achieved by setting the opposite.")
-    parser.add_argument("--protocol",
-                        "--type",
+    parser.add_argument("--type",
                         "--types",
                         "--traffic_type",
                         "--traffic_types",
-                        dest="traffic_type",
+                        dest="traffic_types",
                         default=None,
                         type=str,
                         help="Type(s) of generated traffic")
@@ -708,7 +706,7 @@ INCLUDE_IN_README:
                             must also have --pull_report also set to pull reports""")
     # Logging configuration
     parser.add_argument("--lf_logger_config_json",
-                        help="--lf_logger_config_json <json file> : Path to logger JSON configuration of logger")
+                        help="Path to logger JSON configuration")
     parser.add_argument('--logger_no_file',
                         default=None,
                         action="store_true",
@@ -749,8 +747,8 @@ def validate_args(args):
                 logger.error(f"Unexpected traffic direction {direction}, supported are: {DataplaneTest.TRAFFIC_DIRECTION_MAP.keys()}")
                 exit(1)
 
-    if args.traffic_type:
-        traffic_types = args.traffic_type.split(",")
+    if args.traffic_types:
+        traffic_types = args.traffic_types.split(",")
 
         for traffic_type in traffic_types:
             if traffic_type not in DataplaneTest.TRAFFIC_TYPE_MAP:
@@ -844,7 +842,7 @@ def apply_json_configuration(args):
     if "duration" in json_data:
         args.duration = json_data["duration"]
     if "station" in json_data:
-        args.stations = json_data["station"]
+        args.station = json_data["station"]
 
     # Traffic configuration
     for key in ["speed", "rate", "download_speed", "download_rate"]:
@@ -860,9 +858,9 @@ def apply_json_configuration(args):
         arg_value=args.traffic_directions,
         keys=["direction", "directions", "traffic_direction", "traffic_directions"]
     )
-    args.traffic_type = __apply_csv_json(
+    args.traffic_types = __apply_csv_json(
         json_data=json_data,
-        arg_value=args.traffic_type,
+        arg_value=args.traffic_types,
         keys=["type", "types", "traffic_type", "traffic_types"]
     )
 
