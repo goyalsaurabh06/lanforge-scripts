@@ -355,6 +355,15 @@ class Throughput(Realm):
         self.csv_direction = csv_direction
         self.expected_passfail_value = expected_passfail_value
         self.device_csv_name = device_csv_name
+        self.client_issue_log = []
+        self.missing_cx_logged = set()
+        self.missing_signal_logged = set()
+        self.logged_once_keys = set()
+        # Clear any api_logs.txt left over from a previous run so this run's report only
+        # picks up API failures that actually happened during this test.
+        if os.path.exists('api_logs.txt'):
+            os.remove('api_logs.txt')
+        self.actual_monitoring_duration_seconds = 0
         self.file_name = file_name
         self.group_name = group_name
         self.profile_name = profile_name
@@ -655,21 +664,28 @@ class Throughput(Realm):
 
         """
         response = self.json_get("/resource/all")
-        if "resources" not in response.keys():
-            logger.error("There are no real devices.")
+        try:
+            if "resources" not in response.keys():
+                logger.error("There are no real devices.")
+                exit(1)
+        except AttributeError:
+            logger.error(f"Unexpected response from '/resource/all': {response}")
             exit(1)
 
         for key, value in response.items():
             if key == "resources":
                 for element in value:
                     for _, b in element.items():
-                        if "Apple" in b['hw version']:
-                            if b['kernel'] == '':
-                                self.hw_list.append('iOS')
+                        try:
+                            if "Apple" in b['hw version']:
+                                if b['kernel'] == '':
+                                    self.hw_list.append('iOS')
+                                else:
+                                    self.hw_list.append(b['hw version'])
                             else:
                                 self.hw_list.append(b['hw version'])
-                        else:
-                            self.hw_list.append(b['hw version'])
+                        except (AttributeError, KeyError) as e:
+                            self.log_once('os_type_resource_parse', f"Unexpected resource entry from '/resource/all': {e}", url='/resource/all', response=b)
         # print(self.hw_list)
         for hw_version in self.hw_list:
             if "Win" in hw_version:
@@ -818,60 +834,76 @@ class Throughput(Realm):
         # Retrieve all resources from the LANforge
         response = self.json_get("/resource/all")
 
-        if "resources" not in response.keys():
-            logger.error("There are no real devices.")
+        try:
+            if "resources" not in response.keys():
+                logger.error("There are no real devices.")
+                exit(1)
+        except AttributeError:
+            self.log_once('phantom_check_resource_response', "Unexpected response from '/resource/all'", url='/resource/all', response=response)
             exit(1)
+
+        try:
+            interop_devices_keys_ok = interop_response is not None and "devices" in interop_response.keys()
+        except AttributeError:
+            interop_devices_keys_ok = False
+            self.log_once('phantom_check_adb_parse', "Unexpected response from '/adb'", url='/adb', response=interop_response)
 
         # Iterate over the response to categorize resources
         for key, value in response.items():
             if key == "resources":
                 for element in value:
                     for (_, b) in element.items():
+                        try:
+                            # Check if the resource is not phantom
+                            if b['phantom'] is False:
+                                self.working_resources_list.append(b["hw version"])
 
-                        # Check if the resource is not phantom
-                        if b['phantom'] is False:
-                            self.working_resources_list.append(b["hw version"])
-
-                            # Categorize based on hw version (type of device)
-                            if "Win" in b['hw version']:
-                                self.eid_list.append(b['eid'])
-                                self.windows_list.append(b['hw version'])
-                                self.devices_available.append(b['eid'] + " " + 'Win' + " " + b['hostname'])
-                            elif "Linux" in b['hw version']:
-                                if 'ct' not in b['hostname']:
-                                    if 'lf' not in b['hostname']:
-                                        self.eid_list.append(b['eid'])
-                                        self.linux_list.append(b['hw version'])
-                                        self.devices_available.append(b['eid'] + " " + 'Lin' + " " + b['hostname'])
-                            elif "Apple" in b['hw version']:
-                                if b['kernel'] == '':
+                                # Categorize based on hw version (type of device)
+                                if "Win" in b['hw version']:
                                     self.eid_list.append(b['eid'])
-                                    self.mac_list.append(b['hw version'])
-                                    if "devices" in interop_response.keys():
-                                        interop_devices = interop_response['devices']
-                                        # Extract usernames of devices that match the current eid
-                                        if len([v['user-name'] for d in interop_devices for k, v in d.items() if v.get('resource-id') == b['eid']]) == 0:
-                                            self.devices_available.append(b['eid'] + " " + 'iOS' + " " + b['hostname'])
-                                        # If username is found
+                                    self.windows_list.append(b['hw version'])
+                                    self.devices_available.append(b['eid'] + " " + 'Win' + " " + b['hostname'])
+                                elif "Linux" in b['hw version']:
+                                    if 'ct' not in b['hostname']:
+                                        if 'lf' not in b['hostname']:
+                                            self.eid_list.append(b['eid'])
+                                            self.linux_list.append(b['hw version'])
+                                            self.devices_available.append(b['eid'] + " " + 'Lin' + " " + b['hostname'])
+                                elif "Apple" in b['hw version']:
+                                    if b['kernel'] == '':
+                                        self.eid_list.append(b['eid'])
+                                        self.mac_list.append(b['hw version'])
+                                        if interop_devices_keys_ok:
+                                            interop_devices = interop_response['devices']
+                                            # Extract usernames of devices that match the current eid
+                                            if len([v['user-name'] for d in interop_devices for k, v in d.items() if v.get('resource-id') == b['eid']]) == 0:
+                                                self.devices_available.append(b['eid'] + " " + 'iOS' + " " + b['hostname'])
+                                            # If username is found
+                                            else:
+                                                ios_username = [v['user-name'] for d in interop_devices for k, v in d.items() if v.get('resource-id') == b['eid']][0]
+                                                self.devices_available.append(b['eid'] + " " + 'iOS' + " " + ios_username)
                                         else:
-                                            ios_username = [v['user-name'] for d in interop_devices for k, v in d.items() if v.get('resource-id') == b['eid']][0]
-                                            self.devices_available.append(b['eid'] + " " + 'iOS' + " " + ios_username)
+                                            self.devices_available.append(b['eid'] + " " + 'iOS' + " " + b['hostname'])
                                     else:
-                                        self.devices_available.append(b['eid'] + " " + 'iOS' + " " + b['hostname'])
+                                        self.eid_list.append(b['eid'])
+                                        self.mac_list.append(b['hw version'])
+                                        # self.hostname_list.append(b['eid']+ " " +b['hostname'])
+                                        self.devices_available.append(b['eid'] + " " + 'Mac' + " " + b['hostname'])
                                 else:
                                     self.eid_list.append(b['eid'])
-                                    self.mac_list.append(b['hw version'])
-                                    # self.hostname_list.append(b['eid']+ " " +b['hostname'])
-                                    self.devices_available.append(b['eid'] + " " + 'Mac' + " " + b['hostname'])
-                            else:
-                                self.eid_list.append(b['eid'])
-                                self.android_list.append(b['hw version'])
-                                self.devices_available.append(b['eid'] + " " + 'android' + " " + b['user'])
+                                    self.android_list.append(b['hw version'])
+                                    self.devices_available.append(b['eid'] + " " + 'android' + " " + b['user'])
+                        except (AttributeError, IndexError, KeyError) as e:
+                            self.log_once('phantom_check_resource_parse', f"Unexpected resource entry from '/resource/all': {e}", url='/resource/all', response=b)
 
         # Retrieve all ports from the endpoint
         response_port = self.json_get("/port/all")
-        if "interfaces" not in response_port.keys():
-            logger.error("Error: 'interfaces' key not found in port data")
+        try:
+            if "interfaces" not in response_port.keys():
+                logger.error("Error: 'interfaces' key not found in port data")
+                exit(1)
+        except AttributeError:
+            logger.error(f"Unexpected response from '/port/all': {response_port}")
             exit(1)
 
         # mac_id1_list=[]
@@ -1054,49 +1086,73 @@ class Throughput(Realm):
         interfaces_dict = dict()
         try:
             port_data = self.json_get('/ports/all/')['interfaces']
-        except KeyError:
-            logger.error("Error: 'interfaces' key not found in port data")
+        except (KeyError, TypeError, AttributeError) as e:
+            logger.error(f"Error: 'interfaces' key not found in port data: {e}")
             exit(1)
 
         for port in port_data:
             interfaces_dict.update(port)
         for sta in station_names:
-            if sta in interfaces_dict:
-                if "dBm" in interfaces_dict[sta]['signal']:
-                    signal_list.append(interfaces_dict[sta]['signal'].split(" ")[0])
+            try:
+                if sta in interfaces_dict:
+                    if "dBm" in interfaces_dict[sta]['signal']:
+                        signal_list.append(interfaces_dict[sta]['signal'].split(" ")[0])
+                    else:
+                        signal_list.append(interfaces_dict[sta]['signal'])
                 else:
-                    signal_list.append(interfaces_dict[sta]['signal'])
-            else:
+                    signal_list.append('-')
+            except (AttributeError, IndexError, KeyError) as e:
                 signal_list.append('-')
+                self.log_once('signal_parse', f"Unexpected port entry while reading 'signal' for '{sta}': {e}", url='/ports/all/', response=interfaces_dict.get(sta))
         for sta in station_names:
-            if sta in interfaces_dict:
-                channel_value = str(interfaces_dict[sta].get('channel', ''))
-                if channel_value in ('', '0', '-1'):
-                    channel_list.append('NA')
+            try:
+                if sta in interfaces_dict:
+                    channel_value = str(interfaces_dict[sta].get('channel', ''))
+                    if channel_value in ('', '0', '-1'):
+                        channel_list.append('NA')
+                    else:
+                        channel_list.append(interfaces_dict[sta]['channel'])
                 else:
-                    channel_list.append(interfaces_dict[sta]['channel'])
-            else:
+                    channel_list.append('-')
+            except (AttributeError, IndexError, KeyError) as e:
                 channel_list.append('-')
+                self.log_once('channel_parse', f"Unexpected port entry while reading 'channel' for '{sta}': {e}", url='/ports/all/', response=interfaces_dict.get(sta))
         for sta in station_names:
-            if sta in interfaces_dict:
-                mode_list.append(interfaces_dict[sta]['mode'])
-            else:
+            try:
+                if sta in interfaces_dict:
+                    mode_list.append(interfaces_dict[sta]['mode'])
+                else:
+                    mode_list.append('-')
+            except (AttributeError, IndexError, KeyError) as e:
                 mode_list.append('-')
+                self.log_once('mode_parse', f"Unexpected port entry while reading 'mode' for '{sta}': {e}", url='/ports/all/', response=interfaces_dict.get(sta))
         for sta in station_names:
-            if sta in interfaces_dict:
-                link_speed_list.append(interfaces_dict[sta]['tx-rate'])
-            else:
+            try:
+                if sta in interfaces_dict:
+                    link_speed_list.append(interfaces_dict[sta]['tx-rate'])
+                else:
+                    link_speed_list.append('-')
+            except (AttributeError, IndexError, KeyError) as e:
                 link_speed_list.append('-')
+                self.log_once('tx_rate_parse', f"Unexpected port entry while reading 'tx-rate' for '{sta}': {e}", url='/ports/all/', response=interfaces_dict.get(sta))
         for sta in station_names:
-            if sta in interfaces_dict:
-                rx_rate_list.append(interfaces_dict[sta]['rx-rate'])
-            else:
+            try:
+                if sta in interfaces_dict:
+                    rx_rate_list.append(interfaces_dict[sta]['rx-rate'])
+                else:
+                    rx_rate_list.append('-')
+            except (AttributeError, IndexError, KeyError) as e:
                 rx_rate_list.append('-')
+                self.log_once('rx_rate_parse', f"Unexpected port entry while reading 'rx-rate' for '{sta}': {e}", url='/ports/all/', response=interfaces_dict.get(sta))
         for sta in station_names:
-            if sta in interfaces_dict:
-                bssid_list.append(interfaces_dict[sta]['ap'])
-            else:
+            try:
+                if sta in interfaces_dict:
+                    bssid_list.append(interfaces_dict[sta]['ap'])
+                else:
+                    bssid_list.append('-')
+            except (AttributeError, IndexError, KeyError) as e:
                 bssid_list.append('-')
+                self.log_once('bssid_parse', f"Unexpected port entry while reading 'ap' for '{sta}': {e}", url='/ports/all/', response=interfaces_dict.get(sta))
         return signal_list, channel_list, mode_list, link_speed_list, rx_rate_list, bssid_list
 
     def get_ssid_list(self, station_names):
@@ -1108,18 +1164,22 @@ class Throughput(Realm):
 
         try:
             port_data = self.json_get('/ports/all/')['interfaces']
-        except KeyError:
-            logger.error("Error: 'interfaces' key not found in port data")
+        except (KeyError, TypeError, AttributeError) as e:
+            logger.error(f"Error: 'interfaces' key not found in port data: {e}")
             exit(1)
 
         interfaces_dict = dict()
         for port in port_data:
             interfaces_dict.update(port)
         for sta in station_names:
-            if sta in interfaces_dict:
-                ssid_list.append(interfaces_dict[sta]['ssid'])
-            else:
+            try:
+                if sta in interfaces_dict:
+                    ssid_list.append(interfaces_dict[sta]['ssid'])
+                else:
+                    ssid_list.append('-')
+            except (AttributeError, IndexError, KeyError) as e:
                 ssid_list.append('-')
+                self.log_once('ssid_parse', f"Unexpected port entry while reading 'ssid' for '{sta}': {e}", url='/ports/all/', response=interfaces_dict.get(sta))
         return ssid_list
 
     def build(self):
@@ -1238,6 +1298,56 @@ class Throughput(Realm):
         logger.info("cleanup done")
         self.cx_profile.cleanup()
 
+    def log_once(self, key, message, level='error', url=None, response=None):
+        """Logs `message` at most once per unique `key` for the lifetime of this object,
+        so a condition that recurs on every poll (e.g. a persistently malformed API
+        response) doesn't flood the log file.
+
+        If `url` and/or `response` are given, the full API call and raw response are
+        also written once to 'api_logs.txt' in the result directory, keeping the main
+        log concise while still preserving the raw payload for debugging.
+        """
+        if key not in self.logged_once_keys:
+            getattr(logger, level)(message)
+            self.logged_once_keys.add(key)
+            if url is not None or response is not None:
+                self._write_api_log(key, message, url, response)
+
+    def _write_api_log(self, key, message, url, response):
+        try:
+            log_dir = self.result_dir if getattr(self, 'result_dir', None) else '.'
+            os.makedirs(log_dir, exist_ok=True)
+            with open(os.path.join(log_dir, 'api_logs.txt'), 'a') as f:
+                f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {key}: {message}\n")
+                if url is not None:
+                    f.write(f"API: {url}\n")
+                if response is not None:
+                    f.write(f"Response: {response}\n")
+                f.write("\n")
+        except OSError as e:
+            logger.debug(f"Could not write to api_logs.txt: {e}")
+
+    def record_client_issue(self, device, issue):
+        self.client_issue_log.append({
+            "Time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "Device": device,
+            "Issue": issue,
+        })
+
+    def get_column_values(self, filtered_df, substring):
+        """Returns the values of the first column of `filtered_df` whose name
+        contains `substring`, as a list. Falls back to a zero-filled list of the
+        same length (and logs the miss once per substring) if no such column
+        exists, instead of raising IndexError."""
+        matching_cols = [col for col in filtered_df.columns if substring in col]
+        if not matching_cols:
+            self.log_once(
+                f'missing_column_{substring}',
+                f"Expected a column containing '{substring}' but found none. Columns: {list(filtered_df.columns)}"
+            )
+            return [0] * len(filtered_df)
+        return filtered_df[matching_cols[0]].values.tolist()
+
     def get_layer3_endp_data(self):
         """
         Fetches Layer 3 endpoint data for all created cross connections.
@@ -1257,15 +1367,39 @@ class Throughput(Realm):
             cx_list_endp.append(i + '-A')
             cx_list_endp.append(i + '-B')
             cx_list_l3.append(i)
-        # Fetch required throughput data from Lanforge
-        try:
-            # for dynamic data, taken rx rate lasts from layer3 endp tab
-            l3_endp_data = list(self.json_get('/endp/{}/list?fields=rx rate (last),rx drop %25,name,run,name'.format(','.join(cx_list_endp)))['endpoint'])
-            l3_cx_data = self.json_get('/cx/all')
-        except Exception as e:
-            cx_data = self.json_get('/cx/all/')
-            logger.info(cx_data)
-            logger.error(f"Endpoint not fetched from API {e}")
+        # Fetch required throughput data from Lanforge, retrying transient API failures
+        # (e.g. a momentary None response) for up to 20s before giving up on this poll.
+        endp_url = '/endp/{}/list?fields=rx rate (last),rx drop %25,name,run,name'.format(','.join(cx_list_endp))
+        max_retries = 5
+        retry_delay_sec = 4
+        l3_endp_data = []
+        l3_cx_data = {}
+        attempt = 1
+        fetch_error = None
+        while attempt <= max_retries:
+            try:
+                # for dynamic data, taken rx rate lasts from layer3 endp tab
+                l3_endp_data = list(self.json_get(endp_url)['endpoint'])
+                l3_cx_data = self.json_get('/cx/all')
+                fetch_error = None
+                break
+            except Exception as e:
+                l3_endp_data = []
+                l3_cx_data = {}
+                fetch_error = e
+                if attempt < max_retries:
+                    time.sleep(retry_delay_sec)
+                attempt += 1
+
+        if fetch_error is not None:
+            # Log the failing API and the exception only once for the whole test run,
+            # so a persistent outage doesn't flood the log file on every poll.
+            self.log_once('endp_api_failure', f"Endpoint not fetched from API '{endp_url}': {fetch_error}",
+                          url=endp_url, response=str(fetch_error))
+        elif 'endp_api_failure' in self.logged_once_keys:
+            logger.info(f"Endpoint API '{endp_url}' is responding again.")
+            self.logged_once_keys.discard('endp_api_failure')
+
         # Extracting and storing throughput data
         cx_list = list(self.cx_profile.created_cx.keys())
         i = 0
@@ -1273,24 +1407,49 @@ class Throughput(Realm):
         # mapping the data based upon the cx_list order
         for cx in cx_list:
             throughput[i] = [0, 0, 0, 0, "Stopped", 0]
+            cx_found = False
             for j in l3_endp_data:
-                key, value = next(iter(j.items()))
-                endp_a = cx + '-A'
-                endp_b = cx + '-B'
-                if value['name'] == endp_a:
-                    throughput[i][0] = value['rx rate (last)']
-                    throughput[i][2] = value['rx drop %']
-                elif value['name'] == endp_b:
-                    throughput[i][1] = value['rx rate (last)']
-                    throughput[i][3] = value['rx drop %']
-                if value['name'] == endp_a or value['name'] == endp_b:
-                    throughput[i][4] = 'Run' if value['run'] else 'Stopped'
+                try:
+                    key, value = next(iter(j.items()))
+                    endp_a = cx + '-A'
+                    endp_b = cx + '-B'
+                    if value['name'] == endp_a:
+                        throughput[i][0] = value['rx rate (last)']
+                        throughput[i][2] = value['rx drop %']
+                    elif value['name'] == endp_b:
+                        throughput[i][1] = value['rx rate (last)']
+                        throughput[i][3] = value['rx drop %']
+                    if value['name'] == endp_a or value['name'] == endp_b:
+                        throughput[i][4] = 'Run' if value['run'] else 'Stopped'
+                        cx_found = True
+                except (AttributeError, IndexError, KeyError) as e:
+                    # Log the unexpected response shape only once per test run so we can
+                    # debug which endpoint/key broke, without spamming the log every poll.
+                    self.log_once('endp_parse_error', f"Unexpected response while parsing '{endp_url}': {e}",
+                                  url=endp_url, response=j)
+            if not cx_found:
+                if cx not in self.missing_cx_logged:
+                    logger.warning("CX '{}' is missing from the layer-3 endpoint data.".format(cx))
+                    # logger.warning(
+                    #     "The device may have disconnected or its connection was not created. "
+                    #     "Continuing the test with the remaining devices."
+                    # )
+                    self.missing_cx_logged.add(cx)
+                    self.record_client_issue(cx, "CX '{}' missing from layer-3 endpoint data".format(cx))
+            else:
+                if cx in self.missing_cx_logged:
+                    logger.info("CX '{}' data is available again.".format(cx))
+                    self.missing_cx_logged.discard(cx)
             # To add average RTT
             for j in l3_cx_data:
-                if not isinstance(l3_cx_data[j], dict):
-                    continue
-                if cx == l3_cx_data[j]['name']:
-                    throughput[i][5] = l3_cx_data[j]['avg rtt']
+                try:
+                    if not isinstance(l3_cx_data[j], dict):
+                        continue
+                    if cx == l3_cx_data[j]['name']:
+                        throughput[i][5] = l3_cx_data[j]['avg rtt']
+                except (AttributeError, IndexError, KeyError) as e:
+                    self.log_once('endp_cx_parse_error', f"Unexpected response while parsing '/cx/all': {e}",
+                                  url='/cx/all', response=l3_cx_data[j])
             i += 1
         return throughput
 
@@ -1425,9 +1584,11 @@ class Throughput(Realm):
                         logger.warning('Test is stopped by the user')
                         test_stopped_by_user = True
                         if self.do_bandsteering:
+                            self.actual_monitoring_duration_seconds += (datetime.now() - start_time).total_seconds()
                             return individual_df, test_stopped_by_user
                         break
                 if self.do_bandsteering:
+                    self.actual_monitoring_duration_seconds += (datetime.now() - start_time).total_seconds()
                     return individual_df, test_stopped_by_user
                 # Adjust time_gap based on elapsed time since start (for webui)
                 d = datetime.now()
@@ -1527,6 +1688,7 @@ class Throughput(Realm):
                 individual_df.loc[len(individual_df)] = individual_df_data
                 individual_df.to_csv('throughput_data.csv', index=False)
                 if self.do_bandsteering:
+                    self.actual_monitoring_duration_seconds += (datetime.now() - start_time).total_seconds()
                     return individual_df, test_stopped_by_user
 
             if self.stop_test:
@@ -1623,6 +1785,7 @@ class Throughput(Realm):
         logger.info("connections download {}".format(connections_download))
         logger.info("connections upload {}".format(connections_upload))
 
+        self.actual_monitoring_duration_seconds += (datetime.now() - start_time).total_seconds()
         return individual_df, test_stopped_by_user
 
     def monitor_for_robo(self, iteration, individual_df, device_names, incremental_capacity_list, overall_start_time, overall_end_time, is_device_configured):
@@ -2098,6 +2261,7 @@ class Throughput(Realm):
         logger.info("connections download {}".format(connections_download))
         logger.info("connections upload {}".format(connections_upload))
 
+        self.actual_monitoring_duration_seconds += (datetime.now() - start_time).total_seconds()
         return individual_df, test_stopped_by_user
 
     def perform_intended_load(self, iteration, incremental_capacity_list):
@@ -2688,11 +2852,11 @@ class Throughput(Realm):
                     # Checking individual device download and upload rate by searching device name in dataframe
                     columns_with_substring = [col for col in data_iter.columns if k in col]
                     filtered_df = data_iter[columns_with_substring]
-                    download_col = filtered_df[[col for col in filtered_df.columns if "Download" in col][0]].values.tolist()
-                    upload_col = filtered_df[[col for col in filtered_df.columns if "Upload" in col][0]].values.tolist()
-                    upload_drop_col = filtered_df[[col for col in filtered_df.columns if "Tx % Drop" in col][0]].values.tolist()
-                    download_drop_col = filtered_df[[col for col in filtered_df.columns if "Rx % Drop " in col][0]].values.tolist()
-                    rssi_col = filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()
+                    download_col = self.get_column_values(filtered_df, "Download")
+                    upload_col = self.get_column_values(filtered_df, "Upload")
+                    upload_drop_col = self.get_column_values(filtered_df, "Tx % Drop")
+                    download_drop_col = self.get_column_values(filtered_df, "Rx % Drop ")
+                    rssi_col = self.get_column_values(filtered_df, "RSSI")
                     if self.load_type == "wc_intended_load":
                         if self.direction == "Bi-direction":
 
@@ -2703,7 +2867,7 @@ class Throughput(Realm):
                             upload_drop.append(round(sum(upload_drop_col) / len(upload_drop_col), 2))
                             download_drop.append(round(sum(download_drop_col) / len(download_drop_col), 2))
                             rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
-                            avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
+                            avg_rtt_data.append(self.get_column_values(filtered_df, "Average RTT ")[-1])
                             # Calculate and append upload and download throughput to lists
                             upload_list.append(str(round((int(self.cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
                             download_list.append(str(round((int(self.cx_profile.side_b_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
@@ -2726,7 +2890,7 @@ class Throughput(Realm):
                             # Calculate and append upload and download throughput to lists
                             upload_list.append(str(round((int(self.cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
                             download_list.append(str(round((int(self.cx_profile.side_b_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
-                            avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
+                            avg_rtt_data.append(self.get_column_values(filtered_df, "Average RTT ")[-1])
                             # Append average download drop data from filtered dataframe
 
                             download_drop.append(round(sum(download_drop_col) / len(download_drop_col), 2))
@@ -2750,7 +2914,7 @@ class Throughput(Realm):
                             download_data.append(0)
                             # Append average upload drop data from filtered dataframe
                             upload_drop.append(round(sum(upload_drop_col) / len(upload_drop_col), 2))
-                            avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
+                            avg_rtt_data.append(self.get_column_values(filtered_df, "Average RTT ")[-1])
 
                             if self.cx_profile.side_a_min_pdu == -1:
                                 packet_size_in_table.append('AUTO')
@@ -2769,7 +2933,7 @@ class Throughput(Realm):
                             download_drop.append(round(sum(download_drop_col) / len(download_drop_col), 2))
                             # upload_data.append(filtered_df[[col for col in  filtered_df.columns if "Upload" in col][0]].values.tolist()[-1])
                             rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
-                            avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
+                            avg_rtt_data.append(self.get_column_values(filtered_df, "Average RTT ")[-1])
 
                             # Calculate and append upload and download throughput to lists
                             upload_list.append(str(round(int(self.cx_profile.side_a_min_bps) / 1000000, 2)))
@@ -2787,7 +2951,7 @@ class Throughput(Realm):
                             # Append 0 for upload data
                             upload_data.append(0)
                             rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
-                            avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
+                            avg_rtt_data.append(self.get_column_values(filtered_df, "Average RTT ")[-1])
 
                             # Calculate and append upload and download throughput to lists
                             upload_list.append(str(round(int(self.cx_profile.side_a_min_bps) / 1000000, 2)))
@@ -2805,7 +2969,7 @@ class Throughput(Realm):
                             upload_list.append(str(round(int(self.cx_profile.side_a_min_bps) / 1000000, 2)) + "Mbps")
                             download_list.append(str(round(int(self.cx_profile.side_b_min_bps) / 1000000, 2)) + "Mbps")
                             rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
-                            avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
+                            avg_rtt_data.append(self.get_column_values(filtered_df, "Average RTT ")[-1])
 
                             # Append average upload data from filtered dataframe
                             upload_data.append(round(sum(upload_col) / len(upload_col), 2))
@@ -3155,11 +3319,11 @@ class Throughput(Realm):
                     # Checking individual device download and upload rate by searching device name in dataframe
                     columns_with_substring = [col for col in data_iter.columns if k in col]
                     filtered_df = data_iter[columns_with_substring]
-                    download_col = filtered_df[[col for col in filtered_df.columns if "Download" in col][0]].values.tolist()
-                    upload_col = filtered_df[[col for col in filtered_df.columns if "Upload" in col][0]].values.tolist()
-                    upload_drop_col = filtered_df[[col for col in filtered_df.columns if "Tx % Drop" in col][0]].values.tolist()
+                    download_col = self.get_column_values(filtered_df, "Download")
+                    upload_col = self.get_column_values(filtered_df, "Upload")
+                    upload_drop_col = self.get_column_values(filtered_df, "Tx % Drop")
                     download_drop_col = filtered_df[[col for col in filtered_df.columns if "Rx % Drop" in col][0]].values.tolist()
-                    rssi_col = filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()
+                    rssi_col = self.get_column_values(filtered_df, "RSSI")
                     if self.direction == "Bi-direction":
 
                         # Append download and upload data from filtered dataframe
@@ -3167,9 +3331,9 @@ class Throughput(Realm):
                         upload_data.append(round(sum(upload_col) / len(upload_col), 2))
                         upload_drop.append(round(sum(upload_drop_col) / len(upload_drop_col), 2))
                         download_drop.append(round(sum(download_drop_col) / len(download_drop_col), 2))
-                        rssi_data.append(int(round(sum(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()) /
-                                         len(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()), 2)) * -1)
-                        avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
+                        rssi_data.append(int(round(sum(self.get_column_values(filtered_df, "RSSI")) /
+                                         len(self.get_column_values(filtered_df, "RSSI")), 2)) * -1)
+                        avg_rtt_data.append(self.get_column_values(filtered_df, "Average RTT ")[-1])
                         # Calculate and append upload and download throughput to lists
                         upload_list.append(str(round(int(self.cx_profile.side_a_min_bps) / 1000000, 2)))
                         download_list.append(str(round(int(self.cx_profile.side_b_min_bps) / 1000000, 2)))
@@ -3182,10 +3346,10 @@ class Throughput(Realm):
 
                         # Append 0 for upload data
                         upload_data.append(0)
-                        rssi_data.append(int(round(sum(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()) /
-                                         len(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()), 2)) * -1)
+                        rssi_data.append(int(round(sum(self.get_column_values(filtered_df, "RSSI")) /
+                                         len(self.get_column_values(filtered_df, "RSSI")), 2)) * -1)
                         download_drop.append(round(sum(download_drop_col) / len(download_drop_col), 2))
-                        avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
+                        avg_rtt_data.append(self.get_column_values(filtered_df, "Average RTT ")[-1])
 
                         # Calculate and append upload and download throughput to lists
                         upload_list.append(str(round(int(self.cx_profile.side_a_min_bps) / 1000000, 2)))
@@ -3197,10 +3361,10 @@ class Throughput(Realm):
                         # Calculate and append upload and download throughput to lists
                         upload_list.append(str(round(int(self.cx_profile.side_a_min_bps) / 1000000, 2)))
                         download_list.append(str(round(int(self.cx_profile.side_b_min_bps) / 1000000, 2)))
-                        rssi_data.append(int(round(sum(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()) /
-                                         len(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()), 2)) * -1)
+                        rssi_data.append(int(round(sum(self.get_column_values(filtered_df, "RSSI")) /
+                                         len(self.get_column_values(filtered_df, "RSSI")), 2)) * -1)
                         upload_drop.append(round(sum(upload_drop_col) / len(upload_drop_col), 2))
-                        avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
+                        avg_rtt_data.append(self.get_column_values(filtered_df, "Average RTT ")[-1])
 
                         # Append upload data from filtered dataframe
                         upload_data.append(round(sum(upload_col) / len(upload_col), 2))
@@ -3327,19 +3491,26 @@ class Throughput(Realm):
 
                 # Dataframe changes with respect to groups and profiles in case of interopability
                 if self.group_name:
-                    interop_tab_data = self.json_get('/adb/')["devices"]
+                    try:
+                        interop_tab_data = self.json_get('/adb/')["devices"]
+                    except (TypeError, KeyError, AttributeError) as e:
+                        interop_tab_data = []
+                        self.log_once('adb_devices_parse', f"Unexpected response from '/adb/': {e}", url='/adb/', response=None)
                     res_list = []
                     grp_name = []
                     if device_type[int(incremental_capacity_list[i]) - 1] != 'Android':
                         res_list.append(devices_on_running[-1])
                     else:
-                        for dev in interop_tab_data:
-                            for item in dev.values():
-                                if item['user-name'] == devices_on_running[-1]:
-                                    res_list.append(item['name'].split('.')[2])
-                                    break
+                        try:
+                            for dev in interop_tab_data:
+                                for item in dev.values():
+                                    if item['user-name'] == devices_on_running[-1]:
+                                        res_list.append(item['name'].split('.')[2])
+                                        break
+                        except (AttributeError, IndexError, KeyError) as e:
+                            self.log_once('adb_devices_entry_parse', f"Unexpected device entry from '/adb/': {e}", url='/adb/', response=interop_tab_data)
                     for key, value in self.group_device_map.items():
-                        if res_list[-1] in value:
+                        if res_list and res_list[-1] in value:
                             grp_name.append(key)
                             break
                     bk_dataframe["Group Name"] = grp_name[-1]
@@ -3381,6 +3552,11 @@ class Throughput(Realm):
         if iot_summary:
             self.build_iot_report_section(report, iot_summary)
         # report.build_custom()
+        if self.client_issue_log:
+            issues_df = pd.DataFrame(self.client_issue_log)
+            issues_df.to_csv(os.path.join(report_path_date_time, "client_issue.csv"), index=False)
+        if os.path.exists('api_logs.txt'):
+            shutil.move('api_logs.txt', report_path_date_time)
         report.build_footer()
         report.write_html()
         report.write_pdf(_orientation="Landscape")
@@ -3633,11 +3809,11 @@ class Throughput(Realm):
                                 filtered_df = data_iter.loc[data_iter["Angle"] == angle, columns_with_substring]
                             else:
                                 filtered_df = data_iter[columns_with_substring]
-                            download_col = filtered_df[[col for col in filtered_df.columns if "Download" in col][0]].values.tolist()
-                            upload_col = filtered_df[[col for col in filtered_df.columns if "Upload" in col][0]].values.tolist()
-                            upload_drop_col = filtered_df[[col for col in filtered_df.columns if "Tx % Drop" in col][0]].values.tolist()
-                            download_drop_col = filtered_df[[col for col in filtered_df.columns if "Rx % Drop " in col][0]].values.tolist()
-                            rssi_col = filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()
+                            download_col = self.get_column_values(filtered_df, "Download")
+                            upload_col = self.get_column_values(filtered_df, "Upload")
+                            upload_drop_col = self.get_column_values(filtered_df, "Tx % Drop")
+                            download_drop_col = self.get_column_values(filtered_df, "Rx % Drop ")
+                            rssi_col = self.get_column_values(filtered_df, "RSSI")
                             if self.load_type == "wc_intended_load":
                                 if self.direction == "Bi-direction":
 
@@ -3648,7 +3824,7 @@ class Throughput(Realm):
                                     upload_drop.append(round(sum(upload_drop_col) / len(upload_drop_col), 2))
                                     download_drop.append(round(sum(download_drop_col) / len(download_drop_col), 2))
                                     rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
-                                    avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
+                                    avg_rtt_data.append(self.get_column_values(filtered_df, "Average RTT ")[-1])
                                     # Calculate and append upload and download throughput to lists
                                     upload_list.append(str(round((int(self.cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
                                     download_list.append(str(round((int(self.cx_profile.side_b_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
@@ -3671,7 +3847,7 @@ class Throughput(Realm):
                                     # Calculate and append upload and download throughput to lists
                                     upload_list.append(str(round((int(self.cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
                                     download_list.append(str(round((int(self.cx_profile.side_b_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
-                                    avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
+                                    avg_rtt_data.append(self.get_column_values(filtered_df, "Average RTT ")[-1])
                                     # Append average download drop data from filtered dataframe
 
                                     download_drop.append(round(sum(download_drop_col) / len(download_drop_col), 2))
@@ -3695,7 +3871,7 @@ class Throughput(Realm):
                                     download_data.append(0)
                                     # Append average upload drop data from filtered dataframe
                                     upload_drop.append(round(sum(upload_drop_col) / len(upload_drop_col), 2))
-                                    avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
+                                    avg_rtt_data.append(self.get_column_values(filtered_df, "Average RTT ")[-1])
 
                                     if self.cx_profile.side_a_min_pdu == -1:
                                         packet_size_in_table.append('AUTO')
@@ -3714,7 +3890,7 @@ class Throughput(Realm):
                                     download_drop.append(round(sum(download_drop_col) / len(download_drop_col), 2))
                                     # upload_data.append(filtered_df[[col for col in  filtered_df.columns if "Upload" in col][0]].values.tolist()[-1])
                                     rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
-                                    avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
+                                    avg_rtt_data.append(self.get_column_values(filtered_df, "Average RTT ")[-1])
 
                                     # Calculate and append upload and download throughput to lists
                                     upload_list.append(str(round(int(self.cx_profile.side_a_min_bps) / 1000000, 2)))
@@ -3732,7 +3908,7 @@ class Throughput(Realm):
                                     # Append 0 for upload data
                                     upload_data.append(0)
                                     rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
-                                    avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
+                                    avg_rtt_data.append(self.get_column_values(filtered_df, "Average RTT ")[-1])
 
                                     # Calculate and append upload and download throughput to lists
                                     upload_list.append(str(round(int(self.cx_profile.side_a_min_bps) / 1000000, 2)))
@@ -3750,7 +3926,7 @@ class Throughput(Realm):
                                     upload_list.append(str(round(int(self.cx_profile.side_a_min_bps) / 1000000, 2)) + "Mbps")
                                     download_list.append(str(round(int(self.cx_profile.side_b_min_bps) / 1000000, 2)) + "Mbps")
                                     rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
-                                    avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
+                                    avg_rtt_data.append(self.get_column_values(filtered_df, "Average RTT ")[-1])
 
                                     # Append average upload data from filtered dataframe
                                     upload_data.append(round(sum(upload_col) / len(upload_col), 2))
@@ -3964,6 +4140,11 @@ class Throughput(Realm):
                         report.build_custom()
 
         # report.build_custom()
+        if self.client_issue_log:
+            issues_df = pd.DataFrame(self.client_issue_log)
+            issues_df.to_csv(os.path.join(report_path_date_time, "client_issue.csv"), index=False)
+        if os.path.exists('api_logs.txt'):
+            shutil.move('api_logs.txt', report_path_date_time)
         report.build_footer()
         report.write_html()
         report.write_pdf(_orientation="Landscape")
@@ -3999,7 +4180,11 @@ class Throughput(Realm):
         avg_updrop = []
         avg_dndrop = []
         avgrtt = []
-        interop_tab_data = self.json_get('/adb/')["devices"]
+        try:
+            interop_tab_data = self.json_get('/adb/')["devices"]
+        except (TypeError, KeyError, AttributeError) as e:
+            interop_tab_data = []
+            self.log_once('adb_devices_parse', f"Unexpected response from '/adb/': {e}", url='/adb/', response=None)
         for i in range(len(typeofdevice)):
             for j in groupdevlist:
                 if j == devusername[i] and typeofdevice[i] != 'Android':
@@ -4030,7 +4215,12 @@ class Throughput(Realm):
                 else:
                     for dev in interop_tab_data:
                         for item in dev.values():
-                            if item['user-name'] == devusername[i] and j == item['name'].split('.')[2]:
+                            try:
+                                is_match = item['user-name'] == devusername[i] and j == item['name'].split('.')[2]
+                            except (AttributeError, IndexError, KeyError) as e:
+                                is_match = False
+                                self.log_once('adb_devices_entry_parse', f"Unexpected device entry from '/adb/': {e}", url='/adb/', response=item)
+                            if is_match:
                                 device_type.append(typeofdevice[i])
                                 username.append(devusername[i])
                                 ssid.append(devssid[i])
@@ -4136,26 +4326,40 @@ class Throughput(Realm):
             # When pass_fail csv specified
             if self.expected_passfail_value == '' or self.expected_passfail_value is None:
                 res_list = []
-                interop_tab_data = self.json_get('/adb/')["devices"]
+                try:
+                    interop_tab_data = self.json_get('/adb/')["devices"]
+                except (TypeError, KeyError, AttributeError) as e:
+                    interop_tab_data = []
+                    self.log_once('adb_devices_parse', f"Unexpected response from '/adb/': {e}", url='/adb/', response=None)
                 for j in range(len(device_type[0:int(curr_incremental_capacity)])):
                     if device_type[0:int(curr_incremental_capacity)][j] != 'Android':
                         res_list.append(devices_on_running[0:int(curr_incremental_capacity)][j])
                     else:
-                        for dev in interop_tab_data:
-                            for item in dev.values():
-                                if item['user-name'] == devices_on_running[0:int(curr_incremental_capacity)][j]:
-                                    res_list.append(item['name'].split('.')[2])
+                        try:
+                            for dev in interop_tab_data:
+                                for item in dev.values():
+                                    if item['user-name'] == devices_on_running[0:int(curr_incremental_capacity)][j]:
+                                        res_list.append(item['name'].split('.')[2])
+                        except (AttributeError, IndexError, KeyError) as e:
+                            self.log_once('adb_devices_entry_parse', f"Unexpected device entry from '/adb/': {e}", url='/adb/', response=interop_tab_data)
 
-                with open(self.device_csv_name, mode='r') as file:
-                    reader = csv.DictReader(file)
-                    rows = list(reader)
+                try:
+                    with open(self.device_csv_name, mode='r') as file:
+                        reader = csv.DictReader(file)
+                        rows = list(reader)
+                except OSError as e:
+                    rows = []
+                    logger.error(f"Could not read device CSV '{self.device_csv_name}': {e}")
                 for device in res_list:
                     found = False
-                    for row in rows:
-                        if row['DeviceList'] == device and row[self.csv_direction + ' Mbps'].strip() != '':
-                            test_input_list.append(row[self.csv_direction + ' Mbps'])
-                            found = True
-                            break
+                    try:
+                        for row in rows:
+                            if row['DeviceList'] == device and row[self.csv_direction + ' Mbps'].strip() != '':
+                                test_input_list.append(row[self.csv_direction + ' Mbps'])
+                                found = True
+                                break
+                    except (AttributeError, IndexError, KeyError) as e:
+                        self.log_once('device_csv_row_parse', f"Unexpected row in device CSV '{self.device_csv_name}': {e}", url=self.device_csv_name, response=rows)
                     if not found:
                         logger.info(f'Pass/Fail threshold for device {device} not found in the CSV. Using default threshold of 5 Mbps.')
                         test_input_list.append(5)
@@ -4183,27 +4387,41 @@ class Throughput(Realm):
         else:
             if self.expected_passfail_value == '' or self.expected_passfail_value is None:
                 res_list = []
-                interop_tab_data = self.json_get('/adb/')["devices"]
+                try:
+                    interop_tab_data = self.json_get('/adb/')["devices"]
+                except (TypeError, KeyError, AttributeError) as e:
+                    interop_tab_data = []
+                    self.log_once('adb_devices_parse', f"Unexpected response from '/adb/': {e}", url='/adb/', response=None)
                 if device_type[int(curr_incremental_capacity) - 1] != 'Android':
                     res_list.append(devices_on_running[-1])
                 else:
-                    for dev in interop_tab_data:
-                        for item in dev.values():
-                            if item['user-name'] == devices_on_running[-1]:
-                                res_list.append(item['name'].split('.')[2])
-                                break
+                    try:
+                        for dev in interop_tab_data:
+                            for item in dev.values():
+                                if item['user-name'] == devices_on_running[-1]:
+                                    res_list.append(item['name'].split('.')[2])
+                                    break
+                    except (AttributeError, IndexError, KeyError) as e:
+                        self.log_once('adb_devices_entry_parse', f"Unexpected device entry from '/adb/': {e}", url='/adb/', response=interop_tab_data)
 
-                with open(self.device_csv_name, mode='r') as file:
-                    reader = csv.DictReader(file)
-                    rows = list(reader)
+                try:
+                    with open(self.device_csv_name, mode='r') as file:
+                        reader = csv.DictReader(file)
+                        rows = list(reader)
+                except OSError as e:
+                    rows = []
+                    logger.error(f"Could not read device CSV '{self.device_csv_name}': {e}")
 
                 for device in res_list:
                     found = False
-                    for row in rows:
-                        if row['DeviceList'] == device and row[self.csv_direction + ' Mbps'].strip() != '':
-                            test_input_list.append(row[self.csv_direction + ' Mbps'])
-                            found = True
-                            break
+                    try:
+                        for row in rows:
+                            if row['DeviceList'] == device and row[self.csv_direction + ' Mbps'].strip() != '':
+                                test_input_list.append(row[self.csv_direction + ' Mbps'])
+                                found = True
+                                break
+                    except (AttributeError, IndexError, KeyError) as e:
+                        self.log_once('device_csv_row_parse', f"Unexpected row in device CSV '{self.device_csv_name}': {e}", url=self.device_csv_name, response=rows)
                     if not found:
                         logger.info(f'Pass/Fail threshold for device {device} not found in the CSV. Using default threshold of 5 Mbps.')
                         test_input_list.append(5)
