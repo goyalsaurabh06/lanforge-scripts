@@ -48,7 +48,7 @@ EXAMPLE:    # Run DUT transmit test. Configure UDP traffic at 70% calculated the
             # Note that radio must support specified parameters. Recommended to first configure manually
             ./lf_dataplane_test.py \
                 --upstream          1.1.eth1 \
-                --station          1.1.wlan0 \
+                --station           1.1.wlan0 \
                 --traffic_type      UDP \
                 --rate              100Mbps \
                 --nss               1,2,3,4 \
@@ -58,7 +58,7 @@ EXAMPLE:    # Run DUT transmit test. Configure UDP traffic at 70% calculated the
             # The values specified are *parsed as dB*
             ./lf_dataplane_test.py \
                 --upstream          1.1.eth1 \
-                --station          1.1.wlan0 \
+                --station           1.1.wlan0 \
                 --rate              100Mbps \
                 --attenuator1       "1.1.3273" \
                 --atten1_min        10 \
@@ -70,7 +70,7 @@ EXAMPLE:    # Run DUT transmit test. Configure UDP traffic at 70% calculated the
             # Ensure attenuation values are separated by two periods, otherwise test will not parse properly
             ./lf_dataplane_test.py \
                 --upstream          1.1.eth1 \
-                --station          1.1.wlan0 \
+                --station           1.1.wlan0 \
                 --rate              100Mbps \
                 --attenuator1       "1.1.3273" \
                 --attenuations1     "0..+100..955" \
@@ -82,7 +82,7 @@ EXAMPLE:    # Run DUT transmit test. Configure UDP traffic at 70% calculated the
 
             {
                 "upstream": "1.1.eth1",
-                "stations": "1.1.wlan0",
+                "station": "1.1.wlan0",
                 "rate": "1Gbps"
             }
 
@@ -256,7 +256,7 @@ class DataplaneTest(cv_test):
 
         # Traffic configuration
         self.traffic_directions = DataplaneTest._prepare_as_rawline(traffic_directions, self.TRAFFIC_DIRECTION_MAP)
-        self.traffic_types = DataplaneTest._prepare_as_rawline(traffic_type, self.TRAFFIC_TYPE_MAP)
+        self.traffic_types = DataplaneTest._prepare_as_rawline(traffic_types, self.TRAFFIC_TYPE_MAP)
 
         # Attenuator configuration
         self.attenuator = attenuator
@@ -387,7 +387,7 @@ class DataplaneTest(cv_test):
         if self.traffic_directions:
             cfg_options.append("directions: " + self.traffic_directions)
         if self.traffic_types:
-            cfg_options.append("traffic_types: " + self.traffic_type)
+            cfg_options.append("traffic_types: " + self.traffic_types)
         if self.speed != "":
             cfg_options.append("speed: " + self.speed)
         if self.opposite_speed != "":
@@ -470,7 +470,7 @@ NOTES:      To best understand the Dataplane test, please review manual configur
 EXAMPLE:    # Run DUT transmit test. Configure UDP traffic at 70% calculated theoretical rate for one minute
             ./lf_dataplane_test.py \
                 --upstream          1.1.eth1 \
-                --station          1.1.wlan0 \
+                --station           1.1.wlan0 \
                 --duration          1m \
                 --traffic_type      UDP \
                 --traffic_direction DUT-TX \
@@ -479,7 +479,7 @@ EXAMPLE:    # Run DUT transmit test. Configure UDP traffic at 70% calculated the
             # Run DUT receive test. Configure TCP traffic at 1 Gbps
             ./lf_dataplane_test.py \
                 --upstream          1.1.eth1 \
-                --station          1.1.wlan0 \
+                --station           1.1.wlan0 \
                 --traffic_type      TCP \
                 --traffic_direction DUT-RX \
                 --rate              1Gbps
@@ -487,7 +487,7 @@ EXAMPLE:    # Run DUT transmit test. Configure UDP traffic at 70% calculated the
             # Run DUT transmit and receive test with multiple 250Mbps traffic configurations
             ./lf_dataplane_test.py \
                 --upstream          1.1.eth1 \
-                --station          1.1.wlan0 \
+                --station           1.1.wlan0 \
                 --traffic_type      UDP,TCP \
                 --traffic_direction DUT-TX,DUT-RX \
                 --rate              250Mbps
@@ -496,7 +496,7 @@ EXAMPLE:    # Run DUT transmit test. Configure UDP traffic at 70% calculated the
             # Note that radio must support specified parameters. Recommended to first configure manually
             ./lf_dataplane_test.py \
                 --upstream          1.1.eth1 \
-                --station          1.1.wlan0 \
+                --station           1.1.wlan0 \
                 --traffic_type      UDP \
                 --rate              100Mbps \
                 --nss               1,2,3,4 \
@@ -506,7 +506,7 @@ EXAMPLE:    # Run DUT transmit test. Configure UDP traffic at 70% calculated the
             # Ensure attenuation values are separated by two periods, otherwise test will not parse properly
             ./lf_dataplane_test.py \
                 --upstream          1.1.eth1 \
-                --station          1.1.wlan0 \
+                --station           1.1.wlan0 \
                 --rate              100Mbps \
                 --attenuator1       "1.1.3273" \
                 --attenuations1     "0..+100..955" \
