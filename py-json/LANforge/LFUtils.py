@@ -821,7 +821,6 @@ def wait_until_ports_disappear(base_url="http://localhost:8080", port_list=(), d
             url, resource_id, ",".join(temp_names_by_resource[resource_id]))
     if debug:
         logger.debug(pprint.pformat(("temp_query_by_resource", temp_query_by_resource)))
-    sec_elapsed = 0
     rm_ports_iteration = math.ceil(timeout_sec / 4)
     if rm_ports_iteration > 30:
         rm_ports_iteration = 30
@@ -829,7 +828,7 @@ def wait_until_ports_disappear(base_url="http://localhost:8080", port_list=(), d
         rm_ports_iteration = 1
 
     found_stations = []
-    for _ in range(0, timeout_sec):
+    for sec_elapsed in range(0, timeout_sec):
         found_stations = []
         for (resource, check_url) in temp_query_by_resource.items():
             if debug:
