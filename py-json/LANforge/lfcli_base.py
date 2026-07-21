@@ -14,7 +14,6 @@ import argparse
 import re
 import logging
 import math
-import json
 
 if sys.version_info[0] != 3:
     print("This script requires Python 3")
@@ -70,6 +69,34 @@ def _get_api_logger(filename):
     return api_logger
 
 
+def pause_api_log(filename):
+    """
+    Temporarily silence api-call logging to filename for every LFCliBase-derived
+    object pointed at it (they all share this one cached logger -- see
+    _get_api_logger), without touching any individual object's save_api flag. Useful
+    around noisy polling loops (e.g. a monitor_cx()-style method called on a
+    profile object, not on the Realm itself) that would otherwise flood the log.
+    Call resume_api_log(filename) to restore.
+    No-op if api-call logging was never enabled for filename in this process --
+    looks the logger up by name instead of via _get_api_logger, which would
+    otherwise create (and truncate) the file just from pausing it.
+    """
+    api_logger = logging.getLogger("lfcli_base.api_calls.%s" % os.path.abspath(filename))
+    if api_logger.handlers:
+        api_logger.setLevel(logging.CRITICAL)
+
+
+def resume_api_log(filename):
+    """
+    Undo pause_api_log(filename) -- restores the logger to accept all 4
+    GET/POST/PUT/DELETE custom levels again. No-op if api-call logging was never
+    enabled for filename (see pause_api_log).
+    """
+    api_logger = logging.getLogger("lfcli_base.api_calls.%s" % os.path.abspath(filename))
+    if api_logger.handlers:
+        api_logger.setLevel(lf_logger_config.GET)
+
+
 class LFCliBase:
     SHOULD_RUN = 0  # indicates normal operation
     SHOULD_QUIT = 1  # indicates to quit loops, close files, send SIGQUIT to threads and return
@@ -95,9 +122,16 @@ class LFCliBase:
         self.lfclient_port = _lfjson_port
         self.debug = _debug
         # when True, json_get/json_post/json_put/json_delete log a line for each call
-        # via the dedicated api-call logger (see _get_api_logger / _log_api_call)
-        self.save_api = _save_api
-        self.api_log_filename = _api_log_file_name or os.path.join(os.path.expanduser('~'), 'lf_api_calls.csv')
+        # via the dedicated api-call logger (see _get_api_logger / _log_api_call).
+        # api_log_filename: explicit arg wins, else the process-wide default set via
+        # lf_logger_config.enable_api_log() (e.g. by lf_webpage.py when --save_api is
+        # passed). That process-wide default is also an independent way to turn
+        # save_api on: it's what lets profile objects (StationProfile, HTTPProfile,
+        # ...) that realm.py's new_*_profile() methods construct without threading
+        # _save_api through still log to the same common file.
+        self.api_log_filename = (_api_log_file_name or lf_logger_config.get_api_log_filename()
+                                 or os.path.join(os.path.expanduser('~'), 'lf_api_calls.csv'))
+        self.save_api = _save_api or (lf_logger_config.get_api_log_filename() is not None)
         if self.save_api:
             # _get_api_logger() sets up (and truncates) the file the first time this
             # path is seen in the process, then caches the logger so a second
@@ -261,6 +295,20 @@ class LFCliBase:
         logging.basicConfig(filename=filename)
 
     # - END LOGGING -
+
+    def pause_api(self):
+        """
+        Temporarily silence api-call logging for this object's api_log_filename --
+        shared by every LFCliBase-derived object pointed at the same file (see
+        pause_api_log), not just this instance. Call resume_api() to restore.
+        """
+        pause_api_log(self.api_log_filename)
+
+    def resume_api(self):
+        """
+        Undo pause_api().
+        """
+        resume_api_log(self.api_log_filename)
 
     def _log_api_call(self, method, url, data=None, response_code=None, diagnostics=None):
         """

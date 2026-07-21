@@ -803,198 +803,208 @@ class HttpDownload(Realm):
         return list(rx_rate), list(bytes_rd)
 
     def monitor_for_runtime_csv(self, duration):
+        """
+        Pause api-call logging for the duration of this polling loop -- it polls
+        port/endpoint status on a tight interval and would otherwise flood the CSV
+        with our own status calls -- then resume it whether the loop finishes
+        normally, returns early (e.g. user-abort), or raises.
+        """
+        self.local_realm.pause_api()
+        try:
 
-        time_now = datetime.now()
-        starttime = time_now.strftime("%d/%m %I:%M:%S %p")
-        # duration = self.traffic_duration
-        endtime = time_now + timedelta(seconds=duration)
-        end_time = endtime
-        # endtime = endtime
-        current_time = datetime.now()
-        self.data = {}
-        self.data["client"] = self.devices_list
-        # self.data["url_data"] = []
-        self.data_for_webui = {}
-        self.data_for_webui["client"] = self.devices_list
-        self.get_device_port_details()
-        # Creating individual Dataframe for each device
-        for port in self.port_list:
-            # Added this check to handle multiple external monitor calls for band steering.
-            # This is common to both cases and does not affect the current execution.
-            # It simply ensures safe handling when the monitor is invoked from lf_base_robo.
-            if port not in self.individual_device_data:
-                columns = ['TIMESTAMP', 'Bytes-rd', 'total urls', 'download_rate', 'rx_rate', 'tx_rate', 'RSSI', 'BSSID', 'Channel']
-                if self.do_bandsteering:
-                    columns.append('From Coordinate')
-                    columns.append('To Coordinate')
-                    columns.append('Robot X')
-                    columns.append('Robot Y')
-                self.individual_device_data[port] = pd.DataFrame(columns=columns)
-        test_stopped_by_user = False
-        monitor_charge_time = current_time
-        while (current_time < endtime):
-            # If robot test mode is enabled, periodically check if a battery pause is needed
-            if self.robot_test:
-                # Check if enough time has passed to trigger a battery check (300 sec)
-                if (datetime.now() - monitor_charge_time).total_seconds() >= 300:
-                    pause_start = datetime.now()
-                    # Wait for the robot to charge. Returns whether we paused and whether user aborted.
-                    pause, test_stopped_by_user = self.robot_obj.wait_for_battery(stop=self.stop)
-                    if test_stopped_by_user:
-                        break
-                    if pause:
-                        # After charging, return to the last coordinate
-                        reached, abort = self.robot_obj.move_to_coordinate(self.current_coordinate)
-                        # If user stopped the test during movement
-                        if abort:
-                            test_stopped_by_user = True
+            time_now = datetime.now()
+            starttime = time_now.strftime("%d/%m %I:%M:%S %p")
+            # duration = self.traffic_duration
+            endtime = time_now + timedelta(seconds=duration)
+            end_time = endtime
+            # endtime = endtime
+            current_time = datetime.now()
+            self.data = {}
+            self.data["client"] = self.devices_list
+            # self.data["url_data"] = []
+            self.data_for_webui = {}
+            self.data_for_webui["client"] = self.devices_list
+            self.get_device_port_details()
+            # Creating individual Dataframe for each device
+            for port in self.port_list:
+                # Added this check to handle multiple external monitor calls for band steering.
+                # This is common to both cases and does not affect the current execution.
+                # It simply ensures safe handling when the monitor is invoked from lf_base_robo.
+                if port not in self.individual_device_data:
+                    columns = ['TIMESTAMP', 'Bytes-rd', 'total urls', 'download_rate', 'rx_rate', 'tx_rate', 'RSSI', 'BSSID', 'Channel']
+                    if self.do_bandsteering:
+                        columns.append('From Coordinate')
+                        columns.append('To Coordinate')
+                        columns.append('Robot X')
+                        columns.append('Robot Y')
+                    self.individual_device_data[port] = pd.DataFrame(columns=columns)
+            test_stopped_by_user = False
+            monitor_charge_time = current_time
+            while (current_time < endtime):
+                # If robot test mode is enabled, periodically check if a battery pause is needed
+                if self.robot_test:
+                    # Check if enough time has passed to trigger a battery check (300 sec)
+                    if (datetime.now() - monitor_charge_time).total_seconds() >= 300:
+                        pause_start = datetime.now()
+                        # Wait for the robot to charge. Returns whether we paused and whether user aborted.
+                        pause, test_stopped_by_user = self.robot_obj.wait_for_battery(stop=self.stop)
+                        if test_stopped_by_user:
                             break
-                        if not reached:
-                            # test_stopped_by_user = True
-                            break
-                        # Restore orientation if rotation is enabled
-                        if self.rotation_enabled:
-                            rotation_moni = self.robot_obj.rotate_angle(self.current_angle)
-                            if not rotation_moni:
+                        if pause:
+                            # After charging, return to the last coordinate
+                            reached, abort = self.robot_obj.move_to_coordinate(self.current_coordinate)
+                            # If user stopped the test during movement
+                            if abort:
                                 test_stopped_by_user = True
                                 break
-                        # restart traffic
-                        self.start()
-                        # Add pause duration to overall end time
-                        pause_end = datetime.now()
-                        charge_pause = pause_end - pause_start
-                        endtime += charge_pause
-                    # Reset battery-monitor timer
-                    monitor_charge_time = datetime.now()
+                            if not reached:
+                                # test_stopped_by_user = True
+                                break
+                            # Restore orientation if rotation is enabled
+                            if self.rotation_enabled:
+                                rotation_moni = self.robot_obj.rotate_angle(self.current_angle)
+                                if not rotation_moni:
+                                    test_stopped_by_user = True
+                                    break
+                            # restart traffic
+                            self.start()
+                            # Add pause duration to overall end time
+                            pause_end = datetime.now()
+                            charge_pause = pause_end - pause_start
+                            endtime += charge_pause
+                        # Reset battery-monitor timer
+                        monitor_charge_time = datetime.now()
 
-                    # IMPORTANT: Update loop time
-                    current_time = datetime.now()
+                        # IMPORTANT: Update loop time
+                        current_time = datetime.now()
 
-            # data in json format
-            # data = self.json_get("layer4/list?fields=bytes-rd")
-            # uc_avg_data = self.json_get("layer4/list?fields=uc-avg")
-            # uc_max_data = self.json_get("layer4/list?fields=uc-max")
-            # uc_min_data = self.json_get("layer4/list?fields=uc-min")
-            # total_url_data = self.json_get("layer4/list?fields=total-urls")
-            # bytes_rd = self.json_get("layer4/list?fields=bytes-rd")
-            l4_dict = self.get_layer4_data()
-            uc_avg_data = l4_dict['uc_avg_data']
-            uc_max_data = l4_dict['uc_max_data']
-            uc_min_data = l4_dict['uc_min_data']
-            url_times = l4_dict['url_times']
-            rx_rate = l4_dict['rx_rate']
-            bytes_rd = l4_dict['bytes_rd']
-            total_err = l4_dict['total_err']
-            urls_downloaded = []
-            for i in range(len(total_err)):
-                urls_downloaded.append(url_times[i] - total_err[i])
-            url_times = list(urls_downloaded)
-            self.data["MAC"] = self.macid_list
-            self.data["SSID"] = self.ssid_list
-            self.data["Channel"] = self.channel_list
-            self.data["Mode"] = self.mode_list
-            rssi_list, tx_rate_list, rx_rate_list, bssid_list, channel_list = self.get_signal_and_link_speed_data()  # these data collected from port manager
-            individual_rx_data = []
-            individual_rx_data.extend([current_time])
-            for i, port in enumerate(self.port_list):
-                # logger.info(f"row data HTTP",row_data)
+                # data in json format
+                # data = self.json_get("layer4/list?fields=bytes-rd")
+                # uc_avg_data = self.json_get("layer4/list?fields=uc-avg")
+                # uc_max_data = self.json_get("layer4/list?fields=uc-max")
+                # uc_min_data = self.json_get("layer4/list?fields=uc-min")
+                # total_url_data = self.json_get("layer4/list?fields=total-urls")
+                # bytes_rd = self.json_get("layer4/list?fields=bytes-rd")
+                l4_dict = self.get_layer4_data()
+                uc_avg_data = l4_dict['uc_avg_data']
+                uc_max_data = l4_dict['uc_max_data']
+                uc_min_data = l4_dict['uc_min_data']
+                url_times = l4_dict['url_times']
+                rx_rate = l4_dict['rx_rate']
+                bytes_rd = l4_dict['bytes_rd']
+                total_err = l4_dict['total_err']
+                urls_downloaded = []
+                for i in range(len(total_err)):
+                    urls_downloaded.append(url_times[i] - total_err[i])
+                url_times = list(urls_downloaded)
+                self.data["MAC"] = self.macid_list
+                self.data["SSID"] = self.ssid_list
+                self.data["Channel"] = self.channel_list
+                self.data["Mode"] = self.mode_list
+                rssi_list, tx_rate_list, rx_rate_list, bssid_list, channel_list = self.get_signal_and_link_speed_data()  # these data collected from port manager
+                individual_rx_data = []
+                individual_rx_data.extend([current_time])
+                for i, port in enumerate(self.port_list):
+                    # logger.info(f"row data HTTP",row_data)
 
+                    try:
+                        row_data = [current_time, bytes_rd[i], url_times[i], rx_rate[i], rx_rate_list[i], tx_rate_list[i], rssi_list[i], bssid_list[i], channel_list[i]]
+                        if self.do_bandsteering:
+                            robo_x, robo_y, from_coord, to_coord = self.robot_obj.get_robot_pose()
+                            row_data.extend([from_coord, to_coord, robo_x, robo_y])
+                        self.individual_device_data[port].loc[len(self.individual_device_data[port])] = row_data
+                    except Exception:
+                        # Fail-safe: if any list index/key mismatch occurs while adding row_data,
+                        # stop execution to avoid inconsistent results.
+                        tb_str = traceback.format_exc()  # capture traceback as string
+                        logger.error("An exception occurred:\n%s", tb_str)
+                        exit(1)
+                rx_rate, bytes_rd = self.aggregate_rx_bytes(rx_rate, bytes_rd)
+                # dataset = [round(x / 1000000,4) for x in dataset] #converting bps to mbps
+
+                if len(url_times) == len(self.devices_list):
+
+                    self.data["status"] = ["RUNNING"] * len(self.devices_list)
+                    self.data["url_data"] = url_times
+                    self.data["uc_min"] = uc_min_data
+                    self.data["uc_max"] = uc_max_data
+                    self.data["uc_avg"] = uc_avg_data
+                    self.data["bytes_rd"] = bytes_rd
+                    self.data["rx rate (1m)"] = rx_rate
+                    self.data["total_err"] = total_err
+                else:
+                    self.data["status"] = ["RUNNING"] * len(self.devices_list)
+                    self.data["url_data"] = [0] * len(self.devices_list)
+                    self.data["uc_avg"] = [0] * len(self.devices_list)
+                    self.data["uc_max"] = [0] * len(self.devices_list)
+                    self.data["uc_min"] = [0] * len(self.devices_list)
+                    self.data["bytes_rd"] = [0] * len(self.devices_list)
+                    self.data["rx rate (1m)"] = [0] * len(self.devices_list)
+                    self.data["total_err"] = [0] * len(self.devices_list)
+                time_difference = abs(end_time - datetime.now())
+                total_hours = time_difference.total_seconds() / 3600
+                remaining_minutes = (total_hours % 1) * 60
+                self.data["start_time"] = [starttime] * len(self.devices_list)
+                if self.robot_test:
+                    # To update end time at each interval
+                    end_time = endtime
+                self.data["end_time"] = [end_time.strftime("%d/%m %I:%M:%S %p")] * len(self.devices_list)
+                self.data["remaining_time"] = [[str(int(total_hours)) + " hr and " + str(
+                    int(remaining_minutes)) + " min" if int(total_hours) != 0 or int(remaining_minutes) != 0 else '<1 min'][
+                    0]] * len(self.devices_list)
+                if self.robot_test and self.rotation_enabled:
+                    self.data["current_angle"] = [self.current_angle] * len(self.devices_list)
                 try:
-                    row_data = [current_time, bytes_rd[i], url_times[i], rx_rate[i], rx_rate_list[i], tx_rate_list[i], rssi_list[i], bssid_list[i], channel_list[i]]
-                    if self.do_bandsteering:
-                        robo_x, robo_y, from_coord, to_coord = self.robot_obj.get_robot_pose()
-                        row_data.extend([from_coord, to_coord, robo_x, robo_y])
-                    self.individual_device_data[port].loc[len(self.individual_device_data[port])] = row_data
+                    df1 = pd.DataFrame(self.data)
                 except Exception:
-                    # Fail-safe: if any list index/key mismatch occurs while adding row_data,
-                    # stop execution to avoid inconsistent results.
                     tb_str = traceback.format_exc()  # capture traceback as string
                     logger.error("An exception occurred:\n%s", tb_str)
                     exit(1)
-            rx_rate, bytes_rd = self.aggregate_rx_bytes(rx_rate, bytes_rd)
-            # dataset = [round(x / 1000000,4) for x in dataset] #converting bps to mbps
+                if self.dowebgui:
+                    df1.to_csv('{}/http_datavalues.csv'.format(self.result_dir), index=False)
+                    if not self.do_bandsteering and self.robot_test:
+                        df1.to_csv(f"{self.result_dir}/{self.current_coordinate}_http_datavalues.csv", index=False)
+                elif self.client_type == 'Real':
+                    df1.to_csv("http_datavalues.csv", index=False)
+                    # IF ROBOT TEST PERFORMED
+                    if not self.do_bandsteering and self.robot_test:
+                        # Save FTP data values for the current coordinate when in robot test
+                        df1.to_csv(f"{self.current_coordinate}_http_datavalues.csv", index=False)
+                # No sleep is added here for band steering, as we need to capture data every second.
+                # The per-second sleep interval is already handled in lf_base_robo.
+                if not self.do_bandsteering:
+                    time.sleep(5)
+                if self.dowebgui == "True":
+                    with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host,
+                                                                                                     self.test_name),
+                              'r') as file:
+                        data = json.load(file)
+                        if data["status"] != "Running":
+                            print('Test is stopped by the user')
+                            self.data["end_time"] = [datetime.now().strftime("%d/%m %I:%M:%S %p")] * len(self.devices_list)
+                            test_stopped_by_user = True
+                            break
 
-            if len(url_times) == len(self.devices_list):
-
-                self.data["status"] = ["RUNNING"] * len(self.devices_list)
-                self.data["url_data"] = url_times
-                self.data["uc_min"] = uc_min_data
-                self.data["uc_max"] = uc_max_data
-                self.data["uc_avg"] = uc_avg_data
-                self.data["bytes_rd"] = bytes_rd
-                self.data["rx rate (1m)"] = rx_rate
-                self.data["total_err"] = total_err
-            else:
-                self.data["status"] = ["RUNNING"] * len(self.devices_list)
-                self.data["url_data"] = [0] * len(self.devices_list)
-                self.data["uc_avg"] = [0] * len(self.devices_list)
-                self.data["uc_max"] = [0] * len(self.devices_list)
-                self.data["uc_min"] = [0] * len(self.devices_list)
-                self.data["bytes_rd"] = [0] * len(self.devices_list)
-                self.data["rx rate (1m)"] = [0] * len(self.devices_list)
-                self.data["total_err"] = [0] * len(self.devices_list)
-            time_difference = abs(end_time - datetime.now())
-            total_hours = time_difference.total_seconds() / 3600
-            remaining_minutes = (total_hours % 1) * 60
-            self.data["start_time"] = [starttime] * len(self.devices_list)
-            if self.robot_test:
-                # To update end time at each interval
-                end_time = endtime
-            self.data["end_time"] = [end_time.strftime("%d/%m %I:%M:%S %p")] * len(self.devices_list)
-            self.data["remaining_time"] = [[str(int(total_hours)) + " hr and " + str(
-                int(remaining_minutes)) + " min" if int(total_hours) != 0 or int(remaining_minutes) != 0 else '<1 min'][
-                0]] * len(self.devices_list)
-            if self.robot_test and self.rotation_enabled:
-                self.data["current_angle"] = [self.current_angle] * len(self.devices_list)
+                current_time = datetime.now()
+                # Reusing monitor logic for band steering, but only need one record per call,
+                # so break after first iteration instead of running for full duration.
+                if self.do_bandsteering:
+                    break
+            individual_device_csv_names = []  # To store individial device csv names
+            # Iterate over each port and its corresponding DataFrame in the dictionary Saving the DataFrame to CSV
+            for port, df in self.individual_device_data.items():
+                df.to_csv(f"{endtime}-http-{port}.csv", index=False)
+                individual_device_csv_names.append(f'{endtime}-http-{port}')
+            self.individual_device_csv_names = individual_device_csv_names.copy()
             try:
-                df1 = pd.DataFrame(self.data)
+                all_l4_data = self.get_all_l4_data()
+                df = pd.DataFrame(all_l4_data)
+                df.to_csv("all_l4_data.csv", index=False)
             except Exception:
-                tb_str = traceback.format_exc()  # capture traceback as string
-                logger.error("An exception occurred:\n%s", tb_str)
-                exit(1)
-            if self.dowebgui:
-                df1.to_csv('{}/http_datavalues.csv'.format(self.result_dir), index=False)
-                if not self.do_bandsteering and self.robot_test:
-                    df1.to_csv(f"{self.result_dir}/{self.current_coordinate}_http_datavalues.csv", index=False)
-            elif self.client_type == 'Real':
-                df1.to_csv("http_datavalues.csv", index=False)
-                # IF ROBOT TEST PERFORMED
-                if not self.do_bandsteering and self.robot_test:
-                    # Save FTP data values for the current coordinate when in robot test
-                    df1.to_csv(f"{self.current_coordinate}_http_datavalues.csv", index=False)
-            # No sleep is added here for band steering, as we need to capture data every second.
-            # The per-second sleep interval is already handled in lf_base_robo.
-            if not self.do_bandsteering:
-                time.sleep(5)
-            if self.dowebgui == "True":
-                with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host,
-                                                                                                 self.test_name),
-                          'r') as file:
-                    data = json.load(file)
-                    if data["status"] != "Running":
-                        print('Test is stopped by the user')
-                        self.data["end_time"] = [datetime.now().strftime("%d/%m %I:%M:%S %p")] * len(self.devices_list)
-                        test_stopped_by_user = True
-                        break
-
-            current_time = datetime.now()
-            # Reusing monitor logic for band steering, but only need one record per call,
-            # so break after first iteration instead of running for full duration.
-            if self.do_bandsteering:
-                break
-        individual_device_csv_names = []  # To store individial device csv names
-        # Iterate over each port and its corresponding DataFrame in the dictionary Saving the DataFrame to CSV
-        for port, df in self.individual_device_data.items():
-            df.to_csv(f"{endtime}-http-{port}.csv", index=False)
-            individual_device_csv_names.append(f'{endtime}-http-{port}')
-        self.individual_device_csv_names = individual_device_csv_names.copy()
-        try:
-            all_l4_data = self.get_all_l4_data()
-            df = pd.DataFrame(all_l4_data)
-            df.to_csv("all_l4_data.csv", index=False)
-        except Exception:
-            logger.error("All l4 data not found")
-        return test_stopped_by_user
+                logger.error("All l4 data not found")
+            return test_stopped_by_user
+        finally:
+            self.local_realm.resume_api()
 
     def get_all_l4_data(self):
         """
@@ -2893,6 +2903,13 @@ times the file is downloaded.
             security = [args.twog_security, args.fiveg_security]
             ssid = [args.twog_ssid, args.fiveg_ssid]
             passwd = [args.twog_passwd, args.fiveg_passwd]
+        if args.save_api:
+            # process-wide default (see lf_logger_config.enable_api_log): makes every
+            # LFCliBase-derived object constructed from here on -- including the
+            # station_profile/http_profile/etc. objects HttpDownload's Realm creates
+            # internally via new_*_profile(), which don't have --save_api threaded
+            # through their own constructors -- log to this same file
+            lf_logger_config.enable_api_log(args.api_log_file_name)
         http = HttpDownload(lfclient_host=args.mgr, lfclient_port=args.mgr_port,
                             _save_api=args.save_api, _api_log_file_name=args.api_log_file_name,
                             upstream=args.upstream_port, num_sta=args.num_stations,
