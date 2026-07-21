@@ -68,6 +68,20 @@ INCLUDE_IN_README
 # gets the root logger
 logger = logging.getLogger()
 
+# Custom log levels for the 4 REST verbs, registered the same way logging registers
+# DEBUG/INFO/WARNING/etc, so a caller does logger.log(GET, message) / log(POST, ...)
+# / etc and %(levelname)s in a format string already reads GET/POST/PUT/DELETE --
+# no bespoke per-caller logging helper needed, and (deliberately) no monkey-patching
+# of logging.Logger with .get()/.post()/.put()/.delete() convenience methods, since
+# that would mutate stdlib behavior for every logger in the process just from
+# importing this module.
+GET = 25
+POST = 26
+PUT = 27
+DELETE = 28
+for _level_value, _level_name in ((GET, "GET"), (POST, "POST"), (PUT, "PUT"), (DELETE, "DELETE")):
+    logging.addLevelName(_level_value, _level_name)
+
 # This class lf_logger_config should only be enstanciated in the main of the program
 # not in any anticedents (base objects)
 # sets up the default logger class, which may be overwritten by
