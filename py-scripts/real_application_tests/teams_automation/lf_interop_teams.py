@@ -221,6 +221,12 @@ class TeamsAutomation(Realm):
                 self.header = ['timestamp'] + self.video_stats_header
         self.data_store = {}
         self.stop_signal = False
+        self.device_issue_log = []
+        self.missing_endp_logged = set()
+        self.endp_not_running_logged = set()
+        self.missing_signal_logged = set()
+        self.actual_monitoring_duration_seconds = 0
+        self.monitor_start_time = None
         self.path = os.path.join(os.getcwd(), "teams_test_results")
         if not os.path.exists(self.path):
             os.makedirs(self.path)
@@ -550,6 +556,18 @@ class TeamsAutomation(Realm):
             logger.info(f"sending running state to.. {cx_name}")
 
     def monitor_test(self):
+        self.monitor_start_time = datetime.now()
+        try:
+            self._monitor_test_loop()
+        finally:
+            # Accumulate the time actually spent monitoring on every exit path (normal
+            # completion, an early return from the robo/band-steering branches below, or an
+            # exception) so it's clear from the log how long monitoring actually ran for,
+            # separate from the configured "Duration (min)".
+            self.actual_monitoring_duration_seconds += (datetime.now() - self.monitor_start_time).total_seconds()
+            logger.info("Monitoring Duration: {}".format(self.format_monitoring_duration()))
+
+    def _monitor_test_loop(self):
         while datetime.now(self.tz) < self.end_time or not self.check_gen_cx():
             if self.stop_signal:
                 break
@@ -623,23 +641,30 @@ class TeamsAutomation(Realm):
         self.stop_signal = False
         self.generic_endps_profile.created_cx = []
         self.generic_endps_profile.created_endp = []
+        self.missing_endp_logged = set()
+        self.endp_not_running_logged = set()
 
     def get_signal_and_channel_data(self):
         """
         Returns a dictionary of LANforge stats keyed by station name.
         Example: {'sta001': {'signal': -55, 'channel': 36, ...}}
+
+        Logs a warning (once) when a station drops out of the ports data and an info line
+        (once) when it reappears, matching the missing_signal_logged warn-once/recover-once
+        pattern used for signal monitoring in lf_interop_video_streaming.py's get_signal_data().
         """
 
         lf_stats_map = {}
         interfaces_dict = dict()
+        ports_url = "/ports/all/"
 
         try:
             # Get raw data from LANforge API
-            port_data = self.json_get("/ports/all/")["interfaces"]
+            port_data = self.json_get(ports_url)["interfaces"]
             for port in port_data:
                 interfaces_dict.update(port)
         except Exception as e:
-            print(f"Error fetching port data: {e}")
+            logger.error(f"Error fetching port data: {e}", exc_info=True)
             return {}
 
         # Loop through your managed stations (e.g., sta001, sta002)
@@ -654,26 +679,38 @@ class TeamsAutomation(Realm):
                 "bssid": "-",
             }
 
-            if sta in interfaces_dict:
-                data = interfaces_dict[sta]
+            if sta not in interfaces_dict:
+                if sta not in self.missing_signal_logged:
+                    logger.warning(
+                        "Signal data for '{}' is unavailable, it may have disconnected. "
+                        "Continuing the test with the remaining devices.\n"
+                        "URL     : {}".format(sta, ports_url)
+                    )
+                    self.missing_signal_logged.add(sta)
+                    self.record_device_issue(sta, "Signal data unavailable (device may have disconnected)")
+                continue
 
-                # --- Signal Parsing ---
-                sig = data.get("signal", "-")
-                if "dBm" in str(sig):
-                    lf_stats_map[sta]["signal"] = sig.split(" ")[0]
-                else:
-                    lf_stats_map[sta]["signal"] = sig
+            if sta in self.missing_signal_logged:
+                logger.info(f"Signal data for '{sta}' is available again.")
+                self.missing_signal_logged.discard(sta)
 
-                # --- Other Fields ---
-                lf_stats_map[sta]["channel"] = data.get("channel", "-")
-                lf_stats_map[sta]["mode"] = data.get("mode", "-")
-                lf_stats_map[sta]["tx_rate"] = data.get("tx-rate", "-")
-                lf_stats_map[sta]["rx_rate"] = data.get("rx-rate", "-")
-                lf_stats_map[sta]["bssid"] = data.get(
-                    "ap", "-"
-                )  # 'ap' is usually BSSID
+            data = interfaces_dict[sta]
 
-        print(lf_stats_map)
+            # --- Signal Parsing ---
+            sig = data.get("signal", "-")
+            if "dBm" in str(sig):
+                lf_stats_map[sta]["signal"] = sig.split(" ")[0]
+            else:
+                lf_stats_map[sta]["signal"] = sig
+
+            # --- Other Fields ---
+            lf_stats_map[sta]["channel"] = data.get("channel", "-")
+            lf_stats_map[sta]["mode"] = data.get("mode", "-")
+            lf_stats_map[sta]["tx_rate"] = data.get("tx-rate", "-")
+            lf_stats_map[sta]["rx_rate"] = data.get("rx-rate", "-")
+            lf_stats_map[sta]["bssid"] = data.get(
+                "ap", "-"
+            )  # 'ap' is usually BSSID
 
         return lf_stats_map
 
@@ -1100,6 +1137,9 @@ class TeamsAutomation(Realm):
                 self.add_live_view_images_to_report()
             if self.do_bs:
                 self.add_bandsteering_report_section()
+            if self.device_issue_log:
+                issues_df = pd.DataFrame(self.device_issue_log)
+                issues_df.to_csv(os.path.join(self.report_path_date_time, "clients_issue.csv"), index=False)
             self.report.write_html()
             self.report.write_pdf()
         except Exception as e:
@@ -1302,25 +1342,128 @@ class TeamsAutomation(Realm):
                 self.report.set_table_dataframe(filtered_df)
                 self.report.build_table()
 
-    def check_gen_cx(self):
+    def record_device_issue(self, device, issue):
+        self.device_issue_log.append({
+            "Time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "Device": device,
+            "Issue": issue,
+        })
+
+    def format_monitoring_duration(self):
+        """
+        Formats the time actually spent monitoring (self.actual_monitoring_duration_seconds,
+        accumulated across every monitor_test call) as "Xm Ys". This reflects the configured
+        duration when monitoring ran to completion, or less than that when monitoring ended
+        early (e.g. all devices missing, or the test was stopped).
+        """
+        total_seconds = int(self.actual_monitoring_duration_seconds)
+        minutes, seconds = divmod(total_seconds, 60)
+        return "{}m {}s".format(minutes, seconds)
+
+    def poll_gen_endp_status(self, gen_endp):
+        """
+        Fetches a single generic endpoint's CX status, logging a warning (once) when the
+        endpoint's data is missing/unreachable and an info line (once) when it becomes
+        available again. Returns the status string, or None
+        if the endpoint could not be reached.
+        """
         try:
-
-            for gen_endp in self.generic_endps_profile.created_endp:
-                generic_endpoint = self.json_get(f'/generic/{gen_endp}')
-
-                if not generic_endpoint or "endpoint" not in generic_endpoint:
-                    logging.info(f"Error fetching endpoint data for {gen_endp}")
-                    return False
-
-                endp_status = generic_endpoint["endpoint"].get("status", "")
-
-                if endp_status not in ["Stopped", "WAITING", "NO-CX", "PHANTOM", "FTM_WAIT"]:
-                    return False
-
-            return True
+            generic_endpoint = self.json_get(f'/generic/{gen_endp}')
         except Exception as e:
-            logging.error(f"Error in check_gen_cx function {e}", exc_info=True)
-            logging.info(f"generic endpoint data {generic_endpoint}")
+            generic_endpoint = None
+            logger.error(f"Error fetching endpoint data for {gen_endp}: {e}", exc_info=True)
+
+        if not generic_endpoint or "endpoint" not in generic_endpoint:
+            if gen_endp not in self.missing_endp_logged:
+                logger.warning(
+                    "Endpoint '{}' is missing from the monitoring data, the device may have "
+                    "disconnected or its connection was not created. Continuing the test with "
+                    "the remaining devices.\n"
+                    "Response: {}".format(gen_endp, generic_endpoint)
+                )
+                self.missing_endp_logged.add(gen_endp)
+                self.record_device_issue(gen_endp, "Endpoint missing from monitoring data")
+            return None
+
+        if gen_endp in self.missing_endp_logged:
+            logger.info(f"Endpoint '{gen_endp}' data is available again.")
+            self.missing_endp_logged.discard(gen_endp)
+
+        return generic_endpoint["endpoint"].get("status", "")
+
+    def wait_for_any_endp_recovery(self, timeout=40, poll_interval=5):
+        """
+        Polls every created generic endpoint (via poll_gen_endp_status) while all of them are
+        missing/unreachable, giving devices a chance to reappear before the caller gives up.
+        Honors a user-initiated stop (self.stop_signal, set by the /stop_teams webui route)
+        during the wait, so a stop request isn't delayed by the full retry window.
+
+        Returns True as soon as at least one endpoint responds again or the user stops the
+        test, False if `timeout` seconds elapse with every endpoint still missing and no stop
+        request.
+        """
+        wait_start = datetime.now()
+        while (datetime.now() - wait_start).total_seconds() < timeout:
+            time.sleep(poll_interval)
+            if self.stop_signal:
+                logger.info("Test is stopped by the user during the device-recovery wait.")
+                return True
+            statuses = [self.poll_gen_endp_status(gen_endp) for gen_endp in self.generic_endps_profile.created_endp]
+            elapsed = (datetime.now() - wait_start).total_seconds()
+            if any(status is not None for status in statuses):
+                logger.info("Device(s) responded again after {:.0f}s, resuming.".format(elapsed))
+                return True
+            logger.warning("Still no devices responding after {:.0f}s, retrying...".format(elapsed))
+        return False
+
+    def check_gen_cx(self):
+        """
+        Polls every created generic endpoint's CX status. Returns True once every endpoint has
+        reached a finished state (Stopped/WAITING/FTM_WAIT) - so monitor_test's tail loop can
+        end - False while any endpoint is still actively running or unreachable.
+
+        If every endpoint is missing/unreachable at once, retries for up to 40 seconds (via
+        wait_for_any_endp_recovery) before ending the monitor loop gracefully, matching the
+        "retry before failing when all devices stop responding" behavior added for CX
+        monitoring in lf_interop_video_streaming.py.
+        """
+        finished_statuses = ("Stopped", "WAITING", "FTM_WAIT")
+        disconnected_statuses = ("NO-CX", "PHANTOM")
+        try:
+            if not self.generic_endps_profile.created_endp:
+                return True
+
+            statuses = {gen_endp: self.poll_gen_endp_status(gen_endp)
+                        for gen_endp in self.generic_endps_profile.created_endp}
+
+            if all(status is None for status in statuses.values()):
+                logger.warning("All devices have stopped responding during monitoring, retrying "
+                               "for up to 40 seconds before ending the monitor loop.")
+                if not self.wait_for_any_endp_recovery(timeout=40, poll_interval=5):
+                    logger.error("No devices responded within 40 seconds during monitoring, "
+                                 "ending the monitor loop gracefully; the test will continue with "
+                                 "the data collected so far.")
+                    return True
+                return False
+
+            all_finished = True
+            for gen_endp, status in statuses.items():
+                if status is None:
+                    all_finished = False
+                elif status in disconnected_statuses:
+                    if gen_endp not in self.endp_not_running_logged:
+                        logger.warning(f"Endpoint '{gen_endp}' status is '{status}', the device "
+                                       "may have disconnected before completing normally.")
+                        self.endp_not_running_logged.add(gen_endp)
+                        self.record_device_issue(gen_endp, f"Endpoint status is '{status}'")
+                elif status not in finished_statuses:
+                    all_finished = False
+                elif gen_endp in self.endp_not_running_logged:
+                    self.endp_not_running_logged.discard(gen_endp)
+
+            return all_finished
+        except Exception as e:
+            logger.error(f"Error in check_gen_cx function: {e}", exc_info=True)
             return False
 
     def set_start_time(self):
