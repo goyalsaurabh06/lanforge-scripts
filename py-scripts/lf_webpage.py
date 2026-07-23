@@ -155,6 +155,13 @@ class HttpDownload(Realm):
                  eap_identity=None, ieee80211=None, ieee80211u=None, ieee80211w=None, enable_pkc=None, bss_transition=None, power_save=None, disable_ofdma=None, roam_ft_ds=None, key_management=None,
                  pairwise=None, private_key=None, ca_cert=None, client_cert=None, pk_passwd=None, pac_file=None, config=False, wait_time=60, get_live_view=False, total_floors=0, robot_test=False,
                  robot_ip=None, coordinate=None, rotation=None, duration=None, do_bandsteering=False, cycles=None, bssids=None, duration_to_skip=None):
+        """
+        Stores all CLI-derived test settings (radios, SSID/security, client type, device
+        selection, advanced EAP options, robot-test and band-steering parameters, etc.) on
+        the instance. Creates a local Realm along with the station profile and HTTP/Layer-4
+        profile used by build()/precleanup(), and a PortUtils helper. When robot testing is
+        enabled, also parses the coordinate and rotation lists.
+        """
         # super().__init__(lfclient_host=lfclient_host,
         #                  lfclient_port=lfclient_port)
         self.ssid_list = []
@@ -259,6 +266,15 @@ class HttpDownload(Realm):
 
 # The 'phantom_check' will be handled within the 'get_real_client_list' function
     def get_real_client_list(self):
+        """
+        Resolves the requested devices against the LANforge's available resources/ports,
+        optionally configuring SSID/security/EAP settings via DeviceConfig, and updates the
+        device/port/MAC lists on the instance. Prompts on stdin if no devices were given,
+        and exits (or aborts a Web UI run) if none of the requested devices are available.
+
+        Returns:
+            tuple: (port list, device list, MAC list, group-to-profile config map)
+        """
         user_list = []
         real_client_list1 = []
         real_client_list2 = []
@@ -510,6 +526,13 @@ class HttpDownload(Realm):
         return response, data
 
     def filter_iOS_devices(self, device_list):
+        """
+        Queries each device's resource info and drops any iOS device (unsupported),
+        logging a message for each one removed. Updates the device list on the instance.
+
+        Returns:
+            The filtered device list, in the same type (str or list) as the input.
+        """
         modified_device_list = device_list
         if type(device_list) is str:
             modified_device_list = device_list.split(',')
@@ -537,6 +560,10 @@ class HttpDownload(Realm):
         return filtered_list
 
     def set_values(self):
+        """
+        Sets the radio list and generates the virtual station name list on the instance
+        based on the selected band (2.4G, 5G, 6G, or Both).
+        """
         # This method will set values according user input
         if self.bands == "5G":
             self.radio = [self.fiveg_radio]
@@ -566,6 +593,10 @@ class HttpDownload(Realm):
             ]
 
     def precleanup(self):
+        """
+        Removes any pre-existing HTTP/Layer-4 traffic and stations for the configured
+        radio(s) before the test builds new ones, waiting for the stations to disappear.
+        """
         self.count = 0
         for rad in range(len(self.radio)):
             if self.radio[rad] == self.fiveg_radio:
@@ -604,6 +635,13 @@ class HttpDownload(Realm):
         print("precleanup done")
 
     def build(self):
+        """
+        Enables HTTP on the upstream port, then for Virtual clients creates and admin-ups
+        the stations (waiting for IPs) and builds an HTTP download profile pointed at the
+        upstream server; for Real clients builds the HTTP profile directly against the
+        already-connected device ports. Uses get_url_from_file when set to fetch URLs from
+        a file instead of a fixed webpage.
+        """
         # enable http on ethernet
         self.port_util.set_http(port_name=self.local_realm.name_to_eid(self.upstream)[2],
                                 resource=self.local_realm.name_to_eid(self.upstream)[1], on=True)
@@ -673,6 +711,7 @@ class HttpDownload(Realm):
         print("Test Build done")
 
     def start(self):
+        """Starts the created HTTP cross-connections and blocks until each reports state 'Run'."""
         self.http_profile.start_cx()
         try:
             for i in self.http_profile.created_cx.keys():
@@ -683,6 +722,12 @@ class HttpDownload(Realm):
             pass
 
     def stop(self):
+        """
+        Stops the HTTP cross-connections. For Real clients, marks devices as STOPPED and
+        writes the current data to http_datavalues.csv; for robot tests (without band
+        steering) also stores the run's data under the current coordinate/angle and writes
+        a per-coordinate CSV.
+        """
         self.http_profile.stop_cx()
         # To update status of devices and remaining_time in ftp_datavalues.csv file to stopped and 0 respectively.
         if self.client_type == 'Real':
@@ -703,6 +748,10 @@ class HttpDownload(Realm):
                     df1.to_csv(f"{self.current_coordinate}_http_datavalues.csv", index=False)
 
     def update_stop_status_robot(self):
+        """
+        Marks all devices as STOPPED in the tracked data and writes it to
+        http_datavalues.csv, plus a per-coordinate CSV for the current robot position.
+        """
         # To update status of devices in csv file to stopped.
         self.data["status"] = ["STOPPED"] * len(self.macid_list)
         df1 = pd.DataFrame(self.data)
@@ -801,7 +850,16 @@ class HttpDownload(Realm):
         return list(rx_rate), list(bytes_rd)
 
     def monitor_for_runtime_csv(self, duration):
+        """
+        Polls Layer-4 and signal/link stats every few seconds for the given duration,
+        logging one row per device to a per-port CSV and to http_datavalues.csv (or the
+        Web UI result-dir CSV), and handles robot battery-charge pauses when robot testing
+        is enabled. Also aborts early if the Web UI running-status file shows the test was
+        stopped by the user, and writes an aggregated all_l4_data.csv at the end.
 
+        Returns:
+            bool: True if the test was stopped by the user before the duration elapsed.
+        """
         time_now = datetime.now()
         starttime = time_now.strftime("%d/%m %I:%M:%S %p")
         # duration = self.traffic_duration
@@ -1037,6 +1095,10 @@ class HttpDownload(Realm):
         return result
 
     def my_monitor(self, data_mon):
+        """
+        Fetches the given Layer-4 field for all created cross-connections and returns it
+        as a list, one value per connection. Logs and returns None on failure.
+        """
         # data in json format
         data = self.local_realm.json_get("layer4/%s/list?fields=%s" %
                                          (','.join(self.http_profile.created_cx.keys()), data_mon.replace(' ', '+')))
@@ -1060,12 +1122,20 @@ class HttpDownload(Realm):
             logger.error(total_data)
 
     def postcleanup(self):
+        """Removes the created HTTP profile and stations, waiting for the stations to disappear."""
         self.http_profile.cleanup()
         self.station_profile.cleanup()
         LFUtils.wait_until_ports_disappear(base_url=self.local_realm.lfclient_url, port_list=self.station_profile.station_names,
                                            debug=self.debug)
 
     def file_create(self, ssh_port):
+        """
+        Over SSH, removes any existing webpage.html on the LANforge's nginx server and
+        creates a new one of the configured file_size using fallocate.
+
+        Returns:
+            list: output lines from the shell commands run over the SSH connection.
+        """
         ip = self.host
         user = "root"
         pswd = "lanforge"
@@ -1095,6 +1165,13 @@ class HttpDownload(Realm):
         return output
 
     def download_time_in_sec(self, result_data):
+        """
+        Converts each band's 'dl_time' values (in ms, keyed by "6G"/"5G"/"2.4G"/"Both")
+        into seconds rounded to one decimal.
+
+        Returns:
+            list: one list of per-device download times (seconds) per band present.
+        """
         self.result_data = result_data
         download_time = dict.fromkeys(result_data.keys())
         for i in download_time:
@@ -1145,6 +1222,13 @@ class HttpDownload(Realm):
         return dataset
 
     def speed_in_Mbps(self, result_data):
+        """
+        Converts each band's 'speed' values (in bps, keyed by "5G"/"2.4G"/"Both") into
+        Mbps rounded to one decimal.
+
+        Returns:
+            list: one list of per-device speeds (Mbps) per band present.
+        """
         self.result_data = result_data
         speed = dict.fromkeys(result_data.keys())
         for i in speed:
@@ -1183,6 +1267,13 @@ class HttpDownload(Realm):
         return dataset
 
     def summary_calculation(self, result_data, bands, threshold_5g, threshold_2g, threshold_both):
+        """
+        Compares each band's average download time (in result_data) against its matching
+        threshold and derives a PASS/FAIL string per band.
+
+        Returns:
+            list: PASS/FAIL strings, one per band in bands.
+        """
         self.result_data = result_data
 
         avg_dl_time = []
@@ -1245,9 +1336,16 @@ class HttpDownload(Realm):
         return data
 
     def check_station_ip(self):
+        """Unused placeholder; currently a no-op."""
         pass
 
     def generate_graph(self, dataset, lis, bands, graph_image_name="ucg-avg_http"):
+        """
+        Builds and saves a horizontal bar graph of average download time per client.
+
+        Returns:
+            str: the generated graph image's filename.
+        """
         bands = ['Download']
         if self.client_type == "Real":
             lis = self.devices_list
@@ -1289,6 +1387,12 @@ class HttpDownload(Realm):
         return graph_png
 
     def graph_2(self, dataset2, lis, bands, graph_name="Total-url_http"):
+        """
+        Builds and saves a horizontal bar graph of the number of file downloads per client.
+
+        Returns:
+            str: the generated graph image's filename.
+        """
         bands = ['Download']
         if self.client_type == "Real":
             lis = self.devices_list
@@ -1321,6 +1425,10 @@ class HttpDownload(Realm):
     # This function is called to get details of devices during runtime
 
     def get_device_port_details(self):
+        """
+        For Real clients, fetches port info and populates the channel, mode, and SSID
+        lists on the instance for each port in the current port list.
+        """
         self.response_port = self.local_realm.json_get("/port/all")
         # Initialize lists to store channel, mode, and SSID information
         self.channel_list, self.mode_list, self.ssid_list = [], [], []
@@ -1338,6 +1446,10 @@ class HttpDownload(Realm):
                         self.ssid_list.append(str(port_data['ssid']))
 
     def add_live_view_images_to_report(self, report):
+        """
+        Waits (up to 60s per floor) for each floor's live-view image to appear on disk,
+        then embeds it into the report on its own page.
+        """
         for floor in range(0, int(self.total_floors)):
             http_img_path = os.path.join(self.result_dir, "live_view_images", f"http_{self.test_name}_{floor + 1}.png")
             timeout = 60  # seconds
@@ -1506,6 +1618,14 @@ class HttpDownload(Realm):
                         result_data, test_rig, rx_rate,
                         test_tag, dut_hw_version, dut_sw_version, dut_model_num, dut_serial_num, test_id,
                         test_input_infor, csv_outfile, _results_dir_name='webpage_test', report_path='', iot_summary=None):
+        """
+        Builds the PDF/HTML webpage-download test report: test setup table, download-count
+        and average-download-time graphs, per-device results table (with pass/fail columns
+        when pass/fail criteria are configured), and optional band-steering, live-view, and
+        IoT sections. For robot tests, instead builds one section per coordinate/rotation
+        and returns early. Also writes KPI rows and moves the run's CSVs into the report's
+        dated folder.
+        """
         if self.dowebgui == "True" and report_path == '':
             report = lf_report.lf_report(_results_dir_name="webpage_test", _output_html="Webpage.html",
                                          _output_pdf="Webpage.pdf", _path=self.result_dir)
@@ -1861,6 +1981,7 @@ class HttpDownload(Realm):
         report.write_pdf()
 
     def copy_reports_to_home_dir(self):
+        """Copies the test's result directory into ~/WebGui_Reports/<test_name> for the Web UI."""
         curr_path = self.result_dir
         home_dir = os.path.expanduser("~")  # it returns the home directory [ base : home/username]
         out_folder_name = "WebGui_Reports"
@@ -1878,7 +1999,9 @@ class HttpDownload(Realm):
     def generate_dataframe(self, groupdevlist: List[str], clients_list: List[str], mac: List[str], channel: List[str], ssid: List[str], mode: List[str], file_download: List[int],
                            test_input: List[int], averagetime: List[float], bytes_read: List[float], rx_rate: List[float], status: List[str], failedurls: List[int]) -> Optional[pd.DataFrame]:
         """
-        Creates a separate DataFrame for each group of devices.
+        Filters the per-device result lists down to just the devices belonging to
+        groupdevlist, matching Real devices by hostname/serial and interop (Android)
+        devices via the /adb table.
 
         Returns:
             DataFrame: A DataFrame for each device group.
@@ -1954,6 +2077,10 @@ class HttpDownload(Realm):
 
     # Updates the status in the running.json file while running a test from the Web UI
     def updating_webui_runningjson(self, obj):
+        """
+        Merges the keys of obj into the test's running-status JSON file so the Web UI
+        reflects the current state.
+        """
         data = {}
         with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host, self.test_name),
                   'r') as file:
@@ -1966,6 +2093,7 @@ class HttpDownload(Realm):
 
     # Converting the upstream_port to IP address for configuration purposes
     def change_port_to_ip(self, upstream_port):
+        """Resolves a LANforge port name to its IP address; returns the input unchanged if it is already an IP or has no address."""
         if upstream_port.count('.') != 3:
             target_port_list = self.name_to_eid(upstream_port)
             shelf, resource, port, _ = target_port_list
@@ -1981,6 +2109,14 @@ class HttpDownload(Realm):
         return upstream_port
 
     def get_pass_fail_list(self, dataset2):
+        """
+        Computes each device's expected download-count threshold (from device_csv_name or
+        expected_passfail_value) and compares it against dataset2 to derive a PASS/FAIL
+        verdict per device.
+
+        Returns:
+            tuple: (expected download count per device, PASS/FAIL per device)
+        """
         # When device csv specified for pass_fail criteria
         if self.expected_passfail_value == '' or self.expected_passfail_value is None:
             res_list = []
@@ -2411,6 +2547,7 @@ class HttpDownload(Realm):
 
 
 def validate_args(args):
+    """Validates CLI argument combinations (groups/profiles, pass-fail options, config options), logging an error and exiting on any conflict."""
     if args.expected_passfail_value and args.device_csv_name:
         logger.error("Specify either --expected_passfail_value or --device_csv_name")
         exit(1)
@@ -2507,6 +2644,11 @@ async def run_iot(ip: str = '127.0.0.1',
                   device_list: str = '',
                   testname: str = '',
                   increment: str = ''):
+    """
+    Runs the IoT device automation (fetch devices, select, run test, generate report) via
+    the Automation class. Exits the process on invalid delay/increment arguments or if
+    testname already has results on disk.
+    """
     try:
 
         if delay < 5:
