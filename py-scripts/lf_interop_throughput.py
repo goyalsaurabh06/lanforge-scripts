@@ -276,6 +276,12 @@ class Throughput(Realm):
                  total_resources_list=None, working_resources_list=None, hostname_list=None, username_list=None, eid_list=None,
                  devices_available=None, input_devices_list=None, mac_id1_list=None, mac_id_list=None, overall_avg_rssi=None,
                  coordinate_list=None, rotation_enabled=None, robo_ip=None, angle_list=None, do_bandsteering=False, total_cycles=1, bssids=None, duration_to_skip=None):
+        """
+        Connects to the LANforge manager and stores all CLI-derived settings on self.
+        Creates the station profile and L3 connection profile (self.station_profile,
+        self.cx_profile) used by build()/create_cx(). If robo_ip is given, also creates
+        a RobotClass instance (self.robot) for robot-assisted testing.
+        """
         super().__init__(lfclient_host=host,
                          lfclient_port=port)
         self.ssid_list = []
@@ -651,8 +657,10 @@ class Throughput(Realm):
 
     def os_type(self):
         """
-        Determines OS type of selected devices.
-
+        Fetches /resource/all and classifies every non-phantom resource's hw version into
+        self.windows_list, self.linux_list, self.mac_list, or self.android_list (accumulated
+        onto self.hw_list first). Sets self.laptop_list from the Windows/Linux/Mac lists.
+        Exits the process if the LANforge has no resources.
         """
         response = self.json_get("/resource/all")
         if "resources" not in response.keys():
@@ -687,7 +695,9 @@ class Throughput(Realm):
 
     def disconnect_all_devices(self, devices_to_disconnect=None):
         """
-        Disconnects either all devices or a specific list of devices from Wi-Fi networks.
+        Disconnects devices from Wi-Fi: either every device in self.device_list, or only
+        the eids in devices_to_disconnect. Android devices also get their app stopped and
+        Wi-Fi disabled via ADB. Blocks until the async do_disconnect() helper completes.
         """
         obj = DeviceConfig.DeviceConfig(lanforge_ip=self.host, file_name=self.file_name, wait_time=self.wait_time)
         # all_devices = obj.get_all_devices()
@@ -695,6 +705,7 @@ class Throughput(Realm):
         adb_obj = DeviceConfig.ADB_DEVICES(lanforge_ip=self.host)
 
         async def do_disconnect():
+            """Forgets the Wi-Fi network on the target devices, stopping the app first for Androids."""
             all_devices = obj.get_all_devices()
             # TO DISCONNECT ALL DEVICES
             if devices_to_disconnect is None:
@@ -751,8 +762,13 @@ class Throughput(Realm):
 
     def phantom_check(self):
         """
-        Checks for non-phantom resources and ports, categorizes them, and prepares a list of available devices for testing.
+        Resolves self.device_list against the LANforge's non-phantom resources/ports,
+        optionally configuring them via DeviceConfig, and populates
+        self.real_client_list/input_devices_list/mac_id_list with the matches. Prompts on
+        stdin if no devices were specified. Exits if the LANforge has no resources.
 
+        Returns:
+            tuple: (bool success, list self.real_client_list)
         """
         port_eid_list, same_eid_list, original_port_list = [], [], []
         interop_response = self.json_get("/adb")
@@ -1034,6 +1050,10 @@ class Throughput(Realm):
 
     # Updates the status in the running.json file while running a test from the Web UI
     def updating_webui_runningjson(self, obj):
+        """
+        Merges the keys of obj into the test's running-status JSON file so the Web UI
+        reflects the current state.
+        """
         data = {}
         with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host, self.test_name),
                   'r') as file:
@@ -1132,6 +1152,12 @@ class Throughput(Realm):
         return self.cx_profile.created_cx
 
     def create_cx(self):
+        """
+        Builds the cross-connection names for each real client and creates them on the
+        LANforge via self.cx_profile.create(). Also derives self.direction (Download/Upload/
+        Bi-direction) from the configured rates, and runs pre_cleanup() first when
+        self.precleanup is set.
+        """
         direction = ''
 
         # Determine direction based on side_a_min_bps and side_b_min_bps
@@ -1216,6 +1242,7 @@ class Throughput(Realm):
         # self.cx_profile.start_cx_specific(cx_list)
 
     def stop_specific(self, cx_list):
+        """Stops the given list of cross-connections on the LANforge."""
         logger.info("Stopping specific CXs...")
         for cx_name in cx_list:
             if self.debug:
@@ -1227,14 +1254,17 @@ class Throughput(Realm):
             }, debug_=self.debug)
 
     def stop(self):
+        """Stops all created cross-connections and admin-downs the stations."""
 
         self.cx_profile.stop_cx()
         self.station_profile.admin_down()
 
     def pre_cleanup(self):
+        """Removes any pre-existing cross-connections before the test builds new ones."""
         self.cx_profile.cleanup()
 
     def cleanup(self):
+        """Deletes the cross-connections created for this test run."""
         logger.info("cleanup done")
         self.cx_profile.cleanup()
 
@@ -1295,6 +1325,13 @@ class Throughput(Realm):
         return throughput
 
     def monitor(self, iteration, individual_df, device_names, incremental_capacity_list, overall_start_time, overall_end_time, is_device_configured):
+        """
+        Polls throughput and signal data for the duration of one test iteration, logging
+        each sample to CSV, and detects if the user stopped the test from the Web UI.
+
+        Returns:
+            tuple: (updated dataframe, whether the test was stopped by the user)
+        """
         individual_df_for_webui = individual_df.copy()  # for webui
         throughput, upload, download, upload_throughput, download_throughput, connections_upload, connections_download = {}, [], [], [], [], {}, {}
         drop_a, drop_a_per, drop_b, drop_b_per, state, state_of_device, avg_rtt = [], [], [], [], [], [], []  # noqa: F841
@@ -2150,8 +2187,11 @@ class Throughput(Realm):
 
     def check_incremental_list(self):
         """
-        Checks and generates a list of incremental capacities for connections.
+        Validates that the requested incremental-capacity steps fully cover the selected
+        devices, prompting on stdin for a value if none was given.
 
+        Returns:
+            bool: True if the steps cover all selected devices, False otherwise.
         """
         if (len(self.incremental_capacity) == 0 and self.do_interopability is not True and self.incremental):
             self.incremental_capacity = input("Enter the incremental load to run the test:")
@@ -2212,9 +2252,11 @@ class Throughput(Realm):
 
     def get_incremental_capacity_list(self):
         """
+        Splits the created cross-connections into per-iteration groups according to
+        self.incremental_capacity.
 
-        Generates lists of incremental capacities and connection names for the created connections.
-
+        Returns:
+            tuple: (cx names per iteration, cx indices per iteration, all cx names, capacity per iteration)
         """
 
         cx_incremental_capacity_lists, cx_incremental_capacity_names_lists, incremental_capacity_list_values = [], [], []
@@ -2492,6 +2534,19 @@ class Throughput(Realm):
 
     def generate_report(self, iterations_before_test_stopped_by_user, incremental_capacity_list, data=None, data1=None, report_path='', result_dir_name='Throughput_Test_report',
                         selected_real_clients_names=None, iot_summary=None):
+        """
+        Builds the PDF/HTML throughput (or interoperability) test report: test setup table,
+        per-iteration throughput line/bar graphs, per-device RSSI/drop/pass-fail tables, and
+        optional bandsteering, live-view, and IoT sections. Writes throughput.pdf/throughput.html
+        under report_path.
+
+        Args:
+            iterations_before_test_stopped_by_user: iteration indices actually completed.
+            incremental_capacity_list: number of devices used per iteration.
+            data: collected throughput dataframe.
+            data1: per-iteration cx-count metadata from get_incremental_capacity_list().
+            iot_summary: parsed IoT summary dict/JSON, if IoT testing was run.
+        """
 
         if self.do_interopability:
             result_dir_name = "Interopability_Test_report"
@@ -4130,6 +4185,14 @@ class Throughput(Realm):
         return None
 
     def get_pass_fail_list(self, device_type, curr_incremental_capacity, devices_on_running, download_data, upload_data):
+        """
+        Computes each device's expected throughput threshold (from self.expected_passfail_value
+        or self.device_csv_name) and compares it against the measured upload/download data to
+        derive a PASS/FAIL verdict per device.
+
+        Returns:
+            tuple: (expected throughput per device, PASS/FAIL per device)
+        """
         test_input_list = []
         pass_fail_list = []
         if not self.do_interopability:
@@ -4232,6 +4295,7 @@ class Throughput(Realm):
         return test_input_list, pass_fail_list
 
     def copy_reports_to_home_dir(self):
+        """Copies the test's result directory into ~/WebGui_Reports/<test_name> for the Web UI."""
         curr_path = self.result_dir
         home_dir = os.path.expanduser("~")
         out_folder_name = "WebGui_Reports"
@@ -4248,6 +4312,7 @@ class Throughput(Realm):
 
     # Converting the upstream_port to IP address for configuration purposes
     def change_port_to_ip(self, upstream_port):
+        """Resolves a LANforge port name to its IP address; returns the input unchanged if it is already an IP or has no address."""
         if upstream_port.count('.') != 3:
             target_port_list = self.name_to_eid(upstream_port)
             shelf, resource, port, _ = target_port_list
@@ -4416,6 +4481,7 @@ class Throughput(Realm):
 
 
 def validate_args(args):
+    """Validates CLI argument combinations (groups/profiles, pass-fail options, config options), logging an error and exiting on any conflict."""
     if args.group_name:
         selected_groups = args.group_name.split(',')
     else:
@@ -4498,6 +4564,11 @@ async def run_iot(ip: str = '127.0.0.1',
                   device_list: str = '',
                   testname: str = '',
                   increment: str = ''):
+    """
+    Runs the IoT device automation (fetch devices, select, run test, generate report) via
+    the Automation class. Exits the process on invalid delay/increment arguments or if
+    testname already has results on disk.
+    """
     try:
 
         if delay < 5:

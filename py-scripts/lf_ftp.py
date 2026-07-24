@@ -214,6 +214,11 @@ class FtpTest(LFCliBase):
                  bssids=None,
                  duration_to_skip=None
                  ):
+        """Stores all CLI-derived test settings (connection info, SSID/security, client type and
+        device selection, EAP/advanced wifi options, pass/fail and robot-test parameters, etc.)
+        on the instance and prepares the Realm, station profile, and HTTP/Layer-4 profile used
+        to build and run the test.
+        """
         super().__init__(lfclient_host, lfclient_port, _debug=_debug_on, _exit_on_fail=_exit_on_fail)
 
         if not device_list:
@@ -342,6 +347,14 @@ class FtpTest(LFCliBase):
         logger.info("Test is Initialized")
 
     def query_realclients(self):
+        """Resolves the requested real-client devices against the LANforge's available
+        resources/ports, optionally configuring them (SSID/security/EAP or group profiles) first.
+        Prompts on stdin if no devices were specified, and aborts the test if none of the
+        requested devices turn out to be available.
+
+        Returns:
+            tuple: (real client list, group-to-profile config map)
+        """
         config_devices = {}
         obj = DeviceConfig.DeviceConfig(lanforge_ip=self.host, file_name=self.file_name, wait_time=self.wait_time)
         upstream = self.change_port_to_ip(self.upstream)
@@ -568,7 +581,9 @@ class FtpTest(LFCliBase):
         return self.real_client_list, config_devices
 
     def set_values(self):
-        '''This method will set values according user input'''
+        """Derives the radio list, station count, and file size in bytes to use for the test
+        from the selected band and other CLI-provided settings.
+        """
         if self.band == "6G":
             self.radio = [self.sixg_radio]
         elif self.band == "5G":
@@ -591,6 +606,9 @@ class FtpTest(LFCliBase):
 
     # Converts an upstream port name to its corresponding IP address if it's not already in IP format.
     def change_port_to_ip(self, upstream_port):
+        """Resolves a LANforge port name to its IP address; returns the input unchanged if it is
+        already an IP or has no resolvable address.
+        """
         if upstream_port.count('.') != 3:
             target_port_list = LFUtils.name_to_eid(upstream_port)
             shelf, resource, port, _ = target_port_list
@@ -606,6 +624,9 @@ class FtpTest(LFCliBase):
         return upstream_port
 
     def precleanup(self):
+        """Removes any pre-existing FTP traffic and stations for the configured radio(s) before
+        the test builds new ones, waiting for the stations to disappear.
+        """
         self.count = 0
 
         # delete everything in the GUI before starting the script
@@ -668,6 +689,10 @@ class FtpTest(LFCliBase):
         logger.info("precleanup done")
 
     def build(self):
+        """Enables FTP on the upstream port, then creates the FTP download or upload
+        cross-connections for either Virtual clients (creating and bringing up stations first)
+        or Real clients (using the already-connected device ports).
+        """
         # set ftp
         # self.port_util.set_ftp(port_name=self.local_realm.name_to_eid(self.upstream)[2], resource=2, on=True)
         rv = self.local_realm.name_to_eid(self.upstream)
@@ -850,12 +875,17 @@ class FtpTest(LFCliBase):
         return response, data
 
     def start(self, print_pass=False, print_fail=False):
+        """Starts the created FTP cross-connections."""
         for _ in self.radio:
             self.cx_profile.start_cx()
 
         logger.info("Test Started")
 
     def stop(self):
+        """Stops the FTP cross-connections and admin-downs the stations. For Real clients,
+        records the run's data as stopped, and for robot tests also stores the results under
+        the current coordinate/angle.
+        """
         self.cx_profile.stop_cx()
         self.station_profile.admin_down()
         # To update status of devices and remaining_time in ftp_datavalues.csv file to stopped and 0 respectively.
@@ -901,6 +931,9 @@ class FtpTest(LFCliBase):
                     df1.to_csv(f"{self.current_coordinate}_ftp_datavalues.csv", index=False)
 
     def update_stop_status_robot(self):
+        """Marks all tracked devices as stopped and persists the current run's results for the
+        active robot coordinate.
+        """
         # To update status of devices in csv file to stopped.
         self.data["status"] = ["STOPPED"] * len(self.mac_id_list)
         df1 = pd.DataFrame(self.data)
@@ -911,6 +944,9 @@ class FtpTest(LFCliBase):
             df1.to_csv(f"{self.current_coordinate}_ftp_datavalues.csv", index=False)
 
     def postcleanup(self):
+        """Removes the created FTP cross-connections and stations, waiting for the stations to
+        disappear.
+        """
         self.cx_profile.cleanup()
         # self.local_realm.load("BLANK")
         self.station_profile.cleanup(self.station_profile.station_names, delay=1.5, debug_=self.debug)
@@ -918,6 +954,12 @@ class FtpTest(LFCliBase):
                                            debug=self.debug)
 
     def filter_iOS_devices(self, device_list):
+        """Drops any iOS devices (unsupported) from device_list, logging a message for each one
+        removed, and updates the device list on the instance.
+
+        Returns:
+            The filtered device list, in the same type (str or list) as the input.
+        """
         modified_device_list = device_list
         if type(device_list) is str:
             modified_device_list = device_list.split(',')
@@ -945,8 +987,11 @@ class FtpTest(LFCliBase):
         return filtered_list
 
     def file_create(self):
-        '''This method will Create file for given file size'''
+        """Over SSH, (re)creates the FTP test file on the server at the configured file size.
 
+        Returns:
+            list: output lines from the shell commands run over the SSH connection.
+        """
         ip = self.host
         entity_id = self.local_realm.name_to_eid(self.upstream)
         # entity_id[0]=shelf, entity_id[1]=resource, entity_id[2]=port
@@ -1052,19 +1097,11 @@ class FtpTest(LFCliBase):
 
     def aggregate_rx_bytes(self):
         """
-        Compute average RX rate and update max bytes read.
-
-        - Calculate device-wise average RX rate considering the values from start of test (ignore zero values)
-        - Store averaged RX rates in self.rx_rate (rounded to 4 decimals)
-        - Convert RX rate from bps to Mbps
-        - Update self.bytes_rd with maximum values observed so far
-
-        Args:
-            rx_rate_val (list of list): RX rate values per device over time
-            max_bytes_rd (list): Previously recorded max bytes read
+        Computes each device's average RX rate (in Mbps) over the run so far, and updates the
+        tracked bytes-read totals with the maximum values observed.
 
         Returns:
-                - dataset (list): Current average RX rates converted to Mbps
+            list: current average RX rate per device, in Mbps.
         """
 
         for j in range(len(self.rx_rate_val[0])):
@@ -1088,7 +1125,13 @@ class FtpTest(LFCliBase):
     # FOR WEB-UI // function usd to fetch runtime values and fill the csv.
 
     def monitor_for_runtime_csv(self):
+        """Monitors the running FTP test for the configured duration, periodically recording
+        per-device throughput and signal data for later reporting, and pausing for robot
+        battery charging when robot testing is enabled.
 
+        Returns:
+            bool: True if the test was stopped by the user before the duration elapsed.
+        """
         time_now = datetime.now()
         start_time = time_now.strftime("%d/%m %I:%M:%S %p")
         duration = self.traffic_duration
@@ -1332,6 +1375,9 @@ class FtpTest(LFCliBase):
         return l4_dict
 
     def get_device_details(self):
+        """Refreshes the per-device channel, mode, SSID, and Layer-4 throughput/error stats on
+        the instance for the current cross-connections.
+        """
         dataset = []
         self.channel_list, self.mode_list, self.ssid_list, self.uc_avg, self.uc_max, self.url_data, self.uc_min, self.bytes_rd, self.rx_rate, self.bssid_list = [], [], [], [], [], [], [], [], [], []
         self.total_err = []
@@ -1414,6 +1460,9 @@ class FtpTest(LFCliBase):
 
     # Updates the status in the running.json file while running a test from the Web UI
     def updating_webui_runningjson(self, obj):
+        """Merges the keys of obj into the test's running-status file so the Web UI reflects
+        the current state.
+        """
         data = {}
         with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host, self.test_name),
                   'r') as file:
@@ -1425,6 +1474,9 @@ class FtpTest(LFCliBase):
             json.dump(data, file, indent=4)
 
     def my_monitor(self):
+        """Refreshes per-device channel/mode/SSID and Layer-4 throughput stats on the instance
+        for Virtual or Real clients. Exits the process if no Layer-4 endpoint data is found.
+        """
         dataset = []
         self.channel_list, self.mode_list, self.ssid_list, self.uc_avg, self.uc_max, self.url_data, self.uc_min, self.bytes_rd = [], [], [], [], [], [], [], []
         if self.clients_type == "Virtual":
@@ -1531,6 +1583,9 @@ class FtpTest(LFCliBase):
             exit()
 
     def my_monitor_for_real_devices(self):
+        """Refreshes per-device channel/mode/SSID data on the instance for Real clients, and
+        updates the Web UI result data when running from the Web UI.
+        """
         self.channel_list, self.mode_list, self.ssid_list = [], [], []
         response_port = self.json_get("/port/all")
         for interface in response_port['interfaces']:
@@ -1704,6 +1759,9 @@ class FtpTest(LFCliBase):
         return time_string
 
     def pass_fail_check(self, time_list):
+        """Returns "Pass" if every value in time_list is within the configured pass/fail
+        duration, otherwise "Fail".
+        """
         if max(time_list) < (self.pass_fail_duration * 60):
             return "Pass"
         else:
@@ -1977,11 +2035,8 @@ class FtpTest(LFCliBase):
                 # self.generate_graph_throughput(result_data, x_axis, b, size)
 
     def add_live_view_images_to_report(self):
-        """
-        This function looks for throughput and RSSI images for each floor
-        in the 'live_view_images' folder within `self.result_dir`.
-        It waits up to **60 seconds** for each image. If an image is found,
-        it's added to the `report` on a new page; otherwise, it's skipped.
+        """Waits for each floor's live-view image to become available, then adds it to the
+        report on its own page; skips a floor if its image never appears.
         """
         for floor in range(0, int(self.total_floors)):
             ftp_img_path = os.path.join(self.result_dir, "live_view_images", f"ftp_{self.test_name}_{floor + 1}.png")
@@ -2157,38 +2212,9 @@ class FtpTest(LFCliBase):
         self.report.build_table()
 
     def get_bandsteering_stats(self):
-        """
-        Generate Band Steering statistics and report for each device.
-
-        This function processes per-device connection data to:
-        - Detect BSSID transitions (band steering events)
-        - Count occurrences of each configured BSSID
-        - Generate a bar graph showing BSSID change counts
-        - Create a detailed table of band steering events (if any)
-
-        Data Source:
-            self.individual_device_data → {
-                dev_name: pandas.DataFrame,
-                ...
-            }
-
-        Expected DataFrame Columns:
-            - timestamp
-            - BSSID
-            - Channel
-            - from_coordinate (optional)
-            - to_coordinate (optional)
-
-        Behavior:
-            - Only considers BSSID changes within the configured BSSID list (self.bssids)
-            - Ignores consecutive duplicate BSSID entries
-            - Skips table generation if no valid band steering events are found
-            - Always generates a graph (even if counts are zero)
-
-        Output:
-            Adds bandstreering statistics to the report for each device, including:
-            - Bar graph of BSSID change counts per device
-            - Table of band steering transitions (if available)
+        """Adds band-steering statistics to the report for each device: a bar graph of how many
+        times the device's BSSID changed among the configured BSSIDs, plus a table of the
+        transitions when any occurred.
         """
 
         data = self.individual_device_data
@@ -2302,6 +2328,12 @@ class FtpTest(LFCliBase):
     def generate_report(self, ftp_data, date, input_setup_info, test_rig, test_tag, dut_hw_version,
                         dut_sw_version, dut_model_num, dut_serial_num, test_id, bands,
                         csv_outfile, local_lf_report_dir, _results_dir_name='ftp_test', report_path='', config_devices="", iot_summary=None):
+        """Builds the PDF/HTML FTP test report: test setup table, throughput/time graphs, and a
+        per-device results table (with pass/fail columns when pass/fail criteria are
+        configured, and a separate table per group when devices were run in groups), plus
+        optional band-steering and IoT sections. For robot tests, instead builds one section
+        per coordinate/rotation and returns early.
+        """
         no_of_stations = ""
         duration = ""
         x_fig_size = 18
@@ -2843,6 +2875,9 @@ class FtpTest(LFCliBase):
             logger.info("csv output file : {}".format(csv_outfile))
 
     def copy_reports_to_home_dir(self):
+        """Copies the test's result directory into a per-test folder under the user's home
+        directory for the Web UI.
+        """
         curr_path = self.result_dir
         home_dir = os.path.expanduser("~")
         out_folder_name = "WebGui_Reports"
@@ -2859,6 +2894,10 @@ class FtpTest(LFCliBase):
 
     # Calculates pass/fail status for each client based on their result compared to the expected value.
     def get_pass_fail_list(self, client_list):
+        """Computes each client's expected download-count threshold (either a shared value or
+        a per-device value looked up from a CSV) and derives a PASS/FAIL verdict per client,
+        storing both on the instance.
+        """
         # When csv_name is provided, for pass/fail criteria, respective values for each client will be used
         if self.expected_passfail_val == '' or self.expected_passfail_val is None:
             res_list = []
@@ -2910,12 +2949,11 @@ class FtpTest(LFCliBase):
 
     def generate_dataframe(self, groupdevlist: List[str], clients_list: List[str], mac: List[str], channel: List[str], ssid: List[str], mode: List[str], file_download: List[int],
                            test_input: List[int], averagetime: List[float], bytes_read: List[float], rx_rate: List[float], status: List[str], failedurls: List[int]) -> Optional[pd.DataFrame]:
-        """
-        Creates a separate DataFrame for each group of devices.
+        """Filters the per-device result lists down to just the devices belonging to
+        groupdevlist, matching Real devices by name and interop (Android) devices via serial.
 
         Returns:
-            DataFrame: A DataFrame for each device group.
-            Returns None if neither device in a group is configured.
+            DataFrame: results for the matched devices, or None if none matched.
         """
         clients = []
         macids = []
@@ -3265,7 +3303,9 @@ class FtpTest(LFCliBase):
 
 
 def validate_args(args):
-    """Validate CLI arguments."""
+    """Validates CLI argument combinations (groups/profiles, pass-fail options, device
+    configuration options), logging an error and exiting on any conflict.
+    """
     # Get group and profile values from arguments and convert comma-separated strings into lists
     if args.group_name:
         selected_groups = args.group_name.split(',')
@@ -3322,6 +3362,9 @@ def validate_args(args):
 
 
 def duration_to_seconds(duration: str) -> int:
+    """Converts a duration string with an optional s/m/h suffix (default seconds) into a
+    number of seconds.
+    """
     duration = duration.strip().lower()
     if duration.endswith("s"):
         return int(duration[:-1])
@@ -3384,6 +3427,10 @@ async def run_iot(ip: str = '127.0.0.1',
                   device_list: str = '',
                   testname: str = '',
                   increment: str = ''):
+    """Runs the IoT device test end-to-end (fetch devices, select devices, run test, generate
+    report) via the Automation class. Exits the process on invalid delay/increment arguments
+    or if testname already has results on disk.
+    """
     try:
 
         if delay < 5:
