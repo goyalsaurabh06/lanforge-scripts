@@ -126,7 +126,6 @@ from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
 from threading import Thread
 import traceback
-import threading
 from collections import Counter
 import re
 logger = logging.getLogger(__name__)
@@ -140,9 +139,6 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.
 
 
 # Import LANforge-related modules
-
-# Set up logging
-logger = logging.getLogger(__name__)
 
 # Import LF logger configuration module
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
@@ -251,8 +247,8 @@ class Youtube(Realm):
         self.generic_endps_profile.name_prefix = "yt"
         self.endpoint_last_status = {}
         self.Devices = None
-        self.start_time = ""
-        self.stop_time = ""
+        self.start_time = None
+        self.stop_time = None
         self.do_webUI = do_webUI
         self.ui_report_dir = ui_report_dir
         self.devices = base_RealDevice(manager_ip=self.host, selected_bands=[])
@@ -264,8 +260,7 @@ class Youtube(Realm):
         self.ssid = ssid
         self.security = security
         self.band = band
-        self.start_time = None,
-        self.est_end_time = None,
+        self.est_end_time = None
         self.all_stop = False
         self.keys = []
         self.hostname_os_combination = None
@@ -934,7 +929,7 @@ class Youtube(Realm):
             response.status_code = 200
 
             # Start shutdown in a separate thread
-            shutdown_thread = threading.Thread(target=self.shutdown)
+            shutdown_thread = Thread(target=self.shutdown)
             shutdown_thread.start()
 
             return response
