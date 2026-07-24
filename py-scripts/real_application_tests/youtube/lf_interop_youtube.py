@@ -2588,6 +2588,7 @@ class Youtube(Realm):
 
 
 def main():
+    iot_summary = None
     try:
         help_summary = '''\
         Youtube streaming automation
@@ -3052,7 +3053,6 @@ NOTES:
                 youtube.generic_endps_profile.stop_cx()
                 logging.info("Duration ended")
 
-            iot_summary = None
             if args.iot_test and args.iot_testname:
                 base = os.path.join("results", args.iot_testname)
                 p = os.path.join(base, "iot_summary.json")
