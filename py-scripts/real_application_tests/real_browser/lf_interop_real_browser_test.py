@@ -82,25 +82,27 @@ Pre-requisites: Real clients should be connected to the LANforge MGR and Interop
 
 
 """
-
-import sys
-import os
-import importlib
-import argparse
-import time
-import pandas as pd
-import logging
-import json
-import shutil
-import asyncio
-from datetime import datetime, timedelta
-# from lf_graph import lf_bar_graph_horizontal
-from flask import Flask, request, jsonify
-import threading
-import csv
-import re
-import traceback
 import requests
+import traceback
+import re
+import csv
+import threading
+from flask import Flask, request, jsonify
+from datetime import datetime, timedelta
+import asyncio
+import shutil
+import json
+import logging
+import pandas as pd
+import time
+import argparse
+import importlib
+import os
+import sys
+WINDOWS_REAL_BROWSER_DIR = r".\local\real_application_test\real_browser"
+LINUX_REAL_BROWSER_DIR = "./local/real_application_test/real_browser"
+MACOS_REAL_BROWSER_DIR = "./local/real_application_test/real_browser"
+# from lf_graph import lf_bar_graph_horizontal
 
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
@@ -412,13 +414,36 @@ class RealBrowserTest(Realm):
 
         for i in range(0, len(self.laptop_os_types)):
             if self.laptop_os_types[i] == 'windows':
-                cmd = "real_browser.bat --url %s --server %s --duration %s" % (self.url, self.upstream_port, self.duration)
+                cmd = (
+                    fr'"{WINDOWS_REAL_BROWSER_DIR}\real_browser.bat" '
+                    '--url "%s" --server "%s" --duration %s'
+                    % (
+                        self.url,
+                        self.upstream_port,
+                        self.duration,
+                    )
+                )
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
             elif self.laptop_os_types[i] == 'linux':
-                cmd = "su -l lanforge  ctrb.bash %s %s %s %s" % (self.new_port_list[i], self.url, self.upstream_port, self.duration)
+                cmd = (
+                    f"su -l lanforge {LINUX_REAL_BROWSER_DIR}/ctrb.bash "
+                    "%s %s %s %s"
+                ) % (
+                    self.new_port_list[i],
+                    self.url,
+                    self.upstream_port,
+                    self.duration,
+                )
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
             elif self.laptop_os_types[i] == 'macos':
-                cmd = "sudo bash ctrb.bash --url %s --server %s  --duration %s" % (self.url, self.upstream_port, self.duration)
+                cmd = (
+                    f"sudo bash {MACOS_REAL_BROWSER_DIR}/ctrb.bash "
+                    "--url %s --server %s --duration %s"
+                ) % (
+                    self.url,
+                    self.upstream_port,
+                    self.duration,
+                )
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
 
         if len(self.phone_data) != 0:
