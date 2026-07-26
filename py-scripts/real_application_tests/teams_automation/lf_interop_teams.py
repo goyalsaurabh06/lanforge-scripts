@@ -85,7 +85,9 @@ from collections import Counter
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../..'))
-
+WINDOWS_TEAMS_DIR = r".\local\real_application_test\teams_automation"
+LINUX_TEAMS_DIR = "./local/real_application_test/teams_automation"
+MACOS_TEAMS_DIR = "./local/real_application_test/teams_automation"
 
 lfcli_base = importlib.import_module("py-json.LANforge.lfcli_base")
 LFCliBase = lfcli_base.LFCliBase
@@ -362,13 +364,19 @@ class TeamsAutomation(Realm):
             exit(0)
 
         if self.real_sta_os_types[0] == "windows":
-            cmd = f"py teams_host.py --ip {self.upstream_port}"
+            cmd = fr'"{WINDOWS_TEAMS_DIR}\teams.bat" --ip {self.upstream_port} host'
             self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[0], cmd)
         elif self.real_sta_os_types[0] == 'linux':
-            cmd = "su -l lanforge ctteams.bash %s %s %s" % (self.wifi_interfaces_list[0], self.upstream_port, "host")
+            cmd = (
+                f"su -l lanforge {LINUX_TEAMS_DIR}/ctteams.bash "
+                f"{self.wifi_interfaces_list[0]} {self.upstream_port} host"
+            )
             self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[0], cmd)
         elif self.real_sta_os_types[0] == 'macos':
-            cmd = "sudo bash ctteams.bash %s %s" % (self.upstream_port, "host")
+            cmd = (
+                f"sudo bash {MACOS_TEAMS_DIR}/ctteams.bash "
+                f"{self.upstream_port} host"
+            )
             self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[0], cmd)
         self.generic_endps_profile.start_cx()
         time.sleep(5)
@@ -494,28 +502,24 @@ class TeamsAutomation(Realm):
                 logger.debug(self.generic_endps_profile.created_cx)
                 if self.enable_mobile_stats:
                     cmd = (
-                        f"su - lanforge -c "
-                        f"\"cd /home/lanforge && "
                         f"python3 /home/lanforge/lanforge-scripts/py-scripts/real_application_tests/teams_automation/teams_android.py "
                         f"--devices {self.serial_list[i]} "
                         f"--meet_link '{self.meet_link}' "
                         f"--participant_name '{self.real_sta_hostname[i]}' "
                         f"--upstream_port {self.lanforge_ip} "
                         f"--duration {self.duration} "
-                        f"--audio "
-                        f"--video\""
+                        "--audio "
+                        "--video "
                     )
                 else:
                     cmd = (
-                        f"su - lanforge -c "
-                        f"\"cd /home/lanforge && "
                         f"python3 /home/lanforge/lanforge-scripts/py-scripts/real_application_tests/teams_automation/teams_android_app.py "
                         f"--device {self.serial_list[i]} "
                         f"--meet_link '{self.meet_link}' "
                         f"--participant_name '{self.real_sta_hostname[i]}' "
                         f"--upstream_port {self.lanforge_ip} "
-                        f"--audio "
-                        f"--video\""
+                        "--audio "
+                        "--video "
                     )
                 self.generic_endps_profile.set_cmd(
                     self.generic_endps_profile.created_endp[i], cmd
@@ -528,19 +532,30 @@ class TeamsAutomation(Realm):
 
         for i in range(1, len(self.real_sta_os_types)):
             if self.real_sta_os_types[i] == "windows":
-                cmd = f"py teams_client.py --ip {self.upstream_port}"
+                cmd = fr'"{WINDOWS_TEAMS_DIR}\teams.bat" --ip {self.upstream_port} client'
                 self.generic_endps_profile.set_cmd(
                     self.generic_endps_profile.created_endp[i], cmd
                 )
             elif self.real_sta_os_types[i] == 'linux':
-                cmd = "su -l lanforge ctteams.bash %s %s %s" % (
-                    self.wifi_interfaces_list[i], self.upstream_port, "client"
+                cmd = (
+                    f"su -l lanforge {LINUX_TEAMS_DIR}/ctteams.bash "
+                    "%s %s %s"
+                ) % (
+                    self.wifi_interfaces_list[i],
+                    self.upstream_port,
+                    "client",
                 )
                 self.generic_endps_profile.set_cmd(
                     self.generic_endps_profile.created_endp[i], cmd
                 )
             elif self.real_sta_os_types[i] == 'macos':
-                cmd = "sudo bash ctteams.bash %s %s" % (self.upstream_port, "client")
+                cmd = (
+                    f"sudo bash {MACOS_TEAMS_DIR}/ctteams.bash "
+                    "%s %s"
+                ) % (
+                    self.upstream_port,
+                    "client",
+                )
                 self.generic_endps_profile.set_cmd(
                     self.generic_endps_profile.created_endp[i], cmd
                 )
@@ -1110,7 +1125,6 @@ class TeamsAutomation(Realm):
             logging.error(f"Error in generate_report function: {e}", exc_info=True)
         finally:
             self.move_csv_files()
-            self.move_log_folder()
 
     def add_live_view_images_to_report(self):
         """
@@ -1630,14 +1644,6 @@ class TeamsAutomation(Realm):
                 dest = os.path.join(self.report_path_date_time, file)
                 shutil.move(src, dest)
 
-    def move_log_folder(self):
-        log_dir = os.path.join(self.path, "teams_laptop_client_logs")
-        if os.path.isdir(log_dir):
-            dest = os.path.join(self.report_path_date_time, "teams_laptop_client_logs")
-            if os.path.isdir(dest):
-                shutil.rmtree(dest)
-            shutil.move(log_dir, dest)
-
     def shutdown(self):
         """
         Gracefully shut down the application.
@@ -1937,30 +1943,6 @@ class TeamsAutomation(Realm):
                         }
 
                 return jsonify(result), 200
-
-        @self.app.route("/upload_log", methods=["POST"])
-        def upload_log():
-            try:
-                data = request.json
-                hostname = data.get("hostname")
-                log_content = data.get("log")
-
-                if not hostname or log_content is None:
-                    return jsonify({"status": "error", "message": "Missing hostname or log"}), 400
-
-                log_dir = os.path.join(self.path, "teams_laptop_client_logs")
-                os.makedirs(log_dir, exist_ok=True)
-
-                hostname = hostname.strip()
-                save_path = os.path.join(log_dir, f"{hostname}.log")
-                with open(save_path, "w", errors="replace") as f:
-                    f.write(log_content)
-
-                logging.info(f"Log file uploaded from {hostname}")
-                return jsonify({"status": "success", "message": "Log file uploaded"}), 200
-            except Exception as e:
-                logging.error(f"Error uploading log file: {e}")
-                return jsonify({"status": "error", "message": str(e)}), 500
 
         try:
             self.app.run(host='0.0.0.0', port=5005, debug=True, threaded=True, use_reloader=False)
