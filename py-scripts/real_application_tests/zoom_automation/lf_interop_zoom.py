@@ -79,6 +79,9 @@ import subprocess
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
+WINDOWS_ZOOM_DIR = r".\local\real_application_test\zoom_automation"
+LINUX_ZOOM_DIR = "./local/real_application_test/zoom_automation"
+MACOS_ZOOM_DIR = "./local/real_application_test/zoom_automation"
 
 
 lfcli_base = importlib.import_module("py-json.LANforge.lfcli_base")
@@ -210,7 +213,6 @@ class ZoomAutomation(Realm):
         self.generic_endps_profile = self.new_generic_endp_profile()
         self.generic_endps_profile.name_prefix = "zoom"
         self.generic_endps_profile.type = "zoom"
-        self.endpoint_last_status = {}
         self.data_store = {}
         self.header = [
             "timestamp",
@@ -728,71 +730,6 @@ class ZoomAutomation(Realm):
             logger.error(f"Error in check_gen_cx function {e}", exc_info=True)
             logger.info(f"generic endpoint data {generic_endpoint}")
 
-    def monitor_endpoint_status_changes(self, wait_time=40, poll_interval=5):
-        """
-        Checks the current status of every generic endpoint and, only the
-        first time an endpoint's status changes, logs a message and appends
-        a row (timestamp, endpoint_name, status) to
-        endpoint_status_changes.csv. Repeated polls of an unchanged status
-        are not logged or written again.
-
-        If every created endpoint is missing from the response, retries
-        every poll_interval seconds for up to wait_time seconds. Aborts the
-        test if still none of the created endpoints have responded once
-        wait_time has elapsed.
-        """
-        csv_file = os.path.join(self.path, "endpoint_status_changes.csv")
-        created_endp = self.generic_endps_profile.created_endp
-
-        start_time = time.time()
-        endpoint_data = {}
-        while True:
-            for gen_endp in created_endp:
-                generic_endpoint = self.json_get(f"/generic/{gen_endp}")
-                if generic_endpoint and "endpoint" in generic_endpoint:
-                    endpoint_data[gen_endp] = generic_endpoint
-
-            if endpoint_data or (time.time() - start_time) >= wait_time:
-                break
-
-            logger.warning(
-                "No data received for any of the created endpoints; retrying..."
-            )
-            time.sleep(poll_interval)
-
-        if not endpoint_data:
-            logger.error(
-                f"No data received for any of the created endpoints after waiting "
-                f"{wait_time} seconds. Aborting test."
-            )
-            exit(1)
-
-        for gen_endp, generic_endpoint in endpoint_data.items():
-            current_status = generic_endpoint["endpoint"].get("status", "")
-            previous_status = self.endpoint_last_status.get(gen_endp)
-
-            if current_status == previous_status:
-                continue
-
-            logger.info(
-                f"Endpoint {gen_endp} status changed to:{current_status}"
-            )
-
-            file_exists = os.path.isfile(csv_file) and os.path.getsize(csv_file) > 0
-            with open(csv_file, mode="a", newline="") as f:
-                writer = csv.writer(f)
-                if not file_exists:
-                    writer.writerow(["timestamp", "endpoint_name", "status"])
-                writer.writerow(
-                    [
-                        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        gen_endp,
-                        current_status,
-                    ]
-                )
-
-            self.endpoint_last_status[gen_endp] = current_status
-
     def wait_for_flask(self, url="http://127.0.0.1:5000/get_latest_stats", timeout=10):
         """Wait until the Flask server is up, but exit if it takes longer than `timeout` seconds."""
         start_time = time.time()  # Record the start time
@@ -895,28 +832,6 @@ class ZoomAutomation(Realm):
             )
         return True, created_cx, created_endp
 
-    def json_get_with_retry(self, url, wait_time=40, poll_interval=5):
-        """
-        Calls self.json_get(url), retrying every poll_interval seconds for up
-        to wait_time seconds if LANforge returns no response. Aborts the test
-        if it still hasn't responded once wait_time has elapsed.
-        """
-        start_time = time.time()
-        response = self.json_get(url)
-        while response is None and (time.time() - start_time) < wait_time:
-            logger.warning(f"GET {url} returned no response from LANforge; retrying...")
-            time.sleep(poll_interval)
-            response = self.json_get(url)
-
-        if response is None:
-            logger.error(
-                f"GET {url} returned no response from LANforge after waiting "
-                f"{wait_time} seconds. Aborting test."
-            )
-            exit(1)
-
-        return response
-
     def get_resource_data(self):
         self.ports_list = []
         self.user_list = []
@@ -928,24 +843,16 @@ class ZoomAutomation(Realm):
         ]
 
         # Step 1: Retrieve information about all resources
-        response = self.json_get_with_retry("/resource/all")
+        response = self.json_get("/resource/all")
 
         # Step 2: Match user-specified resources with available resources sequentially
         if self.user_resources:
-            try:
-                resources = response["resources"]
-                lf_resources_dict = {}
+            resources = response.get("resources", [])
+            for user_resource in self.user_resources:
+                found = False
                 for element in resources:
-                    lf_resources_dict.update(element)
-
-                logger.debug(
-                    "LANforge resources fetched from /resource/all:\n%s",
-                    json.dumps(lf_resources_dict, indent=2, default=str),
-                )
-
-                for user_resource in self.user_resources:
-                    if user_resource in lf_resources_dict:
-                        resource_values = lf_resources_dict[user_resource]
+                    if user_resource in element:
+                        resource_values = element[user_resource]
                         eid = resource_values["eid"]
                         resource_ip = resource_values["ctrl-ip"]
                         hostname = resource_values["hostname"]
@@ -954,24 +861,14 @@ class ZoomAutomation(Realm):
                         self.device_names.append(hostname)
                         self.ports_list.append({"eid": eid, "ctrl-ip": resource_ip})
                         self.user_list.append(user)
-                    else:
-                        logger.error(
-                            f"Resource {user_resource} not found in LANforge response. Aborting test."
-                        )
-                        exit(1)
-            except KeyError as e:
-                logger.error(
-                    f"/resource/all response is not in the expected format, missing key {e}. "
-                    "Data received:\n%s",
-                    json.dumps(response, indent=2, default=str),
-                )
-                exit(1)
-            except Exception as e:
-                logger.error(
-                    f"Unexpected error while parsing /resource/all response: {e}",
-                    exc_info=True,
-                )
-                exit(1)
+
+                        found = True
+                        break
+
+                if not found:
+                    logger.warning(
+                        f"Resource {user_resource} not found in LANforge response"
+                    )
 
     def get_ports_data(self):
         self.gen_ports_list = []
@@ -981,119 +878,89 @@ class ZoomAutomation(Realm):
         self.ssid_list = []
 
         # Step 3: Retrieve port information
-        response_port = self.json_get_with_retry("/port/all")
+        response_port = self.json_get("/port/all")
 
         # Step 4: Match ports associated with retrieved resources in the order of ports_list
-        try:
-            for port_entry in self.ports_list:
-                # Extract the eid and ctrl-ip from the current ports_list entry
-                expected_eid = port_entry["eid"]
+        for port_entry in self.ports_list:
+            # Extract the eid and ctrl-ip from the current ports_list entry
+            expected_eid = port_entry["eid"]
 
-                # Iterate over the port interfaces to find a matching port
-                for interface in response_port["interfaces"]:
-                    for port, _port_data in interface.items():
-                        # Extract the first two segments of the port identifier to match with expected_eid
-                        result = ".".join(port.split(".")[:2])
+            # Iterate over the port interfaces to find a matching port
+            for interface in response_port["interfaces"]:
+                for port, _port_data in interface.items():
+                    # Extract the first two segments of the port identifier to match with expected_eid
+                    result = ".".join(port.split(".")[:2])
 
-                        # Check if the result matches the current expected eid from ports_list
-                        if result == expected_eid:
-                            self.gen_ports_list.append(port.split(".")[-1])
-                            break
-                    else:
-                        continue
-                    break
+                    # Check if the result matches the current expected eid from ports_list
+                    if result == expected_eid:
+                        self.gen_ports_list.append(port.split(".")[-1])
+                        break
+                else:
+                    continue
+                break
 
-            for port_entry in self.ports_list:
-                # Extract the eid and ctrl-ip from the current ports_list entry
-                expected_eid = port_entry["eid"]
+        for port_entry in self.ports_list:
+            # Extract the eid and ctrl-ip from the current ports_list entry
+            expected_eid = port_entry["eid"]
 
-                # Iterate over the port interfaces to find a matching port
-                for interface in response_port["interfaces"]:
-                    for port, port_data in interface.items():
-                        # Extract the first two segments of the port identifier to match with expected_eid
-                        result = ".".join(port.split(".")[:2])
+            # Iterate over the port interfaces to find a matching port
+            for interface in response_port["interfaces"]:
+                for port, port_data in interface.items():
+                    # Extract the first two segments of the port identifier to match with expected_eid
+                    result = ".".join(port.split(".")[:2])
 
-                        # Check if the result matches the current expected eid from ports_list
-                        if result == expected_eid and port_data["parent dev"] == "wiphy0":
-                            self.mac_list.append(port_data["mac"])
-                            self.rssi_list.append(port_data["signal"])
-                            self.link_rate_list.append(port_data["rx-rate"])
-                            self.ssid_list.append(port_data["ssid"])
+                    # Check if the result matches the current expected eid from ports_list
+                    if result == expected_eid and port_data["parent dev"] == "wiphy0":
+                        self.mac_list.append(port_data["mac"])
+                        self.rssi_list.append(port_data["signal"])
+                        self.link_rate_list.append(port_data["rx-rate"])
+                        self.ssid_list.append(port_data["ssid"])
 
-                            break
-                    else:
-                        continue
-                    break
-        except KeyError as e:
-            logger.error(
-                "/port/all response is not in the expected format, missing key %s. "
-                "Data received:\n%s",
-                e,
-                json.dumps(response_port, indent=2, default=str),
-            )
-            exit(1)
-        except Exception as e:
-            logger.error(
-                f"Unexpected error while parsing /port/all response: {e}",
-                exc_info=True,
-            )
-            exit(1)
+                        break
+                else:
+                    continue
+                break
         self.wifi_interface_list = [item.split(".")[2] for item in self.real_sta_list]
 
     def get_interop_data(self):
-        interop_data = self.json_get_with_retry("/adb")
+        interop_data = self.json_get("/adb")
+        interop_mobile_data = interop_data.get("devices", {})
         self.serial_list = []
         self.lanforge_port_list = []
-        try:
-            interop_mobile_data = interop_data["devices"]
-            for user in self.user_list:
-                if user == "":
+        for user in self.user_list:
+            if user == "":
+                self.serial_list.append("")
+                self.lanforge_port_list.append("")
+            else:
+                user_found = False
+                # 1. Handle Single Device (Flat Dictionary)
+                if isinstance(interop_mobile_data, dict):
+                    if interop_mobile_data.get("user-name") == user:
+                        # Extract details from 'name' (e.g., '1.1.3200f8664a91a5e9')
+                        full_name = interop_mobile_data.get("name")
+                        if full_name and full_name.count(".") >= 2:
+                            resource = full_name.split(".")[1]
+                            serial_no = full_name.split(".")[2]
+                            self.serial_list.append(serial_no)
+                            self.lanforge_port_list.append(f"1.{resource}.eth0")
+                            user_found = True
+                else:
+                    for mobile_device in interop_mobile_data:
+                        for serial, device_data in mobile_device.items():
+                            if device_data.get("user-name") == user:
+                                resource = serial.split(".")[1]
+                                serial_no = serial.split(".")[2]
+                                self.serial_list.append(serial_no)
+                                lanforge_port = f"1.{resource}.eth0"
+                                self.lanforge_port_list.append(lanforge_port)
+                                user_found = True
+                                break
+                        if user_found:
+                            break
+
+                if not user_found:
                     self.serial_list.append("")
                     self.lanforge_port_list.append("")
-                else:
-                    user_found = False
-                    # 1. Handle Single Device (Flat Dictionary)
-                    if isinstance(interop_mobile_data, dict):
-                        if interop_mobile_data["user-name"] == user:
-                            # Extract details from 'name' (e.g., '1.1.3200f8664a91a5e9')
-                            full_name = interop_mobile_data["name"]
-                            if full_name and full_name.count(".") >= 2:
-                                resource = full_name.split(".")[1]
-                                serial_no = full_name.split(".")[2]
-                                self.serial_list.append(serial_no)
-                                self.lanforge_port_list.append(f"1.{resource}.eth0")
-                                user_found = True
-                    else:
-                        for mobile_device in interop_mobile_data:
-                            for serial, device_data in mobile_device.items():
-                                if device_data["user-name"] == user:
-                                    resource = serial.split(".")[1]
-                                    serial_no = serial.split(".")[2]
-                                    self.serial_list.append(serial_no)
-                                    lanforge_port = f"1.{resource}.eth0"
-                                    self.lanforge_port_list.append(lanforge_port)
-                                    user_found = True
-                                    break
-                            if user_found:
-                                break
-
-                    if not user_found:
-                        self.serial_list.append("")
-                        self.lanforge_port_list.append("")
-        except KeyError as e:
-            logger.error(
-                "/adb response is not in the expected format, missing key %s. "
-                "Data received:\n%s",
-                e,
-                json.dumps(interop_data, indent=2, default=str),
-            )
-            exit(1)
-        except Exception as e:
-            logger.error(
-                f"Unexpected error while parsing /adb response: {e}",
-                exc_info=True,
-            )
-            exit(1)
 
         logger.debug(f"Checking serial list {self.serial_list}")
 
@@ -1124,21 +991,23 @@ class ZoomAutomation(Realm):
             exit(0)
 
         if self.real_sta_os_type[0] == "windows":
-            cmd = f"py zoom_host.py --ip {self.upstream_port}"
+            cmd = fr'"{WINDOWS_ZOOM_DIR}\zoom.bat" --ip {self.upstream_port} host'
             self.generic_endps_profile.set_cmd(
                 self.generic_endps_profile.created_endp[0], cmd
             )
         elif self.real_sta_os_type[0] == "linux":
-            cmd = "su -l lanforge ctzoom.bash %s %s %s" % (
-                self.wifi_interface_list[0],
-                self.upstream_port,
-                "host",
+            cmd = (
+                f"su -l lanforge {LINUX_ZOOM_DIR}/ctzoom.bash "
+                f"{self.wifi_interface_list[0]} {self.upstream_port} host"
             )
             self.generic_endps_profile.set_cmd(
                 self.generic_endps_profile.created_endp[0], cmd
             )
         elif self.real_sta_os_type[0] == "macos":
-            cmd = "sudo bash ctzoom.bash %s %s" % (self.upstream_port, "host")
+            cmd = (
+                f"sudo bash {MACOS_ZOOM_DIR}/ctzoom.bash "
+                f"{self.upstream_port} host"
+            )
             self.generic_endps_profile.set_cmd(
                 self.generic_endps_profile.created_endp[0], cmd
             )
@@ -1189,14 +1058,12 @@ class ZoomAutomation(Realm):
                 self.generic_endps_profile.created_endp.extend(created_endp)
                 self.generic_endps_profile.created_cx.extend(created_cx)
                 cmd = (
-                    f"su - lanforge -c "
-                    f"\"cd /home/lanforge && "
                     f"python3 /home/lanforge/lanforge-scripts/py-scripts/real_application_tests/zoom_automation/android_zoom.py "
                     f"--serial {self.serial_list[i]} "
                     f"--meeting_url '{self.meet_link}' "
                     f"--participant_name '{self.real_sta_hostname[i]}' "
                     f"--server_host {self.mgr_ip} "
-                    f"--server_port 5000\""
+                    f"--server_port 5000"
                 )
                 self.generic_endps_profile.set_cmd(
                     self.generic_endps_profile.created_endp[i], cmd
@@ -1210,21 +1077,23 @@ class ZoomAutomation(Realm):
 
         for i in range(1, len(self.real_sta_os_type)):
             if self.real_sta_os_type[i] == "windows":
-                cmd = f"py zoom_client.py --ip {self.upstream_port}"
+                cmd = fr'"{WINDOWS_ZOOM_DIR}\zoom.bat" --ip {self.upstream_port} client'
                 self.generic_endps_profile.set_cmd(
                     self.generic_endps_profile.created_endp[i], cmd
                 )
             elif self.real_sta_os_type[i] == "linux":
-                cmd = "su -l lanforge ctzoom.bash %s %s %s" % (
-                    self.wifi_interface_list[i],
-                    self.upstream_port,
-                    "client",
+                cmd = (
+                    f"su -l lanforge {LINUX_ZOOM_DIR}/ctzoom.bash "
+                    f"{self.wifi_interface_list[i]} {self.upstream_port} client"
                 )
                 self.generic_endps_profile.set_cmd(
                     self.generic_endps_profile.created_endp[i], cmd
                 )
             elif self.real_sta_os_type[i] == "macos":
-                cmd = "sudo bash ctzoom.bash %s %s" % (self.upstream_port, "client")
+                cmd = (
+                    f"sudo bash {MACOS_ZOOM_DIR}/ctzoom.bash "
+                    f"{self.upstream_port} client"
+                )
                 self.generic_endps_profile.set_cmd(
                     self.generic_endps_profile.created_endp[i], cmd
                 )
@@ -1343,7 +1212,6 @@ class ZoomAutomation(Realm):
                         self.wait_for_host_ready()
                         self.create_participants()
                         self.wait_for_test_start()
-                self.monitor_endpoint_status_changes()
                 logger.info("Monitoring the Test")
                 time.sleep(5)
         if self.do_robo:
@@ -1381,7 +1249,7 @@ class ZoomAutomation(Realm):
         if real_sta_list is None:
             self.real_sta_list, _, _ = real_device_obj.query_user()
         else:
-            interface_data = self.json_get_with_retry("/port/all")
+            interface_data = self.json_get("/port/all")
             interfaces = interface_data["interfaces"]
             final_device_list = []  # Initialize the list
 
@@ -1532,25 +1400,16 @@ class ZoomAutomation(Realm):
 
     def get_access_token(self, account_id, client_id, client_secret):
         token_url = f"https://zoom.us/oauth/token?grant_type=account_credentials&account_id={account_id}"
-        try:
-            response = requests.post(
-                token_url, auth=HTTPBasicAuth(client_id, client_secret)
-            )
-        except requests.exceptions.RequestException as e:
-            logger.error(
-                f"Request failed while getting access token for account_id={account_id}: {e}"
-            )
-            return None
-
+        response = requests.post(
+            token_url, auth=HTTPBasicAuth(client_id, client_secret)
+        )
         if response.status_code == 200:
             access_token = response.json().get("access_token")
             return access_token
         else:
-            logger.error(
-                f"Failed to get access token for account_id={account_id}: "
-                f"{response.status_code} {response.text}"
+            raise Exception(
+                f"Failed to get access token: {response.status_code} {response.text}"
             )
-            return None
 
     def get_participants_qos(self, meeting_id, access_token, test_type="past"):
         url = f"https://api.zoom.us/v2/metrics/meetings/{meeting_id}/participants/qos"
@@ -1612,11 +1471,6 @@ class ZoomAutomation(Realm):
             token = self.get_access_token(
                 self.account_id, self.client_id, self.client_secret
             )
-            if token is None:
-                logger.warning(
-                    "Unable to obtain Zoom access token; skipping this live data fetch"
-                )
-                return
             self._set_raw_zoom_stats(
                 self.get_participants_qos(self.remote_login_url, token, "live")
             )
@@ -1642,9 +1496,6 @@ class ZoomAutomation(Realm):
         token = self.get_access_token(
             self.account_id, self.client_id, self.client_secret
         )
-        if token is None:
-            logger.error("Unable to obtain Zoom access token. Aborting QoS data fetch.")
-            return
 
         # Zoom QoS data is typically available ~20 seconds after meeting end.
         # We wait 150 seconds to be safe and simplify the logic.
@@ -2137,8 +1988,6 @@ class ZoomAutomation(Realm):
                            _results_dir_name="zoom_call_report",
                            _path=self.path)
         report_path_date_time = report.get_path_date_time()
-        self.report = report
-        self.report_path_date_time = report_path_date_time
 
         report.set_title("Zoom Call Automated Report")
         report.build_banner()
@@ -2720,10 +2569,6 @@ class ZoomAutomation(Realm):
             file_to_move_path = os.path.join(self.path, f'{client}.csv')
             self.move_files(file_to_move_path, report_path_date_time)
 
-        self.move_files(
-            os.path.join(self.path, "endpoint_status_changes.csv"), report_path_date_time
-        )
-
     def change_port_to_ip(self, upstream_port):
         """
         Convert a given port name to its corresponding IP address if it's not already an IP.
@@ -2749,9 +2594,8 @@ class ZoomAutomation(Realm):
         if upstream_port.count('.') != 3:
             target_port_list = self.name_to_eid(upstream_port)
             shelf, resource, port, _ = target_port_list
-            response = self.json_get_with_retry(f'/port/{shelf}/{resource}/{port}?fields=ip')
             try:
-                target_port_ip = response['interface']['ip']
+                target_port_ip = self.json_get(f'/port/{shelf}/{resource}/{port}?fields=ip')['interface']['ip']
                 upstream_port = target_port_ip
             except Exception as e:
                 logging.warning(f'The upstream port is not an ethernet port. Proceeding with the given upstream_port {upstream_port}. Exception: {e}')
@@ -3847,9 +3691,6 @@ class ZoomAutomation(Realm):
             ),
             self.report_path_date_time,
         )
-        self.move_files(
-            os.path.join(self.path, "endpoint_status_changes.csv"), self.report_path_date_time
-        )
 
     def generate_report_from_data(self):
         """
@@ -4113,11 +3954,6 @@ class ZoomAutomation(Realm):
             pattern = os.path.join(os.getcwd(), "zoom_api_responses", "*_qos.json")
             for f in glob.glob(pattern):
                 self.move_files(f, report_path_date_time)
-
-        # 3. Move the endpoint status change log
-        self.move_files(
-            os.path.join(self.path, "endpoint_status_changes.csv"), report_path_date_time
-        )
 
     def stop_webui(self):
         """
