@@ -25,6 +25,7 @@ debug_printer = pprint.PrettyPrinter(indent=2)
 LFRequest = importlib.import_module("py-json.LANforge.LFRequest")
 LFUtils = importlib.import_module("py-json.LANforge.LFUtils")
 Logg = importlib.import_module("lanforge_client.logg")
+lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 logger = logging.getLogger(__name__)
 
 """
@@ -34,6 +35,66 @@ $ LF_USE_AUTOGEN=1 python3 jbr_jag_test.py --test set_port --host ct521a-lion
 if os.environ.get("LF_USE_AUTOGEN") == 1:
     lanforge_api = importlib.import_module("lanforge_client.lanforge_api")
     LFSession = lanforge_api.LFSession
+
+# maps a json_get/post/put/delete HTTP method to its custom log level (see
+# lf_logger_config.GET/POST/PUT/DELETE); used with logger.log(level, message)
+# instead of logger.get(...)/.post(...)/etc so nothing monkey-patches logging.Logger
+_API_LOG_LEVELS = {
+    "GET": lf_logger_config.GET,
+    "POST": lf_logger_config.POST,
+    "PUT": lf_logger_config.PUT,
+    "DELETE": lf_logger_config.DELETE,
+}
+
+
+def _get_api_logger(filename):
+    """
+    Return the dedicated api-call logger for filename, creating its FileHandler the
+    first time filename is seen in this process. logging.getLogger(name) always
+    returns the same instance for a given name, so that's used as the cache -- no
+    separate dict needed -- meaning multiple LFCliBase/Realm instances pointed at
+    the same file share one handler instead of re-truncating it or duplicating
+    every line. Only sets up the logger/handler (a logging concern); callers decide
+    what message format to log -- see LFCliBase._log_api_call and its CSV override
+    in realm.Realm.
+    """
+    api_logger = logging.getLogger("lfcli_base.api_calls.%s" % os.path.abspath(filename))
+    if not api_logger.handlers:
+        api_logger.setLevel(lf_logger_config.GET)  # lowest of the 4 custom verb levels
+        api_logger.propagate = False
+        handler = logging.FileHandler(filename, mode='w')
+        handler.setFormatter(logging.Formatter('%(asctime)s.%(msecs)03d,%(levelname)s,%(message)s',
+                                                datefmt='%Y-%m-%dT%H:%M:%S'))
+        api_logger.addHandler(handler)
+    return api_logger
+
+
+def pause_api_log(filename):
+    """
+    Temporarily silence api-call logging to filename for every LFCliBase-derived
+    object pointed at it (they all share this one cached logger -- see
+    _get_api_logger), without touching any individual object's save_api flag. Useful
+    around noisy polling loops (e.g. a monitor_cx()-style method called on a
+    profile object, not on the Realm itself) that would otherwise flood the log.
+    Call resume_api_log(filename) to restore.
+    No-op if api-call logging was never enabled for filename in this process --
+    looks the logger up by name instead of via _get_api_logger, which would
+    otherwise create (and truncate) the file just from pausing it.
+    """
+    api_logger = logging.getLogger("lfcli_base.api_calls.%s" % os.path.abspath(filename))
+    if api_logger.handlers:
+        api_logger.setLevel(logging.CRITICAL)
+
+
+def resume_api_log(filename):
+    """
+    Undo pause_api_log(filename) -- restores the logger to accept all 4
+    GET/POST/PUT/DELETE custom levels again. No-op if api-call logging was never
+    enabled for filename (see pause_api_log).
+    """
+    api_logger = logging.getLogger("lfcli_base.api_calls.%s" % os.path.abspath(filename))
+    if api_logger.handlers:
+        api_logger.setLevel(lf_logger_config.GET)
 
 
 class LFCliBase:
@@ -50,7 +111,9 @@ class LFCliBase:
                  _exit_on_fail=False,
                  _local_realm=None,
                  _proxy_str=None,
-                 _capture_signal_list=None):
+                 _capture_signal_list=None,
+                 _save_api=False,
+                 _api_log_file_name=None):
         if _capture_signal_list is None:
             _capture_signal_list = []
         self.fail_pref = "FAILED: "
@@ -58,6 +121,23 @@ class LFCliBase:
         self.lfclient_host = _lfjson_host
         self.lfclient_port = _lfjson_port
         self.debug = _debug
+        # when True, json_get/json_post/json_put/json_delete log a line for each call
+        # via the dedicated api-call logger (see _get_api_logger / _log_api_call).
+        # api_log_filename: explicit arg wins, else the process-wide default set via
+        # lf_logger_config.enable_api_log() (e.g. by lf_webpage.py when --save_api is
+        # passed). That process-wide default is also an independent way to turn
+        # save_api on: it's what lets profile objects (StationProfile, HTTPProfile,
+        # ...) that realm.py's new_*_profile() methods construct without threading
+        # _save_api through still log to the same common file.
+        self.api_log_filename = (_api_log_file_name or lf_logger_config.get_api_log_filename()
+                                 or os.path.join(os.path.expanduser('~'), 'lf_api_calls.csv'))
+        self.save_api = _save_api or (lf_logger_config.get_api_log_filename() is not None)
+        if self.save_api:
+            # _get_api_logger() sets up (and truncates) the file the first time this
+            # path is seen in the process, then caches the logger so a second
+            # LFCliBase/Realm pointed at the same file appends instead of
+            # re-truncating (which would wipe out the first instance's entries)
+            _get_api_logger(self.api_log_filename)
         # if (_debug):
         #     logger.debug("LFCliBase._proxy_str: %s" % _proxy_str)
         self.proxy = {}
@@ -216,6 +296,44 @@ class LFCliBase:
 
     # - END LOGGING -
 
+    def pause_api(self):
+        """
+        Temporarily silence api-call logging for this object's api_log_filename --
+        shared by every LFCliBase-derived object pointed at the same file (see
+        pause_api_log), not just this instance. Call resume_api() to restore.
+        """
+        pause_api_log(self.api_log_filename)
+
+    def resume_api(self):
+        """
+        Undo pause_api().
+        """
+        resume_api_log(self.api_log_filename)
+
+    def _log_api_call(self, method, url, data=None, response_code=None, diagnostics=None):
+        """
+        Log one line to api_log_filename for a json_get/json_post/json_put/
+        json_delete call, via the dedicated api-call logger's GET/POST/PUT/DELETE
+        level (so the timestamp and method columns come from the logger's own
+        %(asctime)s/%(levelname)s formatting -- see _get_api_logger). Only logs when
+        self.save_api is True.
+        This base implementation just logs the raw payload; realm.Realm overrides it
+        to format the line as a proper CSV row instead.
+        :param method: "GET" | "POST" | "PUT" | "DELETE"
+        :param url: requested url
+        :param data: payload sent (POST/PUT/DELETE only)
+        :param response_code: HTTP status code returned by the call, if any
+        :param diagnostics: one-line summary from LFRequest.print_diagnostics(), if the
+        call went through a caught HTTPError/URLError (reason, X-Error-* headers, etc.)
+        """
+        if not self.save_api:
+            return
+        message = "%s payload=%s response_code=%s diagnostics=%s" % (
+            url, data if data is not None else "No payload",
+            response_code if response_code is not None else "-",
+            diagnostics if diagnostics is not None else "No diagnostics")
+        _get_api_logger(self.api_log_filename).log(_API_LOG_LEVELS[method], message)
+
     def json_post(self, _req_url, _data, debug_=False, suppress_related_commands_=None, response_json_list_=None):
         """
         send json to the LANforge client
@@ -227,6 +345,7 @@ class LFCliBase:
         :return: http response object
         """
         json_response = None
+        lf_r = None
         debug_ |= self.debug
         try:
             lf_r = LFRequest.LFRequest(url=self.lfclient_url,
@@ -270,7 +389,11 @@ class LFCliBase:
                 logger.debug("Exception %s:" % x)
                 logger.debug(traceback.format_exception(Exception, x, x.__traceback__, chain=True))
             if self.exit_on_error:
+                self._log_api_call("POST", _req_url, data=_data, response_code=getattr(lf_r, 'last_response_code', None),
+                                   diagnostics=getattr(lf_r, 'last_diagnostics', None))
                 exit(1)
+        self._log_api_call("POST", _req_url, data=_data, response_code=getattr(lf_r, 'last_response_code', None),
+                           diagnostics=getattr(lf_r, 'last_diagnostics', None))
         return json_response
 
     def json_put(self, _req_url, _data, debug_=False, response_json_list_=None):
@@ -286,6 +409,7 @@ class LFCliBase:
         """
         debug_ |= self.debug
         json_response = None
+        lf_r = None
         try:
             lf_r = LFRequest.LFRequest(url=self.lfclient_url,
                                        uri=_req_url,
@@ -308,7 +432,11 @@ class LFCliBase:
                 logger.debug("Exception %s:" % x)
                 logger.debug(traceback.format_exception(Exception, x, x.__traceback__, chain=True))
             if self.exit_on_error:
+                self._log_api_call("PUT", _req_url, data=_data, response_code=getattr(lf_r, 'last_response_code', None),
+                                   diagnostics=getattr(lf_r, 'last_diagnostics', None))
                 exit(1)
+        self._log_api_call("PUT", _req_url, data=_data, response_code=getattr(lf_r, 'last_response_code', None),
+                           diagnostics=getattr(lf_r, 'last_diagnostics', None))
         return json_response
 
     def json_get(self, _req_url, debug_=None):
@@ -319,6 +447,7 @@ class LFCliBase:
         if debug_ is None:
             debug_ = self.debug
         json_response = None
+        lf_r = None
         try:
             lf_r = LFRequest.LFRequest(url=self.lfclient_url,
                                        uri=_req_url,
@@ -334,6 +463,8 @@ class LFCliBase:
                     else:
                         logger.debug("LFCliBase.json_get: no entity/response, check other errors")
                         time.sleep(10)
+                self._log_api_call("GET", _req_url, response_code=getattr(lf_r, 'last_response_code', None),
+                                   diagnostics=getattr(lf_r, 'last_diagnostics', None))
                 return None
         except ValueError as ve:
             if debug_ or self.exit_on_error:
@@ -341,8 +472,12 @@ class LFCliBase:
                 logger.debug("Exception %s:" % ve)
                 logger.debug(traceback.format_exception(ValueError, ve, ve.__traceback__, chain=True))
             if self.exit_on_error:
+                self._log_api_call("GET", _req_url, response_code=getattr(lf_r, 'last_response_code', None),
+                                   diagnostics=getattr(lf_r, 'last_diagnostics', None))
                 sys.exit(1)
 
+        self._log_api_call("GET", _req_url, response_code=getattr(lf_r, 'last_response_code', None),
+                           diagnostics=getattr(lf_r, 'last_diagnostics', None))
         return json_response
 
     def json_delete(self, _req_url, debug_=False):
@@ -350,6 +485,7 @@ class LFCliBase:
         if debug_:
             logger.debug("DELETE: {_req_url}".format(_req_url=_req_url))
         json_response = None
+        lf_r = None
         try:
             # logger.info("----- DELETE ----- ----- ----- ----- ----- ----- ----- ----- ----- ----- ")
             lf_r = LFRequest.LFRequest(url=self.lfclient_url,
@@ -362,6 +498,8 @@ class LFCliBase:
             # logger.debug(debug_printer.pformat(json_response))
             if (json_response is None) and debug_:
                 logger.debug("LFCliBase.json_delete: no entity/response, probabily status 404")
+                self._log_api_call("DELETE", _req_url, response_code=getattr(lf_r, 'last_response_code', None),
+                                   diagnostics=getattr(lf_r, 'last_diagnostics', None))
                 return None
         except ValueError as ve:
             if debug_ or self.exit_on_error:
@@ -369,8 +507,12 @@ class LFCliBase:
                 logger.debug("Exception %s:" % ve)
                 logger.debug(traceback.format_exception(ValueError, ve, ve.__traceback__, chain=True))
             if self.exit_on_error:
+                self._log_api_call("DELETE", _req_url, response_code=getattr(lf_r, 'last_response_code', None),
+                                   diagnostics=getattr(lf_r, 'last_diagnostics', None))
                 sys.exit(1)
         # print("----- ----- ----- ----- ----- ----- ----- ----- ----- ----- ----- ----- ")
+        self._log_api_call("DELETE", _req_url, response_code=getattr(lf_r, 'last_response_code', None),
+                           diagnostics=getattr(lf_r, 'last_diagnostics', None))
         return json_response
 
     @staticmethod

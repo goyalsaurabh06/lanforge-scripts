@@ -8,8 +8,11 @@
 # Written by Candela Technologies Inc.
 #  Updated by:
 
+import io
 import sys
+import csv
 import os
+import json
 import importlib
 import re
 import time
@@ -101,14 +104,31 @@ class Realm(LFCliBase):
                  _exit_on_error=False,
                  _exit_on_fail=False,
                  _proxy_str=None,
-                 _capture_signal_list=None):
+                 _capture_signal_list=None,
+                 _save_api=False,
+                 _api_log_file_name=None):
         super().__init__(_lfjson_host=lfclient_host,
                          _lfjson_port=lfclient_port,
                          _debug=debug_,
                          _exit_on_error=_exit_on_error,
                          _exit_on_fail=_exit_on_fail,
                          _proxy_str=_proxy_str,
-                         _capture_signal_list=_capture_signal_list)
+                         _capture_signal_list=_capture_signal_list,
+                         _save_api=_save_api,
+                         _api_log_file_name=_api_log_file_name)
+
+        if self.save_api:
+            # LFCliBase.__init__ already truncated the file and set up the handler
+            # (see _get_api_logger); write the CSV header only once -- checking the
+            # stream position rather than a separate flag means a second Realm/
+            # LFCliBase pointed at the same (cached) logger just skips this, since
+            # the position is already past 0
+            api_logger = lfcli_base._get_api_logger(self.api_log_filename)
+            for handler in api_logger.handlers:
+                stream = getattr(handler, 'stream', None)
+                if stream is not None and stream.tell() == 0:
+                    stream.write("timestamp,method,url,payload,response_code,diagnostics\n")
+                    stream.flush()
 
         if _capture_signal_list is None:
             _capture_signal_list = []
@@ -338,6 +358,29 @@ class Realm(LFCliBase):
         self.freq_to_chan[7075] = 415
         self.freq_to_chan[7095] = 419
         self.freq_to_chan[7115] = 423
+
+    def _log_api_call(self, method, url, data=None, response_code=None, diagnostics=None):
+        """
+        Override LFCliBase._log_api_call to format the api-call log line as a CSV
+        row -- url,payload,response_code,diagnostics -- via csv.writer (for correct
+        comma/quote escaping around JSON payloads) instead of the base class's plain
+        text. The timestamp and method columns come for free from the api logger's
+        own %(asctime)s/%(levelname)s formatting (see LFCliBase._get_api_logger).
+        Only logs when self.save_api is True. payload is only recorded for
+        POST/PUT/DELETE; GET rows record "No payload".
+        """
+        if not self.save_api:
+            return
+        if method in ("POST", "PUT", "DELETE") and data is not None:
+            payload = json.dumps(data, default=str)
+        else:
+            payload = "No payload"
+        buf = io.StringIO()
+        csv.writer(buf).writerow([url, payload,
+                                  response_code if response_code is not None else "-",
+                                  diagnostics if diagnostics is not None else "No diagnostics"])
+        api_logger = lfcli_base._get_api_logger(self.api_log_filename)
+        api_logger.log(lfcli_base._API_LOG_LEVELS[method], buf.getvalue().strip())
 
     def wait_until_ports_appear(self, sta_list=None, debug_=False, timeout=360):
         if (sta_list is None) or (len(sta_list) < 1):

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import sys
 import json
 import logging
@@ -67,6 +68,37 @@ INCLUDE_IN_README
 
 # gets the root logger
 logger = logging.getLogger()
+
+# Custom log levels for the 4 REST verbs, registered the same way logging registers
+# DEBUG/INFO/WARNING/etc, so a caller does logger.log(GET, message) / log(POST, ...)
+# / etc and %(levelname)s in a format string already reads GET/POST/PUT/DELETE --
+# no bespoke per-caller logging helper needed, and (deliberately) no monkey-patching
+# of logging.Logger with .get()/.post()/.put()/.delete() convenience methods, since
+# that would mutate stdlib behavior for every logger in the process just from
+# importing this module.
+GET = 25
+POST = 26
+PUT = 27
+DELETE = 28
+for _level_value, _level_name in ((GET, "GET"), (POST, "POST"), (PUT, "PUT"), (DELETE, "DELETE")):
+    logging.addLevelName(_level_value, _level_name)
+
+# Process-wide default for the api-call log file (consumed by LFCliBase.__init__).
+# None means api-call logging is off by default. A script that wants --save_api
+# calls enable_api_log() once; every LFCliBase-derived object constructed
+# afterward -- including profile objects (StationProfile, HTTPProfile, ...) that
+# realm.py's new_*_profile() methods create without threading _save_api through --
+# then logs to this same common file automatically, with no per-class changes.
+_api_log_filename = None
+
+
+def enable_api_log(filename=None):
+    global _api_log_filename
+    _api_log_filename = filename or os.path.join(os.path.expanduser('~'), 'lf_api_calls.csv')
+
+
+def get_api_log_filename():
+    return _api_log_filename
 
 # This class lf_logger_config should only be enstanciated in the main of the program
 # not in any anticedents (base objects)
