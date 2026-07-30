@@ -1,0 +1,95 @@
+name: Run LANforge Script
+
+# Manually run a py-scripts script against a live LANforge system.
+#
+# LANforge managers are almost always on a private lab network, not reachable
+# from GitHub-hosted cloud runners. This workflow must therefore run on a
+# self-hosted runner that lives on the same network as the target manager
+# (or otherwise has a route to it, e.g. via VPN). Register one self-hosted
+# runner per lab/network and target it with the "runner" input below.
+#
+# Trigger from the CLI, e.g.:
+#   gh workflow run run-script.yml --ref my-branch \
+#     -f script=test_l3.py \
+#     -f mgr=192.168.1.10 \
+#     -f args="--mgr_port 8080 --a_min 100 --b_min 100 --test_duration 15s" \
+#     -f runner=self-hosted
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: "Label of the self-hosted runner that can reach the LANforge manager network"
+        type: string
+        default: self-hosted
+        required: true
+      script:
+        description: "Script to run, relative to py-scripts/ (e.g. test_l3.py)"
+        type: string
+        required: true
+      mgr:
+        description: "LANforge manager IP or hostname, reachable from the chosen runner"
+        type: string
+        required: true
+      mgr_port:
+        description: "LANforge manager HTTP port, used only for the pre-flight reachability check"
+        type: string
+        default: "8080"
+        required: false
+      args:
+        description: "Additional CLI arguments to pass to the script (e.g. --mgr_port, test-specific flags)"
+        type: string
+        default: ""
+        required: false
+      python_bin:
+        description: "Python interpreter already installed on the runner, used to create the venv"
+        type: string
+        default: python3
+        required: false
+
+jobs:
+  run-script:
+    name: Run ${{ inputs.script }} against ${{ inputs.mgr }}
+    runs-on: ${{ inputs.runner }}
+    env:
+      SCRIPT: ${{ inputs.script }}
+      MGR: ${{ inputs.mgr }}
+      MGR_PORT: ${{ inputs.mgr_port }}
+      SCRIPT_ARGS: ${{ inputs.args }}
+      PYTHON_BIN: ${{ inputs.python_bin }}
+    steps:
+      - name: Check out source repository
+        uses: actions/checkout@v6
+
+      - name: Verify LANforge manager is reachable from this runner
+        shell: bash
+        run: |
+          "$PYTHON_BIN" - "$MGR" "$MGR_PORT" <<'EOF'
+          import socket
+          import sys
+
+          mgr, port = sys.argv[1], int(sys.argv[2])
+          try:
+              with socket.create_connection((mgr, port), timeout=5):
+                  pass
+          except OSError as e:
+              print(f"::error::Cannot reach LANforge manager '{mgr}:{port}' from this runner ({e}). "
+                    "This workflow must run on a self-hosted runner that is on the same network "
+                    "as the LANforge manager (or otherwise has a route to it).")
+              sys.exit(1)
+          print(f"LANforge manager '{mgr}:{port}' is reachable.")
+          EOF
+
+      - name: Create virtual environment and install dependencies
+        working-directory: py-scripts
+        shell: bash
+        run: |
+          venv_path="${GITHUB_WORKSPACE}/py-scripts/.venv"
+          "$PYTHON_BIN" update_dependencies.py --create_venv --venv_path "$venv_path"
+          echo "VENV_PATH=$venv_path" >> "$GITHUB_ENV"
+
+      - name: Run script
+        working-directory: py-scripts
+        shell: bash
+        run: |
+          source "$VENV_PATH/bin/activate"
+          python "$SCRIPT" --mgr "$MGR" $SCRIPT_ARGS
