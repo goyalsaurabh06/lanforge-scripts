@@ -203,6 +203,11 @@ class Ping(Realm):
         self.windows = 0
         self.mac = 0
         self.result_json = {}
+        self.reported_missing_endpoints = set()
+        self.endpoint_status_history = {}
+        self.endpoint_status_csv_path = os.path.join(os.getcwd(), 'endpoint_status_log.csv')
+        with open(self.endpoint_status_csv_path, 'w', newline='') as f:
+            csv.writer(f).writerow(['timestamp', 'resource_id', 'endpoint_name', 'status'])
         self.generic_endps_profile = self.new_generic_endp_profile()
         self.generic_endps_profile.type = 'lfping'
         self.generic_endps_profile.dest = self.change_target_to_ip()
@@ -459,6 +464,25 @@ class Ping(Realm):
         self.generic_endps_profile.stop_cx()
         self.stop_time = datetime.now()
 
+    def log_endpoint_status_change(self, endpoint_name, endpoint_data):
+        status = endpoint_data.get('status')
+        if self.endpoint_status_history.get(endpoint_name) == status:
+            return
+        self.endpoint_status_history[endpoint_name] = status
+
+        resource_id = ''
+        prefix = f"{self.generic_endps_profile.name_prefix}-"
+        for station in self.sta_list:
+            expected_name = f"{prefix}{station}" if station in self.real_sta_list else f"{prefix}{station.split('.')[-1]}"
+            if endpoint_name == expected_name:
+                resource_id = station.split('.')[1]
+                break
+
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        with open(self.endpoint_status_csv_path, 'a', newline='') as f:
+            csv.writer(f).writerow([timestamp, resource_id, endpoint_name, status])
+        logger.info(f"Endpoint {endpoint_name} (resource {resource_id}) status changed to {status}")
+
     def get_results(self):
         endp = "/generic/{}".format(','.join(self.generic_endps_profile.created_endp))
         logger.debug(f"GET {endp}")
@@ -466,29 +490,120 @@ class Ping(Realm):
 
         if results is None:
             logger.error(f"GET {endp} returned no response for created endpoints: {self.generic_endps_profile.created_endp}")
+            return results
 
         multiple_endpoints_requested = len(self.generic_endps_profile.created_endp) > 1
 
         if multiple_endpoints_requested and 'endpoints' in results.keys():
             results = results['endpoints']
             try:
-                returned_names = [list(d.keys())[0] for d in results]
+                returned_names = []
+                for d in results:
+                    endpoint_name = list(d.keys())[0]
+                    self.log_endpoint_status_change(endpoint_name, d[endpoint_name])
+                    returned_names.append(endpoint_name)
                 missing = [name for name in self.generic_endps_profile.created_endp if name not in returned_names]
-                if missing:
-                    logger.error(f"GET {endp} response is missing results for endpoints: {missing}")
+                newly_missing = [name for name in missing if name not in self.reported_missing_endpoints]
+                if newly_missing:
+                    logger.warning(f"GET {endp} response is missing results for endpoints: {newly_missing}")
+                    logger.warning(json.dumps(results, indent=2))
+                    self.reported_missing_endpoints.update(newly_missing)
             except Exception:
                 logger.error(f"GET {endp} 'endpoints' list is not in the expected format.")
+                return results
             return results
 
         try:
             results = results['endpoint']
+            self.log_endpoint_status_change(results['name'], results)
         except Exception:
             logger.error(f"GET {endp} response does not contain the 'endpoint' or 'endpoints' key, or the data is not in the expected format.")
             overallres = self.json_get("/generic/all")
             logger.error("GET /generic/all response:")
             logger.error(json.dumps(overallres, indent=2))
+            return results
 
         return results
+
+    def has_valid_endpoint_data(self, result_data):
+        """
+        True if result_data (as returned by get_results()) contains at least
+        one endpoint whose name isn't the 'UNKNOWN' placeholder LANforge uses
+        when a generic endpoint couldn't be tied to a real device/CX.
+        """
+        if result_data is None:
+            return False
+        if isinstance(result_data, dict):
+            return 'UNKNOWN' not in result_data.get('name', 'UNKNOWN')
+        keys = [list(d.keys())[0] for d in result_data]
+        return any('UNKNOWN' not in key for key in keys)
+
+    def wait_for_valid_endpoints(self, timeout=40, poll_interval=2):
+        """
+        Called when a poll comes back with no valid (non-UNKNOWN) generic
+        endpoints at all. Keeps retrying get_results() for up to `timeout`
+        seconds in case the loss is transient (e.g. a brief LANforge hiccup)
+        before giving up, instead of stopping the test immediately.
+
+        Returns:
+            True if a retry during the wait found valid endpoint data
+            (caller should resume normal polling), False if the whole
+            timeout elapsed with nothing valid (caller should stop the
+            test and move on to report generation).
+        """
+        logger.warning(f"No valid generic endpoints in the last poll. Waiting up to {timeout}s for them to recover before stopping the test.")
+        wait_start = datetime.now()
+        while (datetime.now() - wait_start).total_seconds() < timeout:
+            time.sleep(poll_interval)
+            if self.has_valid_endpoint_data(self.get_results()):
+                logger.info("Valid endpoint data recovered; resuming the test.")
+                return True
+        logger.error(f"No valid generic endpoints recovered after waiting {timeout}s.")
+        return False
+
+    def wait_for_ports_response(self, timeout=40, poll_interval=2):
+        """
+        Called when GET /ports/all/ returns no response. Keeps retrying for
+        up to `timeout` seconds in case the failure is transient before
+        giving up.
+
+        Returns:
+            The /ports/all/ response dict if a retry during the wait
+            succeeds, or None if the whole timeout elapsed with nothing
+            valid (caller should stop the test).
+        """
+        logger.warning(f"GET /ports/all/ returned no response. Waiting up to {timeout}s for it to recover before stopping the test.")
+        wait_start = datetime.now()
+        while (datetime.now() - wait_start).total_seconds() < timeout:
+            time.sleep(poll_interval)
+            ports_response = self.json_get('/ports/all/')
+            if ports_response is not None:
+                logger.info("GET /ports/all/ succeeded; resuming the test.")
+                return ports_response
+        logger.error(f"GET /ports/all/ still returned no response after waiting {timeout}s.")
+        return None
+
+    def wait_for_adb_response(self, timeout=40, poll_interval=2):
+        """
+        Called when GET /adb/ returns no response. Keeps retrying for up to
+        `timeout` seconds in case the failure is transient before giving up.
+
+        Returns:
+            The /adb/ response dict if a retry during the wait succeeds, or
+            None if the whole timeout elapsed with nothing valid (caller
+            should fall back to whatever it already does for a missing
+            /adb/ response).
+        """
+        logger.warning(f"GET /adb/ returned no response. Waiting up to {timeout}s for it to recover.")
+        wait_start = datetime.now()
+        while (datetime.now() - wait_start).total_seconds() < timeout:
+            time.sleep(poll_interval)
+            adb_response = self.json_get('/adb/')
+            if adb_response is not None:
+                logger.info("GET /adb/ succeeded.")
+                return adb_response
+        logger.error(f"GET /adb/ still returned no response after waiting {timeout}s.")
+        return None
 
     def generate_remarks(self, station_ping_data):
         remarks = []
@@ -869,24 +984,40 @@ class Ping(Realm):
     def get_pass_fail_list(self):
         # When csv_name is provided, for pass/fail criteria, respective values for each client will be used
         if not self.expected_passfail_val:
-            res_list = []
-            test_input_list = []
-            pass_fail_list = []
-            for client in self.report_names:
-                # Check if the client type (second word in "1.15 android samsungmob") is 'android'
-                if client.split(' ')[1] != 'Android':
-                    res_list.append(client.split(' ')[2])
-                else:
-                    logger.debug("GET /adb/")
-                    adb_response = self.json_get('/adb/')
-                    if adb_response is None:
-                        logger.error("GET /adb/ returned no response while building the pass/fail device list.")
+            # Resolve /adb/ once (not once per Android client) and only if there's
+            # at least one Android client to resolve.
+            interop_tab_data = None
+            if any(client.split(' ')[1] == 'Android' for client in self.report_names):
+                logger.debug("GET /adb/")
+                adb_response = self.json_get('/adb/')
+                if adb_response is None:
+                    logger.error("GET /adb/ returned no response while building the pass/fail device list.")
+                    adb_response = self.wait_for_adb_response(timeout=40)
+                if adb_response is not None:
                     interop_tab_data = adb_response["devices"]
+
+            res_list = []
+            for client in self.report_names:
+                device_name = client.split(' ')[2]
+                # Check if the client type (second word in "1.15 android samsungmob") is 'android'
+                matched_name = None
+                if client.split(' ')[1] == 'Android' and interop_tab_data is not None:
                     for dev in interop_tab_data:
                         for item in dev.values():
                             # Extract the username from the client string (e.g., 'samsungmob' from "1.15 android samsungmob")
-                            if item['user-name'] == client.split(' ')[2]:
-                                res_list.append(item['name'].split('.')[2])
+                            if item['user-name'] == device_name:
+                                matched_name = item['name'].split('.')[2]
+                                break
+                        if matched_name is not None:
+                            break
+                # Always append exactly one entry per client, even when the ADB
+                # lookup can't resolve a match, so res_list stays positionally
+                # aligned with self.report_names/self.packets_sent/etc. — an
+                # unresolved Android client previously left a gap here, which
+                # shifted every pass/fail verdict after it onto the wrong device.
+                res_list.append(matched_name if matched_name is not None else device_name)
+
+            test_input_list = []
             with open(self.csv_name, mode='r') as file:
                 reader = csv.DictReader(file)
                 rows = list(reader)
@@ -898,9 +1029,10 @@ class Ping(Realm):
                         found = True
                         break
                 if not found:
-                    logging.info(f"Ping result for device {device} not found in CSV. Using default packet loss = 10%")
+                    logging.warning(f"Ping Packet Loss % for device {device} not found in Threshold CSV. Using default packet loss = 10%")
                     test_input_list.append(10)
-            for i in range(len(test_input_list)):
+            pass_fail_list = []
+            for i in range(len(self.report_names)):
                 if self.packets_sent[i] == 0.0:
                     pass_fail_list.append('FAIL')
                 elif float(test_input_list[i]) >= self.packet_loss_percent[i]:
@@ -920,11 +1052,92 @@ class Ping(Realm):
                     pass_fail_list.append("FAIL")
         return pass_fail_list, test_input_list
 
+    def build_device_summary(self, device, device_data):
+        """
+        Safely derives the summary fields used in report tables/graphs for one device.
+
+        device_data can be sparse (empty ping_stats, rtts made up entirely of the
+        0.11 "no data" placeholder, missing keys) if the endpoint never reported
+        anything, without the entry itself being absent from self.result_json.
+        Every field below falls back to a safe default (0 / 'NA' / 'Unknown')
+        instead of raising, so every device in self.result_json always
+        contributes exactly one entry to each summary list — keeping them
+        aligned with self.result_json's iteration order, which
+        generate_uptime_graph() relies on for per-device color mapping.
+        """
+        device_data = device_data or {}
+        ping_stats = device_data.get('ping_stats') or {}
+        sent_list = ping_stats.get('sent') or []
+        received_list = ping_stats.get('received') or []
+        dropped_list = ping_stats.get('dropped') or []
+
+        def last_int(values):
+            try:
+                return int(values[-1])
+            except (IndexError, TypeError, ValueError):
+                return 0
+
+        channel_value = str(device_data.get('channel', ''))
+        device_channel = 'NA' if channel_value in ('', '0', '-1') else device_data.get('channel', channel_value)
+
+        try:
+            total_sent = float(device_data.get('sent', 0) or 0)
+        except (TypeError, ValueError):
+            total_sent = 0
+        if total_sent == 0 or not sent_list:
+            packet_loss_percent = 0
+        else:
+            try:
+                last_sent = float(sent_list[-1])
+                packet_loss_percent = (float(dropped_list[-1]) / last_sent * 100) if last_sent != 0 else 0
+            except (IndexError, TypeError, ValueError):
+                packet_loss_percent = 0
+
+        try:
+            t_rtt_values = sorted(v for v in (device_data.get('rtts') or {}).values() if v != 0.11)
+        except TypeError:
+            t_rtt_values = []
+        if t_rtt_values:
+            device_avg = float(sum(t_rtt_values) / len(t_rtt_values))
+            device_min = float(min(t_rtt_values))
+            device_max = float(max(t_rtt_values))
+        else:
+            device_avg = device_min = device_max = 0
+
+        device_name = device_data.get('name', device)
+        device_os = device_data.get('os', 'Unknown')
+        if device_os == 'Virtual':
+            report_name = '{} {}'.format(device, device_os)[0:25]
+        else:
+            report_name = '{} {} {}'.format(device, device_os, device_name)
+
+        return {
+            'packets_sent': last_int(sent_list),
+            'packets_received': last_int(received_list),
+            'packets_dropped': last_int(dropped_list),
+            'device_name': device_name,
+            'device_mode': device_data.get('mode', 'NA'),
+            'device_channel': device_channel,
+            'device_mac': device_data.get('mac', 'NA'),
+            'device_ip': device_data.get('ip', 'NA'),
+            'device_bssid': device_data.get('bssid', 'NA'),
+            'device_ssid': device_data.get('ssid', 'NA'),
+            'packet_loss_percent': packet_loss_percent,
+            'device_avg': device_avg,
+            'device_min': device_min,
+            'device_max': device_max,
+            'report_name': report_name,
+            'remarks': device_data.get('remarks') or [],
+        }
+
     def generate_report(self, result_json=None, result_dir='Ping_Plotter_Test_Report', report_path='', config_devices='', group_device_map=None):
         if group_device_map is None:
             group_device_map = {}
         if result_json is not None:
             self.result_json = result_json
+        if not self.result_json:
+            logger.error("No ping data was collected for any device; skipping report generation.")
+            return
         logging.info('Generating Report')
         # graph for the above
         self.packets_sent = []
@@ -951,58 +1164,32 @@ class Ping(Realm):
             del self.result_json['status']
 
         for device, device_data in self.result_json.items():
-            self.packets_sent.append(int(device_data['ping_stats']['sent'][-1]))
-            self.packets_received.append(int(device_data['ping_stats']['received'][-1]))
-            self.packets_dropped.append(int(device_data['ping_stats']['dropped'][-1]))
-            self.device_names.append(device_data['name'])
-            self.device_modes.append(device_data['mode'])
-            channel_value = str(device_data.get('channel', ''))
-            if channel_value in ('', '0', '-1'):
-                self.device_channels.append('NA')
-            else:
-                self.device_channels.append(device_data['channel'])
-            self.device_mac.append(device_data['mac'])
-            self.device_ips.append(device_data['ip'])
-            self.device_bssid.append(device_data['bssid'])
-            self.device_ssid.append(device_data['ssid'])
-            if float(device_data['sent']) == 0:
-                self.packet_loss_percent.append(0)
-                # self.client_unrechability_percent.append(0)
-            else:
-                if device_data['ping_stats']['sent'] == [] or float(device_data['ping_stats']['sent'][-1]) == 0:
-                    self.packet_loss_percent.append(0)
-                else:
-                    self.packet_loss_percent.append(float(device_data['ping_stats']['dropped'][-1]) / float(device_data['ping_stats']['sent'][-1]) * 100)
-                # self.client_unrechability_percent.append(float(device_data['dropped']) / (float(self.duration) * 60) * 100)
-            t_rtt_values = sorted(list(device_data['rtts'].values()))
-            if t_rtt_values != []:
-                while (0.11 in t_rtt_values):
-                    t_rtt_values.remove(0.11)
-                self.device_avg.append(float(sum(t_rtt_values) / len(t_rtt_values)))
-                self.device_min.append(float(min(t_rtt_values)))
-                self.device_max.append(float(max(t_rtt_values)))
-            else:
-                self.device_avg.append(0)
-                self.device_min.append(0)
-                self.device_max.append(0)
-            # self.device_avg.append(float(sum(t_rtt_values) / len(t_rtt_values)))
-            # self.device_min.append(float(device_data['min_rtt'].replace(',', '')))
-            # self.device_max.append(float(device_data['max_rtt'].replace(',', '')))
-            # self.device_avg.append(float(device_data['avg_rtt'].replace(',', '')))
-            if device_data['os'] == 'Virtual':
-                self.report_names.append('{} {}'.format(device, device_data['os'])[0:25])
-            else:
-                self.report_names.append('{} {} {}'.format(device, device_data['os'], device_data['name']))
-            if device_data['remarks'] != []:
-                self.device_names_with_errors.append(device_data['name'])
+            summary = self.build_device_summary(device, device_data)
+            self.packets_sent.append(summary['packets_sent'])
+            self.packets_received.append(summary['packets_received'])
+            self.packets_dropped.append(summary['packets_dropped'])
+            self.device_names.append(summary['device_name'])
+            self.device_modes.append(summary['device_mode'])
+            self.device_channels.append(summary['device_channel'])
+            self.device_mac.append(summary['device_mac'])
+            self.device_ips.append(summary['device_ip'])
+            self.device_bssid.append(summary['device_bssid'])
+            self.device_ssid.append(summary['device_ssid'])
+            self.packet_loss_percent.append(summary['packet_loss_percent'])
+            self.device_avg.append(summary['device_avg'])
+            self.device_min.append(summary['device_min'])
+            self.device_max.append(summary['device_max'])
+            self.report_names.append(summary['report_name'])
+            if summary['remarks']:
+                self.device_names_with_errors.append(summary['device_name'])
                 self.devices_with_errors.append(device)
-                self.remarks.append(','.join(device_data['remarks']))
-            logging.info('{} {} {}'.format(*self.packets_sent,
-                                           *self.packets_received,
-                                           *self.packets_dropped))
-            logging.info('{} {} {}'.format(*self.device_min,
-                                           *self.device_max,
-                                           *self.device_avg))
+                self.remarks.append(','.join(summary['remarks']))
+            logging.debug('{} {} {}'.format(*self.packets_sent,
+                                            *self.packets_received,
+                                            *self.packets_dropped))
+            logging.debug('{} {} {}'.format(*self.device_min,
+                                            *self.device_max,
+                                            *self.device_avg))
 
         logging.info('Generating Report')
 
@@ -1014,6 +1201,9 @@ class Ping(Realm):
         report_path_date_time = report.get_path_date_time()
         logging.info('path: {}'.format(report_path))
         logging.info('path_date_time: {}'.format(report_path_date_time))
+
+        if os.path.exists(self.endpoint_status_csv_path):
+            shutil.move(self.endpoint_status_csv_path, os.path.join(report_path_date_time, 'endpoint_status_log.csv'))
 
         # setting report title
         report.set_title('Ping Plotter Test Report')
@@ -1364,6 +1554,9 @@ class Ping(Realm):
         adb_response = self.json_get('/adb/')
         if adb_response is None:
             logger.error("GET /adb/ returned no response while building the device report list.")
+            adb_response = self.wait_for_adb_response(timeout=40)
+            if adb_response is None:
+                return None
         interop_tab_data = adb_response["devices"]
         for i in range(len(report_names)):
             for j in groupdevlist:
@@ -1371,7 +1564,7 @@ class Ping(Realm):
                 # - report_names[i].split(" ")[2] gives 'test3' (device name)
                 # - report_names[i].split(" ")[1] gives 'Lin' (OS type)
                 # This condition filters out Android clients and matches device name with j
-                if j == report_names[i].split(" ")[2] and report_names[i].split(" ")[1] != 'android':
+                if j == report_names[i].split(" ")[2] and report_names[i].split(" ")[1] != 'Android':
                     report_name.append(report_names[i])
                     macids.append(device_mac[i])
                     device_ip.append(device_ips[i])
@@ -1557,18 +1750,20 @@ class Ping(Realm):
             t_init = datetime.now()
             try:
                 result_data = self.get_results()
-                if isinstance(result_data, dict):
-                    if 'UNKNOWN' in result_data['name']:
-                        raise ValueError("There are no valid generic endpoints to run the test")
-                else:
-                    keys = [list(d.keys())[0] for d in result_data]
-                    keys = [key for key in keys if 'UNKNOWN' not in key]
-                    if len(keys) == 0:
-                        raise ValueError("There are no valid generic endpoints to run the test")
+                if result_data is None:
+                    logger.warning("get_results() returned no data this poll; skipping to the next iteration.")
+                    time.sleep(1)
+                    loop_timer += abs(t_init - datetime.now()).total_seconds()
+                    continue
+                if not self.has_valid_endpoint_data(result_data):
+                    raise ValueError("There are no valid generic endpoints to run the test")
             except ValueError as e:
                 logger.info(result_data)
                 logger.error(e)
-                exit(0)
+                if self.wait_for_valid_endpoints(timeout=40):
+                    loop_timer += abs(t_init - datetime.now()).total_seconds()
+                    continue
+                break
             # logging.info(result_data)
             # Robot battery management — check every 300 seconds
             if self.robot is not None and not self.do_bandsteering and monitor_charge_time is not None:
@@ -1953,16 +2148,6 @@ class Ping(Realm):
             self.coordinates_completed.append(coord)
             self.currentcoordinate = coord
 
-            logger.debug("GET /ports/all/")
-            ports_response = self.json_get('/ports/all/')
-            if ports_response is None:
-                logger.error(f"GET /ports/all/ returned no response while updating port data at coordinate {coord}.")
-            ports_data_dict = ports_response['interfaces']
-            ports_data = {}
-            for ports in ports_data_dict:
-                port, port_data = list(ports.keys())[0], list(ports.values())[0]
-                ports_data[port] = port_data
-
             logging.info("rotationlist {}".format(self.angle_list))
             for j in range(len(self.angle_list)):
                 duration = initial_duration * 60
@@ -2114,6 +2299,9 @@ class Ping(Realm):
             group_device_map = {}
         if result_json is not None:
             self.result_json = result_json
+        if not self.coordinate_json:
+            logger.error("No ping data was collected for any coordinate; skipping report generation.")
+            return
         logging.info('Generating Report')
 
         report = lf_report(_output_pdf='interop_ping.pdf',
@@ -2124,6 +2312,9 @@ class Ping(Realm):
         report_path_date_time = report.get_path_date_time()
         logging.info('path: {}'.format(report_path))
         logging.info('path_date_time: {}'.format(report_path_date_time))
+
+        if os.path.exists(self.endpoint_status_csv_path):
+            shutil.move(self.endpoint_status_csv_path, os.path.join(report_path_date_time, 'endpoint_status_log.csv'))
 
         # setting report title
         report.set_title('Ping Plotter Test Report')
@@ -2243,53 +2434,26 @@ class Ping(Realm):
                     del self.result_json['status']
 
                 for device, device_data in self.result_json.items():
-                    print("deviceeee", device, "deviceedataaa", device_data)
-                    self.packets_sent.append(int(device_data['ping_stats']['sent'][-1]))
-                    self.packets_received.append(int(device_data['ping_stats']['received'][-1]))
-                    self.packets_dropped.append(int(device_data['ping_stats']['dropped'][-1]))
-                    self.device_names.append(device_data['name'])
-                    self.device_modes.append(device_data['mode'])
-                    channel_value = str(device_data.get('channel', ''))
-                    if channel_value in ('', '0', '-1'):
-                        self.device_channels.append('NA')
-                    else:
-                        self.device_channels.append(device_data['channel'])
-                    self.device_mac.append(device_data['mac'])
-                    self.device_ips.append(device_data['ip'])
-                    self.device_bssid.append(device_data['bssid'])
-                    self.device_ssid.append(device_data['ssid'])
-                    if float(device_data['sent']) == 0:
-                        self.packet_loss_percent.append(0)
-                        # self.client_unrechability_percent.append(0)
-                    else:
-                        if device_data['ping_stats']['sent'] == [] or float(device_data['ping_stats']['sent'][-1]) == 0:
-                            self.packet_loss_percent.append(0)
-                        else:
-                            self.packet_loss_percent.append(float(device_data['ping_stats']['dropped'][-1]) / float(device_data['ping_stats']['sent'][-1]) * 100)
-                        # self.client_unrechability_percent.append(float(device_data['dropped']) / (float(self.duration) * 60) * 100)
-                    t_rtt_values = sorted(list(device_data['rtts'].values()))
-                    if t_rtt_values != []:
-                        while (0.11 in t_rtt_values):
-                            t_rtt_values.remove(0.11)
-                        self.device_avg.append(float(sum(t_rtt_values) / len(t_rtt_values)))
-                        self.device_min.append(float(min(t_rtt_values)))
-                        self.device_max.append(float(max(t_rtt_values)))
-                    else:
-                        self.device_avg.append(0)
-                        self.device_min.append(0)
-                        self.device_max.append(0)
-                    # self.device_avg.append(float(sum(t_rtt_values) / len(t_rtt_values)))
-                    # self.device_min.append(float(device_data['min_rtt'].replace(',', '')))
-                    # self.device_max.append(float(device_data['max_rtt'].replace(',', '')))
-                    # self.device_avg.append(float(device_data['avg_rtt'].replace(',', '')))
-                    if device_data['os'] == 'Virtual':
-                        self.report_names.append('{} {}'.format(device, device_data['os'])[0:25])
-                    else:
-                        self.report_names.append('{} {} {}'.format(device, device_data['os'], device_data['name']))
-                    if device_data['remarks'] != []:
-                        self.device_names_with_errors.append(device_data['name'])
+                    summary = self.build_device_summary(device, device_data)
+                    self.packets_sent.append(summary['packets_sent'])
+                    self.packets_received.append(summary['packets_received'])
+                    self.packets_dropped.append(summary['packets_dropped'])
+                    self.device_names.append(summary['device_name'])
+                    self.device_modes.append(summary['device_mode'])
+                    self.device_channels.append(summary['device_channel'])
+                    self.device_mac.append(summary['device_mac'])
+                    self.device_ips.append(summary['device_ip'])
+                    self.device_bssid.append(summary['device_bssid'])
+                    self.device_ssid.append(summary['device_ssid'])
+                    self.packet_loss_percent.append(summary['packet_loss_percent'])
+                    self.device_avg.append(summary['device_avg'])
+                    self.device_min.append(summary['device_min'])
+                    self.device_max.append(summary['device_max'])
+                    self.report_names.append(summary['report_name'])
+                    if summary['remarks']:
+                        self.device_names_with_errors.append(summary['device_name'])
                         self.devices_with_errors.append(device)
-                        self.remarks.append(','.join(device_data['remarks']))
+                        self.remarks.append(','.join(summary['remarks']))
                     logging.info('{} {} {}'.format(*self.packets_sent,
                                                    *self.packets_received,
                                                    *self.packets_dropped))
@@ -3230,15 +3394,6 @@ connectivity problems.
 
     # start generate endpoint
     ping.start_generic()
-    logger.debug("GET /ports/all/")
-    ports_response = ping.json_get('/ports/all/')
-    if ports_response is None:
-        logger.error("GET /ports/all/ returned no response while fetching initial port data.")
-    ports_data_dict = ports_response['interfaces']
-    ports_data = {}
-    for ports in ports_data_dict:
-        port, port_data = list(ports.keys())[0], list(ports.values())[0]
-        ports_data[port] = port_data
 
     duration = duration * 60
 
@@ -3258,26 +3413,30 @@ connectivity problems.
         t_init = datetime.now()
         try:
             result_data = ping.get_results()
-            if isinstance(result_data, dict):
-                if 'UNKNOWN' in result_data['name']:
-                    raise ValueError("There are no valid generic endpoints to run the test")
-            else:
-                keys = [list(d.keys())[0] for d in result_data]
-                keys = [key for key in keys if 'UNKNOWN' not in key]
-                if len(keys) == 0:
-                    raise ValueError("There are no valid generic endpoints to run the test")
+            if result_data is None:
+                logger.warning("get_results() returned no data this poll; skipping to the next iteration.")
+                time.sleep(1)
+                loop_timer += abs(t_init - datetime.now()).total_seconds()
+                continue
+            if not ping.has_valid_endpoint_data(result_data):
+                raise ValueError("There are no valid generic endpoints to run the test")
         except ValueError as e:
             logger.info(result_data)
             logger.error(e)
-            exit(0)
+            if ping.wait_for_valid_endpoints(timeout=40):
+                loop_timer += abs(t_init - datetime.now()).total_seconds()
+                continue
+            break
         if args.virtual:
             logger.debug("GET /ports/all/")
             ports_response = ping.json_get('/ports/all/')
             if ports_response is None:
-                logger.error("GET /ports/all/ returned no response while polling virtual station port data.")
-            ports_data_dict = ports_response['interfaces']
+                ports_response = ping.wait_for_ports_response(timeout=40)
+                if ports_response is None:
+                    logger.error("GET /ports/all/ returned no response while polling virtual station port data. Stopping the test.")
+                    exit(1)
             ports_data = {}
-            for ports in ports_data_dict:
+            for ports in ports_response['interfaces']:
                 port, port_data = list(ports.keys())[0], list(ports.values())[0]
                 ports_data[port] = port_data
             if isinstance(result_data, dict):

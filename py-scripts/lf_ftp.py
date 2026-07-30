@@ -278,12 +278,19 @@ class FtpTest(LFCliBase):
         self.uc_avg = []
         self.failed_cx = []
         self.tracking_map = {}
+        self.device_issue_log = []
+        self.actual_monitoring_duration_seconds = 0
+        self.missing_cx_logged = set()
+        self.missing_device_logged = set()
+        self.cx_status_log = {}
+        self.monitoring_start_time = None
         self.uc_min = []
         self.uc_max = []
         self.url_data = []
         self.bytes_rd = []
         self.rx_rate = []
         self.total_err = []
+        self.status_list = []
         self.channel_list = []
         self.mode_list = []
         self.cx_list = []
@@ -1085,10 +1092,74 @@ class FtpTest(LFCliBase):
             self.bytes_rd[i] = max(self.max_bytes_rd[i], self.bytes_rd[i])
         return list(dataset)
 
+    def record_device_issue(self, device, issue):
+        self.device_issue_log.append({
+            "Time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "Device": device,
+            "Issue": issue,
+        })
+
+    def monitoring_elapsed_seconds(self):
+        if not self.monitoring_start_time:
+            return 0
+        return (datetime.now() - self.monitoring_start_time).total_seconds()
+
+    def track_cx_status(self, cx, status):
+        # Ignore CX status for the first 10s of monitoring: CXs are still settling into "Run"
+        # right after the test starts (e.g. Login/Wait), and treating that startup ramp-up as a
+        # real status change/recovery would be a false positive. Nothing is recorded - not even
+        # a baseline - during this window, so the first status seen once it ends becomes the
+        # reference point rather than being compared against transient startup states.
+        if self.monitoring_elapsed_seconds() < 10:
+            return
+        previous = self.cx_status_log.get(cx)
+        if previous is not None and previous != status:
+            if status.lower() != 'run':
+                logger.warning("CX '{}' status changed: {} -> {}".format(cx, previous, status))
+                self.record_device_issue(cx, "Status changed: {} -> {}".format(previous, status))
+            elif previous.lower() != 'run':
+                logger.info("CX '{}' recovered: {} -> {}".format(cx, previous, status))
+                self.record_device_issue(cx, "Recovered: {} -> {}".format(previous, status))
+        self.cx_status_log[cx] = status
+
+    def format_monitoring_duration(self):
+        total_seconds = int(self.actual_monitoring_duration_seconds)
+        minutes, seconds = divmod(total_seconds, 60)
+        return "{}m {}s".format(minutes, seconds)
+
+    def wait_for_any_cx_recovery(self, timeout=40, poll_interval=5):
+        """
+        Polls device data (via get_device_details) while every created CX is missing, giving
+        devices a chance to reappear before the caller gives up on this monitoring iteration.
+        Also honors a user-initiated stop from the webgui during the wait, so a stop request
+        isn't delayed by the full retry window.
+
+        Returns 'recovered' as soon as at least one CX responds again, 'stopped' if the user
+        stops the test during the wait, or 'timeout' if `timeout` seconds elapse with every CX
+        still missing.
+        """
+        wait_start = datetime.now()
+        while (datetime.now() - wait_start).total_seconds() < timeout:
+            time.sleep(poll_interval)
+            if self.dowebgui == "True":
+                with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(
+                        self.host, self.test_name), 'r') as file:
+                    data = json.load(file)
+                    if data["status"] != "Running":
+                        logger.info("Test is stopped by the user during the device-recovery wait.")
+                        return 'stopped'
+            self.get_device_details()
+            elapsed = (datetime.now() - wait_start).total_seconds()
+            if len(self.missing_cx_logged) < len(self.cx_list):
+                logger.info("Device(s) responded again after {:.0f}s, resuming.".format(elapsed))
+                return 'recovered'
+            logger.warning("Still no devices responding after {:.0f}s, retrying...".format(elapsed))
+        return 'timeout'
+
     # FOR WEB-UI // function usd to fetch runtime values and fill the csv.
 
     def monitor_for_runtime_csv(self):
-
+        self.monitoring_start_time = datetime.now()
         time_now = datetime.now()
         start_time = time_now.strftime("%d/%m %I:%M:%S %p")
         duration = self.traffic_duration
@@ -1160,6 +1231,23 @@ class FtpTest(LFCliBase):
             # bytes_rd = self.json_get("layer4/list?fields=bytes-rd")
             # Calling function to get devices data to append in ftp_datavalues.csv during runtime
             self.get_device_details()
+
+            # If every CX has stopped responding, retry for up to 40 seconds before giving up
+            # on this monitor loop. This does not fail the test: the loop just ends gracefully
+            # and execution continues with whatever data was already collected.
+            if self.cx_list and len(self.missing_cx_logged) == len(self.cx_list):
+                logger.warning("All devices have stopped responding during monitoring, retrying "
+                               "for up to 40 seconds before ending the monitor loop.")
+                recovery = self.wait_for_any_cx_recovery(timeout=40, poll_interval=5)
+                if recovery == 'stopped':
+                    test_stopped_by_user = True
+                    break
+                elif recovery == 'timeout':
+                    logger.error("No devices responded within 40 seconds during monitoring, "
+                                 "ending the monitor loop gracefully; the test will continue with "
+                                 "the data collected so far.")
+                    break
+
             self.data["client"] = self.cx_list
             self.data["MAC"] = self.mac_id_list
             self.data["Channel"] = self.channel_list
@@ -1274,6 +1362,7 @@ class FtpTest(LFCliBase):
         except Exception:
             logger.error("All l4 data not found")
 
+        self.actual_monitoring_duration_seconds += (datetime.now() - self.monitoring_start_time).total_seconds()
         return test_stopped_by_user
 
     def get_layer4_data(self):
@@ -1285,7 +1374,7 @@ class FtpTest(LFCliBase):
             dict: mapping of metric names to lists of values, one per CX.
         """
         try:
-            url_str = 'layer4/{}/list?fields=uc-avg,uc-max,uc-min,total-urls,rx rate (1m),bytes-rd,total-err'.format(','.join(self.cx_list))
+            url_str = 'layer4/{}/list?fields=uc-avg,uc-max,uc-min,total-urls,rx rate (1m),bytes-rd,total-err,status'.format(','.join(self.cx_list))
             l4_data = self.local_realm.json_get(url_str)['endpoint']
         except Exception:
             logger.error("NO  L4 endpoint found")
@@ -1297,7 +1386,8 @@ class FtpTest(LFCliBase):
             'url_times': [],
             'rx_rate': [],
             'bytes_rd': [],
-            'total_err': []
+            'total_err': [],
+            'status': []
         }
         cx_list = self.cx_list
         idx = 0
@@ -1315,10 +1405,20 @@ class FtpTest(LFCliBase):
                         l4_dict['rx_rate'].append(value['rx rate (1m)'])
                         l4_dict['bytes_rd'].append(value['bytes-rd'])
                         l4_dict['total_err'].append(value['total-err'])
+                        l4_dict['status'].append(value['status'])
+                        self.track_cx_status(cx, value['status'])
                         cx_found = True
             if not cx_found:
-                logger.info("apending default for http %s", cx)
-                self.failed_cx.append(cx)
+                if cx not in self.missing_cx_logged:
+                    logger.warning(
+                        "CX '{}' is missing from the monitoring data, the device may have "
+                        "disconnected or its connection was not created. Continuing the test "
+                        "with the remaining devices.\n"
+                        "URL     : {}\n"
+                        "Response: {}".format(cx, url_str, l4_data))
+                    self.missing_cx_logged.add(cx)
+                    self.failed_cx.append(cx)
+                    self.record_device_issue(cx, "CX missing from monitoring data")
                 l4_dict['uc_avg_data'].append(0 if not self.tracking_map else self.tracking_map['uc_avg_data'][idx])
                 l4_dict['uc_max_data'].append(0 if not self.tracking_map else self.tracking_map['uc_max_data'][idx])
                 l4_dict['uc_min_data'].append(0 if not self.tracking_map else self.tracking_map['uc_min_data'][idx])
@@ -1326,6 +1426,17 @@ class FtpTest(LFCliBase):
                 l4_dict['rx_rate'].append(0 if not self.tracking_map else self.tracking_map['rx_rate'][idx])
                 l4_dict['bytes_rd'].append(0 if not self.tracking_map else self.tracking_map['bytes_rd'][idx])
                 l4_dict['total_err'].append(0 if not self.tracking_map else self.tracking_map['total_err'][idx])
+                l4_dict['status'].append('Stopped')
+                # Don't route through track_cx_status here: the "CX missing" warning/issue
+                # above already records this event, so this just keeps cx_status_log's baseline
+                # in sync (as 'Stopped') without writing a second, redundant issue-log entry.
+                # Still respects the 10s grace period so a CX that's merely slow to come up
+                # doesn't seed a false "Stopped -> Run" recovery the moment it starts.
+                if self.monitoring_elapsed_seconds() >= 10:
+                    self.cx_status_log[cx] = 'Stopped'
+            elif cx in self.missing_cx_logged:
+                logger.info("CX '{}' data is available again.".format(cx))
+                self.missing_cx_logged.discard(cx)
             idx += 1
         self.tracking_map = l4_dict.copy()
 
@@ -1346,6 +1457,7 @@ class FtpTest(LFCliBase):
         self.rx_rate = l4_data["rx_rate"]
         self.total_err = l4_data["total_err"]
         self.url_data = l4_data["url_times"]
+        self.status_list = l4_data["status"]
         dataset = l4_data["bytes_rd"]
         self.bytes_rd = [float(f"{(i / 1000000): .4f}") for i in dataset]
         urls_downloaded = []
@@ -1371,45 +1483,37 @@ class FtpTest(LFCliBase):
 
         for sta in station_names:
             if sta in interfaces_dict:
-                if "dBm" in interfaces_dict[sta]['signal']:
-                    self.rssi_list.append(interfaces_dict[sta]['signal'].split(" ")[0])
+                if sta in self.missing_device_logged:
+                    logger.info("Signal data for device '{}' is available again.".format(sta))
+                    self.missing_device_logged.discard(sta)
+                data = interfaces_dict[sta]
+                if "dBm" in data['signal']:
+                    self.rssi_list.append(data['signal'].split(" ")[0])
                 else:
-                    self.rssi_list.append(interfaces_dict[sta]['signal'])
-            else:
-                self.rssi_list.append('-')
-        for sta in station_names:
-            if sta in interfaces_dict:
-                self.tx_rate.append(interfaces_dict[sta]['tx-rate'])
-            else:
-                self.tx_rate.append('-')
-        for sta in station_names:
-            if sta in interfaces_dict:
-                self.port_rx_rate.append(interfaces_dict[sta]['rx-rate'])
-            else:
-                self.port_rx_rate.append('-')
-        for sta in station_names:
-            if sta in interfaces_dict:
-                channel_value = str(interfaces_dict[sta].get('channel', ''))
+                    self.rssi_list.append(data['signal'])
+                self.tx_rate.append(data['tx-rate'])
+                self.port_rx_rate.append(data['rx-rate'])
+                channel_value = str(data.get('channel', ''))
                 if channel_value in ('', '0', '-1'):
                     self.channel_list.append('NA')
                 else:
-                    self.channel_list.append(interfaces_dict[sta]['channel'])
+                    self.channel_list.append(data['channel'])
+                self.mode_list.append(data['mode'])
+                self.ssid_list.append(data['ssid'])
+                self.bssid_list.append(data['ap'])
             else:
+                if sta not in self.missing_device_logged:
+                    logger.warning(
+                        "Signal data for device '{}' is unavailable, it may have disconnected. "
+                        "Continuing the test with the remaining devices.".format(sta))
+                    self.missing_device_logged.add(sta)
+                    self.record_device_issue(sta, "Signal data unavailable (device may have disconnected)")
+                self.rssi_list.append('-')
+                self.tx_rate.append('-')
+                self.port_rx_rate.append('-')
                 self.channel_list.append('-')
-        for sta in station_names:
-            if sta in interfaces_dict:
-                self.mode_list.append(interfaces_dict[sta]['mode'])
-            else:
                 self.mode_list.append('-')
-        for sta in station_names:
-            if sta in interfaces_dict:
-                self.ssid_list.append(interfaces_dict[sta]['ssid'])
-            else:
                 self.ssid_list.append('-')
-        for sta in station_names:
-            if sta in interfaces_dict:
-                self.bssid_list.append(interfaces_dict[sta]['ap'])
-            else:
                 self.bssid_list.append('-')
 
     # Updates the status in the running.json file while running a test from the Web UI
@@ -2471,10 +2575,14 @@ class FtpTest(LFCliBase):
                 for coord, robot_info in self.robot_data.items():
                     self.build_graphs_and_table(coord, None, robot_info, client_list)
             # Finalizing the report after robot test graphs and tables
+            if self.device_issue_log:
+                issues_df = pd.DataFrame(self.device_issue_log)
+                issues_df.to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
             self.report.build_footer()
             html_file = self.report.write_html()
             logger.info(f"Returned file {html_file}")
             self.report.write_pdf()
+            logger.info("Monitoring Duration: {}".format(self.format_monitoring_duration()))
             return
         # self.report.set_obj_html("PASS/FAIL Results",
         #                          "This Table will give Pass/Fail results.")
@@ -2650,11 +2758,15 @@ class FtpTest(LFCliBase):
                 self.report.build_objective()
         if iot_summary:
             self.build_iot_report_section(self.report, iot_summary)
+        if self.device_issue_log:
+            issues_df = pd.DataFrame(self.device_issue_log)
+            issues_df.to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
         self.report.build_footer()
         html_file = self.report.write_html()
         logger.info("returned file {}".format(html_file))
         logger.info(html_file)
         self.report.write_pdf()
+        logger.info("Monitoring Duration: {}".format(self.format_monitoring_duration()))
 
         # The following lines can be used when the kpi results are needed
         # self.kpi_results

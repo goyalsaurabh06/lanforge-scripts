@@ -75,7 +75,6 @@ realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
 lf_report_pdf = importlib.import_module("py-scripts.lf_report")
 lf_graph = importlib.import_module("py-scripts.lf_graph")
-LFUtils = importlib.import_module("py-json.LANforge.LFUtils")
 logger = logging.getLogger(__name__)
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 
@@ -170,6 +169,49 @@ class InteropPortReset(Realm):
         # logging.basicConfig(filename='port_reset.log', filemode='w', format='%(asctime)s - %(message)s',
         #                     level=logging.INFO, force=True)
 
+    def json_get_with_retry(self, url, wait_time=40, poll_interval=5, debug_=False):
+        """
+        Calls self.json_get(url), retrying every poll_interval seconds for up
+        to wait_time seconds if LANforge returns no response.
+        """
+        start_time = time.time()
+        response = self.json_get(url, debug_=debug_)
+        while response is None and (time.time() - start_time) < wait_time:
+            logging.warning(f"GET {url} returned no response from LANforge; retrying...")
+            time.sleep(poll_interval)
+            response = self.json_get(url, debug_=debug_)
+
+        if response is None:
+            logging.error(
+                f"GET {url} returned no response from LANforge after waiting "
+                f"{wait_time} seconds."
+            )
+
+        return response
+
+    def change_port_to_ip(self, upstream_port):
+        # Resolves an ethernet port name (e.g. "eth1") to its IP via LANforge, used
+        # for --mgr_ip. This is only called once, at test start, and we cannot
+        # proceed without a resolved manager IP, so retry for a while and then
+        # abort instead of silently continuing with an unresolved port name.
+        if upstream_port.count('.') != 3:
+            target_port_list = self.name_to_eid(upstream_port)
+            shelf, resource, port, _ = target_port_list
+            response = self.json_get_with_retry(f'/port/{shelf}/{resource}/{port}?fields=ip')
+            try:
+                upstream_port = response['interface']['ip']
+            except (TypeError, KeyError) as e:
+                logging.error(
+                    f"change_port_to_ip: could not resolve upstream port '{upstream_port}' to an IP; LANforge "
+                    f"response is not in expected format ({e}). Data received: {response}")
+                logging.critical("Aborting the test: a valid manager IP is required to proceed.")
+                exit(1)
+            logging.info(f"Upstream port IP {upstream_port}")
+        else:
+            logging.info(f"Upstream port IP {upstream_port}")
+
+        return upstream_port
+
     def selecting_devices_from_available(self):
         # If device list is not provided by user, then it shows the available devices to choose from
         if self.device_list is None:
@@ -236,8 +278,14 @@ class InteropPortReset(Realm):
                     file_names[file_name] = file_path
 
     def get_last_wifi_msg(self):
-        a = self.json_get("/wifi-msgs/last/1", debug_=True)
-        last = a['wifi-messages']['time-stamp']
+        a = self.json_get_with_retry("/wifi-msgs/last/1", debug_=True)
+        try:
+            last = a['wifi-messages']['time-stamp']
+        except (TypeError, KeyError) as e:
+            logging.error(
+                f"get_last_wifi_msg: LANforge response is not in expected format ({e}). Data received: {a}")
+            logging.warning("Could not establish a wifi-msgs baseline timestamp; falling back to 'NA' for this reset.")
+            return "NA"
         logging.info(f"Last WiFi Message Time Stamp: {last}")
         return last
 
@@ -305,8 +353,20 @@ class InteropPortReset(Realm):
     def get_time_from_wifi_msgs(self, local_dict=None, phn_name=None, timee=None, file_name="dummy.json", reset_cnt=None):
         # print("Waiting for 20 sec to fetch the logs...")
         # time.sleep(20)
-        a = self.json_get("/wifi-msgs/since=time/" + str(timee), debug_=True)
-        values = a['wifi-messages']
+        a = self.json_get_with_retry("/wifi-msgs/since=time/" + str(timee), debug_=True)
+        try:
+            values = a['wifi-messages']
+        except (TypeError, KeyError) as e:
+            logging.error(
+                f"get_time_from_wifi_msgs: LANforge response is not in expected format ({e}) while fetching "
+                f"wifi-msgs for device {phn_name}. Data received: {a}")
+            logging.warning(f"Defaulting device {phn_name} stats to 0 for this reset and continuing.")
+            for key in ("ConnectAttempt", "Disconnected", "Scanning", "Association Rejection", "Connected"):
+                local_dict[str(phn_name)][key] = 0
+            local_dict[str(phn_name)]["Remarks"] = "Data unavailable - LANforge API error, stats defaulted to 0"
+            local_dict[str(phn_name)]["cx time (us)"] = "NA"
+            self.write_reset_csvs(local_dict, reset_cnt)
+            return local_dict
         # print("Wifi msgs Response : ", values)
         logging.info(
             f"Counting the DISCONNECTIONS, SCANNING, ASSOC ATTEMPTS, ASSOC RECJECTIONS, CONNECTS for device {phn_name}")
@@ -323,7 +383,17 @@ class InteropPortReset(Realm):
         # print("Key list", keys_list)
         # android (flag) check for clustered lanforge cases
         android = False
-        for device_data in self.json_get('/adb/')['devices']:
+        adb_response = self.json_get_with_retry('/adb/')
+        try:
+            adb_devices = adb_response['devices']
+        except (TypeError, KeyError) as e:
+            logging.error(
+                f"get_time_from_wifi_msgs: LANforge response is not in expected format ({e}) while fetching "
+                f"/adb/ devices. Data received: {adb_response}")
+            logging.warning(
+                f"Could not fetch adb device list; relying only on the '1.1.' prefix heuristic for {phn_name}.")
+            adb_devices = []
+        for device_data in adb_devices:
             device_name, _ = list(device_data.keys())[0], list(device_data.values())[0]
             if phn_name in device_name:
                 android = True
@@ -383,12 +453,19 @@ class InteropPortReset(Realm):
             local_dict[str(phn_name)]["Association Rejection"] = adb_association_rejection
             if adb_connected_count > 0:
                 _, shelf, serial = phn_name.split('.')
-                resource_id = self.json_get('/adb/1/{}/{}?fields=resource-id'.format(shelf, serial))
-                resource_id = resource_id['devices']['resource-id']
-
-                port_ssid_query = self.json_get('port/1/{}/wlan0?fields=cx time (us)'.format(resource_id.split('.')[1]))
-                uptime = port_ssid_query['interface']['cx time (us)']
-                local_dict[str(phn_name)]['cx time (us)'] = uptime
+                resource_id_resp = self.json_get_with_retry('/adb/1/{}/{}?fields=resource-id'.format(shelf, serial))
+                port_ssid_query = None
+                try:
+                    resource_id = resource_id_resp['devices']['resource-id']
+                    port_ssid_query = self.json_get_with_retry('port/1/{}/wlan0?fields=cx time (us)'.format(resource_id.split('.')[1]))
+                    uptime = port_ssid_query['interface']['cx time (us)']
+                    local_dict[str(phn_name)]['cx time (us)'] = uptime
+                except (TypeError, KeyError) as e:
+                    logging.error(
+                        f"get_time_from_wifi_msgs: could not fetch cx time (us) for device {phn_name}; LANforge "
+                        f"response is not in expected format ({e}). resource-id response: {resource_id_resp}, "
+                        f"port response: {port_ssid_query}")
+                    local_dict[str(phn_name)]['cx time (us)'] = 'NA'
             else:
                 local_dict[str(phn_name)]['cx time (us)'] = 'NA'
         else:
@@ -415,6 +492,7 @@ class InteropPortReset(Realm):
                 local_dict[str(phn_name)]["Association Rejection"] = win_association_rejection
                 win_connected_count = self.get_count(value=values, keys_list=keys_list, device=phn_name,
                                                      filter="connected")
+                win_connection_state_unverified = False
                 # assoc-rejection based logic
                 if win_association_rejection:
                     # Updating the connects
@@ -430,11 +508,19 @@ class InteropPortReset(Realm):
                         # Double-checking
                         if win_connected_count > 1 or win_connected_count == 0:
                             port_name = phn_name.split(".")
-                            port_ssid_query = self.json_get(f"port/{port_name[0]}/{port_name[1]}/{port_name[2]}?fields=ssid,ip")
-                            if port_ssid_query['interface']['ssid'] == self.ssid and port_ssid_query['interface']['ip'] != "0.0.0.0":
-                                win_connected_count = 1
-                            else:
+                            port_ssid_query = self.json_get_with_retry(f"port/{port_name[0]}/{port_name[1]}/{port_name[2]}?fields=ssid,ip")
+                            try:
+                                if port_ssid_query['interface']['ssid'] == self.ssid and port_ssid_query['interface']['ip'] != "0.0.0.0":
+                                    win_connected_count = 1
+                                else:
+                                    win_connected_count = 0
+                            except (TypeError, KeyError) as e:
+                                logging.error(
+                                    f"get_time_from_wifi_msgs: could not verify connection state for device "
+                                    f"{phn_name}; LANforge response is not in expected format ({e}). Data "
+                                    f"received: {port_ssid_query}")
                                 win_connected_count = 0
+                                win_connection_state_unverified = True
                 logging.info("Final Connected Count for %s: %s" % (phn_name, win_connected_count))
                 local_dict[str(phn_name)]["Connected"] = win_connected_count
                 # Updating the association-rejections
@@ -447,12 +533,20 @@ class InteropPortReset(Realm):
                     remarks = "No Disconnections are seen but Client is UP and connected to user given SSID."
                 elif win_disconnect_count >= 1 and win_connected_count == 0:
                     remarks = "The Disconnections are seen but Client did not connected to user given SSID."
+                if win_connection_state_unverified:
+                    remarks = "Connection state unverified - LANforge API error while double-checking connect count"
                 local_dict[str(phn_name)]["Remarks"] = remarks
                 if win_connected_count > 0:
                     port_name = phn_name.split(".")
-                    port_ssid_query = self.json_get(f"port/{port_name[0]}/{port_name[1]}/{port_name[2]}?fields=cx time (us)")
-                    uptime = port_ssid_query['interface']['cx time (us)']
-                    local_dict[str(phn_name)]['cx time (us)'] = uptime
+                    port_ssid_query = self.json_get_with_retry(f"port/{port_name[0]}/{port_name[1]}/{port_name[2]}?fields=cx time (us)")
+                    try:
+                        uptime = port_ssid_query['interface']['cx time (us)']
+                        local_dict[str(phn_name)]['cx time (us)'] = uptime
+                    except (TypeError, KeyError) as e:
+                        logging.error(
+                            f"get_time_from_wifi_msgs: could not fetch cx time (us) for device {phn_name}; "
+                            f"LANforge response is not in expected format ({e}). Data received: {port_ssid_query}")
+                        local_dict[str(phn_name)]['cx time (us)'] = 'NA'
                 else:
                     local_dict[str(phn_name)]['cx time (us)'] = 'NA'
             else:  # other means (for linux, mac)
@@ -479,6 +573,7 @@ class InteropPortReset(Realm):
 
                 other_connected_count = self.get_count(value=values, keys_list=keys_list, device=phn_name,
                                                        filter="<3>CTRL-EVENT-CONNECTED")
+                other_connection_state_unverified = False
                 # assoc-rejection based logic
                 if other_association_rejection:
                     # Updating the connects
@@ -494,11 +589,19 @@ class InteropPortReset(Realm):
                         # Double-checking & adding remarks if any
                         if other_connected_count > 1 or other_connected_count == 0:
                             port_name = phn_name.split(".")
-                            port_ssid_query = self.json_get(f"port/{port_name[0]}/{port_name[1]}/{port_name[2]}?fields=ssid,ip")
-                            if port_ssid_query['interface']['ssid'] == self.ssid and port_ssid_query['interface']['ip'] != "0.0.0.0":
-                                other_connected_count = 1
-                            else:
+                            port_ssid_query = self.json_get_with_retry(f"port/{port_name[0]}/{port_name[1]}/{port_name[2]}?fields=ssid,ip")
+                            try:
+                                if port_ssid_query['interface']['ssid'] == self.ssid and port_ssid_query['interface']['ip'] != "0.0.0.0":
+                                    other_connected_count = 1
+                                else:
+                                    other_connected_count = 0
+                            except (TypeError, KeyError) as e:
+                                logging.error(
+                                    f"get_time_from_wifi_msgs: could not verify connection state for device "
+                                    f"{phn_name}; LANforge response is not in expected format ({e}). Data "
+                                    f"received: {port_ssid_query}")
                                 other_connected_count = 0
+                                other_connection_state_unverified = True
                 logging.info("Final Connected Count for %s: %s" % (phn_name, other_connected_count))
                 local_dict[str(phn_name)]["Connected"] = other_connected_count
                 # Updating the association-rejections
@@ -511,22 +614,33 @@ class InteropPortReset(Realm):
                     remarks = "No Disconnections are seen but Client is UP and connected to user given SSID."
                 elif other_disconnect_count >= 1 and other_connected_count == 0:
                     remarks = "The Disconnections are seen but Client did not connected to user given SSID."
+                if other_connection_state_unverified:
+                    remarks = "Connection state unverified - LANforge API error while double-checking connect count"
                 local_dict[str(phn_name)]["Remarks"] = remarks
                 if other_connected_count > 0:
                     port_name = phn_name.split(".")
-                    port_ssid_query = self.json_get(f"port/{port_name[0]}/{port_name[1]}/{port_name[2]}?fields=cx time (us)")
-                    uptime = port_ssid_query['interface']['cx time (us)']
-                    local_dict[str(phn_name)]['cx time (us)'] = uptime
+                    port_ssid_query = self.json_get_with_retry(f"port/{port_name[0]}/{port_name[1]}/{port_name[2]}?fields=cx time (us)")
+                    try:
+                        uptime = port_ssid_query['interface']['cx time (us)']
+                        local_dict[str(phn_name)]['cx time (us)'] = uptime
+                    except (TypeError, KeyError) as e:
+                        logging.error(
+                            f"get_time_from_wifi_msgs: could not fetch cx time (us) for device {phn_name}; "
+                            f"LANforge response is not in expected format ({e}). Data received: {port_ssid_query}")
+                        local_dict[str(phn_name)]['cx time (us)'] = 'NA'
                 else:
                     local_dict[str(phn_name)]['cx time (us)'] = 'NA'
         logging.info("local_dict " + str(local_dict))
+        self.write_reset_csvs(local_dict, reset_cnt)
+
+        return local_dict
+
+    def write_reset_csvs(self, local_dict, reset_cnt):
         # storing results in csv file for each reset
         for interface_name, metrics in local_dict.items():
             df = pd.DataFrame([metrics])
             filename = f"{self.report_path}/{interface_name}_{reset_cnt}.csv"
             df.to_csv(filename, index=False)
-
-        return local_dict
 
     def aggregate_reset_dict(self, reset_dict):
         aggregated = {}
@@ -1587,23 +1701,6 @@ class InteropPortReset(Realm):
         print(df_summary)
 
 
-def change_port_to_ip(upstream_port, lfclient_host, lfclient_port):
-    if upstream_port.count('.') != 3:
-        target_port_list = LFUtils.name_to_eid(upstream_port)
-        shelf, resource, port, _ = target_port_list
-        try:
-            realm_obj = Realm(lfclient_host=lfclient_host, lfclient_port=lfclient_port)
-            target_port_ip = realm_obj.json_get(f'/port/{shelf}/{resource}/{port}?fields=ip')['interface']['ip']
-            upstream_port = target_port_ip
-        except Exception:
-            logging.warning(f'The upstream port is not an ethernet port. Proceeding with the given upstream_port {upstream_port}.')
-        logging.info(f"Upstream port IP {upstream_port}")
-    else:
-        logging.info(f"Upstream port IP {upstream_port}")
-
-    return upstream_port
-
-
 def main():
     help_summary = '''\
     The LANforge interop port reset test enables users to use real Wi-Fi stations and connect them to the Access Point
@@ -1737,8 +1834,6 @@ INCLUDE_IN_README: False
 
     if args.log_level:
         logger_config.set_level(level=args.log_level)
-    args.mgr_ip = change_port_to_ip(args.mgr_ip, args.host, args.port)
-    print(args.mgr_ip)
     if args.lf_logger_config_json:
         # logger_config.lf_logger_config_json = "lf_logger_config.json"
         logger_config.lf_logger_config_json = args.lf_logger_config_json
@@ -1769,6 +1864,15 @@ INCLUDE_IN_README: False
                            get_live_view=args.get_live_view,
                            total_floors=args.total_floors
                            )
+
+    # mgr_ip may have been given as a port name (e.g. "eth1") rather than an IP;
+    # resolve it now that we have an instance to reuse for the LANforge lookup.
+    # base_interop_profile.server_ip was already captured from the unresolved
+    # mgr_ip at construction time above, so it must be patched too.
+    obj.mgr_ip = obj.change_port_to_ip(obj.mgr_ip)
+    obj.base_interop_profile.server_ip = obj.mgr_ip
+    print(obj.mgr_ip)
+
     obj.selecting_devices_from_available()
     if obj.robot_test:
         obj.run()
