@@ -461,7 +461,7 @@ INCLUDE_IN_README:
                             that is connected to the LANforge system.  Default is eth1. All data being transmitted
                             is done via this port.  This port is used to send and receive data
                             to/from the A.P. that is being tested.
-                            format: <resource><port>""")
+                            Format: <shelf>.<resource>.<port>""")
     parser.add_argument("-b", "--batch_size", type=str, default="1",
                         help="""Select number of stations to add per iteration.  Default is 1.
                         This is the number of stations that will be added to the test for each iteration.
@@ -500,8 +500,11 @@ INCLUDE_IN_README:
                         help="ssid Security type. If not open, then mention --password to create stations with this security type and password")
     parser.add_argument("-paswd", "--paswd", "-passwd", "--passwd", "--password", "--key", dest="paswd", default="[BLANK]",
                         help="WiFi passphrase/password/key. Leave empty for open security type.")
-    parser.add_argument("--report_dir", default="")
-    parser.add_argument("--scenario", default="")
+
+    parser.add_argument("--report_dir", default="",
+                        help="Directory name to use for the Chamber View report.")
+    parser.add_argument("--scenario", default="",
+                        help="Chamber View Scenario name to apply before running the test.")
     parser.add_argument("--graph_groups", help="Path to file to save graph_groups to on local system", default=None)
     parser.add_argument("--local_lf_report_dir", help="""--local_lf_report_dir <where to pull reports to>  default ''  means put in current working directory,
                          must also have --pull_report also set to pull reports.""", default="")
