@@ -80,7 +80,7 @@ EXAMPLE:    # Run 60 second default DL/UL-rate UDP IPv4 traffic-based test with
                     --upstream      1.1.eth1 \
                     --stations      1.1.sta0000,1.1.sta0001 \
                     --local_lf_report_dir /home/user/lf_reports \
-                        
+
             #Run test with custom download / upload rates for each station
                 ./lf_wifi_capacity_test.py \
                     --mgr           192.168.1.101 \
@@ -316,6 +316,7 @@ class WiFiCapacityTest(cv_test):
 
         self.rm_text_blob(self.config_name, "Wifi-Capacity-")  # To delete old config with same name
 
+
 def validate_args(args):
     if args.create_stations:
         if not args.num_stations and not args.stations:
@@ -330,7 +331,8 @@ def validate_args(args):
     if args.security.lower != 'open':
         if not args.paswd:
             logger.error("Requires password to connect to wifi whose security is not open, mention with --password")
-            exit(1)    
+            exit(1)
+
 
 def main():
     help_summary = "The Candela WiFi Capacity test is designed to measure performance of an " \
@@ -398,7 +400,7 @@ EXAMPLE:    # Run 60 second default DL/UL-rate UDP IPv4 traffic-based test with
                     --create_stations \
                     --radio         wiphy0 \
                     --start_id      1000 \
-                    --num_stations  10 \         
+                    --num_stations  10 \
                     --stations      1.1.sta1010,1.1.sta2020
                     --ssid          test_ssid \
                     --security      WPA2 \
@@ -429,7 +431,7 @@ EXAMPLE:    # Run 60 second default DL/UL-rate UDP IPv4 traffic-based test with
                     --upstream      1.1.eth1 \
                     --stations      1.1.sta0000,1.1.sta0001 \
                     --local_lf_report_dir /home/user/lf_reports \
-            
+
             #Run test with custom download / upload rates for each station
                 ./lf_wifi_capacity_test.py \
                     --mgr           192.168.1.101 \
@@ -473,11 +475,11 @@ INCLUDE_IN_README:
                         will run 2 times with all 10 stations being used for each iteration. Default is 1""")
     parser.add_argument("-p", "--protocol", "--type", "--types", "--traffic_type", "--traffic_types", type=str, dest="traffic_type", default="UDP-IPv4",
                         help="Protocol ex.TCP-IPv4. Default is UDP-IPv4. Only one protocol can be selected at a time.\n"
-                            "UDP, TCP, layer4-7, TCP&UDP are avialable options")
+                        "UDP, TCP, layer4-7, TCP&UDP are avialable options")
     parser.add_argument("-d", "--duration", type=str, default="5000",
                         help="Duration of each traffic run. Default is 5s. Example: 5s, 1m, 2h. Each station is tested for this duration.")
     parser.add_argument("--verbosity", default="5", help="Verbosity of the report specified as single value in 1 - 11 range (whole numbers).\n"
-                             "The larger the number, the more verbose. Default: 5")
+                        "The larger the number, the more verbose. Default: 5")
     parser.add_argument("--speed", "--rate", "--download_speed", "--download_rate", type=str, default="1Gbps",
                         help="Select requested download rate.  Kbps, Mbps, Gbps units supported.  Default is 1Gbps")
     parser.add_argument("--opposite_speed", "--opposite_rate", "--upload_speed", "--upload_rate", dest="upload_rate", type=str, default="10Mbps",
@@ -486,8 +488,8 @@ INCLUDE_IN_README:
                         help="Select station sorting behaviour:  none | interleave | linear  Default is interleave.")
     parser.add_argument("-s", "--station", "--stations", dest="stations", type=str, default="",
                         help="If specified, these stations will be used.  If not specified, all available stations will be selected.  Example: 1.1.sta001,1.1.wlan0,....\n"
-                            "Can also be used to specify custon names for the stations being created by --create_stations param\n"
-                            "<shelf>.<resource>.<alias>")
+                        "Can also be used to specify custon names for the stations being created by --create_stations param\n"
+                        "<shelf>.<resource>.<alias>")
     parser.add_argument("-cs", "--create_stations", default=False, action='store_true',
                         help="""create stations in lanforge (by default: False)
                         If specifed, either mention --num_stations or --stations to create stations in lanforge. If both are specified, --stations will be used to create stations

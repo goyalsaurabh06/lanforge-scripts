@@ -72,7 +72,7 @@ def cv_add_base_parser(parser):
                         default=False,
                         action='store_true',
                         help="Pull reports from LANforge system into the current system. Off by default.\n"
-                            "Can use --local_lf_report_dir to specify where these reports are stored. By default reports are stored in same dir as the script.")
+                        "Can use --local_lf_report_dir to specify where these reports are stored. By default reports are stored in same dir as the script.")
     parser.add_argument("--load_old_cfg",
                         action='store_true',
                         help="Load defaults from previous run of the test")
@@ -137,6 +137,7 @@ def cv_add_base_parser(parser):
 
 class cv_test(Realm):
     """Utilities for configuring LANforge Chamber View tests and Scenarios."""
+
     def __init__(self,
                  lfclient_host: str = "localhost",
                  lfclient_port: int = 8080,

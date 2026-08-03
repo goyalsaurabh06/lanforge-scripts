@@ -459,16 +459,16 @@ class LFCliBase:
 
                         if expire_at < curr_time:
                             warnings.append("** License item %s EXPIRED on %s"
-                                            % ( hunks[0],
+                                            % (hunks[0],
                                                 time.strftime('%Y-%m-%d %H:%M', time.localtime(expire_at))))
                             naptime = abs(naptime)
                         elif expire_at <= in30d_time:
                             info.append("** License item %s WILL expire on %s"
-                                            % ( hunks[0],
-                                                time.strftime('%Y-%m-%d %H:%M', time.localtime(expire_at))))
+                                        % (hunks[0],
+                                           time.strftime('%Y-%m-%d %H:%M', time.localtime(expire_at))))
                     if len(warnings) > 0:
                         combined_warn = "\nScripts might fail because of unavailable features:\n" \
-                                        +("\n".join(warnings))
+                                        + ("\n".join(warnings))
                         if (naptime > 0):
                             logger.error(combined_warn)
                             time.sleep(naptime)
@@ -476,7 +476,7 @@ class LFCliBase:
                             logger.warning(combined_warn)
                     if len(info) > 0:
                         combined_info = "\nScripts active licenses:\n" \
-                                        +("\n".join(info))
+                                        + ("\n".join(info))
                         logger.debug(combined_info)
                     return True
                 else:
@@ -676,8 +676,8 @@ class LFCliBase:
                     duration_time = datetime.timedelta(seconds=dur_time)
             else:
                 if 'ms' in time_string:
-                    dur_time = int(time_string.replace("ms",""))
-                    duration_time = datetime.timedelta(microseconds=dur_time*1000)
+                    dur_time = int(time_string.replace("ms", ""))
+                    duration_time = datetime.timedelta(microseconds=dur_time * 1000)
                 else:
                     raise ValueError("Cannot compute time string provided: %s" % time_string)
         else:
@@ -838,7 +838,7 @@ class LFCliBase:
                 else:
                     optional.add_argument(argument['name'], help=argument['help'])
 
-        # Required Args        
+        # Required Args
         # Silently support capitalized security types
         required.add_argument('--ssid',
                               help='REQUIRED. WiFi SSID for created stations to associate to')
