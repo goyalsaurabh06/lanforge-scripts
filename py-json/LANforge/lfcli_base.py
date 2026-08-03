@@ -708,7 +708,7 @@ class LFCliBase:
             parser = argparse.ArgumentParser()
         optional = parser.add_argument_group('arguments with PRE-DEFINED DEFAULTS, arguments & defaults defined by create_bare_argparse found in /lanforge-scripts/py-json/LANforge/lfcli_base.py')
         required = parser.add_argument_group('arguments with NO PRE-DEFINED DEFAULTS, arguments & defaults defined by create_bare_argparse found in  /lanforge-scripts/py-json/LANforge/lfcli_base.py')
-        optional.add_argument('--mgr', "--m", "--lfmgr", "lanforge_ip", dest="mgr",
+        optional.add_argument('--mgr', "--m", "--lfmgr", "--lanforge_ip", dest="mgr",
                               default='localhost',
                               help='Hostname or IP address of the LANforge GUI machine (localhost is default, use when running script on lanforge)')
         optional.add_argument('--mgr_port', '--port', '--o', '--lanforge_port',
@@ -777,11 +777,11 @@ class LFCliBase:
                             that is connected to the LANforge system.  Default is eth1. All data being transmitted
                             is done via this port.  This port is used to send and receive data
                             to/from the A.P. that is being tested.
-                            format: <resource><port>""")
+                            Format: <shelf>.<resource>.<port>""")
         optional.add_argument('--num_stations',
                               type=int,
                               default=0,
-                              help='Number of stations to create')
+                              help='Number of stations to create. Default: 0. Dependency: used together with --radio, --ssid, --security and --paswd when creating stations')
         optional.add_argument('--test_id',
                               default="webconsole",
                               help='Test ID (intended to use for ws events)')
@@ -830,7 +830,7 @@ class LFCliBase:
                               '--key',
                               dest='paswd',
                               default="[BLANK]",
-                              help='WiFi passphrase/password/key')
+                              help='WiFi passphrase/password/key for created stations. Default: [BLANK]. Dependency: REQUIRED when --security is not "open"')
         if more_optional is not None:
             for argument in more_optional:
                 if 'default' in argument.keys():
@@ -841,7 +841,7 @@ class LFCliBase:
         # Required Args        
         # Silently support capitalized security types
         required.add_argument('--ssid',
-                              help='WiFi SSID for script objects to associate to')
+                              help='REQUIRED. WiFi SSID for created stations to associate to')
         # please override this password argument using set_defaults(passwd='NA')
 
         if more_required is not None:
