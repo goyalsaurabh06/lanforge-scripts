@@ -918,7 +918,8 @@ INCLUDE_IN_README:
                         help="This is synonymous with the RADIUS username.")
     parser.add_argument("--eap_anonymous_identity",
                         type=str,
-                        help="",
+                        help="Anonymous identity used in outer EAP authentication (EAP-TTLS/PEAP). Default: [BLANK]. "
+                             "Dependency: used only when --eap_method is TTLS or PEAP",
                         default="[BLANK]")  # TODO: Fix root cause of 'null' when not set issue (REST server-side issue)
     parser.add_argument("--eap_password",
                         "--radius_passwd",
