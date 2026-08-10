@@ -6319,6 +6319,18 @@ class MultiTraffic(Realm):
         logging.info(f"test_map: {test_map}")
         logging.info(f"unq_tests: {unq_tests}")
         for test_name in unq_tests:
+            # All tables produced below are also collected for the machine-readable
+            # report.  A suffix is used only when the same test is run more than once.
+            self._json_test_key = test_name
+            if self._json_test_key in self.json_metrics:
+                occurrence = 2
+                while f"{test_name}_{occurrence}" in self.json_metrics:
+                    occurrence += 1
+                self._json_test_key = f"{test_name}_{occurrence}"
+            self.json_metrics.setdefault(self._json_test_key, {
+                "test_setup": {},
+                "metrics": {}
+            })
             try:
                 if test_name == "http_test":
                     """Processes HTTP test reporting and visualizations."""
@@ -12422,6 +12434,92 @@ class MultiTraffic(Realm):
                 series_df = series_df[["s/no", "test_name", "Duration", "status"]]
         return series_df, parallel_df
 
+    @staticmethod
+    def _json_safe(value):
+        """Convert pandas/numpy values into values accepted by json.dump."""
+        if isinstance(value, dict):
+            return {str(key): MultiTraffic._json_safe(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [MultiTraffic._json_safe(item) for item in value]
+        try:
+            if pd.isna(value):
+                return None
+        except (TypeError, ValueError):
+            pass
+        if hasattr(value, "item"):
+            try:
+                return MultiTraffic._json_safe(value.item())
+            except (TypeError, ValueError):
+                pass
+        return value
+
+    def _capture_json_table(self, dataframe):
+        """Store a rendered report table as named metrics for the current test."""
+        if not isinstance(dataframe, pd.DataFrame) or not self._json_test_key:
+            return
+        test_report = self.json_metrics.setdefault(self._json_test_key, {
+            "test_setup": {},
+            "metrics": {}
+        })
+        metrics = test_report["metrics"]
+        for column, values in dataframe.to_dict(orient="list").items():
+            metric_name = str(column)
+            metric_value = self._json_safe(values)
+            if metric_name not in metrics:
+                metrics[metric_name] = metric_value
+                continue
+            # Several report sections can contain the same column name. Keep one
+            # metric and append adjacent values so related columns remain lists.
+            existing_value = metrics[metric_name]
+            if not isinstance(existing_value, list):
+                existing_value = [existing_value]
+            if isinstance(metric_value, list):
+                existing_value.extend(metric_value)
+            else:
+                existing_value.append(metric_value)
+            metrics[metric_name] = existing_value
+
+    def _capture_json_setup(self, setup_data):
+        """Store report setup fields alongside the test metrics."""
+        if not isinstance(setup_data, dict) or not self._json_test_key:
+            return
+        test_report = self.json_metrics.setdefault(self._json_test_key, {
+            "test_setup": {},
+            "metrics": {}
+        })
+        setup = test_report["test_setup"]
+        for name, value in setup_data.items():
+            metric_name = str(name)
+            if metric_name not in setup:
+                setup[metric_name] = self._json_safe(value)
+
+    def _install_json_report_capture(self):
+        """Capture the same tables/setup data that are written to the PDF."""
+        self.json_metrics = {}
+        self._json_test_key = None
+        report = self.overall_report
+        original_set_table_dataframe = report.set_table_dataframe
+        original_test_setup_table = report.test_setup_table
+
+        def set_table_dataframe(dataframe):
+            self._capture_json_table(dataframe)
+            return original_set_table_dataframe(dataframe)
+
+        def test_setup_table(test_setup_data, value):
+            self._capture_json_setup(test_setup_data)
+            return original_test_setup_table(test_setup_data, value)
+
+        report.set_table_dataframe = set_table_dataframe
+        report.test_setup_table = test_setup_table
+
+    def _write_json_report(self):
+        """Write metrics keyed by test name next to the overall PDF report."""
+        json_path = os.path.join(self.overall_report.path_date_time, "lf_multi_traffic_overall.json")
+        with open(json_path, "w", encoding="utf-8") as json_file:
+            json.dump(self._json_safe(self.json_metrics), json_file, indent=2, ensure_ascii=False)
+        logging.info(f"Generated JSON report file: {json_path}")
+        return json_path
+
     def generate_overall_report(self, test_results_df='', args_dict=None):
         '''
         Generate Overall Report
@@ -12434,6 +12532,7 @@ class MultiTraffic(Realm):
         self.overall_report = lf_report.lf_report(_results_dir_name="lf_multi_traffic_Test_Overall_report", _output_html="lf_multi_traffic_overall.html",
                                                   _output_pdf="lf_multi_traffic_overall.pdf", _path=self.result_path if not self.dowebgui else self.result_dir)
         self.report_path_date_time = self.overall_report.get_path_date_time()
+        self._install_json_report_capture()
         self.overall_report.set_title("MULTI TRAFFIC TEST")
         self.overall_report.set_date(datetime.datetime.now())
         self.overall_report.build_banner()
@@ -12479,6 +12578,7 @@ class MultiTraffic(Realm):
         html_file = self.overall_report.write_html()
         logging.info(f"Generated HTML report file: {html_file}")
         self.overall_report.write_pdf()
+        self._write_json_report()
 
     def configure_devices(self, device_list=None, ssid=None, passwd='[BLANK]', security='open',
                           file_name='', wait_time=60, app_flags=None, upstream_port=None,
