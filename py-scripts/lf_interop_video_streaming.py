@@ -158,6 +158,7 @@ lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 port_utils = importlib.import_module("py-json.port_utils")
 PortUtils = port_utils.PortUtils
 DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
+lf_interop_bg_ping = importlib.import_module("py-scripts.lf_interop_bg_ping")
 iot_scripts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../local/interop-webGUI/IoT/scripts/"))
 if os.path.exists(iot_scripts_path):
     sys.path.insert(0, iot_scripts_path)
@@ -1910,6 +1911,9 @@ class VideoStreamingTest(Realm):
             self.get_bandsteering_stats(report, realtime_dataset, devices_on_running_state, device_names_on_running)
         if iot_summary:
             self.build_iot_report_section(report, iot_summary)
+        # ping statistics collected on the clients while the video was streaming
+        if getattr(self, 'background_ping', None):
+            self.background_ping.add_to_report(report)
         if self.device_issue_log:
             issues_df = pd.DataFrame(self.device_issue_log)
             issues_df.to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
@@ -2466,6 +2470,9 @@ class VideoStreamingTest(Realm):
                 self.data = self.vs_data[self.coordinate_list[coordinate]]["self_data"]
                 shutil.move('video_streaming_realtime_data{}.csv'.format(csv_suffix), report_path_date_time)
                 self.generate_individual_coordinate(report, device_type, username, ssid, mac, channel, mode, rssi, tx_rate, created_incremental_values, keys)
+        # ping statistics collected on the clients while the video was streaming
+        if getattr(self, 'background_ping', None):
+            self.background_ping.add_to_report(report)
         if self.device_issue_log:
             issues_df = pd.DataFrame(self.device_issue_log)
             issues_df.to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
@@ -3465,6 +3472,8 @@ def main():
     optional.add_argument('--do_bandsteering', help='Enable bandsteering', action='store_true')
     optional.add_argument('--bssids', type=str, help='Comma separated list of BSSIDs to be used for the test', default="")
     optional.add_argument('--total_cycles', help='Enable bandsteering', default="1")
+    lf_interop_bg_ping.add_arguments(parser)
+
     args = parser.parse_args()
 
     if args.help_summary:
@@ -3737,6 +3746,14 @@ def main():
                 daemon=True
             )
             iot_thread.start()
+    # starting the ping on the selected clients, it keeps running until the streaming is stopped
+    obj.background_ping = lf_interop_bg_ping.from_args(
+        args,
+        host=args.host,
+        port=8080,
+        device_list=obj.resource_ids.split(',') if obj.resource_ids else [],
+        default_target=args.upstream_port if args.upstream_port != 'NA' else None)
+
     # To create cx for selected devices
     obj.build()
 
@@ -3901,6 +3918,8 @@ def main():
                     iterations_before_test_stopped_by_user.append(i)
                     break
     obj.stop()
+    if obj.background_ping:
+        obj.background_ping.stop()
     date = str(datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
     iot_summary = None
     if args.iot_test and args.iot_testname:
@@ -3915,6 +3934,9 @@ def main():
         obj.generate_report(date, list(set(iterations_before_test_stopped_by_user)), test_setup_info=test_setup_info, realtime_dataset=individual_df, iot_summary=iot_summary)
     elif obj.resource_ids:
         obj.generate_report(date, list(set(iterations_before_test_stopped_by_user)), test_setup_info=test_setup_info, realtime_dataset=individual_df, iot_summary=iot_summary)
+
+    if obj.background_ping:
+        obj.background_ping.cleanup()
 
     # Perform post-cleanup operations
     if args.postcleanup:
