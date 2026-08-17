@@ -77,6 +77,7 @@ lf_csv = importlib.import_module("py-scripts.lf_csv")
 realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
 lf_report_pdf = importlib.import_module("py-scripts.lf_report")
+lf_interop_bg_ping = importlib.import_module("py-scripts.lf_interop_bg_ping")
 lf_graph = importlib.import_module("py-scripts.lf_graph")
 logger = logging.getLogger(__name__)
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
@@ -2105,6 +2106,10 @@ class InteropPortReset(Realm):
                 per_iteration_results=per_iteration_results, device_list=all_devices
             )
 
+            # ping statistics collected on the clients while the ports were being reset
+            if getattr(self, 'background_ping', None):
+                self.background_ping.add_to_report(self.lf_report)
+
             self.lf_report.build_footer()
             self.lf_report.write_html()
             if self.dowebgui:
@@ -2414,6 +2419,9 @@ class InteropPortReset(Realm):
                 device_summary_df = pd.DataFrame(device_summary_table)
                 self.lf_report.set_table_dataframe(device_summary_df)
                 self.lf_report.build_table()
+        # ping statistics collected on the clients while the ports were being reset
+        if getattr(self, 'background_ping', None):
+            self.background_ping.add_to_report(self.lf_report)
         self.lf_report.build_footer()
         self.lf_report.write_html()
         if self.dowebgui:
@@ -2637,53 +2645,17 @@ INCLUDE_IN_README: False
         "--dowebgui", help="If true will execute script for webgui", action="store_true"
     )
 
-    parser.add_argument(
-        "--result_dir",
-        help="Specify the result dir to store the runtime logs",
-        default="",
-    )
-    parser.add_argument(
-        "--test_name",
-        help="Specify test name to store the runtime csv results",
-        default=None,
-    )
-    parser.add_argument(
-        "--robot_test", help="to trigger robot test", action="store_true"
-    )
-    parser.add_argument(
-        "--robot_ip",
-        type=str,
-        default="localhost",
-        help="hostname for where Robot server is running",
-    )
-    parser.add_argument(
-        "--robot_port",
-        type=str,
-        default=5000,
-        help="port Robot HTTP service is running on",
-    )
-    parser.add_argument(
-        "--coordinate",
-        type=str,
-        default="",
-        help="The coordinate contains list of coordinates to be ",
-    )
-    parser.add_argument(
-        "--rotation",
-        type=str,
-        default="",
-        help="The set of angles to rotate at a particular point",
-    )
-    parser.add_argument(
-        "--get_live_view",
-        help="If true will heatmap will be generated from testhouse automation WebGui ",
-        action="store_true",
-    )
-    parser.add_argument(
-        "--total_floors",
-        help="Total floors from testhouse automation WebGui ",
-        default="0",
-    )
+    parser.add_argument('--result_dir', help='Specify the result dir to store the runtime logs', default='')
+    parser.add_argument('--test_name', help='Specify test name to store the runtime csv results', default=None)
+    parser.add_argument("--robot_test", help='to trigger robot test', action='store_true')
+    parser.add_argument('--robot_ip', type=str, default='localhost', help='hostname for where Robot server is running')
+    parser.add_argument('--robot_port', type=str, default=5000, help='port Robot HTTP service is running on')
+    parser.add_argument('--coordinate', type=str, default='', help="The coordinate contains list of coordinates to be ")
+    parser.add_argument('--rotation', type=str, default='', help="The set of angles to rotate at a particular point")
+    parser.add_argument('--get_live_view', help="If true will heatmap will be generated from testhouse automation WebGui ", action='store_true')
+    parser.add_argument('--total_floors', help="Total floors from testhouse automation WebGui ", default="0")
+    lf_interop_bg_ping.add_arguments(parser)
+
     args = parser.parse_args()
 
     if args.help_summary:
@@ -2757,6 +2729,9 @@ INCLUDE_IN_README: False
         port_reset_test.generate_report(
             per_iteration_results=per_iteration_results, test_duration=test_duration
         )
+
+    if obj.background_ping:
+        obj.background_ping.cleanup()
 
 
 if __name__ == "__main__":
