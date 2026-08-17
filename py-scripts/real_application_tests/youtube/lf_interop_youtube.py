@@ -162,6 +162,7 @@ lf_report = importlib.import_module("py-scripts.lf_report")
 lf_graph = importlib.import_module("py-scripts.lf_graph")
 lf_base_interop_profile = importlib.import_module("py-scripts.lf_base_interop_profile")
 robo_base_class = importlib.import_module("py-scripts.lf_base_robo")
+lf_interop_bg_ping = importlib.import_module("py-scripts.lf_interop_bg_ping")
 
 # Accessing specific classes
 lf_report = lf_report.lf_report
@@ -1033,6 +1034,9 @@ class Youtube(Realm):
     def finalize_test_run(self, args, iot_summary=None):
         """Stop clients, generate the report, then clean up the test."""
         self.stop()
+        # the background ping has to be stopped before the report is built so its statistics are final
+        if getattr(self, 'background_ping', None):
+            self.background_ping.stop()
         # Stop collection before WebUI completion triggers the final live image.
         if args.do_webUI:
             self.stop_webui_test()
@@ -1058,6 +1062,8 @@ class Youtube(Realm):
                     self.generic_endps_profile.cleanup()
                 except Exception:
                     logger.exception("Unable to clean up all YouTube endpoints")
+                if getattr(self, 'background_ping', None):
+                    self.background_ping.cleanup()
 
     def get_youtube_lf_wifi_stats(self):
         """
@@ -2041,6 +2047,10 @@ class Youtube(Realm):
         if self.do_bandsteering:
             self.add_bandsteering_report_section(report=self.report)
 
+        # ping statistics collected on the clients while YouTube was streaming
+        if getattr(self, 'background_ping', None):
+            self.background_ping.add_to_report(self.report)
+
         # Closing
         self.report.build_custom()
         self.report.build_footer()
@@ -2924,6 +2934,10 @@ class Youtube(Realm):
 
         os.chdir(original_dir)
 
+        # ping statistics collected on the clients while YouTube was streaming
+        if getattr(self, 'background_ping', None):
+            self.background_ping.add_to_report(self.report)
+
         self.report.build_custom()
         self.report.build_footer()
         self.report.write_html()
@@ -3355,6 +3369,8 @@ NOTES:
         robo.add_argument('--bssids', type=str, help='Comma-separated list of BSSIDs for bandsteering test')
         robo.add_argument('--cycles', type=int, default=1, help='Number of cycles to perform bandsteering')
 
+        lf_interop_bg_ping.add_arguments(parser)
+
         args = parser.parse_args()
 
         if args.help_summary:
@@ -3627,6 +3643,14 @@ NOTES:
 
             logging.info("Waiting 10 seconds before starting YouTube streaming")
             youtube.wait_stop_aware(10, "before YouTube streaming started")
+
+            # starting the ping on the selected clients, it keeps running until the streaming is stopped
+            youtube.background_ping = lf_interop_bg_ping.from_args(
+                args,
+                host=args.mgr,
+                port=8080,
+                device_list=youtube.real_sta_list,
+                default_target=args.upstream_port)
 
             youtube.start_time = datetime.now()
             if args.do_robo:
