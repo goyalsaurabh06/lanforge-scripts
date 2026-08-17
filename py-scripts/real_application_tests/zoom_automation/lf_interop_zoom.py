@@ -123,6 +123,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 robo_base_class = importlib.import_module("py-scripts.lf_base_robo")
+lf_interop_bg_ping = importlib.import_module("py-scripts.lf_interop_bg_ping")
 
 WINDOWS_ZOOM_DIR = r".\local\real_application_test\zoom_automation"  # zoom.bat/ctzoom.bash live on the client Laptops
 LINUX_ZOOM_DIR = "./local/real_application_test/zoom_automation"
@@ -3068,6 +3069,10 @@ class ZoomAutomation(Realm):
                 report.set_table_dataframe(video_test_details)
                 report.html += report.dataframe.to_html(index=False,
                                                         justify='center', render_links=True, escape=False)  # have the index be able to be passed in.
+        # ping statistics collected on the clients while the meeting was running
+        if getattr(self, 'background_ping', None):
+            self.background_ping.add_to_report(report)
+
         report.set_custom_html("<br/><hr/>")
         report.build_custom()
 
@@ -4100,6 +4105,9 @@ class ZoomAutomation(Realm):
             self.report.html += self.report.dataframe_html
         if self.do_bs:
             self.add_bandsteering_report_section(report=self.report)
+        # ping statistics collected on the clients while the meeting was running
+        if getattr(self, 'background_ping', None):
+            self.background_ping.add_to_report(self.report)
         self.report.write_html()
         self.report.write_pdf(_page_size="Legal", _orientation="Landscape")
         for client in self.real_sta_hostname:
@@ -4192,6 +4200,10 @@ class ZoomAutomation(Realm):
 
         if self.do_webui:
             self.add_live_view_images_to_report()
+
+        # ping statistics collected on the clients while the meeting was running
+        if getattr(self, 'background_ping', None):
+            self.background_ping.add_to_report(self.report)
 
         self.report.build_custom()
         self.report.write_html()
@@ -4790,6 +4802,8 @@ def main():
             default="",
         )
 
+        lf_interop_bg_ping.add_arguments(parser)
+
         args = parser.parse_args()
 
         if args.log_level:
@@ -5127,10 +5141,20 @@ def main():
         zoom_automation.get_ports_data()
         zoom_automation.get_interop_data()
 
+        # starting the ping on the selected clients, it keeps running until the meeting is over
+        zoom_automation.background_ping = lf_interop_bg_ping.from_args(
+            args,
+            host=args.lanforge_ip,
+            port=8080,
+            device_list=zoom_automation.real_sta_list,
+            default_target=args.upstream_port)
+
         if args.do_robo:
             zoom_automation.run_robo_test()
         else:
             zoom_automation.run()
+        if zoom_automation.background_ping:
+            zoom_automation.background_ping.stop()
         zoom_automation.data_store.clear()
         if not args.api_stats_collection:
             zoom_automation.generate_report()
@@ -5141,6 +5165,8 @@ def main():
     finally:  # covers --help; an if not a return, which would swallow SystemExit
         if zoom_automation is not None:
             zoom_automation.stop_signal = True
+            if getattr(zoom_automation, 'background_ping', None):
+                zoom_automation.background_ping.stop()
             logger.info("Waiting for Browser Cleanup in Laptops")
             time.sleep(10)
 
@@ -5153,6 +5179,8 @@ def main():
                 zoom_automation.generate_report_from_api()
             time.sleep(5)
             zoom_automation.cleanup_generic_endpoints()
+            if getattr(zoom_automation, 'background_ping', None):
+                zoom_automation.background_ping.cleanup()
             # zoom_automation.move_ping_logs()
             zoom_automation.move_log_folder()
             logger.info("Done.")
