@@ -165,6 +165,7 @@ DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
 lf_report = importlib.import_module("py-scripts.lf_report")
 lf_graph = importlib.import_module("py-scripts.lf_graph")
 lf_kpi_csv = importlib.import_module("py-scripts.lf_kpi_csv")
+lf_interop_bg_ping = importlib.import_module("py-scripts.lf_interop_bg_ping")
 logger = logging.getLogger(__name__)
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 
@@ -2617,6 +2618,9 @@ class FtpTest(LFCliBase):
                 for coord, robot_info in self.robot_data.items():
                     self.build_graphs_and_table(coord, None, robot_info, client_list)
             # Finalizing the report after robot test graphs and tables
+            # ping statistics collected on the clients while the ftp traffic was running
+            if getattr(self, 'background_ping', None):
+                self.background_ping.add_to_report(self.report)
             if self.device_issue_log:
                 issues_df = pd.DataFrame(self.device_issue_log)
                 issues_df.to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
@@ -2800,6 +2804,9 @@ class FtpTest(LFCliBase):
                 self.report.build_objective()
         if iot_summary:
             self.build_iot_report_section(self.report, iot_summary)
+        # ping statistics collected on the clients while the ftp traffic was running
+        if getattr(self, 'background_ping', None):
+            self.background_ping.add_to_report(self.report)
         if self.device_issue_log:
             issues_df = pd.DataFrame(self.device_issue_log)
             issues_df.to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
@@ -3873,6 +3880,8 @@ INCLUDE_IN_README: False
                           type=str,
                           default='',
                           help='Comma-separated list of device counts to incrementally test (e.g., "1,3,5")')
+    lf_interop_bg_ping.add_arguments(parser)
+
     args = parser.parse_args()
 
     help_summary = '''\
@@ -3968,6 +3977,10 @@ some amount of file data from the FTP server while measuring the time taken by c
         args.traffic_duration = int(args.traffic_duration[0:-1]) * 60 * 60
     elif args.traffic_duration.endswith(''):
         args.traffic_duration = int(args.traffic_duration)
+
+    # The ping runs across every band, file size and direction combination of the test
+    background_ping = None
+    background_ping_requested = args.bg_ping
 
     # For all combinations ftp_data of directions, file size and client counts, run the test
     for band in args.bands:
@@ -4071,6 +4084,15 @@ some amount of file data from the FTP server while measuring the time taken by c
                 if obj.clients_type == 'Real':
                     obj.monitor_cx()
                     logger.info(f'Test started on the devices : {obj.input_devices_list}')
+                    # starting the ping on the selected clients, it keeps running until the ftp traffic is done
+                    if background_ping_requested:
+                        background_ping_requested = False
+                        background_ping = lf_interop_bg_ping.from_args(
+                            args,
+                            host=args.mgr,
+                            port=args.mgr_port,
+                            device_list=obj.input_devices_list,
+                            default_target=args.upstream_port)
                 # First time stamp
                 time1 = datetime.now()
                 logger.info("Traffic started running at %s", time1)
@@ -4109,6 +4131,10 @@ some amount of file data from the FTP server while measuring the time taken by c
 
     # total time for test duration
     # test_duration = str(time_stamp2 - time_stamp1)[:-7]
+
+    if background_ping:
+        background_ping.stop()
+        obj.background_ping = background_ping
 
     date = str(datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
 
@@ -4161,6 +4187,9 @@ some amount of file data from the FTP server while measuring the time taken by c
                             dut_sw_version=args.dut_sw_version, dut_model_num=args.dut_model_num,
                             dut_serial_num=args.dut_serial_num, test_id=args.test_id,
                             bands=args.bands, csv_outfile=args.csv_outfile, local_lf_report_dir=args.local_lf_report_dir, iot_summary=iot_summary)
+
+    if background_ping:
+        background_ping.cleanup()
 
     if args.dowebgui:
         obj.copy_reports_to_home_dir()
