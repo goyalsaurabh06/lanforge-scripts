@@ -1,0 +1,696 @@
+#!/usr/bin/env python3
+
+'''
+    NAME: lf_interop_bg_ping.py
+
+    PURPOSE: lf_interop_bg_ping.py lets any interop test run a ping on its real clients in the
+    background while the test itself drives traffic, and appends the collected ping statistics to
+    the test report.
+
+    The ping runs on the LANforge side as a generic cross-connect (lfping), so it keeps running
+    without the calling script having to drive it. A sampler thread polls the endpoints while the
+    test runs so latency and loss are captured even for long runs.
+
+    EXAMPLE-1:
+    Enabling the background ping from any interop script that supports it
+    python3 lf_interop_qos.py --mgr 192.168.200.63 --real --ssid RDT_wpa2 --security wpa2 --passwd OpenWifi
+    --bg_ping --bg_ping_target 192.168.1.61
+
+    EXAMPLE-2:
+    Enabling the background ping with a custom packet interval and sampling interval
+    python3 lf_interop_video_streaming.py --mgr 192.168.200.63 --ssid RDT_wpa2 --security wpa2 --passwd OpenWifi
+    --bg_ping --bg_ping_target 1.1.eth1 --bg_ping_interval 1 --bg_ping_sample_interval 10
+
+    SCRIPT_CLASSIFICATION : Library
+
+    SCRIPT_CATEGORIES: Report Generation
+
+    NOTES:
+    1.The target may be an IP, a domain name or a LANforge port such as 1.1.eth1, which is resolved to its IP
+    2.iOS devices are skipped because generic endpoints are not supported on them
+    3.The background ping never aborts the calling test, all failures are logged and the test continues
+
+    STATUS: BETA RELEASE
+
+    VERIFIED_ON:
+    Working date    - 15/08/2026
+    Build version   - 5.4.7
+    kernel version  - 6.2.16+
+
+    License: Free to distribute and modify. LANforge systems must be licensed.
+    Copyright (C) 2020-2026 Candela Technologies Inc.
+'''
+
+import os
+import re
+import sys
+import time
+import logging
+import threading
+
+import pandas as pd
+
+# Resolved from this file rather than the working directory so that the calling script can live in
+# any directory under the repository
+_PY_SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+_REPO_DIR = os.path.dirname(_PY_SCRIPTS_DIR)
+for _import_dir in (_PY_SCRIPTS_DIR, os.path.join(_REPO_DIR, 'py-json'), _REPO_DIR):
+    if _import_dir not in sys.path:
+        sys.path.append(_import_dir)
+
+from lf_interop_ping import Ping  # noqa: E402
+
+logger = logging.getLogger(__name__)
+
+# lfping reports running totals on every reply line, for example
+# 64 bytes from 192.168.1.61: icmp_seq=28 time=3.66 ms *** drop: 0 (0, 0.000)  rx: 28  fail: 0  bytes: 1792 min/avg/max: 2.160/3.422/5.190
+CUMULATIVE_PATTERN = re.compile(r'min/avg/max:?\s*([0-9]+\.?[0-9]*)/([0-9]+\.?[0-9]*)/([0-9]+\.?[0-9]*)')
+DROP_PATTERN = re.compile(r'drop:\s*([0-9]+)')
+RX_PATTERN = re.compile(r'rx:\s*([0-9]+)')
+
+# Matches the round trip time of a single reply, used for client types that do not report totals.
+# Windows replies use 'time=1ms' or 'time<1ms', the rest use 'time=1.23 ms'.
+RTT_PATTERN = re.compile(r'time[=<]\s*([0-9]+\.?[0-9]*)\s*ms', re.IGNORECASE)
+
+OS_TYPE_LABELS = {
+    'android': 'Android',
+    'windows': 'Windows',
+    'linux': 'Linux',
+    'macos': 'Mac',
+}
+
+
+class BackgroundPing:
+    """Runs lfping on real clients in the background for the duration of another interop test.
+
+    The calling script only needs to construct the object, call start() before its traffic
+    begins, stop() once its traffic ends and add_to_report() while building its report.
+    """
+
+    # Kept distinct from the 'generic' prefix used by lf_interop_ping and lf_interop_speedtest so
+    # that the background ping never removes or reuses endpoints owned by the calling test.
+    NAME_PREFIX = 'bgping'
+
+    def __init__(self,
+                 host=None,
+                 port=8080,
+                 target=None,
+                 interval=1,
+                 device_list=None,
+                 sample_interval=10,
+                 lanforge_password='lanforge',
+                 debug=False):
+        self.host = host
+        self.port = port
+        self.target = target
+        self.interval = interval
+        self.sample_interval = sample_interval
+        self.debug = debug
+        self.requested_devices = list(device_list) if device_list else []
+
+        self.ping = Ping(host=host,
+                         port=port,
+                         target=target,
+                         interval=interval,
+                         lanforge_password=lanforge_password,
+                         sta_list=[],
+                         real=True,
+                         virtual=False,
+                         duration=0,
+                         debug=debug)
+        self.ping.generic_endps_profile.name_prefix = self.NAME_PREFIX
+
+        self.device_os = {}
+        self.device_data = {}
+        self.samples = {}
+        self.started = False
+        self.start_time = None
+        self.stop_time = None
+        self.stats = {}
+        self._previous_lines = {}
+        self._stop_event = threading.Event()
+        self._sampler_thread = None
+
+    def json_get(self, path):
+        try:
+            return self.ping.json_get(path)
+        except Exception as e:
+            logger.warning('Background ping query %s failed: %s', path, e)
+            return None
+
+    def resolve_target(self):
+        """Converts a LANforge port such as 1.1.eth1 into the IP the clients should ping."""
+        if not self.target:
+            return None
+
+        if self.target.count('.') == 3 and all(part.isdigit() for part in self.target.split('.')):
+            return self.target
+
+        eid = self.ping.name_to_eid(self.target)
+        if len(eid) < 3 or not eid[2]:
+            return self.target
+
+        response = self.json_get('/port/{}/{}/{}?fields=ip'.format(eid[0], eid[1], eid[2]))
+        if response and 'interface' in response and response['interface'].get('ip'):
+            resolved = response['interface']['ip']
+            logger.info('Background ping target %s resolved to %s', self.target, resolved)
+            return resolved
+
+        logger.warning('Could not resolve the background ping target %s, using it as given', self.target)
+        return self.target
+
+    def discover_devices(self):
+        """Builds the ping capable subset of the devices the calling test was given.
+
+        Only the devices the calling test is running on are considered, never anything else on
+        the testbed. Of those, phantom, down, address-less and iOS devices are dropped because a
+        ping cannot be run on them.
+        """
+        # Ports named in full, e.g. 1.40.wlan0, and resources named on their own, e.g. 1.40
+        requested_ports = set()
+        requested_resources = set()
+        for device in self.requested_devices:
+            device = str(device).strip()
+            if not device:
+                continue
+            parts = device.split('.')
+            if len(parts) == 1:
+                requested_resources.add('1.' + parts[0])
+            elif len(parts) == 2:
+                requested_resources.add(device)
+            else:
+                requested_ports.add('.'.join(parts[:3]))
+
+        if not requested_ports and not requested_resources:
+            logger.error('The background ping was given no devices to run on, skipping it')
+            return []
+
+        # A resource whose port was named explicitly must not also match through its resource
+        ports_named_for = {'.'.join(port.split('.')[:2]) for port in requested_ports}
+        requested_resources -= ports_named_for
+
+        resources = self.json_get('/resource/all')
+        if not resources or 'resources' not in resources:
+            logger.warning('Background ping could not read the resource list')
+            return []
+
+        resource_os = {}
+        ios_resources = set()
+        for resource_entry in resources['resources']:
+            resource_id = list(resource_entry.keys())[0]
+            resource_data = resource_entry[resource_id]
+            if not isinstance(resource_data, dict) or 'hw version' not in resource_data:
+                continue
+
+            # A custom kernel means a LANforge resource rather than a real client
+            if resource_data.get('ct-kernel'):
+                continue
+
+            hw_version = resource_data.get('hw version', '')
+            app_id = resource_data.get('app-id', '')
+            kernel = resource_data.get('kernel', '')
+
+            # Same iOS signature the other interop scripts use
+            if 'Apple' in hw_version and app_id != '' and (app_id != '0' or kernel == ''):
+                ios_resources.add(resource_id)
+                continue
+
+            if 'Win/x86' in hw_version:
+                resource_os[resource_id] = 'windows'
+            elif 'Apple/x86' in hw_version:
+                resource_os[resource_id] = 'macos'
+            elif 'Linux/x86' in hw_version:
+                resource_os[resource_id] = 'linux'
+            else:
+                resource_os[resource_id] = 'android'
+
+        ports = self.json_get('/ports/all')
+        if not ports or 'interfaces' not in ports:
+            logger.warning('Background ping could not read the port list')
+            return []
+
+        selected = []
+        matched_requests = set()
+        for port_entry in ports['interfaces']:
+            port_id = list(port_entry.keys())[0]
+            port_data = port_entry[port_id]
+            parts = port_id.split('.')
+            if len(parts) != 3:
+                continue
+            resource_id = parts[0] + '.' + parts[1]
+
+            # Named ports are taken as given, a named resource contributes its station port only
+            if port_id in requested_ports:
+                request = port_id
+            elif resource_id in requested_resources and port_data.get('parent dev') == 'wiphy0':
+                request = resource_id
+            else:
+                continue
+
+            matched_requests.add(request)
+
+            if resource_id in ios_resources:
+                logger.info('Skipping the iOS device %s for the background ping, a ping cannot be run on it', resource_id)
+                continue
+
+            if resource_id not in resource_os:
+                logger.info('Skipping %s for the background ping, it is not a real client', port_id)
+                continue
+
+            if port_data.get('phantom') or port_data.get('down'):
+                logger.info('Skipping %s for the background ping, the port is down or phantom', port_id)
+                continue
+
+            # A client without an address cannot ping, and the endpoint would sit idle
+            port_ip = port_data.get('ip')
+            if not port_ip or port_ip == '0.0.0.0':
+                logger.info('Skipping %s for the background ping, the client has no IP', port_id)
+                continue
+
+            selected.append(port_id)
+            self.device_os[port_id] = resource_os[resource_id]
+            self.device_data[port_id] = port_data
+
+        unmatched = sorted((requested_ports | requested_resources) - matched_requests)
+        if unmatched:
+            logger.warning('Background ping could not find the devices %s on the LANforge', unmatched)
+
+        logger.info('The background ping will run on %s of the %s devices the test was given',
+                    selected, len(self.requested_devices))
+
+        return selected
+
+    def pre_cleanup(self):
+        """Removes background ping endpoints left over by an earlier run."""
+        # The name field is only populated when it is asked for, /generic/all returns it empty
+        response = self.json_get('/generic/list?fields=name')
+        if not response:
+            return
+
+        endpoints = response.get('endpoints', response.get('endpoint', []))
+        if isinstance(endpoints, dict):
+            endpoints = [endpoints]
+
+        stale_endps = []
+        for endpoint in endpoints:
+            if not isinstance(endpoint, dict):
+                continue
+            # /generic/all wraps every endpoint in a dict keyed by its name
+            for key, value in endpoint.items():
+                name = value.get('name') if isinstance(value, dict) else key
+                if name and name.startswith(self.NAME_PREFIX + '-'):
+                    stale_endps.append(name)
+
+        if not stale_endps:
+            return
+
+        logger.info('Removing the stale background ping endpoints %s', stale_endps)
+        self.ping.generic_endps_profile.created_endp = stale_endps
+        self.ping.generic_endps_profile.created_cx = ['CX_{}'.format(name) for name in stale_endps]
+        self.ping.generic_endps_profile.cleanup()
+        self.ping.generic_endps_profile.created_endp = []
+        self.ping.generic_endps_profile.created_cx = []
+
+    def start(self):
+        """Creates and starts the ping endpoints. Returns True when the ping is running."""
+        if not self.target:
+            logger.error('No background ping target was given, the background ping is disabled')
+            return False
+
+        if not self.ping.check_tab_exists():
+            logger.error('The Generic tab is not available, skipping the background ping')
+            return False
+
+        self.target = self.resolve_target()
+        # Ping binds dest at construction time, so it has to be set again after the target is resolved
+        self.ping.target = self.target
+        self.ping.generic_endps_profile.dest = self.target
+        self.ping.generic_endps_profile.interval = self.interval
+
+        devices = self.discover_devices()
+        if not devices:
+            logger.error('No ping capable real devices were found, skipping the background ping')
+            return False
+
+        self.ping.real_sta_list = devices
+        self.ping.sta_list = list(devices)
+        self.samples = {device: self._empty_sample() for device in devices}
+        self._previous_lines = {device: [] for device in devices}
+
+        try:
+            self.pre_cleanup()
+            os_types = [self.device_os[device] for device in devices]
+            if not self.ping.generic_endps_profile.create(ports=devices, sleep_time=.5, real_client_os_types=os_types):
+                logger.error('Background ping endpoint creation failed')
+                return False
+            # Endpoints only report their output as often as their report timer, the ping plotter
+            # uses the same value to keep the results flowing
+            for endpoint in self.ping.generic_endps_profile.created_endp:
+                self.ping.generic_endps_profile.set_report_timer(endp_name=endpoint, timer=250)
+            self.ping.start_generic()
+        except Exception as e:
+            logger.error('Background ping could not be started: %s', e)
+            return False
+
+        self.started = True
+        self.start_time = time.time()
+        logger.info('Background ping started on %s devices towards %s', len(devices), self.target)
+
+        if self.sample_interval:
+            self._stop_event.clear()
+            self._sampler_thread = threading.Thread(target=self._sampler, daemon=True)
+            self._sampler_thread.start()
+
+        return True
+
+    def _sampler(self):
+        while not self._stop_event.is_set():
+            # Wait first so the endpoints have output to report on the very first sample
+            if self._stop_event.wait(self.sample_interval):
+                break
+            try:
+                self.sample()
+            except Exception as e:
+                logger.warning('Background ping sampling failed: %s', e)
+
+    def _results_by_device(self):
+        """Returns the raw endpoint data of every background ping endpoint, keyed by device."""
+        results = self.ping.get_results()
+        by_device = {}
+
+        if isinstance(results, dict):
+            # A single endpoint is returned unwrapped
+            if 'name' in results:
+                results = [{results['name']: results}]
+            else:
+                results = [results]
+
+        if not isinstance(results, list):
+            return by_device
+
+        for entry in results:
+            if not isinstance(entry, dict):
+                continue
+            for key, value in entry.items():
+                if not isinstance(value, dict):
+                    continue
+                name = value.get('name', key)
+                if not name.startswith(self.NAME_PREFIX + '-'):
+                    continue
+                by_device[name[len(self.NAME_PREFIX) + 1:]] = value
+
+        return by_device
+
+    @staticmethod
+    def _empty_sample():
+        return {'min': None, 'avg': None, 'max': None, 'rx': None, 'drop': None,
+                'count': 0, 'total': 0.0, 'observed_min': None, 'observed_max': None,
+                'last_line': ''}
+
+    def sample(self):
+        """Reads the endpoint output once and folds it into the running per device statistics.
+
+        Sampling while the test runs means the statistics survive an endpoint that stops
+        reporting, and it keeps 'last results' from rolling over unread on long runs.
+        """
+        for device, endpoint_data in self._results_by_device().items():
+            if device not in self.samples:
+                continue
+
+            last_results = endpoint_data.get('last results', '') or ''
+            lines = [line for line in last_results.split('\n') if line.strip()]
+            if not lines:
+                continue
+
+            stats = self.samples[device]
+            stats['last_line'] = lines[-1]
+
+            # The totals on the most recent reply line already cover the whole ping run
+            cumulative_found = False
+            for line in reversed(lines):
+                match = CUMULATIVE_PATTERN.search(line)
+                if not match:
+                    continue
+                stats['min'] = float(match.group(1))
+                stats['avg'] = float(match.group(2))
+                stats['max'] = float(match.group(3))
+
+                drop_match = DROP_PATTERN.search(line)
+                if drop_match:
+                    stats['drop'] = int(drop_match.group(1))
+                rx_match = RX_PATTERN.search(line)
+                if rx_match:
+                    stats['rx'] = int(rx_match.group(1))
+
+                cumulative_found = True
+                break
+
+            # 'last results' is a rolling buffer, so only the lines past the overlap are new
+            new_lines = self._new_lines(self._previous_lines.get(device, []), lines)
+            self._previous_lines[device] = lines
+
+            if cumulative_found:
+                continue
+
+            # Client types that do not report totals are tracked reply by reply instead
+            for line in new_lines:
+                match = RTT_PATTERN.search(line)
+                if not match:
+                    continue
+                rtt = float(match.group(1))
+                stats['count'] += 1
+                stats['total'] += rtt
+                if stats['observed_min'] is None or rtt < stats['observed_min']:
+                    stats['observed_min'] = rtt
+                if stats['observed_max'] is None or rtt > stats['observed_max']:
+                    stats['observed_max'] = rtt
+
+    @staticmethod
+    def _new_lines(previous_lines, current_lines):
+        """Returns the lines of current_lines that were not already present in previous_lines."""
+        if not previous_lines:
+            return current_lines
+
+        overlap = min(len(previous_lines), len(current_lines))
+        while overlap > 0:
+            if previous_lines[-overlap:] == current_lines[:overlap]:
+                return current_lines[overlap:]
+            overlap -= 1
+
+        return current_lines
+
+    def stop(self):
+        """Stops the ping endpoints and builds the final per device statistics."""
+        if not self.started:
+            return {}
+
+        self._stop_event.set()
+        if self._sampler_thread:
+            self._sampler_thread.join(timeout=self.sample_interval + 5)
+
+        try:
+            self.ping.stop_generic()
+        except Exception as e:
+            logger.warning('Background ping could not be stopped cleanly: %s', e)
+
+        self.stop_time = time.time()
+
+        # The min/avg/max summary is only printed once the ping process has been killed
+        time.sleep(2)
+        try:
+            self.sample()
+            self.stats = self._build_stats()
+        except Exception as e:
+            logger.warning('Background ping results could not be collected: %s', e)
+            self.stats = {}
+
+        self.started = False
+        return self.stats
+
+    def _build_stats(self):
+        stats = {}
+        results = self._results_by_device()
+
+        for device in self.ping.real_sta_list:
+            endpoint_data = results.get(device, {})
+            sampled = self.samples.get(device, self._empty_sample())
+
+            sent = self._as_int(endpoint_data.get('tx pkts'))
+            received = self._as_int(endpoint_data.get('rx pkts'))
+            dropped = self._as_int(endpoint_data.get('dropped'))
+
+            # Fall back to the totals lfping prints when the endpoint counters are unavailable
+            if not received and sampled.get('rx') is not None:
+                received = sampled['rx']
+            if not dropped and sampled.get('drop') is not None:
+                dropped = sampled['drop']
+            if not sent:
+                sent = received + dropped
+
+            minimum = sampled.get('min')
+            average = sampled.get('avg')
+            maximum = sampled.get('max')
+            if minimum is None and sampled.get('count'):
+                minimum = sampled['observed_min']
+                maximum = sampled['observed_max']
+                average = sampled['total'] / sampled['count']
+
+            device_data = self.device_data.get(device, {})
+            os_type = self.device_os.get(device, 'linux')
+            entry = {
+                'device': device,
+                'name': device_data.get('user', '') or device_data.get('hostname', '') or device,
+                'os': OS_TYPE_LABELS.get(os_type, os_type),
+                'mac': device_data.get('mac', ''),
+                'ssid': device_data.get('ssid', ''),
+                'channel': device_data.get('channel', ''),
+                'mode': device_data.get('mode', ''),
+                'target': self.target,
+                'command': endpoint_data.get('command', ''),
+                'sent': sent,
+                'recv': received,
+                'dropped': dropped,
+                'loss_percent': round(((sent - received) / sent) * 100, 2) if sent else 0,
+                'min_rtt': round(minimum, 2) if minimum is not None else 0,
+                'avg_rtt': round(average, 2) if average is not None else 0,
+                'max_rtt': round(maximum, 2) if maximum is not None else 0,
+                'last_result': sampled.get('last_line', ''),
+                'remarks': [],
+            }
+            entry['remarks'] = self.ping.generate_remarks(entry)
+
+            # A client that sent nothing never ran the command, which is a setup problem on that
+            # client rather than a result. Say so here, the report table alone is easy to miss.
+            if not sent and not received:
+                logger.warning('The background ping produced no output on %s. The client did not run "%s", check '
+                               'that the ping is runnable there.', device, entry['command'])
+
+            stats[device] = entry
+
+        return stats
+
+    @staticmethod
+    def _as_int(value):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    def cleanup(self):
+        """Removes the background ping endpoints."""
+        try:
+            self.ping.generic_endps_profile.cleanup()
+            self.ping.generic_endps_profile.created_cx = []
+            self.ping.generic_endps_profile.created_endp = []
+        except Exception as e:
+            logger.warning('Background ping cleanup failed: %s', e)
+
+    def duration_string(self):
+        if not self.start_time:
+            return ''
+        end = self.stop_time if self.stop_time else time.time()
+        minutes, seconds = divmod(int(end - self.start_time), 60)
+        hours, minutes = divmod(minutes, 60)
+        return '{:02d}:{:02d}:{:02d}'.format(hours, minutes, seconds)
+
+    def to_dataframe(self):
+        """Builds the ping statistics table.
+
+        Only the ping numbers are reported. The client details the test already tabulates
+        elsewhere in its report are deliberately not repeated here.
+        """
+        if not self.stats:
+            return None
+
+        rows = list(self.stats.values())
+        table = {
+            'Wireless Client': ['{} {}'.format(row['name'], row['os']) for row in rows],
+            'Packets Sent': [row['sent'] for row in rows],
+            'Packets Received': [row['recv'] for row in rows],
+            'Packets Loss': [row['dropped'] for row in rows],
+            'Packet Loss %': [row['loss_percent'] for row in rows],
+            'Min Latency (ms)': [row['min_rtt'] for row in rows],
+            'Average Latency (ms)': [row['avg_rtt'] for row in rows],
+            'Max Latency (ms)': [row['max_rtt'] for row in rows],
+        }
+
+        # The remarks column only earns its place when something actually went wrong
+        remarks = [', '.join(row['remarks']) for row in rows]
+        if any(remarks):
+            table['Remarks'] = remarks
+
+        return pd.DataFrame(table)
+
+    def add_to_report(self, report):
+        """Appends the ping statistics table to the test's own report.
+
+        Safe to call unconditionally, nothing is added when the background ping did not run.
+        """
+        dataframe = self.to_dataframe()
+        if dataframe is None:
+            return False
+
+        try:
+            report.set_table_title(
+                'Ping Statistics: pinged {} for {} at a {} second interval while the test was running'.format(
+                    self.target, self.duration_string(), self.interval))
+            report.build_table_title()
+            report.set_table_dataframe(dataframe)
+            report.build_table()
+        except Exception as e:
+            logger.warning('Background ping statistics could not be added to the report: %s', e)
+            return False
+
+        return True
+
+
+def add_arguments(parser):
+    """Adds the shared background ping arguments to an interop script argument parser."""
+    group = parser.add_argument_group('Background ping')
+    group.add_argument('--bg_ping',
+                       action='store_true',
+                       help='Run a ping on the real clients in the background while the test runs and report its '
+                            'statistics at the end of the report')
+    group.add_argument('--bg_ping_target',
+                       type=str,
+                       default=None,
+                       help='IP, domain name or LANforge port the background ping should target. Defaults to the '
+                            'upstream port or server IP of the test when not given')
+    group.add_argument('--bg_ping_interval',
+                       type=float,
+                       default=1,
+                       help='Packet interval of the background ping in seconds. Defaults to 1')
+    group.add_argument('--bg_ping_sample_interval',
+                       type=float,
+                       default=10,
+                       help='How often the background ping endpoints are sampled, in seconds. Defaults to 10')
+    return parser
+
+
+def from_args(args, host, port=8080, device_list=None, default_target=None):
+    """Builds and starts a BackgroundPing from parsed arguments.
+
+    Returns None when the background ping was not requested or could not be started, so the
+    calling script can keep the return value and call it unconditionally.
+    """
+    if not getattr(args, 'bg_ping', False):
+        return None
+
+    target = getattr(args, 'bg_ping_target', None) or default_target
+    if not target:
+        logger.error('--bg_ping was given without --bg_ping_target and the test has no upstream to fall back on, '
+                     'skipping the background ping')
+        return None
+
+    background_ping = BackgroundPing(host=host,
+                                     port=port,
+                                     target=target,
+                                     interval=getattr(args, 'bg_ping_interval', 1),
+                                     device_list=device_list,
+                                     sample_interval=getattr(args, 'bg_ping_sample_interval', 10),
+                                     debug=getattr(args, 'debug', False))
+
+    if not background_ping.start():
+        return None
+
+    return background_ping
