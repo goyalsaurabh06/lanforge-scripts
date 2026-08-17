@@ -136,6 +136,7 @@ realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
 from lf_report import lf_report  # noqa: E402
 from lf_graph import lf_bar_graph, lf_bar_graph_horizontal  # noqa: E402
+import lf_interop_bg_ping  # noqa: E402
 
 logger = logging.getLogger(__name__)
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
@@ -1720,6 +1721,9 @@ class ThroughputQOS(Realm):
 
         if iot_summary:
             self.build_iot_report_section(report, iot_summary)
+        # ping statistics collected on the clients while the qos traffic was running
+        if getattr(self, 'background_ping', None):
+            self.background_ping.add_to_report(report)
         # recorded device issues in csv
         if self.device_issue_log:
             issues_df = pd.DataFrame(self.device_issue_log)
@@ -3746,6 +3750,8 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
                           default='',
                           help='Comma-separated list of device counts to incrementally test (e.g., "1,3,5")')
 
+    lf_interop_bg_ping.add_arguments(parser)
+
     args = parser.parse_args()
 
     # help summary
@@ -3927,15 +3933,27 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
                 )
                 df1.to_csv('{}/overall_throughput.csv'.format(throughput_qos.result_dir), index=False)
                 raise ValueError("Aborting the test....")
+        # starting the ping on the selected clients, it keeps running until the qos traffic is stopped
+        throughput_qos.background_ping = lf_interop_bg_ping.from_args(
+            args,
+            host=args.mgr,
+            port=args.mgr_port,
+            device_list=throughput_qos.input_devices_list,
+            default_target=args.upstream_port)
         throughput_qos.build()
         throughput_qos.monitor_cx()
         if args.robot_test:
             throughput_qos.perform_robo()
+            if throughput_qos.background_ping:
+                throughput_qos.background_ping.stop()
+                throughput_qos.background_ping.cleanup()
             exit(1)
         throughput_qos.start(False, False)
         time.sleep(10)
         connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b = throughput_qos.monitor()
         throughput_qos.stop()
+        if throughput_qos.background_ping:
+            throughput_qos.background_ping.stop()
         time.sleep(5)
         test_results['test_results'].append(throughput_qos.evaluate_qos(connections_download, connections_upload, drop_a_per, drop_b_per))
         data.update(test_results)
@@ -3984,6 +4002,9 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
             connections_download_avg=connections_download_avg,
             avg_drop_a=avg_drop_a,
             avg_drop_b=avg_drop_b, iot_summary=iot_summary)
+
+    if getattr(throughput_qos, 'background_ping', None):
+        throughput_qos.background_ping.cleanup()
 
     # Update webgui running json with latest entry and test status completed
     if throughput_qos.dowebgui == "True":
