@@ -74,6 +74,7 @@ lf_csv = importlib.import_module("py-scripts.lf_csv")
 realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
 lf_report_pdf = importlib.import_module("py-scripts.lf_report")
+lf_interop_bg_ping = importlib.import_module("py-scripts.lf_interop_bg_ping")
 lf_graph = importlib.import_module("py-scripts.lf_graph")
 logger = logging.getLogger(__name__)
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
@@ -1427,6 +1428,10 @@ class InteropPortReset(Realm):
             #                             "The table displays details of real clients which are involved in the test.")
             # self.lf_report.build_objective()
 
+            # ping statistics collected on the clients while the ports were being reset
+            if getattr(self, 'background_ping', None):
+                self.background_ping.add_to_report(self.lf_report)
+
             self.lf_report.build_footer()
             self.lf_report.write_html()
             if self.dowebgui:
@@ -1654,6 +1659,9 @@ class InteropPortReset(Realm):
                 test_setup = pd.DataFrame(table_2)
                 self.lf_report.set_table_dataframe(test_setup)
                 self.lf_report.build_table()
+        # ping statistics collected on the clients while the ports were being reset
+        if getattr(self, 'background_ping', None):
+            self.background_ping.add_to_report(self.lf_report)
         self.lf_report.build_footer()
         self.lf_report.write_html()
         if self.dowebgui:
@@ -1822,6 +1830,8 @@ INCLUDE_IN_README: False
     parser.add_argument('--rotation', type=str, default='', help="The set of angles to rotate at a particular point")
     parser.add_argument('--get_live_view', help="If true will heatmap will be generated from testhouse automation WebGui ", action='store_true')
     parser.add_argument('--total_floors', help="Total floors from testhouse automation WebGui ", default="0")
+    lf_interop_bg_ping.add_arguments(parser)
+
     args = parser.parse_args()
 
     # help summary
@@ -1874,10 +1884,21 @@ INCLUDE_IN_README: False
     print(obj.mgr_ip)
 
     obj.selecting_devices_from_available()
+
+    # starting the ping on the selected clients, it keeps running across every reset iteration
+    obj.background_ping = lf_interop_bg_ping.from_args(
+        args,
+        host=args.host,
+        port=8080,
+        device_list=obj.real_sta_list,
+        default_target=obj.mgr_ip)
+
     if obj.robot_test:
         obj.run()
     else:
         reset_dict, duration = obj.run()
+    if obj.background_ping:
+        obj.background_ping.stop()
     if args.dowebgui:
         obj.result_df['Status'] = 'stopped'
         if obj.robot_test:
@@ -1890,6 +1911,9 @@ INCLUDE_IN_README: False
         obj.generate_report_for_robo()
     else:
         obj.generate_report(reset_dict=reset_dict, test_dur=duration)
+
+    if obj.background_ping:
+        obj.background_ping.cleanup()
 
 
 if __name__ == '__main__':
