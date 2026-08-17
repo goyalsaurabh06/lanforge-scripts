@@ -162,7 +162,7 @@ realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
 # Importing DeviceConfig to apply device configurations for ADB devices and laptops
 DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
-lf_report = importlib.import_module("py-scripts.lf_report")
+lf_report = importlib.import_module("py-scripts.modern_lf_report")
 lf_graph = importlib.import_module("py-scripts.lf_graph")
 lf_kpi_csv = importlib.import_module("py-scripts.lf_kpi_csv")
 logger = logging.getLogger(__name__)

@@ -24,6 +24,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pdfkit
 from matplotlib.colors import ListedColormap
+from matplotlib.ticker import MaxNLocator
 # import matplotlib.ticker as mticker
 import argparse
 import traceback
@@ -1039,14 +1040,18 @@ class lf_line_graph:
             plt.gca().invert_yaxis()
         if self.reverse_x:
             plt.gca().invert_xaxis()
+        # Thin out x-tick labels so long series (many timestamps) stay readable
+        plt.gca().xaxis.set_major_locator(MaxNLocator(nbins=10, integer=True))
+        plt.xticks(rotation=30, ha='right')
         plt.gcf()
+        plt.tight_layout()
         plt.savefig("%s.png" % self.graph_image_name, dpi=96)
         plt.close()
         logger.debug("{}.png".format(self.graph_image_name))
         if self.enable_csv:
             if self.data_set is not None:
-                self.lf_csv.columns = self.label
-                self.lf_csv.rows = self.data_set
+                self.lf_csv.columns = [self.xaxis_name] + self.label
+                self.lf_csv.rows = [self.xaxis_categories] + self.data_set
                 self.lf_csv.filename = f"{self.graph_image_name}.csv"
                 self.lf_csv.generate_csv()
             else:

@@ -146,8 +146,8 @@ realm = importlib.import_module("py-json.realm")
 LFCliBase = realm.LFCliBase
 Realm = realm.Realm
 base_RealDevice = base.RealDevice
-lf_report = importlib.import_module("py-scripts.lf_report")
-lf_report_pdf = importlib.import_module("py-scripts.lf_report")
+lf_report = importlib.import_module("py-scripts.modern_lf_report")
+lf_report_pdf = importlib.import_module("py-scripts.modern_lf_report")
 lf_graph = importlib.import_module("py-scripts.lf_graph")
 logging.basicConfig(
     level=logging.INFO,
@@ -1438,17 +1438,6 @@ class VideoStreamingTest(Realm):
             created_incremental_values = self.incremental
         return created_incremental_values
 
-    def trim_data(self, array_size, to_updated_array):
-        if array_size < 6:
-            updated_array = to_updated_array
-        else:
-            middle_elements_count = 4
-            step = (array_size - 1) / (middle_elements_count + 1)
-            middle_elements = [int(i * step) for i in range(1, middle_elements_count + 1)]
-            new_array = [0] + middle_elements + [array_size - 1]
-            updated_array = [to_updated_array[index] for index in new_array]
-        return updated_array
-
     def process_list(self, lst):
         # This function filters out initial zero values in the test video rate.
         # Before the video starts running, the rate is temporarily zero,
@@ -1691,7 +1680,6 @@ class VideoStreamingTest(Realm):
             devices_data_to_create_wait_time_bar_graph = []
             max_video_rate, min_video_rate, avg_video_rate = [], [], []
             total_url_data, rssi_data = [], []
-            trimmed_data_set_in_graph = []
             max_bytes_rd_list = []
             avg_rx_rate_list = []
             # Retrieve data for the previous iteration, if it's not the first iteration
@@ -1750,10 +1738,6 @@ class VideoStreamingTest(Realm):
             video_streaming_values_list = realtime_dataset['overall_video_format_bitrate'][realtime_dataset['iteration'] == iter + 1].values.tolist()
             data_set_in_graph.append(video_streaming_values_list)
 
-            # Trim the data in data_set_in_graph and append to trimmed_data_set_in_graph
-            for _ in range(len(data_set_in_graph)):
-                trimmed_data_set_in_graph.append(self.trim_data(len(data_set_in_graph[_]), data_set_in_graph[_]))
-
             # If there are multiple incremental values, add custom HTML content to the report for the current iteration
             if len(created_incremental_values) > 1:
                 report.set_custom_html(f"<h2><u>Iteration-{iter + 1}</u></h2>")
@@ -1765,18 +1749,20 @@ class VideoStreamingTest(Realm):
             report.build_objective()
 
             # Create a line graph for video rate over time
-            graph = lf_line_graph(_data_set=trimmed_data_set_in_graph,
+            graph = lf_line_graph(_data_set=data_set_in_graph,
                                   _xaxis_name="Time",
                                   _yaxis_name="Video Rate (Mbps)",
-                                  _xaxis_categories=self.trim_data(len(realtime_dataset['timestamp'][realtime_dataset['iteration'] == iter + 1].values.tolist()),
-                                                                   realtime_dataset['timestamp'][realtime_dataset['iteration'] == iter + 1].values.tolist()),
+                                  _xaxis_categories=realtime_dataset['timestamp'][realtime_dataset['iteration'] == iter + 1].values.tolist(),
                                   _label=['Rate'],
-                                  _graph_image_name=f"vs_line_graph{iter}"
+                                  _graph_image_name=f"vs_line_graph{iter}",
+                                  _enable_csv=True
                                   )
             graph_png = graph.build_line_graph()
             logger.info("graph name {}".format(graph_png))
-            report.set_graph_image(graph_png)
+            report.set_graph_image(graph_png, _chart_type="line")
             report.move_graph_image()
+            report.set_csv_filename(graph_png)
+            report.move_csv_file()
 
             report.build_graph()
 
@@ -1798,14 +1784,17 @@ class VideoStreamingTest(Realm):
                                             _legend_loc="best",
                                             _legend_box=(1.0, 1.0),
                                             _show_bar_value=True,
-                                            _figsize=(x_fig_size, y_fig_size)
+                                            _figsize=(x_fig_size, y_fig_size),
                                             #    _color=['lightcoral']
+                                            _enable_csv=True
                                             )
             graph_png = graph.build_bar_graph_horizontal()
             logger.info("wait time graph name {}".format(graph_png))
             graph.build_bar_graph_horizontal()
             report.set_graph_image(graph_png)
             report.move_graph_image()
+            report.set_csv_filename(graph_png)
+            report.move_csv_file()
             report.build_graph()
 
             report.set_obj_html(
@@ -1823,14 +1812,17 @@ class VideoStreamingTest(Realm):
                                             _legend_loc="best",
                                             _legend_box=(1.0, 1.0),
                                             _show_bar_value=True,
-                                            _figsize=(x_fig_size, y_fig_size)
+                                            _figsize=(x_fig_size, y_fig_size),
                                             #    _color=['lightcoral']
+                                            _enable_csv=True
                                             )
             graph_png = graph.build_bar_graph_horizontal()
             logger.info("max/min graph name {}".format(graph_png))
             graph.build_bar_graph_horizontal()
             report.set_graph_image(graph_png)
             report.move_graph_image()
+            report.set_csv_filename(graph_png)
+            report.move_csv_file()
             report.build_graph()
 
             report.set_obj_html(
@@ -1848,14 +1840,17 @@ class VideoStreamingTest(Realm):
                                             _legend_loc="best",
                                             _legend_box=(1.0, 1.0),
                                             _show_bar_value=True,
-                                            _figsize=(x_fig_size, y_fig_size)
+                                            _figsize=(x_fig_size, y_fig_size),
                                             #    _color=['lightcoral']
+                                            _enable_csv=True
                                             )
             graph_png = graph.build_bar_graph_horizontal()
             logger.info("wait time graph name {}".format(graph_png))
             graph.build_bar_graph_horizontal()
             report.set_graph_image(graph_png)
             report.move_graph_image()
+            report.set_csv_filename(graph_png)
+            report.move_csv_file()
             report.build_graph()
             if self.dowebgui and self.get_live_view and not self.do_bandsteering:
                 self.add_buffer_and_wait_time_images(report=report)
@@ -2504,7 +2499,6 @@ class VideoStreamingTest(Realm):
             devices_data_to_create_wait_time_bar_graph = []
             max_video_rate, min_video_rate, avg_video_rate = [], [], []
             total_url_data, rssi_data = [], []
-            trimmed_data_set_in_graph = []
             max_bytes_rd_list = []
             avg_rx_rate_list = []
             # Retrieve data for the previous iteration, if it's not the first iteration
@@ -2563,10 +2557,6 @@ class VideoStreamingTest(Realm):
             video_streaming_values_list = realtime_dataset['overall_video_format_bitrate'][realtime_dataset['iteration'] == iter + 1].values.tolist()
             data_set_in_graph.append(video_streaming_values_list)
 
-            # Trim the data in data_set_in_graph and append to trimmed_data_set_in_graph
-            for _ in range(len(data_set_in_graph)):
-                trimmed_data_set_in_graph.append(self.trim_data(len(data_set_in_graph[_]), data_set_in_graph[_]))
-
             # If there are multiple incremental values, add custom HTML content to the report for the current iteration
             if len(created_incremental_values) > 1:
                 report.set_custom_html(f"<h2><u>Iteration-{iter + 1}</u></h2>")
@@ -2582,18 +2572,20 @@ class VideoStreamingTest(Realm):
             report.build_objective()
 
             # Create a line graph for video rate over time
-            graph = lf_line_graph(_data_set=trimmed_data_set_in_graph,
+            graph = lf_line_graph(_data_set=data_set_in_graph,
                                   _xaxis_name="Time",
                                   _yaxis_name="Video Rate (Mbps)",
-                                  _xaxis_categories=self.trim_data(len(realtime_dataset['timestamp'][realtime_dataset['iteration'] == iter + 1].values.tolist()),
-                                                                   realtime_dataset['timestamp'][realtime_dataset['iteration'] == iter + 1].values.tolist()),
+                                  _xaxis_categories=realtime_dataset['timestamp'][realtime_dataset['iteration'] == iter + 1].values.tolist(),
                                   _label=['Rate'],
-                                  _graph_image_name=f"vs_line_graph{iter}{graph_suffix}"
+                                  _graph_image_name=f"vs_line_graph{iter}{graph_suffix}",
+                                  _enable_csv=True
                                   )
             graph_png = graph.build_line_graph()
             logger.info("graph name {}".format(graph_png))
-            report.set_graph_image(graph_png)
+            report.set_graph_image(graph_png, _chart_type="line")
             report.move_graph_image()
+            report.set_csv_filename(graph_png)
+            report.move_csv_file()
 
             report.build_graph()
 
@@ -2615,14 +2607,17 @@ class VideoStreamingTest(Realm):
                                             _legend_loc="best",
                                             _legend_box=(1.0, 1.0),
                                             _show_bar_value=True,
-                                            _figsize=(x_fig_size, y_fig_size)
+                                            _figsize=(x_fig_size, y_fig_size),
                                             #    _color=['lightcoral']
+                                            _enable_csv=True
                                             )
             graph_png = graph.build_bar_graph_horizontal()
             logger.info("wait time graph name {}".format(graph_png))
             graph.build_bar_graph_horizontal()
             report.set_graph_image(graph_png)
             report.move_graph_image()
+            report.set_csv_filename(graph_png)
+            report.move_csv_file()
             report.build_graph()
 
             report.set_obj_html(
@@ -2640,14 +2635,17 @@ class VideoStreamingTest(Realm):
                                             _legend_loc="best",
                                             _legend_box=(1.0, 1.0),
                                             _show_bar_value=True,
-                                            _figsize=(x_fig_size, y_fig_size)
+                                            _figsize=(x_fig_size, y_fig_size),
                                             #    _color=['lightcoral']
+                                            _enable_csv=True
                                             )
             graph_png = graph.build_bar_graph_horizontal()
             logger.info("max/min graph name {}".format(graph_png))
             graph.build_bar_graph_horizontal()
             report.set_graph_image(graph_png)
             report.move_graph_image()
+            report.set_csv_filename(graph_png)
+            report.move_csv_file()
             report.build_graph()
 
             report.set_obj_html(
@@ -2665,14 +2663,17 @@ class VideoStreamingTest(Realm):
                                             _legend_loc="best",
                                             _legend_box=(1.0, 1.0),
                                             _show_bar_value=True,
-                                            _figsize=(x_fig_size, y_fig_size)
+                                            _figsize=(x_fig_size, y_fig_size),
                                             #    _color=['lightcoral']
+                                            _enable_csv=True
                                             )
             graph_png = graph.build_bar_graph_horizontal()
             logger.info("wait time graph name {}".format(graph_png))
             graph.build_bar_graph_horizontal()
             report.set_graph_image(graph_png)
             report.move_graph_image()
+            report.set_csv_filename(graph_png)
+            report.move_csv_file()
             report.build_graph()
             if not self.robot_test:
                 self.add_buffer_and_wait_time_images(report=report)
