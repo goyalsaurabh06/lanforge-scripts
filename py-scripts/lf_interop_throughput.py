@@ -199,6 +199,7 @@ from LANforge import LFUtils  # noqa: F401 E402
 realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
 from lf_report import lf_report  # noqa: E402
+import lf_interop_bg_ping  # noqa: E402
 from lf_graph import lf_bar_graph_horizontal, lf_bar_graph  # noqa: E402
 # from lf_graph import lf_line_graph  # noqa: E402
 
@@ -3721,6 +3722,9 @@ class Throughput(Realm):
                 self.add_live_view_images_to_report(report)
         if iot_summary:
             self.build_iot_report_section(report, iot_summary)
+        # ping statistics collected on the clients while the traffic was running
+        if getattr(self, 'background_ping', None):
+            self.background_ping.add_to_report(report)
         if self.device_issue_log:
             pd.DataFrame(self.device_issue_log).to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
         # report.build_custom()
@@ -4313,6 +4317,9 @@ class Throughput(Realm):
                         report.set_custom_html('<hr>')
                         report.build_custom()
 
+        # ping statistics collected on the clients while the traffic was running
+        if getattr(self, 'background_ping', None):
+            self.background_ping.add_to_report(report)
         if self.device_issue_log:
             pd.DataFrame(self.device_issue_log).to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
         # report.build_custom()
@@ -5130,6 +5137,8 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
     optional.add_argument('--rotation', help="The set of angles to rotate at a particular point")
     optional.add_argument('--bssids', type=str, help='Comma separated list of BSSIDs to be used for the test', default="")
 
+    lf_interop_bg_ping.add_arguments(parser)
+
     args = parser.parse_args()
 
     if args.help_summary:
@@ -5330,6 +5339,14 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
             logger.error("Incremental values given for selected devices are incorrect")
             return
 
+        # starting the ping on the selected clients, it keeps running until the traffic is stopped
+        throughput.background_ping = lf_interop_bg_ping.from_args(
+            args,
+            host=args.mgr,
+            port=args.mgr_port,
+            device_list=throughput.input_devices_list,
+            default_target=args.upstream_port)
+
         created_cxs = throughput.build()
         time.sleep(10)
         created_cxs = list(created_cxs.keys())
@@ -5337,6 +5354,9 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
         if args.robot_ip:
             # Execute Robo test execution when robot IP is provided
             throughput.perform_robo(args, clients_to_run)
+            if throughput.background_ping:
+                throughput.background_ping.stop()
+                throughput.background_ping.cleanup()
             exit(1)
 
         if not throughput.precheck_all_created_cx_endpoints():
@@ -5426,6 +5446,8 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
     #     logger.info("connections upload {}".format(connections_upload))
     throughput.remove_missing_cx()
     throughput.stop()
+    if throughput.background_ping:
+        throughput.background_ping.stop()
     if args.postcleanup:
         throughput.cleanup()
     throughput.ensure_monitoring_data_collected()
@@ -5439,6 +5461,8 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
                 iot_summary = json.load(f)
     throughput.generate_report(list(set(iterations_before_test_stopped_by_user)), incremental_capacity_list, data=all_dataframes, data1=to_run_cxs_len, report_path=throughput.result_dir,
                                iot_summary=iot_summary)
+    if throughput.background_ping:
+        throughput.background_ping.cleanup()
     if throughput.dowebgui:
         # copying to home directory i.e home/user_name
         throughput.copy_reports_to_home_dir()
