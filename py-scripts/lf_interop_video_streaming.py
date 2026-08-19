@@ -712,11 +712,12 @@ class VideoStreamingTest(Realm):
         match = re.search(r'(\d+)_l4$', cx_name)
         return "1.{}".format(match.group(1)) if match else cx_name
 
-    def record_device_issue(self, device, issue):
+    def record_device_issue(self, device, issue, api_response=None):
         self.device_issue_log.append({
             "Time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             "Device": device,
             "Issue": issue,
+            "API Response": api_response if api_response is not None else '',
         })
 
     def my_monitor_runtime(self):
@@ -790,18 +791,22 @@ class VideoStreamingTest(Realm):
 
             for cx_name in self.created_cx.keys():
                 value = cx_metrics.get(cx_name)
-                if value is None:
-                    if cx_name not in self.missing_cx_logged:
+                was_missing = value is None
+                # devices not yet in all_cx_list belong to a future incremental stage, not a failure
+                started = cx_name in self.all_cx_list
+                if was_missing:
+                    if started and cx_name not in self.missing_cx_logged:
                         logger.warning(
                             "CX '{}' is missing from the monitoring data, the device may have disconnected "
                             "or its connection was not created. Continuing the test with the remaining "
                             "devices.\n"
                             "URL     : {}\n"
-                            "Response: {}".format(cx_name, monitor_url, data)
+                            "Response keys: {}".format(cx_name, monitor_url, list(cx_metrics.keys()))
                         )
                         self.missing_cx_logged.add(cx_name)
                         self.record_device_issue(self.port_label_from_cx_name(cx_name),
-                                                 "CX '{}' missing from monitoring data".format(cx_name))
+                                                 "CX '{}' missing from monitoring data".format(cx_name),
+                                                 api_response=list(cx_metrics.keys()))
                     value = dict(default_cx_metrics, name=cx_name)
                 else:
                     if cx_name in self.missing_cx_logged:
@@ -809,19 +814,20 @@ class VideoStreamingTest(Realm):
                         self.missing_cx_logged.discard(cx_name)
 
                 status = value.get('status', 'Stopped')
-                # Give devices a 10s grace period after monitoring starts before treating a
-                # non-'Run' status as noteworthy, since it's normal for CXs to still be starting
-                # up right after the monitor loop begins.
-                past_grace_period = (self.monitor_start_time is None or (datetime.now() - self.monitor_start_time).total_seconds() >= 10)
-                if status != 'Run':
-                    if past_grace_period and cx_name not in self.cx_not_running_logged:
-                        logger.warning("CX '{}' status is '{}', not running.".format(cx_name, status))
-                        self.cx_not_running_logged.add(cx_name)
-                        self.record_device_issue(self.port_label_from_cx_name(cx_name),
-                                                 "CX '{}' status is '{}', not running".format(cx_name, status))
-                elif cx_name in self.cx_not_running_logged:
-                    logger.info("CX '{}' status is back to running.".format(cx_name))
-                    self.cx_not_running_logged.discard(cx_name)
+                # skip the status check for an already-missing CX, since it defaults to 'Stopped' and would just be a redundant warning
+                if not was_missing:
+                    # 10s grace period after monitor start, since CXs may still be starting up
+                    past_grace_period = (self.monitor_start_time is None or (datetime.now() - self.monitor_start_time).total_seconds() >= 10)
+                    if status != 'Run':
+                        if started and past_grace_period and cx_name not in self.cx_not_running_logged:
+                            logger.warning("CX '{}' status is '{}', not running.".format(cx_name, status))
+                            self.cx_not_running_logged.add(cx_name)
+                            self.record_device_issue(self.port_label_from_cx_name(cx_name),
+                                                     "CX '{}' status is '{}', not running".format(cx_name, status),
+                                                     api_response=value)
+                    elif cx_name in self.cx_not_running_logged:
+                        logger.info("CX '{}' status is back to running.".format(cx_name))
+                        self.cx_not_running_logged.discard(cx_name)
 
                 names.append(value.get('name', cx_name))
                 statuses.append(status)
@@ -874,7 +880,8 @@ class VideoStreamingTest(Realm):
                         return True
             self.my_monitor_runtime()
             elapsed = (datetime.now() - wait_start).total_seconds()
-            if len(self.missing_cx_logged) < len(self.created_cx):
+            # compare against currently-started devices only, not future incremental stages
+            if len(self.missing_cx_logged) < len(set(self.all_cx_list)):
                 logger.info("Device(s) responded again after {:.0f}s, resuming.".format(elapsed))
                 return True
             logger.warning("Still no devices responding after {:.0f}s, retrying...".format(elapsed))
@@ -1010,14 +1017,16 @@ class VideoStreamingTest(Realm):
             value = signal_by_resource.get(resource_id)
             if value is None:
                 if resource_id not in self.missing_signal_logged:
+                    response_keys = [key for iface in eid_data.get("interfaces", []) for key in iface]
                     logger.warning(
                         "Signal data for device on port 1.{} is unavailable, it may have disconnected. "
                         "Continuing the test with the remaining devices.\n"
                         "URL     : {}\n"
-                        "Response: {}".format(resource_id, signal_url, eid_data)
+                        "Response keys: {}".format(resource_id, signal_url, response_keys)
                     )
                     self.missing_signal_logged.add(resource_id)
-                    self.record_device_issue("1.{}".format(resource_id), "Signal data unavailable (device may have disconnected)")
+                    self.record_device_issue("1.{}".format(resource_id), "Signal data unavailable (device may have disconnected)",
+                                             api_response=response_keys)
                 value = default_signal
             else:
                 if resource_id in self.missing_signal_logged:
@@ -1040,14 +1049,15 @@ class VideoStreamingTest(Realm):
             resource_ids = list(map(int, self.resource_ids.split(',')))
             self.data_for_webui['resources'] = resource_ids
             starttime = datetime.now()
-            if self.monitor_start_time is None:
+            if self.do_bandsteering:
+                # bandsteering runs one continuous session, so only set this once
+                if self.monitor_start_time is None:
+                    self.monitor_start_time = starttime
+            else:
+                # other robot_test flows restart CXs per coordinate/rotation, so restart this too
                 self.monitor_start_time = starttime
             self.data["name"] = self.my_monitor('name')
             current_time = datetime.now()
-            endtime = ""
-            endtime = starttime + timedelta(minutes=duration)
-            endtime = endtime.isoformat()[0:19]
-            endtime_check = datetime.strptime(endtime, "%Y-%m-%dT%H:%M:%S")
             self.data['status'] = self.my_monitor('status')
             device_type = []
             username = []
@@ -1093,13 +1103,10 @@ class VideoStreamingTest(Realm):
             incremental_capacity_list = self.get_incremental_capacity_list()
             video_rate_dict = {i: [] for i in range(len(device_type))}
 
-            # Verify CX endpoints are responding before monitoring starts. A device with no CX
-            # data is left in self.created_cx (my_monitor_runtime already reports it with default
-            # 'Stopped' metrics so the per-device arrays built above stay in sync) but is logged
-            # here so it's clear from the start which devices the test will continue without.
             if self.created_cx:
                 self.my_monitor_runtime()
-                if len(self.missing_cx_logged) == len(self.created_cx):
+                # compare against currently-started devices only, not future incremental stages
+                if self.all_cx_list and len(self.missing_cx_logged) == len(set(self.all_cx_list)):
                     logger.warning("No devices are responding before monitoring starts, retrying for "
                                    "up to 40 seconds before failing the test.")
                     if not self.wait_for_any_cx_recovery(timeout=40, poll_interval=5):
@@ -1109,21 +1116,33 @@ class VideoStreamingTest(Realm):
                             "Video streaming test failed: no devices are available to run the test "
                             "(all CX endpoints missing after 40s retry).")
                 if self.missing_cx_logged and not self.pre_monitoring_missing_logged:
-                    # This pre-check runs on every call to monitor_for_runtime_csv, which in
-                    # bandsteering/robot mode is invoked repeatedly as the monitor_function tick.
-                    # Only print this summary once per test instead of on every tick.
+                    # Print this summary once per test, since bandsteering/robot mode calls monitor_for_runtime_csv repeatedly as the monitor tick.
+                    last_response_endpoint = self.last_monitor_response.get('endpoint') if self.last_monitor_response else None
+                    if isinstance(last_response_endpoint, list):
+                        response_keys = [key for endpoint in last_response_endpoint for key in endpoint]
+                    elif isinstance(last_response_endpoint, dict):
+                        response_keys = list(last_response_endpoint.keys())
+                    else:
+                        response_keys = []
                     logger.warning("The following device(s) are missing before monitoring starts, "
                                    "continuing the test with the remaining {} device(s): {}\n"
                                    "URL     : {}\n"
-                                   "Response: {}".format(
-                                       len(self.created_cx) - len(self.missing_cx_logged),
+                                   "Response keys: {}".format(
+                                       len(set(self.all_cx_list)) - len(self.missing_cx_logged),
                                        sorted(self.port_label_from_cx_name(cx) for cx in self.missing_cx_logged),
-                                       self.last_monitor_url, self.last_monitor_response))
+                                       self.last_monitor_url, response_keys))
                     self.pre_monitoring_missing_logged = True
+
+            # start the duration window here, after setup/pre-checks above, not at function entry
+            current_time = datetime.now()
+            endtime_check = current_time + timedelta(minutes=duration)
 
             # Loop until the current time is less than the end time
             while current_time < endtime_check or self.background_run:
                 if self.test_stopped:
+                    # bandsteering re-enters this function per tick, so return now instead of falling through to code that assumes a loop iteration ran
+                    if self.do_bandsteering:
+                        return test_stopped_by_user
                     break
                 if self.robot_test:
                     # monitor_charge_time is None when this function is invoked as the
@@ -1186,13 +1205,19 @@ class VideoStreamingTest(Realm):
                 # giving up on this monitor loop. Unlike the pre-monitoring check, this does not
                 # fail the test: the loop just ends gracefully and execution continues with
                 # whatever data was already collected.
-                if self.created_cx and len(self.missing_cx_logged) == len(self.created_cx):
+                # compare against currently-started devices only, not future incremental stages
+                if self.all_cx_list and len(self.missing_cx_logged) == len(set(self.all_cx_list)):
                     logger.warning("All devices have stopped responding during monitoring, retrying "
                                    "for up to 40 seconds before ending the monitor loop.")
                     if not self.wait_for_any_cx_recovery(timeout=40, poll_interval=5):
                         logger.error("No devices responded within 40 seconds during monitoring, "
                                      "ending the monitor loop gracefully; the test will continue with "
                                      "the data collected so far.")
+                        # stop the whole robot test instead of moving on to another coordinate/rotation
+                        self.test_stopped = True
+                        # mark the WebUI as completed instead of leaving it at a later planned navigation state
+                        if self.robot_test:
+                            self.robot.update_nav_data_for_all_cxs_stopped()
                         break
 
                 overall_video_rate = []
@@ -1239,7 +1264,7 @@ class VideoStreamingTest(Realm):
                     if from_coordinate == to_coordinate:
                         return test_stopped_by_user
                     individual_df_data.extend([robot_x, robot_y, from_coordinate, to_coordinate])
-                if self.robot_test and self.rotation_enabled:
+                elif self.robot_test and self.rotation_enabled:
                     individual_df_data.append(self.current_angle)
                 individual_df.loc[len(individual_df)] = individual_df_data
                 new_row_df = individual_df.tail(1)
@@ -1291,6 +1316,10 @@ class VideoStreamingTest(Realm):
             individual_df_data = []
             overall_video_rate = []
 
+            # test_stopped can break the loop before its first tick, leaving signal data unset
+            if 'rssi_data' not in locals():
+                rssi_data, link_speed_data, bssid_data, channel_data = self.get_signal_data(resource_order=resource_order)
+
             # Collecting data when test is stopped
             for i in range(len(self.data["total_wait_time"])):
                 if self.data['status'][i] != 'Run':
@@ -1328,7 +1357,10 @@ class VideoStreamingTest(Realm):
                 individual_df_data.extend([sum(overall_video_rate), present_time, iteration + 1, actual_start_time.strftime('%Y-%m-%d %H:%M:%S'),
                                            self.data['end_time_webGUI'][0], self.data['remaining_time_webGUI'][0], "Stopped"])
 
-            if self.robot_test and self.rotation_enabled:
+            if self.robot_test and self.do_bandsteering:
+                robot_x, robot_y, from_coordinate, to_coordinate = self.robot.get_robot_pose()
+                individual_df_data.extend([robot_x, robot_y, from_coordinate, to_coordinate])
+            elif self.robot_test and self.rotation_enabled:
                 individual_df_data.append(self.current_angle)
 
             individual_df.loc[len(individual_df)] = individual_df_data
@@ -2294,7 +2326,7 @@ class VideoStreamingTest(Realm):
         """
         date = str(datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
 
-        test_setup_info = self.create_test_setup_info(media_source=args.media_source, media_quality=args.media_quality)
+        test_setup_info = self.create_test_setup_info(media_source=self.media_source_name, media_quality=self.media_quality_name)
         params = {
             "date": None,
             "iterations_before_test_stopped_by_user": None,
@@ -2424,6 +2456,9 @@ class VideoStreamingTest(Realm):
                 for angle in range(len(self.rotation_list)):
                     self.current_angle = self.rotation_list[angle]
                     coord, ang = self.coordinate_list[coordinate], self.rotation_list[angle]
+                    # a stopped test may not have reached every configured angle, so skip missing ones
+                    if ang not in self.vs_data[int(coord)]:
+                        continue
                     self.data = self.vs_data[int(coord)][ang]["self_data"]
                     self.generate_individual_coordinate(report, device_type, username, ssid, mac, channel, mode, rssi, tx_rate, created_incremental_values, keys)
                 shutil.move('video_streaming_realtime_data{}.csv'.format(csv_suffix), report_path_date_time)
@@ -2727,16 +2762,24 @@ class VideoStreamingTest(Realm):
             self.start_specific(cx_order_list[i])
             individual_df = pd.DataFrame(columns=individual_dataframe_columns)
             for coord in coordinate_list_with_robo:
-                #  To check for battery level before moving to next coordinate and also monitor cx while moving to next coordinate in bandsteering mode
-                pause, stopped, all_data_frames = self.robot.wait_for_battery(
-                    monitor_function=lambda: self.monitor_for_runtime_csv(
-                        args.duration, file_path, individual_df, i, actual_start_time, cx_order_list[i]))
-                if stopped:
+                try:
+                    #  To check for battery level before moving to next coordinate and also monitor cx while moving to next coordinate in bandsteering mode
+                    pause, stopped, all_data_frames = self.robot.wait_for_battery(
+                        monitor_function=lambda: self.monitor_for_runtime_csv(
+                            args.duration, file_path, individual_df, i, actual_start_time, cx_order_list[i]))
+                    if stopped:
+                        break
+                    # Moving to next coordinate and also monitor cx while moving to next coordinate in bandsteering mode
+                    matched, abort, all_data_frames = self.robot.move_to_coordinate(
+                        coord, monitor_function=lambda: self.monitor_for_runtime_csv(
+                            args.duration, file_path, individual_df, i, actual_start_time, cx_order_list[i]))
+                except RuntimeError as e:
+                    logger.debug("Stopping bandsteering test: %s", e)
+                    # no devices ever responded; stop the test and report with the data collected so far
+                    self.test_stopped = True
+                    if self.robot_test:
+                        self.robot.update_nav_data_for_all_cxs_stopped()
                     break
-                # Moving to next coordinate and also monitor cx while moving to next coordinate in bandsteering mode
-                matched, abort, all_data_frames = self.robot.move_to_coordinate(
-                    coord, monitor_function=lambda: self.monitor_for_runtime_csv(
-                        args.duration, file_path, individual_df, i, actual_start_time, cx_order_list[i]))
                 if coord == self.coordinate_list[0]:
                     curr_cycle += 1
                     if curr_cycle > int(self.total_cycles):
@@ -2745,17 +2788,18 @@ class VideoStreamingTest(Realm):
                         logger.info("current cycle {}".format(curr_cycle))
                 if abort:
                     break
-            # To get add last entry in the csv
-            last_idx = individual_df.index[-1]
-            individual_df.loc[last_idx, "status"] = "Stopped"
-            last_row_df = individual_df.loc[[last_idx]]
-            if self.dowebgui:
-                last_row_df.to_csv(f"{args.result_dir}/video_streaming_realtime_data.csv", mode="a", header=False, index=False)
-            else:
-                last_row_df.to_csv("video_streaming_realtime_data.csv", mode="a", header=False, index=False)
+            # add last entry in the csv, skipping if no data was ever collected
+            if len(individual_df) > 0:
+                last_idx = individual_df.index[-1]
+                individual_df.loc[last_idx, "status"] = "Stopped"
+                last_row_df = individual_df.loc[[last_idx]]
+                if self.dowebgui:
+                    last_row_df.to_csv(f"{args.result_dir}/video_streaming_realtime_data.csv", mode="a", header=False, index=False)
+                else:
+                    last_row_df.to_csv("video_streaming_realtime_data.csv", mode="a", header=False, index=False)
             #  stop cx's after completing all cycles in bandsteering mode or if test is stopped by user in between the test
             self.stop()
-            test_setup_info = self.create_test_setup_info(media_source=self.media_source, media_quality=self.media_quality)
+            test_setup_info = self.create_test_setup_info(media_source=self.media_source_name, media_quality=self.media_quality_name)
             date = str(datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
             self.generate_report(date, [0], test_setup_info=test_setup_info, realtime_dataset=individual_df, iot_summary=None)
             if self.postcleanup:
@@ -2812,9 +2856,24 @@ class VideoStreamingTest(Realm):
                                     if data["status"] != "Running":
                                         self.test_stopped = True
                                         break
-                            test_stopped_by_user = self.monitor_for_runtime_csv(args.duration, file_path, coordinate_df, i, actual_start_time, cx_order_list[i])
+                            try:
+                                test_stopped_by_user = self.monitor_for_runtime_csv(args.duration, file_path, coordinate_df, i, actual_start_time, cx_order_list[i])
+                            except RuntimeError as e:
+                                logger.debug("Stopping robot test at coordinate {}: {}".format(self.current_coordinate, e))
+                                # no devices ever responded at this coordinate; stop the whole robot test
+                                self.test_stopped = True
+                                if self.robot_test:
+                                    self.robot.update_nav_data_for_all_cxs_stopped()
+                                break
                         else:
-                            test_stopped_by_user = self.monitor_for_runtime_csv(args.duration, file_path, coordinate_df, i, actual_start_time, cx_order_list[i])
+                            try:
+                                test_stopped_by_user = self.monitor_for_runtime_csv(args.duration, file_path, coordinate_df, i, actual_start_time, cx_order_list[i])
+                            except RuntimeError as e:
+                                logger.debug("Stopping robot test at coordinate {}: {}".format(self.current_coordinate, e))
+                                self.test_stopped = True
+                                if self.robot_test:
+                                    self.robot.update_nav_data_for_all_cxs_stopped()
+                                break
                         if not test_stopped_by_user:
                             # Append current iteration index to iterations_before_test_stopped_by_user
                             iterations_before_test_stopped_by_user.append(i)
@@ -2834,6 +2893,8 @@ class VideoStreamingTest(Realm):
                     else:
                         exit_from_monitor = False
                         for angle in range(len(self.rotation_list)):
+                            if self.test_stopped:
+                                break
                             final_angle = 0
                             # Check battery level: if below 20% robot charges fully before resuming
                             pause_angle, test_stopped_by_user = self.robot.wait_for_battery(stop=self.stop)
@@ -2882,27 +2943,44 @@ class VideoStreamingTest(Realm):
                                         if data["status"] != "Running":
                                             self.test_stopped = True
                                             break
-                                test_stopped_by_user = self.monitor_for_runtime_csv(
-                                    args.duration,
-                                    file_path,
-                                    individual_df,
-                                    i,
-                                    actual_start_time,
-                                    cx_order_list[i],
-                                    curr_coordinate=coordinate,
-                                    curr_rotation=self.rotation_list[angle],
-                                    monitor_charge_time=monitor_charge_time)
+                                try:
+                                    test_stopped_by_user = self.monitor_for_runtime_csv(
+                                        args.duration,
+                                        file_path,
+                                        individual_df,
+                                        i,
+                                        actual_start_time,
+                                        cx_order_list[i],
+                                        curr_coordinate=coordinate,
+                                        curr_rotation=self.rotation_list[angle],
+                                        monitor_charge_time=monitor_charge_time)
+                                except RuntimeError as e:
+                                    logger.debug("Stopping robot test at coordinate {} angle {}: {}".format(
+                                        coordinate, self.rotation_list[angle], e))
+                                    # stop the whole robot test; breaking here also stops the outer coordinate loop
+                                    self.test_stopped = True
+                                    if self.robot_test:
+                                        self.robot.update_nav_data_for_all_cxs_stopped()
+                                    break
                             else:
-                                test_stopped_by_user = self.monitor_for_runtime_csv(
-                                    args.duration,
-                                    file_path,
-                                    individual_df,
-                                    i,
-                                    actual_start_time,
-                                    cx_order_list[i],
-                                    curr_coordinate=coordinate,
-                                    curr_rotation=self.rotation_list[angle],
-                                    monitor_charge_time=monitor_charge_time)
+                                try:
+                                    test_stopped_by_user = self.monitor_for_runtime_csv(
+                                        args.duration,
+                                        file_path,
+                                        individual_df,
+                                        i,
+                                        actual_start_time,
+                                        cx_order_list[i],
+                                        curr_coordinate=coordinate,
+                                        curr_rotation=self.rotation_list[angle],
+                                        monitor_charge_time=monitor_charge_time)
+                                except RuntimeError as e:
+                                    logger.debug("Stopping robot test at coordinate {} angle {}: {}".format(
+                                        coordinate, self.rotation_list[angle], e))
+                                    self.test_stopped = True
+                                    if self.robot_test:
+                                        self.robot.update_nav_data_for_all_cxs_stopped()
+                                    break
                             if not test_stopped_by_user:
                                 # Append current iteration index to iterations_before_test_stopped_by_user
                                 iterations_before_test_stopped_by_user.append(i)
@@ -2911,6 +2989,9 @@ class VideoStreamingTest(Realm):
                                 iterations_before_test_stopped_by_user.append(i)
                                 params = self.build_report_params_for_robo(args, cx_order_list, individual_df, iterations_before_test_stopped_by_user)
                                 params["self_data"] = self.data.copy()
+                                if int(coordinate) not in self.vs_data:
+                                    self.vs_data[int(coordinate)] = {}
+                                self.vs_data[int(coordinate)][self.rotation_list[angle]] = params
                                 break
                             self.stop()
                             params = self.build_report_params_for_robo(args, cx_order_list, individual_df, iterations_before_test_stopped_by_user)
@@ -2918,7 +2999,7 @@ class VideoStreamingTest(Realm):
                             if int(coordinate) not in self.vs_data:
                                 self.vs_data[int(coordinate)] = {}
                             self.vs_data[int(coordinate)][self.rotation_list[angle]] = params
-        test_setup_info = self.create_test_setup_info(media_source=args.media_source, media_quality=args.media_quality)
+        test_setup_info = self.create_test_setup_info(media_source=self.media_source_name, media_quality=self.media_quality_name)
         if self.dowebgui:
             self.copy_reports_to_home_dir()
             with open(nav_data, 'r') as x:
@@ -3489,6 +3570,9 @@ def main():
                              bssids=args.bssids.split(",") if args.bssids else [],
                              duration_to_skip=args.duration_to_skip
                              )
+    # preserve the human-readable names so the report shows e.g. "Hls" instead of the numeric code "3"
+    obj.media_source_name = media_source
+    obj.media_quality_name = media_quality
     args.upstream_port = obj.change_port_to_ip(args.upstream_port)
     obj.upstream_port = args.upstream_port
     obj.validate_args()
@@ -3581,10 +3665,9 @@ def main():
             if obj.android_list:
                 resource_ids = ",".join([item.split(".")[1] for item in obj.android_list])
 
-                num_list = list(map(int, resource_ids.split(',')))
+                num_list = sorted(map(int, resource_ids.split(',')))
 
                 # Sort the list
-                num_list.sort()
 
                 # Join the sorted list back into a string
                 sorted_string = ','.join(map(str, num_list))
@@ -3734,17 +3817,27 @@ def main():
             # Case 3: Incremental list has multiple values and length of keys is greater than 1
             elif len(obj.incremental) != 1 and len(keys) > 1:
 
-                index = 0
+                # each stage runs the cumulative set of devices, not just the newly added ones
                 for num in obj.incremental:
+                    cx_order_list.append(keys[0:num])
 
-                    cx_order_list.append(keys[index: num])
-                    index = num
+                if obj.incremental[-1] < len(keys):
+                    cx_order_list.append(keys[:])
 
-                if index < len(keys):
-                    cx_order_list.append(keys[index:])
+            # cumulative stages need the previous batch stopped before the next one starts
+            cumulative_incremental_batches = len(obj.incremental) != 1 and len(keys) > 1
 
             # Iterate over cx_order_list to start tests incrementally
             for i in range(len(cx_order_list)):
+                # a prior stage timing out shouldn't stop the next stage's devices from starting
+                obj.test_stopped = False
+                if i > 0 and cumulative_incremental_batches:
+                    obj.stop()
+                    # stale missing/not-running state from the stopped batch would otherwise falsely fail the new stage
+                    obj.missing_cx_logged.clear()
+                    obj.cx_not_running_logged.clear()
+                    obj.pre_monitoring_missing_logged = False
+                    time.sleep(10)
                 if i == 0:
                     if args.robot_test:
                         obj.perform_robo(args, individual_dataframe_columns, cx_order_list, i, actual_start_time, iterations_before_test_stopped_by_user)
@@ -3768,16 +3861,38 @@ def main():
                     date_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     obj.data['remaining_time_webGUI'] = [datetime.strptime(end_time_webGUI, "%Y-%m-%d %H:%M:%S") - datetime.strptime(date_time, "%Y-%m-%d %H:%M:%S")]
 
-                if args.dowebgui:
-                    file_path = os.path.join(obj.result_dir, "../../Running_instances/{}_{}_running.json".format(obj.host, obj.test_name))
-                    if os.path.exists(file_path):
-                        with open(file_path, 'r') as file:
-                            data = json.load(file)
-                            if data["status"] != "Running":
-                                break
-                    test_stopped_by_user = obj.monitor_for_runtime_csv(args.duration, file_path, individual_df, i, actual_start_time, cx_order_list[i])
-                else:
-                    test_stopped_by_user = obj.monitor_for_runtime_csv(args.duration, file_path, individual_df, i, actual_start_time, cx_order_list[i])
+                try:
+                    if args.dowebgui:
+                        file_path = os.path.join(obj.result_dir, "../../Running_instances/{}_{}_running.json".format(obj.host, obj.test_name))
+                        if os.path.exists(file_path):
+                            with open(file_path, 'r') as file:
+                                data = json.load(file)
+                                if data["status"] != "Running":
+                                    break
+                        test_stopped_by_user = obj.monitor_for_runtime_csv(args.duration, file_path, individual_df, i, actual_start_time, cx_order_list[i])
+                    else:
+                        test_stopped_by_user = obj.monitor_for_runtime_csv(args.duration, file_path, individual_df, i, actual_start_time, cx_order_list[i])
+                except RuntimeError:
+                    # no devices responded for this stage; stop and report with the data collected so far
+                    obj.test_stopped = True
+                    # this stage never ran a monitoring tick, so skip it in the report instead of feeding empty data
+                    if not individual_df[individual_df['iteration'] == i + 1].empty:
+                        iterations_before_test_stopped_by_user.append(i)
+                    elif i == len(cx_order_list) - 1:
+                        # last stage got no data at all; webGUI still needs a terminal Stopped row to detect completion
+                        terminal_row = []
+                        for _ in keys:
+                            terminal_row.extend([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '', ''])
+                        terminal_row.extend([0, datetime.now().strftime("%H:%M:%S"), i + 1,
+                                             actual_start_time.strftime('%Y-%m-%d %H:%M:%S'),
+                                             obj.data['end_time_webGUI'][0], 0, "Stopped"])
+                        individual_df.loc[len(individual_df)] = terminal_row
+                        final_row_df = individual_df.tail(1)
+                        if args.dowebgui:
+                            individual_df.to_csv('{}/video_streaming_realtime_data.csv'.format(obj.result_dir), index=False)
+                        else:
+                            final_row_df.to_csv('video_streaming_realtime_data.csv', index=False, mode='a', header=False)
+                    break
                 if not test_stopped_by_user:
                     # Append current iteration index to iterations_before_test_stopped_by_user
                     iterations_before_test_stopped_by_user.append(i)

@@ -2,7 +2,7 @@
 """
 NAME:       lf_wifi_capacity_test.py
 
-PURPOSE:    This script runs LANforge GUI-based WiFi Capacity test.
+PURPOSE:    This script runs LANforge GUI-based Wi-Fi Capacity test.
 
 NOTES:      Upon successful termination, the test PDF and HTML reports are saved.
             The report is optionally copied to the current directory on the executing system
@@ -34,11 +34,13 @@ EXAMPLE:    # Run 60 second default DL/UL-rate UDP IPv4 traffic-based test with
                     --batch_size    2
 
             # Run test using values and options as defined in pre-existing config
-            # Can use additional options like '--duration', '--batch_size', etc.
-            # to override those in config
+            # Additional options like '--duration', '--batch_size', etc. can be used
+            # to override values in the saved config
                 ./lf_wifi_capacity_test.py \
                     --pull_report   \
-                    --config_name   existing_wct_config
+                    --config_name   existing_wct_config \
+                    --load_old_cfg  \
+                    --batch_size    1,4,8
 
             # Run test with creating stations in lanforge starting from given index with specified ssid and security type
             # with 10 stations and 1.1.eth1 as upstream port
@@ -145,8 +147,8 @@ class WiFiCapacityTest(cv_test):
                  duration="5000",
                  pull_report=False,
                  load_old_cfg=False,
-                 upload_rate="10Mbps",
-                 download_rate="1Gbps",
+                 upload_rate="",
+                 download_rate="",
                  sort="interleave",
                  stations="",
                  create_stations=False,
@@ -163,13 +165,17 @@ class WiFiCapacityTest(cv_test):
                  graph_groups=None,
                  test_rig="",
                  test_tag="",
+                 payload_size="",
+                 sock_buffer_size="",
                  local_lf_report_dir="",
-                 sta_list="",
+                 sta_list=None,
                  verbosity="5",
                  force: bool = False,
                  **kwargs):
         super().__init__(lfclient_host=lfclient_host, lfclient_port=lf_port)
 
+        if sta_list is None:
+            sta_list = []
         if enables is None:
             enables = []
         if disables is None:
@@ -212,6 +218,8 @@ class WiFiCapacityTest(cv_test):
         self.graph_groups = graph_groups
         self.test_rig = test_rig
         self.test_tag = test_tag
+        self.payload_size = payload_size
+        self.sock_buffer_size = sock_buffer_size
         self.local_lf_report_dir = local_lf_report_dir
         self.stations_list = sta_list
         self.verbosity = verbosity
@@ -226,7 +234,7 @@ class WiFiCapacityTest(cv_test):
             self.station_profile.admin_up()
             self.wait_for_ip(station_list=sta_names)
             logger.info("Stations created and got the ips...")
-        elif self.create_stations and self.stations_list is not None:
+        elif self.create_stations and self.stations_list:
             sta_names = self.stations_list
             self.station_profile.cleanup(sta_names)
             self.station_profile.use_security(self.security, self.ssid, self.paswd)
@@ -240,18 +248,23 @@ class WiFiCapacityTest(cv_test):
         time.sleep(2)
         self.sync_cv()
 
-        self.rm_text_blob(self.config_name, "Wifi-Capacity-")  # To delete old config with same name
-        self.show_text_blob(None, None, False)
+        blob_test = "Wifi-Capacity-"
+
+        if not self.load_old_cfg:
+            self.rm_text_blob(self.config_name, blob_test)  # To delete old config with same name
+            self.show_text_blob(None, None, False)
+            if self.download_rate == "":
+                self.download_rate = "1Gbps"
+            if self.upload_rate == "":
+                self.upload_rate = "10Mbps"
 
         # Test related settings
         cfg_options = []
-
         if self.upstream != "":
             eid = LFUtils.name_to_eid(self.upstream)
             port = "%i.%i.%s" % (eid[0], eid[1], eid[2])
-
             port_list = [port]
-            if self.stations != "" or self.stations_list != []:
+            if self.stations or self.stations_list:
                 stas = None
                 if self.stations:
                     stas = self.stations.split(",")
@@ -260,7 +273,7 @@ class WiFiCapacityTest(cv_test):
                 for s in stas:
                     port_list.append(s)
             else:
-                stas = self.station_map()  # See realm
+                stas = self.station_map()
                 for eid in stas.keys():
                     port_list.append(eid)
             logger.info(f"Selected Port list: {port_list}")
@@ -268,7 +281,7 @@ class WiFiCapacityTest(cv_test):
             idx = 0
             for eid in port_list:
                 add_port = "sel_port-" + str(idx) + ": " + eid
-                self.create_test_config(self.config_name, "Wifi-Capacity-", add_port)
+                self.create_test_config(self.config_name, blob_test, add_port)
                 idx += 1
         if self.batch_size != "":
             cfg_options.append("batch_size: " + self.batch_size)
@@ -286,15 +299,18 @@ class WiFiCapacityTest(cv_test):
             cfg_options.append("test_rig: " + self.test_rig)
         if self.test_tag != "":
             cfg_options.append("test_tag: " + self.test_tag)
+        if self.payload_size != "":
+            cfg_options.append("pdu_sz: " + self.payload_size)
+        if self.sock_buffer_size != "":
+            cfg_options.append("sock_buffer: " + self.sock_buffer_size)
 
-        cfg_options.append("save_csv: 1")
+        if not self.load_old_cfg:
+            cfg_options.append("save_csv: 1")
 
         self.apply_cfg_options(cfg_options, self.enables, self.disables, self.raw_lines, self.raw_lines_file)
 
-        blob_test = "Wifi-Capacity-"
-
-        # We deleted the scenario earlier, now re-build new one line at a time.
-        self.build_cfg(self.config_name, blob_test, cfg_options)
+        if cfg_options:
+            self.build_cfg(self.config_name, blob_test, cfg_options)
 
         cv_cmds = []
 
@@ -308,13 +324,22 @@ class WiFiCapacityTest(cv_test):
             cmd = "cv click '%s' 'Interleave Sort'" % self.instance_name
             cv_cmds.append(cmd)
 
-        self.create_and_run_test(lf_host=self.lfclient_host,
+        self.create_and_run_test(load_old_cfg=self.load_old_cfg,
+                                 test_name=self.test_name,
+                                 instance_name=self.instance_name,
+                                 config_name=self.config_name,
+                                 sets=self.sets,
+                                 pull_report=self.pull_report,
+                                 lf_host=self.lfclient_host,
+                                 lf_user=self.lf_user,
+                                 lf_password=self.lf_password,
                                  cv_cmds=cv_cmds,
-                                 **vars(self))
+                                 ssh_port=self.ssh_port,
+                                 local_lf_report_dir=self.local_lf_report_dir,
+                                 graph_groups_file=self.graph_groups)
 
-        self.rm_text_blob(self.config_name, blob_test)  # To delete old config with same name
-
-        self.rm_text_blob(self.config_name, "Wifi-Capacity-")  # To delete old config with same name
+        if not self.load_old_cfg:
+            self.rm_text_blob(self.config_name, blob_test)  # To delete old config with same name
 
 
 def validate_args(args):
@@ -385,11 +410,13 @@ EXAMPLE:    # Run 60 second default DL/UL-rate UDP IPv4 traffic-based test with
                     --batch_size    2
 
             # Run test using values and options as defined in pre-existing config
-            # Can use additional options like '--duration', '--batch_size', etc.
-            # to override those in config
+            # Additional options like '--duration', '--batch_size', etc. can be used
+            # to override values in the saved config
                 ./lf_wifi_capacity_test.py \
                     --pull_report   \
-                    --config_name   existing_wct_config
+                    --config_name   existing_wct_config \
+                    --load_old_cfg  \
+                    --batch_size    1,4,8
 
             # Run test with creating stations in lanforge starting from given index with specified ssid and security type
             # with 10 stations and 1.1.eth1 as upstream port, starting the id from a specifc value, (either create specific number of stations with this id, or create stations with given names)
@@ -524,7 +551,7 @@ INCLUDE_IN_README:
     parser.add_argument('--logger_no_file',
                         default=None,
                         action="store_true",
-                        help='Show loggingout without the trailing file name and line')
+                        help='Show logging out without the trailing file name and line')
 
     args = parser.parse_args()
 
@@ -542,7 +569,7 @@ INCLUDE_IN_README:
     if args.log_level:
         logger_config.set_level(level=args.log_level)
 
-    # lf_logger_config_json will take presidence to changing debug levels
+    # lf_logger_config_json will take presidency to changing debug levels
     if args.lf_logger_config_json:
         logger_config.lf_logger_config_json = args.lf_logger_config_json
         logger_config.load_lf_logger_config()
@@ -571,12 +598,12 @@ INCLUDE_IN_README:
     else:
         station_list = []
 
-    # add addtional configuration to raw_line
-    if (args.per_station_upload_rate):
+    # add additional configuration to raw_line
+    if args.per_station_upload_rate:
         if "ul_rate_sel: Per-Station Upload Rate:" not in args.raw_line:
             args.raw_line.append("ul_rate_sel: Per-Station Upload Rate")
 
-    if (args.per_station_download_rate):
+    if args.per_station_download_rate:
         if "dl_rate_sel: Per-Station Download Rate:" not in args.raw_line:
             args.raw_line.append("dl_rate_sel: Per-Station Download Rate")
 

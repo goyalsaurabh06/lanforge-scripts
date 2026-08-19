@@ -1,18 +1,27 @@
-import uiautomator2 as u2
-import time
-from ppadb.client import Client as AdbClient
-from datetime import datetime
+"""Join a Microsoft Teams meeting on one Android device for LANforge tests."""
 import argparse
-import pytz
-import requests
 import logging
 import os
-import sys
-import traceback
 import subprocess
+import sys
+import time
+import traceback
+from datetime import datetime
+
+import pytz
+import requests
+import uiautomator2 as u2
+from ppadb.client import Client as AdbClient
 
 
 class TeamsAndroidApp:
+    """Drive one Android device through a Teams meeting.
+
+    Talks to the device over ADB for shell commands and uiautomator2 for UI
+    interaction, and to the host's Flask server for meeting timing. One
+    instance drives one device, identified by its ADB serial.
+    """
+
     def __init__(
         self,
         host="127.0.0.1",
@@ -23,7 +32,14 @@ class TeamsAndroidApp:
         serial=None,
         audio=True,
         video=True,
+        prejoin_timeout=180,
     ):
+        """Set up the ADB client and this participant's logger.
+
+        host/port address the ADB server, upstream_port the host's Flask
+        server.
+        """
+        self.prejoin_timeout = prejoin_timeout
         self.host = host
         self.client = AdbClient(host=self.host, port=port)
         self.serial = serial
@@ -39,7 +55,18 @@ class TeamsAndroidApp:
         self.base_url = f"http://{self.upstream_port}:5005"
         self.participant_name = participant_name
 
-        os.makedirs(f"{os.getcwd()}/ms_teams_mobile_logs", exist_ok=True)
+        # Store mobile logs in a fixed location relative to this script, independent of the current working directory.
+        mobile_log_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "ms_teams_mobile_logs",
+        )
+        os.makedirs(mobile_log_dir, exist_ok=True)
+
+        log_name = (
+            f"{self.participant_name}_{self.serial}.log"
+            if self.serial
+            else f"{self.participant_name}.log"
+        )
 
         # Configure the logging system
         logging.basicConfig(
@@ -47,7 +74,7 @@ class TeamsAndroidApp:
             format="%(asctime)s - %(levelname)s - %(message)s",
             handlers=[
                 logging.FileHandler(
-                    f"{os.getcwd()}/ms_teams_mobile_logs/{self.participant_name}.log",
+                    os.path.join(mobile_log_dir, log_name),
                     mode="w",
                 ),  # Writes to file
                 logging.StreamHandler(sys.stdout),  # Writes to terminal
@@ -58,11 +85,15 @@ class TeamsAndroidApp:
         self.logger = logging.getLogger(__name__)
 
     def get_devices(self):
-        """Return list of connected ADB serials"""
+        """Return the ADB serials of every connected device."""
         devices = self.client.devices()
         return [d.serial for d in devices]
 
     def connect(self):
+        """Open a uiautomator2 session to this device's serial.
+
+        Must be called before any UI interaction.
+        """
         self.d = u2.connect(self.serial)
         self.logger.info(f"[{self.participant_name} ({self.serial})] Connected")
 
@@ -79,11 +110,68 @@ class TeamsAndroidApp:
             )
         return installed
 
-    def update_participation(self):
+    def _adb(self, *args):
+        """Run an adb shell command on this device and return the result."""
+        return subprocess.run(
+            ["adb", "-s", self.serial, "shell", *args],
+            capture_output=True,
+            text=True,
+        )
 
+    def grant_permissions(self, package_name="com.microsoft.teams"):
+        """Pre-grant the app's runtime permissions so no dialog blocks the join.
+
+        Reads the permissions the package actually declares on this device, so
+        one call covers every API level in the fleet. Returns the number still
+        ungranted afterwards.
+        """
+        listing = self._adb("dumpsys", "package", package_name).stdout
+        wanted, in_runtime = [], False
+        for raw in listing.splitlines():
+            line = raw.strip()
+            if line.startswith("runtime permissions:"):
+                in_runtime = True
+            elif in_runtime:
+                if line.startswith("android.permission."):
+                    wanted.append(line.split(":", 1)[0])
+                elif line:
+                    break
+
+        granted = 0
+        for permission in wanted:
+            result = self._adb("pm", "grant", package_name, permission)
+            output = result.stdout + result.stderr
+            if "GRANT_RUNTIME_PERMISSIONS" in output:
+                self.logger.error(
+                    f"[{self.participant_name} ({self.serial})] This ROM blocks adb from "
+                    f"granting permissions. Accept the prompts manually once."
+                )
+                break
+            if not output.strip():
+                granted += 1
+
+        # Not a runtime permission — it is an appop, so pm grant cannot set it.
+        self._adb("appops", "set", package_name, "SYSTEM_ALERT_WINDOW", "allow")
+
+        remaining = self._adb("dumpsys", "package", package_name).stdout.count(
+            "granted=false"
+        )
+        self.logger.info(
+            f"[{self.participant_name} ({self.serial})] Permissions: granted {granted}"
+            f"/{len(wanted)}, {remaining} still ungranted."
+        )
+        return remaining
+
+    def update_participation(self):
+        """Tell the host server this device has joined the call.
+
+        Failures are logged and swallowed, since a missed status update does
+        not affect the call itself.
+        """
         endpoint_url = f"{self.base_url}/set_participants_joined"
         try:
-            response = requests.get(endpoint_url, timeout=5)
+            # Include the participant name so the server can identify which device joined the call.
+            response = requests.get(endpoint_url, params={"device": self.participant_name}, timeout=5)
             if response.status_code == 200:
                 self.logger.info(
                     f"[{self.participant_name} ({self.serial})] Device participation status updated successfully."
@@ -128,6 +216,10 @@ class TeamsAndroidApp:
             return self.stop_signal
 
     def close_meeting(self):
+        """Stop the Teams app on this device.
+
+        Does nothing if no uiautomator2 session was opened.
+        """
         if self.d is not None:
             self.d.app_stop("com.microsoft.teams")
             self.logger.info(
@@ -135,6 +227,11 @@ class TeamsAndroidApp:
             )
 
     def open_interop_app(self):
+        """Launch the interop app and tap into its test room.
+
+        Waits up to 60s for the app to load, raising if it never appears or
+        the enter button cannot be clicked.
+        """
         if self.d is None:
             return
         self.d.app_start("com.candela.wecan")
@@ -161,6 +258,11 @@ class TeamsAndroidApp:
         )
 
     def get_start_and_end_time(self):
+        """Fetch the meeting's start and end time from the host.
+
+        Sets self.start_time and self.end_time. On any failure it logs and
+        leaves both unchanged, so the caller can poll until they arrive.
+        """
         endpoint_url = f"{self.base_url}/get_start_end_time"
         try:
             response = requests.get(endpoint_url, timeout=5)
@@ -178,27 +280,65 @@ class TeamsAndroidApp:
             )
 
     def dump_xml(self):
+        """Write the current UI hierarchy to dump_<serial>.xml for debugging."""
         xml = self.d.dump_hierarchy()
         with open(f"dump_{self.d.serial}.xml", "w", encoding="utf-8") as f:
             f.write(xml)
 
-    def enable_audio(self):
-        wait_count = 0
-        while (
-            "Mic muted" not in self.d.dump_hierarchy()
-            and "Mic unmuted" not in self.d.dump_hierarchy()
-        ):
-            time.sleep(1)
-            self.logger.info(
-                f"Waiting for Mute/Unmute button to be available for device {self.participant_name} ({self.serial})..."
+    def _hierarchy(self):
+        """One UI dump. A failed dump means 'nothing readable on screen yet'."""
+        try:
+            return self.d.dump_hierarchy()
+        except Exception as e:
+            self.logger.debug(
+                f"[{self.participant_name} ({self.serial})] UI dump failed: {e}"
             )
-            wait_count += 1
-            if wait_count > 60:
-                self.logger.error(
-                    f"Mute/Unmute button not found in time for device {self.participant_name} ({self.serial})"
+            return ""
+
+    def wait_for_text(self, texts, timeout, what):
+        """Poll the UI until any string in texts appears. Return the hierarchy, or "".
+
+        One dump per poll, and a wall-clock deadline rather than an iteration
+        count. dump_hierarchy() takes seconds on a loading screen, so counting
+        iterations turns a nominal 60s limit into several minutes — which is
+        what made a slow Teams launch look like a hang.
+        """
+        deadline = time.monotonic() + timeout
+        announced_loading = False
+        while True:
+            xml = self._hierarchy()
+            if any(t in xml for t in texts):
+                return xml
+
+            if not announced_loading and ("Hang tight" in xml or "Loading" in xml):
+                # Distinguishes "Teams is still starting" from "the screen we
+                # want never appeared", which read identically in the old logs.
+                self.logger.info(
+                    f"[{self.participant_name} ({self.serial})] Teams is still loading; "
+                    f"waiting for {what}."
                 )
-                return
-        if "Mic unmuted" in self.d.dump_hierarchy():
+                announced_loading = True
+
+            if time.monotonic() >= deadline:
+                self.logger.error(
+                    f"[{self.participant_name} ({self.serial})] {what} did not appear "
+                    f"within {timeout}s."
+                )
+                return ""
+            time.sleep(1)
+
+    def enable_audio(self, timeout=60):
+        """Unmute the microphone if it is muted.
+
+        Returns without acting if the mute control does not appear within
+        `timeout` seconds.
+        """
+        xml = self.wait_for_text(
+            ("Mic muted", "Mic unmuted"), timeout, "Mute/Unmute button"
+        )
+        if not xml:
+            return
+        if "Mic unmuted" in xml:
             self.logger.info(
                 f"Audio is already unmuted for device {self.participant_name} ({self.serial})"
             )
@@ -215,23 +355,18 @@ class TeamsAndroidApp:
                     f"[{self.participant_name} ({self.serial})] Un Mute button not found to click."
                 )
 
-    def enable_video(self):
-        count = 0
-        while (
-            "Video is off" not in self.d.dump_hierarchy()
-            and "Video is on" not in self.d.dump_hierarchy()
-        ):
-            time.sleep(1)
-            self.logger.info(
-                f"Waiting for Video Turn on button {self.participant_name} ({self.serial})..."
-            )
-            count += 1
-            if count > 60:
-                self.logger.error(
-                    f"Unable to find Video Turn on Button or Video Turn off Button {self.participant_name} ({self.serial})"
-                )
-                return
-        if "Video is on" in self.d.dump_hierarchy():
+    def enable_video(self, timeout=60):
+        """Turn the camera on if it is off.
+
+        Returns without acting if the video control does not appear within
+        `timeout` seconds.
+        """
+        xml = self.wait_for_text(
+            ("Video is off", "Video is on"), timeout, "Video on/off button"
+        )
+        if not xml:
+            return
+        if "Video is on" in xml:
             self.logger.info(
                 f"Video is already on for Device {self.participant_name} - {self.serial}"
             )
@@ -248,7 +383,8 @@ class TeamsAndroidApp:
                     f"[{self.participant_name} ({self.serial})] Video Turn on button not found to click."
                 )
 
-    def join_meeting(self):
+    def _launch_meeting_intent(self):
+        """Hand the meeting link to Teams as a VIEW intent."""
         subprocess.run(
             [
                 "adb",
@@ -265,25 +401,56 @@ class TeamsAndroidApp:
             ]
         )
 
+    def _current_activity(self):
+        """Return the foreground activity name, or "" if it cannot be read."""
+        try:
+            return self.d.app_current().get("activity", "")
+        except Exception as e:
+            self.logger.debug(
+                f"[{self.participant_name} ({self.serial})] app_current failed: {e}"
+            )
+            return ""
+
+    def join_meeting(self):
+        """Open the meeting link and join the call.
+
+        Fires the meeting intent up to three times, since Teams can drop it
+        and stay on its loading screen, then enters the name, enables the
+        requested media and taps Join now. Exits with status 1 if the
+        pre-join screen never appears.
+        """
+        attempts = 3
+        per_attempt = max(30, self.prejoin_timeout // attempts)
+        for attempt in range(1, attempts + 1):
+            self._launch_meeting_intent()
+            if self.wait_for_text(
+                ("Enter name", "Join now"), per_attempt, "Teams pre-join screen"
+            ):
+                break
+            self.logger.warning(
+                f"[{self.participant_name} ({self.serial})] attempt {attempt}/{attempts}: "
+                f"no pre-join screen after {per_attempt}s, still on "
+                f"{self._current_activity() or 'unknown activity'}."
+            )
+            if attempt < attempts:
+                self.d.app_stop("com.microsoft.teams")
+                time.sleep(2)
+        else:
+            self.logger.error(
+                f"[{self.participant_name} ({self.serial})] Teams did not reach the "
+                f"pre-join screen after {attempts} attempts."
+            )
+            sys.exit(1)
+
+        self.enter_participant_name()
+
         if self.video:
             self.enable_video()
         if self.audio:
             self.enable_audio()
 
-        self.enter_participant_name()
-
-        wait_count = 0
-        while "Join now" not in self.d.dump_hierarchy():
-            time.sleep(1)
-            wait_count += 1
-            self.logger.info(
-                f"Waiting for meeting join screen to load on device {self.participant_name} ({self.serial})..."
-            )
-            if wait_count > 60:
-                self.logger.error(
-                    f"Meeting join screen did not load in time for device {self.participant_name} ({self.serial})"
-                )
-                sys.exit(1)
+        if not self.wait_for_text(("Join now",), 60, "Join now button"):
+            sys.exit(1)
 
         join_btn = self.d.xpath('//*[@text="Join now"]')
 
@@ -298,19 +465,14 @@ class TeamsAndroidApp:
             )
             sys.exit(1)
 
-    def enter_participant_name(self):
-        wait_count = 0
-        while "Enter name" not in self.d.dump_hierarchy():
-            time.sleep(1)
-            wait_count += 1
-            self.logger.info(
-                f"Waiting for participant name input field to be available for device {self.participant_name} ({self.serial})..."
-            )
-            if wait_count > 60:
-                self.logger.error(
-                    f"Participant name input field did not appear in time for device {self.participant_name} ({self.serial})"
-                )
-                sys.exit(1)
+    def enter_participant_name(self, timeout=60):
+        """Type this participant's name into the pre-join field.
+
+        Exits with status 1 if the field does not appear within `timeout`
+        seconds or cannot be filled.
+        """
+        if not self.wait_for_text(("Enter name",), timeout, "participant name field"):
+            sys.exit(1)
         name_input = self.d.xpath('//*[@text="Enter name"]')
         if name_input.wait(timeout=20):
             name_input.set_text(self.participant_name)
@@ -376,6 +538,10 @@ if __name__ == "__main__":
             sys.exit(1)
         if not teams_android_app.is_app_installed("com.candela.wecan"):
             sys.exit(1)
+
+        # Before the join, so a first-launch permission dialog cannot sit on top
+        # of the pre-join screen the automation is waiting for.
+        teams_android_app.grant_permissions()
 
         teams_android_app.join_meeting()
         teams_android_app.update_participation()

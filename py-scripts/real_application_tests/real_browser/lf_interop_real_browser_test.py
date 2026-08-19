@@ -9,18 +9,18 @@ Pre-requisites: Real clients should be connected to the LANforge MGR and Interop
 
             Example-1 :
             Command Line Interface to run url in the Browser with specified URL and duration:
-            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --debug --upstream_port 1.1.eth1
+            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "https://google.com" --duration 10m --debug --upstream_port 1.1.eth1
 
                 CASE-1:
-                If not specified it takes the default url (default url is www.google.com)
+                If not specified it takes the default url (default url is https://google.com)
 
             Example-2:
             Command Line Interface to run url in the Browser with specified Resources:
-            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --debug --upstream_port 1.1.eth1
+            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "https://google.com" --duration 10m --device_list 1.10,1.12 --debug --upstream_port 1.1.eth1
 
             Example-3:
             Command Line Interface to run url in the Browser with specified urls_per_tennm (specify the number of url you want to test in the given duration):
-            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --count 10 --debug --upstream_port 1.1.eth1
+            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "https://google.com" --duration 10m --device_list 1.10,1.12 --count 10 --debug --upstream_port 1.1.eth1
 
                 CASE-1:
                 If not specified it takes the default count value (default count is 1)
@@ -37,12 +37,12 @@ Pre-requisites: Real clients should be connected to the LANforge MGR and Interop
 
             Example-6:
             Command Line Interface to run the Test along with IOT without device list
-            python3  lf_interop_real_browser_test.py --mgr 192.168.207.78 --duration 1 --url https://www.google.com --count 10 --upstream_port 192.168.200.191
+            python3  lf_interop_real_browser_test.py --mgr 192.168.207.78 --duration 1 --url https://google.com --count 10 --upstream_port 192.168.200.191
             --expected_passfail_value 5 --iot_test --iot_testname "Real_Browser_Iot"
 
             Example-7:
             Command Line Interface to run the Test along with IOT with device list
-            python3  lf_interop_real_browser_test.py --mgr 192.168.207.78 --duration 1 --url https://www.google.com --count 10 --upstream_port 192.168.200.191
+            python3  lf_interop_real_browser_test.py --mgr 192.168.207.78 --duration 1 --url https://google.com --count 10 --upstream_port 192.168.200.191
             --expected_passfail_value 5 --iot_test --iot_testname "Real_Browser_Iot" --iot_device_list "switch.smart_plug_1_socket_1"
 
             Example-8:
@@ -52,7 +52,7 @@ Pre-requisites: Real clients should be connected to the LANforge MGR and Interop
 
             Example-9:
             Command Line Interface to run the Real Browser Test with Robo bandsteering and Device list
-            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --duration 1 --url https://www.google.com --device_list 1.11,1.10 --count 10
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --duration 1 --url https://google.com --device_list 1.11,1.10 --count 10
             --upstream_port 192.168.204.90 --expected_passfail_value 5 --do_robo --robo_ip 192.168.200.140 --coordinates 3,2,1 --rotations ""
             --duration_to_skip 1 --do_bandsteering --cycles 1 --bssids 94:A6:7E:74:26:31,94:A6:7E:74:26:22
 
@@ -66,7 +66,7 @@ Pre-requisites: Real clients should be connected to the LANforge MGR and Interop
                 2. Always specify the duration in minutes (for example: --duration 3 indicates a duration of 3 minutes).
                 3. If --device_list are not given after passing the CLI, a list of available devices will be displayed on the terminal.
                 4. Enter the resource numbers separated by commas (,) in the resource argument and also enclose in double quotes (e.g. : 1.10,1.12).
-                5. For --url, you can specify the URL (e.g., www.google.com).
+                5. For --url, you can specify the URL (e.g., https://google.com).
                 6. To run the test by specifying the incremental capacity, enable the --incremental flag.
 
             STATUS: BETA RELEASE
@@ -101,6 +101,9 @@ import csv
 import re
 import traceback
 import requests
+import platform
+import subprocess
+import signal
 
 WINDOWS_REAL_BROWSER_DIR = r".\local\real_application_test\real_browser"
 LINUX_REAL_BROWSER_DIR = "./local/real_application_test/real_browser"
@@ -236,10 +239,13 @@ class RealBrowserTest(Realm):
         self.app = Flask(__name__)
         self.app.logger.setLevel(logging.WARNING)
         self.laptop_stats = {}
+        self.mobile_stats = {}
+        self.missing_cx_logged = set()
         self.user_name = None
         self.hw = None
         self.mac_list = None
         self.csv_file_names = []
+        self.log_file_names = []
         self.stop_signal = False
         self.webui_stop_clicked = False
         self.device_targets = {}
@@ -272,6 +278,7 @@ class RealBrowserTest(Realm):
         self.generic_endps_profile = self.new_generic_endp_profile()
         self.generic_endps_profile.type = 'real_browser'
         self.generic_endps_profile.name_prefix = "rb"
+        self.endpoint_last_status = {}
         self.file_name = file_name
         self.group_name = group_name
         self.profile_name = profile_name
@@ -411,6 +418,11 @@ class RealBrowserTest(Realm):
         self.http_profile.created_cx.clear()
 
         self.new_port_list = [item.split('.')[2] for item in self.laptops]
+
+        for port in self.laptops:
+            self.pre_cleanup_stale_endpoint(port)
+        for port in self.phone_data:
+            self.pre_cleanup_stale_android_endpoint(port)
 
         if self.generic_endps_profile.create(ports=self.laptops, sleep_time=.5, real_client_os_types=self.laptop_os_types,):
 
@@ -766,11 +778,26 @@ class RealBrowserTest(Realm):
         # Start the CX for HTTP profile
         self.http_profile.start_cx()
         self.generic_endps_profile.start_cx()
+        # Longest we wait for a single CX to reach 'Run', and how often we poll while waiting.
+        cx_start_timeout = 30
+        cx_start_poll_interval = 1
         try:
             # Loop through each CX endpoint and wait until it reaches the 'Run' state
             for i in self.created_cx.keys():
-                while self.local_realm.json_get("/cx/" + i).get(i).get('state') != 'Run':
-                    continue
+                wait_start = time.time()
+                while True:
+                    cx_response = self.local_realm.json_get("/cx/" + i)
+                    cx_data = cx_response.get(i) if cx_response else None
+                    cx_state = cx_data.get('state') if cx_data else None
+                    if cx_state == 'Run':
+                        break
+                    if time.time() - wait_start >= cx_start_timeout:
+                        logging.error(
+                            f"CX {i} did not reach the 'Run' state within {cx_start_timeout} seconds "
+                            f"(last reported state: {cx_state}). Aborting test."
+                        )
+                        exit(1)
+                    time.sleep(cx_start_poll_interval)
         except Exception as e:
             logging.info(e)
             pass
@@ -818,12 +845,95 @@ class RealBrowserTest(Realm):
         time.sleep(10)
 
     def precleanup(self):
-        self.http_profile.cleanup()
-        self.generic_endps_profile.cleanup()
+        for port in self.laptops:
+            self.pre_cleanup_stale_endpoint(port)
+        for port in self.phone_data:
+            self.pre_cleanup_stale_android_endpoint(port)
 
     def postcleanup(self):
-        self.http_profile.cleanup()
-        self.generic_endps_profile.cleanup()
+        self.cleanup_generic_endpoints()
+        self.cleanup_layer4_endpoints()
+
+    def generic_endpoint_exists(self, endp_name):
+        """True if LANforge currently has a generic endpoint by this name."""
+        response = self.json_get(f"/generic/{endp_name}")
+        return bool(response and "empty" not in response)
+
+    def layer4_endpoint_exists(self, endp_name):
+        """True if LANforge currently has a layer 4 endpoint by this name."""
+        response = self.json_get(f"/layer4/{endp_name}")
+        return bool(response and "empty" not in response)
+
+    def predict_endpoint_names(self, port_name):
+        """
+        Reproduce GenCXProfile.create()'s naming convention without actually
+        creating anything, so we can check LANforge for a stale endpoint/CX
+        left over from a prior run that crashed before cleanup ran.
+        """
+        prefix = self.generic_endps_profile.name_prefix
+        return f"{prefix}-{port_name}", f"CX_{prefix}-{port_name}"
+
+    def predict_android_endpoint_names(self, port_name):
+        """
+        Reproduce create_android()'s naming convention.
+        """
+        gen_name = "rb-%s" % "_".join(port_name.split("."))
+        cx_name = "CX_generic-%s" % gen_name
+        return gen_name, cx_name
+
+    def pre_cleanup_stale_names(self, gen_name, cx_name):
+        """
+        Remove any endpoint/CX by these names that's still on LANforge from
+        a previous run — e.g. one that crashed before its own cleanup ran.
+        """
+        if self.generic_endpoint_exists(gen_name):
+            logger.info(f"Removing stale CX {cx_name} left over from a previous run.")
+            self.json_post("cli-json/rm_cx", {"test_mgr": "default_tm", "cx_name": cx_name})
+            logger.info(f"Removing stale generic endpoint {gen_name} left over from a previous run.")
+            self.json_post("cli-json/rm_endp", {"endp_name": gen_name})
+
+        if self.layer4_endpoint_exists(cx_name):
+            logger.info(f"Removing stale Layer 4 endpoint {cx_name} left over from a previous run.")
+            self.json_post("cli-json/rm_endp", {"endp_name": cx_name})
+            logger.info(f"Removing stale Layer 4 CX {cx_name} left over from a previous run.")
+            self.json_post("cli-json/rm_cx", {"test_mgr": "default_tm", "cx_name": cx_name})
+
+    def pre_cleanup_stale_endpoint(self, port_name):
+        """Before creating a real-device generic endpoint for port_name."""
+        gen_name, cx_name = self.predict_endpoint_names(port_name)
+        self.pre_cleanup_stale_names(gen_name, cx_name)
+
+    def pre_cleanup_stale_android_endpoint(self, port_name):
+        """Before creating an Android generic endpoint for port_name."""
+        gen_name, cx_name = self.predict_android_endpoint_names(port_name)
+        self.pre_cleanup_stale_names(gen_name, cx_name)
+
+    def cleanup_generic_endpoints(self):
+        """
+        Like generic_endps_profile.cleanup(), but only deletes the endpoint
+        if LANforge still actually reports it as present.
+        """
+        for cx_name in self.generic_endps_profile.created_cx:
+            if self.generic_endpoint_exists(cx_name):
+                self.json_post("cli-json/rm_cx", {"test_mgr": "default_tm", "cx_name": cx_name})
+
+        for endp_name in self.generic_endps_profile.created_endp:
+            if self.generic_endpoint_exists(endp_name):
+                self.json_post("cli-json/rm_endp", {"endp_name": endp_name})
+            else:
+                logger.debug(f"CX endpoint {endp_name} no longer exists on LANforge — skipping delete.")
+
+    def cleanup_layer4_endpoints(self):
+        """
+        Like http_profile.cleanup(), but only deletes the CX/endpoint
+        if LANforge still actually reports it as present.
+        """
+        for endp_name, cx_name in list(self.http_profile.created_cx.items()):
+            if self.layer4_endpoint_exists(endp_name):
+                self.json_post("cli-json/rm_cx", {"test_mgr": "default_tm", "cx_name": cx_name})
+                self.json_post("cli-json/rm_endp", {"endp_name": endp_name})
+            else:
+                logger.debug(f"Layer4 endpoint {endp_name} no longer exists on LANforge — skipping delete.")
 
     def set_available_resources_ids(self, available_list):
         self.resource_ids = available_list
@@ -858,7 +968,13 @@ class RealBrowserTest(Realm):
         webui_mac = 0
 
         # Retrieve data from LANforge port Manager tab including alias, MAC address, mode, parent device, RX rate, TX rate, SSID, and signal strength
-        eid_data = self.json_get("ports?fields=alias,mac,mode,Parent Dev,ssid,signal,phantom,down,ip")
+        eid_data = self.json_get_with_retry("ports?fields=alias,mac,mode,Parent Dev,ssid,signal,phantom,down,ip")
+        try:
+            interfaces = eid_data["interfaces"]
+        except KeyError as e:
+            logger.error(f"Missing expected key {e} in LANforge /ports response. Aborting test.")
+            logger.info("LANforge /ports response received:\n%s", json.dumps(eid_data, indent=2, default=str))
+            exit(1)
         resource_ids = []
         if self.resource_ids:
 
@@ -867,14 +983,14 @@ class RealBrowserTest(Realm):
         for item in resource_ids:
             item = str(item)
 
-            for alias in eid_data["interfaces"]:
+            for alias in interfaces:
                 for i in alias:
 
                     resource_id = i.split('.')[1]
                     if resource_id == item:
 
                         resource_id_list.append(i.split(".")[1])
-                        resource_hw_data = self.json_get("/resource/" + i.split(".")[0] + "/" + i.split(".")[1])
+                        resource_hw_data = self.json_get_with_retry("/resource/" + i.split(".")[0] + "/" + i.split(".")[1])
                         hw_version = resource_hw_data['resource']['hw version']
                         # Check if the hardware version does not start with ('Win', 'Linux', 'Apple') and the resource ID is in resource_ids
                         if not hw_version.startswith(('Win', 'Linux', 'Apple')) and alias[i]["parent dev"] == 'wiphy0' and not alias[i]["down"] and alias[i]['ip'] != '0.0.0.0':
@@ -930,8 +1046,13 @@ class RealBrowserTest(Realm):
             elif os_type == "Android":
                 self.android = self.android + 1
 
-        interop_data = self.json_get('/adb')
-        interop_mobile_data = interop_data.get('devices', {})
+        interop_data = self.json_get_with_retry('/adb')
+        try:
+            interop_mobile_data = interop_data.get('devices', {})
+        except Exception as e:
+            logger.error(f"Error extracting devices from /adb response: {e}. Aborting test.")
+            logger.info("LANforge /adb response received:\n%s", json.dumps(interop_data, indent=2, default=str))
+            exit(1)
 
         for user in user_name:
             if user == '':
@@ -949,13 +1070,56 @@ class RealBrowserTest(Realm):
                                 break
         return station_name, laptops, laptop_os_types, user_name, mac_address,
 
+    def stop_previous_flask_server(self):
+        """
+        Forcefully kills any process currently listening on port 5003 (Linux/Darwin only).
+        """
+        port = 5003
+        logger.info(
+            f"Checking for processes using port {port} to forcefully kill them..."
+        )
+
+        current_os = platform.system()
+
+        try:
+            if current_os in ["Linux", "Darwin"]:
+                # Find PID on Linux/Mac using lsof
+                command = f"lsof -t -i:{port}"
+                try:
+                    output = subprocess.check_output(command, shell=True, text=True)
+                    pids = output.strip().split("\n")
+                    for pid in pids:
+                        if pid.strip():
+                            logger.info(
+                                f"Killing process {pid} on port {port} ({current_os})..."
+                            )
+                            os.kill(int(pid.strip()), signal.SIGKILL)
+                except subprocess.CalledProcessError:
+                    logger.info(f"No process found using port {port} on {current_os}.")
+                    logger.info(f"Port {port} is clear, ready to start Flask server.")
+                    pass
+            else:
+                logger.warning(
+                    f"Unsupported OS: {current_os}. Expected Linux or Darwin. Cannot automatically clear port {port}."
+                )
+
+        except Exception as e:
+            logger.warning(f"Error while trying to clear port {port}: {e}")
+
+    def handle_flask_server(self):
+        self.stop_previous_flask_server()
+        time.sleep(5)  # Ensure the port is released before starting the server
+        flask_thread = threading.Thread(target=self.start_flask_server)
+        flask_thread.daemon = True
+        flask_thread.start()
+
     def start_flask_server(self):
 
         @self.app.route('/stop_rb', methods=['GET'])
         def stop_rb():
             logging.info("Stopping the test through WEB GUI")
             self.webui_stop_clicked = True
-            response = jsonify({"message": "Stopping Zoom Test"})
+            response = jsonify({"message": "Stopping Real Browser Test"})
             response.status_code = 200
             self.stop()
 
@@ -991,6 +1155,54 @@ class RealBrowserTest(Realm):
                     self.laptop_stats[hostname]['rotations_enabled'] = self.rotations_enabled
             return jsonify({"status": "success"}), 200
 
+        @self.app.route('/upload_test_log', methods=['POST'])
+        def upload_test_log():
+            """Store a client log for inclusion in the active test report."""
+            device_name = request.form.get('device_name', '').strip()
+            device_type = request.form.get('device_type', 'client').strip().lower()
+            log_kind = request.form.get('log_kind', 'test').strip().lower()
+            log_file = request.files.get('log_file')
+
+            if not device_name or log_file is None:
+                logger.error("Missing required parameters: device_name or log_file")
+                logger.info(f"Device name: {device_name}, Log file: {log_file}")
+                return jsonify({"error": "device_name and log_file are required"}), 400
+
+            safe_device_name = re.sub(r'[^A-Za-z0-9_.-]+', '_', device_name)
+            safe_device_type = re.sub(r'[^A-Za-z0-9_.-]+', '_', device_type)
+            safe_log_kind = re.sub(r'[^A-Za-z0-9_.-]+', '_', log_kind)
+            log_directory = (
+                self.result_dir
+                if self.dowebgui and self.result_dir
+                else "."
+            )
+            os.makedirs(log_directory, exist_ok=True)
+            if safe_log_kind == 'debug':
+                base_name = f"{safe_device_name}_client_debug.log"
+            else:
+                base_name = (
+                    f"{safe_device_name}_{safe_device_type}_test"
+                )
+            # If running a Robo test, append the point name (and angle if enabled):
+            if self.do_robo and self.current_cord:
+                if getattr(self, "rotations_enabled", False) and self.current_angle is not None:
+                    log_filename = f"{base_name}_pt{self.current_cord}_{self.current_angle}.log"
+                else:
+                    log_filename = f"{base_name}_pt{self.current_cord}.log"
+            else:
+                log_filename = f"{base_name}.log"
+            log_path = os.path.join(log_directory, log_filename)
+
+            try:
+                log_file.save(log_path)
+            except OSError as exc:
+                logger.exception("Unable to store log for %s", device_name)
+                return jsonify({"error": str(exc)}), 500
+
+            self.log_file_names.append(log_filename)
+            logger.info("Received test log for %s: %s", device_name, log_path)
+            return jsonify({"message": "Log uploaded successfully"}), 200
+
         # New route to check the health of the Flask server
         @self.app.route('/check_health', methods=['GET'])
         def check_health():
@@ -1014,29 +1226,189 @@ class RealBrowserTest(Realm):
 
     def run_flask_server(self):
 
-        flask_thread = threading.Thread(target=self.start_flask_server)
+        flask_thread = threading.Thread(target=self.handle_flask_server)
         flask_thread.daemon = True
         flask_thread.start()
         self.wait_for_flask()
 
-    def check_gen_cx(self):
-        """
-        Check if all endpoints have a status of 'Stopped' or 'WAITING'.
+    def check_gen_cx(self, stall_timeout=300):
+        """Return True once every generic endpoint is idle (Stopped/WAITING/NO-CX),
+        or once a stuck endpoint has been non-idle for longer than stall_timeout
+        seconds — in which case we stop waiting on it instead of hanging forever."""
+        if not hasattr(self, "_gen_cx_stall_since"):
+            self._gen_cx_stall_since = {}
 
-        Returns:
-            bool: True if all endpoints are either 'Stopped' or 'WAITING', False otherwise.
+        now = time.time()
+        ready = True
+
+        try:
+            created_endp = [(e, "generic") for e in set(self.generic_endps_profile.created_endp)] + \
+                [(e, "layer4") for e in self.created_cx.keys()]
+
+            for gen_endp, api in created_endp:
+                generic_endpoint = self.json_get(f"/{api}/{gen_endp}")
+
+                if not generic_endpoint or "endpoint" not in generic_endpoint or not isinstance(generic_endpoint["endpoint"], dict):
+                    logger.info(f"Error fetching endpoint data for {gen_endp}")
+                    endp_status = None  # unreachable/deleted endpoint
+                else:
+                    endp_status = generic_endpoint["endpoint"].get("status", "")
+
+                if endp_status in ["Stopped", "WAITING", "NO-CX", "FTM_WAIT", None]:
+                    self._gen_cx_stall_since.pop(gen_endp, None)
+                    continue
+
+                # Covers BOTH "stuck at a non-idle status" AND "can't be fetched/deleted"
+                stall_start = self._gen_cx_stall_since.setdefault(gen_endp, now)
+                stalled_for = now - stall_start
+                if stalled_for >= stall_timeout:
+                    logger.warning(
+                        f"{gen_endp} unresolved (status={endp_status!r}) for "
+                        f"{stalled_for:.0f}s (limit {stall_timeout}s) — giving up waiting on it."
+                    )
+                    continue
+
+                ready = False
+
+            return ready
+        except Exception as e:
+            logger.error(f"Error in check_gen_cx function {e}", exc_info=True)
+            return False
+
+    def json_get_with_retry(self, url, wait_time=40, poll_interval=5):
         """
-        for gen_endp in self.generic_endps_profile.created_endp:
-            generic_endpoint = self.json_get(f'/generic/{gen_endp}')
-            if not generic_endpoint or "endpoint" not in generic_endpoint:
-                logging.info(f"Error fetching endpoint data for {gen_endp}")
-                return False  # Handle case where endpoint data is not available
-            endp_status = generic_endpoint["endpoint"].get("status", "")
-            # If the endpoint status is not 'Stopped' or 'WAITING', return False
-            if endp_status not in ["Stopped", "WAITING", "FTM_WAIT", "NO-CX"]:
-                return False
-        # If all endpoints are in 'Stopped' or 'WAITING', return True
-        return True
+        Calls self.json_get(url), retrying every poll_interval seconds for up
+        to wait_time seconds if LANforge returns no response. Aborts the test
+        if it still hasn't responded once wait_time has elapsed.
+        """
+        start_time = time.time()
+        response = self.json_get(url)
+        while response is None and (time.time() - start_time) < wait_time:
+            logger.warning(f"GET {url} returned no response from LANforge; retrying...")
+            time.sleep(poll_interval)
+            response = self.json_get(url)
+
+        if response is None:
+            logger.error(
+                f"GET {url} returned no response from LANforge after waiting "
+                f"{wait_time} seconds. Aborting test."
+            )
+            exit(1)
+
+        return response
+
+    def monitor_endpoint_status_changes(self, wait_time=40, poll_interval=5):
+        """
+        Checks the current status of every generic endpoint and, only the
+        first time an endpoint's status changes, logs a message and appends
+        a row (timestamp, endpoint_name, status) to
+        endpoint_status_changes.csv. Repeated polls of an unchanged status
+        are not logged or written again.
+        """
+        csv_file = "endpoint_status_changes.csv"
+        gen_url = "generic/%s/list?fields=name,status" % (",".join(set(self.generic_endps_profile.created_endp))) if self.generic_endps_profile.created_endp else ""
+        layer4_url = "layer4/%s/list?fields=name,status" % (",".join(self.created_cx.keys())) if self.created_cx else ""
+        created_endp = [(e, "generic") for e in self.generic_endps_profile.created_endp] + \
+            [(e, "layer4") for e in self.created_cx.keys()]
+
+        start_time = time.time()
+        endpoint_data = {}
+        while True:
+            active = 0
+            for gen_endp, api in created_endp:
+                generic_endpoint = self.json_get(f"/{api}/{gen_endp}")
+                if generic_endpoint:
+                    endpoint_data[gen_endp] = generic_endpoint
+                    if generic_endpoint.get("empty") != "no elements":
+                        active += 1
+
+            if active > 0 or (time.time() - start_time) >= wait_time:
+                break
+
+            logger.warning(
+                f"All {len(created_endp)} generic endpoint(s) are unreachable - retrying... {int(time.time() - start_time)}s/{wait_time}s before giving up and stopping the test."
+            )
+            time.sleep(poll_interval)
+
+        if not endpoint_data:
+            logger.error(
+                f"No data received for any of the created endpoints after waiting "
+                f"{wait_time} seconds. Aborting test."
+            )
+            exit(1)
+
+        def get_keys(resp):
+            if not resp or resp.get("empty") == "no elements":
+                return []
+            items = resp.get("endpoints") or resp.get("endpoint") or []
+            if isinstance(items, dict):
+                items = [items]
+            keys = []
+            for item in items:
+                if isinstance(item, dict):
+                    if "name" in item:
+                        keys.append(item["name"])
+                    else:
+                        keys.extend([k for k, v in item.items() if isinstance(v, dict)])
+            return keys
+
+        gen_resp = self.json_get(gen_url) if gen_url else None
+        layer4_resp = self.json_get(layer4_url) if layer4_url else None
+        active_keys_map = {
+            "generic": get_keys(gen_resp),
+            "layer4": get_keys(layer4_resp)
+        }
+
+        for gen_endp, api in created_endp:
+            generic_endpoint = endpoint_data.get(gen_endp, {})
+            url = layer4_url if api == "layer4" else gen_url
+            keys = active_keys_map.get(api, [])
+            if generic_endpoint.get("empty") == "no elements":
+                current_status = "Not Found / Deleted"
+                if gen_endp not in self.missing_cx_logged:
+                    logger.warning(
+                        f"CX '{gen_endp}' is missing from the monitoring data, the device may have disconnected "
+                        f"or its connection was not created. Continuing the test with the remaining devices.\n"
+                        f"URL     : {url}\n"
+                        f"Response keys: {keys}"
+                    )
+                    self.missing_cx_logged.add(gen_endp)
+            else:
+                current_status = generic_endpoint["endpoint"].get("status", "")
+                if gen_endp in self.missing_cx_logged:
+                    logger.info(f"CX '{gen_endp}' data is available again.")
+                    self.missing_cx_logged.discard(gen_endp)
+
+            previous_status = self.endpoint_last_status.get(gen_endp)
+
+            if current_status == previous_status:
+                continue
+
+            if current_status != "Not Found / Deleted":
+                logger.info(
+                    f"Endpoint {gen_endp} status changed to: {current_status}"
+                )
+
+            file_exists = os.path.isfile(csv_file) and os.path.getsize(csv_file) > 0
+            with open(csv_file, mode="a", newline="") as f:
+                writer = csv.writer(f)
+                if not file_exists:
+                    writer.writerow(["timestamp", "endpoint_name", "status", "url", "response_keys"])
+                writer.writerow(
+                    [
+                        datetime.now().strftime("%d-%m-%Y %H:%M:%S"),
+                        gen_endp,
+                        current_status,
+                        url,
+                        keys if current_status == "Not Found / Deleted" else generic_endpoint.get("endpoint", {})
+                    ]
+                )
+
+            self.endpoint_last_status[gen_endp] = current_status
+
+        if active == 0:
+            logger.error(f"No active endpoints after waiting {wait_time}s. Aborting.")
+            exit(1)
 
     def update_webui_json(self):
         """
@@ -1565,6 +1937,7 @@ class RealBrowserTest(Realm):
 
                     # CSV FOR WEBUI GRAPHS
                     self.write_live_webui_csv(rows)
+                    self.monitor_endpoint_status_changes()
 
                     time.sleep(1)
                     return True
@@ -1738,6 +2111,13 @@ class RealBrowserTest(Realm):
             elif len(self.incremental) == 1 and len(keys) > 1:
                 incremental_value = self.incremental[0]
                 max_index = len(keys)
+                # A non-positive step would never advance index, looping forever.
+                if incremental_value <= 0:
+                    logging.error(
+                        f"Invalid incremental value {incremental_value}; it must be greater than 0. "
+                        "Aborting test."
+                    )
+                    exit(1)
                 while index < max_index:
                     next_index = min(index + incremental_value, max_index)
                     cx_order_list.append(keys[index:next_index])
@@ -1950,7 +2330,7 @@ class RealBrowserTest(Realm):
                     return
             except requests.exceptions.ConnectionError:
                 time.sleep(1)
-        logging.error("❌ Flask server did not start within 10 seconds. Exiting.")
+        logging.error(f"❌ Flask server did not start within {timeout} seconds. Exiting.")
         sys.exit(1)
 
     def get_stats(self, duration, file_path, iteration_number, resource_list_sorted, cx_order_list, i, initial_target_urls):
@@ -2019,47 +2399,49 @@ class RealBrowserTest(Realm):
                             cx_names = []
                             # Check if multiple CX endpoints are created
                             if len(self.created_cx.keys()) > 1:
-                                data = mobile_data['endpoint']
-                                for endpoint in data:
-                                    for _key, value in endpoint.items():
-                                        if True:
-                                            cx_name = value.get('name', 'NA')
-                                            match = re.search(r'http(\d+)', cx_name)
-                                            res_no = match.group(1) if match else 'NA'
-                                            hostname = self.local_realm.json_get("resource/1/%s/list?fields=user" % (res_no))
-                                            hostname = hostname["resource"]["user"]
-                                            pass_url = value.get('total-urls', 0)
-                                            total_urls.append(pass_url)
-                                            uc_min.append(value.get('uc-min', 0.0))
-                                            uc_avg.append(value.get('uc-avg', 0.0))
-                                            uc_max.append(value.get('uc-max', 0.0))
-                                            total_err.append(value.get('total-err', 0))
-                                            hostnames.append(hostname)
-                                            cx_names.append(cx_name)
-                                            if hostname not in self.device_targets:
-                                                self.device_targets[hostname] = initial_target_urls
-                                            # Check if the mobile device reaches the current target URL count
-                                            if pass_url >= self.device_targets[hostname] and hostname not in time_taken:
-                                                time_taken[hostname] = (datetime.now() - start_time).total_seconds()
-                                # Save each mobile device's data to the CSV
-                                for i in range(len(total_urls)):
-                                    row = {
-                                        'device_type': 'mobile',
-                                        'device_name': hostnames[i],
-                                        'total_urls': total_urls[i],
-                                        'uc_min': float(uc_min[i]) / 1000,
-                                        'uc_avg': float(uc_avg[i]) / 1000,
-                                        'uc_max': float(uc_max[i]) / 1000,
-                                        'total_err': total_err[i],
-                                        'time_to_target_urls': time_taken.get(hostnames[i], 0.0),
-                                        'cx_name': cx_names[i],
-                                    }
-                                    writer.writerow(row)
-                                    last_data.append(row)
+                                if mobile_data and mobile_data.get('empty') != 'no elements':
+                                    data = mobile_data['endpoint']
+                                    if isinstance(data, dict):
+                                        data = [{data.get('name', 'endp'): data}]
+                                    for endpoint in data:
+                                        for _key, value in endpoint.items():
+                                            if True:
+                                                cx_name = value.get('name', 'NA')
+                                                match = re.search(r'http(\d+)', cx_name)
+                                                res_no = match.group(1) if match else 'NA'
+                                                hostname = self.local_realm.json_get("resource/1/%s/list?fields=user" % (res_no))
+                                                hostname = hostname["resource"]["user"]
+                                                pass_url = value.get('total-urls', 0)
+                                                total_urls.append(pass_url)
+                                                uc_min.append(value.get('uc-min', 0.0))
+                                                uc_avg.append(value.get('uc-avg', 0.0))
+                                                uc_max.append(value.get('uc-max', 0.0))
+                                                total_err.append(value.get('total-err', 0))
+                                                hostnames.append(hostname)
+                                                cx_names.append(cx_name)
+                                                if hostname not in self.device_targets:
+                                                    self.device_targets[hostname] = initial_target_urls
+                                                # Check if the mobile device reaches the current target URL count
+                                                if pass_url >= self.device_targets[hostname] and hostname not in time_taken:
+                                                    time_taken[hostname] = (datetime.now() - start_time).total_seconds()
+                                    # Save each mobile device's data to the Cache
+                                    for i in range(len(total_urls)):
+                                        row = {
+                                            'device_type': 'mobile',
+                                            'device_name': hostnames[i],
+                                            'total_urls': total_urls[i],
+                                            'uc_min': float(uc_min[i]) / 1000,
+                                            'uc_avg': float(uc_avg[i]) / 1000,
+                                            'uc_max': float(uc_max[i]) / 1000,
+                                            'total_err': total_err[i],
+                                            'time_to_target_urls': time_taken.get(hostnames[i], 0.0),
+                                            'cx_name': cx_names[i],
+                                        }
+                                        self.mobile_stats[cx_names[i]] = row
                             # Handle the case where only one CX endpoint is created
                             elif len(self.created_cx.keys()) == 1:
-                                endpoint = mobile_data.get('endpoint', {})
-                                if True:
+                                if mobile_data and mobile_data.get('empty') != 'no elements':
+                                    endpoint = mobile_data.get('endpoint', {})
                                     cx_name = endpoint.get('name', 'NA')
                                     match = re.search(r'http(\d+)', cx_name)
                                     res_no = match.group(1) if match else 'NA'
@@ -2083,8 +2465,11 @@ class RealBrowserTest(Realm):
                                         'time_to_target_urls': time_taken.get(hostname, 0.0),
                                         'cx_name': cx_name
                                     }
-                                    writer.writerow(row)
-                                    last_data.append(row)
+                                    self.mobile_stats[cx_name] = row
+                            for _, row in self.mobile_stats.items():
+                                writer.writerow(row)
+                                last_data.append(row)
+                    self.monitor_endpoint_status_changes()
                     time.sleep(1)
                 except Exception as e:
                     logging.exception(f"Error in get_stats function {e}", exc_info=True)
@@ -2116,8 +2501,16 @@ class RealBrowserTest(Realm):
     def updating_webui_runningjson(self, obj):
         data = {}
         file_path = self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.host, self.test_name)
-        # Wait until the file exists
+        # Wait until the file exists, but don't hang forever if the WebUI never creates it.
+        running_json_timeout = 60
+        wait_start = time.time()
         while not os.path.exists(file_path):
+            if time.time() - wait_start >= running_json_timeout:
+                logging.error(
+                    f"Running Json file {file_path} was not created within "
+                    f"{running_json_timeout} seconds. Aborting test."
+                )
+                exit(1)
             logging.info("Waiting for the Running Json file to be created")
             time.sleep(1)
         logging.info("Running Json file created")
@@ -2153,9 +2546,14 @@ class RealBrowserTest(Realm):
         if self.upstream_port.count('.') != 3:
             target_port_list = self.name_to_eid(self.upstream_port)
             shelf, resource, port, _ = target_port_list
+            response = self.json_get_with_retry(f'/port/{shelf}/{resource}/{port}?fields=ip')
             try:
-                target_port_ip = self.json_get(f'/port/{shelf}/{resource}/{port}?fields=ip')['interface']['ip']
+                target_port_ip = response['interface']['ip']
                 self.upstream_port = target_port_ip
+            except KeyError as e:
+                logger.error(f"Missing expected key {e} in LANforge /port/{shelf}/{resource}/{port} response. Aborting test.")
+                logger.info("LANforge response received:\n%s", json.dumps(response, indent=2, default=str))
+                exit(1)
             except Exception:
                 logging.warning(f'The upstream port is not an ethernet port. Proceeding with the given upstream_port {self.upstream_port}.')
             logging.info(f"Upstream port IP {self.upstream_port}")
@@ -2213,7 +2611,7 @@ class RealBrowserTest(Realm):
                     logger.warning("Invalid device format: %s", device)
                     continue
 
-                device_data_resp = self.json_get(f'/resource/{shelf}/{resource}')
+                device_data_resp = self.json_get_with_retry(f'/resource/{shelf}/{resource}')
                 if not device_data_resp or 'resource' not in device_data_resp:
                     logger.warning("Device data not found for %s", device)
                     continue
@@ -2303,7 +2701,13 @@ class RealBrowserTest(Realm):
         test_input_list = []
 
         if not self.expected_passfail_value:
-            interop_tab_data = self.json_get('/adb/')["devices"]
+            response = self.json_get_with_retry('/adb/')
+            try:
+                interop_tab_data = response["devices"]
+            except KeyError as e:
+                logger.error(f"Missing expected key {e} in LANforge /adb/ response. Aborting test.")
+                logger.info("LANforge /adb/ response received:\n%s", json.dumps(response, indent=2, default=str))
+                exit(1)
             user_to_serial_map = {}
             for dev in interop_tab_data:
                 for item in dev.values():
@@ -2432,12 +2836,17 @@ class RealBrowserTest(Realm):
                     self.csv_file_names = [self.csv_file_names[-1]]
 
             for i in range(0, len(self.csv_file_names)):
+                if self.csv_file_names[i] == 'endpoint_status_changes.csv':
+                    continue
 
                 final_eid_data, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = self.extract_device_data(self.csv_file_names[i])
                 report.set_graph_title("Successful URL's per Device")
                 report.build_graph_title()
 
                 data = pd.read_csv(self.csv_file_names[i])
+                if data.empty:
+                    logging.warning(f"No data found in {self.csv_file_names[i]}. Skipping graph generation.")
+                    return
 
                 # Extract device names from CSV
                 if 'total_urls' in data.columns:
@@ -2696,6 +3105,8 @@ class RealBrowserTest(Realm):
 
                 if 'real_time_data.csv' not in self.csv_file_names:
                     self.csv_file_names.append('real_time_data.csv')
+                if 'endpoint_status_changes.csv' not in self.csv_file_names:
+                    self.csv_file_names.append('endpoint_status_changes.csv')
 
                 for filename in self.csv_file_names:
                     source_path = os.path.join(source_dir, filename)
@@ -2705,6 +3116,18 @@ class RealBrowserTest(Realm):
                         try:
                             shutil.move(source_path, destination_path)
                             logging.info(f"Moved {filename} to {destination_dir}")
+                        except Exception as e:
+                            logging.warning(f"Could not move {filename}: {e}")
+
+                log_dir = os.path.join(destination_dir, "log")
+                os.makedirs(log_dir, exist_ok=True)
+                for filename in self.log_file_names:
+                    source_path = os.path.join(source_dir, filename)
+
+                    if os.path.isfile(source_path):
+                        try:
+                            shutil.move(source_path, log_dir)
+                            logging.info(f"Moved {filename} to {log_dir}")
                         except Exception as e:
                             logging.warning(f"Could not move {filename}: {e}")
 
@@ -2756,6 +3179,7 @@ class RealBrowserTest(Realm):
         # logging.info(f"Checking final eid data {final_eid_data}")
         for eid in final_eid_data:
             port_data = self.local_realm.json_get("port/list?fields=ssid,mac,parent dev,signal,tx-rate,channel,down,ip")
+            found = False
             for interface in port_data['interfaces']:
                 for key, value in interface.items():
                     temp_eid = key.split(".")
@@ -2767,6 +3191,24 @@ class RealBrowserTest(Realm):
                         signal_data.append(value.get("signal", 'None'))
                         ssid_data.append(value.get("ssid", 'None'))
                         tx_rate_data.append(value.get("tx-rate", 'None'))
+                        found = True
+            if not found:
+                # ponytail: device unreachable (down/phantom) this poll; keep columns aligned with device_names
+                mac_data.append('NA')
+                channel_data.append('NA')
+                signal_data.append('NA')
+                ssid_data.append('NA')
+                tx_rate_data.append('NA')
+
+        # devices with no resource match at all also need placeholders so
+        # every returned column stays the same length as device_names
+        for _ in range(len(device_names) - len(final_eid_data)):
+            final_eid_data.append('NA')
+            mac_data.append('NA')
+            channel_data.append('NA')
+            signal_data.append('NA')
+            ssid_data.append('NA')
+            tx_rate_data.append('NA')
 
         return final_eid_data, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data
 
@@ -2854,6 +3296,7 @@ class RealBrowserTest(Realm):
             start_time = datetime.now()
             self.device_targets = {}
             self.laptop_stats = {}
+            self.mobile_stats = {}
             while datetime.now() <= end_time or not self.check_gen_cx():
                 pause, _ = self.robo_obj.wait_for_battery()
                 if pause:
@@ -2920,55 +3363,55 @@ class RealBrowserTest(Realm):
                             cx_names = []
                             # Check if multiple CX endpoints are created
                             if len(self.created_cx.keys()) > 1:
-                                data = mobile_data['endpoint']
-                                for endpoint in data:
-                                    for _key, value in endpoint.items():
-                                        if True:
-                                            cx_name = value.get('name', 'NA')
-                                            match = re.search(r'http(\d+)', cx_name)
-                                            res_no = match.group(1) if match else 'NA'
-                                            hostname = self.local_realm.json_get("resource/1/%s/list?fields=user" % (res_no))
-                                            hostname = hostname["resource"]["user"]
-                                            pass_url = value.get('total-urls', 0)
-                                            total_urls.append(pass_url)
-                                            uc_min.append(value.get('uc-min', 0.0))
-                                            uc_avg.append(value.get('uc-avg', 0.0))
-                                            uc_max.append(value.get('uc-max', 0.0))
-                                            total_err.append(value.get('total-err', 0))
-                                            hostnames.append(hostname)
-                                            cx_names.append(cx_name)
-                                            if hostname not in self.device_targets:
-                                                self.device_targets[hostname] = initial_target_urls
-                                            # Check if the mobile device reaches the current target URL count
-                                            if pass_url >= self.device_targets[hostname] and hostname not in time_taken:
-                                                time_taken[hostname] = (datetime.now() - start_time).total_seconds()
-                                            if self.do_robo:
-                                                self.robo_mobile_data[hostname] = {
-                                                    'current_angle': self.current_angle,
-                                                    'current_cord': self.current_cord,
-                                                    'rotations_enabled': self.rotations_enabled,
-                                                    'total_urls': pass_url
-                                                }
-                                # Save each mobile device's data to the CSV
-                                for i in range(len(total_urls)):
-                                    row = {
-                                        'device_type': 'mobile',
-                                        'device_name': hostnames[i],
-                                        'total_urls': total_urls[i],
-                                        'uc_min': float(uc_min[i]) / 1000,
-                                        'uc_avg': float(uc_avg[i]) / 1000,
-                                        'uc_max': float(uc_max[i]) / 1000,
-                                        'total_err': total_err[i],
-                                        'time_to_target_urls': time_taken.get(hostnames[i], 0.0),
-                                        'cx_name': cx_names[i],
-                                        'angle': angle
-                                    }
-                                    writer.writerow(row)
-                                    last_data.append(row)
+                                if mobile_data and mobile_data.get('empty') != 'no elements':
+                                    data = mobile_data.get('endpoint')
+                                    for endpoint in data:
+                                        for _key, value in endpoint.items():
+                                            if True:
+                                                cx_name = value.get('name', 'NA')
+                                                match = re.search(r'http(\d+)', cx_name)
+                                                res_no = match.group(1) if match else 'NA'
+                                                hostname = self.local_realm.json_get("resource/1/%s/list?fields=user" % (res_no))
+                                                hostname = hostname["resource"]["user"]
+                                                pass_url = value.get('total-urls', 0)
+                                                total_urls.append(pass_url)
+                                                uc_min.append(value.get('uc-min', 0.0))
+                                                uc_avg.append(value.get('uc-avg', 0.0))
+                                                uc_max.append(value.get('uc-max', 0.0))
+                                                total_err.append(value.get('total-err', 0))
+                                                hostnames.append(hostname)
+                                                cx_names.append(cx_name)
+                                                if hostname not in self.device_targets:
+                                                    self.device_targets[hostname] = initial_target_urls
+                                                # Check if the mobile device reaches the current target URL count
+                                                if pass_url >= self.device_targets[hostname] and hostname not in time_taken:
+                                                    time_taken[hostname] = (datetime.now() - start_time).total_seconds()
+                                                if self.do_robo:
+                                                    self.robo_mobile_data[hostname] = {
+                                                        'current_angle': self.current_angle,
+                                                        'current_cord': self.current_cord,
+                                                        'rotations_enabled': self.rotations_enabled,
+                                                        'total_urls': pass_url
+                                                    }
+                                    # Save each mobile device's data to the Cache
+                                    for i in range(len(total_urls)):
+                                        row = {
+                                            'device_type': 'mobile',
+                                            'device_name': hostnames[i],
+                                            'total_urls': total_urls[i],
+                                            'uc_min': float(uc_min[i]) / 1000,
+                                            'uc_avg': float(uc_avg[i]) / 1000,
+                                            'uc_max': float(uc_max[i]) / 1000,
+                                            'total_err': total_err[i],
+                                            'time_to_target_urls': time_taken.get(hostnames[i], 0.0),
+                                            'cx_name': cx_names[i],
+                                            'angle': angle
+                                        }
+                                        self.mobile_stats[cx_names[i]] = row
                             # Handle the case where only one CX endpoint is created
                             elif len(self.created_cx.keys()) == 1:
-                                endpoint = mobile_data.get('endpoint', {})
-                                if True:
+                                if mobile_data and mobile_data.get('empty') != 'no elements':
+                                    endpoint = mobile_data.get('endpoint', {})
                                     cx_name = endpoint.get('name', 'NA')
                                     match = re.search(r'http(\d+)', cx_name)
                                     res_no = match.group(1) if match else 'NA'
@@ -3000,8 +3443,11 @@ class RealBrowserTest(Realm):
                                             'rotations_enabled': self.rotations_enabled,
                                             'total_urls': pass_url
                                         }
-                                    writer.writerow(row)
-                                    last_data.append(row)
+                                    self.mobile_stats[cx_name] = row
+                            for _, row in self.mobile_stats.items():
+                                writer.writerow(row)
+                                last_data.append(row)
+                    self.monitor_endpoint_status_changes()
                     time.sleep(1)
                 except Exception as e:
                     logging.exception(f"Error in get_stats function {e}", exc_info=True)
@@ -3089,9 +3535,9 @@ class RealBrowserTest(Realm):
         except Exception as e:
             logging.error(f"Error in create_robo_report function {e}", exc_info=True)
         finally:
+            destination_dir = self.report_path_date_time
             if not self.dowebgui:
                 source_dir = "."
-                destination_dir = self.report_path_date_time
                 for filename in self.robo_csv_files:
                     source_path = os.path.join(source_dir, filename)
                     destination_path = os.path.join(destination_dir, filename)
@@ -3100,6 +3546,18 @@ class RealBrowserTest(Realm):
                         logging.info(f"Moved {filename} to {destination_dir}")
                     else:
                         logging.info(f"{filename} not found in the current directory")
+
+            log_dir = os.path.join(destination_dir, "log")
+            os.makedirs(log_dir, exist_ok=True)
+            for filename in set(self.log_file_names + [f for f in os.listdir(".") if f.endswith("_client_test.log") or f.endswith("_test.log")]):
+                source_path = os.path.join(".", filename)
+
+                if os.path.isfile(source_path):
+                    try:
+                        shutil.move(source_path, log_dir)
+                        logging.info(f"Moved {filename} to {log_dir}")
+                    except Exception as e:
+                        logging.warning(f"Could not move {filename}: {e}")
 
     def create_robo_graphs_test_results(self, csv_file, coordinate, angle=None):
         """
@@ -3384,22 +3842,22 @@ def main():
 
             Pre-requisites: Real devices should be connected to the LANforge MGR and Interop app should be open on the real clients which are connected to Lanforge
 
-            Example: (python3 or ./)lf_interop_real_browser_test.py --mgr 192.168.214.219 --duration 1 --url "www.google.com"
+            Example: (python3 or ./)lf_interop_real_browser_test.py --mgr 192.168.214.219 --duration 1 --url "https://google.com"
 
             Example-1 :
             Command Line Interface to run url in the Browser with specified URL and duration:
-            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --debug --upstream_port 1.1.eth1
+            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "https://google.com" --duration 10m --debug --upstream_port 1.1.eth1
 
                 CASE-1:
-                If not specified it takes the default url (default url is www.google.com)
+                If not specified it takes the default url (default url is https://google.com)
 
             Example-2:
             Command Line Interface to run url in the Browser with specified Resources:
-            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --debug --upstream_port 1.1.eth1
+            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "https://google.com" --duration 10m --device_list 1.10,1.12 --debug --upstream_port 1.1.eth1
 
             Example-3:
             Command Line Interface to run url in the Browser with specified urls_per_tennm (specify the number of url you want to test in the given duration):
-            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "www.google.com" --duration 10m --device_list 1.10,1.12 --count 10 --debug --upstream_port 1.1.eth1
+            python3 lf_interop_real_browser_test.py --mgr 192.168.214.219 --url "https://google.com" --duration 10m --device_list 1.10,1.12 --count 10 --debug --upstream_port 1.1.eth1
 
                 CASE-1:
                 If not specified it takes the default count value (default count is 1)
@@ -3430,7 +3888,7 @@ def main():
                 2. Always specify the duration in minutes (for example: --duration 3 indicates a duration of 3 minutes).
                 3. If --device_list are not given after passing the CLI, a list of available devices will be displayed on the terminal.
                 4. Enter the resource numbers separated by commas (,) in the resource argument and also enclose in double quotes (e.g. : 1.10,1.12).
-                5. For --url, you can specify the URL (e.g., www.google.com).
+                5. For --url, you can specify the URL (e.g., https://google.com).
                 6. To run the test by specifying the incremental capacity, enable the --incremental flag.
 
             STATUS: BETA RELEASE
@@ -3577,6 +4035,8 @@ def main():
             if args.rotations:
                 rotations_enabled = True
 
+        iot_summary = None
+
         # Initialize an instance of RealBrowserTest with various parameters
         obj = RealBrowserTest(host=args.host,
                               ssid=args.ssid,
@@ -3683,7 +4143,6 @@ def main():
         obj.handle_incremental(args, obj, available_resources, available_resources)
         obj.handle_duration()
         obj.run_test(available_resources)
-        iot_summary = None
         if args.iot_test and args.iot_testname:
             base = os.path.join("results", args.iot_testname)
             p = os.path.join(base, "iot_summary.json")
@@ -3697,6 +4156,7 @@ def main():
         logger.error("An exception occurred:\n%s", tb_str)
     finally:
         if '--help' not in sys.argv and '-h' not in sys.argv:
+            obj.stop()
             if args.do_robo and args.do_bandsteering:
                 if args.dowebgui:
                     obj.stop_webui_test()
@@ -3707,7 +4167,6 @@ def main():
                 obj.create_robo_report()
             else:
                 obj.create_report(iot_summary=iot_summary)
-            obj.stop()
 
             if not args.no_postcleanup:
                 obj.postcleanup()

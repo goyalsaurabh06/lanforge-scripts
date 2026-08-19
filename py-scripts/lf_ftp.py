@@ -284,6 +284,8 @@ class FtpTest(LFCliBase):
         self.missing_device_logged = set()
         self.cx_status_log = {}
         self.monitoring_start_time = None
+        self.all_devices_stopped = False
+        self.bandsteering_start_time = None
         self.uc_min = []
         self.uc_max = []
         self.url_data = []
@@ -1092,11 +1094,12 @@ class FtpTest(LFCliBase):
             self.bytes_rd[i] = max(self.max_bytes_rd[i], self.bytes_rd[i])
         return list(dataset)
 
-    def record_device_issue(self, device, issue):
+    def record_device_issue(self, device, issue, api_response=None):
         self.device_issue_log.append({
             "Time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             "Device": device,
             "Issue": issue,
+            "API Response": api_response if api_response is not None else '',
         })
 
     def monitoring_elapsed_seconds(self):
@@ -1104,7 +1107,7 @@ class FtpTest(LFCliBase):
             return 0
         return (datetime.now() - self.monitoring_start_time).total_seconds()
 
-    def track_cx_status(self, cx, status):
+    def track_cx_status(self, cx, status, api_response=None):
         # Ignore CX status for the first 10s of monitoring: CXs are still settling into "Run"
         # right after the test starts (e.g. Login/Wait), and treating that startup ramp-up as a
         # real status change/recovery would be a false positive. Nothing is recorded - not even
@@ -1116,10 +1119,10 @@ class FtpTest(LFCliBase):
         if previous is not None and previous != status:
             if status.lower() != 'run':
                 logger.warning("CX '{}' status changed: {} -> {}".format(cx, previous, status))
-                self.record_device_issue(cx, "Status changed: {} -> {}".format(previous, status))
+                self.record_device_issue(cx, "Status changed: {} -> {}".format(previous, status), api_response=api_response)
             elif previous.lower() != 'run':
                 logger.info("CX '{}' recovered: {} -> {}".format(cx, previous, status))
-                self.record_device_issue(cx, "Recovered: {} -> {}".format(previous, status))
+                self.record_device_issue(cx, "Recovered: {} -> {}".format(previous, status), api_response=api_response)
         self.cx_status_log[cx] = status
 
     def format_monitoring_duration(self):
@@ -1159,9 +1162,25 @@ class FtpTest(LFCliBase):
     # FOR WEB-UI // function usd to fetch runtime values and fill the csv.
 
     def monitor_for_runtime_csv(self):
-        self.monitoring_start_time = datetime.now()
+        if self.do_bandsteering and self.all_devices_stopped:
+            # Exit early to preserve the last valid results.
+            return False
+        if self.do_bandsteering:
+            # Band steering invokes this function repeatedly as a per-tick callback within one
+            # continuous session, so only set this once for the whole session.
+            if self.monitoring_start_time is None:
+                self.monitoring_start_time = datetime.now()
+        else:
+            # Non-bandsteering flows restart the grace period on every call.
+            self.monitoring_start_time = datetime.now()
         time_now = datetime.now()
-        start_time = time_now.strftime("%d/%m %I:%M:%S %p")
+        if self.do_bandsteering:
+            # Report the session's start, not this tick's timestamp.
+            if self.bandsteering_start_time is None:
+                self.bandsteering_start_time = time_now
+            start_time = self.bandsteering_start_time.strftime("%d/%m %I:%M:%S %p")
+        else:
+            start_time = time_now.strftime("%d/%m %I:%M:%S %p")
         duration = self.traffic_duration
         endtime = time_now + timedelta(seconds=duration)
         end_time = endtime
@@ -1169,6 +1188,9 @@ class FtpTest(LFCliBase):
         current_time = datetime.now()
         self.data = {}
         self.data["url_data"] = []
+        # Seeded so these keys exist even if traffic_duration <= 0 and the loop below never runs.
+        self.data["start_time"] = [start_time] * len(self.cx_list)
+        self.data["end_time"] = [end_time.strftime("%d/%m %I:%M:%S %p")] * len(self.cx_list)
         client_id_list = []
         test_stopped_by_user = False
         for port in self.input_devices_list:
@@ -1187,6 +1209,13 @@ class FtpTest(LFCliBase):
             client_id_list.append('.'.join(r_id[:2]))
         monitor_charge_time = current_time
         while (current_time < endtime):
+            if self.all_devices_stopped:
+                # An earlier call already gave up waiting for devices to recover. Band steering
+                # invokes this function repeatedly as its own monitor_function tick, so return
+                # immediately instead of re-running the 40s recovery wait on every tick.
+                if self.do_bandsteering:
+                    return test_stopped_by_user
+                break
             # If robot test mode is enabled, periodically check if a battery pause is needed
             if self.robot_test:
                 # Check if enough time has passed to trigger a battery check (300 sec)
@@ -1235,18 +1264,24 @@ class FtpTest(LFCliBase):
             # If every CX has stopped responding, retry for up to 40 seconds before giving up
             # on this monitor loop. This does not fail the test: the loop just ends gracefully
             # and execution continues with whatever data was already collected.
+            no_devices_data_found = False
             if self.cx_list and len(self.missing_cx_logged) == len(self.cx_list):
                 logger.warning("All devices have stopped responding during monitoring, retrying "
                                "for up to 40 seconds before ending the monitor loop.")
                 recovery = self.wait_for_any_cx_recovery(timeout=40, poll_interval=5)
                 if recovery == 'stopped':
                     test_stopped_by_user = True
-                    break
+                    no_devices_data_found = True
                 elif recovery == 'timeout':
                     logger.error("No devices responded within 40 seconds during monitoring, "
                                  "ending the monitor loop gracefully; the test will continue with "
                                  "the data collected so far.")
-                    break
+                    self.all_devices_stopped = True
+                    # Mark the WebUI as completed instead of leaving it at a later planned
+                    # navigation state.
+                    if self.robot_test:
+                        self.robot_obj.update_nav_data_for_all_cxs_stopped()
+                    no_devices_data_found = True
 
             self.data["client"] = self.cx_list
             self.data["MAC"] = self.mac_id_list
@@ -1307,6 +1342,9 @@ class FtpTest(LFCliBase):
                 # To update end time at each interval
                 end_time = endtime
             self.data["end_time"] = [end_time.strftime("%d/%m %I:%M:%S %p")] * len(self.cx_list)
+            if no_devices_data_found:
+                # Record the actual give-up time instead of the never-reached planned end_time.
+                self.data["end_time"] = [datetime.now().strftime("%d/%m %I:%M:%S %p")] * len(self.cx_list)
             self.data["remaining_time"] = [[str(int(total_hours)) + " hr and " + str(
                 int(remaining_minutes)) + " min" if int(total_hours) != 0 or int(
                 remaining_minutes) != 0 else '<1 min'][0]] * len(self.cx_list)
@@ -1348,6 +1386,8 @@ class FtpTest(LFCliBase):
             # Reusing monitor logic for band steering, but only need one record per call,
             # so break after first iteration instead of running for full duration.
             if self.do_bandsteering:
+                break
+            if no_devices_data_found:
                 break
             current_time = datetime.now()
         individual_device_csv_names = []
@@ -1406,19 +1446,20 @@ class FtpTest(LFCliBase):
                         l4_dict['bytes_rd'].append(value['bytes-rd'])
                         l4_dict['total_err'].append(value['total-err'])
                         l4_dict['status'].append(value['status'])
-                        self.track_cx_status(cx, value['status'])
+                        self.track_cx_status(cx, value['status'], api_response=value)
                         cx_found = True
             if not cx_found:
                 if cx not in self.missing_cx_logged:
+                    response_cx_names = [cx_name for i in l4_data for cx_name in i.keys()]
                     logger.warning(
                         "CX '{}' is missing from the monitoring data, the device may have "
                         "disconnected or its connection was not created. Continuing the test "
                         "with the remaining devices.\n"
-                        "URL     : {}\n"
-                        "Response: {}".format(cx, url_str, l4_data))
+                        "URL          : {}\n"
+                        "Response CXs : {}".format(cx, url_str, response_cx_names))
                     self.missing_cx_logged.add(cx)
                     self.failed_cx.append(cx)
-                    self.record_device_issue(cx, "CX missing from monitoring data")
+                    self.record_device_issue(cx, "CX missing from monitoring data", api_response=response_cx_names)
                 l4_dict['uc_avg_data'].append(0 if not self.tracking_map else self.tracking_map['uc_avg_data'][idx])
                 l4_dict['uc_max_data'].append(0 if not self.tracking_map else self.tracking_map['uc_max_data'][idx])
                 l4_dict['uc_min_data'].append(0 if not self.tracking_map else self.tracking_map['uc_min_data'][idx])
@@ -1507,7 +1548,8 @@ class FtpTest(LFCliBase):
                         "Signal data for device '{}' is unavailable, it may have disconnected. "
                         "Continuing the test with the remaining devices.".format(sta))
                     self.missing_device_logged.add(sta)
-                    self.record_device_issue(sta, "Signal data unavailable (device may have disconnected)")
+                    self.record_device_issue(sta, "Signal data unavailable (device may have disconnected)",
+                                             api_response=list(interfaces_dict.keys()))
                 self.rssi_list.append('-')
                 self.tx_rate.append('-')
                 self.port_rx_rate.append('-')
@@ -3313,16 +3355,19 @@ class FtpTest(LFCliBase):
             self.robot_obj.do_bandsteering = True
             self.start(False, False)
             for coordinate in cycle_coords:
-                if test_stopped_by_user:
+                if test_stopped_by_user or self.all_devices_stopped:
                     break
                 # Check for battery status before moving to next coordinate
                 if_paused, test_stopped_by_user, test_status = self.robot_obj.wait_for_battery(monitor_function=lambda: self.monitor_for_runtime_csv())
                 # If test is stopped by user during battery wait
-                if test_stopped_by_user:
+                if test_stopped_by_user or self.all_devices_stopped:
                     break
                 robo_moved, abort, test_status = self.robot_obj.move_to_coordinate(coordinate, monitor_function=lambda: self.monitor_for_runtime_csv())
                 # If robot failed to reach the coordinate
                 if abort:
+                    break
+                if self.all_devices_stopped:
+                    logger.warning("Band-steering test stopped because no devices recovered within 40 seconds.")
                     break
                 if robo_moved:
                     logger.info("Reached the coordinate {}".format(coordinate))
@@ -3331,7 +3376,9 @@ class FtpTest(LFCliBase):
             return
 
         for coordinate in range(len(self.coordinate_list)):
-            if test_stopped_by_user:
+            if test_stopped_by_user or self.all_devices_stopped:
+                if self.all_devices_stopped:
+                    logger.warning("Robot test stopped because no devices recovered within 40 seconds.")
                 break
             # Check for battery status before moving to next coordinate
             if_paused, test_stopped_by_user = self.robot_obj.wait_for_battery()
@@ -3357,6 +3404,8 @@ class FtpTest(LFCliBase):
                 # if rotation mode
                 else:
                     for angle in range(len(self.rotation_list)):
+                        if self.all_devices_stopped:
+                            break
                         # Check for battery status before rotating to next angle
                         is_paused, test_stopped_by_user = self.robot_obj.wait_for_battery()
                         # If test is stopped by user during battery wait

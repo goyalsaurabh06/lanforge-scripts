@@ -80,7 +80,17 @@ import json
 import sys
 import traceback
 import glob
+import shlex
 from collections import Counter
+
+# Resolve helper scripts relative to this module, avoiding fixed paths.
+TEAMS_AUTOMATION_DIR = os.path.dirname(os.path.abspath(__file__))
+TEAMS_ANDROID_SCRIPT = os.path.join(
+    TEAMS_AUTOMATION_DIR, "teams_android.py"
+)
+TEAMS_ANDROID_APP_SCRIPT = os.path.join(
+    TEAMS_AUTOMATION_DIR, "teams_android_app.py"
+)
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
@@ -233,6 +243,18 @@ class TeamsAutomation(Realm):
                 self.header = ['timestamp'] + self.video_stats_header
         self.data_store = {}
         self.stop_signal = False
+        self.robot_run_skipped = False
+        self.device_issue_log = []
+        self.missing_signal_logged = set()
+        self.joined_device_names = set()
+        self._gen_cx_last_status = {}
+        self._gen_cx_stall_since = {}
+        self._gen_cx_gave_up_logged = set()
+        self._all_cx_missing_since = None
+        self.actual_monitoring_duration_seconds = 0
+        self.monitor_start_time = None
+        # Map each endpoint to its CX for safe cleanup.
+        self.generic_cx_pairs = {}
         self.path = os.path.join(os.getcwd(), "teams_test_results")
         if not os.path.exists(self.path):
             os.makedirs(self.path)
@@ -285,8 +307,12 @@ class TeamsAutomation(Realm):
         data = {}
         file_path = self.path + "/../../Running_instances/{}_{}_running.json".format(self.lanforge_ip, self.test_name)
 
-        # Wait until the file exists
+        # Avoid waiting forever if the Web UI fails to create the running JSON.
+        running_json_timeout = 5 * 60
+        wait_started = time.monotonic()
         while not os.path.exists(file_path):
+            if time.monotonic() - wait_started >= running_json_timeout:
+                raise TimeoutError(f"Running JSON file was not created within {running_json_timeout} seconds: {file_path}")
             logging.info("Waiting for the running json file to be created")
             time.sleep(1)
         logging.info("Running Json file found")
@@ -366,12 +392,118 @@ class TeamsAutomation(Realm):
 
         return upstream_port
 
+    def get_generic_endpoint_for_cleanup(self, endp_name):
+        """
+        Query the generic endpoint and return its data for cleanup validation.
+
+        Returns:
+            tuple: (query_succeeded, endpoint_data), where endpoint_data is the
+            endpoint details if available, otherwise None.
+        """
+        try:
+            response = self.json_get(f"/generic/{endp_name}")
+        except Exception as error:
+            logger.warning(
+                "Unable to check generic endpoint '%s' before cleanup: %s",
+                endp_name,
+                error,
+            )
+            return False, None
+
+        if not isinstance(response, dict):
+            return True, None
+        endpoint_data = response.get("endpoint")
+        return True, endpoint_data if isinstance(endpoint_data, dict) else None
+
+    def predict_endpoint_names(self, port_name):
+        """Return the normal Teams endpoint/CX names created by GenCXProfile."""
+        prefix = self.generic_endps_profile.name_prefix
+        return f"{prefix}-{port_name}", f"CX_{prefix}-{port_name}"
+
+    @staticmethod
+    def predict_android_endpoint_names(port_name):
+        """Return the Teams Android endpoint/CX names created by create_android()."""
+        gen_name = "teams-%s" % "_".join(port_name.split("."))
+        return gen_name, f"CX_generic-{gen_name}"
+
+    def pre_cleanup_stale_names(self, endp_name, cx_name):
+        """Remove a same-named pair left by an earlier interrupted Teams run."""
+        if self.no_pre_cleanup:
+            return
+
+        query_succeeded, endpoint_data = self.get_generic_endpoint_for_cleanup(endp_name)
+        if not query_succeeded or endpoint_data is None:
+            return
+
+        if endpoint_data.get("status") == "NO-CX":
+            logger.info("Stale CX '%s' is already missing; skipping its removal.", cx_name)
+        else:
+            logger.info("Removing stale CX '%s' left by a previous run.", cx_name)
+            self.json_post(
+                "cli-json/rm_cx",
+                {"test_mgr": "default_tm", "cx_name": cx_name},
+            )
+        logger.info(
+            "Removing stale generic endpoint '%s' left by a previous run.",
+            endp_name,
+        )
+        self.json_post("cli-json/rm_endp", {"endp_name": endp_name})
+
+    def pre_cleanup_stale_endpoint(self, port_name):
+        self.pre_cleanup_stale_names(*self.predict_endpoint_names(port_name))
+
+    def pre_cleanup_stale_android_endpoint(self, port_name):
+        self.pre_cleanup_stale_names(*self.predict_android_endpoint_names(port_name))
+
+    def cleanup_generic_endpoints(self):
+        """
+        Clean up tracked generic endpoints and their CXs, skipping objects
+        already missing from LANforge. If the existence check fails, fall back
+        to the original cleanup behavior.
+        """
+        pairs = dict(self.generic_cx_pairs)
+        for endp_name, cx_name in zip(
+                self.generic_endps_profile.created_endp,
+                self.generic_endps_profile.created_cx):
+            pairs.setdefault(endp_name, cx_name)
+
+        for endp_name, cx_name in pairs.items():
+            query_succeeded, endpoint_data = self.get_generic_endpoint_for_cleanup(endp_name)
+
+            if query_succeeded and endpoint_data is None:
+                logger.info(
+                    "Skipping cleanup for CX '%s' and endpoint '%s': they are "
+                    "already missing from LANforge.",
+                    cx_name,
+                    endp_name,
+                )
+                continue
+
+            status = endpoint_data.get("status", "") if endpoint_data else ""
+            if status == "NO-CX":
+                logger.info("Skipping cleanup for already-missing CX '%s'.", cx_name)
+            else:
+                self.json_post(
+                    "cli-json/rm_cx",
+                    {"test_mgr": "default_tm", "cx_name": cx_name},
+                )
+
+            # If the query failed, preserve the old unconditional endpoint cleanup.
+            self.json_post("cli-json/rm_endp", {"endp_name": endp_name})
+
     def create_host(self):
+        # Clean up stale endpoints before creating a new one.
+        self.pre_cleanup_stale_endpoint(self.real_sta_list[0])
         if self.generic_endps_profile.create(ports=[self.real_sta_list[0]], real_client_os_types=[self.real_sta_os_types[0]]):
             logging.info('Real client generic endpoint creation completed.')
         else:
             logging.error('Real client generic endpoint creation failed.')
             exit(0)
+
+        # Store the created endpoint-to-CX mapping.
+        self.generic_cx_pairs[
+            self.generic_endps_profile.created_endp[0]
+        ] = self.generic_endps_profile.created_cx[0]
 
         if self.real_sta_os_types[0] == "windows":
             cmd = fr'"{self.window_dir}\teams.bat" --ip {self.upstream_port} host'
@@ -388,17 +520,103 @@ class TeamsAutomation(Realm):
         time.sleep(5)
 
     def wait_for_login(self):
-        while not self.login_completed:
+        # Avoid waiting forever if the host never reports a completed login.
+        login_timeout = 5 * 60
+        wait_started = time.monotonic()
+        host_endp = self.generic_endps_profile.created_endp[0]
+        host_url = f'/generic/{host_endp}'
+        host_reached_run = False
+        host_missing_since = None
+        host_missing_timeout = 40
+        # Keep polling even after the login callback arrives. Login completion
+        # alone is not enough to proceed if the only CX is currently missing.
+        while True:
+            if time.monotonic() - wait_started >= login_timeout:
+                raise TimeoutError(
+                    f"Host login did not complete within {login_timeout} seconds"
+                )
             try:
-                generic_endpoint = self.json_get(f'/generic/{self.generic_endps_profile.created_endp[0]}')
-                endp_status = generic_endpoint["endpoint"]["status"]
+                generic_endpoint = self.json_get(host_url)
+                endpoint_data = generic_endpoint.get("endpoint") if isinstance(generic_endpoint, dict) else None
+
+                if not isinstance(endpoint_data, dict):
+                    if host_missing_since is None:
+                        host_missing_since = time.monotonic()
+                    missing_for = time.monotonic() - host_missing_since
+                    run_context = "before reaching Run state" if not host_reached_run else "after reaching Run state"
+                    first_missing_poll = self._gen_cx_last_status.get(host_endp) != "MISSING"
+                    if first_missing_poll:
+                        logger.warning(
+                            "Host CX endpoint '%s' is missing %s.\n"
+                            "URL: %s\n"
+                            "Endpoint keys present: []",
+                            host_endp,
+                            run_context,
+                            host_url,
+                        )
+                        self.record_device_issue(host_endp,
+                                                 "Host CX endpoint missing {}".format(run_context))
+                    else:
+                        logger.warning("Host CX endpoint '%s' is still missing (%.0fs/%ss).",
+                                       host_endp, missing_for, host_missing_timeout)
+                    self._gen_cx_last_status[host_endp] = "MISSING"
+                    if missing_for >= host_missing_timeout:
+                        logger.error("Host CX endpoint '%s' remained missing for %.0fs (limit %ss). Stopping the test.",
+                                     host_endp, missing_for, host_missing_timeout)
+                        self.record_device_issue(
+                            host_endp,
+                            "Host CX missing for {:.0f}s; test stopped".format(missing_for),
+                        )
+                        self.stop_signal = True
+                        if self.do_robo:
+                            self.robot_run_skipped = True
+                        return False
+                    time.sleep(5)
+                    continue
+
+                endp_status = endpoint_data.get("status", "")
+                if host_missing_since is not None:
+                    logger.info("Host CX endpoint '%s' is available again after %.0fs.",
+                                host_endp, time.monotonic() - host_missing_since)
+                host_missing_since = None
+                if endp_status in ("Run", "RUNNING"):
+                    host_reached_run = True
+                self._gen_cx_last_status[host_endp] = endp_status
                 if endp_status == "Stopped":
                     logging.error("Failed to Start the Host Device")
-                    self.generic_endps_profile.cleanup()
+                    self.cleanup_generic_endpoints()
                     os._exit(1)
+                if self.login_completed:
+                    logger.info("Host login is complete and CX endpoint '%s' is available. Proceeding with participant creation.",
+                                host_endp)
+                    return True
                 time.sleep(5)
             except Exception as e:
-                logging.info(f"Error while checking login_completed status: {e}")
+                if host_missing_since is None:
+                    host_missing_since = time.monotonic()
+                missing_for = time.monotonic() - host_missing_since
+                run_context = "before reaching Run state" if not host_reached_run else "after reaching Run state"
+                first_missing_poll = self._gen_cx_last_status.get(host_endp) != "MISSING"
+                if first_missing_poll:
+                    logger.warning("Host CX endpoint '%s' is missing %s.\nURL: %s\nEndpoint keys present: [] (request failed: %s)",
+                                   host_endp, run_context, host_url, e)
+                    self.record_device_issue(host_endp,
+                                             "Host CX endpoint missing {}".format(run_context))
+                else:
+                    logger.warning("Host CX endpoint '%s' is still missing (%.0fs/%ss).",
+                                   host_endp, missing_for, host_missing_timeout)
+                self._gen_cx_last_status[host_endp] = "MISSING"
+                if missing_for >= host_missing_timeout:
+                    logger.error("Host CX endpoint '%s' remained missing for %.0fs (limit %ss). Stopping the test.",
+                                 host_endp, missing_for, host_missing_timeout)
+                    self.record_device_issue(
+                        host_endp,
+                        "Host CX missing for {:.0f}s; test stopped".format(missing_for),
+                    )
+                    self.stop_signal = True
+                    if self.do_robo:
+                        self.robot_run_skipped = True
+                    return False
                 time.sleep(5)
 
     def create_android(
@@ -473,12 +691,18 @@ class TeamsAutomation(Realm):
 
         for data in post_data:
             url = "/cli-json/add_cx"
-            self.json_post(
+            response = self.json_post(
                 url,
                 data,
                 debug_=debug_,
                 suppress_related_commands_=suppress_related_commands_,
             )
+            # Track missing CX creation responses for subsequent monitoring.
+            if response is None:
+                logger.warning("No response received while creating CX '%s'. The CX will remain tracked and monitoring will wait for it to appear.",
+                               data["alias"])
+                self.record_device_issue(data["alias"],
+                                         "No response received from CX creation request; waiting for CX to appear")
         if sleep_time:
             time.sleep(sleep_time)
 
@@ -498,6 +722,7 @@ class TeamsAutomation(Realm):
         logger.debug(self.serial_list)
         for i in range(1, len(self.real_sta_os_types)):
             if self.real_sta_os_types[i] == "android":
+                self.pre_cleanup_stale_android_endpoint(self.real_sta_list[i])
                 status, created_cx, created_endp = self.create_android(
                     lanforge_res=self.lanforge_port_list[i],
                     ports=[self.real_sta_list[i]],
@@ -505,12 +730,13 @@ class TeamsAutomation(Realm):
                 )
                 self.generic_endps_profile.created_endp.extend(created_endp)
                 self.generic_endps_profile.created_cx.extend(created_cx)
+                self.generic_cx_pairs.update(zip(created_endp, created_cx))
                 logger.debug(self.generic_endps_profile.created_cx)
                 if self.enable_mobile_stats:
                     cmd = (
                         f"su - lanforge -c "
                         f"\"cd /home/lanforge && "
-                        f"python3 /home/lanforge/lanforge-scripts/py-scripts/real_application_tests/teams_automation/teams_android.py "
+                        f"python3 {shlex.quote(TEAMS_ANDROID_SCRIPT)} "
                         f"--devices {self.serial_list[i]} "
                         f"--meet_link '{self.meet_link}' "
                         f"--participant_name '{self.real_sta_hostname[i]}' "
@@ -523,7 +749,7 @@ class TeamsAutomation(Realm):
                     cmd = (
                         f"su - lanforge -c "
                         f"\"cd /home/lanforge && "
-                        f"python3 /home/lanforge/lanforge-scripts/py-scripts/real_application_tests/teams_automation/teams_android_app.py "
+                        f"python3 {shlex.quote(TEAMS_ANDROID_APP_SCRIPT)} "
                         f"--device {self.serial_list[i]} "
                         f"--meet_link '{self.meet_link}' "
                         f"--participant_name '{self.real_sta_hostname[i]}' "
@@ -535,10 +761,13 @@ class TeamsAutomation(Realm):
                     self.generic_endps_profile.created_endp[i], cmd
                 )
             else:
+                self.pre_cleanup_stale_endpoint(self.real_sta_list[i])
                 self.generic_endps_profile.create(
                     ports=[self.real_sta_list[i]],
                     real_client_os_types=[self.real_sta_os_types[i]],
                 )
+                endp_name, cx_name = self.predict_endpoint_names(self.real_sta_list[i])
+                self.generic_cx_pairs[endp_name] = cx_name
 
         for i in range(1, len(self.real_sta_os_types)):
             if self.real_sta_os_types[i] == "windows":
@@ -568,8 +797,39 @@ class TeamsAutomation(Realm):
             logger.info(f"sending running state to.. {cx_name}")
 
     def monitor_test(self):
-        while datetime.now(self.tz) < self.end_time or not self.check_gen_cx():
-            if self.stop_signal:
+        """Run test monitoring and record the actual duration."""
+        self.monitor_start_time = datetime.now()
+        try:
+            self._monitor_test_loop()
+        finally:
+            # Track and log the actual monitoring duration on every exit path.
+            self.actual_monitoring_duration_seconds += (datetime.now() - self.monitor_start_time).total_seconds()
+            logger.info("Monitoring Duration: {}".format(self.format_monitoring_duration()))
+
+    def _monitor_test_loop(self):
+        # Once the configured end time is reached, allow CXs five minutes to
+        # finish before ending monitoring instead of waiting indefinitely.
+        cx_finish_grace_period = 5 * 60
+        end_time_reached_at = None
+
+        while True:
+            # Poll every iteration to promptly detect CX state changes.
+            gen_cx_finished = self.check_gen_cx()
+            if datetime.now(self.tz) >= self.end_time:
+                if gen_cx_finished:
+                    break
+
+                if end_time_reached_at is None:
+                    end_time_reached_at = time.monotonic()
+                elif time.monotonic() - end_time_reached_at >= cx_finish_grace_period:
+                    logger.error("Generic CXs did not finish within five minutes after the configured end time. "
+                                 "Stopping monitoring.")
+                    self.record_device_issue("ALL",
+                                             "Generic CXs did not finish within the post-test grace period")
+                    self.stop_signal = True
+                    break
+
+            if self.stop_signal or self.robot_run_skipped:
                 break
 
             if self.do_robo:
@@ -598,11 +858,14 @@ class TeamsAutomation(Realm):
                     return
 
             elif self.do_bs:
-                time.sleep(27)
-                logger.info(
-                    f"Robo will be moving through the following coordinates: {self.bs_coord_result}"
-                )
+                if not self.wait_for_bandsteering_interval(27):
+                    return
+                logger.info("Robo will move through the following coordinates: %s", self.bs_coord_result)
                 for coordinate in self.bs_coord_result:
+                    if self.stop_signal:
+                        logger.warning("Stopping band-steering coordinate traversal because there is no active CX.")
+                        return
+
                     if not self.to_coordinate:
                         self.to_coordinate = coordinate
                     else:
@@ -614,6 +877,11 @@ class TeamsAutomation(Realm):
                     matched, aborted = self.robo_obj.move_to_coordinate(
                         coord=coordinate
                     )
+
+                    # Check CX status after each robot move since movement blocks execution.
+                    if not self.check_bandsteering_cx_status():
+                        return
+
                     if matched:
                         self.current_coord = coordinate
                         self.successful_coords.append(coordinate)
@@ -624,23 +892,63 @@ class TeamsAutomation(Realm):
                         logger.error(f"Failed to reach the {coordinate}")
                         self.failed_coords.append(coordinate)
                         sys.exit()
-                    time.sleep(10)
+                    if not self.wait_for_bandsteering_interval(10):
+                        return
                 return
 
             time.sleep(5)
 
+    def check_bandsteering_cx_status(self):
+        """
+        Check generic CX status during band-steering traversal.
+
+        Returns:
+            bool: True to continue monitoring, False to stop when all CXs are
+            finished, disconnected, or monitoring has been terminated.
+        """
+        gen_cx_finished = self.check_gen_cx()
+        if self.stop_signal:
+            return False
+
+        if gen_cx_finished:
+            logger.error("All generic CXs are finished or disconnected; stopping the band-steering test.")
+            self.record_device_issue("ALL", "All CXs finished or disconnected during band-steering")
+            self.stop_signal = True
+            return False
+
+        return True
+
+    def wait_for_bandsteering_interval(self, duration, poll_interval=5):
+        """Wait for a band-steering interval while continuing to poll CX status."""
+        deadline = time.monotonic() + duration
+        while True:
+            if not self.check_bandsteering_cx_status():
+                return False
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return True
+            time.sleep(min(poll_interval, remaining))
+
     def reset_variables_for_next_run(self):
         self.participants_joined = 0
+        self.joined_device_names = set()
         self.login_completed = False
         self.meet_link = ""
         self.data_store = {}
         self.cred_index = 0
-        self.generic_endps_profile.cleanup()
+        self.cleanup_generic_endpoints()
         self.start_time = None
         self.end_time = None
         self.stop_signal = False
         self.generic_endps_profile.created_cx = []
         self.generic_endps_profile.created_endp = []
+        self.generic_cx_pairs = {}
+        self._gen_cx_last_status = {}
+        self._gen_cx_stall_since = {}
+        self._gen_cx_gave_up_logged = set()
+        self._all_cx_missing_since = None
+        self.robot_run_skipped = False
 
     def get_signal_and_channel_data(self):
         """
@@ -650,14 +958,15 @@ class TeamsAutomation(Realm):
 
         lf_stats_map = {}
         interfaces_dict = dict()
+        ports_url = "/ports/all/"
 
         try:
             # Get raw data from LANforge API
-            port_data = self.json_get("/ports/all/")["interfaces"]
+            port_data = self.json_get(ports_url)["interfaces"]
             for port in port_data:
                 interfaces_dict.update(port)
         except Exception as e:
-            print(f"Error fetching port data: {e}")
+            logger.error(f"Error fetching port data: {e}", exc_info=True)
             return {}
 
         # Loop through your managed stations (e.g., sta001, sta002)
@@ -672,26 +981,36 @@ class TeamsAutomation(Realm):
                 "bssid": "-",
             }
 
-            if sta in interfaces_dict:
-                data = interfaces_dict[sta]
+            if sta not in interfaces_dict:
+                # Track signal-data loss and recovery for each station.
+                if sta not in self.missing_signal_logged:
+                    logger.warning("Signal data for '{}' is unavailable, it may have disconnected. Continuing the test "
+                                   "with the remaining devices.\nURL     : {}".format(sta, ports_url))
+                    self.missing_signal_logged.add(sta)
+                    self.record_device_issue(sta, "Signal data unavailable (device may have disconnected)")
+                continue
 
-                # --- Signal Parsing ---
-                sig = data.get("signal", "-")
-                if "dBm" in str(sig):
-                    lf_stats_map[sta]["signal"] = sig.split(" ")[0]
-                else:
-                    lf_stats_map[sta]["signal"] = sig
+            if sta in self.missing_signal_logged:
+                logger.info(f"Signal data for '{sta}' is available again.")
+                self.missing_signal_logged.discard(sta)
 
-                # --- Other Fields ---
-                lf_stats_map[sta]["channel"] = data.get("channel", "-")
-                lf_stats_map[sta]["mode"] = data.get("mode", "-")
-                lf_stats_map[sta]["tx_rate"] = data.get("tx-rate", "-")
-                lf_stats_map[sta]["rx_rate"] = data.get("rx-rate", "-")
-                lf_stats_map[sta]["bssid"] = data.get(
-                    "ap", "-"
-                )  # 'ap' is usually BSSID
+            data = interfaces_dict[sta]
 
-        print(lf_stats_map)
+            # --- Signal Parsing ---
+            sig = data.get("signal", "-")
+            if "dBm" in str(sig):
+                lf_stats_map[sta]["signal"] = sig.split(" ")[0]
+            else:
+                lf_stats_map[sta]["signal"] = sig
+
+            # --- Other Fields ---
+            lf_stats_map[sta]["channel"] = data.get("channel", "-")
+            lf_stats_map[sta]["mode"] = data.get("mode", "-")
+            lf_stats_map[sta]["tx_rate"] = data.get("tx-rate", "-")
+            lf_stats_map[sta]["rx_rate"] = data.get("rx-rate", "-")
+            lf_stats_map[sta]["bssid"] = data.get(
+                "ap", "-"
+            )  # 'ap' is usually BSSID
 
         return lf_stats_map
 
@@ -741,7 +1060,12 @@ class TeamsAutomation(Realm):
 
     def run(self):
         self.create_host()
-        self.wait_for_login()
+        if not self.wait_for_login():
+            logger.error("Teams test stopped before participant creation because the host CX did not recover.")
+            if self.do_robo:
+                self.archive_mobile_logs_for_robot_run()
+                self.reset_variables_for_next_run()
+            return
         self.create_participants()
 
         self.wait_for_test_start()
@@ -749,6 +1073,16 @@ class TeamsAutomation(Realm):
         self.stop_signal = True
         time.sleep(10)
         if self.do_robo:
+            # Save Android logs with the current run's coordinate/rotation.
+            self.archive_mobile_logs_for_robot_run()
+            if self.robot_run_skipped:
+                location = f"coordinate {self.current_coord}"
+                if self.rotations_enabled:
+                    location += f", angle {self.current_rotation}"
+                logger.warning(f"Stopping the current Teams run at {location} because all CX endpoints are unavailable. "
+                               "Collected data has been retained, and testing will continue with the next angle or coordinate.")
+                self.reset_variables_for_next_run()
+                return
             if self.rotations_enabled:
                 logger.info(
                     f"Completed one cycle of test for coordinate {self.current_coord} with rotation {self.current_rotation}"
@@ -801,6 +1135,12 @@ class TeamsAutomation(Realm):
     def wait_for_test_start(self):
         check_count = 0
         while len(self.real_sta_list) != self.participants_joined:
+            # Poll endpoints during callbacks to detect CX changes promptly.
+            self.check_gen_cx()
+            if self.stop_signal:
+                logging.warning("Stopping the participant-join wait because the CX status check stopped the current test.")
+                break
+
             logging.info(
                 f"Waiting for all participants to join the call. Joined: {self.participants_joined}, Expected: {len(self.real_sta_list)}"
             )
@@ -810,6 +1150,14 @@ class TeamsAutomation(Realm):
                 logging.warning(
                     f"Proceeding with the test with the participants that have joined. Joined: {self.participants_joined}, Expected: {len(self.real_sta_list)}"
                 )
+                missing_devices = [
+                    hostname for hostname in self.real_sta_hostname
+                    if hostname not in self.joined_device_names
+                ]
+                if missing_devices:
+                    logging.warning(f"Devices that did not join the call: {missing_devices}")
+                    for device in missing_devices:
+                        self.record_device_issue(device, "Did not join the Teams call before timeout")
                 break
 
         if len(self.real_sta_list) == self.participants_joined:
@@ -1118,6 +1466,10 @@ class TeamsAutomation(Realm):
                 self.add_live_view_images_to_report()
             if self.do_bs:
                 self.add_bandsteering_report_section()
+            # Save recorded device issues alongside the test report.
+            if self.device_issue_log:
+                issues_df = pd.DataFrame(self.device_issue_log)
+                issues_df.to_csv(os.path.join(self.report_path_date_time, "clients_issue.csv"), index=False)
             self.report.write_html()
             self.report.write_pdf()
         except Exception as e:
@@ -1125,6 +1477,7 @@ class TeamsAutomation(Realm):
         finally:
             self.move_csv_files()
             self.move_log_folder()
+            self.move_mobile_log_folder()
 
     def add_live_view_images_to_report(self):
         """
@@ -1320,25 +1673,205 @@ class TeamsAutomation(Realm):
                 self.report.set_table_dataframe(filtered_df)
                 self.report.build_table()
 
-    def check_gen_cx(self):
+    def record_device_issue(self, device, issue, api_response=None):
+        """Record a timestamped device issue for inclusion in the test report."""
+        self.device_issue_log.append({
+            "Time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "Device": device,
+            "Issue": issue,
+            "API Response": api_response if api_response is not None else '',
+        })
+
+    def format_monitoring_duration(self):
+        """Format the actual monitoring duration as minutes and seconds."""
+        total_seconds = int(self.actual_monitoring_duration_seconds)
+        minutes, seconds = divmod(total_seconds, 60)
+        return "{}m {}s".format(minutes, seconds)
+
+    def poll_gen_endp_status(self, gen_endp):
+        """Return the CX status and this endpoint's API payload, or ``(None, None)``."""
         try:
-
-            for gen_endp in self.generic_endps_profile.created_endp:
-                generic_endpoint = self.json_get(f'/generic/{gen_endp}')
-
-                if not generic_endpoint or "endpoint" not in generic_endpoint:
-                    logging.info(f"Error fetching endpoint data for {gen_endp}")
-                    return False
-
-                endp_status = generic_endpoint["endpoint"].get("status", "")
-
-                if endp_status not in ["Stopped", "WAITING", "NO-CX", "PHANTOM", "FTM_WAIT"]:
-                    return False
-
-            return True
+            generic_endpoint = self.json_get(f'/generic/{gen_endp}')
         except Exception as e:
-            logging.error(f"Error in check_gen_cx function {e}", exc_info=True)
-            logging.info(f"generic endpoint data {generic_endpoint}")
+            generic_endpoint = None
+            logger.error(f"Error fetching endpoint data for {gen_endp}: {e}", exc_info=True)
+
+        if not generic_endpoint or "endpoint" not in generic_endpoint:
+            return None, None
+
+        endpoint_data = generic_endpoint["endpoint"]
+        return endpoint_data.get("status", ""), endpoint_data
+
+    def get_missing_endpoint_debug(self, gen_endp):
+        """Return debug lines and the endpoint keys present in the combined API response."""
+        single_url = f'/generic/{gen_endp}'
+        all_endpoints = sorted(set(self.generic_endps_profile.created_endp))
+        if not all_endpoints:
+            return [f"URL: {single_url}"], []
+
+        all_url = f"/generic/{','.join(all_endpoints)}"
+        try:
+            response = self.json_get(all_url)
+        except Exception as e:
+            logger.error(f"Error fetching {all_url} for debug: {e}", exc_info=True)
+            return [f"URL: {single_url}"], []
+
+        if response and "endpoints" in response:
+            present_keys = [name for endp in response["endpoints"] for name in endp.keys()]
+        elif response and "endpoint" in response:
+            present_keys = all_endpoints[:1]
+        else:
+            present_keys = []
+
+        return ([
+            f"URL: {all_url}",
+            f"Endpoint keys present: {present_keys}",
+        ], present_keys)
+
+    def log_gen_cx_status_change(self, gen_endp, status, api_response=None):
+        """Log generic endpoint status changes and unavailable endpoints."""
+        status_key = status if status is not None else "MISSING"
+        prev_status_key = self._gen_cx_last_status.get(gen_endp)
+
+        if prev_status_key == status_key:
+            return
+
+        if status is None:
+            debug_lines, present_keys = self.get_missing_endpoint_debug(gen_endp)
+            logger.info(
+                f"Endpoint '{gen_endp}' is not available. Its CX may not have "
+                "been created, or it may be temporarily disconnected. "
+                "Continuing to monitor it.\n"
+                + "\n".join(debug_lines)
+            )
+            self.record_device_issue(
+                gen_endp,
+                "Endpoint unavailable (CX may not be created yet or device may "
+                "be disconnected)",
+                api_response=present_keys,
+            )
+        elif prev_status_key is not None:
+            logger.info(f"Endpoint '{gen_endp}' status changed to '{status}'.")
+            self.record_device_issue(
+                gen_endp,
+                f"Endpoint status changed to '{status}'",
+                api_response=api_response,
+            )
+
+        self._gen_cx_last_status[gen_endp] = status_key
+
+    def check_gen_cx(self, stall_timeout=300, all_missing_timeout=40):
+        """
+        Check the status of all created generic CX endpoints.
+
+        Args:
+            stall_timeout: Timeout for an unreachable endpoint.
+            all_missing_timeout: Timeout when all endpoints are unavailable.
+
+        Returns:
+            bool: True if monitoring is complete; otherwise False.
+        """
+        finished_statuses = ("Stopped", "WAITING", "FTM_WAIT")
+        disconnected_statuses = ("NO-CX", "PHANTOM")
+        now = time.time()
+        all_finished = True
+
+        try:
+            if not self.generic_endps_profile.created_endp:
+                logger.error("No generic CX endpoints were created for any device. Stopping the test.")
+                self.record_device_issue("ALL", "No generic CX endpoints were created; test stopped")
+                self.stop_signal = True
+                return True
+
+            statuses = {}
+            for gen_endp in set(self.generic_endps_profile.created_endp):
+                status, endpoint_data = self.poll_gen_endp_status(gen_endp)
+                self.log_gen_cx_status_change(gen_endp, status, api_response=endpoint_data)
+                statuses[gen_endp] = status
+
+                if status in finished_statuses:
+                    self._gen_cx_stall_since.pop(gen_endp, None)
+                    self._gen_cx_gave_up_logged.discard(gen_endp)
+                    continue
+
+                if status in disconnected_statuses:
+                    self._gen_cx_stall_since.pop(gen_endp, None)
+                    self._gen_cx_gave_up_logged.discard(gen_endp)
+                    continue
+
+                if status is not None:
+                    # Successfully fetched a status that isn't a known finished/disconnected
+                    # value (e.g. "Run") - the endpoint is alive and still going.
+                    self._gen_cx_stall_since.pop(gen_endp, None)
+                    self._gen_cx_gave_up_logged.discard(gen_endp)
+                    all_finished = False
+                    continue
+
+                # status is None - the endpoint couldn't be fetched at all (unreachable/deleted).
+                stall_start = self._gen_cx_stall_since.setdefault(gen_endp, now)
+                stalled_for = now - stall_start
+                if stalled_for >= stall_timeout:
+                    if gen_endp not in self._gen_cx_gave_up_logged:
+                        logger.warning(f"'{gen_endp}' unresolved (status={status!r}) for "
+                                       f"{stalled_for:.0f}s (limit {stall_timeout}s) - giving up waiting on it.")
+                        self._gen_cx_gave_up_logged.add(gen_endp)
+                        self.record_device_issue(
+                            gen_endp,
+                            f"Gave up waiting on endpoint after {stalled_for:.0f}s (status={status!r})",
+                        )
+                    continue
+
+                all_finished = False
+
+            if self.do_robo:
+                # Advance to the next coordinate or angle only when all tracked CXs are unavailable.
+                all_cxs_unavailable = statuses and all(
+                    status is None or status in disconnected_statuses
+                    for status in statuses.values()
+                )
+                if all_cxs_unavailable:
+                    if self._all_cx_missing_since is None:
+                        self._all_cx_missing_since = now
+                    unavailable_for = now - self._all_cx_missing_since
+                    if unavailable_for >= all_missing_timeout:
+                        location = f"coordinate {self.current_coord}"
+                        if self.rotations_enabled:
+                            location += f", angle {self.current_rotation}"
+                        logger.warning(f"All {len(statuses)} CX endpoints have been unavailable for {unavailable_for:.0f}s "
+                                       f"at {location}. Skipping this run and continuing with the next angle or coordinate.")
+                        self.record_device_issue("ALL",
+                                                 f"All CXs unavailable for {unavailable_for:.0f}s; current robot run skipped")
+                        self.stop_signal = True
+                        self.robot_run_skipped = True
+                        return all_finished
+                    location = f"coordinate {self.current_coord}"
+                    if self.rotations_enabled:
+                        location += f", angle {self.current_rotation}"
+                    logger.warning(
+                        f"All {len(statuses)} CX endpoints are unavailable at {location} - retrying... "
+                        f"{unavailable_for:.0f}s/{all_missing_timeout}s before skipping this run."
+                    )
+                else:
+                    self._all_cx_missing_since = None
+
+            if not self.do_robo and statuses and all(s is None for s in statuses.values()):
+                if self._all_cx_missing_since is None:
+                    self._all_cx_missing_since = now
+                missing_for = now - self._all_cx_missing_since
+                if missing_for >= all_missing_timeout:
+                    logger.error(f"All {len(statuses)} generic endpoint(s) have been unreachable for {missing_for:.0f}s "
+                                 f"(limit {all_missing_timeout}s) - stopping the test.")
+                    self.record_device_issue("ALL", f"All endpoints unreachable for {missing_for:.0f}s - test stopped")
+                    self.stop_signal = True
+                else:
+                    logger.warning(f"All {len(statuses)} generic endpoint(s) are unreachable - retrying... "
+                                   f"{missing_for:.0f}s/{all_missing_timeout}s before giving up and stopping the test.")
+            elif not self.do_robo:
+                self._all_cx_missing_since = None
+
+            return all_finished
+        except Exception as e:
+            logger.error(f"Error in check_gen_cx function: {e}", exc_info=True)
             return False
 
     def set_start_time(self):
@@ -1652,6 +2185,81 @@ class TeamsAutomation(Realm):
                 shutil.rmtree(dest)
             shutil.move(log_dir, dest)
 
+    def move_mobile_log_folder(self):
+        """Move mobile Teams logs to the current test report directory."""
+        mobile_log_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "ms_teams_mobile_logs",
+        )
+        if os.path.isdir(mobile_log_dir):
+            dest = os.path.join(self.report_path_date_time, "ms_teams_mobile_logs")
+            if os.path.isdir(dest):
+                shutil.rmtree(dest)
+            shutil.move(mobile_log_dir, dest)
+
+    def archive_mobile_logs_for_robot_run(self):
+        """
+        Archive Android logs after each robot run by renaming them with the
+        current coordinate (and rotation, if enabled).
+        """
+        mobile_log_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "ms_teams_mobile_logs",
+        )
+        if not os.path.isdir(mobile_log_dir):
+            return
+
+        def safe_name(value):
+            return "".join(
+                character if character.isalnum() or character in ("-", "_", ".") else "_"
+                for character in str(value)
+            )
+
+        coordinate = safe_name(self.current_coord)
+        rotation = safe_name(self.current_rotation)
+
+        for index, os_type in enumerate(self.real_sta_os_types):
+            if os_type != "android":
+                continue
+
+            hostname = os.path.basename(str(self.real_sta_hostname[index]).strip())
+            source = os.path.join(mobile_log_dir, f"{hostname}.log")
+            if not os.path.isfile(source):
+                logger.warning(
+                    "Android log was not found for '%s' after the robot run: %s",
+                    hostname,
+                    source,
+                )
+                continue
+
+            if self.rotations_enabled:
+                archived_name = f"{safe_name(hostname)}_{coordinate}_{rotation}.log"
+            else:
+                archived_name = f"{safe_name(hostname)}_{coordinate}.log"
+
+            destination = os.path.join(mobile_log_dir, archived_name)
+            suffix = 2
+            while os.path.exists(destination):
+                stem, extension = os.path.splitext(archived_name)
+                destination = os.path.join(
+                    mobile_log_dir, f"{stem}_{suffix}{extension}"
+                )
+                suffix += 1
+
+            try:
+                os.replace(source, destination)
+                logger.info(
+                    "Archived Android log for robot run: %s",
+                    destination,
+                )
+            except OSError as error:
+                logger.error(
+                    "Unable to archive Android log '%s': %s",
+                    source,
+                    error,
+                    exc_info=True,
+                )
+
     def shutdown(self):
         """
         Gracefully shut down the application.
@@ -1662,7 +2270,7 @@ class TeamsAutomation(Realm):
         time.sleep(10)
         self.create_avg_data()
         self.generate_report()
-        self.generic_endps_profile.cleanup()
+        self.cleanup_generic_endpoints()
         self.stop_test_in_webui()
         logging.info("Exiting the application.")
         os._exit(0)
@@ -1710,6 +2318,9 @@ class TeamsAutomation(Realm):
 
         @self.app.route('/set_participants_joined', methods=['GET'])
         def set_participants_joined():
+            device = request.args.get('device', '').strip()
+            if device:
+                self.joined_device_names.add(device)
             self.participants_joined += 1
             return jsonify({"message": f"Updated participants joined status to {self.participants_joined}"})
 
@@ -1965,12 +2576,45 @@ class TeamsAutomation(Realm):
                 log_dir = os.path.join(self.path, "teams_laptop_client_logs")
                 os.makedirs(log_dir, exist_ok=True)
 
-                hostname = hostname.strip()
-                save_path = os.path.join(log_dir, f"{hostname}.log")
+                hostname = os.path.basename(hostname.strip())
+
+                def safe_name(value):
+                    # Replace filename-unsafe characters with underscores.
+                    return "".join(
+                        character
+                        if character.isalnum() or character in ("-", "_", ".")
+                        else "_"
+                        for character in str(value)
+                    )
+
+                safe_hostname = safe_name(hostname)
+                if self.do_robo:
+                    coordinate = safe_name(self.current_coord)
+                    if self.rotations_enabled:
+                        rotation = safe_name(self.current_rotation)
+                        log_name = (
+                            f"{safe_hostname}_{coordinate}_{rotation}.log"
+                        )
+                    else:
+                        log_name = f"{safe_hostname}_{coordinate}.log"
+                else:
+                    log_name = f"{safe_hostname}.log"
+
+                save_path = os.path.join(log_dir, log_name)
+                suffix = 2
+                # Avoid overwriting an existing log by appending a numeric suffix.
+                while os.path.exists(save_path):
+                    stem, extension = os.path.splitext(log_name)
+                    save_path = os.path.join(
+                        log_dir, f"{stem}_{suffix}{extension}"
+                    )
+                    suffix += 1
+
                 with open(save_path, "w", errors="replace") as f:
                     f.write(log_content)
 
-                logging.info(f"Log file uploaded from {hostname}")
+                logging.info("Log file uploaded from %s and saved as %s",
+                             hostname, os.path.basename(save_path))
                 return jsonify({"status": "success", "message": "Log file uploaded"}), 200
             except Exception as e:
                 logging.error(f"Error uploading log file: {e}")
@@ -2027,7 +2671,8 @@ class TeamsAutomation(Realm):
                         self.path, f"*{self.current_coord}_{self.current_rotation}.csv"
                     )
                 ):
-                    if csv_path.endswith("teams_cred.csv"):
+                    if csv_path.endswith("teams_cred.csv") or os.path.basename(
+                            csv_path).startswith("teams_call_avg_data"):
                         continue
                     df = pd.read_csv(csv_path)
 
@@ -2049,7 +2694,8 @@ class TeamsAutomation(Realm):
                 for csv_path in glob.glob(
                     os.path.join(self.path, f"*{self.current_coord}.csv")
                 ):
-                    if csv_path.endswith("teams_cred.csv"):
+                    if csv_path.endswith("teams_cred.csv") or os.path.basename(
+                            csv_path).startswith("teams_call_avg_data"):
                         continue
                     df = pd.read_csv(csv_path)
 
@@ -2081,6 +2727,18 @@ class TeamsAutomation(Realm):
                 row = averages.to_dict()
                 row["Device Name"] = device_name
                 summary_rows.append(row)
+
+        # Skip averaging when a robot run ends before monitoring produces any CSV data.
+        if not summary_rows:
+            location = f"coordinate {self.current_coord}"
+            if self.rotations_enabled:
+                location += f", rotation {self.current_rotation}"
+            logger.warning(
+                "No monitoring data was collected for %s; skipping average-data "
+                "generation for this run.",
+                location,
+            )
+            return
 
         summary_df = pd.DataFrame(summary_rows)
 
@@ -2408,12 +3066,13 @@ def main():
                 teams.stop_signal = True
                 if args.do_webUI:
                     teams.stop_test_in_webui()
-                teams.generate_report()
                 logger.info("Waiting for Browser Cleanup at Client Side")
                 time.sleep(10)
                 logger.info("Browser Cleanup Completed")
+                # Wait for client cleanup to finish so the report includes late log uploads.
+                teams.generate_report()
                 if not teams.no_post_cleanup:
-                    teams.generic_endps_profile.cleanup()
+                    teams.cleanup_generic_endpoints()
                 logger.info("Test Completed")
 
 

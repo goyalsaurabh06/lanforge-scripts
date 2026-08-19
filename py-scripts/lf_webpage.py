@@ -256,6 +256,13 @@ class HttpDownload(Realm):
         self.cycles = cycles
         self.bssids = bssids.split(',') if bssids else []
         self.duration_to_skip = duration_to_skip
+        self.missing_cx_logged = set()
+        self.missing_device_logged = set()
+        self.cx_status_log = {}
+        self.device_issue_log = []
+        self.monitor_start_time = None
+        self.actual_monitor_duration = 0
+        self.all_devices_stopped = False
 
 # The 'phantom_check' will be handled within the 'get_real_client_list' function
     def get_real_client_list(self):
@@ -511,7 +518,7 @@ class HttpDownload(Realm):
 
     def filter_iOS_devices(self, device_list):
         modified_device_list = device_list
-        if type(device_list) is str:
+        if isinstance(device_list, str):
             modified_device_list = device_list.split(',')
         filtered_list = []
         for device in modified_device_list:
@@ -531,7 +538,7 @@ class HttpDownload(Realm):
                 logger.info("%s is an iOS device. Currently, we do not support iOS devices.", device)
             else:
                 filtered_list.append(device)
-        if type(device_list) is str:
+        if isinstance(device_list, str):
             filtered_list = ','.join(filtered_list)
         self.device_list = filtered_list
         return filtered_list
@@ -603,6 +610,27 @@ class HttpDownload(Realm):
             time.sleep(1)
         print("precleanup done")
 
+    def get_upstream_ip(self):
+        """Gives the upstream ip."""
+        data = self.local_realm.json_get("ports/list?fields=IP")
+        eid = self.local_realm.name_to_eid(self.upstream)
+
+        port_name = f"{eid[0]}.{eid[1]}.{eid[2]}"
+
+        for interface in data.get("interfaces", []):
+            if port_name in interface:
+                ip = interface[port_name].get("ip")
+
+                if not ip:
+                    logger.error("No IP found for upstream port %s", port_name)
+                    return None
+
+                logger.info("Upstream IP: %s", ip)
+                return ip
+
+        logger.error("Unable to locate upstream port %s", port_name)
+        return None
+
     def build(self):
         # enable http on ethernet
         self.port_util.set_http(port_name=self.local_realm.name_to_eid(self.upstream)[2],
@@ -629,16 +657,9 @@ class HttpDownload(Realm):
                 # building layer4
                 self.http_profile.direction = 'dl'
                 self.http_profile.dest = '/dev/null'
-                data = self.local_realm.json_get("ports/list?fields=IP")
-
-                # getting eth ip
-                eid = self.local_realm.name_to_eid(self.upstream)
-                for i in data["interfaces"]:
-                    for j in i:
-                        if "{shelf}.{resource}.{port}".format(shelf=eid[0], resource=eid[1], port=eid[2]) == j:
-                            ip_upstream = i["{shelf}.{resource}.{port}".format(
-                                shelf=eid[0], resource=eid[1], port=eid[2])]['ip']
-
+                ip_upstream = self.get_upstream_ip()
+                if ip_upstream is None:
+                    raise RuntimeError("Failed to determine upstream IP")
                 # create http profile
                 if self.get_url_from_file:  # enabling the GET-URL-FROM-FILE flag if its ture
                     self.http_profile.create(ports=self.station_profile.station_names, sleep_time=.5,
@@ -655,20 +676,18 @@ class HttpDownload(Realm):
         else:
             if self.client_type == "Real":
                 self.http_profile.direction = 'dl'
-                data = self.local_realm.json_get("ports/list?fields=IP")
-
-                # getting eth ip
-                eid = self.local_realm.name_to_eid(self.upstream)
-                for i in data["interfaces"]:
-                    for j in i:
-                        if "{shelf}.{resource}.{port}".format(shelf=eid[0], resource=eid[1], port=eid[2]) == j:
-                            ip_upstream = i["{shelf}.{resource}.{port}".format(
-                                shelf=eid[0], resource=eid[1], port=eid[2])]['ip']
+                ip_upstream = self.get_upstream_ip()
+                if ip_upstream is None:
+                    raise RuntimeError("Failed to determine upstream IP")
 
                 self.http_profile.create(ports=self.port_list, sleep_time=.5,
                                          suppress_related_commands_=None, http=True, interop=True,
                                          user=self.lf_username, passwd=self.lf_password,
                                          http_ip=ip_upstream + "/webpage.html", proxy_auth_type=0x200, timeout=1000, windows_list=self.windows_ports)
+        if not self.http_profile.created_cx:
+            logger.error("No Layer4 CXs created for ports %s", self.station_profile.station_names)
+            raise RuntimeError("CX creation failed")
+        logger.info("Created %d CX(s)", len(self.http_profile.created_cx))
 
         print("Test Build done")
 
@@ -715,16 +734,20 @@ class HttpDownload(Realm):
     def get_layer4_data(self):
         """
         Fetch Layer 4 stats (uc-avg, uc-min, uc-max, urls, rx rate, bytes read, errors)
-        for all connections in self.cx_list.
+        for all connections currently created on the http profile.
         Returns:
             dict: mapping of metric names to lists of values, one per CX.
         """
         cx_list = list(self.http_profile.created_cx.keys())
         try:
-            url_str = 'layer4/{}/list?fields=uc-avg,uc-max,uc-min,total-urls,rx rate (1m),bytes-rd,total-err'.format(','.join(cx_list))
-            l4_data = self.local_realm.json_get(url_str)['endpoint']
-        except Exception:
-            logger.error("l4 DATA not found")
+            url_str = 'layer4/{}/list?fields=uc-avg,uc-max,uc-min,total-urls,rx rate (1m),bytes-rd,total-err,status'.format(','.join(cx_list))
+            response = self.local_realm.json_get(url_str)
+            endpoint_data = response.get("endpoint") if response else None
+            if endpoint_data is None:
+                logger.error("Layer4 endpoint data missing")
+                endpoint_data = []
+        except Exception as e:
+            logger.error("l4 DATA not found, {%s}", e)
             exit(1)
         l4_dict = {
             'uc_avg_data': [],
@@ -733,14 +756,15 @@ class HttpDownload(Realm):
             'url_times': [],
             'rx_rate': [],
             'bytes_rd': [],
-            'total_err': []
+            'total_err': [],
+            'status': []
         }
-        if not isinstance(l4_data, list):
-            l4_data = [{l4_data['name']: l4_data}]
+        if not isinstance(endpoint_data, list):
+            endpoint_data = [{endpoint_data['name']: endpoint_data}]
         idx = 0
         for cx in cx_list:
             cx_found = False
-            for i in l4_data:
+            for i in endpoint_data:
                 for cx_name, value in i.items():
                     if cx == cx_name:
                         l4_dict['uc_avg_data'].append(value['uc-avg'])
@@ -750,9 +774,22 @@ class HttpDownload(Realm):
                         l4_dict['rx_rate'].append(value['rx rate (1m)'])
                         l4_dict['bytes_rd'].append(value['bytes-rd'])
                         l4_dict['total_err'].append(value['total-err'])
+                        l4_dict['status'].append(value.get('status', ''))
+                        self.track_cx_status(cx, value.get('status', ''), api_response=value)
                         cx_found = True
             if not cx_found:
-                self.failed_cx.append(cx)
+                if cx not in self.missing_cx_logged:
+                    response_keys = [key for endpoint in endpoint_data
+                                     if isinstance(endpoint, dict) for key in endpoint]
+                    logger.warning(
+                        "CX '%s' is missing from the monitoring data, the device may have "
+                        "disconnected or its connection was not created. Continuing the test "
+                        "with the remaining devices.\n"
+                        "URL          : %s\n"
+                        "Response keys: %s", cx, url_str, response_keys)
+                    self.missing_cx_logged.add(cx)
+                    self.failed_cx.append(cx)
+                    self.record_device_issue(cx, "CX missing from monitoring data", api_response=response_keys)
                 l4_dict['uc_avg_data'].append(0 if not self.tracking_map else self.tracking_map['uc_avg_data'][idx])
                 l4_dict['uc_max_data'].append(0 if not self.tracking_map else self.tracking_map['uc_max_data'][idx])
                 l4_dict['uc_min_data'].append(0 if not self.tracking_map else self.tracking_map['uc_min_data'][idx])
@@ -760,10 +797,72 @@ class HttpDownload(Realm):
                 l4_dict['rx_rate'].append(0 if not self.tracking_map else self.tracking_map['rx_rate'][idx])
                 l4_dict['bytes_rd'].append(0 if not self.tracking_map else self.tracking_map['bytes_rd'][idx])
                 l4_dict['total_err'].append(0 if not self.tracking_map else self.tracking_map['total_err'][idx])
+                l4_dict['status'].append('Stopped')
+                if self.monitoring_elapsed_seconds() >= 10:
+                    self.cx_status_log[cx] = 'Stopped'
+            elif cx in self.missing_cx_logged:
+                logger.info("CX '%s' data is available again.", cx)
+                self.missing_cx_logged.discard(cx)
             idx += 1
         self.tracking_map = l4_dict.copy()
 
         return l4_dict
+
+    def record_device_issue(self, device, issue, api_response=None):
+        self.device_issue_log.append({
+            "Time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "Device": device,
+            "Issue": issue,
+            "API Response": api_response if api_response is not None else '',
+        })
+
+    def monitoring_elapsed_seconds(self):
+        if not self.monitor_start_time:
+            return 0
+        return (datetime.now() - self.monitor_start_time).total_seconds()
+
+    def track_cx_status(self, cx, status, api_response=None):
+        """Tracks the CXs status and logs any changes."""
+        if not status or self.monitoring_elapsed_seconds() < 10:
+            return
+        previous = self.cx_status_log.get(cx)
+        if previous is not None and previous != status:
+            if status.lower() != 'run':
+                logger.warning("CX '%s' status changed: %s -> %s", cx, previous, status)
+                self.record_device_issue(cx, "Status changed: {} -> {}".format(previous, status), api_response=api_response)
+            elif previous.lower() != 'run':
+                logger.info("CX '%s' recovered: %s -> %s", cx, previous, status)
+                self.record_device_issue(cx, "Recovered: {} -> {}".format(previous, status), api_response=api_response)
+        self.cx_status_log[cx] = status
+
+    def format_monitoring_duration(self):
+        """Formats the actual monitoring duration into a human-readable string."""
+        total_seconds = int(self.actual_monitor_duration)
+        minutes, seconds = divmod(total_seconds, 60)
+        return "{}m {}s".format(minutes, seconds)
+
+    def wait_for_any_cx_recovery(self, timeout=40, poll_interval=5):
+        """
+        Waits for any of the created CXs to recover (i.e., stop being missing" from the monitoring data) within a specified timeout.
+        """
+        wait_start = datetime.now()
+        created_cx_count = len(self.http_profile.created_cx)
+        while (datetime.now() - wait_start).total_seconds() < timeout:
+            time.sleep(poll_interval)
+            if self.dowebgui == "True":
+                with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(
+                        self.host, self.test_name), 'r') as file:
+                    data = json.load(file)
+                    if data["status"] != "Running":
+                        logger.info("Test is stopped by the user during the device-recovery wait.")
+                        return 'stopped'
+            self.get_layer4_data()
+            elapsed = (datetime.now() - wait_start).total_seconds()
+            if len(self.missing_cx_logged) < created_cx_count:
+                logger.info("Device(s) responded again after %.0fs, resuming.", elapsed)
+                return 'recovered'
+            logger.warning("Still no devices responding after %.0fs, retrying...", elapsed)
+        return 'timeout'
 
     def aggregate_rx_bytes(self, rx_rate, bytes_rd):
         """
@@ -801,7 +900,17 @@ class HttpDownload(Realm):
         return list(rx_rate), list(bytes_rd)
 
     def monitor_for_runtime_csv(self, duration):
+        """Monitor the Layer 4 connections for a specified duration, collecting data and handling device issues."""
+        if self.all_devices_stopped:
+            return True
 
+        if self.do_bandsteering:
+            # Band steering calls this function once per tick within one continuous session,
+            # so only start the CX-status grace period once for the whole session.
+            if self.monitor_start_time is None:
+                self.monitor_start_time = datetime.now()
+        else:
+            self.monitor_start_time = datetime.now()
         time_now = datetime.now()
         starttime = time_now.strftime("%d/%m %I:%M:%S %p")
         # duration = self.traffic_duration
@@ -876,6 +985,28 @@ class HttpDownload(Realm):
             # total_url_data = self.json_get("layer4/list?fields=total-urls")
             # bytes_rd = self.json_get("layer4/list?fields=bytes-rd")
             l4_dict = self.get_layer4_data()
+            end_monitor_loop = False
+            created_cx_count = len(self.http_profile.created_cx)
+            if created_cx_count and len(self.missing_cx_logged) == created_cx_count:
+                logger.warning("All devices have stopped responding during monitoring, retrying "
+                               "for up to 40 seconds before ending the monitor loop.")
+                recovery = self.wait_for_any_cx_recovery(timeout=40, poll_interval=5)
+                if recovery == 'stopped':
+                    test_stopped_by_user = True
+                    end_monitor_loop = True
+                elif recovery == 'timeout':
+                    logger.error("No devices responded within 40 seconds during monitoring, "
+                                 "ending the monitor loop gracefully; the test will continue with "
+                                 "the data collected so far.")
+                    end_monitor_loop = True
+                    self.all_devices_stopped = True
+                    if self.robot_test:
+                        # Mark the WebUI as completed instead of leaving it at a later planned
+                        # navigation state.
+                        self.robot_obj.update_nav_data_for_all_cxs_stopped()
+                else:
+                    l4_dict = self.get_layer4_data()
+
             uc_avg_data = l4_dict['uc_avg_data']
             uc_max_data = l4_dict['uc_max_data']
             uc_min_data = l4_dict['uc_min_data']
@@ -923,6 +1054,7 @@ class HttpDownload(Realm):
                 self.data["rx rate (1m)"] = rx_rate
                 self.data["total_err"] = total_err
             else:
+                logger.error("Runtime data mismatch: Devices=%d URLs=%d RX=%d Bytes=%d", len(self.devices_list), len(url_times), len(rx_rate), len(bytes_rd))
                 self.data["status"] = ["RUNNING"] * len(self.devices_list)
                 self.data["url_data"] = [0] * len(self.devices_list)
                 self.data["uc_avg"] = [0] * len(self.devices_list)
@@ -960,6 +1092,8 @@ class HttpDownload(Realm):
                 if not self.do_bandsteering and self.robot_test:
                     # Save FTP data values for the current coordinate when in robot test
                     df1.to_csv(f"{self.current_coordinate}_http_datavalues.csv", index=False)
+            if end_monitor_loop:
+                break
             # No sleep is added here for band steering, as we need to capture data every second.
             # The per-second sleep interval is already handled in lf_base_robo.
             if not self.do_bandsteering:
@@ -992,6 +1126,7 @@ class HttpDownload(Realm):
             df.to_csv("all_l4_data.csv", index=False)
         except Exception:
             logger.error("All l4 data not found")
+        self.actual_monitor_duration += (datetime.now() - self.monitor_start_time).total_seconds()
         return test_stopped_by_user
 
     def get_all_l4_data(self):
@@ -1015,7 +1150,7 @@ class HttpDownload(Realm):
 
         result = {field: [] for field in fields}
 
-        endpoint = data.get("endpoint", {})
+        endpoint = data.get("endpoint", {}) if data else {}
         cx_list = self.http_profile.created_cx.keys()
         if isinstance(endpoint, dict):
             for field in fields:
@@ -1081,15 +1216,10 @@ class HttpDownload(Realm):
             stdin, stdout, stderr = ssh.exec_command(str(cmd1))
             output = stdout.readlines()
             time.sleep(10)
-            cmd2 = "sudo fallocate -l " + self.file_size + " /usr/local/lanforge/nginx/html/webpage.html"
-            stdin, stdout, stderr = ssh.exec_command(str(cmd2))
-            print("File creation done", self.file_size)
-            output = stdout.readlines()
-        else:
-            cmd2 = "sudo fallocate -l " + self.file_size + " /usr/local/lanforge/nginx/html/webpage.html"
-            stdin, stdout, stderr = ssh.exec_command(str(cmd2))
-            print("File creation done", self.file_size)
-            output = stdout.readlines()
+        cmd2 = "sudo fallocate -l " + self.file_size + " /usr/local/lanforge/nginx/html/webpage.html"
+        stdin, stdout, stderr = ssh.exec_command(str(cmd2))
+        print("File creation done", self.file_size)
+        output = stdout.readlines()
         ssh.close()
         time.sleep(1)
         return output
@@ -1575,9 +1705,13 @@ class HttpDownload(Realm):
                 for coord, _ in self.robot_data.items():
                     # Build graphs and table for each coordinate
                     self.build_graphs_and_table(coord, "", report, lis, bands)
+            if self.device_issue_log:
+                issues_df = pd.DataFrame(self.device_issue_log)
+                issues_df.to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
             report.build_footer()
             html_file = report.write_html()
             report.write_pdf()
+            logger.info("Monitoring Duration: %s", self.format_monitoring_duration())
             return
         if self.do_bandsteering:
             self.get_bandsteering_stats(report)
@@ -1854,11 +1988,15 @@ class HttpDownload(Realm):
                 report.set_obj_html(_obj_title="Charging Timestamps",
                                     _obj="Robot did not went to charge during this test")
                 report.build_objective()
+        if self.device_issue_log:
+            issues_df = pd.DataFrame(self.device_issue_log)
+            issues_df.to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
         report.build_footer()
         html_file = report.write_html()
         print("returned file {}".format(html_file))
         print(html_file)
         report.write_pdf()
+        logger.info("Monitoring Duration: %s", self.format_monitoring_duration())
 
     def copy_reports_to_home_dir(self):
         curr_path = self.result_dir
@@ -2051,34 +2189,35 @@ class HttpDownload(Realm):
             interfaces_dict.update(port)
         for sta in station_names:
             if sta in interfaces_dict:
-                if "dBm" in interfaces_dict[sta]['signal']:
-                    signal_list.append(interfaces_dict[sta]['signal'].split(" ")[0])
+                if sta in self.missing_device_logged:
+                    logger.info("Signal data for device '%s' is available again.", sta)
+                    self.missing_device_logged.discard(sta)
+                data = interfaces_dict[sta]
+                if "dBm" in data['signal']:
+                    signal_list.append(data['signal'].split(" ")[0])
                 else:
-                    signal_list.append(interfaces_dict[sta]['signal'])
-            else:
-                signal_list.append('-')
-        for sta in station_names:
-            if sta in interfaces_dict:
-                link_speed_list.append(interfaces_dict[sta]['tx-rate'])
-            else:
-                link_speed_list.append('-')
-        for sta in station_names:
-            if sta in interfaces_dict:
-                rx_rate_list.append(interfaces_dict[sta]['rx-rate'])
-            else:
-                rx_rate_list.append('-')
-        for sta in station_names:
-            if sta in interfaces_dict:
-                bssid_list.append(interfaces_dict[sta]['ap'])
-            else:
-                bssid_list.append('-')
-        for sta in station_names:
-            if sta in interfaces_dict:
-                channel_value = str(interfaces_dict[sta].get('channel', ''))
+                    signal_list.append(data['signal'])
+                link_speed_list.append(data['tx-rate'])
+                rx_rate_list.append(data['rx-rate'])
+                bssid_list.append(data['ap'])
+                channel_value = str(data.get('channel', ''))
                 if channel_value in ('', '0', '-1'):
                     channel_list.append('NA')
                 else:
-                    channel_list.append(interfaces_dict[sta]['channel'])
+                    channel_list.append(data['channel'])
+            else:
+                if sta not in self.missing_device_logged:
+                    logger.warning(
+                        "Signal data for device '%s' is unavailable, it may have disconnected. "
+                        "Continuing the test with the remaining devices.", sta)
+                    self.missing_device_logged.add(sta)
+                    self.record_device_issue(sta, "Signal data unavailable (device may have disconnected)",
+                                             api_response=list(interfaces_dict.keys()))
+                signal_list.append('-')
+                link_speed_list.append('-')
+                rx_rate_list.append('-')
+                bssid_list.append('-')
+                channel_list.append('-')
         return signal_list, link_speed_list, rx_rate_list, bssid_list, channel_list
 
     def monitor_cx(self):
@@ -2282,16 +2421,19 @@ class HttpDownload(Realm):
             self.robot_obj.do_bandsteering = True
             self.start()
             for coordinate in cycle_coords:
-                if test_stopped_by_user:
+                if test_stopped_by_user or self.all_devices_stopped:
                     break
                 # Check for battery status before moving to next coordinate
                 if_paused, test_stopped_by_user, test_status = self.robot_obj.wait_for_battery(monitor_function=lambda: self.monitor_for_runtime_csv(self.duration))
                 # If test is stopped by user during battery wait
-                if test_stopped_by_user:
+                if test_stopped_by_user or self.all_devices_stopped:
                     break
                 robo_moved, abort, test_status = self.robot_obj.move_to_coordinate(coordinate, monitor_function=lambda: self.monitor_for_runtime_csv(self.duration))
                 # If robot failed to reach the coordinate
                 if abort:
+                    break
+                if self.all_devices_stopped:
+                    logger.warning("Band-steering test stopped because no devices recovered within 40 seconds.")
                     break
                 if robo_moved:
                     logger.info("Reached the coordinate {}".format(coordinate))
@@ -2299,7 +2441,9 @@ class HttpDownload(Realm):
             return
         for coordinate in range(len(self.coordinate_list)):
             # Check for battery status before moving to next coordinate
-            if test_stopped_by_user:
+            if test_stopped_by_user or self.all_devices_stopped:
+                if self.all_devices_stopped:
+                    logger.warning("Robot test stopped because no devices recovered within 40 seconds.")
                 break
             if_paused, test_stopped_by_user = self.robot_obj.wait_for_battery()
             # If test is stopped by user during battery wait
@@ -2325,7 +2469,7 @@ class HttpDownload(Realm):
                     for angle in range(len(self.rotation_list)):
                         # Check for battery status before rotating to next angle
                         is_paused, test_stopped_by_user = self.robot_obj.wait_for_battery()
-                        if test_stopped_by_user:
+                        if test_stopped_by_user or self.all_devices_stopped:
                             break
                         robo_rotated = self.robot_obj.rotate_angle(self.rotation_list[angle])
                         if robo_rotated:
@@ -2335,7 +2479,7 @@ class HttpDownload(Realm):
                             self.stop()
                             self.update_stop_status_robot()
                         # If test is stopped by user
-                        if test_stopped_by_user:
+                        if test_stopped_by_user or self.all_devices_stopped:
                             break
 
     def build_graphs_and_table(self, coord="", rotation="", report="", lis=None, bands=None):

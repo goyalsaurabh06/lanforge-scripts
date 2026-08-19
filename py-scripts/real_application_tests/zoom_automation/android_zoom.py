@@ -1,21 +1,35 @@
 #!/usr/bin/env python3
-from datetime import datetime, timedelta
-import uiautomator2 as u2
-import time
+"""Drive a single Android device through a Zoom call for LANforge interop tests."""
+
 import argparse
-import re
-import xml.etree.ElementTree as ET
-from ppadb.client import Client as AdbClient
-import requests
-import pytz
-import sys
 import logging
 import os
+import re
+import subprocess
+import sys
+import time
+from datetime import datetime, timedelta
+from xml.etree.ElementTree import fromstring
+
+import pytz
+import requests
+import uiautomator2 as u2
+from ppadb.client import Client as AdbClient
 
 # from ping_monitor import PingMonitor
 
+ZOOM_PACKAGE = "us.zoom.videomeetings"
+
 
 class ZoomAutomator:
+    """Drive one Android device through a Zoom meeting.
+
+    Talks to the device over ADB for shell commands and uiautomator2 for UI
+    interaction, and to the host's Flask server for meeting timing and stop
+    signals. One instance drives one device; the participant name keys both
+    its log file and everything it uploads to the host.
+    """
+
     def __init__(
         self,
         host="127.0.0.1",
@@ -24,6 +38,11 @@ class ZoomAutomator:
         server_port=5000,
         participant_name=None,
     ):
+        """Set up the ADB client and this participant's logger.
+
+        host/port address the ADB server, server_ip/server_port the host's
+        Flask server. No device is attached yet — call set_device() for that.
+        """
         self.host = host
         self.port = port
         self.client = AdbClient(host=host, port=port)
@@ -42,8 +61,17 @@ class ZoomAutomator:
         # self.ping_monitor = PingMonitor(self.participant_name)
 
     def _create_logger(self):
-        log_dir = os.path.join(os.getcwd(), "zoom_mobile_logs")
+        """Build this participant's logger, writing to file and to stdout.
+
+        The file is zoom_mobile_logs/<participant>.log, which upload_log() later
+        pushes to the host, and stdout is what LANforge captures for this device's
+        generic endpoint.
+        """
+        log_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "zoom_mobile_logs"
+        )
         os.makedirs(log_dir, exist_ok=True)
+        self.log_dir = log_dir
 
         logger_name = f"{__name__}.{self.participant_name}"
         logger = logging.getLogger(logger_name)
@@ -51,7 +79,7 @@ class ZoomAutomator:
         logger.propagate = False
 
         if not logger.handlers:
-            formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+            formatter = logging.Formatter("%(asctime)s %(levelname)-7s %(message)s")
 
             file_handler = logging.FileHandler(
                 os.path.join(log_dir, f"{self.participant_name}.log"), mode="w"
@@ -66,14 +94,26 @@ class ZoomAutomator:
 
         return logger
 
+    def _set_phase(self, phase):
+        """Mark a new stage of the run in the log, in one place."""
+        self.logger.info(f"--- {phase} ---")
+
     @staticmethod
     def _parse_bounds(bounds):
+        """Turn a uiautomator bounds string into (left, top, right, bottom).
+
+        Returns None if bounds is missing or does not match "[x1,y1][x2,y2]".
+        """
         match = re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", bounds or "")
         if not match:
             return None
         return tuple(map(int, match.groups()))
 
     def tap_bounds_center(self, d, bounds):
+        """Tap the middle of a uiautomator bounds rectangle.
+
+        Returns False without tapping if the bounds could not be parsed.
+        """
         parsed = self._parse_bounds(bounds)
         if not parsed:
             return False
@@ -83,6 +123,11 @@ class ZoomAutomator:
         return True
 
     def reveal_zoom_controls(self, d, tap_coords):
+        """Tap the screen until Zoom's auto-hiding meeting toolbar is showing.
+
+        Returns as soon as the audio or video button is visible, after at most
+        two taps; the controls have to be on screen before they can be read.
+        """
         audio_state, _, _ = self.get_audio_control_info(d)
         video_state, _, _ = self.get_video_control_info(d)
         if audio_state is not None or video_state is not None:
@@ -99,82 +144,173 @@ class ZoomAutomator:
         d.click(*tap_coords)
         time.sleep(1)
 
+    @staticmethod
+    def _control_label(node):
+        """Return a node's label from content-desc, or text when that is empty."""
+        return node.attrib.get("content-desc") or node.attrib.get("text") or ""
+
     def get_audio_control_info(self, d):
         """Return audio state and bounds by parsing the current hierarchy dump."""
         try:
-            root = ET.fromstring(d.dump_hierarchy())
+            root = fromstring(d.dump_hierarchy())
         except Exception as e:
             self.logger.error(
-                f"[{self.device_serial}] Failed to parse audio hierarchy: {e}"
+                f"Failed to parse audio hierarchy: {e}"
             )
             return None, None, None
 
         for node in root.iter("node"):
-            content_desc = node.attrib.get("content-desc", "")
-            if content_desc == "Mute my audio, button":
-                return True, node.attrib.get("bounds"), content_desc
-            if content_desc == "Unmute my audio, button":
-                return False, node.attrib.get("bounds"), content_desc
+            label = self._control_label(node)
+            if label.startswith("Mute my audio"):
+                return True, node.attrib.get("bounds"), label
+            if label.startswith("Unmute my audio"):
+                return False, node.attrib.get("bounds"), label
 
         return None, None, None
 
     def get_video_control_info(self, d):
         """Return Video state and bounds by parsing the current hierarchy dump."""
         try:
-            root = ET.fromstring(d.dump_hierarchy())
+            root = fromstring(d.dump_hierarchy())
         except Exception as e:
             self.logger.error(
-                f"[{self.device_serial}] Failed to parse video hierarchy: {e}"
+                f"Failed to parse video hierarchy: {e}"
             )
             return None, None, None
 
         for node in root.iter("node"):
-            content_desc = node.attrib.get("content-desc", "")
-            if content_desc == "Start my video, button":
-                return False, node.attrib.get("bounds"), content_desc
-            if content_desc == "Stop my video, button":
-                return True, node.attrib.get("bounds"), content_desc
+            label = self._control_label(node)
+            if label.startswith("Start my video"):
+                return False, node.attrib.get("bounds"), label
+            if label.startswith("Stop my video"):
+                return True, node.attrib.get("bounds"), label
 
         return None, None, None
 
     def get_leave_control_info(self, d):
         """Return leave button bounds by parsing the current hierarchy dump."""
         try:
-            root = ET.fromstring(d.dump_hierarchy())
+            root = fromstring(d.dump_hierarchy())
         except Exception as e:
             self.logger.error(
-                f"[{self.device_serial}] Failed to parse leave hierarchy: {e}"
+                f"Failed to parse leave hierarchy: {e}"
             )
             return None, None
 
         for node in root.iter("node"):
-            content_desc = node.attrib.get("content-desc", "")
-            if content_desc == "Leave, button":
-                return node.attrib.get("bounds"), content_desc
+            label = self._control_label(node)
+            if label.startswith("Leave"):
+                return node.attrib.get("bounds"), label
 
         return None, None
+
+    def verify_zoom_installed(self):
+        """Abort the test if the Zoom app is not installed on the device.
+
+        Without this check the automation runs blind: app_start() shells out to
+        monkey and ignores the failure, the meeting deep link opens in a browser
+        instead, and the run only dies ~30s later with a misleading "name input
+        screen not found" error.
+        """
+        try:
+            output = self.adb_device.shell(f"pm list packages {ZOOM_PACKAGE}") or ""
+        except Exception as e:
+            self.logger.error(
+                f"Could not query installed packages to confirm Zoom: {e}"
+            )
+            sys.exit(1)
+
+        if f"package:{ZOOM_PACKAGE}" not in output.split():
+            self.logger.error(
+                f"Zoom app ({ZOOM_PACKAGE}) is not installed on this device. "
+                f"Install Zoom on the device and re-run the test."
+            )
+            sys.exit(1)
+
+        self.logger.info(f"Zoom app ({ZOOM_PACKAGE}) is installed.")
 
     def set_device(self, serial):
         """Set the target device for automation using its ADB serial number."""
         self.device_serial = serial
         try:
-            # Get the device object via ADB client
             self.adb_device = self.client.device(serial)
             if self.adb_device is None:
                 raise Exception(f"Device with serial {serial} not found via ADB.")
 
-            # Connect using uiautomator2 for UI interaction
+            # Fail fast before the slow uiautomator2 connect if Zoom is missing.
+            self.verify_zoom_installed()
+
             self.u2_device = u2.connect(serial)
-            self.logger.info(f"[{serial}] Successfully connected to device.")
+            self.logger.info(f"Successfully connected to device {serial}.")
 
         except Exception as e:
-            self.logger.error(f"[{serial}] Failed to connect: {e}")
+            self.logger.error(f"Failed to connect: {e}")
             raise
 
+    def _adb(self, *args):
+        """Run an adb shell command on this device and return the result."""
+        return subprocess.run(
+            ["adb", "-s", self.device_serial, "shell", *args],
+            capture_output=True,
+            text=True,
+        )
+
+    def grant_permissions(self, package_name=ZOOM_PACKAGE):
+        """Pre-grant the app's runtime permissions so no dialog blocks the join.
+
+        Reads the permissions the package actually declares on this device, so
+        one call covers every API level in the fleet. Returns the number still
+        ungranted afterwards.
+        """
+        self._set_phase("PERMISSIONS")
+
+        listing = self._adb("dumpsys", "package", package_name).stdout
+        wanted, in_runtime = [], False
+        for raw in listing.splitlines():
+            line = raw.strip()
+            if line.startswith("runtime permissions:"):
+                in_runtime = True
+            elif in_runtime:
+                if line.startswith("android.permission."):
+                    wanted.append(line.split(":", 1)[0])
+                elif line:
+                    break
+
+        granted = 0
+        for permission in wanted:
+            result = self._adb("pm", "grant", package_name, permission)
+            output = result.stdout + result.stderr
+            if "GRANT_RUNTIME_PERMISSIONS" in output:
+                self.logger.error(
+                    "This ROM blocks adb from granting permissions. "
+                    "Accept the prompts manually once."
+                )
+                break
+            if not output.strip():
+                granted += 1
+
+        # Not a runtime permission — it is an appop, so pm grant cannot set it.
+        self._adb("appops", "set", package_name, "SYSTEM_ALERT_WINDOW", "allow")
+
+        remaining = self._adb("dumpsys", "package", package_name).stdout.count(
+            "granted=false"
+        )
+        self.logger.info(
+            f"Permissions: granted {granted}/{len(wanted)}, "
+            f"{remaining} still ungranted."
+        )
+        return remaining
+
     def start_interop_app(self):
+        """Force-stop Zoom and hand the device back to the interop app.
+
+        The interop app is restarted with auto_start so it reconnects to
+        LANforge on its own. Called from main()'s finally block, so the device
+        is restored whether the run succeeded or failed.
+        """
         if not self.adb_device:
             raise RuntimeError("Device not set. Call set_device() first.")
-        self.logger.info(f"[{self.device_serial}] Launching Interop App...")
+        self.logger.info("Launching Interop App...")
         self.adb_device.shell("am force-stop us.zoom.videomeetings")
         time.sleep(1)
         self.adb_device.shell("am force-stop com.candela.wecan")
@@ -183,7 +319,7 @@ class ZoomAutomator:
             "am start --es auto_start 1 -n com.candela.wecan/com.candela.wecan.StartupActivity"
         )
         time.sleep(5)
-        self.logger.info(f"[{self.device_serial}] Interop App launched successfully.")
+        self.logger.info("Interop App launched successfully.")
 
     def check_stop_signal(self):
         """Check the stop signal from the Flask server."""
@@ -195,7 +331,6 @@ class ZoomAutomator:
 
                 stop_signal_from_server = response.json().get("stop", False)
 
-                # Only update if the server's stop signal is True
                 if stop_signal_from_server:
                     self.stop_signal = True
                     self.logger.info(
@@ -207,88 +342,82 @@ class ZoomAutomator:
             return self.stop_signal
 
     def join_zoom_meeting(self, meeting_url, participant_name):
+        """Drive one device through a full Zoom call, start to finish.
+
+        Opens the meeting deep link, clears permission prompts, and types
+        participant_name into either the preview screen or the older name dialog,
+        whichever this Zoom build shows. Then enables audio and video, polls the
+        host for the meeting end time, stays in the call until it passes or the
+        server signals a stop, and leaves.
+        """
         if not self.u2_device:
             raise RuntimeError("Device not set. Call set_device() first.")
 
-        serial = self.device_serial
         d = self.u2_device
         try:
             width, height = d.window_size()
-        except Exception:
+        except Exception as e:
             # fallback defaults as it throws error in some devices
             width, height = 500, 1000
+            self.logger.warning(
+                f"Could not read window size ({e}); falling back to {width}x{height}."
+            )
+        tap_coords = (width // 2, height // 2)
 
-        self.logger.info(f"[{serial}] Starting Zoom automation for: {participant_name}")
+        self._set_phase("LAUNCH")
+        self.logger.info(f"Starting Zoom automation for {participant_name}.")
+        self.logger.info(f"Screen {width}x{height}, centre tap at {tap_coords}.")
 
-        # 1. Launch Zoom using the meeting link
-        self.logger.info(f"[{serial}] Launching Zoom app with meeting link...")
-        d.app_start("us.zoom.videomeetings", stop=True)
+        self.logger.info(f"Starting {ZOOM_PACKAGE} and opening the meeting link.")
+        d.app_start(ZOOM_PACKAGE, stop=True)
         time.sleep(2)
-
         self.adb_device.shell(
-            f'am start -a android.intent.action.VIEW -d "{meeting_url}"'
+            f'am start -a android.intent.action.VIEW -d "{meeting_url}" {ZOOM_PACKAGE}'
         )
+        self.logger.info(f"Meeting link handed to Zoom: {meeting_url}")
         time.sleep(8)
 
-        # 2. Handle permission prompts first
-        self.logger.info(f"[{serial}] Checking for permission prompts...")
-        allow_while_using = d(text="While using the app")
-        if allow_while_using.wait(timeout=8):
-            allow_while_using.click()
-            self.logger.info(f"[{serial}] Granted 'While using the app' permission")
-            time.sleep(2)
-
-            for permission_text in ["Allow", "ALLOW"]:
-                allow_btn = d(text=permission_text, className="android.widget.Button")
-                if allow_btn.wait(timeout=5):
-                    allow_btn.click()
-                    self.logger.info(f"[{serial}] Clicked {permission_text}")
-                    time.sleep(1)
-
-        # 3. Detect preview screen
         preview_join = d(text="Editing display name")
-        if preview_join.wait(timeout=5):
-            self.logger.info(f"[{serial}] Preview screen detected.")
+        if preview_join.wait(timeout=30):
+            self.logger.info("Preview screen detected.")
 
-            # Enter name if field is present
             name_input = d(className="android.widget.EditText")
             if name_input.wait(timeout=10):
                 self.logger.info(
-                    f"[{serial}] Entering participant name: {participant_name}"
+                    f"Entering participant name: {participant_name}"
                 )
                 name_input.set_text(participant_name)
                 time.sleep(1)
                 ok_btn = d(text="OK")
                 if ok_btn.wait(timeout=10):
                     ok_btn.click()
-                    self.logger.info(f"[{serial}] Clicked 'OK' on preview screen.")
+                    self.logger.info("Clicked 'OK' on preview screen.")
                 else:
-                    raise RuntimeError(f"[{serial}] 'OK' button not found within 10 seconds on preview screen.")
+                    raise RuntimeError("'OK' button not found within 10 seconds on preview screen.")
             else:
                 self.logger.error(
-                    f"[{serial}] Name input screen not found "
-                    f"(className='android.widget.EditText'). "
-                    f"Aborting automation."
+                    "Name input screen not found "
+                    "(className='android.widget.EditText'). "
+                    "Aborting automation."
                 )
                 raise RuntimeError(
-                    f"[{serial}] Could not find name input screen. "
-                    f"Zoom may not have launched correctly or the UI flow changed."
+                    "Could not find name input screen. "
+                    "Zoom may not have launched correctly or the UI flow changed."
                 )
 
-            # Tap join on preview
             join_btn = d(text="Join")
             if join_btn.wait(timeout=10):
                 join_btn.click()
-                self.logger.info(f"[{serial}] Clicked 'Join' on preview screen.")
+                self.logger.info("Clicked 'Join' on preview screen.")
             else:
-                raise RuntimeError(f"[{serial}] 'Join' button not found within 10 seconds on preview screen.")
+                raise RuntimeError("'Join' button not found within 10 seconds on preview screen.")
 
         else:
-            # 4. Old flow: check for name input screen
+            # Old flow: check for name input screen
             name_input = d(resourceId="us.zoom.videomeetings:id/edtScreenName")
             if name_input.wait(timeout=15):
                 self.logger.info(
-                    f"[{serial}] Entering participant name: {participant_name}"
+                    f"Entering participant name: {participant_name}"
                 )
                 name_input.set_text(participant_name)
                 time.sleep(1)
@@ -297,38 +426,35 @@ class ZoomAutomator:
                     ok_btn.click()
                 else:
                     d(resourceId="us.zoom.videomeetings:id/button1").click()
-                self.logger.info(f"[{serial}] Clicked 'Ok Button'")
+                self.logger.info("Clicked 'Ok Button'")
             else:
                 self.logger.error(
-                    f"[{serial}] Name input screen not found "
-                    f"(resourceId='us.zoom.videomeetings:id/edtScreenName'). "
-                    f"Aborting automation."
+                    "Name input screen not found "
+                    "(resourceId='us.zoom.videomeetings:id/edtScreenName'). "
+                    "Aborting automation."
                 )
                 raise RuntimeError(
-                    f"[{serial}] Could not find name input screen. "
-                    f"Zoom may not have launched correctly or the UI flow changed."
+                    "Could not find name input screen. "
+                    "Zoom may not have launched correctly or the UI flow changed."
                 )
 
-        # 5. Wait to join the meeting
-        self.logger.info(f"[{serial}] Waiting to join meeting...")
+        self.logger.info("Waiting to join meeting...")
         time.sleep(10)
 
-        # Reveal controls before checking meeting state or toggles.
         self.reveal_zoom_controls(d, (width // 2, height // 2))
 
-        # 6. Check if in meeting
         leave_bounds, _leave_status = self.get_leave_control_info(d)
         if leave_bounds:
             self.logger.info(
-                f"[{serial}] Successfully joined the meeting as {participant_name}."
+                f"Successfully joined the meeting as {participant_name}."
             )
         else:
             self.logger.warning(
-                f"[{serial}] Leave button not found. Checking toolbar..."
+                "Leave button not found. Checking toolbar..."
             )
             if d(resourceId="us.zoom.videomeetings:id/panelMeetingToolbar").exists:
                 self.logger.info(
-                    f"[{serial}] Found meeting toolbar - likely in meeting."
+                    "Found meeting toolbar - likely in meeting."
                 )
 
         time.sleep(2)
@@ -339,17 +465,17 @@ class ZoomAutomator:
             count += 1
             if count > 60:
                 self.logger.error(
-                    f"[{serial}] Failed to retrieve meeting end time from server after 5 minutes. Leaving meeting."
+                    "Failed to retrieve meeting end time from server after 5 minutes. Leaving meeting."
                 )
                 sys.exit(1)
             try:
                 self.get_start_and_end_time()
                 time.sleep(5)
             except Exception as e:
-                self.logger.error(f"[{serial}] Error fetching start/end time: {e}")
+                self.logger.error(f"Error fetching start/end time: {e}")
                 time.sleep(5)
         self.logger.info(
-            f"[{serial}] Meeting scheduled from {self.start_time} to {self.end_time}"
+            f"Meeting scheduled from {self.start_time} to {self.end_time}"
         )
         try:
             end_dt = datetime.fromisoformat(self.end_time.replace("Z", "+00:00"))
@@ -365,27 +491,25 @@ class ZoomAutomator:
         while datetime.now(self.tz) < meeting_end_dt:
             if self.check_stop_signal():
                 self.logger.info(
-                    f"[{serial}] Stop signal received. Leaving meeting early."
+                    "Stop signal received. Leaving meeting early."
                 )
                 break
             time.sleep(2)
 
-        # 7. Leave Meeting
         try:
             self.reveal_zoom_controls(d, (width // 2, height // 2))
 
-            # 8. Leave the meeting
-            self.logger.info(f"[{serial}] Leaving meeting...")
+            self.logger.info("Leaving meeting...")
             leave_bounds, _leave_status = self.get_leave_control_info(d)
             if leave_bounds and self.tap_bounds_center(d, leave_bounds):
                 time.sleep(2)
                 leave_confirm = d(text="Leave meeting")
                 if leave_confirm.wait(timeout=5):
                     leave_confirm.click()
-                    self.logger.info(f"[{serial}] Confirmed leaving meeting.")
+                    self.logger.info("Confirmed leaving meeting.")
             else:
                 self.logger.warning(
-                    f"[{serial}] Leave button not found. Pressing back..."
+                    "Leave button not found. Pressing back..."
                 )
                 d.press("back")
                 time.sleep(1)
@@ -396,6 +520,11 @@ class ZoomAutomator:
             )
 
     def get_start_and_end_time(self):
+        """Fetch the meeting's start and end time from the host and store them.
+
+        Sets self.start_time and self.end_time. On any failure it logs and
+        leaves both unchanged, which is why the caller polls until they arrive.
+        """
         endpoint_url = f"{self.base_url}/get_start_end_time"
         try:
             response = requests.get(endpoint_url, timeout=10)
@@ -411,11 +540,8 @@ class ZoomAutomator:
             self.logger.error(f"Request error: {e}")
 
     def enable_audio_video(self, d, max_retries=15, tap_coords=(500, 500)):
-        """
-        Continuously check and enable audio and video until both are enabled or retries exhausted.
-        """
-        serial = self.device_serial
-        self.logger.info(f"[{serial}] Ensuring audio and video are enabled...")
+        """Continuously check and enable audio and video until both are enabled or retries exhausted."""
+        self.logger.info("Ensuring audio and video are enabled...")
 
         retries = 0
         audio_enabled = False
@@ -423,22 +549,21 @@ class ZoomAutomator:
 
         while retries < max_retries and not (audio_enabled and video_enabled):
             retries += 1
-            self.logger.info(f"[{serial}] Check attempt {retries}/{max_retries}")
+            self.logger.info(f"Check attempt {retries}/{max_retries}")
 
             self.reveal_zoom_controls(d, tap_coords)
             if not audio_enabled:
-                # --- AUDIO check ---
                 try:
                     audio_enabled_state, audio_bounds, audio_status = (
                         self.get_audio_control_info(d)
                     )
-                    self.logger.info(f"[{serial}] Audio status: {audio_status}")
+                    self.logger.info(f"Audio status: {audio_status}")
 
                     if audio_enabled_state is True:
-                        self.logger.info(f"[{serial}] Audio already enabled")
+                        self.logger.info("Audio already enabled")
                         audio_enabled = True
                     elif audio_enabled_state is False:
-                        self.logger.info(f"[{serial}] Audio is disabled. Enabling...")
+                        self.logger.info("Audio is disabled. Enabling...")
                         if self.tap_bounds_center(d, audio_bounds):
                             time.sleep(1)
                             (
@@ -447,41 +572,40 @@ class ZoomAutomator:
                                 audio_status,
                             ) = self.get_audio_control_info(d)
                             self.logger.info(
-                                f"[{serial}] Audio status after tap: {audio_status}"
+                                f"Audio status after tap: {audio_status}"
                             )
                             if audio_enabled_state is True:
-                                self.logger.info(f"[{serial}] Audio enabled")
+                                self.logger.info("Audio enabled")
                                 audio_enabled = True
                         else:
                             self.logger.warning(
-                                f"[{serial}] Audio button bounds missing: {audio_bounds}"
+                                f"Audio button bounds missing: {audio_bounds}"
                             )
                     else:
                         join_audio = d(text="Join Audio")
                         if join_audio.exists:
                             self.logger.info(
-                                f"[{serial}] Audio prompt found. Joining audio..."
+                                "Audio prompt found. Joining audio..."
                             )
                             join_audio.click()
                             time.sleep(1)
                         else:
-                            self.logger.warning(f"[{serial}] Audio button not visible")
+                            self.logger.warning("Audio button not visible")
                 except Exception as e:
-                    self.logger.error(f"[{serial}] Error checking audio: {e}")
+                    self.logger.error(f"Error checking audio: {e}")
 
-            # --- VIDEO check ---
             if not video_enabled:
                 try:
                     video_enabled_state, video_bounds, video_status = (
                         self.get_video_control_info(d)
                     )
-                    self.logger.info(f"[{serial}] Video status: {video_status}")
+                    self.logger.info(f"Video status: {video_status}")
 
                     if video_enabled_state is True:
-                        self.logger.info(f"[{serial}] Video already enabled")
+                        self.logger.info("Video already enabled")
                         video_enabled = True
                     elif video_enabled_state is False:
-                        self.logger.info(f"[{serial}] Video is disabled. Enabling...")
+                        self.logger.info("Video is disabled. Enabling...")
                         if self.tap_bounds_center(d, video_bounds):
                             time.sleep(1)
                             (
@@ -490,41 +614,59 @@ class ZoomAutomator:
                                 video_status,
                             ) = self.get_video_control_info(d)
                             self.logger.info(
-                                f"[{serial}] Video status after tap: {video_status}"
+                                f"Video status after tap: {video_status}"
                             )
                             if video_enabled_state is True:
-                                self.logger.info(f"[{serial}] Video enabled")
+                                self.logger.info("Video enabled")
                                 video_enabled = True
                         else:
                             self.logger.warning(
-                                f"[{serial}] Video button bounds missing: {video_bounds}"
+                                f"Video button bounds missing: {video_bounds}"
                             )
                     else:
                         join_video = d(text="Join Video")
                         if join_video.exists:
                             self.logger.info(
-                                f"[{serial}] Video prompt found. Joining video..."
+                                "Video prompt found. Joining video..."
                             )
                             join_video.click()
                             time.sleep(1)
                         else:
-                            self.logger.warning(f"[{serial}] Video button not visible")
+                            self.logger.warning("Video button not visible")
                 except Exception as e:
-                    self.logger.error(f"[{serial}] Error checking video: {e}")
+                    self.logger.error(f"Error checking video: {e}")
 
             time.sleep(2)
 
         if audio_enabled and video_enabled:
-            self.logger.info(f"[{serial}] Both audio and video are enabled.")
+            self.logger.info("Both audio and video are enabled.")
         else:
             self.logger.warning(
-                f"[{serial}] Could not fully enable audio/video after {max_retries} retries."
+                f"Could not fully enable audio/video after {max_retries} retries."
+            )
+            self.logger.warning(
+                "Audio and video can only be toggled while Zoom's meeting "
+                "toolbar is on screen, and Zoom Auto hides it a few seconds after "
+                "each tap. Turn on 'Always show meeting controls' once on "
+                "this handset so the buttons stay readable — Zoom keeps the "
+                "setting across restarts:\n"
+                "    1. Open the Zoom app (no sign-in needed).\n"
+                "    2. Tap the gear icon at the top left.\n"
+                "    3. Tap 'Meetings'.\n"
+                "    4. Scroll down to 'IN MEETING CONTROLS'.\n"
+                "    5. Turn on 'Always show meeting controls'.\n"
+                "While on that screen, also leave 'Turn off my video' and "
+                "'Mute my microphone' off, so the client joins unmuted and "
+                "with video already on."
             )
 
     def upload_ping_log(self):
-        log_path = os.path.join(
-            os.getcwd(), "zoom_mobile_logs", f"{self.participant_name}_ping.log"
-        )
+        """POST this participant's ping log to the host as a file upload.
+
+        Warns and returns without uploading if PingMonitor never wrote the
+        file, which is the case while the ping monitor is commented out.
+        """
+        log_path = os.path.join(self.log_dir, f"{self.participant_name}_ping.log")
         if not os.path.exists(log_path):
             self.logger.warning(f"Ping log not found: {log_path}")
             return
@@ -538,17 +680,55 @@ class ZoomAutomator:
 
             if resp.status_code == 200:
                 self.logger.info(
-                    f"[{self.device_serial}] Ping log uploaded successfully"
+                    "Ping log uploaded successfully"
                 )
             else:
                 self.logger.error(
-                    f"[{self.device_serial}] Ping log upload failed: {resp.status_code} {resp.text}"
+                    f"Ping log upload failed: {resp.status_code} {resp.text}"
                 )
         except Exception as e:
-            self.logger.error(f"[{self.device_serial}] Error uploading ping log: {e}")
+            self.logger.error(f"Error uploading ping log: {e}")
+
+    def upload_log(self):
+        """Push this run's log to the host's /upload_log endpoint.
+
+        The server namespaces the saved filename by the current robo coordinate
+        (and angle, if rotations are enabled) and archives it into the report
+        folder at the end of the test — same mechanism used for the
+        Windows/Linux/macOS real-device client logs.
+        """
+        log_path = os.path.join(self.log_dir, f"{self.participant_name}.log")
+        if not os.path.exists(log_path):
+            self.logger.warning(f"Log file not found: {log_path}")
+            return
+
+        endpoint_url = f"{self.base_url}/upload_log"
+        try:
+            with open(log_path, "r", errors="replace") as fp:
+                log_content = fp.read()
+
+            resp = requests.post(
+                endpoint_url,
+                json={"hostname": self.participant_name, "log": log_content},
+                timeout=30,
+            )
+
+            if resp.status_code == 200:
+                self.logger.info("Log uploaded successfully")
+            else:
+                self.logger.error(
+                    f"Log upload failed: {resp.status_code} {resp.text}"
+                )
+        except Exception as e:
+            self.logger.error(f"Error uploading log: {e}")
 
 
 def main():
+    """Parse the command line and run one device through the meeting.
+
+    The log is uploaded and the interop app restarted in a finally block, so
+    the device is handed back to LANforge even when the run fails.
+    """
     parser = argparse.ArgumentParser(
         description="Automate joining a Zoom meeting on a single Android device."
     )
@@ -571,11 +751,13 @@ def main():
     )
     try:
         automator.set_device(args.serial)
+        automator.grant_permissions()
         automator.join_zoom_meeting(args.meeting_url, args.participant_name)
     except Exception as e:
         automator.logger.error(f"Error: {e}")
     finally:
         try:
+            automator.upload_log()
             # automator.upload_ping_log()
             automator.start_interop_app()
         except Exception as e:

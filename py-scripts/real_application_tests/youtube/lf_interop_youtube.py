@@ -124,25 +124,25 @@ import shutil
 import glob
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
-from threading import Thread
+from threading import Event, Thread
 import traceback
-import threading
+import platform
+import signal
+import subprocess
 from collections import Counter
 import re
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 logger = logging.getLogger(__name__)
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
-
-
+YOUTUBE_STATS_URL = "http://127.0.0.1:5002/youtube_stats"
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 
 
 # Import LANforge-related modules
-
-# Set up logging
-logger = logging.getLogger(__name__)
 
 # Import LF logger configuration module
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
@@ -174,6 +174,19 @@ from IOT.iot_helper import start_iot_thread, with_iot_params_in_table, add_iot_r
 WINDOWS_REAL_APP_DIR = r".\local\real_application_test\youtube"
 LINUX_REAL_APP_DIR = "./local/real_application_test/youtube"
 MACOS_REAL_APP_DIR = "./local/real_application_test/youtube"
+YOUTUBE_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ANDROID_TEST_SCRIPT = os.path.join(
+    YOUTUBE_SCRIPT_DIR,
+    "youtube_android_test.py",
+)
+
+
+class WebUIStopRequested(Exception):
+    """Unwind the active test loop and continue through final reporting."""
+
+
+class AllEndpointsUnreachable(Exception):
+    """Unwind after every monitored endpoint is absent for 40 seconds."""
 
 
 class Youtube(Realm):
@@ -262,9 +275,10 @@ class Youtube(Realm):
         self.generic_endps_profile = self.new_generic_endp_profile()
         self.generic_endps_profile.type = 'youtube'
         self.generic_endps_profile.name_prefix = "yt"
+        self.endpoint_last_status = {}
         self.Devices = None
-        self.start_time = ""
-        self.stop_time = ""
+        self.start_time = None
+        self.stop_time = None
         self.do_webUI = do_webUI
         self.ui_report_dir = ui_report_dir
         self.devices = base_RealDevice(manager_ip=self.host, selected_bands=[])
@@ -276,8 +290,7 @@ class Youtube(Realm):
         self.ssid = ssid
         self.security = security
         self.band = band
-        self.start_time = None,
-        self.est_end_time = None,
+        self.est_end_time = None
         self.all_stop = False
         self.keys = []
         self.hostname_os_combination = None
@@ -300,6 +313,7 @@ class Youtube(Realm):
         self.lanforge_port_list = set()
         self.lanforge_os_type = list()
         self.android = 0
+        self.android_log_received = Event()
         self.wifi_interface_list = []
         self.devices_list = []
         self.max_buffer = {}
@@ -376,6 +390,44 @@ class Youtube(Realm):
         else:
             return True
 
+    def generic_endpoint_exists(self, endpoint_name):
+        """Return whether LANforge currently has the generic endpoint."""
+        response = self.json_get(f"/generic/{endpoint_name}")
+        return bool(response and "endpoint" in response)
+
+    def pre_cleanup_stale_youtube_endpoints(self, ports):
+        """Remove stale YouTube CX/endpoint pairs before creating them.
+
+        YouTube creates desktop and Android LANforge endpoints through
+        GenCXProfile.create() with real-client OS types, so both use names
+        based on the complete port EID, for example ``yt-1.40.wlan0`` and
+        ``CX_yt-1.40.wlan0``.
+        """
+        prefix = self.generic_endps_profile.name_prefix
+        for port_name in ports:
+            endpoint_name = f"{prefix}-{port_name}"
+            cx_name = f"CX_{prefix}-{port_name}"
+
+            if not self.generic_endpoint_exists(endpoint_name):
+                continue
+
+            logging.info(
+                "Removing stale YouTube CX %s before endpoint creation",
+                cx_name,
+            )
+            self.json_post(
+                "cli-json/rm_cx",
+                {"test_mgr": "default_tm", "cx_name": cx_name},
+            )
+            logging.info(
+                "Removing stale YouTube endpoint %s before endpoint creation",
+                endpoint_name,
+            )
+            self.json_post(
+                "cli-json/rm_endp",
+                {"endp_name": endpoint_name},
+            )
+
     def create_generic_endp(self):
         """
         Create and configure generic endpoints for real client YouTube tests.
@@ -414,6 +466,7 @@ class Youtube(Realm):
         self.get_android_device_data()
         self.process_device_data()
 
+        self.pre_cleanup_stale_youtube_endpoints(self.real_sta_list)
         if self.generic_endps_profile.create(ports=self.real_sta_list, sleep_time=.5, real_client_os_types=self.real_sta_os_types,):
             logging.info('Real client generic endpoint creation completed.')
         else:
@@ -461,6 +514,7 @@ class Youtube(Realm):
                 )
                 self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
 
+        self.pre_cleanup_stale_youtube_endpoints(self.lanforge_port_list)
         if self.generic_endps_profile.create(ports=self.lanforge_port_list, sleep_time=.5, real_client_os_types=self.lanforge_os_type,):
             logging.info('Real client generic endpoint creation completed.')
         else:
@@ -470,17 +524,23 @@ class Youtube(Realm):
         for i in range(0, len(self.lanforge_os_type)):
             cmd = (
                 "su - lanforge -c "
-                "\"cd /home/lanforge && "
-                "python3 /home/lanforge/lanforge-scripts/py-scripts/real_application_tests/youtube/youtube_android_test.py "
+                "\"cd '%s' && "
+                "python3 '%s' "
                 "--url '%s' --duration '%s' --devices '%s' --upstream_port '%s' --resolution '%s'\""
             ) % (
+                YOUTUBE_SCRIPT_DIR,
+                ANDROID_TEST_SCRIPT,
                 self.url,
                 self.duration,
                 self.serial_list_str,
                 self.host,
                 self.resolution,
             )
-            logging.info(f"Setting command for Android devices: {cmd}")
+            logging.info(
+                "Configured YouTube streaming command for %d Android device(s)",
+                len(self.lanforge_os_type),
+            )
+            logger.debug("Android YouTube command: %s", cmd)
             self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[-(i + 1)], cmd)
 
     def get_test_results_data(self, test_results, group):
@@ -564,7 +624,7 @@ class Youtube(Realm):
         if real_sta_list is None:
             self.real_sta_list, _, _ = real_devices.query_user()
         else:
-            interface_data = self.json_get("/port/all")
+            interface_data = self.json_get_with_retry("/port/all")
             interfaces = interface_data["interfaces"]
             final_device_list = []  # Initialize the list
 
@@ -610,6 +670,35 @@ class Youtube(Realm):
             self.real_sta_data_dict[sta_name] = real_devices.devices_data[sta_name]
 
         return self.real_sta_list
+
+    @staticmethod
+    def sum_reset_counter(values):
+        """Sum cumulative-counter segment maxima, ignoring unavailable samples."""
+        valid_values = []
+        for value in values:
+            try:
+                counter = int(float(value))
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if counter >= 0:
+                valid_values.append(counter)
+
+        if not valid_values:
+            return 0
+
+        previous = valid_values[0]
+        segment_max = previous
+        total = 0
+
+        for current in valid_values[1:]:
+            if current < previous:
+                total += segment_max
+                segment_max = current
+            else:
+                segment_max = max(segment_max, current)
+            previous = current
+
+        return int(total + segment_max)
 
     def calculate_device_score(self, df, os_type="laptop"):
         """
@@ -673,27 +762,8 @@ class Youtube(Realm):
             buffer_score = (avg_buffer / 10) * 5
 
         # 5. DROPPED FRAME LOGIC (RESET SAFE)
-        dropped_series = pd.to_numeric(df["DroppedFrames"], errors="coerce").fillna(0).astype(int)
-        total_series = pd.to_numeric(df["TotalFrames"], errors="coerce").fillna(0).astype(int)
-
-        def segment_sum(series):
-            total = 0
-            last_val = series.iloc[0]
-            max_val = last_val
-
-            for val in series:
-                if val < last_val:
-                    total += max_val
-                    max_val = val
-                else:
-                    max_val = max(max_val, val)
-                last_val = val
-
-            total += max_val
-            return total
-
-        total_dropped = segment_sum(dropped_series)
-        total_frames = segment_sum(total_series)
+        total_dropped = self.sum_reset_counter(df["DroppedFrames"])
+        total_frames = self.sum_reset_counter(df["TotalFrames"])
 
         drop_percent = (total_dropped / total_frames) * 100 if total_frames > 0 else 0
 
@@ -903,14 +973,91 @@ class Youtube(Realm):
         2. Sets the start time (`self.start_time`) to the current datetime.
 
         """
+        # A robot test can reuse endpoint names across coordinates and angles.
+        # Do not carry completion-wait timers from an earlier run into this one.
+        self._gen_cx_stall_since = {}
+        self._gen_cx_timed_out = set()
+
+        if self.android:
+            self.android_log_received.clear()
+
         # Start the connections of generic endpoints
         self.generic_endps_profile.start_cx()
         # Set the start time to the current datetime
         self.start_time = datetime.now()
+        logging.info(
+            "YouTube streaming started at %s",
+            datetime.now().astimezone().isoformat(timespec="seconds"),
+        )
 
     def stop_generic_cx(self,):
         self.generic_endps_profile.stop_cx()
         self.stop_time = datetime.now()
+
+    def wait_for_android_shutdown(self, timeout=30):
+        """Give Android time to stop YouTube and upload its combined log."""
+        if not self.android:
+            return True
+        if self.android_log_received.wait(timeout=timeout):
+            logger.info("Android shutdown completed and test log was received.")
+            return True
+        logger.warning(
+            "Android did not upload its test log within %s seconds; "
+            "force-stopping the generic CX.",
+            timeout,
+        )
+        return False
+
+    def wait_stop_aware(self, duration, context, poll_interval=0.25):
+        """Wait for a fixed delay while honoring WebUI stop requests."""
+        deadline = time.monotonic() + duration
+        while True:
+            if self.stop_signal:
+                logger.info("WebUI stop requested %s.", context)
+                raise WebUIStopRequested
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            time.sleep(min(poll_interval, remaining))
+
+    def check_robo_stop(self):
+        """Robot callback that immediately unwinds a WebUI-stopped test."""
+        if self.stop_signal:
+            logger.info(
+                "WebUI stop requested during robot battery/movement handling; "
+                "unwinding directly to report generation."
+            )
+            raise WebUIStopRequested
+        return {}
+
+    def finalize_test_run(self, args, iot_summary=None):
+        """Stop clients, generate the report, then clean up the test."""
+        self.stop()
+        # Stop collection before WebUI completion triggers the final live image.
+        if args.do_webUI:
+            self.stop_webui_test()
+        logger.info("Waiting 10 seconds for client cleanup and log uploads")
+        time.sleep(10)
+        try:
+            if args.do_robo and not args.do_bandsteering:
+                self.create_robo_report()
+            else:
+                self.create_report(
+                    self.stats_api_response,
+                    self.ui_report_dir if args.do_webUI else "",
+                    iot_summary=iot_summary,
+                )
+            logger.info("YouTube report generated: %s", self.report_path_date_time)
+        finally:
+            try:
+                self.generic_endps_profile.stop_cx()
+            except Exception:
+                logger.exception("Unable to stop all YouTube CXs during cleanup")
+            if not args.no_post_cleanup:
+                try:
+                    self.generic_endps_profile.cleanup()
+                except Exception:
+                    logger.exception("Unable to clean up all YouTube endpoints")
 
     def get_youtube_lf_wifi_stats(self):
         """
@@ -960,6 +1107,49 @@ class Youtube(Realm):
         """
         app = Flask(__name__)
 
+        @app.route('/upload_youtube_log', methods=['POST'])
+        def upload_youtube_log():
+            """Store a client log for inclusion in the active test report."""
+            device_name = request.form.get('device_name', '').strip()
+            device_type = request.form.get('device_type', 'client').strip().lower()
+            log_kind = request.form.get('log_kind', 'test').strip().lower()
+            log_file = request.files.get('log_file')
+
+            if not device_name or log_file is None:
+                return jsonify({"error": "device_name and log_file are required"}), 400
+
+            safe_device_name = re.sub(r'[^A-Za-z0-9_.-]+', '_', device_name)
+            safe_device_type = re.sub(r'[^A-Za-z0-9_.-]+', '_', device_type)
+            safe_log_kind = re.sub(r'[^A-Za-z0-9_.-]+', '_', log_kind)
+            log_directory = (
+                self.ui_report_dir
+                if self.do_webUI and self.ui_report_dir
+                else os.path.dirname(os.path.abspath(__file__))
+            )
+            os.makedirs(log_directory, exist_ok=True)
+            if safe_device_type == 'android':
+                log_filename = "android_youtube_test.log"
+            elif safe_log_kind == 'debug':
+                log_filename = f"{safe_device_name}_client_youtube_debug.log"
+            else:
+                log_filename = (
+                    f"{safe_device_name}_{safe_device_type}_youtube_test.log"
+                )
+            log_path = os.path.join(log_directory, log_filename)
+
+            try:
+                log_file.save(log_path)
+            except OSError as exc:
+                logger.exception("Unable to store YouTube log for %s", device_name)
+                return jsonify({"error": str(exc)}), 500
+
+            if log_path not in self.devices_list:
+                self.devices_list.append(log_path)
+            if safe_device_type == 'android':
+                self.android_log_received.set()
+            logger.info("Received YouTube test log for %s: %s", device_name, log_path)
+            return jsonify({"message": "Log uploaded successfully"}), 200
+
         @app.route('/check_stop', methods=['GET'])
         def check_stop():
             return jsonify({"stop": self.stop_signal})
@@ -967,18 +1157,16 @@ class Youtube(Realm):
         @app.route('/stop_yt', methods=['GET'])
         def stop_yt():
             """
-            Endpoint to stop the YouTube test and trigger a graceful application shutdown.
+            Request that the main test flow stop and perform its normal cleanup
+            and report generation.
             """
-            logging.info("Stopping the test through web UI")
+            if self.stop_signal:
+                return jsonify({"message": "YouTube test stop is already in progress"}), 200
 
-            response = jsonify({"message": "Stopping Youtube Test"})
-            response.status_code = 200
+            logger.info("Stopping the test through WebUI")
+            self.stop_signal = True
 
-            # Start shutdown in a separate thread
-            shutdown_thread = threading.Thread(target=self.shutdown)
-            shutdown_thread.start()
-
-            return response
+            return jsonify({"message": "YouTube test stop requested"}), 200
 
         @app.route('/youtube_stats', methods=['GET', 'POST'])
         def youtube_stats():
@@ -1085,12 +1273,25 @@ class Youtube(Realm):
             API endpoint to read YouTube data from CSV files and return the last row for each device.
             """
             device_data = {}
-            for csv_file_path in self.devices_list:
+            for csv_file_path in list(self.devices_list):
+                if not csv_file_path.endswith("_youtube_stats_report.csv"):
+                    continue
                 if not os.path.isfile(csv_file_path):
                     continue
-                df = pd.read_csv(csv_file_path)
+
+                try:
+                    df = pd.read_csv(csv_file_path)
+                except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
+                    logger.warning(
+                        "Unable to read live YouTube data from %s: %s",
+                        csv_file_path,
+                        exc,
+                    )
+                    continue
+
                 if not df.empty:
-                    last_row = df.iloc[-1].to_dict()
+                    # Convert NumPy scalars and NaN into values Flask can encode.
+                    last_row = json.loads(df.iloc[-1].to_json())
                     device_name = os.path.basename(csv_file_path).split('_youtube_stats_report')[0]
                     device_data[device_name] = last_row
             return jsonify({"result": device_data}), 200
@@ -1115,54 +1316,147 @@ class Youtube(Realm):
         flask_thread.daemon = True
         flask_thread.start()
 
+    def stop_previous_flask_server(self, port=5002):
+        """Stop processes already listening on the YouTube statistics port."""
+        current_os = platform.system()
+        if current_os not in ["Linux", "Darwin"]:
+            logger.warning(
+                "Unsupported OS %s; cannot automatically clear port %s.",
+                current_os,
+                port,
+            )
+            return
+
+        logger.info("Checking whether port %s is already in use.", port)
+        try:
+            result = subprocess.run(
+                ["lsof", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError as exc:
+            logger.warning("Unable to inspect port %s: %s", port, exc)
+            return
+
+        pids = [pid for pid in result.stdout.splitlines() if pid.strip()]
+        if not pids:
+            logger.info("Port %s is clear and ready for the Flask server.", port)
+            return
+
+        for pid_text in pids:
+            try:
+                pid = int(pid_text)
+                logger.warning(
+                    "Stopping previous process %s listening on port %s.",
+                    pid,
+                    port,
+                )
+                os.kill(pid, signal.SIGKILL)
+            except (OSError, ValueError) as exc:
+                logger.warning(
+                    "Could not stop process %s on port %s: %s",
+                    pid_text,
+                    port,
+                    exc,
+                )
+
+    def wait_for_flask(
+        self,
+        url=YOUTUBE_STATS_URL,
+        timeout=10,
+    ):
+        """Wait until the YouTube statistics server responds successfully."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                with urllib_request.urlopen(url, timeout=1) as response:
+                    if response.status == 200:
+                        logger.info("YouTube statistics server is ready on port 5002.")
+                        return
+            except (urllib_error.URLError, OSError):
+                time.sleep(1)
+
+        raise RuntimeError(
+            f"YouTube statistics server did not start within {timeout} seconds"
+        )
+
+    def handle_flask_server(self):
+        """Clear port 5002, start Flask, and verify it before the test starts."""
+        self.stop_previous_flask_server(port=5002)
+        time.sleep(5)
+        self.start_flask_server()
+        self.wait_for_flask()
+
     def move_files(self, source_file, dest_dir):
         # Ensure the source file exists
         if not os.path.isfile(source_file):
-            logging.ERROR(f"Source file '{source_file}' does not exist or is not a regular file.")
+            logger.warning(
+                "Skipping report artifact because source file does not exist or "
+                "is not a regular file: %s",
+                source_file,
+            )
             return
 
+        # Keep uploaded client logs separate from reports, CSVs, and graphs.
+        filename = os.path.basename(source_file)
+        if filename.endswith(("_youtube_test.log", "_youtube_debug.log")):
+            dest_dir = os.path.join(dest_dir, "client_logs")
+
         # Ensure the destination directory exists
+        if not os.path.exists(dest_dir) and os.path.basename(dest_dir) == "client_logs":
+            try:
+                os.makedirs(dest_dir, exist_ok=True)
+            except OSError as exc:
+                logger.error(
+                    "Cannot create client log directory %s: %s",
+                    dest_dir,
+                    exc,
+                )
+                return
+
         if not os.path.exists(dest_dir):
-            logging.ERROR(f"Destination directory '{dest_dir}' does not exist.")
+            logger.error(
+                "Cannot move report artifact %s because destination directory "
+                "does not exist: %s",
+                source_file,
+                dest_dir,
+            )
             return
 
         try:
-            filename = os.path.basename(source_file)
             dest_file = os.path.join(dest_dir, filename)
             shutil.move(source_file, dest_file)
 
             logging.info(f"Successfully moved '{source_file}' to '{dest_file}'.")
 
-        except Exception as e:
-            logging.ERROR(f"Failed to move '{source_file}' to '{dest_dir}': {e}")
-
-    def shutdown(self):
-        """
-        Gracefully shut down the application.
-        """
-        logging.info("Initiating graceful shutdown...")
-        self.stop_signal = True
-        time.sleep(10)
-        self.generic_endps_profile.cleanup()
-        logging.info("Application Closed sucessfully")
-
-        if self.do_robo and not self.do_bandsteering:
-            self.create_robo_report()
-        else:
-            report_dir = self.ui_report_dir if self.do_webUI else ''
-            self.create_report(self.stats_api_response, report_dir)
-
-        os._exit(0)
+        except (OSError, shutil.Error) as e:
+            logger.error(
+                "Failed to move report artifact %s to %s: %s",
+                source_file,
+                dest_dir,
+                e,
+            )
 
     def updating_webui_runningjson(self, obj):
         data = {}
         file_path = self.ui_report_dir + "/../../Running_instances/{}_{}_running.json".format(self.host, self.test_name)
 
-        # Wait until the file exists
+        # Wait up to three minutes for the WebGUI to create the running file.
+        wait_timeout = 180
+        wait_deadline = time.monotonic() + wait_timeout
         while not os.path.exists(file_path):
-            logging.info("Waiting for Running json filed to be created")
+            if time.monotonic() >= wait_deadline:
+                logging.error(
+                    "Running JSON file was not created by the WebGUI within %s "
+                    "seconds: %s. Skipping this status update.",
+                    wait_timeout,
+                    file_path,
+                )
+                return
+            logging.info("Waiting for Running JSON file to be created")
             time.sleep(1)
-        logging.info("Running Json file created")
+        logging.info("Running JSON file created")
         with open(file_path, 'r') as file:
             data = json.load(file)
 
@@ -1338,6 +1632,34 @@ class Youtube(Realm):
                                 _obj="Robot did not went to charge during this test")
             report.build_objective()
 
+    def get_report_frame_totals(self, hostname):
+        """Calculate reset-aware frame totals from a device's raw CSV rows."""
+        frame_data = {"TotalFrames": [], "DroppedFrames": []}
+
+        for csv_file_path in self.devices_list:
+            if not csv_file_path.endswith("_youtube_stats_report.csv"):
+                continue
+            try:
+                data = pd.read_csv(csv_file_path)
+            except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
+                logger.warning("Unable to calculate frame totals from %s: %s", csv_file_path, exc)
+                continue
+
+            if "Instance Name" not in data or data.empty:
+                continue
+            device_rows = data[data["Instance Name"].astype(str) == str(hostname)]
+            for column in frame_data:
+                if column in device_rows:
+                    frame_data[column].extend(device_rows[column].tolist())
+
+        if not any(frame_data.values()):
+            return None
+
+        return {
+            column: self.sum_reset_counter(values)
+            for column, values in frame_data.items()
+        }
+
     def create_report(self, data=None, ui_report_dir=None, iot_summary=None):
         data = data or self.stats_api_response
         ui_report_dir = ui_report_dir or self.ui_report_dir
@@ -1459,12 +1781,21 @@ class Youtube(Realm):
         for hostname in self.real_sta_hostname:
             if hostname in self.mydatajson:
                 stats = self.mydatajson[hostname]
+                frame_totals = self.get_report_frame_totals(hostname)
                 viewport_list.append(stats.get("Viewport", ""))
                 current_res_list.append(stats.get("CurrentRes", ""))
                 optimal_res_list.append(stats.get("OptimalRes", ""))
 
-                dropped_frames = stats.get("DroppedFrames", "0")
-                total_frames = stats.get("TotalFrames", "0")
+                dropped_frames = (
+                    frame_totals["DroppedFrames"]
+                    if frame_totals is not None
+                    else stats.get("DroppedFrames", "0")
+                )
+                total_frames = (
+                    frame_totals["TotalFrames"]
+                    if frame_totals is not None
+                    else stats.get("TotalFrames", "0")
+                )
                 max_buffer_health_list.append(self.max_buffer.get(hostname, 0.0))
                 min_buffer_health_list.append(self.min_buffer.get(hostname, 0.0))
                 try:
@@ -1554,10 +1885,10 @@ class Youtube(Realm):
         original_dir = os.getcwd()
 
         if self.do_webUI:
-            csv_files = [f for f in os.listdir(self.report_path_date_time) if f.endswith('.csv')]
+            csv_files = [f for f in os.listdir(self.report_path_date_time) if f.endswith('_youtube_stats_report.csv')]
             os.chdir(self.report_path_date_time)
         else:
-            csv_files = [f for f in os.listdir(self.report_path_date_time) if f.endswith('.csv')]
+            csv_files = [f for f in os.listdir(self.report_path_date_time) if f.endswith('_youtube_stats_report.csv')]
             os.chdir(self.report_path_date_time)
 
         for file_name in csv_files:
@@ -1716,25 +2047,227 @@ class Youtube(Realm):
         self.report.write_html()
         self.report.write_pdf()
 
-    def check_gen_cx(self):
-        try:
+    def json_get_with_retry(self, url, wait_time=40, poll_interval=5):
+        """
+        Calls self.json_get(url), retrying every poll_interval seconds for up
+        to wait_time seconds if LANforge returns no response. Aborts the test
+        if it still hasn't responded once wait_time has elapsed.
+        """
+        start_time = time.time()
+        response = self.json_get(url)
+        while response is None and (time.time() - start_time) < wait_time:
+            logger.warning(f"GET {url} returned no response from LANforge; retrying...")
+            time.sleep(poll_interval)
+            response = self.json_get(url)
 
-            for gen_endp in self.generic_endps_profile.created_endp:
-                generic_endpoint = self.json_get(f'/generic/{gen_endp}')
+        if response is None:
+            logger.error(
+                f"GET {url} returned no response from LANforge after waiting "
+                f"{wait_time} seconds. Aborting test."
+            )
+            exit(1)
+
+        return response
+
+    def write_endpoint_status_csv(self, csv_file, endpoint_name, status,
+                                  api_response=None):
+        """Append an endpoint status change to the monitoring CSV."""
+        file_exists = os.path.isfile(csv_file) and os.path.getsize(csv_file) > 0
+        with open(csv_file, mode="a", newline="") as csv_handle:
+            writer = csv.writer(csv_handle)
+            if not file_exists:
+                writer.writerow([
+                    "timestamp", "endpoint_name", "status", "api_response"
+                ])
+            writer.writerow([
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                endpoint_name,
+                status,
+                json.dumps(api_response, default=str, sort_keys=True),
+            ])
+
+    def monitor_endpoint_status_changes(self, wait_time=40, poll_interval=5):
+        """
+        Record endpoint status changes.  If every endpoint disappears, retry
+        for ``wait_time`` seconds and then unwind to report generation.
+        """
+        current_path = self.ui_report_dir if self.do_webUI else os.path.dirname(os.path.abspath(__file__))
+        csv_file = os.path.join(current_path, "endpoint_status_changes.csv")
+        if csv_file not in self.devices_list:
+            self.devices_list.append(csv_file)
+        created_endp = self.generic_endps_profile.created_endp
+        start_time = time.time()
+        while True:
+            if self.stop_signal:
+                logger.info(
+                    "WebUI stop requested while waiting for endpoint data; "
+                    "unwinding directly to report generation."
+                )
+                raise WebUIStopRequested
+
+            endpoint_data = {}
+            endpoint_responses = {}
+            for gen_endp in created_endp:
+                if self.stop_signal:
+                    logger.info(
+                        "WebUI stop requested during endpoint polling; "
+                        "unwinding directly to report generation."
+                    )
+                    raise WebUIStopRequested
+                generic_endpoint = self.json_get(f"/generic/{gen_endp}")
+                endpoint_responses[gen_endp] = generic_endpoint
+                if generic_endpoint and "endpoint" in generic_endpoint:
+                    endpoint_data[gen_endp] = generic_endpoint
+
+            newly_missing = [
+                gen_endp for gen_endp in created_endp
+                if gen_endp not in endpoint_data
+                and self.endpoint_last_status.get(gen_endp) != "MISSING"
+            ]
+            missing_url = f"/generic/{','.join(sorted(set(created_endp)))}"
+            present_keys = []
+            if newly_missing:
+                try:
+                    combined_response = self.json_get(missing_url)
+                    if combined_response and "endpoints" in combined_response:
+                        present_keys = [
+                            name for endpoint in combined_response["endpoints"]
+                            for name in endpoint
+                        ]
+                    elif combined_response and "endpoint" in combined_response:
+                        present_keys = list(endpoint_data)
+                except Exception:
+                    logger.exception(
+                        "Unable to retrieve combined endpoint status from %s",
+                        missing_url,
+                    )
+
+            for gen_endp in created_endp:
+                generic_endpoint = endpoint_data.get(gen_endp)
+                current_status = (
+                    generic_endpoint["endpoint"].get("status", "")
+                    if generic_endpoint else "MISSING"
+                )
+                if self.endpoint_last_status.get(gen_endp) != current_status:
+                    if current_status == "MISSING":
+                        logger.info(
+                            "Endpoint '%s' is unavailable (endpoint_present=False). "
+                            "It may have been deleted, may not have been created, "
+                            "or may be temporarily disconnected. Continuing to "
+                            "monitor it.\nURL: %s\nEndpoint keys present: %s",
+                            gen_endp,
+                            missing_url,
+                            present_keys,
+                        )
+                    else:
+                        logger.info(
+                            "Endpoint %s status changed to: %s",
+                            gen_endp,
+                            current_status,
+                        )
+                    self.write_endpoint_status_csv(
+                        csv_file,
+                        gen_endp,
+                        current_status,
+                        (present_keys if current_status == "MISSING" else
+                         endpoint_responses.get(gen_endp)),
+                    )
+                    self.endpoint_last_status[gen_endp] = current_status
+
+            if endpoint_data:
+                return True
+
+            missing_for = time.time() - start_time
+            if missing_for >= wait_time:
+                logger.error(
+                    "All %s generic endpoint(s) have been unreachable for %.0fs "
+                    "(limit %ss) - stopping the test.",
+                    len(created_endp),
+                    missing_for,
+                    wait_time,
+                )
+                self.write_endpoint_status_csv(
+                    csv_file,
+                    "ALL",
+                    "ALL_ENDPOINTS_UNREACHABLE",
+                    endpoint_responses,
+                )
+                raise AllEndpointsUnreachable(
+                    f"All generic endpoints were unreachable for {wait_time} seconds"
+                )
+
+            logger.warning(
+                "All %s generic endpoint(s) are unreachable - retrying... "
+                "%.0fs/%ss before giving up and stopping the test.",
+                len(created_endp),
+                missing_for,
+                wait_time,
+            )
+            # Sleep in short intervals so a WebUI stop is acted on promptly,
+            # even while this method is in its missing-endpoint retry window.
+            retry_deadline = time.monotonic() + poll_interval
+            while time.monotonic() < retry_deadline:
+                if self.stop_signal:
+                    logger.info(
+                        "WebUI stop requested while waiting for endpoint data; "
+                        "unwinding directly to report generation."
+                    )
+                    raise WebUIStopRequested
+                remaining = retry_deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                time.sleep(min(0.25, remaining))
+
+    def check_gen_cx(self, stall_timeout=300):
+        """Check whether all generic endpoints have reached an idle state.
+        Treat unresponsive or stalled endpoints as resolved after stall_timeout.
+        """
+        if not hasattr(self, "_gen_cx_stall_since"):
+            self._gen_cx_stall_since = {}
+        if not hasattr(self, "_gen_cx_timed_out"):
+            self._gen_cx_timed_out = set()
+
+        idle_statuses = {"Stopped", "WAITING", "NO-CX", "PHANTOM", "FTM_WAIT"}
+        now = time.monotonic()
+        ready = True
+
+        try:
+            for gen_endp in set(self.generic_endps_profile.created_endp):
+                generic_endpoint = self.json_get(f"/generic/{gen_endp}")
 
                 if not generic_endpoint or "endpoint" not in generic_endpoint:
-                    logging.error(f"Error fetching endpoint data for {gen_endp}")
-                    return False
+                    endp_status = None
+                else:
+                    endp_status = generic_endpoint["endpoint"].get("status", "")
 
-                endp_status = generic_endpoint["endpoint"].get("status", "")
+                if endp_status in idle_statuses:
+                    self._gen_cx_stall_since.pop(gen_endp, None)
+                    self._gen_cx_timed_out.discard(gen_endp)
+                    continue
 
-                if endp_status not in ["Stopped", "WAITING", "NO-CX", "PHANTOM", "FTM_WAIT"]:
-                    return False
+                if gen_endp in self._gen_cx_timed_out:
+                    continue
 
-            return True
-        except Exception as e:
-            logging.error(f"Error in check_gen_cx funtion {e}", exc_info=True)
-            logging.info(f"Generic endpoint data {generic_endpoint}")
+                stall_start = self._gen_cx_stall_since.setdefault(gen_endp, now)
+                stalled_for = now - stall_start
+                if stalled_for >= stall_timeout:
+                    logger.warning(
+                        "Endpoint %s remained unresolved with status %r for %.0f "
+                        "seconds (limit: %s); continuing without waiting for it",
+                        gen_endp,
+                        endp_status,
+                        stalled_for,
+                        stall_timeout,
+                    )
+                    self._gen_cx_timed_out.add(gen_endp)
+                    continue
+
+                ready = False
+
+            return ready
+        except Exception:
+            logger.exception("Error while checking generic endpoint status")
+            return False
 
     def change_port_to_ip(self, upstream_port):
         """
@@ -1761,9 +2294,21 @@ class Youtube(Realm):
         if upstream_port.count('.') != 3:
             target_port_list = self.name_to_eid(upstream_port)
             shelf, resource, port, _ = target_port_list
+            response = self.json_get_with_retry(f'/port/{shelf}/{resource}/{port}?fields=ip')
             try:
-                target_port_ip = self.json_get(f'/port/{shelf}/{resource}/{port}?fields=ip')['interface']['ip']
+                target_port_ip = response['interface']['ip']
                 upstream_port = target_port_ip
+            except KeyError as e:
+                logger.error(
+                    "/port/%s/%s/%s/?fields=ip response is not in the expected format, missing key %s. "
+                    "Data received:\n%s",
+                    shelf,
+                    resource,
+                    port,
+                    e,
+                    json.dumps(response, indent=2, default=str),
+                )
+                exit(1)
             except Exception as e:
                 logging.warning(f'Could not resolve IP for port {upstream_port}: {e}. Proceeding with the given upstream_port {upstream_port}.')
                 logging.warning(f'The upstream port is not an ethernet port. Proceeding with the given upstream_port {upstream_port}.')
@@ -1873,37 +2418,52 @@ class Youtube(Realm):
         Returns:
             None
         """
-        interop_data = self.json_get('/adb')
-        interop_mobile_data = interop_data.get('devices', {})
+        interop_data = self.json_get_with_retry('/adb')
+        try:
+            interop_mobile_data = interop_data.get('devices', {})
 
-        if isinstance(interop_mobile_data, dict):
-            for user in self.user_list:
-                if user != '':
-                    if interop_mobile_data.get('user-name') == user:
+            if isinstance(interop_mobile_data, dict):
+                for user in self.user_list:
+                    if user != '':
+                        if interop_mobile_data.get('user-name') == user:
 
-                        serial = interop_mobile_data.get('name', '')
-                        resource = serial.split('.')[1]
-                        serial_no = serial.split('.')[2]
-                        self.serial_list.append(serial_no)
-                        lanforge_port = f"1.{resource}.eth0"
-                        self.lanforge_port_list.add(lanforge_port)
+                            serial = interop_mobile_data.get('name', '')
+                            resource = serial.split('.')[1]
+                            serial_no = serial.split('.')[2]
+                            self.serial_list.append(serial_no)
+                            lanforge_port = f"1.{resource}.eth0"
+                            self.lanforge_port_list.add(lanforge_port)
 
-        else:
-            for user in self.user_list:
-                if user != '':
-                    for mobile_device in interop_mobile_data:
-                        for serial, device_data in mobile_device.items():
-                            if device_data.get('user-name') == user:
-                                resource = serial.split('.')[1]
-                                serial_no = serial.split('.')[2]
-                                self.serial_list.append(serial_no)
-                                lanforge_port = f"1.{resource}.eth0"
-                                self.lanforge_port_list.add(lanforge_port)
-                                break
+            else:
+                for user in self.user_list:
+                    if user != '':
+                        for mobile_device in interop_mobile_data:
+                            for serial, device_data in mobile_device.items():
+                                if device_data.get('user-name') == user:
+                                    resource = serial.split('.')[1]
+                                    serial_no = serial.split('.')[2]
+                                    self.serial_list.append(serial_no)
+                                    lanforge_port = f"1.{resource}.eth0"
+                                    self.lanforge_port_list.add(lanforge_port)
+                                    break
 
-        self.lanforge_port_list = list(self.lanforge_port_list)
-        self.lanforge_os_type = ["Linux"] * len(self.lanforge_port_list)
-        self.serial_list_str = ','.join(self.serial_list)
+            self.lanforge_port_list = list(self.lanforge_port_list)
+            self.lanforge_os_type = ["Linux"] * len(self.lanforge_port_list)
+            self.serial_list_str = ','.join(self.serial_list)
+        except KeyError as e:
+            logger.error(
+                "/adb response is not in the expected format, missing key %s. "
+                "Data received:\n%s",
+                e,
+                json.dumps(interop_data, indent=2, default=str),
+            )
+            exit(1)
+        except Exception as e:
+            logger.error(
+                f"Unexpected error while parsing /adb response: {e}",
+                exc_info=True,
+            )
+            exit(1)
 
     def get_device_data(self):
         """
@@ -1948,24 +2508,47 @@ class Youtube(Realm):
         self.user_list = []
 
         # Step 1: Retrieve information about all resources
-        response = self.json_get("/resource/all")
-        resource_data_list = response.get("resources", [])
+        response = self.json_get_with_retry("/resource/all")
+        try:
+            resource_data_list = response.get("resources", [])
 
-        # Step 2: Match user-specified resources with available resources in order.
-        for user_resource in user_resources:
-            for resource_entry in resource_data_list:
-                for resource_key, resource_values in resource_entry.items():
-                    if resource_key == user_resource:
-                        self.device_names.append(resource_values['hostname'])
-                        ports_list.append({
-                            'eid': resource_values['eid'],
-                            'ctrl-ip': resource_values['ctrl-ip']
-                        })
-                        self.user_list.append(resource_values['user'])
-                        break
+            # Step 2: Match user-specified resources with available resources in order.
+            for user_resource in user_resources:
+                for resource_entry in resource_data_list:
+                    for resource_key, resource_values in resource_entry.items():
+                        if resource_key == user_resource:
+                            self.device_names.append(resource_values['hostname'])
+                            ports_list.append({
+                                'eid': resource_values['eid'],
+                                'ctrl-ip': resource_values['ctrl-ip']
+                            })
+                            self.user_list.append(resource_values['user'])
+                            break
+                    else:
+                        continue
+                    break
                 else:
-                    continue
-                break
+                    logger.error(
+                        f"Resource {user_resource} not found in LANforge response. Aborting test."
+                    )
+                    logger.info(
+                        "LANforge resources fetched from /resource/all:\n%s",
+                        json.dumps(resource_data_list, indent=2, default=str),
+                    )
+                    exit(1)
+        except KeyError as e:
+            logger.error(
+                f"/resource/all response is not in the expected format, missing key {e}. "
+                "Data received:\n%s",
+                json.dumps(response, indent=2, default=str),
+            )
+            exit(1)
+        except Exception as e:
+            logger.error(
+                f"Unexpected error while parsing /resource/all response: {e}",
+                exc_info=True,
+            )
+            exit(1)
 
         self.mac_list = []
         self.rssi_list = []
@@ -1974,26 +2557,60 @@ class Youtube(Realm):
         self.wifi_interface_list = []
 
         # Step 3: Retrieve port information
-        response_port = self.json_get("/port/all")
-        interfaces_list = response_port.get('interfaces', [])
+        response_port = self.json_get_with_retry("/port/all")
+        try:
+            interfaces_list = response_port.get('interfaces', [])
 
-        # Step 4: Match ports associated with retrieved resources in the order of ports_list
-        for port_entry in ports_list:
-            expected_eid = port_entry['eid']
-            matched_ports = []
+            # Step 4: Match ports associated with retrieved resources in the order of ports_list
+            for port_entry in ports_list:
+                expected_eid = port_entry['eid']
+                matched_ports = []
+                mac = "NA"
+                rssi = "NA"
+                link_rate = "NA"
+                ssid = "NA"
+                wifi_interface = "NA"
 
-            for interface in interfaces_list:
-                for port, port_data in interface.items():
-                    if '.'.join(port.split('.')[:2]) == expected_eid:
-                        matched_ports.append((port, port_data))
+                for interface in interfaces_list:
+                    for port, port_data in interface.items():
+                        if '.'.join(port.split('.')[:2]) == expected_eid:
+                            matched_ports.append((port, port_data))
 
-            for port_name, port_data in matched_ports:
-                if port_data.get("parent dev") == 'wiphy0' and not port_data.get('down') and port_data.get('ip') != '0.0.0.0':
-                    self.mac_list.append(port_data.get("mac"))
-                    self.rssi_list.append(port_data.get("signal"))
-                    self.link_rate_list.append(port_data.get("rx-rate"))
-                    self.ssid_list.append(port_data.get("ssid"))
-                    self.wifi_interface_list.append(port_name.split('.')[2])
+                for port_name, port_data in matched_ports:
+                    if port_data.get("parent dev") == 'wiphy0' and not port_data.get('down') and port_data.get('ip') != '0.0.0.0':
+                        mac = port_data.get("mac") or "NA"
+                        rssi = port_data.get("signal") if port_data.get("signal") is not None else "NA"
+                        link_rate = port_data.get("rx-rate") if port_data.get("rx-rate") is not None else "NA"
+                        ssid = port_data.get("ssid") or "NA"
+                        port_parts = port_name.split('.')
+                        wifi_interface = port_parts[2] if len(port_parts) > 2 else "NA"
+                        break
+
+                self.mac_list.append(mac)
+                self.rssi_list.append(rssi)
+                self.link_rate_list.append(link_rate)
+                self.ssid_list.append(ssid)
+                self.wifi_interface_list.append(wifi_interface)
+
+                if wifi_interface == "NA":
+                    logger.warning(
+                        "No active wiphy0 interface with a valid IP was found for "
+                        "resource %s; network details will be reported as NA",
+                        expected_eid,
+                    )
+        except KeyError as e:
+            logger.error(
+                f"/port/all response is not in the expected format, missing key {e}. "
+                "Data received:\n%s",
+                json.dumps(response_port, indent=2, default=str),
+            )
+            exit(1)
+        except Exception as e:
+            logger.error(
+                f"Unexpected error while parsing /port/all response: {e}",
+                exc_info=True,
+            )
+            exit(1)
 
     def perform_robo_test(self):
         if self.do_webUI:
@@ -2001,21 +2618,32 @@ class Youtube(Realm):
             nav_data = os.path.join(base_dir, 'nav_data.json')  # To generate nav_data.json in webgui folder
             self.robo_obj.nav_data_path = nav_data
         for coordinate in self.coordinates_list:
+            if self.stop_signal:
+                break
             self.robo_obj.wait_for_battery()
             matched, aborted = self.robo_obj.move_to_coordinate(coord=coordinate)
+            if self.stop_signal:
+                raise WebUIStopRequested
             if not matched:
                 continue
             self.current_cord = coordinate
             if self.rotations_enabled:
                 for angle in self.angles_list:
+                    if self.stop_signal:
+                        break
                     self.robo_obj.wait_for_battery()
                     self.robo_obj.rotate_angle(angle_degree=angle)
                     self.current_angle = angle
                     self.start_generic()
                     duration = self.duration
                     end_time = datetime.now() + timedelta(minutes=duration)
-                    logging.info("Starting data collection for coordinate: %s and angle: %s", coordinate, angle)
-                    while datetime.now() < end_time or not self.check_gen_cx():
+                    logging.info(
+                        "Starting data collection for coordinate %s and angle %s at %s",
+                        coordinate,
+                        angle,
+                        datetime.now().astimezone().isoformat(timespec="seconds"),
+                    )
+                    while (datetime.now() < end_time or not self.check_gen_cx()) and not self.stop_signal:
                         pause, _ = self.robo_obj.wait_for_battery()
                         if pause:
                             self.delete_existing_csvs_for_current_point()
@@ -2023,17 +2651,34 @@ class Youtube(Realm):
                             self.start_generic()
                             end_time = datetime.now() + timedelta(minutes=self.duration)
 
+                        self.monitor_endpoint_status_changes()
                         time.sleep(5)
 
+                    if self.stop_signal:
+                        logging.info(
+                            "Robot YouTube stop requested; deferring CX shutdown "
+                            "to common finalization so clients can upload logs."
+                        )
+                        return
                     self.generic_endps_profile.stop_cx()
+                    logging.info(
+                        "Finished data collection for coordinate %s and angle %s at %s",
+                        coordinate,
+                        angle,
+                        datetime.now().astimezone().isoformat(timespec="seconds"),
+                    )
 
             else:
                 self.start_generic()
                 duration = self.duration
                 end_time = datetime.now() + timedelta(minutes=duration)
-                logging.info("Starting data collection for coordinate: %s", coordinate)
+                logging.info(
+                    "Starting data collection for coordinate %s at %s",
+                    coordinate,
+                    datetime.now().astimezone().isoformat(timespec="seconds"),
+                )
 
-                while datetime.now() < end_time or not self.check_gen_cx():
+                while (datetime.now() < end_time or not self.check_gen_cx()) and not self.stop_signal:
                     pause, _ = self.robo_obj.wait_for_battery()
                     if pause:
                         self.delete_existing_csvs_for_current_point()
@@ -2041,18 +2686,35 @@ class Youtube(Realm):
                         self.start_generic()
                         end_time = datetime.now() + timedelta(minutes=self.duration)
 
+                    self.monitor_endpoint_status_changes()
                     time.sleep(5)
 
+                if self.stop_signal:
+                    logging.info(
+                        "Robot YouTube stop requested; deferring CX shutdown to "
+                        "common finalization so clients can upload logs."
+                    )
+                    return
                 self.generic_endps_profile.stop_cx()
+                logging.info(
+                    "Finished data collection for coordinate %s at %s",
+                    coordinate,
+                    datetime.now().astimezone().isoformat(timespec="seconds"),
+                )
 
     def perform_robo_bandsteering_test(self):
-        logging.info("Starting Band-Steering Robo YouTube Test")
+        logging.info(
+            "Starting band-steering robot YouTube test at %s",
+            datetime.now().astimezone().isoformat(timespec="seconds"),
+        )
 
         self.robo_obj.total_cycles = self.cycles
         self.robo_obj.coordinate_list = self.coordinates_list
         coordinate_list_with_robo = self.robo_obj.get_coordinates_list()
-        time.sleep(5)
+        self.wait_stop_aware(5, "before band-steering coordinate traversal")
         for coordinate in coordinate_list_with_robo:
+            if self.stop_signal:
+                break
             logging.info(f"Moving robot to coordinate: {coordinate}")
             if self.to_coordinate == "":
                 self.to_coordinate = coordinate
@@ -2061,9 +2723,16 @@ class Youtube(Realm):
                 self.from_coordinate = self.to_coordinate
                 self.to_coordinate = coordinate
 
-            self.robo_obj.wait_for_battery()
+            self.robo_obj.wait_for_battery(
+                monitor_function=self.check_robo_stop
+            )
 
-            matched, abort = self.robo_obj.move_to_coordinate(coord=coordinate)
+            matched, abort = self.robo_obj.move_to_coordinate(
+                coord=coordinate,
+                monitor_function=self.check_robo_stop,
+            )
+            if self.stop_signal:
+                raise WebUIStopRequested
             if matched:
                 logger.info("Reached the coordinate {}".format(coordinate))
             if abort:
@@ -2071,25 +2740,44 @@ class Youtube(Realm):
             if not matched:
                 continue
             self.current_cord = coordinate
-            time.sleep(10)
 
-        logging.info("All coordinates completed - stopping Band-Steering Test")
-        self.generic_endps_profile.stop_cx()
+            # Monitor endpoints during the existing dwell so band-steering
+            # follows the same stop and reporting behavior as other modes.
+            coordinate_dwell_deadline = time.monotonic() + 10
+            while time.monotonic() < coordinate_dwell_deadline:
+                self.monitor_endpoint_status_changes()
+                remaining = coordinate_dwell_deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                dwell_poll_deadline = time.monotonic() + min(1, remaining)
+                while time.monotonic() < dwell_poll_deadline:
+                    if self.stop_signal:
+                        logger.info(
+                            "WebUI stop requested during band-steering endpoint "
+                            "monitoring; unwinding directly to report generation."
+                        )
+                        raise WebUIStopRequested
+                    sleep_remaining = dwell_poll_deadline - time.monotonic()
+                    if sleep_remaining <= 0:
+                        break
+                    time.sleep(min(0.25, sleep_remaining))
 
+        if self.stop_signal:
+            logging.info(
+                "Band-steering test stopped before all coordinates completed at %s",
+                datetime.now().astimezone().isoformat(timespec="seconds"),
+            )
+        else:
+            logging.info(
+                "All band-steering coordinates completed at %s; stopping the test",
+                datetime.now().astimezone().isoformat(timespec="seconds"),
+            )
         self.stop_bandsteering_test()
 
     def stop_bandsteering_test(self):
         logging.info("Stopping Band-Steering YouTube Test")
 
-        try:
-            self.generic_endps_profile.stop_cx()
-        except Exception as e:
-            logging.error(f"Error stopping CX: {e}")
-        try:
-            self.generic_endps_profile.cleanup()
-        except Exception as e:
-            logging.error(f"Error during cleanup of CX: {e}")
-
+        # Common finalization waits for client uploads and cleans endpoints once.
         self.stop_signal = True
 
         logging.info("Band-Steering Test stopped")
@@ -2306,8 +2994,8 @@ class Youtube(Realm):
             Reads all CSV files in the current directory that start with '<current_cord>_',
             filters rows up to current_angle, and collects stats:
             - Instance Name
-            - Max Total Frames
-            - Max Dropped Frames
+            - Reset-aware Total Frames
+            - Reset-aware Dropped Frames
             - Viewport
             - Current Resolution
             - Optimal Resolution
@@ -2355,8 +3043,8 @@ class Youtube(Realm):
                 viewport = df_filtered["Viewport"].iloc[-1]
                 current_res = df_filtered["CurrentRes"].iloc[-1]
                 optimal_res = df_filtered["OptimalRes"].iloc[-1]
-                max_total_frames = df_filtered["TotalFrames"].max()
-                max_dropped_frames = df_filtered["DroppedFrames"].max()
+                total_frames = self.sum_reset_counter(df_filtered["TotalFrames"])
+                dropped_frames = self.sum_reset_counter(df_filtered["DroppedFrames"])
                 max_buffer_health = df_filtered["BufferHealth"].max()
                 min_buffer_health = df_filtered["BufferHealth"].min()
 
@@ -2364,8 +3052,8 @@ class Youtube(Realm):
                     "Viewport": viewport,
                     "Current Resolution": current_res,
                     "Optimal Resolution": optimal_res,
-                    "Total Frames": int(max_total_frames),
-                    "Dropped Frames": int(max_dropped_frames),
+                    "Total Frames": total_frames,
+                    "Dropped Frames": dropped_frames,
                     "Max Buffer Health": round(float(max_buffer_health), 2),
                     "Min Buffer Health": round(float(min_buffer_health), 2),
                 }
@@ -2478,6 +3166,9 @@ class Youtube(Realm):
 
 
 def main():
+    iot_summary = None
+    args = None
+    youtube = None
     try:
         help_summary = '''\
         Youtube streaming automation
@@ -2792,7 +3483,7 @@ NOTES:
                 windows_dir=args.windows_dir,
                 linux_dir=args.linux_dir,
                 mac_dir=args.mac_dir)
-            youtube.start_flask_server()
+            youtube.handle_flask_server()
             args.upstream_port = youtube.change_port_to_ip(args.upstream_port)
 
             resources = []
@@ -2914,23 +3605,28 @@ NOTES:
                 exit(0)
 
             if len(youtube.real_sta_list) > 0:
-                logging.info(f"checking real sta list while creating endpionts {youtube.real_sta_list}")
+                logging.info(
+                    "Creating YouTube endpoints for selected interfaces: %s",
+                    ", ".join(youtube.real_sta_list),
+                )
                 youtube.create_generic_endp()
             else:
-                logging.info(f"checking real sta list while creating endpionts {youtube.real_sta_list}")
-                logging.error("No Real Devies Available")
+                logging.error("No usable real devices are available")
                 exit(0)
 
             if args.do_webUI:
                 youtube.update_webui()
 
-            logging.info("TEST STARTED")
             if args.do_bandsteering:
-                logging.info('Running the Youtube Streaming until robo finishes all the cycles')
+                logging.info("YouTube streaming will run until all robot cycles finish")
             else:
-                logging.info('Running the Youtube Streaming test for {} minutes'.format(duration))
+                logging.info(
+                    "YouTube streaming is configured to run for %d minute(s)",
+                    duration,
+                )
 
-            time.sleep(10)
+            logging.info("Waiting 10 seconds before starting YouTube streaming")
+            youtube.wait_stop_aware(10, "before YouTube streaming started")
 
             youtube.start_time = datetime.now()
             if args.do_robo:
@@ -2944,13 +3640,17 @@ NOTES:
                 duration = args.duration
                 end_time = datetime.now() + timedelta(minutes=duration)
 
-                while datetime.now() < end_time or not youtube.check_gen_cx():
+                while (datetime.now() < end_time or not youtube.check_gen_cx()) and not youtube.stop_signal:
+                    youtube.monitor_endpoint_status_changes()
                     time.sleep(1)
 
-                youtube.generic_endps_profile.stop_cx()
-                logging.info("Duration ended")
+                if not youtube.stop_signal:
+                    youtube.generic_endps_profile.stop_cx()
+                logging.info(
+                    "YouTube streaming finished at %s",
+                    datetime.now().astimezone().isoformat(timespec="seconds"),
+                )
 
-            iot_summary = None
             if args.iot_test and args.iot_testname:
                 base = os.path.join("results", args.iot_testname)
                 p = os.path.join(base, "iot_summary.json")
@@ -2958,28 +3658,28 @@ NOTES:
                     with open(p) as f:
                         iot_summary = json.load(f)
 
-            logging.info('Stopping the test')
-
-            # Perform post-test cleanup if not skipped
-            if not args.no_post_cleanup:
-                youtube.generic_endps_profile.cleanup()
+            logging.info("Stopping the YouTube test")
+    except WebUIStopRequested:
+        logging.info(
+            "WebUI stop acknowledged during endpoint retry; entering report generation."
+        )
+    except AllEndpointsUnreachable as exc:
+        logging.error("%s; entering report generation.", exc)
     except Exception as e:
         logging.error(f"Error occured {e}")
         tb_str = traceback.format_exc()  # capture traceback as string
         logger.error("An exception occurred:\n%s", tb_str)
     finally:
-        if not ('--help' in sys.argv or '-h' in sys.argv):
-            if args.do_webUI:
-                youtube.stop_webui_test()
-            youtube.stop()
-            if args.do_robo and not args.do_bandsteering:
-                youtube.create_robo_report()
-            elif args.do_webUI:
-                youtube.create_report(youtube.stats_api_response, youtube.ui_report_dir, iot_summary=iot_summary)
-            else:
-                youtube.create_report(youtube.stats_api_response, '', iot_summary=iot_summary)
-            logging.info("Waiting for Cleanup of Browsers in Devices")
-            time.sleep(10)
+        if (
+            args is not None
+            and youtube is not None
+            and not ('--help' in sys.argv or '-h' in sys.argv)
+        ):
+            youtube.finalize_test_run(args, iot_summary=iot_summary)
+            logging.info(
+                "YouTube test and report generation completed at %s",
+                datetime.now().astimezone().isoformat(timespec="seconds"),
+            )
 
 
 if __name__ == "__main__":

@@ -967,10 +967,21 @@ class L3VariableTime(Realm):
         self.polling_interval = polling_interval
         self.cx_profile = self.new_l3_cx_profile()
         self.multicast_profile = self.new_multicast_profile()
+        self.missing_endp_logged = set()
+        self.not_running_endp_logged = set()
+        self.missing_cx_logged = set()
+        self.not_running_cx_logged = set()
+        self.mtx_endps = set()
+        self.mrx_endps = set()
         self.multicast_profile.name_prefix = "MLT-"
         self.station_profiles = []
         self.args = args
         self.outfile = outfile
+        self.client_issue_csv_name = os.path.join(os.path.dirname(self.outfile),
+                                                  "client_issue.csv")
+        self.need_endps_stopped = False
+        self.actual_test_duration_display = None
+        self.bandsteering_start_time = None
         self.csv_started = False
         self.epoch_time = int(time.time())
         self.debug = debug
@@ -1428,6 +1439,7 @@ class L3VariableTime(Realm):
         dur = self.duration_time_to_seconds(self.test_duration)
 
         if self.polling_interval_seconds > dur + 1:
+            logger.info(f"Polling interval {self.polling_interval_seconds} is greater than test duration {dur}. Setting polling interval to {dur - 1} seconds.")
             self.polling_interval_seconds = dur - 1
 
         # Full spread-sheet data
@@ -1460,6 +1472,7 @@ class L3VariableTime(Realm):
                 json.dump({}, file)
 
             # self.robot_obj.robo_ip = f"{self.robo_ip}" # Fake Server Testing
+            self.robot_obj.ip = self.ip
             self.robot_obj.nav_data_path = nav_data
             self.robot_obj.result_directory = os.path.dirname(nav_data)
             self.robot_obj.runtime_dir = self.result_dir
@@ -1474,6 +1487,13 @@ class L3VariableTime(Realm):
         # if it is a dataplane test the side_a is not None and an ethernet port
         # if side_a is None then side_a is radios
         if not self.dataplane:
+            # Use existing station list is similiar to no rebuild
+            if self.use_existing_station_lists:
+                station_profile = self.new_station_profile()
+                for existing_station_list in self.existing_station_lists:
+                    station_profile.station_names.append(existing_station_list)
+
+                self.station_profiles.append(station_profile)
             for (
                     _radio_,
                     ssid_,
@@ -1615,13 +1635,6 @@ class L3VariableTime(Realm):
                                                 reset_port_max_time=reset_port_max_time_sec)
                 self.station_profiles.append(station_profile)
 
-            # Use existing station list is similiar to no rebuild
-            if self.use_existing_station_lists:
-                station_profile = self.new_station_profile()
-                for existing_station_list in self.existing_station_lists:
-                    station_profile.station_names.append(existing_station_list)
-
-                self.station_profiles.append(station_profile)
         else:
             # Dataplane style test
             #
@@ -1855,13 +1868,6 @@ class L3VariableTime(Realm):
     # Query all endpoints to generate rx and other stats, returned
     # as an array of objects.
     def __get_rx_values(self):
-        endp_list = self.json_get(
-            "endp?fields=name,eid,delay,jitter,rx+rate,rx+rate+ll,rx+bytes,rx+drop+%25,rx+pkts+ll",
-            debug_=False)
-        # multicast only shows tx rates
-        # endp_list = self.json_get(
-        #    "endp?fields=name,eid,delay,jitter,tx+rate,tx+rate+ll,tx+bytes,tx+drop+%25,tx+pkts+ll",
-        #    debug_=False)
 
         endp_rx_drop_map = {}
         endp_rx_map = {}
@@ -1872,101 +1878,100 @@ class L3VariableTime(Realm):
         total_ul_ll = 0
         total_dl = 0
         total_dl_ll = 0
+        # For multicast checking the alteast one tx and alteast one rx endpoint is there if not exiting
+        if self.mtx_endps:
+            available = self.monitor_endp_availability(self.mtx_endps)
+            if not available:
+                return False, endp_rx_map, endp_rx_drop_map, endps, total_dl, total_ul, total_dl_ll, total_ul_ll
+            endpoint = self.monitor_endp_availability(self.mrx_endps, return_endpoint_data=True)
+            if not endpoint:
+                return False, endp_rx_map, endp_rx_drop_map, endps, total_dl, total_ul, total_dl_ll, total_ul_ll
+        # Checking atleast one cx is there if not exiting
+        else:
+            available = self.monitor_cx_availability(self.cx_profile.get_cx_names())
+            if not available:
+                return False, endp_rx_map, endp_rx_drop_map, endps, total_dl, total_ul, total_dl_ll, total_ul_ll
+            endp_url = "endp?fields=name,eid,delay,jitter,rx+rate,rx+rate+ll,rx+bytes,rx+drop+%25,rx+pkts+ll,run"
+            endp_list = self.json_get(endp_url, debug_=True)
+            if not endp_list:
+                logger.error(
+                    "Failed to fetch endpoints. Received empty response.\n"
+                    f"Requested URL: '{endp_url}'\n"
+                    f"Response: {endp_list}")
+                return False, endp_rx_map, endp_rx_drop_map, endps, total_dl, total_ul, total_dl_ll, total_ul_ll
+            endpoint = endp_list.get('endpoint', [])
+            if isinstance(endpoint, dict):
+                endpoint = [{endpoint['name']: endpoint}]
 
         # Multicast endpoints
         for e in self.multicast_profile.get_mc_names():
             our_endps[e] = e
-        try:
-            for endp_name in endp_list['endpoint']:
-                logger.debug("endpoint: {}".format(endp_name))
-                if endp_name != 'uri' and endp_name != 'handler':
-                    for item, endp_value in endp_name.items():
-                        # multicast does not support use existing: or self.use_existing_station_lists:
-                        if item in our_endps:
-                            # endps.append(endp_value) need to see how to affect
-                            # NOTE: during each monitor period the rates are added to get the totals
-                            # this is done so that if there is an issue the rate information will be in
-                            # the csv for the individual polling period
-                            logger.debug(
-                                "multicast endpoint: {item} value:\n".format(item=item))
-                            logger.debug(endp_value)
-                            for value_name, value in endp_value.items():
-                                if isinstance(value, str) and not value.isnumeric():
-                                    logging.debug(
-                                        'Expected integer response for rx rate, received non-numeric string instead. Replacing with 0')
-                                    value = 0
-                                if value_name == 'rx rate':
-                                    # This hack breaks for mcast or if someone names endpoints weirdly.
-                                    # logger.info("item: ", item, " rx-bps: ", value_rx_bps)
-                                    if "-mrx-" in item:
-                                        total_dl += int(value)
-                                    else:
-                                        total_ul += int(value)
-                                if value_name == 'rx rate ll':
-                                    # This hack breaks for mcast or if someone
-                                    # names endpoints weirdly.
-                                    if "-mrx-" in item:
-                                        total_dl_ll += int(value)
-                                    else:
-                                        total_ul_ll += int(value)
 
-                                # TODO need a way to report rates
-        except Exception as e:
-            overall_response = self.json_get('/cx/all/')
-            logger.info(overall_response)
-            logger.error(f"Endpoint not fetched from API {e}")
+        for endp_name in endpoint:
+            logger.debug("endpoint: {}".format(endp_name))
+            for item, endp_value in endp_name.items():
+                if item in our_endps:
+                    logger.debug(
+                        "multicast endpoint: {item} value:\n".format(item=item))
+                    logger.debug(endp_value)
+                    for value_name, value in endp_value.items():
+                        if isinstance(value, str) and not value.isnumeric():
+                            logging.debug(
+                                'Expected integer response for rx rate, received non-numeric string instead. Replacing with 0')
+                            value = 0
+                        if value_name == 'rx rate':
+                            if "-mrx-" in item:
+                                total_dl += int(value)
+                            else:
+                                total_ul += int(value)
+                        if value_name == 'rx rate ll':
+                            if "-mrx-" in item:
+                                total_dl_ll += int(value)
+                            else:
+                                total_ul_ll += int(value)
+
         # Unicast endpoints
         for e in self.cx_profile.created_endp.keys():
             our_endps[e] = e
-        try:
-            for endp_name in endp_list['endpoint']:
-                if endp_name != 'uri' and endp_name != 'handler':
-                    for item, endp_value in endp_name.items():
-                        if item in our_endps or self.use_existing_station_lists:
-                            endps.append(endp_value)
-                            logger.debug(
-                                "endpoint: {item} value:\n".format(item=item))
-                            logger.debug(endp_value)
+        for endp_name in endpoint:
+            for item, endp_value in endp_name.items():
+                if item in our_endps:
+                    endps.append(endp_value)
+                    logger.debug(
+                        "endpoint: {item} value:\n".format(item=item))
+                    logger.debug(endp_value)
 
-                            for value_name, value in endp_value.items():
-                                if value_name == 'rx bytes':
-                                    endp_rx_map[item] = value
-                                if value_name == 'rx rate':
-                                    endp_rx_map[item] = value
-                                if value_name == 'rx rate ll':
-                                    endp_rx_map[item] = value
-                                if value_name == 'rx pkts ll':
-                                    endp_rx_map[item] = value
-                                if value_name == 'rx drop %':
-                                    endp_rx_drop_map[item] = value
-                                if value_name == 'rx rate':
-                                    if isinstance(value, str) and not value.isnumeric():
-                                        logging.debug(
-                                            'Expected integer response for rx rate, received non-numeric string instead. Replacing with 0')
-                                        value = 0
-                                    # This hack breaks for mcast or if someone names endpoints weirdly.
-                                    # logger.info("item: ", item, " rx-bps: ", value_rx_bps)
-                                    if item.endswith("-A"):
-                                        total_dl += int(value)
-                                    elif item.endswith("-B"):
-                                        total_ul += int(value)
-                                if value_name == 'rx rate ll':
-                                    if isinstance(value, str) and not value.isnumeric():
-                                        logging.debug(
-                                            'Expected integer response for rx rate ll, received non-numeric string instead. Replacing with 0')
-                                        value = 0
-                                    # This hack breaks for mcast or if someone
-                                    # names endpoints weirdly.
-                                    if item.endswith("-A"):
-                                        total_dl_ll += int(value)
-                                    elif item.endswith("-B"):
-                                        total_ul_ll += int(value)
-        except Exception as e:
-            overall_response = self.json_get('/cx/all/')
-            logger.info(overall_response)
-            logger.error(f"Endpoint not fetched from API {e}")
+                    for value_name, value in endp_value.items():
+                        if value_name == 'rx bytes':
+                            endp_rx_map[item] = value
+                        if value_name == 'rx rate':
+                            endp_rx_map[item] = value
+                        if value_name == 'rx rate ll':
+                            endp_rx_map[item] = value
+                        if value_name == 'rx pkts ll':
+                            endp_rx_map[item] = value
+                        if value_name == 'rx drop %':
+                            endp_rx_drop_map[item] = value
+                        if value_name == 'rx rate':
+                            if isinstance(value, str) and not value.isnumeric():
+                                logging.debug(
+                                    'Expected integer response for rx rate, received non-numeric string instead. Replacing with 0')
+                                value = 0
+                            if item.endswith("-A"):
+                                total_dl += int(value)
+                            elif item.endswith("-B"):
+                                total_ul += int(value)
+                        if value_name == 'rx rate ll':
+                            if isinstance(value, str) and not value.isnumeric():
+                                logging.debug(
+                                    'Expected integer response for rx rate ll, received non-numeric string instead. Replacing with 0')
+                                value = 0
+                            if item.endswith("-A"):
+                                total_dl_ll += int(value)
+                            elif item.endswith("-B"):
+                                total_ul_ll += int(value)
         # logger.debug("total-dl: ", total_dl, " total-ul: ", total_ul, "\n")
-        return endp_rx_map, endp_rx_drop_map, endps, total_dl, total_ul, total_dl_ll, total_ul_ll
+        return True, endp_rx_map, endp_rx_drop_map, endps, total_dl, total_ul, total_dl_ll, total_ul_ll
     # This script supports resetting ports, allowing one to test AP/controller under data load
     # while bouncing wifi stations.  Check here to see if we should reset
     # ports.
@@ -2106,9 +2111,23 @@ class L3VariableTime(Realm):
         else:
             # TODO for multicast when using single station there needs to be an interop mode
             # with a single transmitter for all of the multi-cast
+            for etype in self.endp_types:
+                # TODO multi cast build each type only once
+                if etype == "mc_udp" or etype == "mc_udp6":
+                    # TODO add multicast to name be passed in
+                    for _tos in self.tos:
+                        logger.info("Creating Multicast upstream connections for endpoint type:  {etype} TOS: {tos}".format(
+                            etype=etype, tos=_tos))
+                        self.multicast_profile.create_mc_tx(
+                            etype, self.side_b, tos=_tos, add_tos_to_name=True)
+            self.mtx_endps = self.multicast_profile.get_mc_names()
             logger.info("Creating test station port(s)")
-            for station_profile in self.station_profiles:
-                if not rebuild and not self.use_existing_station_lists:
+            # For real + virtual or existing + virtual combinations, the first
+            # station profile represents the real/existing stations. Only the
+            # remaining profiles are used to create virtual stations, so skip
+            # station creation for i == 0 when using existing station lists.
+            for i, station_profile in enumerate(self.station_profiles):
+                if not rebuild and (not self.use_existing_station_lists or self.use_existing_station_lists and i != 0):
                     station_profile.use_security(
                         station_profile.security,
                         station_profile.ssid,
@@ -2135,8 +2154,6 @@ class L3VariableTime(Realm):
                         for _tos in self.tos:
                             logger.info("Creating Multicast connections for endpoint type:  {etype} TOS: {tos}".format(
                                 etype=etype, tos=_tos))
-                            self.multicast_profile.create_mc_tx(
-                                etype, self.side_b, tos=_tos, add_tos_to_name=True)
                             self.multicast_profile.create_mc_rx(
                                 etype, side_rx=station_profile.station_names, tos=_tos, add_tos_to_name=True)
 
@@ -2154,6 +2171,11 @@ class L3VariableTime(Realm):
                                 self.tcp_endps = self.tcp_endps + these_endp
                             # after we create the cxs, append to global
                             self.cx_names.append(these_cx)
+            # for getting only the rx endpoints in the case of multicast
+            if self.mtx_endps:
+                for endp in self.multicast_profile.get_mc_names():
+                    if endp not in self.mtx_endps:
+                        self.mrx_endps.add(endp)
 
         self.cx_count = self.cx_profile.get_cx_count()
 
@@ -2207,13 +2229,25 @@ class L3VariableTime(Realm):
                 "summary": {},
             }
 
-        endp_data = self.json_get(
-            "endp/all?fields=name,tx+rate,rx+rate,rx+bytes,a/b,tos,eid,type,rx+drop+%25"
-        )
+        url = "/endp/all?fields=name,tx+rate,rx+rate,rx+bytes,a/b,tos,eid,type,rx+drop+%25"
+        endp_data = self.json_get(url, debug_=True)
         endpoints = {}
 
-        if endp_data and "endpoint" in endp_data:
-            for endp_item in endp_data["endpoint"]:
+        if endp_data is None:
+            logger.error(
+                "Failed to fetch endpoint data. Received empty response.\n"
+                f"Requested URL: '{url}'\n"
+                f"Response: {endp_data}")
+        elif "endpoint" not in endp_data:
+            logger.error(
+                "'endpoint' key not found in response.\n"
+                f"Requested URL: '{url}'\n"
+                f"Response: {endp_data}")
+        else:
+            endpoint_list = endp_data["endpoint"]
+            if isinstance(endpoint_list, dict):
+                endpoint_list = [{endpoint_list['name']: endpoint_list}]
+            for endp_item in endpoint_list:
                 for name, info in endp_item.items():
                     endpoints[name] = info
 
@@ -2325,10 +2359,8 @@ class L3VariableTime(Realm):
             logger.info(f"Moving to coordinate {coord_index}: {coordinate}")
 
             pause_coord, test_stopped_by_user = self.robot_obj.wait_for_battery(self.stop)
-            if pause_coord:
-                print("Test stopped by user, exiting...")
-                exit(0)
-            if self.test_stopped_user:
+            if test_stopped_by_user:
+                logger.info("Test stopped by user, exiting...")
                 break
 
             # Move robot to coordinate
@@ -2343,9 +2375,9 @@ class L3VariableTime(Realm):
                     # Rotation mode - run test at each rotation angle
                     for angle_index, rotation_angle in enumerate(self.rotation_list):
                         pause_coord, test_stopped_by_user = self.robot_obj.wait_for_battery(self.stop)
-                        if pause_coord:
-                            print("Test stopped by user, exiting...")
-                            exit(0)
+                        if test_stopped_by_user:
+                            logger.info("Test stopped by user, exiting...")
+                            break
                         logger.info(f"Rotating to angle {angle_index}: {rotation_angle} degrees")
 
                         robo_rotated = self.robot_obj.rotate_angle(rotation_angle)
@@ -2353,8 +2385,16 @@ class L3VariableTime(Realm):
                         if robo_rotated:
                             logger.info(f"Successfully rotated to {rotation_angle} degrees")
                             self.perform_robo_multicast(coordinate=coordinate, rotation=rotation_angle)
+                            if self.need_endps_stopped:
+                                logger.info("Required endpoints stopped, exiting without performing other rotations ...")
+                                self.robot_obj.update_nav_data_for_all_cxs_stopped()
+                                break
                         else:
                             logger.error(f"Failed to rotate to angle {rotation_angle} at coordinate {coordinate}")
+                if self.need_endps_stopped:
+                    logger.info("Required endpoints stopped, exiting without moving to the other coordinates ...")
+                    self.robot_obj.update_nav_data_for_all_cxs_stopped()
+                    break
             else:
                 logger.error(f"Failed to move to coordinate {coordinate}")
 
@@ -2418,8 +2458,12 @@ class L3VariableTime(Realm):
             logger.info("Exiting test")
             exit(1)
         self.robot_obj.do_bandsteering = True
-        ul, dl, ul_pdu_str, dl_pdu_str, atten_val, ul_pdu, dl_pdu, passes, expected_passes, coordinate, rotation = self.start()
-        logger.info("Starting CXs")
+        available, ul, dl, ul_pdu_str, dl_pdu_str, atten_val, ul_pdu, dl_pdu, passes, expected_passes, coordinate, rotation = self.start()
+        if not available:
+            logger.warning("Endpoint data not available, so not going to monitor and skipping band steering test.")
+            return 0
+        # the bandsteering_start_time is used to calculate the actual test duration as we call the monitor multiple times unlike others
+        self.bandsteering_start_time = datetime.datetime.now()
         for coordinate in cycle_coords:
             if test_stopped_by_user:
                 break
@@ -2428,14 +2472,22 @@ class L3VariableTime(Realm):
             # If test is stopped by user during battery wait
             if test_stopped_by_user:
                 break
+            if self.need_endps_stopped:
+                logger.info("Required endpoints stopped, exiting band steering test ...")
+                self.actual_test_duration_display = self.format_duration(datetime.datetime.now() - self.bandsteering_start_time)
+                break
             robo_moved, abort, test_data = self.robot_obj.move_to_coordinate(coordinate, monitor_function=lambda: self.monitor(ul, dl, ul_pdu_str, dl_pdu_str, atten_val, coordinate, rotation))
+            if robo_moved:
+                logger.info("Reached the coordinate {}".format(coordinate))
             # If robot failed to reach the coordinate
             if abort:
                 break
+            if self.need_endps_stopped:
+                logger.info("Required endpoints stopped, exiting band steering test ...")
+                self.actual_test_duration_display = self.format_duration(datetime.datetime.now() - self.bandsteering_start_time)
+                break
             if not robo_moved:
                 continue
-            if robo_moved:
-                logger.info("Reached the coordinate {}".format(coordinate))
         self.process_port_interval_statistics(self.total_dl_bps, self.total_ul_bps, self.total_dl_ll_bps, self.total_ul_ll_bps,
                                               ul, dl, ul_pdu_str, dl_pdu_str, ul_pdu, dl_pdu, atten_val, passes, expected_passes)
         # total_dl_bps,total_ul_bps,total_dl_ll
@@ -2450,13 +2502,27 @@ class L3VariableTime(Realm):
             dict: Collected client data for the given TOS, including clients,
                 uplink/downlink rates, resource aliases, and port signals.
         """
-        port_data = self.json_get('port/all?fields=signal,signal')
+        port_url = 'port/all?fields=signal,signal'
+        port_data = self.json_get(port_url, debug_=True)
+        if not port_data:
+            logger.error(
+                "Failed to fetch port data. Received empty response.\n"
+                f"Requested URL: '{port_url}'\n"
+                f"Response: {port_data}")
+            port_data = {}
         port_data.pop("handler", None)
         port_data.pop("uri", None)
         port_data.pop("warnings", None)
 
         # Gather resource data (only need hostname for alias)
-        resource_data = self.json_get('resource/all?fields=eid,hostname')
+        resource_url = 'resource/all?fields=eid,hostname'
+        resource_data = self.json_get(resource_url, debug_=True)
+        if not resource_data:
+            logger.error(
+                "Failed to fetch resource data. Received empty response.\n"
+                f"Requested URL: '{resource_url}'\n"
+                f"Response: {resource_data}")
+            resource_data = {}
         resource_data.pop("handler", None)
         resource_data.pop("uri", None)
         if not self.dowebgui:
@@ -2469,14 +2535,22 @@ class L3VariableTime(Realm):
 
         # Gather endpoint data (name, tx/rx rate, a/b, tos, eid, type)
         endp_type_present = False
-        endp_data = self.json_get('endp/all?fields=name,tx+rate,rx+rate,a/b,tos,eid,type')
+        endp_url = 'endp/all?fields=name,tx+rate,rx+rate,a/b,tos,eid,type'
+        endp_data = self.json_get(endp_url, debug_=True)
         if endp_data is not None:
             endp_type_present = True
         else:
             logger.info(
                 "Consider upgrading to 5.4.7 + endp field type not supported in LANforge GUI version results for Multicast reversed in graphs and tables")
-            endp_data = self.json_get('endp/all?fields=name,tx+rate,rx+rate,a/b,eid')
+            endp_url = 'endp/all?fields=name,tx+rate,rx+rate,a/b,eid'
+            endp_data = self.json_get(endp_url, debug_=True)
             endp_type_present = False
+        if not endp_data:
+            logger.error(
+                "Failed to fetch endpoint data. Received empty response.\n"
+                f"Requested URL: '{endp_url}'\n"
+                f"Response: {endp_data}")
+            endp_data = {}
         endp_data.pop("handler", None)
         endp_data.pop("uri", None)
 
@@ -2493,7 +2567,11 @@ class L3VariableTime(Realm):
         resource_alias_B = []
         port_signal_B = []
 
-        for endp in endp_data['endpoint']:
+        endpoint = endp_data.get('endpoint', [])
+        if isinstance(endpoint, dict):
+            endp_data['endpoint'] = [{endpoint['name']: endpoint}]
+
+        for endp in endp_data.get('endpoint', []):
             endp_key = list(endp.keys())[0]
             endp_info = endp[endp_key]
 
@@ -2505,7 +2583,7 @@ class L3VariableTime(Realm):
                 # Resource lookup (for alias)
                 eid_tmp_resource = f"{self.name_to_eid(endp_info['eid'])[0]}.{self.name_to_eid(endp_info['eid'])[1]}"
                 alias = 'NA'
-                for res in resource_data['resources']:
+                for res in resource_data.get('resources', []):
                     res_key = list(res.keys())[0]
                     if res_key == eid_tmp_resource:
                         # resource_found = True
@@ -2520,7 +2598,7 @@ class L3VariableTime(Realm):
                 eid_info = endp_info['name'].split('-')
                 eid_tmp_port = f"{eid_tmp_resource}.{eid_info[3 if endp_type_present and endp_info['type'] == 'Mcast' else 1]}"
                 signal = 'NA'
-                for port in port_data['interfaces']:
+                for port in port_data.get('interfaces', []):
                     port_key = list(port.keys())[0]
                     if port_key == eid_tmp_port:
                         signal = port[port_key]['signal']
@@ -2654,8 +2732,9 @@ class L3VariableTime(Realm):
             "-dl-all-eids-sum-per-interval.csv"
 
         # add some calculations, will need some selectable graphs
-        logger.info("all_dl_ports_stations_sum_df : {df}".format(
-            df=all_dl_ports_stations_sum_df))
+        if not self.dowebgui:
+            logger.info("all_dl_ports_stations_sum_df : {df}".format(
+                df=all_dl_ports_stations_sum_df))
 
         if all_dl_ports_stations_sum_df.empty:
             logger.warning(
@@ -2918,11 +2997,14 @@ class L3VariableTime(Realm):
                     passes = 0
                     expected_passes = 0
                     logger.info("Getting initial values.")
-                    self.__get_rx_values()
+                    available = self.__get_rx_values()[0]
                     self.overall = []
                     # monitor stats
                     if self.do_bandsteering:
-                        return ul, dl, ul_pdu_str, dl_pdu_str, atten_val, ul_pdu, dl_pdu, passes, expected_passes, coordinate, rotation
+                        return available, ul, dl, ul_pdu_str, dl_pdu_str, atten_val, ul_pdu, dl_pdu, passes, expected_passes, coordinate, rotation
+                    if not available:
+                        logger.warning("Endpoint data not available, skipping monitoring.")
+                        continue
                     total_dl_bps, total_ul_bps, total_dl_ll_bps, total_ul_ll_bps = self.monitor(ul, dl, ul_pdu_str, dl_pdu_str, atten_val, coordinate, rotation)
                     self.process_port_interval_statistics(total_dl_bps, total_ul_bps, total_dl_ll_bps, total_ul_ll_bps, ul, dl,
                                                           ul_pdu_str, dl_pdu_str, ul_pdu, dl_pdu, atten_val, passes, expected_passes)
@@ -2976,6 +3058,15 @@ class L3VariableTime(Realm):
         # individual_device_data = {}
         # Monitor loop
         bandsteering_data = None
+        if self.need_endps_stopped and self.do_bandsteering:
+            logger.info("Required endpoints stopped, moving to the respective coordinate..")
+            data = {
+                "total_dl_bps": total_dl_bps,
+                "total_ul_bps": total_ul_bps,
+                "total_dl_ll_bps": total_dl_ll_bps,
+                "total_ul_ll_bps": total_ul_ll_bps
+            }
+            return data
         while cur_time < end_time:
             # interval_time = cur_time + datetime.timedelta(seconds=5)
             interval_time = cur_time + \
@@ -2994,7 +3085,24 @@ class L3VariableTime(Realm):
                     self.reset_port_check()
 
             self.epoch_time = int(time.time())
-            endp_rx_map, endp_rx_drop_map, endps, total_dl_bps, total_ul_bps, total_dl_ll_bps, total_ul_ll_bps = self.__get_rx_values()
+            available, endp_rx_map, endp_rx_drop_map, endps, total_dl_bps, total_ul_bps, total_dl_ll_bps, total_ul_ll_bps = self.__get_rx_values()
+            if not available:
+                logger.warning("Endpoint data not available, exiting monitoring loop early.")
+                self.actual_test_duration_display = self.format_duration(cur_time - start_time)
+                self.need_endps_stopped = True
+                if self.do_bandsteering:
+                    self.total_dl_bps = total_dl_bps
+                    self.total_ul_bps = total_ul_bps
+                    self.total_dl_ll_bps = total_dl_ll_bps
+                    self.total_ul_ll_bps = total_ul_ll_bps
+                    data = {
+                        "total_dl_bps": total_dl_bps,
+                        "total_ul_bps": total_ul_bps,
+                        "total_dl_ll_bps": total_dl_ll_bps,
+                        "total_ul_ll_bps": total_ul_ll_bps
+                    }
+                    return data
+                return total_dl_bps, total_ul_bps, total_dl_ll_bps, total_ul_ll_bps
 
             log_msg = "main loop, total-dl: {total_dl_bps} total-ul: {total_ul_bps} total-dl-ll: {total_dl_ll_bps}".format(
                 total_dl_bps=total_dl_bps, total_ul_bps=total_ul_bps, total_dl_ll_bps=total_dl_ll_bps)
@@ -3120,22 +3228,21 @@ class L3VariableTime(Realm):
                                               eid[1], eid[2])
 
                     # read LANforge to get the mac
-                    response = self.json_get(url)
-                    if (response is None) or ("interface" not in response):
-                        logger.info(
-                            "query-port: %s: incomplete response:" % url)
-                        logger.info(pformat(response))
+                    response = self.json_get(url, debug_=True)
+                    if response is None:
+                        logger.error(
+                            "Failed to fetch port data. Received empty response.\n"
+                            f"Requested URL: '{url}'\n"
+                            f"Response: {response}")
+                        continue
+                    elif "interface" not in response:
+                        logger.error(
+                            "'interface' key not found in response.\n"
+                            f"Requested URL: '{url}'\n"
+                            f"Response: {response}")
+                        continue
                     else:
-                        if not self.dowebgui:
-                            # print("response".format(response))
-                            logger.info(pformat(response))
                         port_data = response['interface']
-                        logger.info(
-                            "From LANforge: port_data, response['insterface']:{}".format(port_data))
-                        mac = port_data['mac']
-                        if not self.dowebgui:
-                            logger.info(
-                                "From LANforge: port_data, response['insterface']:{}".format(port_data))
                         mac = port_data['mac']
                         logger.debug("mac : {mac}".format(mac=mac))
 
@@ -3150,76 +3257,76 @@ class L3VariableTime(Realm):
                         self.get_endp_stats_for_port(
                             port_data["port"], endps)
 
-                    if tx_dl_mac_found:
-                        if not self.dowebgui:
-                            logger.info("mac {mac} ap_row_tx_dl {ap_row_tx_dl}".format(
-                                mac=mac, ap_row_tx_dl=ap_row_tx_dl))
-                        # Find latency, jitter for connections
-                        # using this port.
-                        (latency, jitter, total_dl_rate, total_dl_rate_ll, total_dl_pkts_ll,
-                            dl_rx_drop_percent, total_ul_rate, total_ul_rate_ll,
-                            total_ul_pkts_ll, ul_rx_drop_percent) = self.get_endp_stats_for_port(
-                            port_data["port"], endps)
+                        if tx_dl_mac_found:
+                            if not self.dowebgui:
+                                logger.info("mac {mac} ap_row_tx_dl {ap_row_tx_dl}".format(
+                                    mac=mac, ap_row_tx_dl=ap_row_tx_dl))
+                            # Find latency, jitter for connections
+                            # using this port.
+                            (latency, jitter, total_dl_rate, total_dl_rate_ll, total_dl_pkts_ll,
+                                dl_rx_drop_percent, total_ul_rate, total_ul_rate_ll,
+                                total_ul_pkts_ll, ul_rx_drop_percent) = self.get_endp_stats_for_port(
+                                port_data["port"], endps)
 
-                        ap_row_tx_dl.append(ap_row_chanim)
+                            ap_row_tx_dl.append(ap_row_chanim)
 
-                        if self.do_bandsteering:
-                            robot_x, robot_y, from_coordinate, to_coordinate = self.robot_obj.get_robot_pose()
-                            bandsteering_data = [robot_x, robot_y, from_coordinate, to_coordinate]
+                            if self.do_bandsteering:
+                                robot_x, robot_y, from_coordinate, to_coordinate = self.robot_obj.get_robot_pose()
+                                bandsteering_data = [robot_x, robot_y, from_coordinate, to_coordinate]
 
-                        self.write_dl_port_csv(
-                            len(self.station_names_list),
-                            ul,
-                            dl,
-                            ul_pdu_str,
-                            dl_pdu_str,
-                            atten_val,
-                            port_eid,
-                            port_data,
-                            latency,
-                            jitter,
-                            total_ul_rate,
-                            total_ul_rate_ll,
-                            total_ul_pkts_ll,
-                            ul_rx_drop_percent,
-                            total_dl_rate,
-                            total_dl_rate_ll,
-                            total_dl_pkts_ll,
-                            dl_rx_drop_percent,
-                            ap_row_tx_dl,
-                            bandsteering_data=bandsteering_data)  # this is where the AP data is added
+                            self.write_dl_port_csv(
+                                len(self.station_names_list),
+                                ul,
+                                dl,
+                                ul_pdu_str,
+                                dl_pdu_str,
+                                atten_val,
+                                port_eid,
+                                port_data,
+                                latency,
+                                jitter,
+                                total_ul_rate,
+                                total_ul_rate_ll,
+                                total_ul_pkts_ll,
+                                ul_rx_drop_percent,
+                                total_dl_rate,
+                                total_dl_rate_ll,
+                                total_dl_pkts_ll,
+                                dl_rx_drop_percent,
+                                ap_row_tx_dl,
+                                bandsteering_data=bandsteering_data)  # this is where the AP data is added
 
-                        # now report the ap_chanim_stats
+                            # now report the ap_chanim_stats
 
-                    if rx_ul_mac_found:
-                        # Find latency, jitter for connections
-                        # using this port.
-                        # latency, jitter, total_dl_rate, total_dl_rate_ll, total_dl_pkts_ll, dl_rx_drop_percent, total_ul_rate,
-                        # total_ul_rate_ll, total_ul_pkts_ll, ul_tx_drop_percent = self.get_endp_stats_for_port(
-                        #    port_data["port"], endps)
-                        self.write_ul_port_csv(
-                            len(self.station_names_list),
-                            ul,
-                            dl,
-                            ul_pdu_str,
-                            dl_pdu_str,
-                            atten_val,
-                            port_eid,
-                            port_data,
-                            latency,
-                            jitter,
-                            total_ul_rate,
-                            total_ul_rate_ll,
-                            total_ul_pkts_ll,
-                            ul_rx_drop_percent,
-                            total_dl_rate,
-                            total_dl_rate_ll,
-                            total_dl_pkts_ll,
-                            dl_rx_drop_percent,
-                            ap_row_rx_ul)  # ap_ul_row added
-                    if not self.dowebgui:
-                        logger.info("ap_row_rx_ul {ap_row_rx_ul}".format(
-                            ap_row_rx_ul=ap_row_rx_ul))
+                            if rx_ul_mac_found:
+                                # Find latency, jitter for connections
+                                # using this port.
+                                # latency, jitter, total_dl_rate, total_dl_rate_ll, total_dl_pkts_ll, dl_rx_drop_percent, total_ul_rate,
+                                # total_ul_rate_ll, total_ul_pkts_ll, ul_tx_drop_percent = self.get_endp_stats_for_port(
+                                #    port_data["port"], endps)
+                                self.write_ul_port_csv(
+                                    len(self.station_names_list),
+                                    ul,
+                                    dl,
+                                    ul_pdu_str,
+                                    dl_pdu_str,
+                                    atten_val,
+                                    port_eid,
+                                    port_data,
+                                    latency,
+                                    jitter,
+                                    total_ul_rate,
+                                    total_ul_rate_ll,
+                                    total_ul_pkts_ll,
+                                    ul_rx_drop_percent,
+                                    total_dl_rate,
+                                    total_dl_rate_ll,
+                                    total_dl_pkts_ll,
+                                    dl_rx_drop_percent,
+                                    ap_row_rx_ul)  # ap_ul_row added
+                                if not self.dowebgui:
+                                    logger.info("ap_row_rx_ul {ap_row_rx_ul}".format(
+                                        ap_row_rx_ul=ap_row_rx_ul))
 
             ####################################
             else:
@@ -3234,12 +3341,17 @@ class L3VariableTime(Realm):
                     eid = self.name_to_eid(port_eid)
                     url = "/port/%s/%s/%s" % (eid[0],
                                               eid[1], eid[2])
-                    response = self.json_get(url)
-                    if (response is None) or (
-                            "interface" not in response):
-                        logger.info(
-                            "query-port: %s: incomplete response:" % url)
-                        logger.debug(pformat(response))
+                    response = self.json_get(url, debug_=True)
+                    if response is None:
+                        logger.error(
+                            "Failed to fetch port information. Received empty response.\n"
+                            f"Requested URL: '{url}'\n"
+                            f"Response: {response}")
+                    elif "interface" not in response:
+                        logger.error(
+                            "'interface' key not found in response.\n"
+                            f"Requested URL: '{url}'\n"
+                            f"Response: {pformat(response)}")
                     else:
                         port_data = response['interface']
                         (latency, jitter, total_dl_rate, total_dl_rate_ll,
@@ -3550,53 +3662,83 @@ class L3VariableTime(Realm):
 
         # gather port data
         # TODO
-        self.port_data = self.json_get('port/all?fields=alias,port,mac,channel,ssid,mode,bps+rx,rx-rate,bps+tx,tx-rate')
-        # self.port_data = self.json_get('port/all')
-        self.port_data.pop("handler")
-        self.port_data.pop("uri")
-        self.port_data.pop("warnings")
-        logger.info("self.port_data type: {dtype} data: {data}".format(dtype=type(self.port_data), data=self.port_data))
+        url = 'port/all?fields=alias,port,mac,channel,ssid,mode,bps+rx,rx-rate,bps+tx,tx-rate'
+        self.port_data = self.json_get(url, debug_=True)
+        if self.port_data is None:
+            logger.error(
+                "Failed to fetch port data. Received empty response.\n"
+                f"Requested URL: '{url}'\n"
+                f"Response: {self.port_data}")
+            self.port_data = {}
+        else:
+            self.port_data.pop("handler", None)
+            self.port_data.pop("uri", None)
+            self.port_data.pop("warnings", None)
 
-        self.resource_data = self.json_get('resource/all?fields=eid,hostname,hw+version,kernel')
+        if not self.dowebgui:
+            logger.info("self.port_data type: {dtype} data: {data}".format(dtype=type(self.port_data), data=self.port_data))
+
+        url = "/resource/all?fields=eid,hostname,hw+version,kernel"
+        self.resource_data = self.json_get(url, debug_=True)
+
+        if self.resource_data is None:
+            logger.error(
+                "Failed to fetch resource data. Received empty response.\n"
+                f"Requested URL: '{url}'\n"
+                f"Response: {self.resource_data}")
+            self.resource_data = {}
+        else:
+            self.resource_data.pop("handler", None)
+            self.resource_data.pop("uri", None)
+            # self.resource_data.pop("warnings")
+            # This is to handle the case where there is only one resourse
+            if "resource" in self.resource_data.keys():
+                self.resource_data["resources"] = [{'1.1': self.resource_data['resource']}]
+                self.resource_data.pop("resource")
+
         # self.resource_data = self.json_get('resource/all')
-        self.resource_data.pop("handler")
-        self.resource_data.pop("uri")
-        # self.resource_data.pop("warnings")
+
         if not self.dowebgui:
             logger.info("self.resource_data type: {dtype}".format(dtype=type(self.port_data)))
         # logger.info("self.resource_data : {data}".format(data=self.port_data))
-
-        # This is to handle the case where there is only one resourse
-        if "resource" in self.resource_data.keys():
-            self.resource_data["resources"] = [{'1.1': self.resource_data['resource']}]
-            self.resource_data.pop("resource")
 
         # Note will type will only work for 5.4.7
         # gather endp data
         endp_type_present = False
 
         # TODO check for 400 bad request instead of try except
-        self.endp_data = self.json_get(
-            'endp/all?fields=name,tx+rate+ll,tx+rate,rx+rate+ll,rx+rate,a/b,tos,eid,type,rx Drop %25')
+        url = "/endp/all?fields=name,tx+rate+ll,tx+rate,rx+rate+ll,rx+rate,a/b,tos,eid,type,rx Drop %25"
+        self.endp_data = self.json_get(url, debug_=True)
         if self.endp_data is not None:
             endp_type_present = True
         else:
             logger.info(
                 "Consider upgrading to 5.4.7 + endp field type not supported in LANforge GUI version results for Multicast reversed in graphs and tables")
-            self.endp_data = self.json_get(
-                'endp/all?fields=name,tx+rate+ll,tx+rate,rx+rate+ll,rx+rate,a/b,eid,rx Drop %25')
-            endp_type_present = False
-        self.endp_data.pop("handler")
-        self.endp_data.pop("uri")
-        logger.info("self.endpoint_data type: {dtype} data: {data}".format(
-            dtype=type(self.endp_data), data=self.endp_data))
+            url = "/endp/all?fields=name,tx+rate+ll,tx+rate,rx+rate+ll,rx+rate,a/b,eid,rx Drop %25"
+            self.endp_data = self.json_get(url, debug_=True)
+        if not self.endp_data:
+            logger.error(
+                "Failed to fetch endpoint data. Received empty response.\n"
+                f"Requested URL: '{url}'\n"
+                f"Response: {self.endp_data}")
+            self.endp_data = {}
+        else:
+            self.endp_data.pop("handler", None)
+            self.endp_data.pop("uri", None)
+
+        if not self.dowebgui:
+            logger.info("self.endpoint_data type: {dtype} data: {data}".format(
+                dtype=type(self.endp_data), data=self.endp_data))
         # self.side_b_min_bps= str(str(int(self.cx_profile.side_b_min_bps) / 1000000) +' '+'Mbps')
         # self.side_a_min_bps= str(str(int(self.cx_profile.side_a_min_bps) / 1000000) +' '+'Mbps')
 
         self.side_b_min_bps = self.cx_profile.side_b_min_bps
         self.side_a_min_bps = self.cx_profile.side_a_min_bps
-
-        for endp_data in self.endp_data['endpoint']:
+        endpoint = self.endp_data.get('endpoint', [])
+        if isinstance(endpoint, dict):
+            logger.info("endpoint is a dict, converting to list")
+            self.endp_data['endpoint'] = [{endpoint['name']: endpoint}]
+        for endp_data in self.endp_data.get('endpoint', []):
             logger.info("endp_data type {endp_type} endp_data {endp_data}".format(
                 endp_type=type(endp_data), endp_data=endp_data))
             # The dictionary only has one key
@@ -3632,7 +3774,7 @@ class L3VariableTime(Realm):
                                                    0]) + '.' + str(self.name_to_eid(endp_data[endp_data_key]['eid'])[1])
                             # look up the resource
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -3661,7 +3803,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.bk_port_eid_A.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.bk_port_mac_A.append(port_data[port_data_key]['mac'])
@@ -3698,7 +3840,7 @@ class L3VariableTime(Realm):
                                                    0]) + '.' + str(self.name_to_eid(endp_data[endp_data_key]['eid'])[1])
                             # look up the resource
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -3728,7 +3870,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.bk_port_eid_B.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.bk_port_mac_B.append(port_data[port_data_key]['mac'])
@@ -3767,7 +3909,7 @@ class L3VariableTime(Realm):
                                                    0]) + '.' + str(self.name_to_eid(endp_data[endp_data_key]['eid'])[1])
                             # look up the resource
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -3797,7 +3939,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.be_port_eid_A.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.be_port_mac_A.append(port_data[port_data_key]['mac'])
@@ -3834,7 +3976,7 @@ class L3VariableTime(Realm):
                                                    0]) + '.' + str(self.name_to_eid(endp_data[endp_data_key]['eid'])[1])
                             # look up the resource
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -3864,7 +4006,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.be_port_eid_B.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.be_port_mac_B.append(port_data[port_data_key]['mac'])
@@ -3903,7 +4045,7 @@ class L3VariableTime(Realm):
                                                    0]) + '.' + str(self.name_to_eid(endp_data[endp_data_key]['eid'])[1])
                             # look up the resource
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -3933,7 +4075,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.vi_port_eid_A.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.vi_port_mac_A.append(port_data[port_data_key]['mac'])
@@ -3970,7 +4112,7 @@ class L3VariableTime(Realm):
                                                    0]) + '.' + str(self.name_to_eid(endp_data[endp_data_key]['eid'])[1])
                             # look up the resource
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -4000,7 +4142,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.vi_port_eid_B.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.vi_port_mac_B.append(port_data[port_data_key]['mac'])
@@ -4039,7 +4181,7 @@ class L3VariableTime(Realm):
                                                    0]) + '.' + str(self.name_to_eid(endp_data[endp_data_key]['eid'])[1])
                             # look up the resource
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -4069,7 +4211,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.vo_port_eid_A.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.vo_port_mac_A.append(port_data[port_data_key]['mac'])
@@ -4106,7 +4248,7 @@ class L3VariableTime(Realm):
                                                    0]) + '.' + str(self.name_to_eid(endp_data[endp_data_key]['eid'])[1])
                             # look up the resource
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -4136,7 +4278,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.vo_port_eid_B.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.vo_port_mac_B.append(port_data[port_data_key]['mac'])
@@ -4178,7 +4320,7 @@ class L3VariableTime(Realm):
                             # look up the resource may need to have try except to handle cases where
                             # there is an issue getting data
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -4207,7 +4349,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.bk_port_eid_A.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.bk_port_mac_A.append(port_data[port_data_key]['mac'])
@@ -4244,7 +4386,7 @@ class L3VariableTime(Realm):
                             # look up the resource may need to have try except to handle cases where
                             # there is an issue getting data
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -4274,7 +4416,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.bk_port_eid_B.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.bk_port_mac_B.append(port_data[port_data_key]['mac'])
@@ -4314,7 +4456,7 @@ class L3VariableTime(Realm):
                             # look up the resource may need to have try except to handle cases where
                             # there is an issue getting data
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -4344,7 +4486,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.be_port_eid_A.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.be_port_mac_A.append(port_data[port_data_key]['mac'])
@@ -4381,7 +4523,7 @@ class L3VariableTime(Realm):
                             # look up the resource may need to have try except to handle cases where
                             # there is an issue getting data
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -4412,7 +4554,7 @@ class L3VariableTime(Realm):
                             port_found = False
                             self.be_port_eid_B.append(eid_tmp_port)
 
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.be_port_mac_B.append(port_data[port_data_key]['mac'])
@@ -4450,7 +4592,7 @@ class L3VariableTime(Realm):
                             # look up the resource may need to have try except to handle cases where
                             # there is an issue getting data
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -4480,7 +4622,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.vi_port_eid_A.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.vi_port_mac_A.append(port_data[port_data_key]['mac'])
@@ -4517,7 +4659,7 @@ class L3VariableTime(Realm):
                             # look up the resource may need to have try except to handle cases where
                             # there is an issue getting data
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -4546,7 +4688,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.vi_port_eid_B.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.vi_port_mac_B.append(port_data[port_data_key]['mac'])
@@ -4585,7 +4727,7 @@ class L3VariableTime(Realm):
                             # look up the resource may need to have try except to handle cases where
                             # there is an issue getting data
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -4614,7 +4756,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.vo_port_eid_A.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.vo_port_mac_A.append(port_data[port_data_key]['mac'])
@@ -4651,7 +4793,7 @@ class L3VariableTime(Realm):
                             # look up the resource may need to have try except to handle cases where
                             # there is an issue getting data
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -4681,7 +4823,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.vo_port_eid_B.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.vo_port_mac_B.append(port_data[port_data_key]['mac'])
@@ -4723,7 +4865,7 @@ class L3VariableTime(Realm):
                                                    0]) + '.' + str(self.name_to_eid(endp_data[endp_data_key]['eid'])[1])
                             # look up the resource
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -4753,7 +4895,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.bk_port_eid_A.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.bk_port_mac_A.append(port_data[port_data_key]['mac'])
@@ -4791,7 +4933,7 @@ class L3VariableTime(Realm):
                                                    0]) + '.' + str(self.name_to_eid(endp_data[endp_data_key]['eid'])[1])
                             # look up the resource
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -4820,7 +4962,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.bk_port_eid_B.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.bk_port_mac_B.append(port_data[port_data_key]['mac'])
@@ -4858,7 +5000,7 @@ class L3VariableTime(Realm):
                                                    0]) + '.' + str(self.name_to_eid(endp_data[endp_data_key]['eid'])[1])
                             # look up the resource
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -4887,7 +5029,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.be_port_eid_A.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.be_port_mac_A.append(port_data[port_data_key]['mac'])
@@ -4924,7 +5066,7 @@ class L3VariableTime(Realm):
                                                    0]) + '.' + str(self.name_to_eid(endp_data[endp_data_key]['eid'])[1])
                             # look up the resource
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -4954,7 +5096,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.be_port_eid_B.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.be_port_mac_B.append(port_data[port_data_key]['mac'])
@@ -4993,7 +5135,7 @@ class L3VariableTime(Realm):
                                                    0]) + '.' + str(self.name_to_eid(endp_data[endp_data_key]['eid'])[1])
                             # look up the resource
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -5023,7 +5165,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.vi_port_eid_A.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.vi_port_mac_A.append(port_data[port_data_key]['mac'])
@@ -5061,7 +5203,7 @@ class L3VariableTime(Realm):
                                                    0]) + '.' + str(self.name_to_eid(endp_data[endp_data_key]['eid'])[1])
                             # look up the resource
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -5091,7 +5233,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.vi_port_eid_B.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.vi_port_mac_B.append(port_data[port_data_key]['mac'])
@@ -5130,7 +5272,7 @@ class L3VariableTime(Realm):
                                                    0]) + '.' + str(self.name_to_eid(endp_data[endp_data_key]['eid'])[1])
                             # look up the resource
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -5159,7 +5301,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.vo_port_eid_A.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.vo_port_mac_A.append(port_data[port_data_key]['mac'])
@@ -5196,7 +5338,7 @@ class L3VariableTime(Realm):
                                                    0]) + '.' + str(self.name_to_eid(endp_data[endp_data_key]['eid'])[1])
                             # look up the resource
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -5226,7 +5368,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.vo_port_eid_B.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.vo_port_mac_B.append(port_data[port_data_key]['mac'])
@@ -5266,7 +5408,7 @@ class L3VariableTime(Realm):
                                                    0]) + '.' + str(self.name_to_eid(endp_data[endp_data_key]['eid'])[1])
                             # look up the resource
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -5296,7 +5438,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.bk_port_eid_A.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.bk_port_mac_A.append(port_data[port_data_key]['mac'])
@@ -5332,7 +5474,7 @@ class L3VariableTime(Realm):
                                                    0]) + '.' + str(self.name_to_eid(endp_data[endp_data_key]['eid'])[1])
                             # look up the resource
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -5361,7 +5503,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.bk_port_eid_B.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.bk_port_mac_B.append(port_data[port_data_key]['mac'])
@@ -5400,7 +5542,7 @@ class L3VariableTime(Realm):
                                                    0]) + '.' + str(self.name_to_eid(endp_data[endp_data_key]['eid'])[1])
                             # look up the resource
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -5429,7 +5571,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.be_port_eid_A.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.be_port_mac_A.append(port_data[port_data_key]['mac'])
@@ -5465,7 +5607,7 @@ class L3VariableTime(Realm):
                                                    0]) + '.' + str(self.name_to_eid(endp_data[endp_data_key]['eid'])[1])
                             # look up the resource
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -5495,7 +5637,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.be_port_eid_B.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.be_port_mac_B.append(port_data[port_data_key]['mac'])
@@ -5532,7 +5674,7 @@ class L3VariableTime(Realm):
                                                    0]) + '.' + str(self.name_to_eid(endp_data[endp_data_key]['eid'])[1])
                             # look up the resource
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -5562,7 +5704,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.vi_port_eid_A.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.vi_port_mac_A.append(port_data[port_data_key]['mac'])
@@ -5598,7 +5740,7 @@ class L3VariableTime(Realm):
                                                    0]) + '.' + str(self.name_to_eid(endp_data[endp_data_key]['eid'])[1])
                             # look up the resource
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -5628,7 +5770,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.vi_port_eid_B.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.vi_port_mac_B.append(port_data[port_data_key]['mac'])
@@ -5665,7 +5807,7 @@ class L3VariableTime(Realm):
                                                    0]) + '.' + str(self.name_to_eid(endp_data[endp_data_key]['eid'])[1])
                             # look up the resource
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -5694,7 +5836,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.vo_port_eid_A.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.vo_port_mac_A.append(port_data[port_data_key]['mac'])
@@ -5726,7 +5868,7 @@ class L3VariableTime(Realm):
 
                             # look up the resource
                             resource_found = False
-                            for resource_data in self.resource_data['resources']:
+                            for resource_data in self.resource_data.get('resources', []):
                                 resource_data_key = list(resource_data.keys())[0]
                                 if resource_data_key == eid_tmp_resource:
                                     resource_found = True
@@ -5756,7 +5898,7 @@ class L3VariableTime(Realm):
 
                             port_found = False
                             self.vo_port_eid_B.append(eid_tmp_port)
-                            for port_data in self.port_data['interfaces']:
+                            for port_data in self.port_data.get('interfaces', []):
                                 port_data_key = list(port_data.keys())[0]
                                 if port_data_key == eid_tmp_port:
                                     self.vo_port_mac_B.append(port_data[port_data_key]['mac'])
@@ -6163,6 +6305,12 @@ class L3VariableTime(Realm):
 
     # Stop traffic and admin down stations.
     def stop(self):
+        # Drop endpoints/cxs confirmed missing from the LANforge side so stop only
+        # targets what's actually present, irrespective of monitoring errors.
+        for endp_name in self.missing_endp_logged:
+            self.multicast_profile.created_mc.pop(endp_name, None)
+        for cx_name in self.missing_cx_logged:
+            self.cx_profile.created_cx.pop(cx_name, None)
         self.cx_profile.stop_cx()
         self.multicast_profile.stop_mc()
         for station_list in self.station_lists:
@@ -6548,9 +6696,6 @@ class L3VariableTime(Realm):
                     print("Timeout: Images not found within 60 seconds.")
                     break
                 time.sleep(1)
-            while not os.path.exists(throughput_image_path) and not os.path.exists(rssi_image_path):
-                if os.path.exists(throughput_image_path) and os.path.exists(rssi_image_path):
-                    break
             if os.path.exists(throughput_image_path):
                 self.report.set_custom_html('<div style="page-break-before: always;"></div>')
                 self.report.build_custom()
@@ -6738,22 +6883,24 @@ class L3VariableTime(Realm):
             group_names = ', '.join(config_devices.keys())
             profile_names = ', '.join(config_devices.values())
             configmap = "Groups:" + group_names + " -> Profiles:" + profile_names
+            report_test_duration = self.actual_test_duration_display if self.need_endps_stopped else self.test_duration
             test_input_info = {
                 "LANforge ip": self.lfmgr,
                 "LANforge port": self.lfmgr_port,
                 "Upstream": self.upstream_port,
-                "Test Duration": self.test_duration,
+                "Test Duration": report_test_duration,
                 "Test Configuration": configmap,
                 "Polling Interval": self.polling_interval,
                 "Total No. of Devices": self.station_count,
             }
         else:
+            report_test_duration = self.actual_test_duration_display if self.need_endps_stopped else self.test_duration
             if self.robo_test:
                 test_input_info = {
                     "LANforge ip": self.lfmgr,
                     "LANforge port": self.lfmgr_port,
                     "Upstream": self.upstream_port,
-                    "Test Duration": self.test_duration,
+                    "Test Duration": report_test_duration,
                     "Polling Interval": self.polling_interval,
                     "Total No. of Devices": self.station_count,
                     "Robot Coordinates": ", ".join(self.coordinate_list),
@@ -6764,7 +6911,7 @@ class L3VariableTime(Realm):
                     "LANforge ip": self.lfmgr,
                     "LANforge port": self.lfmgr_port,
                     "Upstream": self.upstream_port,
-                    "Test Duration": self.test_duration,
+                    "Test Duration": report_test_duration,
                     "Polling Interval": self.polling_interval,
                     "Total No. of Devices": self.station_count,
                 }
@@ -6853,7 +7000,8 @@ class L3VariableTime(Realm):
         # Generate per-coordinate/rotation graphs and tables for robot test
         if self.robo_test and not self.do_bandsteering:
             logger.info("Building per-coordinate/rotation graphs and tables for robot test (from memory dict)")
-            self.add_live_view_images_to_report()
+            if self.dowebgui:
+                self.add_live_view_images_to_report()
             if not hasattr(self, "multicast_robot_results") or not self.multicast_robot_results:
                 self.report.set_custom_html("<p><i>No robot test results found.</i></p>")
                 self.report.build_custom()
@@ -7351,7 +7499,24 @@ class L3VariableTime(Realm):
         input_list = []
         drop = []
         statuslist = []
-        interop_tab_data = self.json_get('/adb/')["devices"]
+        adb_url = '/adb/'
+        adb_response = self.json_get(adb_url, debug_=True)
+        if adb_response is None:
+            logger.error(
+                "Failed to fetch adb device data. Received empty response.\n"
+                f"Requested URL: '{adb_url}'\n"
+                f"Response: {adb_response}")
+            interop_tab_data = []
+        elif "devices" not in adb_response:
+            logger.error(
+                "'devices' key not found in response.\n"
+                f"Requested URL: '{adb_url}'\n"
+                f"Response: {adb_response}")
+            interop_tab_data = []
+        else:
+            interop_tab_data = adb_response["devices"]
+            if isinstance(interop_tab_data, dict):
+                interop_tab_data = [{interop_tab_data['name']: interop_tab_data}]
         for i in range(len(devclient)):
             for j in groupdevlist:
                 if j == devhostname[i] and devclient[i].split('_')[-1] != 'Android':
@@ -7447,8 +7612,8 @@ class L3VariableTime(Realm):
 
     def webgui_finalize(self, coord=None, rot=None):
         """Test report finalization run when in WebGUI mode."""
-        print(f"DEBUG: result_dir = {self.result_dir}")
-        print(f"DEBUG: coord = {coord}, rot = {rot}")
+        logger.debug("Result directory: %s", self.result_dir)
+        logger.debug("Coordinate: %s, rotation: %s", coord, rot)
 
         if not self.overall:
             logger.warning("webgui_finalize() called but self.overall is empty. Creating default entry.")
@@ -7484,31 +7649,48 @@ class L3VariableTime(Realm):
             filename = 'overall_multicast_throughput.csv'
 
         filepath = os.path.join(self.result_dir, filename)
-        print(f"DEBUG: Saving to {filepath}")
+        logger.debug("Saving WebGUI results to %s", filepath)
 
         try:
             df1.to_csv(filepath, index=False)
-            print(f"INFO: Successfully saved results to {filepath}")
+            logger.info("Successfully saved WebGUI results to %s", filepath)
         except PermissionError as e:
             # Try alternative location if permission denied
-            print(f"ERROR: Permission denied for {filepath}. Trying alternative...")
+            logger.warning("Permission denied for %s: %s. Trying an alternative location.", filepath, e)
             alt_dir = os.path.join(os.path.expanduser("~"), "test_results")
             os.makedirs(alt_dir, exist_ok=True)
             alt_path = os.path.join(alt_dir, filename)
             df1.to_csv(alt_path, index=False)
-            print(f"INFO: Saved to alternative location: {alt_path}")
+            logger.info("Saved WebGUI results to alternative location: %s", alt_path)
         except Exception as e:
-            print(f"ERROR: Failed to save CSV: {e}")
+            logger.error("Failed to save WebGUI results to %s: %s", filepath, e)
             # Save to current directory as last resort
             df1.to_csv(filename, index=False)
-            print(f"INFO: Saved to current directory: {filename}")
+            logger.info("Saved WebGUI results to current directory: %s", filename)
 
     def get_pass_fail_list(self, tos, up, down):
         res_list = []
         test_input_list = []
         pass_fail_list = []
         # When device_csv_name specified
-        interop_tab_data = self.json_get('/adb/')["devices"]
+        adb_url = '/adb/'
+        adb_response = self.json_get(adb_url, debug_=True)
+        if adb_response is None:
+            logger.error(
+                "Failed to fetch adb device data. Received empty response.\n"
+                f"Requested URL: '{adb_url}'\n"
+                f"Response: {adb_response}")
+            interop_tab_data = []
+        elif "devices" not in adb_response:
+            logger.error(
+                "'devices' key not found in response.\n"
+                f"Requested URL: '{adb_url}'\n"
+                f"Response: {adb_response}")
+            interop_tab_data = []
+        else:
+            interop_tab_data = adb_response["devices"]
+            if isinstance(interop_tab_data, dict):
+                interop_tab_data = [{interop_tab_data['name']: interop_tab_data}]
         if self.expected_passfail_value == '' or self.expected_passfail_value is None:
             for client in self.client_dict_A[tos]['resource_alias_A']:
                 # Check if the client type (second word in "1.15 android samsungmob") is 'android'
@@ -7669,18 +7851,270 @@ class L3VariableTime(Realm):
                 report.set_custom_html('<hr>')
                 report.build_custom()
 
+    def append_cx_data(self, is_cx, name, state, response):
+        """Append an endpoint/CX state change to client_issue_csv_name."""
+        file_exists = os.path.isfile(self.client_issue_csv_name)
 
+        with open(self.client_issue_csv_name, "a", newline="") as file:
+            writer = csv.writer(file)
+
+            if not file_exists:
+                if is_cx:
+                    writer.writerow(["TIMESTAMP", "CX_NAME", "STATE", "API RESPONSE"])
+                else:
+                    writer.writerow(["TIMESTAMP", "ENDP_NAME", "STATE", "API RESPONSE"])
+
+            writer.writerow([
+                datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                name,
+                state,
+                response
+            ])
+
+    def check_endpoint_availability(self, expected_endps, present_endps):
+        """Log endpoint missing/not-running/recovered transitions and update the tracking sets."""
+        for endp_name in expected_endps:
+            if endp_name not in present_endps.keys():
+                if endp_name not in self.missing_endp_logged:
+                    present_endp_names = list(present_endps)
+                    logger.warning(
+                        "Endpoint '{}' is missing from the monitoring data.\n"
+                        "Requested URL: 'endp?fields=name,eid,delay,jitter,rx+rate,rx+rate+ll,rx+bytes,rx+drop+%25,rx+pkts+ll,run'\n"
+                        "Response: {}".format(endp_name, present_endp_names))
+                    self.append_cx_data(is_cx=False, name=endp_name, state="MISSING", response=present_endp_names)
+                    self.missing_endp_logged.add(endp_name)
+                self.not_running_endp_logged.discard(endp_name)
+            elif not present_endps[endp_name].get('run'):
+                if endp_name not in self.not_running_endp_logged:
+                    logger.warning(
+                        "Endpoint '{}' is not running in the monitoring data.\n"
+                        "Requested URL: 'endp?fields=name,eid,delay,jitter,rx+rate,rx+rate+ll,rx+bytes,rx+drop+%25,rx+pkts+ll,run'\n"
+                        "Response: {}".format(endp_name, present_endps[endp_name]))
+                    self.append_cx_data(is_cx=False, name=endp_name, state="NOT RUNNING", response=present_endps[endp_name])
+                    self.not_running_endp_logged.add(endp_name)
+                self.missing_endp_logged.discard(endp_name)
+            else:
+                if endp_name in self.missing_endp_logged or endp_name in self.not_running_endp_logged:
+                    logger.info(
+                        "Endpoint '{}' is running in the monitoring data\n"
+                        "Requested URL: 'endp?fields=name,eid,delay,jitter,rx+rate,rx+rate+ll,rx+bytes,rx+drop+%25,rx+pkts+ll,run'\n"
+                        "Response: {}".format(endp_name, present_endps[endp_name]))
+                    self.append_cx_data(is_cx=False, name=endp_name, state="RUNNING", response=present_endps[endp_name])
+                self.missing_endp_logged.discard(endp_name)
+                self.not_running_endp_logged.discard(endp_name)
+
+    def is_test_stopped_by_webgui(self):
+        """Check the webgui running-instance file to see if the user stopped the test."""
+        if not self.dowebgui:
+            return False
+        running_file = f"{self.result_dir}/../../Running_instances/{self.ip}_{self.test_name}_running.json"
+        try:
+            with open(running_file, "r") as file:
+                data = json.load(file)
+            if data.get("status") != "Running":
+                logging.warning("Test is stopped by the user")
+                self.test_stopped_user = True
+                return True
+        except FileNotFoundError:
+            logging.warning(f"Running instance file not found: {running_file}")
+            return True
+        except json.JSONDecodeError:
+            logging.warning(f"Running instance file corrupted or empty: {running_file}")
+            return True
+        except Exception as e:
+            logging.error(f"Unexpected error reading running.json: {e}")
+            return True
+        return False
+
+    def monitor_endp_availability(self, expected_endps, return_endpoint_data=False, duration=40, interval=5):
+        """Retry for up to duration seconds until at least one expected endpoint is present and running."""
+        start_time = time.time()
+        end_time = start_time + duration
+        no_of_attempts = duration // interval
+        count = 0
+        endpoint = []
+        while (start_time <= end_time):
+            count += 1
+            if self.is_test_stopped_by_webgui():
+                logger.info("Test stopped by user via WebGUI. Exiting monitoring.")
+                return [] if return_endpoint_data else False
+            if count > 1:
+                logger.info("Attempt {} of {} to check endpoints availability".format(count, no_of_attempts))
+            endp_url = "endp?fields=name,eid,delay,jitter,rx+rate,rx+rate+ll,rx+bytes,rx+drop+%25,rx+pkts+ll,run"
+            endp_list = self.json_get(endp_url, debug_=True)
+            if not endp_list:
+                logger.error(
+                    "Failed to fetch endpoints. Received empty response.\n"
+                    f"Requested URL: '{endp_url}'\n"
+                    f"Response: {endp_list}")
+                endp_list = {}
+            endpoint = endp_list.get('endpoint', [])
+            if isinstance(endpoint, dict):
+                endpoint = [{endpoint['name']: endpoint}]
+            present_endps = {}
+            for endp_entry in endpoint:
+                for endp_name, endp_response in endp_entry.items():
+                    present_endps[endp_name] = endp_response
+            self.check_endpoint_availability(expected_endps, present_endps)
+            expected_endps_set = set(expected_endps)
+            missing_endps = self.missing_endp_logged & expected_endps_set
+            not_running_endps = self.not_running_endp_logged & expected_endps_set
+            missed = len(missing_endps)
+            not_run = len(not_running_endps)
+            if missed == len(expected_endps):
+                if not return_endpoint_data:
+                    logger.error("All expected tx endpoints ({}) are missing from the monitoring data. Retrying... Before giving up and stopping test".format(
+                        ", ".join(missing_endps)))
+                else:
+                    logger.error("All expected rx endpoints ({}) are missing from the monitoring data. Retrying... Before giving up and stopping test".format(
+                        ", ".join(missing_endps)))
+            elif not_run == len(expected_endps):
+                if not return_endpoint_data:
+                    logger.error("All expected endpoints ({}) are present but not running. Retrying... Before giving up and stopping test".format(
+                        ", ".join(not_running_endps)))
+                else:
+                    logger.error("All expected endpoints ({}) are present but not running. Retrying... Before giving up and stopping test".format(
+                        ", ".join(not_running_endps)))
+            elif missed + not_run == len(expected_endps):
+                if not return_endpoint_data:
+                    logger.error("Some expected endpoints ({}) are missing and some endpoints ({}) are not running. Retrying... Before giving up and stopping test".format(
+                        ", ".join(missing_endps), ", ".join(not_running_endps)))
+                else:
+                    logger.error("Some expected endpoints ({}) are missing and some endpoints ({}) are not running. Retrying... Before giving up and stopping test".format(
+                        ", ".join(missing_endps), ", ".join(not_running_endps)))
+            else:
+                return endpoint if return_endpoint_data else True
+            time.sleep(interval)
+            start_time = time.time()
+        return [] if return_endpoint_data else False
+
+    def check_cx_availability(self, expected_cxs, present_cxs):
+        """Log CX missing/not-running/recovered transitions and update the tracking sets."""
+        for cx_name in expected_cxs:
+            if cx_name not in present_cxs.keys():
+                if cx_name not in self.missing_cx_logged:
+                    present_cx_names = list(present_cxs)
+                    logger.warning(
+                        "Cross-connect '{}' is missing from the monitoring data.\n"
+                        "Requested URL: 'cx/all'\n"
+                        "Response: {}".format(cx_name, present_cx_names))
+                    self.append_cx_data(is_cx=True, name=cx_name, state="MISSING", response=present_cx_names)
+                    self.missing_cx_logged.add(cx_name)
+                self.not_running_cx_logged.discard(cx_name)
+            elif present_cxs[cx_name].get('state', 'Stopped').lower() != "run":
+                if cx_name not in self.not_running_cx_logged:
+                    logger.warning(
+                        "Cross-connect '{}' is not running in the monitoring data.\n"
+                        "Requested URL: 'cx/all'\n"
+                        "Response: {}".format(cx_name, present_cxs[cx_name]))
+                    self.append_cx_data(is_cx=True, name=cx_name,
+                                        state=present_cxs[cx_name].get('state', 'Stopped'),
+                                        response=present_cxs[cx_name])
+                    self.not_running_cx_logged.add(cx_name)
+                self.missing_cx_logged.discard(cx_name)
+            else:
+                if cx_name in self.missing_cx_logged or cx_name in self.not_running_cx_logged:
+                    logger.info(
+                        "Cross-connect '{}' is running in the monitoring data\n"
+                        "Requested URL: 'cx/all'\n"
+                        "Response: {}".format(cx_name, present_cxs[cx_name]))
+                    self.append_cx_data(is_cx=True, name=cx_name, state="RUNNING", response=present_cxs[cx_name])
+                self.missing_cx_logged.discard(cx_name)
+                self.not_running_cx_logged.discard(cx_name)
+
+    def monitor_cx_availability(self, expected_cxs, duration=40, interval=5):
+        """Retry for up to duration seconds until at least one expected cross-connect is present and running."""
+        start_time = time.time()
+        end_time = start_time + duration
+        no_of_attempts = duration // interval
+        count = 0
+        while (start_time <= end_time):
+            count += 1
+            if self.is_test_stopped_by_webgui():
+                logger.info("Test stopped by user via WebGUI. Exiting monitoring.")
+                return False
+            if count > 1:
+                logger.info("Attempt {} of {} to check cross-connections availability".format(count, no_of_attempts))
+            cx_list = self.json_get("cx/all", debug_=True)
+            if not cx_list:
+                logger.error(
+                    "Failed to fetch cross-connects. Received empty response.\n"
+                    "Requested URL: 'cx/all'\n"
+                    f"Response: {cx_list}")
+                time.sleep(interval)
+                start_time = time.time()
+                continue
+            present_cxs = {}
+            for cx_name, cx_info in cx_list.items():
+                if cx_name and isinstance(cx_info, dict):
+                    present_cxs[cx_name] = cx_info
+            self.check_cx_availability(expected_cxs, present_cxs)
+            missed = len(self.missing_cx_logged)
+            not_run = len(self.not_running_cx_logged)
+            if missed == len(expected_cxs):
+                logger.error("All expected cross-connects ({}) are missing from the monitoring data. Retrying... Before giving up and stopping test".format(
+                    ", ".join(self.missing_cx_logged)))
+            elif not_run == len(expected_cxs):
+                logger.error("All expected cross-connects ({}) are present but not running. Retrying... Before giving up and stopping test".format(
+                    ", ".join(self.not_running_cx_logged)))
+            elif missed + not_run == len(expected_cxs):
+                logger.error("Some expected cross-connects ({}) are missing and some cross-connects ({}) are not running. Retrying... Before giving up and stopping test".format(
+                    ", ".join(self.missing_cx_logged), ", ".join(self.not_running_cx_logged)))
+            else:
+                return True
+            time.sleep(interval)
+            start_time = time.time()
+        return False
+
+    def format_duration(self, td):
+        """Convert a timedelta into a readable duration string, e.g. "1 hour 5 minutes"."""
+        total_seconds = int(td.total_seconds())
+
+        days, remainder = divmod(total_seconds, 86400)
+        hours, remainder = divmod(remainder, 3600)
+        minutes, seconds = divmod(remainder, 60)
+
+        parts = []
+
+        if days:
+            parts.append(f"{days} day{'s' if days != 1 else ''}")
+        if hours:
+            parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
+        if minutes:
+            parts.append(f"{minutes} minute{'s' if minutes != 1 else ''}")
+        if seconds or not parts:
+            parts.append(f"{seconds} second{'s' if seconds != 1 else ''}")
+
+        return " ".join(parts)
 # Converting the upstream_port to IP address for configuration purposes
+
+
 def change_port_to_ip(upstream_port, lfclient_host, lfclient_port):
     if upstream_port.count('.') != 3:
         target_port_list = LFUtils.name_to_eid(upstream_port)
         shelf, resource, port, _ = target_port_list
-        try:
-            realm_obj = Realm(lfclient_host=lfclient_host, lfclient_port=lfclient_port)
-            target_port_ip = realm_obj.json_get(f'/port/{shelf}/{resource}/{port}?fields=ip')['interface']['ip']
-            upstream_port = target_port_ip
-        except Exception:
-            logging.warning(f'The upstream port is not an ethernet port. Proceeding with the given upstream_port {upstream_port}.')
+        realm_obj = Realm(lfclient_host=lfclient_host, lfclient_port=lfclient_port)
+        port_url = f'/port/{shelf}/{resource}/{port}?fields=ip'
+        response = realm_obj.json_get(port_url, debug_=True)
+        if not response:
+            logging.error(
+                "Failed to fetch port info. Received empty response.\n"
+                f"Requested URL: '{port_url}'\n"
+                f"Response: {response}")
+            exit(1)
+        if 'interface' not in response:
+            logging.error(
+                "'interface' key not found in response.\n"
+                f"Requested URL: '{port_url}'\n"
+                f"Response: {response}")
+            exit(1)
+        if 'ip' not in response['interface']:
+            logging.error(
+                "'ip' key not found in response.\n"
+                f"Requested URL: '{port_url}'\n"
+                f"Response: {response}")
+            exit(1)
+        upstream_port = response['interface']['ip']
         logging.info(f"Upstream port IP {upstream_port}")
     else:
         logging.info(f"Upstream port IP {upstream_port}")
@@ -7862,10 +8296,21 @@ def query_real_clients(args):
     android_list = []
     mac_id1_list = []
     user_list = []
-    response = config_obj.json_get("/resource/all")
+    resource_url = "/resource/all"
+    response = config_obj.json_get(resource_url, debug_=True)
 
-    if "resources" not in response.keys():
-        logger.error("There are no real devices.")
+    if not response:
+        logger.error(
+            "Failed to fetch resources. Received empty response.\n"
+            f"Requested URL: '{resource_url}'\n"
+            f"Response: {response}")
+        exit(1)
+
+    if "resources" not in response:
+        logger.error(
+            "There are no real devices. 'resources' key not found in response.\n"
+            f"Requested URL: '{resource_url}'\n"
+            f"Response: {response}")
         exit(1)
 
     for key, value in response.items():
@@ -7897,9 +8342,19 @@ def query_real_clients(args):
                             android_list.append(b['hw version'])
                             devices_available.append(b['eid'] + " " + 'android' + " " + b['user'])
 
-    response_port = config_obj.json_get("/port/all")
-    if "interfaces" not in response_port.keys():
-        logger.error("Error: 'interfaces' key not found in port data")
+    port_url = "/port/all"
+    response_port = config_obj.json_get(port_url, debug_=True)
+    if not response_port:
+        logger.error(
+            "Failed to fetch ports. Received empty response.\n"
+            f"Requested URL: '{port_url}'\n"
+            f"Response: {response_port}")
+        exit(1)
+    if "interfaces" not in response_port:
+        logger.error(
+            "'interfaces' key not found in response.\n"
+            f"Requested URL: '{port_url}'\n"
+            f"Response: {response_port}")
         exit(1)
     for interface in response_port['interfaces']:
         for port, port_data in interface.items():
@@ -7938,16 +8393,20 @@ def query_real_clients(args):
             for endp in traffic_type:
                 graph_input_list.append('L3_' + endp.split('_')[1].upper() + '_DL')
     sample_list = []
+    matched_devices = []
     if args.device_list:
         for interface in response_port['interfaces']:
             for port, port_data in interface.items():
                 if not port_data['phantom'] and not port_data['down'] and port_data['parent dev'] == "wiphy0" and port_data['alias'] != 'p2p0':
                     port_list = port.split('.')
+                    device_id = port_list[0] + '.' + port_list[1]
                     for device in args.device_list[0].split(','):
-                        if (port_list[0] + '.' + port_list[1]) == device:
+                        if device_id == device:
                             sample_list.append([port])
-        if sample_list == []:
-            logger.info("Selected devices are not available")
+                            matched_devices.append(device_id)
+        if len(sample_list) != len(args.device_list[0].split(',')):
+            not_available_devices = [device for device in args.device_list[0].split(',') if device not in matched_devices]
+            logger.info(f"{', '.join(not_available_devices)} devices are not available")
             exit(1)
         args.existing_station_list = sample_list
         args.use_existing_station_list = True
@@ -8693,6 +9152,22 @@ Multicast traffic :
 
     Can't decide what columns to use? You can just use 'all' to select all available columns from both tables.
 
+Toolbox Examples with Custom CX Names:
+  - Create stations & build cross-connection with custom name 'wlan0':
+      python3 py-scripts/test_l3.py --lfmgr 192.168.244.45 --toolbox --create_station --radio "radio==wiphy0 stations==1" --build_cxs --upstream_port 1.1.eth1 --cx_names wlan0
+
+  - Build cross-connections with custom names for specific ports:
+      python3 py-scripts/test_l3.py --lfmgr 192.168.244.45 --toolbox --build_cxs --upstream_port 1.1.eth1 --ports 1.1.eth2,1.1.eth3 --cx_names cx_eth2,cx_eth3
+
+  - Start specific cross-connections by name:
+      python3 py-scripts/test_l3.py --lfmgr 192.168.244.45 --toolbox --start_cx wlan0
+
+  - Stop specific cross-connections by name:
+      python3 py-scripts/test_l3.py --lfmgr 192.168.244.45 --toolbox --stop_cx wlan0,cx_eth2
+
+  - Delete specific cross-connections by name:
+      python3 py-scripts/test_l3.py --lfmgr 192.168.244.45 --toolbox --del_cx wlan0
+
 STATUS: Functional
 
 VERIFIED_ON: MAY 2025,
@@ -9075,7 +9550,699 @@ INCLUDE_IN_README: False
                           default='',
                           help='Comma-separated list of device counts to incrementally test (e.g., "1,3,5")')
 
+    # TOOLBOX ARGS
+    optional.add_argument('--toolbox', '--tool_box',
+                          dest='toolbox',
+                          action='store_true',
+                          help='Enable toolbox mode to execute a single building block action and exit immediately.')
+
+    optional.add_argument('--create_station', '--create_stations',
+                          dest='create_station',
+                          action='store_true',
+                          help='Toolbox action: Create stations using specified --radio configuration.')
+
+    optional.add_argument('--ports', '--downstream_ports',
+                          dest='ports',
+                          nargs='+',
+                          default=None,
+                          help='Specify target/downstream port EIDs / names (comma or space separated, e.g. "1.1.eth1,1.1.eth2" or "sta0000,sta0001").')
+
+    optional.add_argument('--cx_names', '--cx_name',
+                          dest='cx_names',
+                          nargs='+',
+                          default=None,
+                          help='Specify custom cross-connection name(s) when creating cross-connections (comma or space separated, e.g. "wlan0" or "cx_1,cx_2").')
+
+    optional.add_argument('--build_cxs', '--build_cx',
+                          dest='build_cxs',
+                          action='store_true',
+                          help='Toolbox action: Build Layer-3 cross-connections between --upstream_port and --ports for specified --endp_type.')
+
+    optional.add_argument('--stop_cx',
+                          nargs='?',
+                          const='all',
+                          default=None,
+                          help='Toolbox action: Stop specified cross-connections (comma-separated list, e.g. "cx_1,cx_2" or "all" [default]).')
+
+    optional.add_argument('--start_cx',
+                          nargs='?',
+                          const='all',
+                          default=None,
+                          help='Toolbox action: Start specified cross-connections (comma-separated list, e.g. "cx_1,cx_2" or "all" [default]).')
+
+    optional.add_argument('--del_cx',
+                          nargs='?',
+                          const='all',
+                          default=None,
+                          help='Toolbox action: Delete specified cross-connections (comma-separated list, e.g. "cx_1,cx_2" or "all" [default]). Also removes associated endpoints.')
+
+    optional.add_argument('--del_stations',
+                          nargs='?',
+                          const='all',
+                          default=None,
+                          help='Toolbox action: Delete specified Wi-Fi stations (comma-separated list, e.g. "sta0000,sta0001" or default: all stations with "sta" prefix).')
+
+    optional.add_argument('--ports_up',
+                          nargs='?',
+                          const='all',
+                          default=None,
+                          help='Toolbox action: Set specified stations/ports admin UP (comma-separated list, e.g. "sta0000,sta0001" or default: all stations with "sta" prefix).')
+
+    optional.add_argument('--ports_down',
+                          nargs='?',
+                          const='all',
+                          default=None,
+                          help='Toolbox action: Set specified stations/ports admin DOWN (comma-separated list, e.g. "sta0000,sta0001" or default: all stations with "sta" prefix).')
+
+
     return parser.parse_args()
+
+
+def handle_toolbox(args):
+    """Execute standalone toolbox actions for LANforge building-block operations.
+
+    Args:
+        args: Parsed command line arguments instance.
+
+    Returns:
+        bool: True if all toolbox actions succeeded, otherwise False.
+    """
+    if not args.toolbox:
+        return False
+
+    logger.info("Toolbox mode enabled.")
+    lf_realm = Realm(lfclient_host=args.lfmgr, lfclient_port=args.lfmgr_port, debug_=args.debug)
+    action_performed = False
+    action_success = True
+    created_stations_session = []
+
+    # Helper function to parse comma/space separated argument lists
+    def parse_list(raw_val):
+        if not raw_val:
+            return []
+        if isinstance(raw_val, list):
+            items = []
+            for item in raw_val:
+                cleaned = str(item).replace('[', '').replace(']', '').replace("'", '').replace('"', '').split(',')
+                for sub in cleaned:
+                    if sub.strip():
+                        items.append(sub.strip())
+            return items
+        return [p.strip() for p in str(raw_val).replace('[', '').replace(']', '').replace("'", '').replace('"', '').split(',') if p.strip()]
+
+    # Action 1: Station Creation (--create_station)
+    if getattr(args, 'create_station', False):
+        action_performed = True
+        logger.info("Toolbox: Creating station(s)...")
+
+        if not args.radio:
+            logger.error("Toolbox: --create_station specified, but no --radio configuration provided.")
+            action_success = False
+        else:
+            radios = args.radio if isinstance(args.radio, list) else [args.radio]
+            user_offset_specified = getattr(args, 'sta_start_offset', None) is not None
+            sta_offset = int(args.sta_start_offset) if user_offset_specified else 0
+            total_processed = 0
+
+            existing_all_ports = lf_realm.get_all_ports() or []
+            existing_sta_indices = []
+            for p in existing_all_ports:
+                eid = lf_realm.name_to_eid(p)
+                p_name = str(eid[2]) if len(eid) >= 3 else str(p)
+                if p_name.startswith('sta'):
+                    digits = ''.join(c for c in p_name[3:] if c.isdigit())
+                    if digits:
+                        existing_sta_indices.append(int(digits))
+
+            # Auto-adjust start offset if user did not specify one and existing stations are found
+            if not user_offset_specified and existing_sta_indices:
+                next_avail = max(existing_sta_indices) + 1
+                if sta_offset < next_avail:
+                    logger.info(
+                        "Toolbox: Existing station(s) detected on LANforge (e.g. sta%04d). Auto-adjusting start offset from %d to %d to avoid station overwrite collision.",
+                        max(existing_sta_indices), sta_offset, next_avail
+                    )
+                    sta_offset = next_avail
+
+            for radio_ in radios:
+                try:
+                    radio_info_dict = dict(
+                        map(
+                            lambda x: x.split('=='),
+                            str(radio_).replace('"', '').replace('[', '').replace(']', '').replace("'", "").replace(',', ' ').split()
+                        )
+                    )
+                except Exception as parse_err:
+                    logger.error("Toolbox: Failed to parse radio configuration '%s': %s", radio_, parse_err)
+                    action_success = False
+                    continue
+
+                radio_name = radio_info_dict.get('radio', 'wiphy0')
+                num_stations = int(radio_info_dict.get('stations', 1))
+                ssid = radio_info_dict.get('ssid', '')
+                ssid_pw = radio_info_dict.get('ssid_pw', '[BLANK]')
+                security = radio_info_dict.get('security', 'open')
+                wifi_mode = radio_info_dict.get('mode', None)
+
+                # Validate radio interface via LANforge JSON API port-type
+                r_eid = lf_realm.name_to_eid(radio_name)
+                radio_clean = str(r_eid[2]) if len(r_eid) >= 3 else str(radio_name)
+                port_type = None
+                try:
+                    port_info = lf_realm.json_get("/port/1/1/%s?fields=alias,port+type" % radio_clean)
+                    if port_info and 'interface' in port_info:
+                        port_type = str(port_info['interface'].get('port type', port_info['interface'].get('type', ''))).strip().upper()
+                except Exception as p_err:
+                    logger.debug("Toolbox: Could not query port type for radio '%s': %s", radio_name, p_err)
+
+                if port_type:
+                    # Validate port type returned by LANforge JSON API
+                    is_radio_type = any(t in port_type for t in ('RADIO', 'WIFI', 'WIPHY', 'DEV', 'PHY'))
+                    is_non_radio = any(t in port_type for t in ('ETH', 'ETHERNET', 'BRIDGE', 'VLAN', 'MACVLAN', 'BOND', 'TUN', 'TAP', 'GRE'))
+                    if is_non_radio or not is_radio_type:
+                        logger.error(
+                            "Toolbox: Port '%s' has port-type '%s' and cannot be used for station creation. Radio interface must be a wireless radio (e.g., WIFI-RADIO).",
+                            radio_name, port_type
+                        )
+                        action_success = False
+                        continue
+                else:
+                    # Fallback to name check if port-type is not returned by JSON API
+                    radio_clean_lower = radio_clean.lower()
+                    invalid_prefixes = ('eth', 'br', 'macvlan', 'bond', 'vlan', 'lo', 'gre', 'tun', 'tap')
+                    if any(radio_clean_lower.startswith(p) for p in invalid_prefixes) or 'eth' in radio_clean_lower:
+                        logger.error(
+                            "Toolbox: Invalid radio '%s' specified for station creation. Non-wireless interfaces (e.g., eth, bridge, macvlan) cannot be used as radios for station creation.",
+                            radio_name
+                        )
+                        action_success = False
+                        continue
+
+                if num_stations <= 0:
+                    logger.error("Toolbox: Invalid station count (%d) specified for radio '%s'. Count must be at least 1.", num_stations, radio_name)
+                    action_success = False
+                    continue
+
+                logger.info(
+                    "Toolbox: Creating %d station(s) on radio '%s' (SSID: '%s', Security: '%s', Start Offset: %d)...",
+                    num_stations, radio_name, ssid, security, sta_offset
+                )
+
+                station_profile = lf_realm.new_station_profile()
+                station_profile.lfclient_url = lf_realm.lfclient_url
+                station_profile.ssid = ssid
+                station_profile.ssid_pass = ssid_pw
+                station_profile.security = security
+                if wifi_mode is not None:
+                    station_profile.mode = wifi_mode
+
+                station_list = LFUtils.portNameSeries(
+                    prefix_="sta",
+                    start_id_=sta_offset,
+                    end_id_=sta_offset + num_stations - 1,
+                    padding_number_=10000,
+                    radio=radio_name
+                )
+
+                # Separate brand new stations from already existing stations to avoid LANforge add_sta overwrite error
+                new_stations = []
+                already_existing = []
+                for sta in station_list:
+                    if lf_realm.is_port_exists(sta, existing_all_ports):
+                        already_existing.append(sta)
+                    else:
+                        new_stations.append(sta)
+
+                if already_existing:
+                    logger.info("Toolbox: Station(s) %s already exist on LANforge manager. Re-using existing station(s).", already_existing)
+
+                if new_stations:
+                    station_profile.use_security(security, ssid, ssid_pw)
+                    try:
+                        res = station_profile.create(
+                            radio=radio_name,
+                            sta_names_=new_stations,
+                            debug=args.debug,
+                            up_=True
+                        )
+                        if res is False:
+                            logger.error("Toolbox: station_profile.create returned failure status for radio '%s'.", radio_name)
+                            action_success = False
+                    except Exception as create_err:
+                        logger.error("Toolbox: Station creation API error on radio '%s': %s", radio_name, create_err)
+                        action_success = False
+
+                for sta in station_list:
+                    lf_realm.admin_up(sta)
+                    created_stations_session.append(sta)
+
+                sta_offset += 1000
+                total_processed += num_stations
+
+            if total_processed > 0 and action_success:
+                logger.info("Toolbox: Successfully processed %d station(s).", total_processed)
+            else:
+                action_success = False
+
+        if not action_success:
+            logger.error("Toolbox: Station creation action failed. Halting remaining actions.")
+            return False
+
+    # Action 2: Layer-3 Cross-Connection Building (--build_cxs / --build_cx)
+    if getattr(args, 'build_cxs', False) or getattr(args, 'build_cx', False):
+        action_performed = True
+        logger.info("Toolbox: Building Layer-3 cross-connection(s)...")
+        raw_ports = getattr(args, 'ports', None) or getattr(args, 'downstream_ports', None)
+        ports = parse_list(raw_ports) if raw_ports else created_stations_session
+
+        if not ports:
+            logger.error("Toolbox: --build_cxs specified, but no --ports/--downstream_ports provided and no stations created in this session.")
+            action_success = False
+        else:
+            upstream_port = getattr(args, 'upstream_port', None)
+            existing_ports = lf_realm.get_all_ports()
+
+            if existing_ports is None:
+                logger.error("Toolbox: Failed to query ports from LANforge API at %s:%s. Check connection.", args.lfmgr, args.lfmgr_port)
+                action_success = False
+            elif not upstream_port:
+                logger.error("Toolbox: --build_cxs specified, but no --upstream_port provided.")
+                action_success = False
+            else:
+                matched_upstream = lf_realm.is_port_exists(upstream_port, existing_ports)
+                if not matched_upstream:
+                    logger.error("Toolbox: Specified upstream port '%s' not found on LANforge manager.", upstream_port)
+                    action_success = False
+
+                valid_ports = []
+                for p in ports:
+                    matched_p = lf_realm.is_port_exists(p, existing_ports)
+                    if matched_p:
+                        valid_ports.append(matched_p)
+                    else:
+                        logger.error("Toolbox: Specified target port '%s' not found on LANforge manager.", p)
+                        action_success = False
+
+                if valid_ports and matched_upstream and action_success:
+                    endp_types = args.endp_type if isinstance(args.endp_type, list) else [args.endp_type] if args.endp_type else ["lf_udp"]
+                    tos_list = args.tos if isinstance(args.tos, list) else [args.tos] if args.tos else ["BE"]
+                    raw_cx_names = getattr(args, 'cx_names', None)
+                    parsed_cx_names = parse_list(raw_cx_names)
+                    custom_cx_name = parsed_cx_names[0] if parsed_cx_names else None
+
+                    cx_profile = lf_realm.new_l3_cx_profile()
+                    cx_profile.host = args.lfmgr
+                    cx_profile.port = args.lfmgr_port
+                    if custom_cx_name:
+                        cx_profile.name_prefix = str(custom_cx_name)
+
+                    min_rate = getattr(args, 'side_a_min_bps', None) or getattr(args, 'rates_a', None) or "256000"
+                    min_rate_b = getattr(args, 'side_b_min_bps', None) or getattr(args, 'rates_b', None) or min_rate
+                    cx_profile.side_a_min_bps = min_rate
+                    cx_profile.side_a_max_bps = min_rate
+                    cx_profile.side_b_min_bps = min_rate_b
+                    cx_profile.side_b_max_bps = min_rate_b
+
+                    for etype in endp_types:
+                        for _tos in tos_list:
+                            logger.info("Creating Layer-3 connections for endpoint type: %s, TOS: %s between upstream '%s' and ports %s (CX name prefix: %s)",
+                                        etype, _tos, matched_upstream, valid_ports, cx_profile.name_prefix)
+                            try:
+                                these_cx, these_endp = cx_profile.create(
+                                    endp_type=etype,
+                                    side_a=valid_ports,
+                                    side_b=matched_upstream,
+                                    sleep_time=0,
+                                    tos=_tos,
+                                    add_tos_to_name=True
+                                )
+                                if not these_cx:
+                                    logger.error("Toolbox: Failed to create Layer-3 cross-connections.")
+                                    action_success = False
+                                else:
+                                    logger.info("Created Layer-3 cross-connections: %s", these_cx)
+                            except Exception as cx_err:
+                                logger.error("Toolbox: Failed to create Layer-3 cross-connections: %s", cx_err)
+                                action_success = False
+
+        if not action_success:
+            logger.error("Toolbox: Cross-connection building action failed. Halting remaining actions.")
+            return False
+
+    # Action 3: Stop Cross Connections (--stop_cx)
+    if args.stop_cx is not None:
+        action_performed = True
+        target_cxs = str(args.stop_cx).strip()
+        existing_cxs = lf_realm.get_all_cxs()
+
+        if existing_cxs is None:
+            logger.error("Toolbox: Failed to query cross-connections from LANforge API at %s:%s. Check connection.", args.lfmgr, args.lfmgr_port)
+            action_success = False
+        elif not target_cxs or target_cxs.lower() == 'all':
+            logger.info("Toolbox: Stopping all cross-connections ('all')...")
+            if not existing_cxs:
+                logger.warning("No cross-connections found on LANforge manager to stop.")
+            else:
+                logger.info("Found %d cross-connection(s): %s", len(existing_cxs), existing_cxs)
+                success_count = 0
+                for cx_name in existing_cxs:
+                    logger.info("Stopping cross-connection '%s'", cx_name)
+                    res = lf_realm.stop_cx(cx_name)
+                    if res is None or res is False:
+                        logger.error("Toolbox: Failed to stop cross-connection '%s'.", cx_name)
+                        action_success = False
+                    else:
+                        success_count += 1
+                if action_success:
+                    logger.info("Successfully stopped %d cross-connection(s).", success_count)
+                else:
+                    logger.error("Failed to stop some cross-connections (%d of %d succeeded).", success_count, len(existing_cxs))
+        else:
+            cx_list = parse_list(target_cxs)
+            logger.info("Toolbox: Stopping specified cross-connections: %s", cx_list)
+            stopped_count = 0
+            for cx_name in cx_list:
+                matched_cx = lf_realm.is_cx_exists(cx_name, existing_cxs)
+                if matched_cx:
+                    logger.info("Stopping cross-connection '%s'", matched_cx)
+                    res = lf_realm.stop_cx(matched_cx)
+                    if res is None or res is False:
+                        logger.error("Toolbox: Failed to stop cross-connection '%s'.", matched_cx)
+                        action_success = False
+                    else:
+                        stopped_count += 1
+                else:
+                    logger.error("Requested cross-connection '%s' not found on LANforge manager.", cx_name)
+                    action_success = False
+
+            if stopped_count == 0 and cx_list:
+                logger.error("Failed to stop any requested cross-connections.")
+                action_success = False
+            elif action_success:
+                logger.info("Completed stopping %d cross-connection(s).", stopped_count)
+            else:
+                logger.error("Completed stopping cross-connections with errors (%d of %d succeeded).", stopped_count, len(cx_list))
+
+        if not action_success:
+            logger.error("Toolbox: Stop cross-connections action failed. Halting remaining actions.")
+            return False
+
+    # Action 4: Start Cross Connections (--start_cx)
+    if args.start_cx is not None:
+        action_performed = True
+        target_cxs = str(args.start_cx).strip()
+        existing_cxs = lf_realm.get_all_cxs()
+
+        if existing_cxs is None:
+            logger.error("Toolbox: Failed to query cross-connections from LANforge API at %s:%s. Check connection.", args.lfmgr, args.lfmgr_port)
+            action_success = False
+        elif not target_cxs or target_cxs.lower() == 'all':
+            logger.info("Toolbox: Starting all cross-connections ('all')...")
+            if not existing_cxs:
+                logger.warning("No cross-connections found on LANforge manager to start.")
+            else:
+                logger.info("Found %d cross-connection(s): %s", len(existing_cxs), existing_cxs)
+                success_count = 0
+                for cx_name in existing_cxs:
+                    logger.info("Starting cross-connection '%s'", cx_name)
+                    res = lf_realm.start_cx(cx_name)
+                    if res is None or res is False:
+                        logger.error("Toolbox: Failed to start cross-connection '%s'.", cx_name)
+                        action_success = False
+                    else:
+                        success_count += 1
+                if action_success:
+                    logger.info("Successfully started %d cross-connection(s).", success_count)
+                else:
+                    logger.error("Failed to start some cross-connections (%d of %d succeeded).", success_count, len(existing_cxs))
+        else:
+            cx_list = parse_list(target_cxs)
+            logger.info("Toolbox: Starting specified cross-connections: %s", cx_list)
+            started_count = 0
+            for cx_name in cx_list:
+                matched_cx = lf_realm.is_cx_exists(cx_name, existing_cxs)
+                if matched_cx:
+                    logger.info("Starting cross-connection '%s'", matched_cx)
+                    res = lf_realm.start_cx(matched_cx)
+                    if res is None or res is False:
+                        logger.error("Toolbox: Failed to start cross-connection '%s'.", matched_cx)
+                        action_success = False
+                    else:
+                        started_count += 1
+                else:
+                    logger.error("Requested cross-connection '%s' not found on LANforge manager.", cx_name)
+                    action_success = False
+
+            if started_count == 0 and cx_list:
+                logger.error("Failed to start any requested cross-connections.")
+                action_success = False
+            elif action_success:
+                logger.info("Completed starting %d cross-connection(s).", started_count)
+            else:
+                logger.error("Completed starting cross-connections with errors (%d of %d succeeded).", started_count, len(cx_list))
+
+        if not action_success:
+            logger.error("Toolbox: Start cross-connections action failed. Halting remaining actions.")
+            return False
+
+    # Action 5: Delete Cross Connections (--del_cx)
+    if args.del_cx is not None:
+        action_performed = True
+        target_cxs = str(args.del_cx).strip()
+        existing_cxs = lf_realm.get_all_cxs()
+
+        if existing_cxs is None:
+            logger.error("Toolbox: Failed to query cross-connections from LANforge API at %s:%s. Check connection.", args.lfmgr, args.lfmgr_port)
+            action_success = False
+        elif not target_cxs or target_cxs.lower() == 'all':
+            logger.info("Toolbox: Deleting all cross-connections ('all')...")
+            if not existing_cxs:
+                logger.warning("No cross-connections found on LANforge manager to delete.")
+            else:
+                logger.info("Found %d cross-connection(s) to delete: %s", len(existing_cxs), existing_cxs)
+                success_count = 0
+                for cx_name in existing_cxs:
+                    logger.info("Deleting cross-connection '%s'", cx_name)
+                    res1 = lf_realm.rm_cx(cx_name)
+                    if res1 is None or res1 is False:
+                        logger.error("Toolbox: Failed to delete cross-connection '%s'.", cx_name)
+                        action_success = False
+                    else:
+                        success_count += 1
+                if action_success:
+                    logger.info("Successfully deleted %d cross-connection(s).", success_count)
+                else:
+                    logger.error("Failed to delete some cross-connections (%d of %d succeeded).", success_count, len(existing_cxs))
+        else:
+            cx_list = parse_list(target_cxs)
+            logger.info("Toolbox: Deleting specified cross-connections: %s", cx_list)
+            deleted_count = 0
+            for cx_name in cx_list:
+                matched_cx = lf_realm.is_cx_exists(cx_name, existing_cxs)
+                if matched_cx:
+                    logger.info("Deleting cross-connection '%s'", matched_cx)
+                    res1 = lf_realm.rm_cx(matched_cx)
+                    if res1 is None or res1 is False:
+                        logger.error("Toolbox: Failed to delete cross-connection '%s'.", matched_cx)
+                        action_success = False
+                    else:
+                        deleted_count += 1
+                else:
+                    logger.info("Requested cross-connection '%s' not found on LANforge manager (already deleted).", cx_name)
+                    deleted_count += 1
+
+            if action_success:
+                logger.info("Completed deleting %d cross-connection(s).", deleted_count)
+            else:
+                logger.error("Completed deleting cross-connections with errors (%d of %d succeeded).", deleted_count, len(cx_list))
+
+        if not action_success:
+            logger.error("Toolbox: Delete cross-connections action failed. Halting remaining actions.")
+            return False
+
+    # Action 6: Delete Stations (--del_stations)
+    if getattr(args, 'del_stations', None) is not None:
+        action_performed = True
+        target_stas = str(args.del_stations).strip()
+        existing_stas = lf_realm.get_all_stations()
+
+        if existing_stas is None:
+            logger.error("Toolbox: Failed to query stations from LANforge API at %s:%s. Check connection.", args.lfmgr, args.lfmgr_port)
+            action_success = False
+        elif not target_stas or target_stas.lower() == 'all':
+            logger.info("Toolbox: Deleting all station ports...")
+            if not existing_stas:
+                logger.warning("No station ports found on LANforge manager to delete.")
+            else:
+                logger.info("Found %d station port(s) to delete: %s", len(existing_stas), existing_stas)
+                success_count = 0
+                for sta_name in existing_stas:
+                    logger.info("Deleting station '%s'", sta_name)
+                    lf_realm.admin_down(sta_name)
+                    res = lf_realm.rm_port(sta_name, check_exists=False)
+                    if res is False or res is None:
+                        logger.error("Toolbox: Failed to delete station '%s'.", sta_name)
+                        action_success = False
+                    else:
+                        success_count += 1
+                if action_success:
+                    logger.info("Successfully deleted %d station port(s).", success_count)
+                else:
+                    logger.error("Failed to delete some station ports (%d of %d succeeded).", success_count, len(existing_stas))
+        else:
+            sta_list = parse_list(target_stas)
+            logger.info("Toolbox: Deleting specified stations: %s", sta_list)
+            deleted_count = 0
+            all_ports = lf_realm.get_all_ports() or existing_stas
+            for sta_name in sta_list:
+                matched_sta = lf_realm.is_port_exists(sta_name, all_ports)
+                if matched_sta:
+                    logger.info("Deleting station '%s'", matched_sta)
+                    lf_realm.admin_down(matched_sta)
+                    res = lf_realm.rm_port(matched_sta, check_exists=False)
+                    if res is False or res is None:
+                        logger.error("Toolbox: Failed to delete station '%s'.", matched_sta)
+                        action_success = False
+                    else:
+                        deleted_count += 1
+                else:
+                    logger.info("Requested station '%s' not found on LANforge manager (already deleted).", sta_name)
+                    deleted_count += 1
+
+            if action_success:
+                logger.info("Completed deleting %d station(s).", deleted_count)
+            else:
+                logger.error("Completed deleting stations with errors (%d of %d succeeded).", deleted_count, len(sta_list))
+
+        if not action_success:
+            logger.error("Toolbox: Delete stations action failed. Halting remaining actions.")
+            return False
+
+    # Action 7: Ports Admin UP (--ports_up)
+    if args.ports_up is not None:
+        action_performed = True
+        target_ports = str(args.ports_up).strip()
+        existing_ports = lf_realm.get_all_ports()
+
+        if existing_ports is None:
+            logger.error("Toolbox: Failed to query ports from LANforge API at %s:%s. Check connection.", args.lfmgr, args.lfmgr_port)
+            action_success = False
+        elif not target_ports or target_ports.lower() == 'all':
+            logger.info("Toolbox: Setting all station/wireless ports admin UP...")
+            sta_ports = lf_realm.get_all_stations() or []
+            if not sta_ports:
+                logger.warning("No ports found on LANforge manager to set admin UP.")
+            else:
+                logger.info("Found %d station/wireless port(s) to set admin UP: %s", len(sta_ports), sta_ports)
+                success_count = 0
+                for sta_name in sta_ports:
+                    logger.info("Setting port '%s' admin UP", sta_name)
+                    res = lf_realm.admin_up(sta_name)
+                    if res is False or res is None:
+                        logger.error("Toolbox: Failed to set port '%s' admin UP.", sta_name)
+                        action_success = False
+                    else:
+                        success_count += 1
+                if action_success:
+                    logger.info("Successfully set %d station/wireless port(s) admin UP.", success_count)
+                else:
+                    logger.error("Failed to set some ports admin UP (%d of %d succeeded).", success_count, len(sta_ports))
+        else:
+            port_list = parse_list(target_ports)
+            logger.info("Toolbox: Setting specified ports admin UP: %s", port_list)
+            up_count = 0
+            for port_name in port_list:
+                matched_port = lf_realm.is_port_exists(port_name, existing_ports)
+                if matched_port:
+                    logger.info("Setting port '%s' admin UP", matched_port)
+                    res = lf_realm.admin_up(matched_port)
+                    if res is False or res is None:
+                        logger.error("Toolbox: Failed to set port '%s' admin UP.", matched_port)
+                        action_success = False
+                    else:
+                        up_count += 1
+                else:
+                    logger.error("Requested port '%s' not found on LANforge manager.", port_name)
+                    action_success = False
+
+            if up_count == 0 and port_list:
+                logger.error("Failed to set any requested ports admin UP.")
+                action_success = False
+            elif action_success:
+                logger.info("Completed setting %d port(s) admin UP.", up_count)
+            else:
+                logger.error("Completed setting ports admin UP with errors (%d of %d succeeded).", up_count, len(port_list))
+
+        if not action_success:
+            logger.error("Toolbox: Ports admin UP action failed. Halting remaining actions.")
+            return False
+
+    # Action 8: Ports Admin DOWN (--ports_down)
+    if args.ports_down is not None:
+        action_performed = True
+        target_ports = str(args.ports_down).strip()
+        existing_ports = lf_realm.get_all_ports()
+
+        if existing_ports is None:
+            logger.error("Toolbox: Failed to query ports from LANforge API at %s:%s. Check connection.", args.lfmgr, args.lfmgr_port)
+            action_success = False
+        elif not target_ports or target_ports.lower() == 'all':
+            logger.info("Toolbox: Setting all station/wireless ports admin DOWN...")
+            sta_ports = lf_realm.get_all_stations() or []
+            if not sta_ports:
+                logger.warning("No ports found on LANforge manager to set admin DOWN.")
+            else:
+                logger.info("Found %d station/wireless port(s) to set admin DOWN: %s", len(sta_ports), sta_ports)
+                success_count = 0
+                for sta_name in sta_ports:
+                    logger.info("Setting port '%s' admin DOWN", sta_name)
+                    res = lf_realm.admin_down(sta_name)
+                    if res is False or res is None:
+                        logger.error("Toolbox: Failed to set port '%s' admin DOWN.", sta_name)
+                        action_success = False
+                    else:
+                        success_count += 1
+                if action_success:
+                    logger.info("Successfully set %d station/wireless port(s) admin DOWN.", success_count)
+                else:
+                    logger.error("Failed to set some ports admin DOWN (%d of %d succeeded).", success_count, len(sta_ports))
+        else:
+            port_list = parse_list(target_ports)
+            logger.info("Toolbox: Setting specified ports admin DOWN: %s", port_list)
+            down_count = 0
+            for port_name in port_list:
+                matched_port = lf_realm.is_port_exists(port_name, existing_ports)
+                if matched_port:
+                    logger.info("Setting port '%s' admin DOWN", matched_port)
+                    res = lf_realm.admin_down(matched_port)
+                    if res is False or res is None:
+                        logger.error("Toolbox: Failed to set port '%s' admin DOWN.", matched_port)
+                        action_success = False
+                    else:
+                        down_count += 1
+                else:
+                    logger.error("Requested port '%s' not found on LANforge manager.", port_name)
+                    action_success = False
+
+            if down_count == 0 and port_list:
+                logger.error("Failed to set any requested ports admin DOWN.")
+                action_success = False
+            elif action_success:
+                logger.info("Completed setting %d port(s) admin DOWN.", down_count)
+            else:
+                logger.error("Completed setting ports admin DOWN with errors (%d of %d succeeded).", down_count, len(port_list))
+
+    # Final Result Evaluation
+    if action_performed:
+        if action_success:
+            logger.info("Toolbox action completed successfully.")
+            return True
+        else:
+            logger.error("Toolbox action failed with errors.")
+            return False
+
+    logger.error("Toolbox flag specified, but no valid toolbox action provided.")
+    return False
 
 
 # Starting point for running this from cmd line.
@@ -9194,12 +10361,35 @@ def main():
 
     help_summary = '''\
 The Layer 3 Traffic Generation Test is designed to test the performance of the
-Access Point by running layer 3 TCP and/or UDP Traffic.  Layer-3 Cross-Connects represent a stream
+Access Point by running layer 3 TCP and/or UDP Traffic. Layer-3 Cross-Connects represent a stream
 of data flowing through the system under test. A Cross-Connect (CX) is composed of two Endpoints,
 each of which is associated with a particular Port (physical or virtual interface).
 
 The test will create stations, create CX traffic between upstream port and stations, run traffic
 and generate a report.
+
+Toolbox Mode (--toolbox):
+Executes standalone, atomic LANforge building-block actions and exits immediately with status code 0 on success or 1 on failure.
+
+Toolbox Actions:
+  --create_station       Create stations using specified --radio config
+  --build_cxs            Build Layer-3 cross-connections between --upstream_port and --ports (or --downstream_ports)
+  --cx_names             Specify custom cross-connection name or prefix (e.g. wlan0, toolbox)
+  --start_cx             Start specified cross-connection(s) by name or 'all'
+  --stop_cx              Stop specified cross-connection(s) by name or 'all'
+  --del_cx               Delete specified cross-connection(s) by name or 'all'
+  --del_stations         Delete specified Wi-Fi station ports by name or 'all'
+  --ports_up             Set specified ports Admin UP
+  --ports_down           Set specified ports Admin DOWN
+
+Examples:
+  # Create station & build cross-connection with custom name 'wlan0':
+  python3 py-scripts/test_l3.py --lfmgr 192.168.244.45 --toolbox --create_station --radio "radio==wiphy0 stations==1" --build_cxs --upstream_port 1.1.eth1 --cx_names wlan0
+
+  # Start, stop, or delete specific cross-connection by name:
+  python3 py-scripts/test_l3.py --lfmgr 192.168.244.45 --toolbox --start_cx wlan0
+  python3 py-scripts/test_l3.py --lfmgr 192.168.244.45 --toolbox --stop_cx wlan0
+  python3 py-scripts/test_l3.py --lfmgr 192.168.244.45 --toolbox --del_cx wlan0
 '''
     args = parse_args()
 
@@ -9239,6 +10429,10 @@ and generate a report.
         # logger_config.lf_logger_config_json = "lf_logger_config.json"
         logger_config.lf_logger_config_json = args.lf_logger_config_json
         logger_config.load_lf_logger_config()
+
+    if args.toolbox:
+        toolbox_success = handle_toolbox(args)
+        sys.exit(0 if toolbox_success else 1)
 
     validate_args(args)
     endp_input_list = []

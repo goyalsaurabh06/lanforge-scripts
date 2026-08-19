@@ -386,6 +386,24 @@ class Throughput(Realm):
         self.do_bandsteering = do_bandsteering
         self.total_cycles = total_cycles
         self.bssids = bssids if bssids else []
+        # Keep monitoring output stable when a client disconnects or temporarily disappears
+        # from LANforge.  Reports still retain one row per configured client.
+        # Track CX availability and state changes across monitoring iterations.
+        self.missing_cx_logged = set()
+        self.cx_missing_until_running = set()
+        self.all_devices_stopped = False
+        self.missing_signal_logged = set()
+        self.last_cx_status = {}
+        self.cx_has_run = set()
+        self.device_issue_log = []
+        self.actual_monitoring_duration_seconds = 0
+        self.monitoring_started_with_available_cx = False
+        self.stopped_by_user = False
+        self.pre_monitoring_missing_logged = False
+        self.last_monitor_url = None
+        self.last_monitor_present_keys = []
+        self.current_iteration_cxs = []
+        self.monitor_start_time = None
         # Variables related to Robo
         self.robo_ip = robo_ip
         self.angle_list = angle_list if angle_list else [0]
@@ -401,6 +419,113 @@ class Throughput(Realm):
             self.robot.time_to_reach = int(duration_to_skip) * 60
             self.robot.coordinate_list = self.coordinate_list
             self.robot.total_cycles = self.total_cycles
+
+    def record_device_issue(self, device, issue, api_response=""):
+        """Append a timestamped device/issue entry, later written out as clients_issue.csv."""
+        if isinstance(api_response, (dict, list, tuple)):
+            api_response = json.dumps(api_response, sort_keys=True, default=str)
+        self.device_issue_log.append({
+            "Time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "Device": device,
+            "Issue": issue,
+            "API Response": api_response,
+        })
+
+    def should_stop_for_missing_cx(self, active_cxs=None, timeout=40, poll_interval=5):
+        """Return True when every CX active in this iteration fails to recover."""
+        if self.stop_test:
+            logger.info("Stop already requested; skipping missing-CX recovery wait.")
+            return True
+        active_cxs = set(active_cxs or self.current_iteration_cxs)
+        if not active_cxs:
+            return False
+        if not active_cxs.issubset(self.missing_cx_logged):
+            return False
+        logger.warning("All CXs active in the current iteration are missing from monitoring data.")
+        if not self.wait_for_any_cx_recovery(active_cxs, timeout, poll_interval):
+            logger.error("No active CX recovered after the retry window; skipping the current iteration.")
+            if self.do_bandsteering:
+                self.stop_test = True
+                self.all_devices_stopped = True
+                if self.robo_ip:
+                    self.robot.update_nav_data_for_all_cxs_stopped()
+            return True
+        return self.stop_test
+
+    def wait_for_any_cx_recovery(self, active_cxs, timeout=40, poll_interval=5):
+        """Wait briefly for a CX to recover, while honoring WebUI stop requests."""
+        active_cxs = set(active_cxs)
+        wait_start = datetime.now()
+        while (datetime.now() - wait_start).total_seconds() < timeout:
+            time.sleep(poll_interval)
+            if self.dowebgui:
+                running_file = os.path.join(
+                    self.result_dir, "../../Running_instances/{}_{}_running.json".format(self.ip, self.test_name))
+                try:
+                    with open(running_file, 'r') as file:
+                        if json.load(file).get("status") != "Running":
+                            logger.info("Test was stopped by the user during the CX recovery wait.")
+                            self.stop_test = True
+                            self.stopped_by_user = True
+                            return True
+                except (FileNotFoundError, json.JSONDecodeError) as error:
+                    logger.warning("Unable to read WebUI test status during CX recovery: %s", error)
+            self.get_layer3_endp_data(active_cxs)
+            elapsed = (datetime.now() - wait_start).total_seconds()
+            if not active_cxs.issubset(self.missing_cx_logged):
+                logger.info("Device(s) responded again after {:.0f}s, resuming.".format(elapsed))
+                return True
+            logger.warning("Still no devices responding after {:.0f}s, retrying...".format(elapsed))
+        return False
+
+    def format_monitoring_duration(self):
+        """Render self.actual_monitoring_duration_seconds as an 'Xm Ys' string for logging."""
+        total_seconds = int(self.actual_monitoring_duration_seconds)
+        minutes, seconds = divmod(total_seconds, 60)
+        return "{}m {}s".format(minutes, seconds)
+
+    def ensure_monitoring_data_collected(self):
+        """Require monitoring data unless the user explicitly stopped the test."""
+        if not self.monitoring_started_with_available_cx and not self.stopped_by_user:
+            raise RuntimeError("All active CXs were missing in every iteration; no monitoring data was collected.")
+
+    def precheck_all_created_cx_endpoints(self, timeout=40, poll_interval=5):
+        """Require at least one created CX endpoint before starting iterations."""
+        # Validate global endpoint availability independently of CX run state.
+        all_created_cxs = set(self.cx_profile.created_cx.keys())
+        if not all_created_cxs:
+            raise RuntimeError("No CXs were created; monitoring cannot start.")
+        self.get_layer3_endp_data(all_created_cxs)
+        if not all_created_cxs.issubset(self.missing_cx_logged):
+            return True
+        logger.warning("All created CX endpoints are missing before monitoring; retrying before starting iterations.")
+        if self.wait_for_any_cx_recovery(all_created_cxs, timeout, poll_interval):
+            return not self.stop_test
+        raise RuntimeError(
+            "All {} created CX(s) are missing before monitoring; no endpoint was available after retries.".format(
+                len(all_created_cxs)))
+
+    def append_stopped_monitor_row(self, dataframe, iteration, incremental_capacity_list, overall_start_time):
+        """Append a final Stopped row when WebUI stops during endpoint retries."""
+        if (not dataframe.empty and 'status' in dataframe.columns and
+                dataframe.iloc[-1].get('status') == 'Stopped'):
+            return dataframe
+        timestamp = datetime.now().strftime("%d/%m %I:%M:%S %p")
+        row = {column: 0 for column in dataframe.columns}
+        row.update({'Iteration': iteration + 1, 'TIMESTAMP': timestamp,
+                    'Start_time': overall_start_time.strftime("%d/%m %I:%M:%S %p"),
+                    'End_time': timestamp, 'Remaining_Time': 0,
+                    'Incremental_list': ', '.join(str(n) for n in incremental_capacity_list),
+                    'status': 'Stopped'})
+        if 'Angle' in dataframe.columns:
+            row['Angle'] = self.current_angle if self.current_angle is not None else 0
+        dataframe.loc[len(dataframe)] = [row[column] for column in dataframe.columns]
+        if self.dowebgui:
+            runtime_csv = 'overall_throughput.csv' if self.group_name else 'throughput_data.csv'
+            if self.robo_ip and self.current_coordinate is not None:
+                runtime_csv = '{}_{}'.format(self.current_coordinate, runtime_csv)
+            dataframe.to_csv(os.path.join(self.result_dir, runtime_csv), index=False)
+        return dataframe
 
     def perform_robo(self, args, clients_to_run):
         """
@@ -428,6 +553,10 @@ class Throughput(Realm):
             self.robot.testname = args.test_name
         iterations_before_test_stopped_by_user = []
         test_stopped_by_user = False
+
+        if not self.precheck_all_created_cx_endpoints():
+            self.stop()
+            return
 
         # if band steering is enabled
         if self.do_bandsteering:
@@ -477,6 +606,9 @@ class Throughput(Realm):
             logger.info("Current Cycle: {}".format(curr_cycle))
             # Iterate through all the points and monitoring throughput,bandsteering stats and as well as robot position
             for coord in coordinate_list_with_robo:
+                if self.stop_test:
+                    logger.info("Stopping band-steering run because all CXs are missing or the test was stopped.")
+                    break
                 pause, stopped = self.robot.wait_for_battery(lambda: self.monitor(
                     0,
                     individual_df,
@@ -487,7 +619,7 @@ class Throughput(Realm):
                     is_device_configured
                 )
                 )
-                if stopped:
+                if self.stop_test or stopped:
                     break
 
                 matched, abort, all_dataframes = self.robot.move_to_coordinate(
@@ -502,6 +634,9 @@ class Throughput(Realm):
                         is_device_configured
                     )
                 )
+                if abort or self.stop_test:
+                    break
+
                 if coord == self.coordinate_list[0]:
                     curr_cycle += 1
                     if curr_cycle > int(self.total_cycles):
@@ -509,15 +644,16 @@ class Throughput(Realm):
                     else:
                         logger.info("current cycle {}".format(curr_cycle))
 
-                if abort:
-                    break
                 if not matched:
                     continue
-            # To add last entry in the csv
-            all_dataframes = pd.concat(
-                [df for df in all_dataframes if isinstance(df, pd.DataFrame)],
-                ignore_index=True
-            )
+            # Generate a band-steering report only when monitoring collected rows.
+            collected_dataframes = [df for df in all_dataframes if isinstance(df, pd.DataFrame)]
+            if not collected_dataframes or all(df.empty for df in collected_dataframes):
+                self.stop()
+                if args.postcleanup:
+                    self.cleanup()
+                raise RuntimeError("All active CXs were missing; no band-steering monitoring data was collected.")
+            all_dataframes = pd.concat(collected_dataframes, ignore_index=True)
             last_idx = all_dataframes.index[-1]
 
             all_dataframes.loc[last_idx, "status"] = "Stopped"
@@ -528,6 +664,7 @@ class Throughput(Realm):
             self.stop()
             if args.postcleanup:
                 self.cleanup()
+            self.ensure_monitoring_data_collected()
             iterations_before_test_stopped_by_user.append(0)
             self.generate_report(list(set(iterations_before_test_stopped_by_user)), incremental_capacity_list, data=all_dataframes, data1=to_run_cxs_len, report_path=self.result_dir)
             if self.dowebgui:
@@ -537,6 +674,9 @@ class Throughput(Realm):
 
         # Loop through the coordinate list when coordinates are specified.
         for coord in self.coordinate_list:
+            if self.stop_test:
+                logger.info("Stopping robot run because all CXs are missing or the test was stopped.")
+                break
             # checking the battery status of robot before moving to a point
             pause_coord, test_stopped_by_user = self.robot.wait_for_battery()
             if test_stopped_by_user:
@@ -598,6 +738,9 @@ class Throughput(Realm):
                     if args.do_interopability and i != 0:
                         self.stop_specific(to_run_cxs[i - 1])
                         time.sleep(5)
+                    elif not args.do_interopability and i != 0:
+                        # Reset the previous cumulative CX set before the next capacity.
+                        self.stop_specific(created_cx_lists_keys[:incremental_capacity_list[i - 1]])
                     if args.interopability_config:
                         if args.do_interopability and i == 0:
                             # To disconnect all the selected devices at the starting selected
@@ -607,10 +750,17 @@ class Throughput(Realm):
                             # To configure device which is under test
                             is_device_configured = self.configure_specific([device_to_run_resource])
                     if is_device_configured:
-                        self.start_specific(to_run_cxs[i])
+                        # Start cumulative CXs for capacity tests or isolated CXs for interoperability.
+                        if args.do_interopability:
+                            self.start_specific(to_run_cxs[i])
+                        else:
+                            self.start_specific(created_cx_lists_keys[:incremental_capacity_list[i]])
 
                 # Determine device names based on the current iteration
-                device_names = created_cx_lists_keys[:to_run_cxs_len[i][-1]]
+                if args.do_interopability and args.load_type != "wc_intended_load":
+                    device_names = list(to_run_cxs[i])
+                else:
+                    device_names = created_cx_lists_keys[:to_run_cxs_len[i][-1]]
 
                 # Monitor throughput and capture all dataframes and test stop status
                 all_dataframes, test_stopped_by_user = self.monitor_for_robo(i, individual_df, device_names, incremental_capacity_list, overall_start_time, overall_end_time, is_device_configured)
@@ -628,13 +778,19 @@ class Throughput(Realm):
                     iterations_before_test_stopped_by_user.append(i)
                     break
 
+            # Stop the whole robot run on a user stop or an unrecoverable CX loss.
+            if test_stopped_by_user:
+                break
+
         #     logger.info("connections download {}".format(connections_download))
         #     logger.info("connections upload {}".format(connections_upload))
             self.stop()
         if args.postcleanup:
             self.cleanup()
 
-        # Clear navigation status fields in nav_data.json when the test completes from Web UI
+        self.ensure_monitoring_data_collected()
+
+        # Mark nav_data.json as completed for the Web UI.
         if args.dowebgui:
             with open(nav_data, 'r') as x:
                 navdata = json.load(x)
@@ -820,7 +976,7 @@ class Throughput(Realm):
 
         if "resources" not in response.keys():
             logger.error("There are no real devices.")
-            exit(1)
+            raise RuntimeError("'resources' key not found in /resource/all response; no real devices available. Response: {}".format(response))
 
         # Iterate over the response to categorize resources
         for key, value in response.items():
@@ -872,7 +1028,7 @@ class Throughput(Realm):
         response_port = self.json_get("/port/all")
         if "interfaces" not in response_port.keys():
             logger.error("Error: 'interfaces' key not found in port data")
-            exit(1)
+            raise RuntimeError("'interfaces' key not found in /port/all response; no port data available. Response: {}".format(response_port))
 
         # mac_id1_list=[]
 
@@ -943,7 +1099,7 @@ class Throughput(Realm):
                 self.device_found = False
                 if self.device_list != "all":
                     logger.warning("Test can not be initiated on any selected devices")
-                    exit(1)
+                    raise RuntimeError("No devices available to continue the test")
 
         else:
             devices_list = ","
@@ -1010,7 +1166,7 @@ class Throughput(Realm):
             if not self.config and not self.interopability_config:
                 if len(self.mac_id_list) == 0:
                     logger.error("Devices selected is less than given incremental capacity")
-                    return False, self.real_client_list
+                    raise RuntimeError("Devices selected (0) is less than given incremental capacity ({})".format(self.incremental_capacity))
                 configured_devices = len(self.mac_id_list)
                 given_capacity = list(map(int, self.incremental_capacity.split(",")))
                 adjusted_capacity = [cap for cap in given_capacity if cap <= configured_devices]
@@ -1060,6 +1216,15 @@ class Throughput(Realm):
 
         for port in port_data:
             interfaces_dict.update(port)
+        for sta in station_names:
+            if sta not in interfaces_dict:
+                if sta not in self.missing_signal_logged:
+                    logger.warning("Signal data for station '%s' is unavailable; continuing with default metrics.", sta)
+                    self.missing_signal_logged.add(sta)
+                    self.record_device_issue(sta, "Signal data unavailable (device may have disconnected)")
+            elif sta in self.missing_signal_logged:
+                logger.info("Signal data for station '%s' is available again.", sta)
+                self.missing_signal_logged.discard(sta)
         for sta in station_names:
             if sta in interfaces_dict:
                 if "dBm" in interfaces_dict[sta]['signal']:
@@ -1213,6 +1378,9 @@ class Throughput(Realm):
                 "cx_name": cx_name,
                 "cx_state": "RUNNING"
             }, debug_=self.debug)
+        # Re-sync local CX state with LANforge right after starting, so the very first
+        # get_layer3_endp_data() poll sees each CX's real state instead of a stale one.
+        self.cx_profile.refresh_cx()
         # self.cx_profile.start_cx_specific(cx_list)
 
     def stop_specific(self, cx_list):
@@ -1225,20 +1393,61 @@ class Throughput(Realm):
                 "cx_name": cx_name,
                 "cx_state": "STOPPED"
             }, debug_=self.debug)
+        self.clear_endp_counters()
+
+    def clear_endp_counters(self):
+        """Clear all endpoint counters after CXs stop."""
+        self.json_post("/cli-json/clear_endp_counters", {
+            "endp_name": "all"
+        }, debug_=self.debug)
 
     def stop(self):
 
         self.cx_profile.stop_cx()
+        self.clear_endp_counters()
         self.station_profile.admin_down()
+
+    def remove_missing_cx(self):
+        """Remove locally tracked CXs absent from the current Layer-3 CX list."""
+        # Refresh Layer-3 CX availability before modifying the local CX profile.
+        if not self.cx_profile.created_cx:
+            return
+        try:
+            cx_response = self.json_get('/cx/all')
+        except Exception as error:
+            logger.warning("Unable to refresh the Layer-3 CX list before cleanup: %s", error)
+            return
+        if not isinstance(cx_response, dict) or not cx_response:
+            logger.warning("Unable to refresh the Layer-3 CX list before cleanup; unexpected response: %s", cx_response)
+            return
+        created_cxs = set(self.cx_profile.created_cx.keys())
+        metadata_keys = {'handler', 'uri', 'buttons', 'empty'}
+        available_cxs = set(cx_response.keys()) - metadata_keys
+        for value in cx_response.values():
+            entries = value if isinstance(value, list) else [value]
+            for entry in entries:
+                if isinstance(entry, dict) and entry.get('name'):
+                    available_cxs.add(entry['name'])
+        available_cxs.intersection_update(created_cxs)
+        missing_cxs = created_cxs - available_cxs
+        if missing_cxs:
+            logger.warning(
+                "Excluding %s CX(s) missing from the current Layer-3 response: %s",
+                len(missing_cxs), sorted(missing_cxs)
+            )
+            for cx in missing_cxs:
+                self.cx_profile.created_cx.pop(cx, None)
 
     def pre_cleanup(self):
         self.cx_profile.cleanup()
 
     def cleanup(self):
+        if self.robo_ip:
+            self.remove_missing_cx()
         logger.info("cleanup done")
         self.cx_profile.cleanup()
 
-    def get_layer3_endp_data(self):
+    def get_layer3_endp_data(self, active_cxs=None):
         """
         Fetches Layer 3 endpoint data for all created cross connections.
 
@@ -1251,50 +1460,113 @@ class Throughput(Realm):
             [3]: RX drop percentage at the B endpoint
             [4]: Status of the Device ("Run" or "Stopped")
         """
-        cx_list_endp = []
-        cx_list_l3 = []
-        for i in self.cx_profile.created_cx.keys():
-            cx_list_endp.append(i + '-A')
-            cx_list_endp.append(i + '-B')
-            cx_list_l3.append(i)
-        # Fetch required throughput data from Lanforge
-        try:
-            # for dynamic data, taken rx rate lasts from layer3 endp tab
-            l3_endp_data = list(self.json_get('/endp/{}/list?fields=rx rate (last),rx drop %25,name,run,name'.format(','.join(cx_list_endp)))['endpoint'])
-            l3_cx_data = self.json_get('/cx/all')
-        except Exception as e:
-            cx_data = self.json_get('/cx/all/')
-            logger.info(cx_data)
-            logger.error(f"Endpoint not fetched from API {e}")
-        # Extracting and storing throughput data
         cx_list = list(self.cx_profile.created_cx.keys())
-        i = 0
+        active_cxs = set(active_cxs or self.current_iteration_cxs or cx_list)
+        endpoint_names = [endpoint for cx in cx_list if cx in active_cxs
+                          for endpoint in (cx + '-A', cx + '-B')]
+        monitor_url = '/endp/{}/list?fields=rx rate (last),rx drop %25,name,run'.format(','.join(endpoint_names))
+        endpoint_response = {}
+        cx_response = {}
+        try:
+            endpoint_response = self.json_get(monitor_url) or {}
+            cx_response = self.json_get('/cx/all') or {}
+        except Exception as e:
+            # Partial /endp response is expected for phantom clients; continue with default metrics.
+            logger.error("Endpoint not fetched from API: %s", e)
+
+        self.last_monitor_url = monitor_url
+        # Normalize the two response shapes /endp/.../list can return into one name->metrics lookup.
+        endpoint_data = endpoint_response.get('endpoint', []) if isinstance(endpoint_response, dict) else []
+        if isinstance(endpoint_data, dict):
+            endpoint_data = [endpoint_data]
+        elif not isinstance(endpoint_data, (list, tuple)):
+            endpoint_data = []
+
+        metrics_by_endpoint = {}
+        for item in endpoint_data:
+            if not isinstance(item, dict):
+                continue
+            if 'name' in item:
+                value = item
+                name = value.get('name')
+                if name:
+                    metrics_by_endpoint[name] = value
+            else:
+                for name, value in item.items():
+                    if isinstance(value, dict):
+                        metrics_by_endpoint[value.get('name', name)] = value
+
+        self.last_monitor_present_keys = sorted(metrics_by_endpoint.keys())
+
+        rtt_by_cx = {}
+        state_by_cx = {}
+        cx_object_by_name = {}
+        # /cx/all keys its entries by index, not by name, so look up 'name' per value.
+        if isinstance(cx_response, dict):
+            for value in cx_response.values():
+                if isinstance(value, dict) and value.get('name'):
+                    rtt_by_cx[value['name']] = value.get('avg rtt', 0)
+                    state_by_cx[value['name']] = value.get("state", "Stopped")
+                    cx_object_by_name[value['name']] = value
+
         throughput = {}
-        # mapping the data based upon the cx_list order
-        for cx in cx_list:
-            throughput[i] = [0, 0, 0, 0, "Stopped", 0]
-            for j in l3_endp_data:
-                key, value = next(iter(j.items()))
-                endp_a = cx + '-A'
-                endp_b = cx + '-B'
-                if value['name'] == endp_a:
-                    throughput[i][0] = value['rx rate (last)']
-                    throughput[i][2] = value['rx drop %']
-                elif value['name'] == endp_b:
-                    throughput[i][1] = value['rx rate (last)']
-                    throughput[i][3] = value['rx drop %']
-                if value['name'] == endp_a or value['name'] == endp_b:
-                    throughput[i][4] = 'Run' if value['run'] else 'Stopped'
-            # To add average RTT
-            for j in l3_cx_data:
-                if not isinstance(l3_cx_data[j], dict):
-                    continue
-                if cx == l3_cx_data[j]['name']:
-                    throughput[i][5] = l3_cx_data[j]['avg rtt']
-            i += 1
+        # Suppress "not running" warnings for the first 10s so fresh CXs don't false-positive.
+        past_grace_period = (self.monitor_start_time is None or
+                             (datetime.now() - self.monitor_start_time).total_seconds() >= 10)
+        for index, cx in enumerate(cx_list):
+            endp_a, endp_b = cx + '-A', cx + '-B'
+            a_metrics = metrics_by_endpoint.get(endp_a)
+            b_metrics = metrics_by_endpoint.get(endp_b)
+            cx_is_present = a_metrics is not None or b_metrics is not None
+            cx_is_active = cx in active_cxs
+            if cx_is_active and not cx_is_present:
+                if cx not in self.missing_cx_logged:
+                    logger.warning("CX '%s' is missing from monitoring data; continuing with the remaining devices.\nURL                  : %s\nEndpoint keys present: %s",
+                                   cx, monitor_url, self.last_monitor_present_keys)
+                    self.missing_cx_logged.add(cx)
+                    self.cx_missing_until_running.add(cx)
+                    self.record_device_issue(cx, "CX missing from monitoring data", self.last_monitor_present_keys)
+            elif cx_is_active and cx in self.missing_cx_logged:
+                logger.info("CX '%s' data is available again.", cx)
+                self.missing_cx_logged.discard(cx)
+
+            running = any(bool(metrics and metrics.get('run')) for metrics in (a_metrics, b_metrics))
+            status = 'Run' if running else state_by_cx.get(cx, "Stopped")
+            previous_status = self.last_cx_status.get(cx)
+            if cx_is_active and cx_is_present:
+                # Ignore the expected initial Stopped/Waiting-to-Run transition.
+                if status == 'Run' and cx not in self.cx_has_run:
+                    self.last_cx_status[cx] = status
+                    self.cx_has_run.add(cx)
+                elif previous_status is None:
+                    self.last_cx_status[cx] = status
+                elif status != previous_status:
+                    missing_and_not_running = cx in self.cx_missing_until_running and status != 'Run'
+                    if not missing_and_not_running:
+                        issue = "Status ({}->{})".format(previous_status, status)
+                        if status == 'Run':
+                            logger.info("CX '%s' %s.", cx, issue)
+                        elif past_grace_period:
+                            logger.warning("CX '%s' %s.", cx, issue)
+                        self.record_device_issue(cx, issue, cx_object_by_name.get(cx, {}))
+                        self.last_cx_status[cx] = status
+                if status == 'Run':
+                    self.cx_missing_until_running.discard(cx)
+
+            throughput[index] = [
+                (a_metrics or {}).get('rx rate (last)', 0),
+                (b_metrics or {}).get('rx rate (last)', 0),
+                (a_metrics or {}).get('rx drop %', 0),
+                (b_metrics or {}).get('rx drop %', 0),
+                status,
+                rtt_by_cx.get(cx, 0),
+            ]
         return throughput
 
     def monitor(self, iteration, individual_df, device_names, incremental_capacity_list, overall_start_time, overall_end_time, is_device_configured):
+        # Skip re-polling once a stop is already decided while the robot is still moving.
+        if self.do_bandsteering and self.stop_test:
+            return individual_df, True
         individual_df_for_webui = individual_df.copy()  # for webui
         throughput, upload, download, upload_throughput, download_throughput, connections_upload, connections_download = {}, [], [], [], [], {}, {}
         drop_a, drop_a_per, drop_b, drop_b_per, state, state_of_device, avg_rtt = [], [], [], [], [], [], []  # noqa: F841
@@ -1304,11 +1576,34 @@ class Throughput(Realm):
         if self.cx_profile.created_cx is None:
             raise ValueError("Monitor needs a list of Layer 3 connections")
 
+        # Restrict missing and status checks to CXs used by this iteration.
+        self.current_iteration_cxs = list(device_names)
+
         start_time = datetime.now()
+        if self.monitor_start_time is None:
+            self.monitor_start_time = start_time
 
         logger.info("Monitoring cx and endpoints")
         end_time = start_time + timedelta(seconds=int(self.test_duration))
         self.overall = []
+
+        # Don't start an interval if every CX is already missing; give recovery a chance first.
+        if self.cx_profile.created_cx:
+            self.get_layer3_endp_data(self.current_iteration_cxs)
+            if self.should_stop_for_missing_cx(self.current_iteration_cxs):
+                if self.stopped_by_user:
+                    individual_df = self.append_stopped_monitor_row(
+                        individual_df, iteration, incremental_capacity_list, overall_start_time)
+                # Propagate missing CX failure to stop band-steering coordinates.
+                return individual_df, True if self.do_bandsteering else self.stop_test
+            self.monitoring_started_with_available_cx = True
+            missing_active_cxs = set(self.current_iteration_cxs).intersection(self.missing_cx_logged)
+            if missing_active_cxs and not self.pre_monitoring_missing_logged:
+                logger.warning("Missing before monitoring; continuing with %s device(s): %s\nURL                  : %s\nEndpoint keys present: %s",
+                               len(self.current_iteration_cxs) - len(missing_active_cxs),
+                               sorted(missing_active_cxs), self.last_monitor_url,
+                               self.last_monitor_present_keys)
+                self.pre_monitoring_missing_logged = True
 
         # Initialize variables for real-time connections data
         index = -1
@@ -1327,11 +1622,22 @@ class Throughput(Realm):
         time_break = 0
         # Continuously collect data until end time is reached
         while datetime.now() < end_time:
+            if self.all_devices_stopped and self.do_bandsteering:
+                logger.info("All devices previously stopped during bandsteering; returning early.")
+                return individual_df, True
             index += 1
             current_time = datetime.now()
             signal_list, channel_list, mode_list, link_speed_list, rx_rate_list, bssid_list = self.get_signal_and_channel_data(self.input_devices_list)
             signal_list = [int(i) if str(i).lstrip('-').isdigit() else 0 for i in signal_list]
-            throughput[index] = self.get_layer3_endp_data()
+            if self.stop_test:
+                logger.info("Stop already requested; ending monitoring interval.")
+                test_stopped_by_user = True
+                break
+            throughput[index] = self.get_layer3_endp_data(self.current_iteration_cxs)
+            if self.current_iteration_cxs and self.should_stop_for_missing_cx(self.current_iteration_cxs):
+                # Propagate missing CX failure to stop band-steering coordinates.
+                test_stopped_by_user = True if self.do_bandsteering else self.stop_test
+                break
             # Check if next sleep would overshoot the end_time
             is_last_iteration = ((current_time + timedelta(seconds=1 if self.dowebgui else self.report_timer)) >= end_time)
             # For the WebUI, data is appended as "STOPPED" outside the loop.
@@ -1424,10 +1730,13 @@ class Throughput(Realm):
                     if data["status"] != "Running":
                         logger.warning('Test is stopped by the user')
                         test_stopped_by_user = True
+                        self.stopped_by_user = True
                         if self.do_bandsteering:
+                            self.actual_monitoring_duration_seconds += (datetime.now() - start_time).total_seconds()
                             return individual_df, test_stopped_by_user
                         break
                 if self.do_bandsteering:
+                    self.actual_monitoring_duration_seconds += (datetime.now() - start_time).total_seconds()
                     return individual_df, test_stopped_by_user
                 # Adjust time_gap based on elapsed time since start (for webui)
                 d = datetime.now()
@@ -1527,6 +1836,7 @@ class Throughput(Realm):
                 individual_df.loc[len(individual_df)] = individual_df_data
                 individual_df.to_csv('throughput_data.csv', index=False)
                 if self.do_bandsteering:
+                    self.actual_monitoring_duration_seconds += (datetime.now() - start_time).total_seconds()
                     return individual_df, test_stopped_by_user
 
             if self.stop_test:
@@ -1620,9 +1930,7 @@ class Throughput(Realm):
         for i in range(len(upload_throughput)):
             connections_upload.update({keys[i]: float(f"{(upload_throughput[i]):.2f}")})
 
-        logger.info("connections download {}".format(connections_download))
-        logger.info("connections upload {}".format(connections_upload))
-
+        self.actual_monitoring_duration_seconds += (datetime.now() - start_time).total_seconds()
         return individual_df, test_stopped_by_user
 
     def monitor_for_robo(self, iteration, individual_df, device_names, incremental_capacity_list, overall_start_time, overall_end_time, is_device_configured):
@@ -1652,11 +1960,26 @@ class Throughput(Realm):
         if self.cx_profile.created_cx is None:
             raise ValueError("Monitor needs a list of Layer 3 connections")
 
+        # Restrict missing and status checks to CXs used by this robot iteration.
+        self.current_iteration_cxs = list(device_names)
+
         start_time = datetime.now()
+        if self.monitor_start_time is None:
+            self.monitor_start_time = start_time
 
         logger.info("Monitoring cx and endpoints")
         end_time = start_time + timedelta(seconds=int(self.test_duration))
         self.overall = []
+
+        if self.cx_profile.created_cx:
+            self.get_layer3_endp_data(self.current_iteration_cxs)
+            if self.should_stop_for_missing_cx(self.current_iteration_cxs):
+                if self.stopped_by_user:
+                    individual_df = self.append_stopped_monitor_row(
+                        individual_df, iteration, incremental_capacity_list, overall_start_time)
+                # End robot monitoring so collected data can proceed to report generation.
+                return individual_df, True
+            self.monitoring_started_with_available_cx = True
 
         # Initialize variables for real-time connections data
         index = -1
@@ -1711,11 +2034,22 @@ class Throughput(Realm):
 
             # Continuously collect data until end time is reached
             while datetime.now() < end_time:
+                if self.all_devices_stopped and self.do_bandsteering:
+                    logger.info("All devices previously stopped during bandsteering; returning early.")
+                    return individual_df, True
                 index += 1
                 current_time = datetime.now()
                 signal_list, channel_list, mode_list, link_speed_list, rx_rate_list, bssid_list = self.get_signal_and_channel_data(self.input_devices_list)
                 signal_list = [int(i) if str(i).lstrip('-').isdigit() else 0 for i in signal_list]
-                throughput[index] = self.get_layer3_endp_data()
+                if self.stop_test:
+                    logger.info("Stop already requested; ending monitoring interval.")
+                    test_stopped_by_user = True
+                    break
+                throughput[index] = self.get_layer3_endp_data(self.current_iteration_cxs)
+                if self.current_iteration_cxs and self.should_stop_for_missing_cx(self.current_iteration_cxs):
+                    # End robot monitoring so collected data can proceed to report generation.
+                    test_stopped_by_user = True
+                    break
                 # Check if next sleep would overshoot the end_time
                 is_last_iteration = ((current_time + timedelta(seconds=1 if self.dowebgui else self.report_timer)) >= end_time)
                 # For the WebUI, data is appended as "STOPPED" outside the loop.
@@ -1854,6 +2188,7 @@ class Throughput(Realm):
                         if data["status"] != "Running":
                             logger.warning('Test is stopped by the user')
                             test_stopped_by_user = True
+                            self.stopped_by_user = True
                             break
 
                     # Adjust time_gap based on elapsed time since start (for webui)
@@ -2095,9 +2430,7 @@ class Throughput(Realm):
         for i in range(len(upload_throughput)):
             connections_upload.update({keys[i]: float(f"{(upload_throughput[i]):.2f}")})
 
-        logger.info("connections download {}".format(connections_download))
-        logger.info("connections upload {}".format(connections_upload))
-
+        self.actual_monitoring_duration_seconds += (datetime.now() - start_time).total_seconds()
         return individual_df, test_stopped_by_user
 
     def perform_intended_load(self, iteration, incremental_capacity_list):
@@ -2673,6 +3006,10 @@ class Throughput(Realm):
                 data_iter = data[data['Iteration'] == i + 1]
                 avg_rtt_data = []
 
+                if data_iter.empty:
+                    logger.warning("Skipping report section for iteration %s because no monitoring data was collected.", i + 1)
+                    continue
+
                 # for sig in self.signal_list[0:int(incremental_capacity_list[i])]:
                 #     signal_data.append(int(sig)*(-1))
                 # rssi_signal_data.append(signal_data)
@@ -3143,6 +3480,10 @@ class Throughput(Realm):
                 data_iter = data[data['Iteration'] == i + 1]
                 avg_rtt_data = []
 
+                if data_iter.empty:
+                    logger.warning("Skipping report section for iteration %s because no monitoring data was collected.", i + 1)
+                    continue
+
                 # Fetch devices_on_running from real_client_list
                 devices_on_running.append(self.real_client_list[data1[i][-1] - 1].split(" ")[-1])
                 # If the device fails to configure, skip its data in the report
@@ -3380,10 +3721,13 @@ class Throughput(Realm):
                 self.add_live_view_images_to_report(report)
         if iot_summary:
             self.build_iot_report_section(report, iot_summary)
+        if self.device_issue_log:
+            pd.DataFrame(self.device_issue_log).to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
         # report.build_custom()
         report.build_footer()
         report.write_html()
         report.write_pdf(_orientation="Landscape")
+        logger.info("Monitoring Duration: %s", self.format_monitoring_duration())
 
     def generate_report_robo(self, iterations_before_test_stopped_by_user, incremental_capacity_list, data=None, data1=None, report_path='', result_dir_name='Throughput_Test_report',
                              selected_real_clients_names=None):
@@ -3613,6 +3957,12 @@ class Throughput(Realm):
                         rssi_data = []
                         data_iter = data[data['Iteration'] == i + 1]
                         avg_rtt_data = []
+
+                        if data_iter.empty:
+                            logger.warning(
+                                "Skipping report section for iteration %s at coordinate %s because no monitoring data was collected.",
+                                i + 1, coordinate)
+                            continue
 
                         # for sig in self.signal_list[0:int(incremental_capacity_list[i])]:
                         #     signal_data.append(int(sig)*(-1))
@@ -3963,10 +4313,13 @@ class Throughput(Realm):
                         report.set_custom_html('<hr>')
                         report.build_custom()
 
+        if self.device_issue_log:
+            pd.DataFrame(self.device_issue_log).to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
         # report.build_custom()
         report.build_footer()
         report.write_html()
         report.write_pdf(_orientation="Landscape")
+        logger.info("Monitoring Duration: %s", self.format_monitoring_duration())
 
     # Creates a separate DataFrame for each group of devices.
 
@@ -4986,6 +5339,10 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
             throughput.perform_robo(args, clients_to_run)
             exit(1)
 
+        if not throughput.precheck_all_created_cx_endpoints():
+            throughput.stop()
+            return
+
         individual_dataframe_column = []
 
         to_run_cxs, to_run_cxs_len, created_cx_lists_keys, incremental_capacity_list = throughput.get_incremental_capacity_list()
@@ -5025,6 +5382,9 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
                 if args.do_interopability and i != 0:
                     throughput.stop_specific(to_run_cxs[i - 1])
                     time.sleep(5)
+                elif not args.do_interopability and i != 0:
+                    # Reset the previous cumulative CX set before the next capacity.
+                    throughput.stop_specific(created_cx_lists_keys[:incremental_capacity_list[i - 1]])
                 if args.interopability_config:
                     if args.do_interopability and i == 0:
                         # To disconnect all the selected devices at the starting selected
@@ -5034,10 +5394,17 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
                         # To configure device which is under test
                         is_device_configured = throughput.configure_specific([device_to_run_resource])
                 if is_device_configured:
-                    throughput.start_specific(to_run_cxs[i])
+                    # Start cumulative CXs for capacity tests or isolated CXs for interoperability.
+                    if args.do_interopability:
+                        throughput.start_specific(to_run_cxs[i])
+                    else:
+                        throughput.start_specific(created_cx_lists_keys[:incremental_capacity_list[i]])
 
             # Determine device names based on the current iteration
-            device_names = created_cx_lists_keys[:to_run_cxs_len[i][-1]]
+            if args.do_interopability and args.load_type != "wc_intended_load":
+                device_names = list(to_run_cxs[i])
+            else:
+                device_names = created_cx_lists_keys[:to_run_cxs_len[i][-1]]
 
             # Monitor throughput and capture all dataframes and test stop status
             all_dataframes, test_stopped_by_user = throughput.monitor(i, individual_df, device_names, incremental_capacity_list, overall_start_time, overall_end_time, is_device_configured)
@@ -5057,9 +5424,11 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
 
     #     logger.info("connections download {}".format(connections_download))
     #     logger.info("connections upload {}".format(connections_upload))
+    throughput.remove_missing_cx()
     throughput.stop()
     if args.postcleanup:
         throughput.cleanup()
+    throughput.ensure_monitoring_data_collected()
     iot_summary = None
     if args.iot_test and args.iot_testname:
         # Load IoT summary data from the specified JSON file

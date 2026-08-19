@@ -319,6 +319,14 @@ class ThroughputQOS(Realm):
         self.qos_data = {}
         self.throughput_data = []
         self.band_steering_df = []
+        self.missing_cx_logged = set()
+        self.missing_signal_logged = set()
+        self.cx_endpoint_lookup_failed_logged = set()
+        self.cx_not_running_logged = set()
+        self.monitor_start_time = None
+        self.device_issue_log = []
+        self.actual_monitoring_duration_seconds = 0
+        self.all_devices_stopped = False
         self.do_bandsteering = do_bandsteering
         self.bssids = bssids.split(",") if bssids else []
         # Initializing robot test parameters
@@ -613,6 +621,26 @@ class ThroughputQOS(Realm):
     def cleanup(self):
         self.cx_profile.cleanup()
 
+    def port_label_from_cx_name(self, cx_name):
+        """Extracts the leading resource id (e.g. "1.16") from a CX name for device issue reports."""
+        match = re.match(r'^[0-9]+\.[0-9]+', cx_name)
+        return match.group() if match else cx_name
+
+    def record_device_issue(self, device, issue, api_response=None):
+        """Records a timestamped device issue, later written to the clients_issue.csv."""
+        self.device_issue_log.append({
+            "Time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "Device": device,
+            "Issue": issue,
+            "API Response": api_response if api_response is not None else '',
+        })
+
+    def format_monitoring_duration(self):
+        """Formats the actual time spent monitoring as "Xm Ys"."""
+        total_seconds = int(self.actual_monitoring_duration_seconds)
+        minutes, seconds = divmod(total_seconds, 60)
+        return "{}m {}s".format(minutes, seconds)
+
     def build(self):
         self.create_cx()
         print("cx build finished")
@@ -716,6 +744,39 @@ class ThroughputQOS(Realm):
             self.mac_id_list = list(self.mac_id_list)
             self.num_stations = len(self.real_client_list)
 
+    def wait_for_any_cx_recovery(self, timeout=40, poll_interval=5):
+        """Polls for any CX to reappear (or a user stop) for up to `timeout` seconds.
+
+        Returns True on recovery or stop, False if the timeout elapses with none.
+        """
+        wait_start = datetime.now()
+        cx_list = list(self.cx_profile.created_cx.keys())
+        while (datetime.now() - wait_start).total_seconds() < timeout:
+            time.sleep(poll_interval)
+            if self.dowebgui == "True":
+                with open(self.result_dir + "/../../Running_instances/{}_{}_running.json".format(
+                        self.ip, self.test_name), 'r') as file:
+                    data = json.load(file)
+                    if data["status"] != "Running":
+                        logger.info("Test is stopped by the user during the device-recovery wait.")
+                        self.test_stopped_by_user = True
+                        return True
+            try:
+                # 'endpoint' is a single dict (not a list) when there's only one CX; normalize to a list
+                endp_api_url = '/endp/list?fields=rx rate (last),rx drop %25,name'
+                endp_response = self.json_get(endp_api_url)
+                endpoint_data = endp_response['endpoint']
+                l3_endp_data = endpoint_data if isinstance(endpoint_data, list) else [endpoint_data]
+                matched_cx = {next(iter(i.items()))[0][0:-2] for i in l3_endp_data}
+            except Exception:
+                matched_cx = set()
+            elapsed = (datetime.now() - wait_start).total_seconds()
+            if any(cx in matched_cx for cx in cx_list):
+                logger.info("Device(s) responded again after {:.0f}s, resuming.".format(elapsed))
+                return True
+            logger.warning("Still no devices responding after {:.0f}s, retrying...".format(elapsed))
+        return False
+
     def monitor(self, curr_coordinate=None, curr_rotation=None, monitor_charge_time=None):
         # TODO: Fix this. This is poor style
         throughput, upload, download, upload_throughput, download_throughput, connections_upload, connections_download, avg_upload, avg_download, avg_upload_throughput, avg_download_throughput, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, dropa_connections, dropb_connections = {  # noqa: E501
@@ -730,6 +791,17 @@ class ThroughputQOS(Realm):
             raise ValueError("Monitor needs a list of Layer 3 connections")
         # monitor columns
         start_time = datetime.now()
+        if self.do_bandsteering:
+            # Bandsteering invokes monitor() repeatedly as a per-tick callback within one
+            # continuous session, so only set this once for the whole session.
+            if self.monitor_start_time is None:
+                self.monitor_start_time = start_time
+        else:
+            # Every other robot_test flow (plain coordinate loop, rotation loop) calls
+            # monitor() once per coordinate/rotation, with CXs freshly restarted just before
+            # each call - restart the grace period each time instead of only on the very
+            # first coordinate.
+            self.monitor_start_time = start_time
         test_start_time = datetime.now().strftime("%Y %d %H:%M:%S")
         if not self.do_bandsteering:
             print("Test started at: ", test_start_time)
@@ -799,8 +871,16 @@ class ThroughputQOS(Realm):
             columns = ['bps rx a', 'bps rx b']
             individual_device_data[cx] = pd.DataFrame(columns=columns)
         while datetime.now() < end_time or getattr(self, "background_run", None):
+            if self.all_devices_stopped:
+                # already gave up on recovery earlier; don't re-run the 40s wait on every
+                # bandsteering tick
+                if self.do_bandsteering:
+                    return pd.DataFrame(self.band_steering_df)
+                break
             if self.robot_test:
-                if self.rotation_enabled:
+                # monitor_charge_time is None on the bandsteering monitor_function tick, so
+                # skip this check instead of crashing on None.
+                if self.rotation_enabled and monitor_charge_time is not None:
                     if (datetime.now() - monitor_charge_time).total_seconds() >= 300:
                         logger.info("Checking battery status (5-minute interval)...")
                         pause_start = datetime.now()
@@ -836,25 +916,50 @@ class ThroughputQOS(Realm):
 
             try:
                 # for dynamic data, taken rx rate (last) from layer3 endp tab
-                l3_endp_data = list(self.json_get('/endp/list?fields=rx rate (last),rx drop %25,name')['endpoint'])
+                # 'endpoint' is a single dict (not a list) when there's only one CX; normalize to a list
+                endp_api_url = '/endp/list?fields=rx rate (last),rx drop %25,name'
+                endp_response = self.json_get(endp_api_url)
+                endpoint_data = endp_response['endpoint']
+                l3_endp_data = endpoint_data if isinstance(endpoint_data, list) else [endpoint_data]
                 port_mgr_data = self.json_get('/ports/all/')['interfaces']
+                matched_ports = set()
                 for value in port_mgr_data:
                     for port, port_data in value.items():
                         if port_data['parent dev'] == "wiphy0" and port in self.input_devices_list:
+                            matched_ports.add(port)
                             rates_data['.'.join(port.split('.')[:2]) + ' rx_rate'].append(port_data['rx-rate'])
                             rates_data['.'.join(port.split('.')[:2]) + ' tx_rate'].append(port_data['tx-rate'])
                             rates_data['.'.join(port.split('.')[:2]) + ' RSSI'].append(port_data['signal'])
                             rates_data['.'.join(port.split('.')[:2]) + ' BSSID'].append(port_data['ap'])
                             rates_data['.'.join(port.split('.')[:2]) + ' Channel'].append(port_data['channel'])
+                # warn once when a device's port drops out, and log once when it reappears
+                for port in self.input_devices_list:
+                    if port not in matched_ports:
+                        if port not in self.missing_signal_logged:
+                            logger.warning(
+                                "Signal data for device on port {} is unavailable, it may have "
+                                "disconnected. Continuing the test with the remaining devices.".format(port)
+                            )
+                            self.missing_signal_logged.add(port)
+                            self.record_device_issue(
+                                port,
+                                "Signal data unavailable (device may have disconnected)",
+                                api_response=[key for interface in port_mgr_data
+                                              if isinstance(interface, dict) for key in interface])
+                    elif port in self.missing_signal_logged:
+                        logger.info("Signal data for device on port {} is available again.".format(port))
+                        self.missing_signal_logged.discard(port)
                 cx_list = list(self.cx_profile.created_cx.keys())
                 # t_response data order - [rx rate(last)_A,rx rate(last)_B,rx drop % A,rx drop %B] A or B will considered based upon the name in L3 Endps tab
                 for cx in cx_list:
                     t_response[cx] = [0, 0, 0.0, 0.0]
+                matched_cx = set()
                 for cx in cx_list:
                     for i in l3_endp_data:
                         key, cx_data = next(iter(i.items()))
                         cx_name = key[0:-2]
                         if cx == cx_name:
+                            matched_cx.add(cx_name)
                             traffic_tos = key.split('_')[-1].split('-')[0]
                             endp = key[-1]
 
@@ -869,9 +974,66 @@ class ThroughputQOS(Realm):
                                 self.real_time_data[cx_name][traffic_tos]['rx drop % b'].append(cx_data['rx drop %'])
                                 t_response[cx_name][3] = cx_data['rx drop %']
                                 self.real_time_data[cx_name][traffic_tos]['time'].append(datetime.now().strftime('%H:%M:%S'))
+                # warn once when a CX drops out of this tick's data, and log once when it reappears
+                for cx in cx_list:
+                    if cx not in matched_cx:
+                        if cx not in self.missing_cx_logged:
+                            # log the response's CX names, not the full (possibly large) response
+                            response_keys = [key for endpoint in l3_endp_data
+                                             if isinstance(endpoint, dict)
+                                             for key in endpoint]
+                            logger.warning(
+                                "CX '{}' is missing from the monitoring data, the device may have "
+                                "disconnected or its connection was not created. Continuing the test "
+                                "with the remaining devices.\n"
+                                "URL     : {}\n"
+                                "Response keys: {}".format(cx, endp_api_url, response_keys)
+                            )
+                            self.missing_cx_logged.add(cx)
+                            self.record_device_issue(self.port_label_from_cx_name(cx),
+                                                     "CX '{}' missing from monitoring data".format(cx),
+                                                     api_response=response_keys)
+                    elif cx in self.missing_cx_logged:
+                        logger.info("CX '{}' data is available again.".format(cx))
+                        self.missing_cx_logged.discard(cx)
+                # warn once when a CX's state isn't 'Run' (10s grace period after monitor start),
+                # and log once when it's running again
+                past_grace_period = (self.monitor_start_time is None or (datetime.now() - self.monitor_start_time).total_seconds() >= 10)
+                for cx in cx_list:
+                    cx_state = overallresponse.get(cx, {}).get('state') if isinstance(overallresponse, dict) else None
+                    if cx_state is not None and cx_state != 'Run':
+                        if past_grace_period and cx not in self.cx_not_running_logged:
+                            logger.warning("CX '{}' status is '{}', not running.".format(cx, cx_state))
+                            self.cx_not_running_logged.add(cx)
+                            self.record_device_issue(
+                                self.port_label_from_cx_name(cx),
+                                "CX '{}' status is '{}', not running".format(cx, cx_state),
+                                api_response=overallresponse.get(cx, {}))
+                    elif cx_state == 'Run' and cx in self.cx_not_running_logged:
+                        logger.info("CX '{}' status is back to running.".format(cx))
+                        self.cx_not_running_logged.discard(cx)
             except Exception as e:
                 logger.info(overallresponse)
                 logger.error(f"None type response{e}")
+
+            # If every device stopped responding, retry for 40s before ending this monitor loop
+            # gracefully (not a test failure) with whatever data was already collected.
+            if self.cx_profile.created_cx and len(self.missing_cx_logged) == len(self.cx_profile.created_cx):
+                logger.warning("All devices have stopped responding during monitoring, retrying "
+                               "for up to 40 seconds before ending the monitor loop.")
+                if not self.wait_for_any_cx_recovery(timeout=40, poll_interval=5):
+                    logger.error("No devices responded within 40 seconds during monitoring, "
+                                 "ending the monitor loop gracefully; the test will continue with "
+                                 "the data collected so far.")
+                    self.all_devices_stopped = True
+                    # Mark the WebUI as completed instead of leaving it at a later planned
+                    # navigation state.
+                    if self.robot_test:
+                        self.robot.update_nav_data_for_all_cxs_stopped()
+                    if self.do_bandsteering:
+                        self.actual_monitoring_duration_seconds += (datetime.now() - start_time).total_seconds()
+                        return pd.DataFrame(self.band_steering_df)
+                    break
             response1 = t_response
             response_values = list(response1.values())
             for value_index in range(len(response1.values())):
@@ -1038,6 +1200,8 @@ class ThroughputQOS(Realm):
                         if self.do_bandsteering:
                             df = pd.DataFrame(self.band_steering_df)
                             self.throughput_data.append(throughput.copy())
+                            # accumulate real monitoring time so the report shows actual duration, not just configured
+                            self.actual_monitoring_duration_seconds += (datetime.now() - start_time).total_seconds()
                             return df
                         break
                 # Adjust time_gap based on elapsed time since start (for webui)
@@ -1090,9 +1254,11 @@ class ThroughputQOS(Realm):
             if self.do_bandsteering:
                 df = pd.DataFrame(self.band_steering_df)
                 self.throughput_data.append(throughput.copy())
+                # accumulate real monitoring time so the report shows actual duration, not just configured
+                self.actual_monitoring_duration_seconds += (datetime.now() - start_time).total_seconds()
                 return df
 
-        if self.robot_test and self.dowebgui:
+        if self.robot_test and self.dowebgui and self.df_for_webui:
             last_entry = self.df_for_webui[-1].copy()
             last_entry["status"] = "Stopped"
             last_entry["timestamp"] = datetime.now().strftime("%d/%m %I:%M:%S %p")
@@ -1108,15 +1274,16 @@ class ThroughputQOS(Realm):
             download[index].append(throughput[index][0])
             drop_a[index].append(throughput[index][2])
             drop_b[index].append(throughput[index][3])
-        # Rounding of the results upto 2 decimals
-        upload_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in upload]
-        download_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in download]
-        drop_a_per = [float(round(sum(i) / len(i), 2)) for i in drop_a]
-        drop_b_per = [float(round(sum(i) / len(i), 2)) for i in drop_b]
-        avg_upload_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in avg_upload]
-        avg_download_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in avg_download]
-        avg_drop_a_per = [float(round(sum(i) / len(i), 2)) for i in avg_drop_a]
-        avg_drop_b_per = [float(round(sum(i) / len(i), 2)) for i in avg_drop_b]
+        # Rounding of the results upto 2 decimals. A list is empty if the loop ended before any
+        # data was collected (e.g. all devices stopped) - treat that as 0, not divide-by-zero.
+        upload_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") if i else 0.0 for i in upload]
+        download_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") if i else 0.0 for i in download]
+        drop_a_per = [float(round(sum(i) / len(i), 2)) if i else 0.0 for i in drop_a]
+        drop_b_per = [float(round(sum(i) / len(i), 2)) if i else 0.0 for i in drop_b]
+        avg_upload_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") if i else 0.0 for i in avg_upload]
+        avg_download_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") if i else 0.0 for i in avg_download]
+        avg_drop_a_per = [float(round(sum(i) / len(i), 2)) if i else 0.0 for i in avg_drop_a]
+        avg_drop_b_per = [float(round(sum(i) / len(i), 2)) if i else 0.0 for i in avg_drop_b]
         keys = list(connections_upload.keys())
         keys = list(connections_download.keys())
         # Updated the calculated values to the respective connections in dictionary
@@ -1132,9 +1299,9 @@ class ThroughputQOS(Realm):
             dropa_connections.update({keys[i]: avg_drop_a_per[i]})
         for i in range(len(avg_drop_b_per)):
             dropb_connections.update({keys[i]: avg_drop_b_per[i]})
-        logger.info("connections download {}".format(connections_download))
-        logger.info("connections {}".format(connections_upload))
         self.connections_download, self.connections_upload, self.drop_a_per, self.drop_b_per = connections_download, connections_upload, drop_a_per, drop_b_per
+        # accumulate real monitoring time so the report shows actual duration, not just configured
+        self.actual_monitoring_duration_seconds += (datetime.now() - start_time).total_seconds()
         return connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, dropa_connections, dropb_connections
 
     def evaluate_qos(self, connections_download, connections_upload, drop_a_per, drop_b_per):
@@ -1193,9 +1360,20 @@ class ThroughputQOS(Realm):
                                 tos_drop_dict['rx_drop_a'][current_tos].append(float(0))
                                 tx_b_download[current_tos].append(int(0))
                                 rx_a_download[current_tos].append(int(0))
+                        # log "CX Not Found" once per occurrence instead of on every tick
                         except Exception:
-                            logger.info(f'{sta}-A/B : CX Not Found')
-                            logger.info(f"Endpoint data : {endps}")
+                            if sta not in self.cx_endpoint_lookup_failed_logged:
+                                logger.warning(
+                                    "%s-A/B : Endpoint Not Found\n"
+                                    "Endpoint keys: %s",
+                                    sta,
+                                    [key for endpoint in endps if isinstance(endpoint, dict) for key in endpoint],
+                                )
+                                self.cx_endpoint_lookup_failed_logged.add(sta)
+                        else:
+                            if sta in self.cx_endpoint_lookup_failed_logged:
+                                logger.info(f'{sta}-A/B : Endpoint data is available again.')
+                                self.cx_endpoint_lookup_failed_logged.discard(sta)
                         counter += 1
                     tos_download.update({"bkQOS": float(f"{sum(tos_download['BK']):.2f}")})
                     tos_download.update({"beQOS": float(f"{sum(tos_download['BE']):.2f}")})
@@ -1530,9 +1708,14 @@ class ThroughputQOS(Realm):
 
         if iot_summary:
             self.build_iot_report_section(report, iot_summary)
+        # recorded device issues in csv
+        if self.device_issue_log:
+            issues_df = pd.DataFrame(self.device_issue_log)
+            issues_df.to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
         report.build_footer()
         report.write_html()
         report.write_pdf()
+        logger.info("Monitoring Duration: {}".format(self.format_monitoring_duration()))
 
     # Generates a separate table in the report for each group, including its respective devices.
     def generate_dataframe(self, groupdevlist, clients_list, mac, ssid, tos, upload, download, individual_upload,
@@ -2581,7 +2764,13 @@ class ThroughputQOS(Realm):
             tos_for_report = self.tos
             tos_images, rssi_images = self.get_live_view_images()
             for tos_val in tos_for_report:
-                for image_path in tos_images[tos_val]:
+                # A missing image is expected after the collection timeout.  Do
+                # not prevent the remainder of the report from being created.
+                image_paths = tos_images.get(tos_val, [])
+                if not image_paths:
+                    logger.warning("Skipping live-view image for TOS '%s': no image was collected.", tos_val)
+                    continue
+                for image_path in image_paths:
                     report.set_custom_html('<div style="page-break-before: always;"></div>')
                     report.build_custom()
                     report.set_custom_html(f'<img src="file://{image_path}" style="width: 1200px; height: 800px;"></img>')
@@ -2596,6 +2785,11 @@ class ThroughputQOS(Realm):
         for coordinate in range(len(passed_coordinates)):
             if self.rotation_enabled:
                 for angle in range(len(self.rotation_list)):
+                    # Test may have stopped before ever reaching/monitoring this
+                    # coordinate/angle combination - skip it instead of crashing.
+                    if (self.coordinate_list[coordinate] not in self.qos_data
+                            or self.rotation_list[angle] not in self.qos_data[self.coordinate_list[coordinate]]):
+                        continue
                     report.set_obj_html(_obj_title=f"Coordinate: {self.coordinate_list[coordinate]} | Rotation Angle: {self.rotation_list[angle]}°",
                                         _obj="")
                     report.build_objective()
@@ -2606,6 +2800,10 @@ class ThroughputQOS(Realm):
                     avg_drop_b = self.qos_data[self.coordinate_list[coordinate]][self.rotation_list[angle]]["avg_drop_b"]
                     self.generate_individual_coordinate(report, data, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, coordinate, angle)
             else:
+                # Test may have stopped before ever reaching/monitoring this coordinate -
+                # skip it instead of crashing.
+                if self.coordinate_list[coordinate] not in self.qos_data:
+                    continue
                 report.set_obj_html(_obj_title=f"Coordinate: {self.coordinate_list[coordinate]}",
                                     _obj="")
                 report.build_objective()
@@ -2619,9 +2817,14 @@ class ThroughputQOS(Realm):
             "contact": "support@candelatech.com"
         }
         report.test_setup_table(test_setup_data=input_setup_info, value="Information")
+        # any recorded device issues in the report folder
+        if self.device_issue_log:
+            issues_df = pd.DataFrame(self.device_issue_log)
+            issues_df.to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
         report.build_footer()
         report.write_html()
         report.write_pdf()
+        logger.info("Monitoring Duration: {}".format(self.format_monitoring_duration()))
 
     def get_bandsteering_stats(self, report=None, data=None):
         """
@@ -2808,16 +3011,19 @@ class ThroughputQOS(Realm):
             curr_cycle = 1
             logger.info("Current Cycle {}".format(curr_cycle))
             for coordinate in cycle_coords:
-                if self.test_stopped_by_user:
+                if self.test_stopped_by_user or self.all_devices_stopped:
                     break
                 # Before moving to next coordinate, check if battery is sufficient
                 pause_coord, test_stopped_by_user, band_steering_data = self.robot.wait_for_battery(monitor_function=lambda: self.monitor())
-                if test_stopped_by_user:
+                if test_stopped_by_user or self.all_devices_stopped:
                     break
                 matched, abort, band_steering_data = self.robot.move_to_coordinate(
                     coordinate,
                     monitor_function=lambda: self.monitor()
                 )
+                if self.all_devices_stopped:
+                    logger.warning("Band-steering test stopped because no devices recovered within 40 seconds.")
+                    break
                 if matched:
                     logger.info("Reached the coordinate {}".format(coordinate))
                     if coordinate == coord_list[0]:
@@ -2857,15 +3063,16 @@ class ThroughputQOS(Realm):
                     drop_a[ind].append(thpt[ind][2])
                     drop_b[ind].append(thpt[ind][3])
 
-            # Rounding of the results upto 2 decimals
-            upload_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in upload]
-            download_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in download]
-            drop_a_per = [float(round(sum(i) / len(i), 2)) for i in drop_a]
-            drop_b_per = [float(round(sum(i) / len(i), 2)) for i in drop_b]
-            avg_upload_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in avg_upload]
-            avg_download_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") for i in avg_download]
-            avg_drop_a_per = [float(round(sum(i) / len(i), 2)) for i in avg_drop_a]
-            avg_drop_b_per = [float(round(sum(i) / len(i), 2)) for i in avg_drop_b]
+            # A timeout can stop band steering before a monitoring sample is collected.
+            # Preserve the stopped-test report by representing those empty values as zero.
+            upload_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") if i else 0.0 for i in upload]
+            download_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") if i else 0.0 for i in download]
+            drop_a_per = [float(round(sum(i) / len(i), 2)) if i else 0.0 for i in drop_a]
+            drop_b_per = [float(round(sum(i) / len(i), 2)) if i else 0.0 for i in drop_b]
+            avg_upload_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") if i else 0.0 for i in avg_upload]
+            avg_download_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") if i else 0.0 for i in avg_download]
+            avg_drop_a_per = [float(round(sum(i) / len(i), 2)) if i else 0.0 for i in avg_drop_a]
+            avg_drop_b_per = [float(round(sum(i) / len(i), 2)) if i else 0.0 for i in avg_drop_b]
             keys = list(connections_download.keys())
             # Updated the calculated values to the respective connections in dictionary
             for i in range(len(download_throughput)):
@@ -2880,8 +3087,6 @@ class ThroughputQOS(Realm):
                 dropa_connections.update({keys[i]: avg_drop_a_per[i]})
             for i in range(len(avg_drop_b_per)):
                 dropb_connections.update({keys[i]: avg_drop_b_per[i]})
-            logger.info("connections download {}".format(connections_download))
-            logger.info("connections {}".format(connections_upload))
             test_results = {'test_results': []}
             data = {}
             test_results['test_results'].append(self.evaluate_qos(connections_download, connections_upload, drop_a_per, drop_b_per))
@@ -2889,7 +3094,7 @@ class ThroughputQOS(Realm):
             input_setup_info = {
                 "contact": "support@candelatech.com"
             }
-            if self.dowebgui == "True":
+            if self.dowebgui == "True" and self.overall:
                 last_entry = self.overall[len(self.overall) - 1]
                 last_entry["status"] = "Stopped"
                 last_entry["timestamp"] = datetime.now().strftime("%d/%m %I:%M:%S %p")
@@ -2911,7 +3116,9 @@ class ThroughputQOS(Realm):
             return
         for coordinate in coord_list:
             if self.robot_ip:
-                if self.test_stopped_by_user:
+                if self.test_stopped_by_user or self.all_devices_stopped:
+                    if self.all_devices_stopped:
+                        logger.warning("Robot test stopped because no devices recovered within 40 seconds.")
                     break
                 # Before moving to next coordinate, check if battery is sufficient
                 pause_coord, test_stopped_by_user = self.robot.wait_for_battery()
@@ -2940,8 +3147,6 @@ class ThroughputQOS(Realm):
                         time.sleep(10)
                         connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b = self.monitor(
                             curr_coordinate=coordinate)
-                        logger.info("connections download {}".format(connections_download))
-                        logger.info("connections upload {}".format(connections_upload))
                         self.stop()
                         time.sleep(5)
                         test_results['test_results'].append(self.evaluate_qos(connections_download, connections_upload, drop_a_per, drop_b_per))
@@ -3005,8 +3210,6 @@ class ThroughputQOS(Realm):
                             monitor_charge_time = datetime.now()
                             connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b = self.monitor(
                                 curr_coordinate=coordinate, curr_rotation=self.current_angle, monitor_charge_time=monitor_charge_time)
-                            logger.info("connections download {}".format(connections_download))
-                            logger.info("connections upload {}".format(connections_upload))
                             self.stop()
                             time.sleep(5)
                             test_results['test_results'].append(self.evaluate_qos(connections_download, connections_upload, drop_a_per, drop_b_per))
@@ -3039,6 +3242,14 @@ class ThroughputQOS(Realm):
                             if coordinate not in self.qos_data:
                                 self.qos_data[coordinate] = {}
                             self.qos_data[coordinate][self.rotation_list[angle]] = params
+                            if self.all_devices_stopped:
+                                logger.warning("Stopping remaining robot-test rotations because no devices recovered within 40 seconds.")
+                                break
+
+                # Do not let the outer coordinate loop move to another coordinate after all
+                # devices stopped responding for 40 seconds during this coordinate's monitoring.
+                if self.all_devices_stopped:
+                    break
 
         self.generate_report_for_robo(coordinate_list=coord_list, angle_list=self.rotation_list, passed_coordinates=passed_coord_list)
 
@@ -3715,8 +3926,6 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
         throughput_qos.start(False, False)
         time.sleep(10)
         connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b = throughput_qos.monitor()
-        logger.info("connections download {}".format(connections_download))
-        logger.info("connections upload {}".format(connections_upload))
         throughput_qos.stop()
         time.sleep(5)
         test_results['test_results'].append(throughput_qos.evaluate_qos(connections_download, connections_upload, drop_a_per, drop_b_per))

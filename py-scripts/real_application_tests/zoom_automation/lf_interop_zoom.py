@@ -49,32 +49,33 @@ NOTES:
 
 """
 
-import os
-import csv
-import time
-import requests
-import threading
 import argparse
-import pytz
-from datetime import datetime, timedelta
-from flask import Flask, request, jsonify
-import importlib
-import pandas as pd
-import shutil
-import logging
-import json
 import asyncio
-import sys
-import traceback
-import textwrap
-from requests.auth import HTTPBasicAuth
-from dotenv import load_dotenv
-import re
+import csv
 import glob
-from collections import Counter
-import signal
+import importlib
+import json
+import logging
+import os
 import platform
+import re
+import shutil
+import signal
 import subprocess
+import sys
+import textwrap
+import threading
+import time
+import traceback
+from collections import Counter
+from datetime import datetime, timedelta
+
+import pandas as pd
+import pytz
+import requests
+from dotenv import load_dotenv
+from flask import Flask, jsonify, request
+from requests.auth import HTTPBasicAuth
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
@@ -99,31 +100,31 @@ DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
 lf_base_interop_profile = importlib.import_module("py-scripts.lf_base_interop_profile")
 RealDevice = lf_base_interop_profile.RealDevice
 
-# Set up logging
 flask_server_logger = logging.getLogger(__name__)
 flask_server_log = logging.getLogger("werkzeug")
 flask_server_log.setLevel(logging.ERROR)
 
-# 1. Configure the logging system
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))  # everything is anchored here, not the cwd
+
+LOG_FILE = os.path.join(SCRIPT_DIR, "lf_interop_zoom.log")
+
+LOG_FORMAT = "%(asctime)s - %(levelname)-8s - %(message)s (%(filename)s:%(lineno)s)"  # filename/lineno tell apart the modules logging through root
+
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
+    format=LOG_FORMAT,
     handlers=[
-        logging.FileHandler("lf_interop_zoom.log", mode="w"),  # Writes to file
-        logging.StreamHandler(sys.stdout),  # Writes to terminal
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(LOG_FILE, mode="a"),  # append: a re-run must not destroy the failed run's log
     ],
+    force=True,  # DeviceConfig ran basicConfig() on import; without this ours is a no-op
 )
 
-# 2. Create the logger instance
 logger = logging.getLogger(__name__)
-
-lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 
 robo_base_class = importlib.import_module("py-scripts.lf_base_robo")
 
-# Directories on the real client stations where the Zoom automation scripts
-# (zoom.bat, ctzoom.bash) are deployed.
-WINDOWS_ZOOM_DIR = r".\local\real_application_test\zoom_automation"
+WINDOWS_ZOOM_DIR = r".\local\real_application_test\zoom_automation"  # zoom.bat/ctzoom.bash live on the client Laptops
 LINUX_ZOOM_DIR = "./local/real_application_test/zoom_automation"
 MACOS_ZOOM_DIR = "./local/real_application_test/zoom_automation"
 
@@ -208,9 +209,8 @@ class ZoomAutomation(Realm):
         self.stop_signal = False
         self.download_csv = False
         self.csv_file_name = "csvdata.csv"
-        self.path = os.path.join(os.getcwd(), "zoom_test_results")
-        if not os.path.exists(self.path):
-            os.makedirs(self.path)
+        self.path = os.path.join(SCRIPT_DIR, "zoom_test_results")  # not the cwd; --report_dir overrides
+        os.makedirs(self.path, exist_ok=True)
 
         self.device_names = []
         self.hostname_os_combination = None
@@ -249,7 +249,6 @@ class ZoomAutomation(Realm):
         self.selected_groups = list(selected_groups or [])
         self.selected_profiles = list(selected_profiles or [])
         self.duration = duration
-        # Single container for raw Zoom QoS and summarized report data.
         self.zoom_stats_data = {"raw_qos": [], "summary": {}}
         self.env_file = env_file
 
@@ -283,16 +282,18 @@ class ZoomAutomation(Realm):
             logger.info(
                 f"User mentioned coordinates list: {self.robo_obj.coordinate_list}"
             )
-        self.successful_coords = []
-        self.failed_coords = []
+        self.successful_coords = []  # robot reached the coordinate
+        self.failed_coords = []  # robot never got there
+        self.failed_angles = {}  # {coordinate: [angles]} it could not rotate to
+        self.host_failure_coords = []  # host device failed or never signalled start
+        self.endpoint_loss_coords = []  # no endpoint answered: deleted or unreachable
+        self.host_ever_ready = False
         self.is_csv_available = False
         self.wait_at_point = int(wait_at_point)
         self.resource_ip = resource_ip
 
     def stop_previous_flask_server(self):
-        """
-        Forcefully kills any process currently listening on port 5000 (Linux/Darwin only).
-        """
+        """Kill any process listening on port 5000 (Linux/Darwin only)."""
         port = 5000
         logger.info(
             f"Checking for processes using port {port} to forcefully kill them..."
@@ -302,7 +303,6 @@ class ZoomAutomation(Realm):
 
         try:
             if current_os in ["Linux", "Darwin"]:
-                # Find PID on Linux/Mac using lsof
                 command = f"lsof -t -i:{port}"
                 try:
                     output = subprocess.check_output(command, shell=True, text=True)
@@ -331,10 +331,14 @@ class ZoomAutomation(Realm):
             logger.info(f"No ping_logs directory found at {source_dir}")
             return
 
-        destination_dir = os.path.join(self.report_path_date_time, "ping_logs")
-        os.makedirs(self.report_path_date_time, exist_ok=True)
+        report_dir = getattr(self, "report_path_date_time", None)
+        if not report_dir:
+            logger.warning(f"No report folder for this run; ping logs stay at {source_dir}")
+            return
 
-        # If destination exists, merge files and remove source
+        destination_dir = os.path.join(report_dir, "ping_logs")
+        os.makedirs(report_dir, exist_ok=True)
+
         if os.path.exists(destination_dir):
             for file_name in os.listdir(source_dir):
                 src_file = os.path.join(source_dir, file_name)
@@ -346,6 +350,69 @@ class ZoomAutomation(Realm):
         else:
             shutil.move(source_dir, destination_dir)
             logger.info(f"Moved ping logs folder to {destination_dir}")
+
+    def move_log_folder(self):
+        source_dir = os.path.join(self.path, "zoom_client_logs")
+        if not os.path.isdir(source_dir):
+            logger.info(f"No zoom_client_logs directory found at {source_dir}")
+            return
+
+        report_dir = getattr(self, "report_path_date_time", None)  # see move_ping_logs()
+        if not report_dir:
+            logger.warning(f"No report folder for this run; client logs stay at {source_dir}")
+            return
+
+        destination_dir = os.path.join(report_dir, "zoom_client_logs")
+        os.makedirs(report_dir, exist_ok=True)
+
+        if os.path.exists(destination_dir):
+            for file_name in os.listdir(source_dir):
+                src_file = os.path.join(source_dir, file_name)
+                dst_file = os.path.join(destination_dir, file_name)
+                if os.path.isfile(src_file):
+                    shutil.move(src_file, dst_file)
+            shutil.rmtree(source_dir, ignore_errors=True)
+            logger.info(f"Merged client logs into {destination_dir}")
+        else:
+            shutil.move(source_dir, destination_dir)
+            logger.info(f"Moved client logs folder to {destination_dir}")
+
+    def move_run_log_to_report(self):
+        """Move this run's log file into the report folder. CLI runs only.
+
+        Skipped under --do_webUI, where the report directory belongs to the web
+        UI. The logging handler is re-attached at the new path.
+        """
+        if self.do_webui:
+            return
+
+        report_dir = getattr(self, "report_path_date_time", None)
+        if not report_dir or not os.path.isdir(report_dir):
+            logger.info(f"No report folder for this run; run log stays at {LOG_FILE}")  # the only record of what went wrong
+            return
+
+        source = os.path.abspath(LOG_FILE)
+        if not os.path.isfile(source):
+            return
+
+        destination = os.path.join(report_dir, os.path.basename(source))
+
+        root = logging.getLogger()  # release the file first: a cross-fs move leaves the handler on a deleted inode
+        for handler in root.handlers[:]:
+            if getattr(handler, "baseFilename", None) == source:
+                root.removeHandler(handler)
+                handler.close()
+
+        try:
+            shutil.move(source, destination)
+        except Exception as e:
+            logger.error(f"Could not move run log to {destination}: {e}", exc_info=True)
+            destination = source  # re-attach where the log actually still is
+
+        handler = logging.FileHandler(destination, mode="a")
+        handler.setFormatter(logging.Formatter(LOG_FORMAT))
+        root.addHandler(handler)
+        logger.info(f"Run log: {destination}")
 
     def handle_flask_server(self):
         self.stop_previous_flask_server()
@@ -404,12 +471,14 @@ class ZoomAutomation(Realm):
 
         @self.app.route("/get_participants_joined", methods=["GET"])
         def get_participants_joined():
+            logger.info(f"/get_participants_joined GET -> participants joined: {self.participants_joined}")
             return jsonify({"participants": self.participants_joined})
 
         @self.app.route("/set_participants_joined", methods=["POST"])
         def set_participants_joined():
             data = request.json
             self.participants_joined = data.get("participants_joined", None)
+            logger.info(f"/set_participants_joined POST -> participants joined: {self.participants_joined}")
             return jsonify(
                 {
                     "message": f"Updated participants joined status to {self.participants_joined}"
@@ -418,6 +487,7 @@ class ZoomAutomation(Realm):
 
         @self.app.route("/get_participants_req", methods=["GET"])
         def get_participants_req():
+            logger.info(f"/get_participants_req GET -> participants required: {self.participants_req}")
             return jsonify({"participants": self.participants_req})
 
         @self.app.route("/test_started", methods=["GET", "POST"])
@@ -508,7 +578,6 @@ class ZoomAutomation(Realm):
                             else:
                                 stats["rotations_enabled"] = False
 
-                        # --- CSV FILE PATH GENERATION ---
                         if self.do_robo:
                             if self.rotations_enabled:
                                 csv_name = f"{hostname}_{self.current_cord}_{self.current_angle}.csv"
@@ -519,7 +588,6 @@ class ZoomAutomation(Realm):
 
                         csv_file = os.path.join(self.path, csv_name)
 
-                        # --- WRITING DATA TO CSV ---
                         file_exists = (
                             os.path.isfile(csv_file) and os.path.getsize(csv_file) > 0
                         )
@@ -588,17 +656,13 @@ class ZoomAutomation(Realm):
 
         @self.app.route("/get_latest_stats", methods=["GET"])
         def get_latest_stats():
-            # Return the latest data for all hostnames
             return jsonify(self._get_summary_zoom_stats()), 200
 
         @self.app.route("/stop_zoom", methods=["GET"])
         def stop_zoom():
-            """
-            Endpoint to stop the Zoom test and trigger a graceful application shutdown.
-            """
+            """Stop the Zoom test and shut the application down."""
             logger.info("Stopping the test through web UI")
             self.stop_signal = True  # Signal to stop the application
-            # Respond to the client
             response = jsonify({"message": "Stopping Zoom Test"})
             response.status_code = 200
             # Trigger shutdown in a separate thread to avoid blocking
@@ -621,16 +685,26 @@ class ZoomAutomation(Realm):
                         400,
                     )
 
-                filename = data.get("filename", "csvdata.csv")
+                filename = os.path.basename((data.get("filename") or "").strip())  # basename blocks "../../x.csv" traversal; name comes off the network
+                if not filename:
+                    logger.error("/upload_csv POST: missing or invalid filename")
+                    return (
+                        jsonify(
+                            {"status": "error", "message": "Missing or invalid filename"}
+                        ),
+                        400,
+                    )
                 self.csv_file_name = f"received_{filename}"
                 rows = data.get("rows", [])
+                logger.info(f"/upload_csv POST: received filename={filename}")
+                logger.debug(f"/upload_csv POST: received rows={rows}")
                 if not rows:
                     return (
                         jsonify({"status": "error", "message": "No rows received"}),
                         400,
                     )
 
-                filepath = f"received_{filename}"
+                filepath = os.path.join(self.path, self.csv_file_name)
                 logger.info(
                     f"Data Received from Zoom dashboard is stored at: {filepath}"
                 )
@@ -652,6 +726,11 @@ class ZoomAutomation(Realm):
                 )
 
             except Exception as e:
+                logger.error(
+                    f"/upload_csv POST failed: {e}. The Zoom dashboard CSV for this "
+                    "round was not saved.",
+                    exc_info=True,
+                )
                 return jsonify({"status": "error", "message": str(e)}), 500
 
         @self.app.route("/upload_ping_log", methods=["POST"])
@@ -690,6 +769,39 @@ class ZoomAutomation(Realm):
                     200,
                 )
             except Exception as e:
+                logger.error(f"/upload_ping_log POST failed: {e}", exc_info=True)
+                return jsonify({"status": "error", "message": str(e)}), 500
+
+        @self.app.route("/upload_log", methods=["POST"])
+        def upload_log():
+            try:
+                data = request.json
+                hostname = data.get("hostname")
+                log_content = data.get("log")
+
+                if not hostname or log_content is None:
+                    return jsonify({"status": "error", "message": "Missing hostname or log"}), 400
+
+                log_dir = os.path.join(self.path, "zoom_client_logs")
+                os.makedirs(log_dir, exist_ok=True)
+
+                # Force a safe filename to avoid path traversal from client-supplied hostname
+                hostname = os.path.basename(hostname.strip())
+                if self.do_robo:
+                    if self.rotations_enabled:
+                        log_name = f"{hostname}_{self.current_cord}_{self.current_angle}.log"
+                    else:
+                        log_name = f"{hostname}_{self.current_cord}.log"
+                else:
+                    log_name = f"{hostname}.log"
+                save_path = os.path.join(log_dir, log_name)
+                with open(save_path, "w", errors="replace") as f:
+                    f.write(log_content)
+
+                logger.info(f"Log file uploaded from {hostname}")
+                return jsonify({"status": "success", "message": "Log file uploaded"}), 200
+            except Exception as e:
+                logger.error(f"Error uploading log file: {e}")
                 return jsonify({"status": "error", "message": str(e)}), 500
 
         try:
@@ -701,14 +813,12 @@ class ZoomAutomation(Realm):
             sys.exit(0)
 
     def shutdown(self):
-        """
-        Gracefully shut down the application.
-        """
+        """Shut the application down gracefully."""
         if self.do_robo and self.api_stats_collection:
             self.generate_report_from_data()
         elif self.api_stats_collection:
             self.generate_report_from_api()
-        self.generic_endps_profile.cleanup()
+        self.cleanup_generic_endpoints()
         logger.info("Initiating graceful shutdown...")
         os._exit(0)
 
@@ -720,38 +830,117 @@ class ZoomAutomation(Realm):
             self.end_time = self.start_time + timedelta(minutes=self.duration)
         return [self.start_time, self.end_time]
 
-    def check_gen_cx(self):
+    def generic_endpoint_exists(self, endp_name):
+        """Return True if LANforge has a generic endpoint by this name."""
+        response = self.json_get(f"/generic/{endp_name}")
+        return bool(response and "endpoint" in response)
+
+    def predict_endpoint_names(self, port_name):
+        """Return the generic endpoint and CX names for a port.
+
+        Both are built from the configured name prefix: port "1.400.wlan0" with
+        prefix "zoom" gives ("zoom-1.400.wlan0", "CX_zoom-1.400.wlan0").
+        """
+        prefix = self.generic_endps_profile.name_prefix
+        return f"{prefix}-{port_name}", f"CX_{prefix}-{port_name}"
+
+    def predict_android_endpoint_names(self, port_name):
+        """Return the generic endpoint and CX names for an Android port.
+
+        The port EID is underscore-joined: "1.13.wlan0" gives
+        ("zoom-1_13_wlan0", "CX_generic-zoom-1_13_wlan0").
+        """
+        gen_name = "zoom-%s" % "_".join(port_name.split("."))
+        cx_name = "CX_generic-%s" % gen_name
+        return gen_name, cx_name
+
+    def pre_cleanup_stale_names(self, gen_name, cx_name):
+        """Delete the named CX and generic endpoint from LANforge.
+
+        Does nothing if the endpoint is not present. The CX goes first, since
+        LANforge refuses to delete an endpoint its CX still owns.
+        """
+        if self.generic_endpoint_exists(gen_name):
+            logger.info(f"Removing stale CX {cx_name} left over from a previous run.")
+            self.json_post("cli-json/rm_cx", {"test_mgr": "default_tm", "cx_name": cx_name})
+            logger.info(f"Removing stale generic endpoint {gen_name} left over from a previous run.")
+            self.json_post("cli-json/rm_endp", {"endp_name": gen_name})
+
+    def pre_cleanup_stale_endpoint(self, port_name):
+        """Before creating a real-device generic endpoint for port_name."""
+        gen_name, cx_name = self.predict_endpoint_names(port_name)
+        self.pre_cleanup_stale_names(gen_name, cx_name)
+
+    def pre_cleanup_stale_android_endpoint(self, port_name):
+        """Before creating an Android generic endpoint for port_name."""
+        gen_name, cx_name = self.predict_android_endpoint_names(port_name)
+        self.pre_cleanup_stale_names(gen_name, cx_name)
+
+    def cleanup_generic_endpoints(self):
+        """Delete every CX and generic endpoint this run created.
+
+        Each CX is removed first, then the endpoints LANforge still reports;
+        endpoints already gone are skipped.
+        """
+        for cx_name in self.generic_endps_profile.created_cx:
+            self.json_post("cli-json/rm_cx", {"test_mgr": "default_tm", "cx_name": cx_name})
+
+        for endp_name in self.generic_endps_profile.created_endp:
+            if self.generic_endpoint_exists(endp_name):
+                self.json_post("cli-json/rm_endp", {"endp_name": endp_name})
+            else:
+                logger.debug(f"Generic endpoint {endp_name} no longer exists on LANforge — skipping delete.")
+
+    def check_gen_cx(self, stall_timeout=600):
+        """Return True once every generic endpoint is idle.
+
+        Idle means Stopped, WAITING or NO-CX — or non-idle for longer than
+        stall_timeout seconds, so a stuck endpoint stops being waited on.
+        """
+        if not hasattr(self, "_gen_cx_stall_since"):
+            self._gen_cx_stall_since = {}
+
+        now = time.time()
+        ready = True
+        generic_endpoint = None
+
         try:
 
-            for gen_endp in self.generic_endps_profile.created_endp:
+            for gen_endp in set(self.generic_endps_profile.created_endp):
                 generic_endpoint = self.json_get(f"/generic/{gen_endp}")
 
                 if not generic_endpoint or "endpoint" not in generic_endpoint:
                     logger.info(f"Error fetching endpoint data for {gen_endp}")
-                    return False
+                    endp_status = None  # unreachable/deleted endpoint
+                else:
+                    endp_status = generic_endpoint["endpoint"].get("status", "")
 
-                endp_status = generic_endpoint["endpoint"].get("status", "")
+                if endp_status in ["Stopped", "WAITING", "NO-CX", "FTM_WAIT"]:
+                    self._gen_cx_stall_since.pop(gen_endp, None)
+                    continue
 
-                if endp_status not in ["Stopped", "WAITING", "NO-CX", "FTM_WAIT"]:
-                    return False
-
-            return True
+                # Covers BOTH "stuck at a non-idle status" AND "can't be fetched/deleted"
+                stall_start = self._gen_cx_stall_since.setdefault(gen_endp, now)
+                stalled_for = now - stall_start
+                if stalled_for >= stall_timeout:
+                    logger.warning(
+                        f"{gen_endp} unresolved (status={endp_status!r}) for "
+                        f"{stalled_for:.0f}s (limit {stall_timeout}s) — giving up waiting on it."
+                    )
+                    continue
+                ready = False
+            return ready
         except Exception as e:
             logger.error(f"Error in check_gen_cx function {e}", exc_info=True)
             logger.info(f"generic endpoint data {generic_endpoint}")
+            return False
 
     def monitor_endpoint_status_changes(self, wait_time=40, poll_interval=5):
-        """
-        Checks the current status of every generic endpoint and, only the
-        first time an endpoint's status changes, logs a message and appends
-        a row (timestamp, endpoint_name, status) to
-        endpoint_status_changes.csv. Repeated polls of an unchanged status
-        are not logged or written again.
+        """Log and record each generic endpoint's first status change.
 
-        If every created endpoint is missing from the response, retries
-        every poll_interval seconds for up to wait_time seconds. Aborts the
-        test if still none of the created endpoints have responded once
-        wait_time has elapsed.
+        Rows are appended to endpoint_status_changes.csv; unchanged statuses are
+        ignored. Returns True while any endpoint still responds, False once none
+        have answered for wait_time seconds.
         """
         csv_file = os.path.join(self.path, "endpoint_status_changes.csv")
         created_endp = self.generic_endps_profile.created_endp
@@ -760,9 +949,12 @@ class ZoomAutomation(Realm):
         endpoint_data = {}
         while True:
             for gen_endp in created_endp:
-                generic_endpoint = self.json_get(f"/generic/{gen_endp}")
-                if generic_endpoint and "endpoint" in generic_endpoint:
-                    endpoint_data[gen_endp] = generic_endpoint
+                try:
+                    generic_endpoint = self.json_get(f"/generic/{gen_endp}")
+                    if generic_endpoint and "endpoint" in generic_endpoint:
+                        endpoint_data[gen_endp] = generic_endpoint
+                except Exception as e:
+                    logger.error(f"Error fetching endpoint {gen_endp} status: {e}")
 
             if endpoint_data or (time.time() - start_time) >= wait_time:
                 break
@@ -775,9 +967,9 @@ class ZoomAutomation(Realm):
         if not endpoint_data:
             logger.error(
                 f"No data received for any of the created endpoints after waiting "
-                f"{wait_time} seconds. Aborting test."
+                f"{wait_time} seconds."
             )
-            exit(1)
+            return False
 
         for gen_endp, generic_endpoint in endpoint_data.items():
             current_status = generic_endpoint["endpoint"].get("status", "")
@@ -804,6 +996,8 @@ class ZoomAutomation(Realm):
                 )
 
             self.endpoint_last_status[gen_endp] = current_status
+
+        return True
 
     def wait_for_flask(self, url="http://127.0.0.1:5000/get_latest_stats", timeout=10):
         """Wait until the Flask server is up, but exit if it takes longer than `timeout` seconds."""
@@ -854,6 +1048,7 @@ class ZoomAutomation(Realm):
             gen_name_a = "%s-%s" % ("zoom", "_".join(port_name.split(".")))
             endp_tpls.append((shelf, resource, name, gen_name_a))
 
+        logger.debug(f"create_android: endp_tpls={endp_tpls}")
         for endp_tpl in endp_tpls:
             shelf = endp_tpl[0]
             resource = endp_tpl[1]
@@ -908,10 +1103,10 @@ class ZoomAutomation(Realm):
         return True, created_cx, created_endp
 
     def json_get_with_retry(self, url, wait_time=40, poll_interval=5):
-        """
-        Calls self.json_get(url), retrying every poll_interval seconds for up
-        to wait_time seconds if LANforge returns no response. Aborts the test
-        if it still hasn't responded once wait_time has elapsed.
+        """Call self.json_get(url), retrying until LANforge responds.
+
+        Retries every poll_interval seconds for up to wait_time seconds, then
+        aborts the test.
         """
         start_time = time.time()
         response = self.json_get(url)
@@ -929,6 +1124,27 @@ class ZoomAutomation(Realm):
 
         return response
 
+    def json_get_with_retry_no_exit(self, url, wait_time=40, poll_interval=5):
+        """GET `url` from LANforge, retrying until it responds.
+
+        Retries every poll_interval seconds for up to wait_time seconds.
+        Returns the decoded response, or None if there was still none.
+        """
+        start_time = time.time()
+        response = self.json_get(url)
+        while response is None and (time.time() - start_time) < wait_time:
+            logger.warning(f"GET {url} returned no response from LANforge; retrying...")
+            time.sleep(poll_interval)
+            response = self.json_get(url)
+
+        if response is None:
+            logger.error(
+                f"GET {url} returned no response from LANforge after waiting "
+                f"{wait_time} seconds. Continuing without this data."
+            )
+
+        return response
+
     def get_resource_data(self):
         self.ports_list = []
         self.user_list = []
@@ -939,10 +1155,8 @@ class ZoomAutomation(Realm):
             ".".join(item.split(".")[:2]) for item in self.real_sta_list
         ]
 
-        # Step 1: Retrieve information about all resources
         response = self.json_get_with_retry("/resource/all")
 
-        # Step 2: Match user-specified resources with available resources sequentially
         if self.user_resources:
             try:
                 resources = response["resources"]
@@ -992,22 +1206,16 @@ class ZoomAutomation(Realm):
         self.link_rate_list = []
         self.ssid_list = []
 
-        # Step 3: Retrieve port information
         response_port = self.json_get_with_retry("/port/all")
 
-        # Step 4: Match ports associated with retrieved resources in the order of ports_list
         try:
             for port_entry in self.ports_list:
-                # Extract the eid and ctrl-ip from the current ports_list entry
                 expected_eid = port_entry["eid"]
 
-                # Iterate over the port interfaces to find a matching port
                 for interface in response_port["interfaces"]:
                     for port, _port_data in interface.items():
-                        # Extract the first two segments of the port identifier to match with expected_eid
                         result = ".".join(port.split(".")[:2])
 
-                        # Check if the result matches the current expected eid from ports_list
                         if result == expected_eid:
                             self.gen_ports_list.append(port.split(".")[-1])
                             break
@@ -1016,16 +1224,12 @@ class ZoomAutomation(Realm):
                     break
 
             for port_entry in self.ports_list:
-                # Extract the eid and ctrl-ip from the current ports_list entry
                 expected_eid = port_entry["eid"]
 
-                # Iterate over the port interfaces to find a matching port
                 for interface in response_port["interfaces"]:
                     for port, port_data in interface.items():
-                        # Extract the first two segments of the port identifier to match with expected_eid
                         result = ".".join(port.split(".")[:2])
 
-                        # Check if the result matches the current expected eid from ports_list
                         if result == expected_eid and port_data["parent dev"] == "wiphy0":
                             self.mac_list.append(port_data["mac"])
                             self.rssi_list.append(port_data["signal"])
@@ -1064,7 +1268,6 @@ class ZoomAutomation(Realm):
                     self.lanforge_port_list.append("")
                 else:
                     user_found = False
-                    # 1. Handle Single Device (Flat Dictionary)
                     if isinstance(interop_mobile_data, dict):
                         if interop_mobile_data["user-name"] == user:
                             # Extract details from 'name' (e.g., '1.1.3200f8664a91a5e9')
@@ -1126,14 +1329,26 @@ class ZoomAutomation(Realm):
                 logger.error(f"Error deleting file {file_path}: {e}")
 
     def create_host(self):
+        """Create the host device's generic endpoint and set its Zoom command.
+
+        The command sent depends on the host's OS. Returns True once the
+        endpoint is created and started, False if creation failed.
+        """
+        self.generic_endps_profile.created_cx = []  # reset per round so cleanup() only touches this coordinate's CXs
+        self.generic_endps_profile.created_endp = []
+
+        self.pre_cleanup_stale_endpoint(self.real_sta_list[0])
         if self.generic_endps_profile.create(
             ports=[self.real_sta_list[0]],
             real_client_os_types=[self.real_sta_os_type[0]],
         ):
             logger.info("Real client generic endpoint creation completed.")
         else:
-            logger.error("Real client generic endpoint creation failed.")
-            exit(0)
+            logger.error(
+                f"Generic endpoint creation failed for the host device "
+                f"{self.real_sta_list[0]} (os={self.real_sta_os_type[0]})."
+            )
+            return False
 
         if self.real_sta_os_type[0] == "windows":
             cmd = fr'"{self.window_dir}\zoom.bat" --ip {self.upstream_port} host'
@@ -1160,27 +1375,79 @@ class ZoomAutomation(Realm):
 
         logger.debug(f"checking real sta list {self.real_sta_list}")
         logger.debug(f"checking real sta os type {self.real_sta_os_type}")
+        return True
 
-    def wait_for_host_ready(self):
-        while not self.login_completed:
-            try:
-                generic_endpoint = self.json_get(
-                    f"/generic/{self.generic_endps_profile.created_endp[0]}"
+    def _record_round_issue(self, bucket):
+        """Append the current coordinate to `bucket` if it is not already there."""
+        if self.current_cord not in bucket:
+            bucket.append(self.current_cord)
+
+    def _handle_round_failure(self, reason, record_in=None):
+        """Log a round failure and report whether the run should continue.
+
+        Records the current coordinate in `record_in`, defaulting to
+        host_failure_coords. Returns False if the host was never ready, True to
+        carry on. A non-robo run exits with status 1 instead of returning.
+        """
+        if self.do_robo:
+            if self.rotations_enabled:  # coordinate alone would not identify the round
+                where = (
+                    f"coordinate {self.current_cord} at angle {self.current_angle}"
                 )
+            else:
+                where = f"coordinate {self.current_cord}"
+
+            self._record_round_issue(
+                self.host_failure_coords if record_in is None else record_in
+            )
+            if not self.host_ever_ready:
+                logger.error(
+                    f"{reason} on the very first round ({where}) — this points to "
+                    "a host device problem rather than a location issue. Aborting "
+                    "the robo test instead of trying the remaining coordinates."
+                )
+                return False
+            logger.error(
+                f"{reason} for {where} — skipping this round and continuing with "
+                "the next one."
+            )
+            return True
+
+        logger.error(f"{reason}. Aborting test.")
+        sys.exit(1)
+
+    def wait_for_host_ready(self, timeout=600):
+        """Wait for the host device to confirm login.
+
+        Returns True once confirmed, False if the host stops first or `timeout`
+        seconds pass.
+        """
+        deadline = time.time() + timeout
+        while not self.login_completed:
+            host_endp = self.generic_endps_profile.created_endp[0]
+            if time.time() >= deadline:
+                logger.error(
+                    f"Timed out after {timeout}s waiting for host device ({host_endp}) to log in."
+                )
+                self.cleanup_generic_endpoints()
+                return False
+            try:
+                generic_endpoint = self.json_get(f"/generic/{host_endp}")
                 endp_status = generic_endpoint["endpoint"]["status"]
                 if endp_status == "Stopped":
-                    logger.error("Failed to Start the Host Device")
-                    self.generic_endps_profile.cleanup()
-                    sys.exit(1)
+                    logger.error(f"Failed to start the host device ({host_endp}).")
+                    self.cleanup_generic_endpoints()
+                    return False
                 time.sleep(5)
             except Exception as e:
-                logger.error(f"Error while checking login_completed status: {e}")
+                logger.error(
+                    f"Error while checking login_completed status for host device ({host_endp}): {e}"
+                )
                 time.sleep(5)
 
         self.meet_link = f"https://us04web.zoom.us/j/{self.remote_login_url}?pwd={self.remote_login_passwd}"
         logger.info(f"Meet link for android devices: {self.meet_link}")
 
-        # Save meet link in a text file under self.path
         try:
             meet_link_file = os.path.join(self.path, "meet_link.txt")
             with open(meet_link_file, "w") as f:
@@ -1190,10 +1457,16 @@ class ZoomAutomation(Realm):
             logger.error(f"Failed to save meet link file: {e}")
 
         self.login_completed = False
+        return True
 
     def create_participants(self):
+        logger.info(
+            f"Creating participants — ports={self.lanforge_port_list}, "
+            f"hostnames={self.real_sta_hostname}, serials={self.serial_list}"
+        )
         for i in range(1, len(self.real_sta_os_type)):
             if self.real_sta_os_type[i] == "android":
+                self.pre_cleanup_stale_android_endpoint(self.real_sta_list[i])
                 status, created_cx, created_endp = self.create_android(
                     lanforge_res=self.lanforge_port_list[i],
                     ports=[self.real_sta_list[i]],
@@ -1201,10 +1474,12 @@ class ZoomAutomation(Realm):
                 )
                 self.generic_endps_profile.created_endp.extend(created_endp)
                 self.generic_endps_profile.created_cx.extend(created_cx)
+                logger.debug(f"create_participants: created_cx now={self.generic_endps_profile.created_cx}")
+                android_zoom_path = os.path.join(SCRIPT_DIR, "android_zoom.py")
                 cmd = (
                     f"su - lanforge -c "
                     f"\"cd /home/lanforge && "
-                    f"python3 /home/lanforge/lanforge-scripts/py-scripts/real_application_tests/zoom_automation/android_zoom.py "
+                    f"python3 {android_zoom_path} "
                     f"--serial {self.serial_list[i]} "
                     f"--meeting_url '{self.meet_link}' "
                     f"--participant_name '{self.real_sta_hostname[i]}' "
@@ -1216,6 +1491,7 @@ class ZoomAutomation(Realm):
                 )
 
             else:
+                self.pre_cleanup_stale_endpoint(self.real_sta_list[i])
                 self.generic_endps_profile.create(
                     ports=[self.real_sta_list[i]],
                     real_client_os_types=[self.real_sta_os_type[i]],
@@ -1251,10 +1527,22 @@ class ZoomAutomation(Realm):
             )
             logger.info(f"Sending running state to.. {cx_name}")
 
-    def wait_for_test_start(self):
-        # Wait for the test to be started
+    def wait_for_test_start(self, timeout=180):
+        """Wait for the test-started signal.
+
+        Returns True once the test has started, False if it is not signalled
+        within `timeout` seconds.
+        """
+        deadline = time.time() + timeout
         count = 0
         while not self.test_start:
+            if time.time() >= deadline:
+                logger.error(
+                    f"Unable to get the start signal from the host device within {timeout}s. "
+                    "Giving up and cleaning up this round's CXs."
+                )
+                self.cleanup_generic_endpoints()
+                return False
             logger.info("WAITING FOR THE TEST TO BE STARTED")
             time.sleep(5)
             count += 1
@@ -1273,19 +1561,37 @@ class ZoomAutomation(Realm):
                 self.current_cord = self.from_cord
         self.set_start_time()
         logger.info("TEST WILL BE STARTING")
+        return True
 
     def run(self):
-        self.create_host()
-        self.wait_for_host_ready()
+        if not self.create_host():
+            return self._handle_round_failure(
+                "Host device generic endpoint creation failed"
+            )
+        if not self.wait_for_host_ready():
+            return self._handle_round_failure("Host device failed to become ready")
+        self.host_ever_ready = True
         self.create_participants()
-        self.wait_for_test_start()
+        if not self.wait_for_test_start():
+            if self.do_robo:
+                logger.error(
+                    f"Unable to get the start signal from the host device for coordinate {self.current_cord} — "
+                    "skipping this coordinate and continuing with the next one."
+                )
+                self._record_round_issue(self.host_failure_coords)
+                return True
+            else:
+                logger.error(
+                    "Unable to get the start signal from the host device — aborting test."
+                )
+                sys.exit(1)
 
         if self.do_bs:
             time.sleep(60)
 
             try:
                 logger.info(
-                    f"Band-Steering Test coordinates to be visited: {self.bs_coord_result}"
+                    f"Band-Steering Test coordinates to be visited ({len(self.bs_coord_result)} total): {self.bs_coord_result}"
                 )
 
                 if not self.bs_coord_result:
@@ -1312,9 +1618,10 @@ class ZoomAutomation(Realm):
                     else:
                         self.failed_coords.append(coordinate)
                     if aborted:
-                        logger.error(f"Failed to reach the {coordinate}")
-                        self.failed_coords.append(coordinate)
-                        sys.exit()
+                        logger.error(
+                            f"Failed to reach coordinate {coordinate} — skipping it and trying the next coordinate."
+                        )
+                        continue
 
                 logger.info(
                     "All coordinates completed — stopping Band-Steering Test"
@@ -1346,25 +1653,48 @@ class ZoomAutomation(Realm):
                     if pause:
                         self.stop_signal = True
                         self.generic_endps_profile.stop_cx()
-                        self.generic_endps_profile.cleanup()
+                        self.cleanup_generic_endpoints()
                         self.delete_current_csv_files()
                         self.start_time = None
                         self.end_time = None
                         time.sleep(20)
                         self.stop_signal = False
                         self.participants_joined = 0
-                        self.create_host()
-                        self.wait_for_host_ready()
+                        if not self.create_host():
+                            return self._handle_round_failure(
+                                "Host device generic endpoint creation failed after "
+                                "battery pause"
+                            )
+                        if not self.wait_for_host_ready():
+                            return self._handle_round_failure(
+                                "Host device failed to restart after battery pause"
+                            )
                         self.create_participants()
-                        self.wait_for_test_start()
-                self.monitor_endpoint_status_changes()
+                        if not self.wait_for_test_start():
+                            logger.error(
+                                f"Unable to get the start signal from the host device after the battery pause "
+                                f"for coordinate {self.current_cord} — skipping this round."
+                            )
+                            self._record_round_issue(self.host_failure_coords)
+                            return True
+                if not self.monitor_endpoint_status_changes():
+                    if self.do_robo:  # no endpoint answered (deleted, or manager unreachable); early return skips the normal teardown
+                        self.generic_endps_profile.stop_cx()
+                        self.cleanup_generic_endpoints()
+                        self.start_time = None
+                        self.end_time = None
+                    return self._handle_round_failure(
+                        "None of the generic endpoints could be read",
+                        record_in=self.endpoint_loss_coords,
+                    )
                 logger.info("Monitoring the Test")
                 time.sleep(5)
         if self.do_robo:
             self.generic_endps_profile.stop_cx()
-            self.generic_endps_profile.cleanup()
+            self.cleanup_generic_endpoints()
             self.start_time = None
             self.end_time = None
+            return True
 
     def select_real_devices(self, real_device_obj, real_sta_list=None):
         final_device_list = []
@@ -1391,7 +1721,6 @@ class ZoomAutomation(Realm):
         9. Returns the sorted list of selected real station names.
 
         """
-        # Query and retrieve all user-defined real stations if `real_sta_list` is not provided
         if real_sta_list is None:
             self.real_sta_list, _, _ = real_device_obj.query_user()
         else:
@@ -1412,7 +1741,6 @@ class ZoomAutomation(Realm):
                     ) in (
                         interface_dict.items()
                     ):  # Iterate through items of each interface dictionary
-                        # Check conditions for adding the device
                         key_parts = key.split(".")
                         extracted_key = ".".join(key_parts[:2])
                         if (
@@ -1431,11 +1759,9 @@ class ZoomAutomation(Realm):
 
             self.real_sta_list = final_device_list
 
-        # Log an error and exit if no real stations are selected for testing
         if len(self.real_sta_list) == 0:
             logger.error("There are no real devices in this testbed. Aborting test")
             exit(0)
-        # Filter out iOS devices from the real_sta_list before proceeding
         self.real_sta_list = self.filter_ios_devices(self.real_sta_list)
 
         # Rebuild a clean, ordered and unique station list (avoid mutating while iterating)
@@ -1486,32 +1812,39 @@ class ZoomAutomation(Realm):
             elif value["ostype"] == "android":
                 self.android = self.android + 1
 
-        # Create mapping: { 'Hostname': 'Station_ID' }
         self.hostname_to_station_map = dict(
             zip(self.real_sta_hostname, self.real_sta_list)
         )
 
-        # Return the sorted list of selected real station names
         return self.real_sta_list
 
     def get_signal_and_channel_data_dict(self):
-        """
-        Returns a dictionary of LANforge stats keyed by station name.
+        """Return LANforge stats keyed by station name.
+
         Example: {'sta001': {'lf_signal': -55, 'lf_channel': 36, ...}}
         """
         lf_stats_map = {}
         interfaces_dict = dict()
 
         try:
-            # Get raw data from LANforge API
-            port_data = self.json_get("/ports/all/")["interfaces"]
-            for port in port_data:
-                interfaces_dict.update(port)
+            response = self.json_get_with_retry_no_exit("/ports/all/")
+            if response:
+                port_data = response["interfaces"]
+                for port in port_data:
+                    interfaces_dict.update(port)
+            else:
+                return {}
+        except KeyError as e:
+            logger.error(
+                f"/ports/all/ response is not in the expected format, missing key {e}. "
+                "Data received:\n%s",
+                json.dumps(response, indent=2, default=str),
+            )
+            return {}
         except Exception as e:
-            logger.error(f"Error fetching port data: {e}")
+            logger.error(f"Error fetching port data: {e}", exc_info=True)
             return {}
 
-        # Loop through your managed stations (e.g., sta001, sta002)
         for sta in self.real_sta_list:
             # Default values if station is missing
             lf_stats_map[sta] = {
@@ -1526,14 +1859,12 @@ class ZoomAutomation(Realm):
             if sta in interfaces_dict:
                 data = interfaces_dict[sta]
 
-                # --- Signal Parsing ---
                 sig = data.get("signal", "-")
                 if "dBm" in str(sig):
                     lf_stats_map[sta]["signal"] = sig.split(" ")[0]
                 else:
                     lf_stats_map[sta]["signal"] = sig
 
-                # --- Other Fields ---
                 lf_stats_map[sta]["channel"] = data.get("channel", "-")
                 lf_stats_map[sta]["mode"] = data.get("mode", "-")
                 lf_stats_map[sta]["tx_rate"] = data.get("tx-rate", "-")
@@ -1541,6 +1872,8 @@ class ZoomAutomation(Realm):
                 lf_stats_map[sta]["bssid"] = data.get(
                     "ap", "-"
                 )  # 'ap' is usually BSSID
+
+        logger.debug(f"get_signal_and_channel_data_dict: lf_stats_map={lf_stats_map}")
 
         return lf_stats_map
 
@@ -1566,25 +1899,48 @@ class ZoomAutomation(Realm):
             )
             return None
 
-    def get_participants_qos(self, meeting_id, access_token, test_type="past"):
+    def get_participants_qos(
+        self,
+        meeting_id,
+        access_token,
+        test_type="past",
+        timeout=300,
+        request_timeout=30,
+    ):
+        """Fetch every page of participant QoS for a meeting.
+
+        `request_timeout` caps each HTTP call and `timeout` the whole pagination
+        walk; on expiry the pages already collected are kept. Returns the
+        participant records, or [] if none could be fetched.
+        """
         url = f"https://api.zoom.us/v2/metrics/meetings/{meeting_id}/participants/qos"
         headers = {"Authorization": f"Bearer {access_token}"}
         params = {"type": test_type}
         all_participants = []
         next_page_token = None
+        deadline = time.time() + timeout
 
         try:
             while True:
                 if next_page_token:
                     params["next_page_token"] = next_page_token
 
-                response = requests.get(url, headers=headers, params=params)
+                response = requests.get(
+                    url, headers=headers, params=params, timeout=request_timeout
+                )
                 if response.status_code == 200:
                     data = response.json()
                     participants = data.get("participants", [])
                     all_participants.extend(participants)
                     next_page_token = data.get("next_page_token")
                     if not next_page_token:
+                        break
+                    if time.time() >= deadline:
+                        logger.warning(
+                            f"Stopped paging {test_type} participant QoS after "
+                            f"{timeout}s with {len(all_participants)} participants "
+                            "collected; keeping what was fetched so far."
+                        )
                         break
                 else:
                     raise Exception(
@@ -1615,14 +1971,14 @@ class ZoomAutomation(Realm):
         return []
 
     def save_json(self, data, filename):
-        os.makedirs("zoom_api_responses", exist_ok=True)
-        path = os.path.join("zoom_api_responses", filename)
+        api_dir = os.path.join(self.path, "zoom_api_responses")
+        os.makedirs(api_dir, exist_ok=True)
+        path = os.path.join(api_dir, filename)
         with open(path, "w") as f:
             json.dump(data, f, indent=2)
 
     def get_live_data(self):
         try:
-            # retrieving with past meetings
             token = self.get_access_token(
                 self.account_id, self.client_id, self.client_secret
             )
@@ -1642,7 +1998,6 @@ class ZoomAutomation(Realm):
             )
 
     def get_final_qos_data(self):
-        # 1. Check Credentials (using instance variables)
         if not all([self.account_id, self.client_id, self.client_secret]):
             logger.error("Exiting test due to missing credentials.")
             raise ValueError(
@@ -1652,7 +2007,6 @@ class ZoomAutomation(Realm):
         meeting_id = self.remote_login_url
         logger.info(f"Meeting ID: {meeting_id}")
 
-        # 2. Get Token & Wait for Data Indexing
         token = self.get_access_token(
             self.account_id, self.client_id, self.client_secret
         )
@@ -1660,15 +2014,12 @@ class ZoomAutomation(Realm):
             logger.error("Unable to obtain Zoom access token. Aborting QoS data fetch.")
             return
 
-        # Zoom QoS data is typically available ~20 seconds after meeting end.
-        # We wait 150 seconds to be safe and simplify the logic.
-        wait_time = 150
+        wait_time = 150  # QoS data appears ~20s after meeting end; 150 is the safe margin
         logger.info(
             f"Waiting {wait_time} seconds for Zoom servers to index past meeting QoS data..."
         )
         time.sleep(wait_time)
 
-        # 3. Fetch Data (Try 'Past' first, fallback to 'Live')
         try:
             logger.info("Attempting to fetch 'past' meeting data...")
             past_qos_data = self.get_participants_qos(meeting_id, token, "past")
@@ -1686,11 +2037,9 @@ class ZoomAutomation(Realm):
             except Exception as e_live:
                 logger.error(f"Failed to fetch both past and live data: {e_live}")
 
-        # 4. Summarize and Save JSON
         raw_qos_data = self._get_raw_zoom_stats()
         summary_data = self.summarize_audio_video(raw_qos_data)
 
-        # Construct JSON filename
         if self.do_robo:
             json_name = (
                 f"{meeting_id}_{self.current_cord}_{self.current_angle}_qos.json"
@@ -1700,12 +2049,10 @@ class ZoomAutomation(Realm):
 
         self.save_json(raw_qos_data, json_name)
 
-        # 5. Write to CSV (Integrated Logic)
         if self.do_robo or self.do_bs or self.api_stats_collection:
             if summary_data:
                 logger.info("Writing final QoS data to CSV...")
 
-                # Fetch Wifi Data if needed
                 lf_wifi_data = {}
                 if self.do_bs:
                     try:
@@ -1718,7 +2065,6 @@ class ZoomAutomation(Realm):
                     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     stats["timestamp"] = timestamp
 
-                    # Add Robot/BS specific data
                     if self.do_bs:
                         x, y, _, _ = self.robo_obj.get_robot_pose()
                         stats["X"] = x
@@ -1741,7 +2087,6 @@ class ZoomAutomation(Realm):
                                 }
                             )
 
-                    # Add Coordinate/Angle data
                     if self.do_robo or self.do_bs:
                         stats["current_cord"] = self.current_cord
                         if self.rotations_enabled:
@@ -1750,7 +2095,6 @@ class ZoomAutomation(Realm):
                         else:
                             stats["rotations_enabled"] = False
 
-                    # Generate CSV Filename
                     if self.do_robo:
                         if self.rotations_enabled:
                             csv_name = f"{final_filename}_{self.current_cord}_{self.current_angle}.csv"
@@ -1761,7 +2105,6 @@ class ZoomAutomation(Realm):
 
                     csv_file = os.path.join(self.path, csv_name)
 
-                    # Write to File
                     try:
                         file_exists = (
                             os.path.isfile(csv_file) and os.path.getsize(csv_file) > 0
@@ -1789,15 +2132,10 @@ class ZoomAutomation(Realm):
             return None
 
     def parse_zoom_value(self, value):
-        """
-        Convert Zoom string metrics into a float.
-        Handles cases like:
-        - "123 kbps"
-        - "21 ms"
-        - "5.6 %"
-        - "21 ms/40 ms"
-        - "Good(4.41)"
-        - "-" or empty values
+        """Convert a Zoom string metric to a float.
+
+        Handles "123 kbps", "21 ms/40 ms", "Good(4.41)", "-" and empty values.
+        Returns None when the value cannot be parsed.
         """
         if not value or str(value).strip() in ["-", ""]:
             return None
@@ -1822,7 +2160,8 @@ class ZoomAutomation(Realm):
         # General case: "123 kbps", "45 ms", "6.7 %"
         try:
             return float(value.split()[0].replace("%", ""))
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Could not parse stat value {value!r} as a number: {e}")  # every known form is handled above; log the raw value so the blank cell is traceable
             return None
 
     def _clean_zoom_participant_name(self, participant_name):
@@ -1931,7 +2270,6 @@ class ZoomAutomation(Realm):
         return normalized_summary
 
     def summarize_csv_audio_video(self, csv_path):
-        # Step 1: Find the correct header line
         with open(csv_path, "r", encoding="utf-8-sig") as f:
             lines = f.readlines()
 
@@ -1942,7 +2280,6 @@ class ZoomAutomation(Realm):
             if pd.notna(host_value):
                 csv_host_name = self._clean_zoom_participant_name(host_value)
 
-        # Step 2: Find the line index where real participant data header starts
         header_line_idx = None
         for i, line in enumerate(lines):
             if line.strip().startswith("Participant,"):
@@ -1954,7 +2291,6 @@ class ZoomAutomation(Realm):
                 "Could not find the participant metrics section in the CSV."
             )
 
-        # Step 3: Read only the participant section
         df = pd.read_csv(csv_path, skiprows=header_line_idx, encoding="utf-8-sig")
         df.columns = df.columns.str.strip()
 
@@ -2027,14 +2363,10 @@ class ZoomAutomation(Realm):
         return self._match_summary_data_to_hostnames(summary, host_device_key)
 
     def summarize_audio_video(self, json_data):
-        """
-        Summarize per-device audio and video stats: avg/max of bitrate, jitter, latency, packet loss.
+        """Summarize per-device audio and video stats from Zoom participant JSON.
 
-        Args:
-            json_data (list): Zoom JSON as list of participants.
-
-        Returns:
-            dict: {device_name: {metric_field_avg/max: value, ...}}
+        Returns {device_name: {metric_avg/max: value}} covering bitrate, jitter,
+        latency and packet loss.
         """
         if not json_data:
             summary_data = self._get_summary_zoom_stats()
@@ -2071,7 +2403,6 @@ class ZoomAutomation(Realm):
                         if val is not None:
                             temp_values[m][f].append(val)
 
-            # calculate avg and max
             for m in metrics:
                 for f in fields:
                     vals = temp_values[m][f]
@@ -2087,14 +2418,10 @@ class ZoomAutomation(Realm):
         return self._match_summary_data_to_hostnames(summary, host_device_key)
 
     def check_tab_exists(self):
-        """
-        Checks if the 'generic' tab exists by making a JSON GET request.
+        """Check whether the 'generic' tab exists.
 
-        Returns:
-        - True if the 'generic' tab exists (response is not None).
-        - False if the 'generic' tab does not exist (response is None).
+        Returns True if it does, False otherwise.
         """
-        # Make a JSON GET request to check the existence of the 'generic' tab
         response = self.json_get("generic")
         # Check if the response is None (indicating the tab does not exist)
         if response is None:
@@ -2103,47 +2430,67 @@ class ZoomAutomation(Realm):
             return True
 
     def move_files(self, source_file, dest_dir):
-        # Ensure the source file exists
         if not os.path.isfile(source_file):
             logging.error(f"Source file '{source_file}' does not exist or is not a regular file.")
             return
 
-        # Ensure the destination directory exists
         if not os.path.exists(dest_dir):
             logging.error(f"Destination directory '{dest_dir}' does not exist.")
             return
 
         try:
-            # Extract the filename from the source file path
             filename = os.path.basename(source_file)
 
-            # Construct the destination file path
             dest_file = os.path.join(dest_dir, filename)
 
-            # Move the file
             shutil.move(source_file, dest_file)
 
             logging.info(f"Successfully moved '{source_file}' to '{dest_file}'.")
         except Exception as e:
             logging.error(f"Failed to move '{source_file}' to '{dest_dir}': {e}")
 
-    def updating_webui_runningjson(self, obj):
-        data = {}
-        file_path = self.path + "/../../Running_instances/{}_{}_running.json".format(self.mgr_ip, self.testname)
+    def updating_webui_runningjson(self, obj, timeout=60):
+        """Merge `obj` into the web UI's running json for this test.
 
-        # Wait until the file exists
+        Returns True when written, False when the file exists but could not be
+        read or written. A file still missing after `timeout` seconds ends the
+        run — usually --testname was left unset, so the name can never match.
+        """
+        file_path = os.path.join(
+            self.path,
+            "..",
+            "..",
+            "Running_instances",
+            f"{self.mgr_ip}_{self.testname}_running.json",
+        )
+
+        deadline = time.time() + timeout
         while not os.path.exists(file_path):
-            logging.info("Waiting for the running json file to be created")
+            if time.time() >= deadline:
+                logger.error(
+                    f"Aborting the test: the web UI running json never appeared "
+                    f"at {file_path} after {timeout}s. Check that --testname "
+                    f"(got {self.testname!r}) and --report_dir match what the "
+                    f"web UI created."
+                )
+                sys.exit(1)  # config problem, not a test failure: no traceback, and finally still cleans up
+            logger.info(f"Waiting for the running json file to be created: {file_path}")
             time.sleep(1)
-        logging.info("Running Json file found")
-        with open(file_path, 'r') as file:
-            data = json.load(file)
 
-        for key in obj:
-            data[key] = obj[key]
+        try:
+            with open(file_path, "r") as file:
+                data = json.load(file)
 
-        with open(file_path, 'w') as file:
-            json.dump(data, file, indent=4)
+            for key in obj:
+                data[key] = obj[key]
+
+            with open(file_path, "w") as file:
+                json.dump(data, file, indent=4)
+        except (OSError, ValueError) as e:
+            logger.error(f"Could not update the web UI running json {file_path}: {e}")  # ValueError covers JSONDecodeError; a truncated file must not kill the test
+            return False
+
+        return True
 
     def generate_report(self):
         report = lf_report(_output_pdf='zoom_call_report.pdf',
@@ -2187,10 +2534,8 @@ class ZoomAutomation(Realm):
 
             }])
         elif len(self.selected_groups) > 0 and len(self.selected_profiles) > 0:
-            # Map each group with a profile
             gp_pairs = zip(self.selected_groups, self.selected_profiles)
 
-            # Create a string by joining the mapped pairs
             gp_map = ", ".join(f"{group} -> {profile}" for group, profile in gp_pairs)
 
             test_parameters = pd.DataFrame([{
@@ -2575,7 +2920,6 @@ class ZoomAutomation(Realm):
                     for client in accepted_clients
                 ]
             }
-            # If both groups and profiles are selected, generate separate audio results tables per group; otherwise show a single combined results table.
             if self.selected_groups and self.selected_profiles:
                 for group in self.selected_groups:
                     group_specific_audio_test_results = self.get_test_results_data(audio_test_results_dict, group)
@@ -2706,7 +3050,6 @@ class ZoomAutomation(Realm):
                     for client in accepted_clients
                 ]
             }
-            # If both groups and profiles are selected, generate separate video results tables per group; otherwise show a single combined results table.
             if self.selected_groups and self.selected_profiles:
                 for group in self.selected_groups:
                     group_specific_video_test_results = self.get_test_results_data(video_test_results_dict, group)
@@ -2739,26 +3082,10 @@ class ZoomAutomation(Realm):
         )
 
     def change_port_to_ip(self, upstream_port):
-        """
-        Convert a given port name to its corresponding IP address if it's not already an IP.
+        """Resolve a LANforge port name such as "1.1.eth1" to its IP address.
 
-        This function checks whether the provided `upstream_port` is a valid IPv4 address.
-        If it's not, it attempts to extract the IP address of the port by resolving it
-        via the internal `name_to_eid()` method and then querying the IP using `json_get()`.
-
-        Args:
-            upstream_port (str): The name or IP of the upstream port. This could be a
-                                 LANforge port name like '1.1.eth1' or an IP address.
-
-        Returns:
-            str: The resolved IP address if the port name was converted successfully,
-                otherwise returns the original input if it was already an IP or
-                if resolution fails.
-
-        Logs:
-            - A warning if the port is not Ethernet or IP resolution fails.
-            - Info logs for the resolved or passed IP.
-
+        Returns the resolved IP, or the input unchanged if it was already an IP
+        or could not be resolved.
         """
         if upstream_port.count('.') != 3:
             target_port_list = self.name_to_eid(upstream_port)
@@ -2767,8 +3094,19 @@ class ZoomAutomation(Realm):
             try:
                 target_port_ip = response['interface']['ip']
                 upstream_port = target_port_ip
+            except KeyError as e:
+                logging.error(
+                    f"/port/{shelf}/{resource}/{port} response is not in the expected format, missing key {e}. "
+                    "Data received:\n%s",
+                    json.dumps(response, indent=2, default=str),
+                )
+                exit(1)
             except Exception as e:
-                logging.warning(f'The upstream port is not an ethernet port. Proceeding with the given upstream_port {upstream_port}. Exception: {e}')
+                logging.error(
+                    f"Unexpected error while parsing /port/{shelf}/{resource}/{port} response: {e}",
+                    exc_info=True,
+                )
+                exit(1)
             logging.info(f"Upstream port IP {upstream_port}")
         else:
             logging.info(f"Upstream port IP {upstream_port}")
@@ -2776,43 +3114,10 @@ class ZoomAutomation(Realm):
         return upstream_port
 
     def get_test_results_data(self, test_results, group):
-        """
-        Filters the overall test results to include only the data belonging to a specific group.
+        """Return `test_results` with only the rows for devices in `group`.
 
-        This function maps hostnames to their respective groups using the configuration object
-        (`self.configobj.get_groups_devices`). It then filters the input `test_results` dictionary
-        so that only entries corresponding to devices in the specified `group` are retained.
-
-        Args:
-            test_results (dict): A dictionary containing lists of test result values for all devices.
-                Example:
-                    {
-                        "Hostname": ["Device1", "Device2"],
-                        "RSSI": [-45, -50],
-                        "Link Rate": [300, 150],
-                        ...
-                    }
-            group (str): The name of the group whose test result data needs to be extracted.
-
-        Returns:
-            dict: A dictionary in the same structure as `test_results`, but filtered to include
-            only entries for hostnames that belong to the given `group`.
-
-        Example:
-            >>> test_results = {
-            ...     "Hostname": ["D1", "D2", "D3"],
-            ...     "RSSI": [-40, -50, -55]
-            ... }
-            >>> self.get_test_results_data(test_results, "GroupA")
-            {
-                "Hostname": ["D1", "D3"],
-                "RSSI": [-40, -55]
-            }
-
-        Notes:
-            - Relies on `self.configobj.get_groups_devices()` to retrieve the mapping of
-            groups to device hostnames.
-            - Returns an empty dictionary if no hostnames from the group are found.
+        Rows are matched on the "Device Name" column. Every original key is
+        kept, holding an empty list when no device matches.
         """
         groups_devices_map = self.config_obj.get_groups_devices(data=self.selected_groups, groupdevmap=True)
         group_hostnames = groups_devices_map.get(group, [])
@@ -2829,34 +3134,11 @@ class ZoomAutomation(Realm):
         return group_test_results
 
     def filter_ios_devices(self, device_list):
-        """
-        Filters out iOS devices from the given device list based on hardware and software identifiers.
+        """Drop iOS devices from a list or comma-separated string of device ids.
 
-        This method accepts a list or comma-separated string of device identifiers and removes
-        devices identified as iOS (Apple) based on their hardware version, app ID, and kernel info
-        fetched via the `/resource/{shelf}/{resource}` API endpoint.
-
-        Supported input formats for each device:
-        - "shelf.resource"
-        - "shelf.resource.port"
-        - "resource" (assumes shelf = 1)
-
-        iOS devices are identified if:
-        - 'Apple' is found in the hardware version, and
-        - `app-id` is not empty and is either non-zero or the kernel is empty
-
-        Args:
-            device_list (Union[list[str], str]): A list or comma-separated string of devices to be filtered.
-
-        Returns:
-            Union[list[int], str]: A list of valid (non-iOS) device IDs as integers,
-                                or a comma-separated string if the input was a string.
-
-        Logs:
-            - Warnings for invalid formats or missing device data.
-            - Info when an iOS device is skipped.
-            - Exceptions if errors occur during processing.
-
+        Accepts "shelf.resource", "shelf.resource.port" or "resource". Returns
+        the non-iOS ids in the form the input used: a list of ints, or a
+        comma-separated string if a string was passed.
         """
         modified_device_list = device_list
         if isinstance(device_list, str):
@@ -2923,7 +3205,6 @@ class ZoomAutomation(Realm):
 
             logger.info(f"Bandsteering report dir: {report_dir}")
 
-            # Search for CSV files in self.path
             csv_files = glob.glob(os.path.join(report_dir, "*.csv"))
             logger.info(f"Bandsteering CSV files found: {csv_files}")
 
@@ -2972,14 +3253,12 @@ class ZoomAutomation(Realm):
 
                 device_name = os.path.basename(csv_file_path).replace(".csv", "")
 
-                # Clean columns
                 df["BSSID"] = df["BSSID"].fillna("NA").astype(str)
                 df["TimeStamp"] = df["TimeStamp"].fillna("NA").astype(str)
                 df["From_Coord"] = df["From_Coord"].fillna("NA").astype(str)
                 df["To_Coord"] = df["To_Coord"].fillna("NA").astype(str)
                 df["Channel"] = df["Channel"].fillna("NA").astype(str)
 
-                # Filter only configured BSSIDs (if provided)
                 if allowed_bssids:
                     df = df[df["BSSID"].isin(allowed_bssids)]
 
@@ -3004,7 +3283,6 @@ class ZoomAutomation(Realm):
 
                 skip_table = not mask.any()
 
-                # Count BSSID switches
                 if skip_table:
                     # Ensure all expected BSSIDs show zero
                     bssid_counts = {bssid: 0 for bssid in self.bssids}
@@ -3079,7 +3357,6 @@ class ZoomAutomation(Realm):
                 report.set_table_dataframe(table_df)
                 report.build_table()
 
-            # Handle Charging Timestamps (Check if robo_obj exists first)
             if (
                 hasattr(self, "robo_obj")
                 and hasattr(self.robo_obj, "charging_timestamps")
@@ -3094,7 +3371,6 @@ class ZoomAutomation(Realm):
                         "charging_completion_timestamp",
                     ],
                 )
-                # Add S.No column
                 df.insert(0, "S.No", range(1, len(df) + 1))
                 report.set_table_dataframe(df)
                 report.build_table()
@@ -3104,17 +3380,16 @@ class ZoomAutomation(Realm):
                     _obj="Robot did not go to charge during this test",
                 )
                 report.build_objective()
-        except Exception as e:
-            logger.error(f"Exeception Occured {e}")
-            logger.error("Error Occured ", exc_info=True)
+        except Exception as e:  # wraps the whole function; exc_info is what narrows the failure down
+            logger.error(
+                f"Failed to build the band-steering report section: {e}",
+                exc_info=True,
+            )
 
     def add_live_view_images_to_report(self):
-        """
-        Waits for and adds the Video and Audio heatmap images for Floor 1.
-        """
+        """Wait for the Floor 1 video and audio heatmaps, then add them."""
         live_view_dir = os.path.join(self.path, "live_view_images")
 
-        # Define the specific filenames for Floor 1
         video_img_name = f"zoom_video_{self.testname}_floor1.png"
         audio_img_name = f"zoom_audio_{self.testname}_floor1.png"
 
@@ -3124,7 +3399,6 @@ class ZoomAutomation(Realm):
         timeout = 90  # seconds
         start_time = time.time()
 
-        # 1. Wait for the Video image (Primary trigger)
         while not (os.path.exists(video_path) and os.path.exists(audio_path)):
             if time.time() - start_time > timeout:
                 logger.error(f"Timeout: {video_img_name} not found within 60 seconds.")
@@ -3141,10 +3415,8 @@ class ZoomAutomation(Realm):
         else:
             logger.warning(f"Audio heatmap image not found: {audio_path}")
 
-        # 2. Build the HTML Report Content
         html_content = ""
 
-        # Add Video Map (if found)
         if os.path.exists(video_path):
             html_content += (
                 '<div style="page-break-before: always;"></div>'
@@ -3152,7 +3424,6 @@ class ZoomAutomation(Realm):
                 f'<div style="text-align:center;"><img src="file://{video_path}" style="width:1200px; height:800px;"></img></div>'
             )
 
-        # Add Audio Map (if found)
         if os.path.exists(audio_path):
             html_content += (
                 '<div style="page-break-before: always;"></div>'
@@ -3160,7 +3431,6 @@ class ZoomAutomation(Realm):
                 f'<div style="text-align:center;"><img src="file://{audio_path}" style="width:1200px; height:800px;"></img></div>'
             )
 
-        # 3. Inject into Report
         if html_content:
             self.report.set_custom_html(html_content)
 
@@ -3295,8 +3565,9 @@ class ZoomAutomation(Realm):
         else:
             csv_device_data = {}
             try:
-                if not os.path.exists(os.path.join(os.getcwd(), self.csv_file_name)):
-                    logger.error(f"File not found: {self.csv_file_name}")
+                csv_path = os.path.join(self.path, self.csv_file_name)
+                if not os.path.exists(csv_path):
+                    logger.error(f"File not found: {csv_path}")
                     self.report.set_table_title("Test Devices:")
                     self.report.build_table_title()
                     device_details = pd.DataFrame(
@@ -3312,7 +3583,7 @@ class ZoomAutomation(Realm):
                         }
                     )
                 else:
-                    csv_device_data = self.summarize_csv_audio_video(self.csv_file_name)
+                    csv_device_data = self.summarize_csv_audio_video(csv_path)
                     device_data = csv_device_data
                     self.report.set_table_title("Test Devices:")
                     self.report.build_table_title()
@@ -3367,7 +3638,6 @@ class ZoomAutomation(Realm):
             )
             self.report.build_text_simple()
 
-            # audio bitrate graph
             self.report.set_graph_title("a. Audio Bitrate (Recevied/Sent)")
             self.report.build_graph_title()
             x_data_set = [
@@ -3405,7 +3675,6 @@ class ZoomAutomation(Realm):
             self.report.move_graph_image()
             self.report.build_graph()
 
-            # audio latency graph
             self.report.set_graph_title("b. Audio Latency (Recevied/Sent)")
             self.report.build_graph_title()
             x_data_set = [
@@ -3442,7 +3711,6 @@ class ZoomAutomation(Realm):
             self.report.move_graph_image()
             self.report.build_graph()
 
-            # audio jitter graph
             self.report.set_graph_title("c. Audio Jitter (Recevied/Sent)")
             self.report.build_graph_title()
             x_data_set = [
@@ -3479,7 +3747,6 @@ class ZoomAutomation(Realm):
             self.report.move_graph_image()
             self.report.build_graph()
 
-            # audio packet loss graph
             self.report.set_graph_title("d. Audio Packet Loss (Recevied/Sent)")
             self.report.build_graph_title()
             x_data_set = [
@@ -3607,7 +3874,6 @@ class ZoomAutomation(Realm):
             )
             self.report.build_text_simple()
 
-            # video bitrate graph
             self.report.set_graph_title("a. Video Bitrate (Recevied/Sent)")
             self.report.build_graph_title()
             x_data_set = [
@@ -3644,7 +3910,6 @@ class ZoomAutomation(Realm):
             self.report.move_graph_image()
             self.report.build_graph()
 
-            # video latency graph
             self.report.set_graph_title("b. Video Latency (Recevied/Sent)")
             self.report.build_graph_title()
             x_data_set = [
@@ -3681,7 +3946,6 @@ class ZoomAutomation(Realm):
             self.report.move_graph_image()
             self.report.build_graph()
 
-            # video jitter graph
             self.report.set_graph_title("c. Video Jitter (Recevied/Sent)")
             self.report.build_graph_title()
             x_data_set = [
@@ -3718,7 +3982,6 @@ class ZoomAutomation(Realm):
             self.report.move_graph_image()
             self.report.build_graph()
 
-            # video packet loss graph
             self.report.set_graph_title("d. Video Packet Loss (Recevied/Sent)")
             self.report.build_graph_title()
             x_data_set = [
@@ -3844,18 +4107,18 @@ class ZoomAutomation(Realm):
             self.move_files(file_to_move_path, self.report_path_date_time)
         if self.download_csv:
             self.move_files(
-                os.path.join(os.getcwd(), self.csv_file_name),
+                os.path.join(self.path, self.csv_file_name),
                 self.report_path_date_time,
             )
         self.move_files(
             os.path.join(
-                os.getcwd(), "zoom_api_responses", f"{self.remote_login_url}_qos.json"
+                self.path, "zoom_api_responses", f"{self.remote_login_url}_qos.json"
             ),
             self.report_path_date_time,
         )
         self.move_files(
             os.path.join(
-                os.getcwd(),
+                self.path,
                 "zoom_api_responses",
                 f"{self.remote_login_url}_raw_qos.json",
             ),
@@ -3866,10 +4129,7 @@ class ZoomAutomation(Realm):
         )
 
     def generate_report_from_data(self):
-        """
-        Main function to generate report from API data.
-        """
-        # --- Initialize Report ---
+        """Generate the report from collected API data."""
         self.report = lf_report(
             _output_pdf="zoom_call_report.pdf",
             _output_html="zoom_call_report.html",
@@ -3877,10 +4137,10 @@ class ZoomAutomation(Realm):
             _path=self.path,
         )
         report_path_date_time = self.report.get_path_date_time()
+        self.report_path_date_time = report_path_date_time  # main()'s finally reads this to place the client and run logs
         self.report.set_title("Zoom Call Automated Report")
         self.report.build_banner()
 
-        # --- Objective Section ---
         self.report.set_table_title("Objective:")
         self.report.build_table_title()
         self.report.set_text(
@@ -3891,7 +4151,6 @@ class ZoomAutomation(Realm):
         )
         self.report.build_text_simple()
 
-        # --- Test Parameters Table ---
         self.report.set_table_title("Test Parameters:")
         self.report.build_table_title()
 
@@ -3916,7 +4175,6 @@ class ZoomAutomation(Realm):
             "Mode": "Robo Motion" if self.do_robo else "Static",
         }
 
-        # Add conditional fields
         if self.config:
             param_data["Configured Devices"] = self.hostname_os_combination
             param_data["SSID"] = self.ssid
@@ -3930,34 +4188,30 @@ class ZoomAutomation(Realm):
         self.report.set_table_dataframe(pd.DataFrame([param_data]))
         self.report.build_table()
 
-        # ROBO MODE: Iterate through Coords/Angles and generate device graphs for each
         self._generate_robo_per_location_report()
 
         if self.do_webui:
             self.add_live_view_images_to_report()
 
-        # --- Finalize Report ---
         self.report.build_custom()
         self.report.write_html()
         self.report.write_pdf(_page_size="Legal", _orientation="Landscape")
         self._move_report_files(report_path_date_time)
 
     def _generate_robo_per_location_report(self):
-        """
-        Iterates through every coordinate and angle, loads the specific JSON,
-        and generates Device-Specific Bar Graphs (Device Name on Y-Axis).
+        """Generate per-device bar graphs for every coordinate and angle.
+
+        Loads each round's JSON and plots device names on the Y-axis.
         """
         coords = self.coordinates_list if self.coordinates_list else ["0,0,0"]
 
         for coord in coords:
-            # Determine angles loop
             if self.rotations_enabled and self.angles_list:
                 angles_loop = self.angles_list
             else:
                 angles_loop = [self.current_angle]
 
             for angle in angles_loop:
-                # 1. Heading for this Location
                 if self.rotations_enabled:
                     heading = f"Audio and Video graphs at coordinate {coord} and angle {angle}"
                 else:
@@ -3965,9 +4219,8 @@ class ZoomAutomation(Realm):
                 self.report.set_table_title(heading)
                 self.report.build_table_title()
 
-                # 2. Load Data
                 json_pattern = f"*_{coord}_{angle}_qos.json"
-                file_path = os.path.join("zoom_api_responses", json_pattern)
+                file_path = os.path.join(self.path, "zoom_api_responses", json_pattern)
                 found_files = glob.glob(file_path)
                 device_data = {}
                 if found_files:
@@ -3985,7 +4238,6 @@ class ZoomAutomation(Realm):
                     self.report.build_text_simple()
                     continue
 
-                # 3. Generate Audio Graphs (Device on Y-Axis)
                 if self.audio:
                     suffix = f"_{coord}_{angle}"
                     self._build_metric_graph(
@@ -4006,7 +4258,6 @@ class ZoomAutomation(Realm):
                     )
                     self._build_results_table(device_data, "audio")
 
-                # 4. Generate Video Graphs (Device on Y-Axis)
                 if self.video:
                     suffix = f"_{coord}_{angle}"
                     self._build_metric_graph(
@@ -4027,16 +4278,13 @@ class ZoomAutomation(Realm):
                     )
                     self._build_results_table(device_data, "video")
 
-                # Add a separator between coordinates
                 self.report.set_custom_html("<hr>")
                 self.report.build_custom()
 
     def _build_metric_graph(
         self, media_type, metric_name, unit, data, input_key, output_key, suffix=""
     ):
-        """
-        Helper to build standard horizontal bar graphs with Device Names on Y-Axis.
-        """
+        """Build a horizontal bar graph with device names on the Y-axis."""
         self.report.set_graph_title(f"{media_type} {metric_name} (Sent/Received)")
         self.report.build_graph_title()
 
@@ -4065,7 +4313,7 @@ class ZoomAutomation(Realm):
         self.report.build_graph()
 
     def _build_results_table(self, data, media_type):
-        """Helper for Summary Table"""
+        """Build the summary results table."""
 
         def fmt_val(client, key):
             val = data.get(client, {}).get(key)
@@ -4101,10 +4349,7 @@ class ZoomAutomation(Realm):
         self.report.html += self.report.dataframe_html
 
     def _move_report_files(self, report_path_date_time):
-        """
-        Helper to move CSVs, and Robo JSONs to the report folder.
-        """
-        # 1. Move Client CSV files
+        """Move CSVs and robo JSONs into the report folder."""
         if self.do_robo:
             for coord in self.coordinates_list:
                 if self.rotations_enabled:
@@ -4122,37 +4367,34 @@ class ZoomAutomation(Realm):
                         if os.path.exists(csv_path):
                             self.move_files(csv_path, report_path_date_time)
 
-        # 2. Move Robo JSONs (Wildcard search for Multi-Location files)
         if self.do_robo:
-            pattern = os.path.join(os.getcwd(), "zoom_api_responses", "*_qos.json")
+            pattern = os.path.join(self.path, "zoom_api_responses", "*_qos.json")
             for f in glob.glob(pattern):
                 self.move_files(f, report_path_date_time)
 
-        # 3. Move the endpoint status change log
         self.move_files(
             os.path.join(self.path, "endpoint_status_changes.csv"), report_path_date_time
         )
 
     def stop_webui(self):
-        """
-        Updates the running_status.json file to mark the test as Completed.
-        """
+        """Mark the test Completed in running_status.json."""
         try:
             json_path = os.path.join(self.path, "running_status.json")
 
-            # 1. Load existing data or create new dict
             data = {}
             if os.path.exists(json_path):
                 with open(json_path, "r") as f:
                     try:
                         data = json.load(f)
-                    except json.JSONDecodeError:
+                    except json.JSONDecodeError as e:  # warn loudly: the keys already in this file are about to vanish
+                        logger.warning(
+                            f"{json_path} is not valid JSON ({e}); its existing "
+                            "contents are being discarded and the file rewritten."
+                        )
                         data = {}
 
-            # 2. Update status
             data["status"] = "Completed"
 
-            # 3. Write back to file
             with open(json_path, "w") as f:
                 json.dump(data, f, indent=4)
 
@@ -4162,6 +4404,9 @@ class ZoomAutomation(Realm):
             logger.error(f"Error updating running_status.json: {e}")
 
     def run_robo_test(self):
+        logger.info(
+            f"Robo test coordinates to be visited ({len(self.coordinates_list)} total): {self.coordinates_list}"
+        )
         for coordinate in self.coordinates_list:
             self.robo_obj.wait_for_battery()
             matched, aborted = self.robo_obj.move_to_coordinate(coord=coordinate)
@@ -4171,27 +4416,41 @@ class ZoomAutomation(Realm):
             else:
                 self.failed_coords.append(coordinate)
             if aborted:
-                logger.error(f"Failed to Reach the coordinate {self.current_cord}")
-                self.failed_coords.append(coordinate)
-                sys.exit()
+                logger.error(
+                    f"Failed to reach coordinate {coordinate} — skipping it and trying the next coordinate."
+                )
+                continue
             if self.rotations_enabled:
                 for angle in self.angles_list:
                     self.robo_obj.wait_for_battery()
                     rotated = self.robo_obj.rotate_angle(angle_degree=angle)
-                    if rotated:
-                        self.current_angle = angle
-                    else:
-                        logger.error(f"Failed to Rotate the Angle {self.current_angle}")
-                        sys.exit()
-                    self.run()
+                    if not rotated:  # per-angle skip, same shape as an unreachable coordinate
+                        logger.error(
+                            f"Failed to rotate to angle {angle} at coordinate "
+                            f"{coordinate} — skipping this angle and trying the next one."
+                        )
+                        self.failed_angles.setdefault(coordinate, []).append(angle)
+                        continue
+                    self.current_angle = angle
+                    if not self.run():
+                        logger.error(
+                            "Stopping robo test early — host device issue detected on the first coordinate."
+                        )
+                        return
                     self.participants_joined = 0
 
             else:
-                self.run()
+                if not self.run():
+                    logger.error(
+                        "Stopping robo test early — host device issue detected on the first coordinate."
+                    )
+                    return
                 self.participants_joined = 0
 
 
 def main():
+    zoom_automation = None  # bound up front so the finally block below can always test it
+
     try:
         parser = argparse.ArgumentParser(
             prog=__file__,
@@ -4264,7 +4523,11 @@ def main():
             help="Time set to wait for the CSV files",
         )
         parser.add_argument("--log_level", help="Level of the logs to be dispalyed")
-        parser.add_argument("--lf_logger_config_json", help="lf_logger config json")
+        parser.add_argument(
+            "--lf_logger_config_json",
+            help="Accepted for backwards compatibility but ignored; this test "
+            "logs to stdout and to lf_interop_zoom.log next to the script",
+        )
         parser.add_argument("--resources", help="resources participated in the test")
         parser.add_argument(
             "--do_webUI",
@@ -4529,15 +4792,13 @@ def main():
 
         args = parser.parse_args()
 
-        # set the logger level to debug
-        logger_config = lf_logger_config.lf_logger_config()
-
         if args.log_level:
-            logger_config.set_level(level=args.log_level)
+            logging.getLogger().setLevel(args.log_level.upper())
 
-        if args.lf_logger_config_json:
-            logger_config.lf_logger_config_json = args.lf_logger_config_json
-            logger_config.load_lf_logger_config()
+        logger.info("=" * 70)
+        logger.info("Zoom test run starting — log file: %s", LOG_FILE)
+        logger.info("Command: %s", " ".join(sys.argv))
+        logger.info("=" * 70)
 
         if (
             args.expected_passfail_value is not None
@@ -4589,6 +4850,26 @@ def main():
             )
             exit(0)
 
+        account_id = client_id = client_secret = None  # resolved first: no point reaching LANforge without them
+        if args.api_stats_collection:
+            if args.env_file:
+                if not os.path.exists(args.env_file):
+                    logger.error(f".env file '{args.env_file}' not found")
+                    sys.exit(1)
+                load_dotenv(args.env_file)
+                logger.info(f"Loaded environment variables from {args.env_file}")
+
+            account_id = args.account_id or os.environ.get("ACCOUNT_ID")
+            client_id = args.client_id or os.environ.get("CLIENT_ID")
+            client_secret = args.client_secret or os.environ.get("CLIENT_SECRET")
+
+            if not all([account_id, client_id, client_secret]):
+                logger.error(
+                    "Missing Zoom credentials: pass --account_id/--client_id/"
+                    "--client_secret or set ACCOUNT_ID/CLIENT_ID/CLIENT_SECRET"
+                )
+                sys.exit(1)
+
         rotations_enabled = False
         bssids = []
         if args.do_robo or args.do_bs or args.do_roam:
@@ -4634,6 +4915,10 @@ def main():
             linux_dir=args.linux_dir,
             mac_dir=args.mac_dir,
         )
+        zoom_automation.account_id = account_id  # None unless this is an --api_stats_collection run
+        zoom_automation.client_id = client_id
+        zoom_automation.client_secret = client_secret
+
         if args.download_csv:
             zoom_automation.download_csv = True
         args.upstream_port = zoom_automation.change_port_to_ip(args.upstream_port)
@@ -4699,9 +4984,7 @@ def main():
                             elif j in all_res.keys():
                                 eid_list.append(all_res[j])
             if args.zoom_host in eid_list:
-                # Remove the existing instance of args.zoom_host from the list
                 eid_list.remove(args.zoom_host)
-                # Insert args.zoom_host at the beginning of the list
                 eid_list.insert(0, args.zoom_host)
 
             args.resources = ",".join(id for id in eid_list)
@@ -4750,7 +5033,6 @@ def main():
                         )
                     args.resources = ",".join(id for id in dev_list)
             else:
-                # If no resources provided, prompt user to select devices manually
                 if args.config:
                     all_devices = config_obj.get_all_devices()
                     device_list = []
@@ -4771,9 +5053,9 @@ def main():
                                 + " "
                                 + device["hostname"]
                             )
-                    print("Available Devices For Testing")
+                    logger.info("Available Devices For Testing")
                     for device in device_list:
-                        print(device)
+                        logger.info(device)
                     zm_host = input("Enter Host Resource for the Test : ")
                     zm_host = zm_host.strip()
                     args.resources = input("Enter client Resources to run the test :")
@@ -4796,7 +5078,6 @@ def main():
                 )
                 for item in get_data:
                     item = item.strip()
-                    # Find and append the matching lap to result_list
                     matching_laps = [lap for lap in laptops if lap.startswith(item)]
                     result_list.extend(matching_laps)
                 if not result_list:
@@ -4846,34 +5127,6 @@ def main():
         zoom_automation.get_ports_data()
         zoom_automation.get_interop_data()
 
-        if args.api_stats_collection:
-            # load environment file if specified
-            if args.env_file:
-                if os.path.exists(args.env_file):
-                    load_dotenv(args.env_file)
-                    logger.info(f"Loaded environment variables from {args.env_file}")
-                else:
-                    raise FileNotFoundError(f".env file '{args.env_file}' not found")
-
-            # Fetching zoom credentials for account
-            zoom_automation.account_id = args.account_id or os.environ.get("ACCOUNT_ID")
-            zoom_automation.client_id = args.client_id or os.environ.get("CLIENT_ID")
-            zoom_automation.client_secret = args.client_secret or os.environ.get(
-                "CLIENT_SECRET"
-            )
-
-            if not all(
-                [
-                    zoom_automation.account_id,
-                    zoom_automation.client_id,
-                    zoom_automation.client_secret,
-                ]
-            ):
-                logger.info("Exiting test.")
-                raise ValueError(
-                    "Missing Zoom credentials (account_id, client_id, client_secret)"
-                )
-
         if args.do_robo:
             zoom_automation.run_robo_test()
         else:
@@ -4885,8 +5138,8 @@ def main():
     except Exception as e:
         logger.error(f"AN ERROR OCCURED WHILE RUNNING TEST {e}")
         traceback.print_exc()
-    finally:
-        if not ("--help" in sys.argv or "-h" in sys.argv):
+    finally:  # covers --help; an if not a return, which would swallow SystemExit
+        if zoom_automation is not None:
             zoom_automation.stop_signal = True
             logger.info("Waiting for Browser Cleanup in Laptops")
             time.sleep(10)
@@ -4899,9 +5152,11 @@ def main():
             elif args.api_stats_collection:
                 zoom_automation.generate_report_from_api()
             time.sleep(5)
-            zoom_automation.generic_endps_profile.cleanup()
+            zoom_automation.cleanup_generic_endpoints()
             # zoom_automation.move_ping_logs()
+            zoom_automation.move_log_folder()
             logger.info("Done.")
+            zoom_automation.move_run_log_to_report()  # last: everything above is now in the log that travels with the report
 
 
 if __name__ == "__main__":
