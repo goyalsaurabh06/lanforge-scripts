@@ -45,7 +45,7 @@ EXAMPLE:    # Run 60 second default DL/UL-rate UDP IPv4 traffic-based test with
             # Run test with creating stations in lanforge starting from given index with specified ssid and security type
             # with 10 stations and 1.1.eth1 as upstream port
                 ./lf_wifi_capacity_test.py \
-                    --mgr           192.158.1.101\
+                    --mgr           192.158.1.101 \
                     --pull_report   \
                     --upstream      1.1.eth1 \
                     --create_stations \
@@ -55,25 +55,25 @@ EXAMPLE:    # Run 60 second default DL/UL-rate UDP IPv4 traffic-based test with
                     --stations      1.1.sta1010,1.1.sta2020 \
                     --ssid          test_ssid \
                     --security      WPA2 \
-                    --paswd         test_password \
+                    --paswd         test_password
 
             # Run test on multiple stations and obtain individual station upload and download rates
                 ./lf_wifi_capacity_test.py \
-                    --mgr           192.168.1.101\
+                    --mgr           192.168.1.101 \
                     --pull_report   \
                     --upstream      1.1.eth1 \
                     --stations      1.1.sta0000,1.1.sta0001 \
                     --per_station_upload_rate \
-                    --per_station_download_rate \
+                    --per_station_download_rate
 
 
             # Run test on multiple stations seperating into batches
                 ./lf_wifi_capacity_test.py \
-                    --mgr           192.168.1.101
+                    --mgr           192.168.1.101 \
                     --pull_report   \
                     --upstream      1.1.eth1 \
-                    --stations      1.1.sta0000,1.1.sta0001,1.1.sta0002,1.1.sta0003,1.1.sta0004,1.1.sta0005
-                    --batch_size    2 \
+                    --stations      1.1.sta0000,1.1.sta0001,1.1.sta0002,1.1.sta0003,1.1.sta0004,1.1.sta0005 \
+                    --batch_size    2
 
             # Run test and save the reports in a specific directory on the executing system
                 ./lf_wifi_capacity_test.py \
@@ -81,7 +81,7 @@ EXAMPLE:    # Run 60 second default DL/UL-rate UDP IPv4 traffic-based test with
                     --pull_report   \
                     --upstream      1.1.eth1 \
                     --stations      1.1.sta0000,1.1.sta0001 \
-                    --local_lf_report_dir /home/user/lf_reports \
+                    --local_lf_report_dir /home/user/lf_reports
 
             #Run test with custom download / upload rates for each station
                 ./lf_wifi_capacity_test.py \
@@ -90,7 +90,7 @@ EXAMPLE:    # Run 60 second default DL/UL-rate UDP IPv4 traffic-based test with
                     --upstream      1.1.eth1 \
                     --stations      1.1.sta0000,1.1.sta000
                     --download_rate 100Mbps \
-                    --upload_rate   1Mbps \
+                    --upload_rate   1Mbps
 
 SCRIPT_CLASSIFICATION:
             Test
@@ -421,7 +421,7 @@ EXAMPLE:    # Run 60 second default DL/UL-rate UDP IPv4 traffic-based test with
             # Run test with creating stations in lanforge starting from given index with specified ssid and security type
             # with 10 stations and 1.1.eth1 as upstream port, starting the id from a specifc value, (either create specific number of stations with this id, or create stations with given names)
                 ./lf_wifi_capacity_test.py \
-                    --mgr           192.158.1.101\
+                    --mgr           192.158.1.101 \
                     --pull_report   \
                     --upstream      1.1.eth1 \
                     --create_stations \
@@ -431,25 +431,25 @@ EXAMPLE:    # Run 60 second default DL/UL-rate UDP IPv4 traffic-based test with
                     --stations      1.1.sta1010,1.1.sta2020
                     --ssid          test_ssid \
                     --security      WPA2 \
-                    --paswd         test_password \
+                    --paswd         test_password
 
             # Run test on multiple stations and obtain individual station upload and download rates
                 ./lf_wifi_capacity_test.py \
-                    --mgr           192.168.1.101\
+                    --mgr           192.168.1.101 \
                     --pull_report   \
                     --upstream      1.1.eth1 \
                     --stations      1.1.sta0000,1.1.sta0001 \
                     --per_station_upload_rate \
-                    --per_station_download_rate \
+                    --per_station_download_rate
 
 
             # Run test on multiple stations seperating into batches
                 ./lf_wifi_capacity_test.py \
-                    --mgr           192.168.1.101
+                    --mgr           192.168.1.101 \
                     --pull_report   \
                     --upstream      1.1.eth1 \
-                    --stations      1.1.sta0000,1.1.sta0001,1.1.sta0002,1.1.sta0003,1.1.sta0004,1.1.sta0005
-                    --batch_size    2 \
+                    --stations      1.1.sta0000,1.1.sta0001,1.1.sta0002,1.1.sta0003,1.1.sta0004,1.1.sta0005 \
+                    --batch_size    2
 
             # Run test and save the reports in a specific directory on the executing system
                 ./lf_wifi_capacity_test.py \
@@ -457,7 +457,7 @@ EXAMPLE:    # Run 60 second default DL/UL-rate UDP IPv4 traffic-based test with
                     --pull_report   \
                     --upstream      1.1.eth1 \
                     --stations      1.1.sta0000,1.1.sta0001 \
-                    --local_lf_report_dir /home/user/lf_reports \
+                    --local_lf_report_dir /home/user/lf_reports
 
             #Run test with custom download / upload rates for each station
                 ./lf_wifi_capacity_test.py \
@@ -466,7 +466,7 @@ EXAMPLE:    # Run 60 second default DL/UL-rate UDP IPv4 traffic-based test with
                     --upstream      1.1.eth1 \
                     --stations      1.1.sta0000,1.1.sta000
                     --download_rate 100Mbps \
-                    --upload_rate   1Mbps \
+                    --upload_rate   1Mbps
 
 SCRIPT_CLASSIFICATION:
             Test
