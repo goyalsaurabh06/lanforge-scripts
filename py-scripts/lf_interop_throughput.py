@@ -3128,8 +3128,16 @@ class Throughput(Realm):
                 test_setup_info["Coordinates"] = self.coordinate_list
                 test_setup_info["Total Cycles"] = self.total_cycles
                 if data is not None and not data.empty and 'TIMESTAMP' in data.columns:
-                    test_setup_info["Test Start Time"] = data['TIMESTAMP'].iloc[0]
-                    test_setup_info["Test End Time"] = data['TIMESTAMP'].iloc[-1]
+                    start_ts = data['TIMESTAMP'].iloc[0]
+                    end_ts = data['TIMESTAMP'].iloc[-1]
+                    test_setup_info["Test Start Time"] = start_ts
+                    test_setup_info["Test End Time"] = end_ts
+                    try:
+                        start_dt = datetime.strptime(start_ts, "%d/%m %I:%M:%S %p")
+                        end_dt = datetime.strptime(end_ts, "%d/%m %I:%M:%S %p")
+                        test_setup_info["Test Duration (minutes)"] = round((end_dt - start_dt).total_seconds() / 60, 2)
+                    except (TypeError, ValueError):
+                        logger.warning("Could not compute test duration from TIMESTAMP values '%s' -> '%s'", start_ts, end_ts)
                 bands = ["2.4 GHz", "5 GHz", "6 GHz"]
                 for band, bssid in zip(bands, self.bssids):
                     if bssid:
