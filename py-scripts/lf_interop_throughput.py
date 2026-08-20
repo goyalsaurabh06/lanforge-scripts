@@ -2615,12 +2615,16 @@ class Throughput(Realm):
         return cx_incremental_capacity_names_lists, cx_incremental_capacity_lists, created_cx_lists_keys, incremental_capacity_list_values
 
     # Ensures maximum of 60 plots in line graph
-    def build_line_graph(self, data_set, xaxis_name, yaxis_name, xaxis_categories, label, graph_image_name):
+    def build_line_graph(self, data_set, xaxis_name, yaxis_name, xaxis_categories, label, graph_image_name,
+                         yticks=None, yticklabels=None, threshold=None, threshold_label=None):
         """
-        Creates and saves a line graph showing throughput over time.
+        Creates and saves a line graph showing one or more series over time
+        (e.g. throughput, band, WiFi channel, RSSI).
 
-        - Plots each data point for all throughput data in dataset.
+        - Plots each data point for all data in dataset.
         - Shows only up to 60 labels on the x-axis to keep it readable.
+        - Optional yticks/yticklabels relabel the y-axis (e.g. band names).
+        - Optional threshold draws a horizontal reference line (e.g. RSSI threshold).
 
         Returns:
         The name of the saved image file.
@@ -2642,6 +2646,9 @@ class Throughput(Realm):
                 marker=marker[i % len(marker)]
             )
 
+        if threshold is not None:
+            plt.axhline(y=threshold, color='grey', linestyle='--', label=threshold_label)
+
         plt.xlabel(xaxis_name, fontweight='bold', fontsize=15)
         plt.ylabel(yaxis_name, fontweight='bold', fontsize=15)
 
@@ -2658,6 +2665,9 @@ class Throughput(Realm):
         tick_labels = [xaxis_categories[i] for i in tick_positions]
 
         plt.xticks(ticks=tick_positions, labels=tick_labels, rotation=90)
+
+        if yticks is not None:
+            plt.yticks(yticks, yticklabels)
 
         plt.grid(True, linestyle=':')  # Grid with dotted lines
 
@@ -2694,52 +2704,6 @@ class Throughput(Realm):
                 return bands[index]
         return "NA"
 
-    def build_step_graph(self, x_categories, y_values, xaxis_name, yaxis_name, graph_image_name,
-                         yticks=None, yticklabels=None, threshold=None, threshold_label=None, color='purple'):
-        """
-        Creates and saves a step graph (e.g. band/channel/RSSI over time).
-
-        Drops the last sample, matching build_line_graph, since the last row of
-        band steering monitoring data is a synthetic "Stopped" marker row.
-
-        Returns:
-        The name of the saved image file.
-        """
-        x_categories = x_categories[:-1]
-        y_values = y_values[:-1]
-
-        plt.figure(figsize=(15, 7))
-        plt.step(range(len(x_categories)), y_values, where='post', color=color, linewidth=2)
-
-        if threshold is not None:
-            plt.axhline(y=threshold, color='grey', linestyle='--', label=threshold_label)
-            plt.legend(loc='best')
-
-        plt.xlabel(xaxis_name, fontweight='bold', fontsize=15)
-        plt.ylabel(yaxis_name, fontweight='bold', fontsize=15)
-
-        data_size = len(x_categories)
-        if data_size <= 60:
-            tick_positions = list(range(data_size))
-        else:
-            tick_count = min(60, data_size)
-            interval = data_size / (tick_count - 1)
-            tick_positions = [round(i * interval) for i in range(tick_count)]
-            tick_positions = sorted(set(min(data_size - 1, max(0, pos)) for pos in tick_positions))
-        tick_labels = [x_categories[i] for i in tick_positions]
-        plt.xticks(ticks=tick_positions, labels=tick_labels, rotation=90)
-
-        if yticks is not None:
-            plt.yticks(yticks, yticklabels)
-
-        plt.grid(True, linestyle=':')
-        plt.tight_layout()
-
-        plt.savefig(f"{graph_image_name}.png", dpi=96, bbox_inches="tight")
-        plt.close()
-
-        return f"{graph_image_name}.png"
-
     def build_bandsteer_summary_pie(self, labels, values, graph_image_name):
         """
         Creates and saves a pie chart summarizing band steer event counts per client.
@@ -2747,11 +2711,13 @@ class Throughput(Realm):
         Returns:
         The name of the saved image file.
         """
-        plt.figure(figsize=(8, 8))
+        plt.figure(figsize=(6.5, 4.5))
         total = sum(values)
-        plt.pie(values, labels=labels, startangle=90,
-                autopct=lambda pct: str(int(round(pct * total / 100))) if total else '0')
+        wedges, _, _ = plt.pie(values, startangle=90,
+                               autopct=lambda pct: str(int(round(pct * total / 100))) if total else '0')
         plt.axis('equal')
+        plt.legend(wedges, [f"{label} ({value})" for label, value in zip(labels, values)],
+                  title="Client", loc="center left", bbox_to_anchor=(1, 0.5), fontsize=9)
         plt.tight_layout()
 
         plt.savefig(f"{graph_image_name}.png", dpi=96, bbox_inches="tight")
@@ -2768,27 +2734,18 @@ class Throughput(Realm):
             "Configuration Status": ["Pass" if status else "Fail" for status in configured_devices_check.values()]
         }
 
-    def get_bandsteering_stats(self, report=None, df=None, data1=None):
+    def compute_bandsteering_events(self, df):
         """
-        Retrieves and adds bandsteering statistics to the report.
-
-        This function processes the given dataframe to detect BSSID changes
-        (transitions) per device, maps them with corresponding channels/bands,
-        and correlates them with robot movement (coordinates and timestamps).
-        It generates:
-          - An overall pie chart of band steer event counts per client.
-          - Per-client throughput, band, WiFi channel and RSSI graphs over time.
-          - A tabular report of band steering events per client.
+        Detects BSSID changes (transitions) per device, maps them with corresponding
+        channels/bands, and correlates them with robot movement (coordinates and timestamps).
 
         Args:
-            report: Report object used to build graphs and tables.
             df (pd.DataFrame): Input dataframe containing timestamp, BSSID,
                             channel, throughput, RSSI and coordinate data.
 
         Returns:
-            None
+            dict: Per-device band steer event info, keyed by device name.
         """
-
         bssid_cols = [c for c in df.columns if c.startswith("BSSID")]
         channel_cols = [c for c in df.columns if c.startswith("Channel")]
 
@@ -2801,7 +2758,6 @@ class Throughput(Realm):
             for bssid_col in bssid_cols
         }
 
-        # ---- Pre-compute band steer events per device (used by summary + table) ----
         device_events = {}
         for col in bssid_cols:
             channel_col = bssid_to_channel[col]
@@ -2826,8 +2782,22 @@ class Throughput(Realm):
                 "from_coordinate_list": filtered_df['From Coordinate'].tolist(),
                 "to_coordinate_list": filtered_df['To Coordinate'].tolist(),
             }
+        return device_events
 
-        # ---- Overall band steer events occurred per client ----
+    def build_bandsteering_summary(self, report=None, df=None):
+        """
+        Adds the overall band steer events summary (pie chart of event counts per
+        client) to the report. Meant to be called once, directly below the Input
+        Parameters table, ahead of the per-client detail sections.
+
+        Args:
+            report: Report object used to build the graph.
+            df (pd.DataFrame): Input dataframe containing timestamp and BSSID data.
+
+        Returns:
+            None
+        """
+        device_events = self.compute_bandsteering_events(df)
         event_counts = {name: len(info["timestamp_list"]) for name, info in device_events.items()}
         report.set_obj_html(
             _obj_title="Overall Band Steer Events Occurred Per Client",
@@ -2844,6 +2814,28 @@ class Throughput(Realm):
         else:
             report.set_custom_html("<p>No band steer events were detected during the test.</p>")
             report.build_custom()
+
+    def get_bandsteering_stats(self, report=None, df=None, data1=None):
+        """
+        Retrieves and adds bandsteering statistics to the report.
+
+        This function processes the given dataframe to detect BSSID changes
+        (transitions) per device, maps them with corresponding channels/bands,
+        and correlates them with robot movement (coordinates and timestamps).
+        It generates:
+          - Per-client throughput, band, WiFi channel and RSSI graphs over time.
+          - A tabular report of band steering events per client.
+
+        Args:
+            report: Report object used to build graphs and tables.
+            df (pd.DataFrame): Input dataframe containing timestamp, BSSID,
+                            channel, throughput, RSSI and coordinate data.
+
+        Returns:
+            None
+        """
+
+        device_events = self.compute_bandsteering_events(df)
 
         timestamps = df['TIMESTAMP'].tolist()
 
@@ -2892,18 +2884,18 @@ class Throughput(Realm):
                 report.move_graph_image()
                 report.build_graph()
 
-            report.set_obj_html(
-                _obj_title=f"Band Steer – {device_name}",
-                _obj=" ")
-            report.build_objective()
-
             band_level_map = {"2.4 GHz": 1, "5 GHz": 2, "6 GHz": 3}
             band_levels = [band_level_map.get(self.bssid_to_band(b), float('nan')) for b in df[info["bssid_col"]].tolist()]
-            graph_png = self.build_step_graph(
-                x_categories=timestamps,
-                y_values=band_levels,
+            report.set_obj_html(
+                _obj_title=f"Real Time Band Steer – {device_name}",
+                _obj=" ")
+            report.build_objective()
+            graph_png = self.build_line_graph(
+                data_set=[band_levels],
                 xaxis_name="Time",
                 yaxis_name="Band",
+                xaxis_categories=timestamps,
+                label=["Band"],
                 graph_image_name=f"bandsteer_band_{device_name}",
                 yticks=[1, 2, 3],
                 yticklabels=["2.4 GHz", "5 GHz", "6 GHz"])
@@ -2918,13 +2910,17 @@ class Throughput(Realm):
                 except (TypeError, ValueError):
                     channel_values.append(float('nan'))
             achieved_channels = sorted({int(v) for v in channel_values if v == v})
-            graph_png = self.build_step_graph(
-                x_categories=timestamps,
-                y_values=channel_values,
+            report.set_obj_html(
+                _obj_title=f"Real Time WiFi Channel – {device_name}",
+                _obj=" ")
+            report.build_objective()
+            graph_png = self.build_line_graph(
+                data_set=[channel_values],
                 xaxis_name="Time",
                 yaxis_name="WiFi Channel",
+                xaxis_categories=timestamps,
+                label=["WiFi Channel"],
                 graph_image_name=f"bandsteer_channel_{device_name}",
-                color='steelblue',
                 yticks=achieved_channels or None,
                 yticklabels=[str(c) for c in achieved_channels] or None)
             report.set_graph_image(graph_png)
@@ -2932,15 +2928,24 @@ class Throughput(Realm):
             report.build_graph()
 
             if rssi_col:
-                graph_png = self.build_step_graph(
-                    x_categories=timestamps,
-                    y_values=df[rssi_col].tolist(),
+                report.set_obj_html(
+                    _obj_title=f"Real Time RSSI – {device_name}",
+                    _obj=" ")
+                report.build_objective()
+                # RSSI is always negative in practice; a stored 0 means the signal
+                # reading was unavailable (e.g. device disconnected), not a real
+                # measurement, so show it as -90 dBm (very poor/no signal) instead
+                # of the misleading 0.
+                rssi_values = [-90 if v == 0 else v for v in df[rssi_col].tolist()]
+                graph_png = self.build_line_graph(
+                    data_set=[rssi_values],
                     xaxis_name="Time",
                     yaxis_name="RSSI (dBm)",
+                    xaxis_categories=timestamps,
+                    label=["RSSI"],
                     graph_image_name=f"bandsteer_rssi_{device_name}",
                     threshold=-75,
-                    threshold_label="-75 dBm threshold",
-                    color='forestgreen')
+                    threshold_label="-75 dBm threshold")
                 report.set_graph_image(graph_png)
                 report.move_graph_image()
                 report.build_graph()
@@ -3122,10 +3127,20 @@ class Throughput(Realm):
                 del test_setup_info["Traffic Duration in minutes"]
                 test_setup_info["Coordinates"] = self.coordinate_list
                 test_setup_info["Total Cycles"] = self.total_cycles
+                if data is not None and not data.empty and 'TIMESTAMP' in data.columns:
+                    test_setup_info["Test Start Time"] = data['TIMESTAMP'].iloc[0]
+                    test_setup_info["Test End Time"] = data['TIMESTAMP'].iloc[-1]
+                bands = ["2.4 GHz", "5 GHz", "6 GHz"]
+                for band, bssid in zip(bands, self.bssids):
+                    if bssid:
+                        test_setup_info[f"BSSID ({band})"] = bssid
 
             if iot_summary:
                 test_setup_info = with_iot_params_in_table(test_setup_info, iot_summary)
             report.test_setup_table(test_setup_data=test_setup_info, value="Test Configuration")
+
+            if self.do_bandsteering:
+                self.build_bandsteering_summary(report, data)
 
             # Loop through iterations and build graphs, tables for each iteration
             for i in range(len(iterations_before_test_stopped_by_user)):
@@ -3374,11 +3389,11 @@ class Throughput(Realm):
                 report.move_graph_image()
                 report.build_graph()
                 report.set_obj_html(
-                    _obj_title="RSSI Of The Clients Connected",
+                    _obj_title="Avg RSSI Of The Clients Connected",
                     _obj=" ")
                 report.build_objective()
                 graph = lf_bar_graph_horizontal(_data_set=[rssi_data],
-                                                _xaxis_name="Signal(-dBm)",
+                                                _xaxis_name="Avg Signal(-dBm)",
                                                 _yaxis_name="Devices",
                                                 _graph_image_name=f"signal_image_name{i}",
                                                 _label=['RSSI'],
@@ -3491,7 +3506,7 @@ class Throughput(Realm):
                         " Observed Average download rate (Mbps) ": [str(n) for n in download_data[0:int(incremental_capacity_list[i])]],
                         " Offered upload rate (Mbps) ": upload_list[0:int(incremental_capacity_list[i])],
                         " Observed Average upload rate (Mbps) ": [str(n) for n in upload_data[0:int(incremental_capacity_list[i])]],
-                        " RSSI (dBm) ": ['' if n == 0 else '-' + str(n) for n in rssi_data[0:int(incremental_capacity_list[i])]],
+                        " Avg RSSI (dBm) ": ['' if n == 0 else '-' + str(n) for n in rssi_data[0:int(incremental_capacity_list[i])]],
                         # " Link Speed ":self.link_speed_list[0:int(incremental_capacity_list[i])],
                         " Average RTT (ms)": avg_rtt_data[0:int(incremental_capacity_list[i])],
                         " Packet Size(Bytes) ": [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
@@ -3783,11 +3798,11 @@ class Throughput(Realm):
                 report.move_graph_image()
                 report.build_graph()
                 report.set_obj_html(
-                    _obj_title="RSSI Of The Clients Connected",
+                    _obj_title="Avg RSSI Of The Clients Connected",
                     _obj=" ")
                 report.build_objective()
                 graph = lf_bar_graph_horizontal(_data_set=[rssi_data],
-                                                _xaxis_name="Signal(-dBm)",
+                                                _xaxis_name="Avg Signal(-dBm)",
                                                 _yaxis_name="Devices",
                                                 _graph_image_name=f"signal_image_name{i}",
                                                 _label=['RSSI'],
@@ -3844,7 +3859,7 @@ class Throughput(Realm):
                 bk_dataframe[" Offered upload rate (Mbps)"] = upload_list[-1]
                 bk_dataframe[" Observed Average upload rate (Mbps)"] = [str(upload_data[-1])]
                 bk_dataframe[" Average RTT (ms) "] = avg_rtt_data[-1]
-                bk_dataframe[" RSSI (dBm)"] = ['' if rssi_data[-1] == 0 else '-' + str(rssi_data[-1])]
+                bk_dataframe[" Avg RSSI (dBm)"] = ['' if rssi_data[-1] == 0 else '-' + str(rssi_data[-1])]
                 if self.direction == "Bi-direction":
                     bk_dataframe[" Average Tx Drop % "] = upload_drop
                     bk_dataframe[" Average Rx Drop % "] = download_drop
@@ -4426,7 +4441,7 @@ class Throughput(Realm):
                                 " Observed Average download rate (Mbps) ": [str(n) for n in download_data[0:int(incremental_capacity_list[i])]],
                                 " Offered upload rate (Mbps) ": upload_list[0:int(incremental_capacity_list[i])],
                                 " Observed Average upload rate (Mbps) ": [str(n) for n in upload_data[0:int(incremental_capacity_list[i])]],
-                                " RSSI (dBm) ": ['' if n == 0 else '-' + str(n) for n in rssi_data[0:int(incremental_capacity_list[i])]],
+                                " Avg RSSI (dBm) ": ['' if n == 0 else '-' + str(n) for n in rssi_data[0:int(incremental_capacity_list[i])]],
                                 # " Link Speed ":self.link_speed_list[0:int(incremental_capacity_list[i])],
                                 " Average RTT (ms)": avg_rtt_data[0:int(incremental_capacity_list[i])],
                                 " Packet Size(Bytes) ": [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
