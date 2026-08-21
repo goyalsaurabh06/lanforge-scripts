@@ -660,6 +660,9 @@ class Throughput(Realm):
             collected_dataframes = [df for df in all_dataframes if isinstance(df, pd.DataFrame)]
             if not collected_dataframes or all(df.empty for df in collected_dataframes):
                 self.stop()
+                if self.background_ping:
+                    self.background_ping.stop()
+                    self.background_ping.cleanup()
                 if args.postcleanup:
                     self.cleanup()
                 raise RuntimeError("All active CXs were missing; no band-steering monitoring data was collected.")
@@ -672,6 +675,8 @@ class Throughput(Realm):
             if self.dowebgui:
                 last_row_df.to_csv(f"{args.result_dir}/throughput_data.csv", mode="a", header=False, index=False)
             self.stop()
+            if self.background_ping:
+                self.background_ping.stop()
             if args.postcleanup:
                 self.cleanup()
             self.ensure_monitoring_data_collected()
@@ -680,6 +685,8 @@ class Throughput(Realm):
             if self.dowebgui:
                 # copying to home directory i.e home/user_name
                 self.copy_reports_to_home_dir()
+            if self.background_ping:
+                self.background_ping.cleanup()
             exit(1)
 
         # Loop through the coordinate list when coordinates are specified.
@@ -795,6 +802,8 @@ class Throughput(Realm):
         #     logger.info("connections download {}".format(connections_download))
         #     logger.info("connections upload {}".format(connections_upload))
             self.stop()
+        if self.background_ping:
+            self.background_ping.stop()
         if args.postcleanup:
             self.cleanup()
 
@@ -2759,26 +2768,33 @@ class Throughput(Realm):
             for bssid_col in bssid_cols
         }
 
+        # Values the 'ap' field takes when a station isn't associated to anything.
+        not_associated = {'-', '00:00:00:00:00:00', '', 'NA', None}
+
         device_events = {}
         for col in bssid_cols:
             channel_col = bssid_to_channel[col]
             device_name = col.split()[-1]
 
+            from_bssid = df[col].shift()
+
             # Detect BSSID changes; the first row is the initial association, not a steering event.
-            mask = df[col] != df[col].shift()
+            mask = df[col] != from_bssid
             if len(mask):
                 mask.iloc[0] = False
+            # Only count a live hand-off between two real BSSIDs, not a disconnect/reconnect.
+            mask = mask & ~df[col].isin(not_associated) & ~from_bssid.isin(not_associated)
             if self.bssids:
-                mask = mask & df[col].isin(self.bssids)
+                mask = mask & df[col].isin(self.bssids) & from_bssid.isin(self.bssids)
             filtered_df = df.loc[mask]
 
             device_events[device_name] = {
                 "bssid_col": col,
                 "channel_col": channel_col,
                 "timestamp_list": filtered_df['TIMESTAMP'].tolist(),
-                "from_bssid_list": df[col].shift().loc[filtered_df.index].tolist(),
+                "from_bssid_list": from_bssid.loc[filtered_df.index].tolist(),
                 "to_bssid_list": filtered_df[col].tolist(),
-                "from_band_list": [self.bssid_to_band(b) for b in df[col].shift().loc[filtered_df.index].tolist()],
+                "from_band_list": [self.bssid_to_band(b) for b in from_bssid.loc[filtered_df.index].tolist()],
                 "to_band_list": [self.bssid_to_band(b) for b in filtered_df[col].tolist()],
                 "from_coordinate_list": filtered_df['From Coordinate'].tolist(),
                 "to_coordinate_list": filtered_df['To Coordinate'].tolist(),
