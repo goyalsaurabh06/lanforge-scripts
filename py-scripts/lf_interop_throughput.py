@@ -183,7 +183,6 @@ import re
 import threading
 from collections import OrderedDict
 from lf_base_robo import RobotClass
-from collections import Counter
 logger = logging.getLogger(__name__)
 
 if sys.version_info[0] != 3:
@@ -387,6 +386,7 @@ class Throughput(Realm):
         self.do_bandsteering = do_bandsteering
         self.total_cycles = total_cycles
         self.bssids = bssids if bssids else []
+        self.cycle_summary = []
         # Keep monitoring output stable when a client disconnects or temporarily disappears
         # from LANforge.  Reports still retain one row per configured client.
         # Track CX availability and state changes across monitoring iterations.
@@ -605,6 +605,8 @@ class Throughput(Realm):
             overall_end_time = overall_start_time + timedelta(seconds=int(args.test_duration) * len(incremental_capacity_list))
             curr_cycle = 1
             logger.info("Current Cycle: {}".format(curr_cycle))
+            self.cycle_summary = []
+            cycle_start_time = overall_start_time
             # Iterate through all the points and monitoring throughput,bandsteering stats and as well as robot position
             for coord in coordinate_list_with_robo:
                 if self.stop_test:
@@ -639,6 +641,13 @@ class Throughput(Realm):
                     break
 
                 if coord == self.coordinate_list[0]:
+                    cycle_end_time = datetime.now()
+                    self.cycle_summary.append({
+                        'Iteration': curr_cycle,
+                        'Start Time': cycle_start_time.strftime("%d/%m %I:%M:%S %p"),
+                        'End Time': cycle_end_time.strftime("%d/%m %I:%M:%S %p"),
+                    })
+                    cycle_start_time = cycle_end_time
                     curr_cycle += 1
                     if curr_cycle > int(self.total_cycles):
                         logger.info("Completed all {} cycles".format(self.total_cycles))
@@ -2607,12 +2616,16 @@ class Throughput(Realm):
         return cx_incremental_capacity_names_lists, cx_incremental_capacity_lists, created_cx_lists_keys, incremental_capacity_list_values
 
     # Ensures maximum of 60 plots in line graph
-    def build_line_graph(self, data_set, xaxis_name, yaxis_name, xaxis_categories, label, graph_image_name):
+    def build_line_graph(self, data_set, xaxis_name, yaxis_name, xaxis_categories, label, graph_image_name,
+                         yticks=None, yticklabels=None, threshold=None, threshold_label=None):
         """
-        Creates and saves a line graph showing throughput over time.
+        Creates and saves a line graph showing one or more series over time
+        (e.g. throughput, band, WiFi channel, RSSI).
 
-        - Plots each data point for all throughput data in dataset.
+        - Plots each data point for all data in dataset.
         - Shows only up to 60 labels on the x-axis to keep it readable.
+        - Optional yticks/yticklabels relabel the y-axis (e.g. band names).
+        - Optional threshold draws a horizontal reference line (e.g. RSSI threshold).
 
         Returns:
         The name of the saved image file.
@@ -2634,6 +2647,9 @@ class Throughput(Realm):
                 marker=marker[i % len(marker)]
             )
 
+        if threshold is not None:
+            plt.axhline(y=threshold, color='grey', linestyle='--', label=threshold_label)
+
         plt.xlabel(xaxis_name, fontweight='bold', fontsize=15)
         plt.ylabel(yaxis_name, fontweight='bold', fontsize=15)
 
@@ -2650,6 +2666,9 @@ class Throughput(Realm):
         tick_labels = [xaxis_categories[i] for i in tick_positions]
 
         plt.xticks(ticks=tick_positions, labels=tick_labels, rotation=90)
+
+        if yticks is not None:
+            plt.yticks(yticks, yticklabels)
 
         plt.grid(True, linestyle=':')  # Grid with dotted lines
 
@@ -2668,6 +2687,45 @@ class Throughput(Realm):
 
         return f"{graph_image_name}.png"
 
+    def bssid_to_band(self, bssid):
+        """
+        Maps a BSSID to its band (2.4 GHz / 5 GHz / 6 GHz) based on its position
+        in the --bssids list, e.g. --bssids x,y,z where x is the 2.4 GHz BSSID,
+        y is the 5 GHz BSSID and z is the 6 GHz BSSID. A blank entry in any
+        position means that band has no BSSID configured.
+        """
+        bands = ["2.4 GHz", "5 GHz", "6 GHz"]
+        if not bssid or not isinstance(bssid, str):
+            return "NA"
+        bssid = bssid.strip().lower()
+        for index, configured_bssid in enumerate(self.bssids):
+            if index >= len(bands):
+                break
+            if configured_bssid and configured_bssid.strip().lower() == bssid:
+                return bands[index]
+        return "NA"
+
+    def build_bandsteer_summary_pie(self, labels, values, graph_image_name):
+        """
+        Creates and saves a pie chart summarizing band steer event counts per client.
+
+        Returns:
+        The name of the saved image file.
+        """
+        plt.figure(figsize=(6.5, 4.5))
+        total = sum(values)
+        wedges, _, _ = plt.pie(values, startangle=90,
+                               autopct=lambda pct: str(int(round(pct * total / 100))) if total else '0')
+        plt.axis('equal')
+        plt.legend(wedges, [f"{label} ({value})" for label, value in zip(labels, values)],
+                  title="Client", loc="center left", bbox_to_anchor=(1, 0.5), fontsize=9)
+        plt.tight_layout()
+
+        plt.savefig(f"{graph_image_name}.png", dpi=96, bbox_inches="tight")
+        plt.close()
+
+        return f"{graph_image_name}.png"
+
     def convert_to_table(self, configured_devices_check):
         """
         Returns usernames and their config status ('Pass' or 'Fail') as a dictionary.
@@ -2677,66 +2735,18 @@ class Throughput(Realm):
             "Configuration Status": ["Pass" if status else "Fail" for status in configured_devices_check.values()]
         }
 
-    def get_bandsteering_stats(self, report=None, df=None, data1=None):
+    def compute_bandsteering_events(self, df):
         """
-        Retrieves and adds bandsteering statistics to the report.
-
-        This function processes the given dataframe to detect BSSID changes
-        (transitions) per device, maps them with corresponding channels,
-        and correlates them with robot movement (coordinates and timestamps).
-        It generates bar graphs for BSSID change counts and tabular reports
-        for band steering events.
+        Detects BSSID changes (transitions) per device, maps them with corresponding
+        channels/bands, and correlates them with robot movement (coordinates and timestamps).
 
         Args:
-            report: Report object used to build graphs and tables.
             df (pd.DataFrame): Input dataframe containing timestamp, BSSID,
-                            channel, and coordinate data.
+                            channel, throughput, RSSI and coordinate data.
 
         Returns:
-            None
+            dict: Per-device band steer event info, keyed by device name.
         """
-
-        # df = pd.DataFrame({
-        #     'TIMESTAMP': [
-        #         '27/01 11:26:39 PM',
-        #         '27/01 11:26:45 PM',
-        #         '27/01 11:26:51 PM',
-        #         '27/01 11:26:57 PM',
-        #         '27/01 11:27:02 PM',
-        #         '27/01 11:27:14 PM',
-        #         '27/01 11:27:20 PM',
-        #         '27/01 11:27:26 PM',
-        #     ],
-
-        #     'BSSID 1.15 Lin ubuntu24': [
-        #         '94:A6:7E:74:26:22',
-        #         '94:A6:7E:74:26:22',
-        #         'AA:BB:CC:DD:EE:FF',
-        #         'AA:BB:CC:DD:EE:FF',
-        #         '94:A6:7E:74:26:22',
-        #         '94:A6:7E:74:26:22',
-        #         '11:22:33:44:55:66',
-        #         '11:22:33:44:55:66',
-        #     ],
-
-        #     'BSSID 1.16 Lin lin34': [
-        #         '94:A6:7E:74:26:22',
-        #         '94:A6:7E:74:26:22',
-        #         '94:A6:7E:74:26:22',
-        #         '94:A6:7E:74:26:22',
-        #         '94:A6:7E:74:26:22',
-        #         '94:A6:7E:74:26:22',
-        #         '11:22:33:44:55:66',
-        #         '11:22:33:44:55:66',
-        #     ],
-
-        #     'Channel 1.15 Lin ubuntu24': [1, 1, 6, 6, 1, 1, 11, 11],
-        #     'Channel1.16 Lin lin34': [36, 36, 36, 36, 36, 36, 44, 44],
-
-        #     'From Coordinate': ['A'] * 8,
-        #     'To Coordinate': ['B'] * 8
-        # })
-
         bssid_cols = [c for c in df.columns if c.startswith("BSSID")]
         channel_cols = [c for c in df.columns if c.startswith("Channel")]
 
@@ -2749,78 +2759,211 @@ class Throughput(Realm):
             for bssid_col in bssid_cols
         }
 
+        device_events = {}
         for col in bssid_cols:
-
             channel_col = bssid_to_channel[col]
-
-            # Detect BSSID changes
-            mask = df[col] != df[col].shift()
-            filtered_df = df.loc[mask]
-            if self.bssids:
-                filtered_df = df.loc[mask & df[col].isin(self.bssids)]
-
-            bssid_list = filtered_df[col].tolist()
-            channel_list = filtered_df[channel_col].tolist()
-            timestamp_list = filtered_df['TIMESTAMP'].tolist()
-            from_coordinate_list = filtered_df['From Coordinate'].tolist()
-            to_coordinate_list = filtered_df['To Coordinate'].tolist()
-            bssid_counts = Counter(bssid_list)
-
-            x_axis = list(bssid_counts.keys())      # BSSID values
-            y_axis = [[float(i)] for i in list(bssid_counts.values())]
-            if len(self.bssids) > 0:
-                x_axis = self.bssids
-                y_axis = [[float(bssid_counts.get(bssid, 0))] for bssid in self.bssids]
-            device_name = col.replace('BSSID ', '')
             device_name = col.split()[-1]
+
+            # Detect BSSID changes; the first row is the initial association, not a steering event.
+            mask = df[col] != df[col].shift()
+            if len(mask):
+                mask.iloc[0] = False
+            if self.bssids:
+                mask = mask & df[col].isin(self.bssids)
+            filtered_df = df.loc[mask]
+
+            device_events[device_name] = {
+                "bssid_col": col,
+                "channel_col": channel_col,
+                "timestamp_list": filtered_df['TIMESTAMP'].tolist(),
+                "from_bssid_list": df[col].shift().loc[filtered_df.index].tolist(),
+                "to_bssid_list": filtered_df[col].tolist(),
+                "from_band_list": [self.bssid_to_band(b) for b in df[col].shift().loc[filtered_df.index].tolist()],
+                "to_band_list": [self.bssid_to_band(b) for b in filtered_df[col].tolist()],
+                "from_coordinate_list": filtered_df['From Coordinate'].tolist(),
+                "to_coordinate_list": filtered_df['To Coordinate'].tolist(),
+            }
+        return device_events
+
+    def build_bandsteering_summary(self, report=None, df=None):
+        """
+        Adds the overall band steer events summary (pie chart of event counts per
+        client) to the report. Meant to be called once, directly below the Input
+        Parameters table, ahead of the per-client detail sections.
+
+        Args:
+            report: Report object used to build the graph.
+            df (pd.DataFrame): Input dataframe containing timestamp and BSSID data.
+
+        Returns:
+            None
+        """
+        device_events = self.compute_bandsteering_events(df)
+        event_counts = {name: len(info["timestamp_list"]) for name, info in device_events.items()}
+        report.set_obj_html(
+            _obj_title="Overall Band Steer Events Occurred Per Client",
+            _obj=" ")
+        report.build_objective()
+        if any(event_counts.values()):
+            pie_png = self.build_bandsteer_summary_pie(
+                labels=list(event_counts.keys()),
+                values=list(event_counts.values()),
+                graph_image_name="bandsteer_events_summary")
+            report.set_graph_image(pie_png)
+            report.move_graph_image()
+            report.build_graph()
+        else:
+            report.set_custom_html("<p>No band steer events were detected during the test.</p>")
+            report.build_custom()
+
+    def get_bandsteering_stats(self, report=None, df=None, data1=None):
+        """
+        Retrieves and adds bandsteering statistics to the report.
+
+        This function processes the given dataframe to detect BSSID changes
+        (transitions) per device, maps them with corresponding channels/bands,
+        and correlates them with robot movement (coordinates and timestamps).
+        It generates:
+          - Per-client throughput, band, WiFi channel and RSSI graphs over time.
+          - A tabular report of band steering events per client.
+
+        Args:
+            report: Report object used to build graphs and tables.
+            df (pd.DataFrame): Input dataframe containing timestamp, BSSID,
+                            channel, throughput, RSSI and coordinate data.
+
+        Returns:
+            None
+        """
+
+        device_events = self.compute_bandsteering_events(df)
+
+        timestamps = df['TIMESTAMP'].tolist()
+
+        # ---- Per-client throughput / band / channel / RSSI graphs and events table ----
+        for device_name, info in device_events.items():
+
+            device_cols = [c for c in df.columns if device_name in c]
+            download_col = next((c for c in device_cols if c.startswith('Download')), None)
+            upload_col = next((c for c in device_cols if c.startswith('Upload')), None)
+            rssi_col = next((c for c in device_cols if c.startswith('RSSI')), None)
+
+            throughput_data_set, throughput_label, achieved_parts = [], [], []
+            if self.direction == "Bi-direction":
+                if download_col:
+                    throughput_data_set.append(df[download_col].tolist())
+                    throughput_label.append('Download')
+                    achieved_parts.append(f"Download: {round(df[download_col].mean(), 2)} Mbps")
+                if upload_col:
+                    throughput_data_set.append(df[upload_col].tolist())
+                    throughput_label.append('Upload')
+                    achieved_parts.append(f"Upload: {round(df[upload_col].mean(), 2)} Mbps")
+            elif self.direction == 'Download':
+                if download_col:
+                    throughput_data_set.append(df[download_col].tolist())
+                    throughput_label.append('Download')
+                    achieved_parts.append(f"Download: {round(df[download_col].mean(), 2)} Mbps")
+            elif self.direction == 'Upload':
+                if upload_col:
+                    throughput_data_set.append(df[upload_col].tolist())
+                    throughput_label.append('Upload')
+                    achieved_parts.append(f"Upload: {round(df[upload_col].mean(), 2)} Mbps")
+
+            if throughput_data_set:
+                report.set_obj_html(
+                    _obj_title=f"Real Time Throughput – {device_name}: Achieved Throughput: " + ", ".join(achieved_parts),
+                    _obj=" ")
+                report.build_objective()
+                graph_png = self.build_line_graph(
+                    data_set=throughput_data_set,
+                    xaxis_name="Time",
+                    yaxis_name="Throughput (Mbps)",
+                    xaxis_categories=timestamps,
+                    label=throughput_label,
+                    graph_image_name=f"bandsteer_throughput_{device_name}")
+                report.set_graph_image(graph_png)
+                report.move_graph_image()
+                report.build_graph()
+
+            band_level_map = {"2.4 GHz": 1, "5 GHz": 2, "6 GHz": 3}
+            band_levels = [band_level_map.get(self.bssid_to_band(b), float('nan')) for b in df[info["bssid_col"]].tolist()]
             report.set_obj_html(
-                _obj_title=f"BSSID change count of the {device_name}",
+                _obj_title=f"Real Time Band Steer – {device_name}",
                 _obj=" ")
             report.build_objective()
-            graph = lf_bar_graph(_data_set=y_axis,
-                                 _xaxis_name="BSSID",
-                                 _yaxis_name="Number of Changes",
-                                 # _xaxis_categories = [", ".join(x_axis)],
-                                 _xaxis_categories=[""],
-                                 _xaxis_label=x_axis,
-                                 _graph_image_name=f"bssid_change_count_{device_name}",
-                                 _label=x_axis,
-                                 _xaxis_step=1,
-                                 _graph_title=f"BSSID change count – {device_name}",
-                                 _title_size=16,
-                                 _color_edge='black',
-                                 _bar_width=0.15,
-                                 _figsize=(18, 6),
-                                 _legend_loc="best",
-                                 _legend_box=(1.0, 1.0),
-                                 _dpi=96,
-                                 _show_bar_value=True,
-                                 _enable_csv=True,
-                                 _color=['orange', 'lightcoral', 'steelblue', 'lightgrey'],
-                                 _color_name=['orange', 'lightcoral', 'steelblue', 'lightgrey'],
-
-                                 )
-
-            graph_png = graph.build_bar_graph()
+            graph_png = self.build_line_graph(
+                data_set=[band_levels],
+                xaxis_name="Time",
+                yaxis_name="Band",
+                xaxis_categories=timestamps,
+                label=["Band"],
+                graph_image_name=f"bandsteer_band_{device_name}",
+                yticks=[1, 2, 3],
+                yticklabels=["2.4 GHz", "5 GHz", "6 GHz"])
             report.set_graph_image(graph_png)
-            # need to move the graph image to the results directory
             report.move_graph_image()
-            report.set_csv_filename(graph_png)
-            report.move_csv_file()
             report.build_graph()
+
+            channel_values = []
+            for c in df[info["channel_col"]].tolist():
+                try:
+                    channel_values.append(float(c))
+                except (TypeError, ValueError):
+                    channel_values.append(float('nan'))
+            achieved_channels = sorted({int(v) for v in channel_values if v == v})
+            report.set_obj_html(
+                _obj_title=f"Real Time WiFi Channel – {device_name}",
+                _obj=" ")
+            report.build_objective()
+            graph_png = self.build_line_graph(
+                data_set=[channel_values],
+                xaxis_name="Time",
+                yaxis_name="WiFi Channel",
+                xaxis_categories=timestamps,
+                label=["WiFi Channel"],
+                graph_image_name=f"bandsteer_channel_{device_name}",
+                yticks=achieved_channels or None,
+                yticklabels=[str(c) for c in achieved_channels] or None)
+            report.set_graph_image(graph_png)
+            report.move_graph_image()
+            report.build_graph()
+
+            if rssi_col:
+                report.set_obj_html(
+                    _obj_title=f"Real Time RSSI – {device_name}",
+                    _obj=" ")
+                report.build_objective()
+                # RSSI is always negative in practice; a stored 0 means the signal
+                # reading was unavailable (e.g. device disconnected), not a real
+                # measurement, so show it as -90 dBm (very poor/no signal) instead
+                # of the misleading 0.
+                rssi_values = [-90 if v == 0 else v for v in df[rssi_col].tolist()]
+                graph_png = self.build_line_graph(
+                    data_set=[rssi_values],
+                    xaxis_name="Time",
+                    yaxis_name="RSSI (dBm)",
+                    xaxis_categories=timestamps,
+                    label=["RSSI"],
+                    graph_image_name=f"bandsteer_rssi_{device_name}",
+                    threshold=-75,
+                    threshold_label="-75 dBm threshold")
+                report.set_graph_image(graph_png)
+                report.move_graph_image()
+                report.build_graph()
 
             report.set_obj_html(
                 _obj_title=f"Band Steering Results for {device_name}",
                 _obj=" ")
             report.build_objective()
-            table_df = {
-                "Timestamp": timestamp_list,
-                "BSSID": bssid_list,
-                "Channel": channel_list,
-                "From Coordinate": from_coordinate_list,
-                "To Coordinate": to_coordinate_list
-            }
-            table_df = pd.DataFrame(table_df)
+            table_df = pd.DataFrame({
+                "Timestamp": info["timestamp_list"],
+                "From BSSID": info["from_bssid_list"],
+                "To BSSID": info["to_bssid_list"],
+                "From Band": info["from_band_list"],
+                "To Band": info["to_band_list"],
+                "From Coordinate": info["from_coordinate_list"],
+                "To Coordinate": info["to_coordinate_list"],
+            })
             report.set_table_dataframe(table_df)
             report.build_table()
 
@@ -2985,10 +3128,29 @@ class Throughput(Realm):
                 del test_setup_info["Traffic Duration in minutes"]
                 test_setup_info["Coordinates"] = self.coordinate_list
                 test_setup_info["Total Cycles"] = self.total_cycles
+                if data is not None and not data.empty and 'TIMESTAMP' in data.columns:
+                    start_ts = data['TIMESTAMP'].iloc[0]
+                    end_ts = data['TIMESTAMP'].iloc[-1]
+                    test_setup_info["Test Start Time"] = start_ts
+                    test_setup_info["Test End Time"] = end_ts
+                    try:
+                        start_dt = datetime.strptime(start_ts, "%d/%m %I:%M:%S %p")
+                        end_dt = datetime.strptime(end_ts, "%d/%m %I:%M:%S %p")
+                        duration_seconds = int((end_dt - start_dt).total_seconds())
+                        test_setup_info["Test Duration"] = f"{duration_seconds // 60} minutes {duration_seconds % 60} seconds"
+                    except (TypeError, ValueError):
+                        logger.warning("Could not compute test duration from TIMESTAMP values '%s' -> '%s'", start_ts, end_ts)
+                bands = ["2.4 GHz", "5 GHz", "6 GHz"]
+                for band, bssid in zip(bands, self.bssids):
+                    if bssid:
+                        test_setup_info[f"BSSID ({band})"] = bssid
 
             if iot_summary:
                 test_setup_info = with_iot_params_in_table(test_setup_info, iot_summary)
             report.test_setup_table(test_setup_data=test_setup_info, value="Test Configuration")
+
+            if self.do_bandsteering:
+                self.build_bandsteering_summary(report, data)
 
             # Loop through iterations and build graphs, tables for each iteration
             for i in range(len(iterations_before_test_stopped_by_user)):
@@ -3237,11 +3399,11 @@ class Throughput(Realm):
                 report.move_graph_image()
                 report.build_graph()
                 report.set_obj_html(
-                    _obj_title="RSSI Of The Clients Connected",
+                    _obj_title="Avg RSSI Of The Clients Connected",
                     _obj=" ")
                 report.build_objective()
                 graph = lf_bar_graph_horizontal(_data_set=[rssi_data],
-                                                _xaxis_name="Signal(-dBm)",
+                                                _xaxis_name="Avg Signal(-dBm)",
                                                 _yaxis_name="Devices",
                                                 _graph_image_name=f"signal_image_name{i}",
                                                 _label=['RSSI'],
@@ -3261,6 +3423,16 @@ class Throughput(Realm):
                 # If band steering is enabled, collect and add band steering details to the report
                 if self.do_bandsteering:
                     self.get_bandsteering_stats(report, data, devices_on_running_trimmed)
+
+                    # ---- Cycle summary: how many robot cycles were completed and when ----
+                    if self.cycle_summary:
+                        report.set_obj_html(
+                            _obj_title="Band Steering Cycle Summary",
+                            _obj=f"Total Cycles Completed: {len(self.cycle_summary)} of {self.total_cycles}")
+                        report.build_objective()
+                        cycle_summary_df = pd.DataFrame(self.cycle_summary, columns=['Iteration', 'Start Time', 'End Time'])
+                        report.set_table_dataframe(cycle_summary_df)
+                        report.build_table()
 
                 if self.dowebgui and self.get_live_view:
                     # To add live view images coming from the Web-GUI in report
@@ -3344,7 +3516,7 @@ class Throughput(Realm):
                         " Observed Average download rate (Mbps) ": [str(n) for n in download_data[0:int(incremental_capacity_list[i])]],
                         " Offered upload rate (Mbps) ": upload_list[0:int(incremental_capacity_list[i])],
                         " Observed Average upload rate (Mbps) ": [str(n) for n in upload_data[0:int(incremental_capacity_list[i])]],
-                        " RSSI (dBm) ": ['' if n == 0 else '-' + str(n) for n in rssi_data[0:int(incremental_capacity_list[i])]],
+                        " Avg RSSI (dBm) ": ['' if n == 0 else '-' + str(n) for n in rssi_data[0:int(incremental_capacity_list[i])]],
                         # " Link Speed ":self.link_speed_list[0:int(incremental_capacity_list[i])],
                         " Average RTT (ms)": avg_rtt_data[0:int(incremental_capacity_list[i])],
                         " Packet Size(Bytes) ": [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
@@ -3636,11 +3808,11 @@ class Throughput(Realm):
                 report.move_graph_image()
                 report.build_graph()
                 report.set_obj_html(
-                    _obj_title="RSSI Of The Clients Connected",
+                    _obj_title="Avg RSSI Of The Clients Connected",
                     _obj=" ")
                 report.build_objective()
                 graph = lf_bar_graph_horizontal(_data_set=[rssi_data],
-                                                _xaxis_name="Signal(-dBm)",
+                                                _xaxis_name="Avg Signal(-dBm)",
                                                 _yaxis_name="Devices",
                                                 _graph_image_name=f"signal_image_name{i}",
                                                 _label=['RSSI'],
@@ -3697,7 +3869,7 @@ class Throughput(Realm):
                 bk_dataframe[" Offered upload rate (Mbps)"] = upload_list[-1]
                 bk_dataframe[" Observed Average upload rate (Mbps)"] = [str(upload_data[-1])]
                 bk_dataframe[" Average RTT (ms) "] = avg_rtt_data[-1]
-                bk_dataframe[" RSSI (dBm)"] = ['' if rssi_data[-1] == 0 else '-' + str(rssi_data[-1])]
+                bk_dataframe[" Avg RSSI (dBm)"] = ['' if rssi_data[-1] == 0 else '-' + str(rssi_data[-1])]
                 if self.direction == "Bi-direction":
                     bk_dataframe[" Average Tx Drop % "] = upload_drop
                     bk_dataframe[" Average Rx Drop % "] = download_drop
@@ -4282,7 +4454,7 @@ class Throughput(Realm):
                                 " Observed Average download rate (Mbps) ": [str(n) for n in download_data[0:int(incremental_capacity_list[i])]],
                                 " Offered upload rate (Mbps) ": upload_list[0:int(incremental_capacity_list[i])],
                                 " Observed Average upload rate (Mbps) ": [str(n) for n in upload_data[0:int(incremental_capacity_list[i])]],
-                                " RSSI (dBm) ": ['' if n == 0 else '-' + str(n) for n in rssi_data[0:int(incremental_capacity_list[i])]],
+                                " Avg RSSI (dBm) ": ['' if n == 0 else '-' + str(n) for n in rssi_data[0:int(incremental_capacity_list[i])]],
                                 # " Link Speed ":self.link_speed_list[0:int(incremental_capacity_list[i])],
                                 " Average RTT (ms)": avg_rtt_data[0:int(incremental_capacity_list[i])],
                                 " Packet Size(Bytes) ": [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
@@ -5135,7 +5307,9 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
     optional.add_argument('--robot_ip', help='hostname for where Robot server is running')
     optional.add_argument('--coordinate', help="Points at which the robot pauses")
     optional.add_argument('--rotation', help="The set of angles to rotate at a particular point")
-    optional.add_argument('--bssids', type=str, help='Comma separated list of BSSIDs to be used for the test', default="")
+    optional.add_argument('--bssids', type=str, help='Comma separated list of BSSIDs to be used for the test, positional by band as '
+                                                       '2.4GHz,5GHz,6GHz (e.g. --bssids x,y,z); leave a position empty if that band '
+                                                       'has no BSSID, e.g. --bssids x,,z', default="")
 
     lf_interop_bg_ping.add_arguments(parser)
 
