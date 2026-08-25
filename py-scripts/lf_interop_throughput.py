@@ -182,6 +182,7 @@ import matplotlib.pyplot as plt
 import re
 import threading
 from collections import OrderedDict
+from lf_robo_coordinates import add_robo_coordinates_to_image, robo_coordinates_json_has_usable_data, parse_robo_coordinates_json
 from lf_base_robo import RobotClass
 logger = logging.getLogger(__name__)
 
@@ -275,7 +276,8 @@ class Throughput(Realm):
                  user_list=None, real_client_list=None, real_client_list1=None, hw_list=None, laptop_list=None, android_list=None, mac_list=None, windows_list=None, linux_list=None,
                  total_resources_list=None, working_resources_list=None, hostname_list=None, username_list=None, eid_list=None,
                  devices_available=None, input_devices_list=None, mac_id1_list=None, mac_id_list=None, overall_avg_rssi=None,
-                 coordinate_list=None, rotation_enabled=None, robo_ip=None, angle_list=None, do_bandsteering=False, total_cycles=1, bssids=None, duration_to_skip=None):
+                 coordinate_list=None, rotation_enabled=None, robo_ip=None, angle_list=None, do_bandsteering=False, total_cycles=1, bssids=None, duration_to_skip=None,
+                 robo_coordinates_json=None):
         super().__init__(lfclient_host=host,
                          lfclient_port=port)
         self.ssid_list = []
@@ -386,6 +388,9 @@ class Throughput(Realm):
         self.do_bandsteering = do_bandsteering
         self.total_cycles = total_cycles
         self.bssids = bssids if bssids else []
+        # Optional floor/robot-coordinate JSON (see add_robo_coordinates_to_image) used to draw
+        # robot markers on the floor-plan image when do_bandsteering is enabled.
+        self.robo_coordinates_json = robo_coordinates_json
         self.cycle_summary = []
         # Keep monitoring output stable when a client disconnects or temporarily disappears
         # from LANforge.  Reports still retain one row per configured client.
@@ -2816,6 +2821,8 @@ class Throughput(Realm):
         """
         device_events = self.compute_bandsteering_events(df)
         event_counts = {name: len(info["timestamp_list"]) for name, info in device_events.items()}
+        report.set_custom_html('<div style="page-break-before: always;"></div>')
+        report.build_custom()
         report.set_obj_html(
             _obj_title="Overall Band Steer Events Occurred Per Client",
             _obj=" ")
@@ -2858,6 +2865,11 @@ class Throughput(Realm):
 
         # ---- Per-client throughput / band / channel / RSSI graphs and events table ----
         for device_name, info in device_events.items():
+
+            # Start each device's 4 graphs (throughput, band, channel, RSSI) on a fresh
+            # page: throughput + band on this page, channel + RSSI on the next (below).
+            report.set_custom_html('<div style="page-break-before: always;"></div>')
+            report.build_custom()
 
             device_cols = [c for c in df.columns if device_name in c]
             download_col = next((c for c in device_cols if c.startswith('Download')), None)
@@ -2920,6 +2932,10 @@ class Throughput(Realm):
             report.move_graph_image()
             report.build_graph()
 
+            # Channel + RSSI graphs continue on the second page for this device.
+            report.set_custom_html('<div style="page-break-before: always;"></div>')
+            report.build_custom()
+
             channel_values = []
             for c in df[info["channel_col"]].tolist():
                 try:
@@ -2967,24 +2983,28 @@ class Throughput(Realm):
                 report.move_graph_image()
                 report.build_graph()
 
-            report.set_obj_html(
-                _obj_title=f"Band Steering Results for {device_name}",
-                _obj=" ")
-            report.build_objective()
-            table_df = pd.DataFrame({
-                "Timestamp": info["timestamp_list"],
-                "From BSSID": info["from_bssid_list"],
-                "To BSSID": info["to_bssid_list"],
-                "From Band": info["from_band_list"],
-                "To Band": info["to_band_list"],
-                "From Coordinate": info["from_coordinate_list"],
-                "To Coordinate": info["to_coordinate_list"],
-            })
-            report.set_table_dataframe(table_df)
-            report.build_table()
+            if info["timestamp_list"]:
+                report.set_obj_html(
+                    _obj_title=f"Band Steering Results for {device_name}",
+                    _obj=" ")
+                report.build_objective()
+                table_df = pd.DataFrame({
+                    "Timestamp": info["timestamp_list"],
+                    "From BSSID": info["from_bssid_list"],
+                    "To BSSID": info["to_bssid_list"],
+                    "From Band": info["from_band_list"],
+                    "To Band": info["to_band_list"],
+                    "From Coordinate": info["from_coordinate_list"],
+                    "To Coordinate": info["to_coordinate_list"],
+                })
+                report.set_table_dataframe(table_df)
+                report.build_table()
+            else:
+                report.set_custom_html(f"<p>No band steer events were detected for {device_name}.</p>")
+                report.build_custom()
 
     def generate_report(self, iterations_before_test_stopped_by_user, incremental_capacity_list, data=None, data1=None, report_path='', result_dir_name='Throughput_Test_report',
-                        selected_real_clients_names=None, iot_summary=None):
+                        selected_real_clients_names=None, iot_summary=None, robo_coordinates_json=None):
 
         if self.do_interopability:
             result_dir_name = "Interopability_Test_report"
@@ -3167,6 +3187,13 @@ class Throughput(Realm):
 
             if self.do_bandsteering:
                 self.build_bandsteering_summary(report, data)
+
+                # Render robot markers on the floor-plan image only when a robo-coordinates
+                # JSON was actually supplied (explicit arg, else the one set on the instance)
+                # and it contains at least one usable coordinate.
+                robo_coordinates_json = robo_coordinates_json if robo_coordinates_json is not None else self.robo_coordinates_json
+                if robo_coordinates_json and robo_coordinates_json_has_usable_data(robo_coordinates_json):
+                    self.add_robo_coordinates_images_to_report(report, robo_coordinates_json)
 
             # Loop through iterations and build graphs, tables for each iteration
             for i in range(len(iterations_before_test_stopped_by_user)):
@@ -4843,6 +4870,25 @@ class Throughput(Realm):
                 report.set_custom_html(f'<img src="file://{rssi_image_path}"></img>')
                 report.build_custom()
 
+    def add_robo_coordinates_images_to_report(self, report, robo_coordinates_json):
+        """
+        Renders robot-coordinate markers (via the reusable add_robo_coordinates_to_image()
+        in lf_robo_coordinates.py) for every floor in `robo_coordinates_json` that has
+        usable data, and embeds the resulting floor-plan images into `report`, one page
+        per floor. Does nothing if no floor has usable robo_coordinates.
+        """
+        output_dir = report.path_date_time if hasattr(report, 'path_date_time') else self.result_dir
+        # report.path_date_time can be a relative path (e.g. when report_path='');
+        # the embedded file:// URI below needs an absolute path to resolve correctly.
+        output_dir = os.path.abspath(output_dir)
+        rendered_images = add_robo_coordinates_to_image(robo_coordinates_json, output_dir)
+
+        for floor_id, image_path in rendered_images:
+            report.set_custom_html('<div style="page-break-before: always;"></div>')
+            report.build_custom()
+            report.set_custom_html(f'<h3>Floor Plan (Floor {floor_id})</h3><img src="file://{image_path}"></img>')
+            report.build_custom()
+
     def build_iot_report_section(self, report, iot_summary):
         """
         Handles all IoT-related charts, tables, and increment-wise reports.
@@ -5284,6 +5330,9 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
     optional.add_argument('--do_bandsteering', help='Enable bandsteering', action='store_true')
     optional.add_argument('--total_cycles', help='Enable bandsteering', default="1")
     optional.add_argument('--duration_to_skip', help='Robot wait duration in seconds at obstacle', default="1")
+    optional.add_argument('--robo_coordinates_json', default=None,
+                          help='Path to a JSON file (or an inline JSON string) with floor/robot-coordinate data, used to draw robot '
+                               'markers on the floor-plan image in the report. Only used when --do_bandsteering is also set.')
     parser.add_argument('--help_summary', help='Show summary of what this script does', action="store_true")
     # IOT ARGS
     parser.add_argument('--iot_test', help="If true will execute script for iot", action='store_true')
@@ -5423,6 +5472,9 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
         iot_device_list = args.iot_device_list
         iot_testname = args.iot_testname
         iot_increment = args.iot_increment
+
+    robo_coordinates_json = parse_robo_coordinates_json(args.robo_coordinates_json)
+
     for index in range(len(loads_data)):
         throughput = Throughput(host=args.mgr,
                                 ip=args.mgr,
@@ -5487,7 +5539,8 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
                                 do_bandsteering=args.do_bandsteering,
                                 total_cycles=args.total_cycles,
                                 bssids=args.bssids.split(",") if args.bssids else [],
-                                duration_to_skip=args.duration_to_skip
+                                duration_to_skip=args.duration_to_skip,
+                                robo_coordinates_json=robo_coordinates_json
                                 )
 
         if gave_incremental:
