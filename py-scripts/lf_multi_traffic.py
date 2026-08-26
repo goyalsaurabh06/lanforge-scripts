@@ -6329,7 +6329,7 @@ class MultiTraffic(Realm):
                 self._json_test_key = f"{test_name}_{occurrence}"
             self.json_metrics.setdefault(self._json_test_key, {
                 "test_setup": {},
-                "metrics": {}
+                "clients": []
             })
             try:
                 if test_name == "http_test":
@@ -8296,7 +8296,18 @@ class MultiTraffic(Realm):
                     while obj_name in self.ping_obj_dict[ce]:
                         if ce == "parallel":
                             obj_no = ''
-                        params = self.ping_obj_dict[ce][obj_name]["data"].copy()
+                        ping_entry = self.ping_obj_dict[ce][obj_name]
+                        if ping_entry.get("data") is None or ping_entry.get("obj") is None:
+                            logging.error(
+                                "Skipping report for %s: ping test did not complete (no data captured). "
+                                "Check the ping test run log for the actual failure.", obj_name)
+                            if ce == "series":
+                                obj_no += 1
+                                obj_name = f"ping_test_{obj_no}"
+                                continue
+                            else:
+                                break
+                        params = ping_entry["data"].copy()
                         result_json = params["result_json"]
                         report_path = params["report_path"]
                         config_devices = params["config_devices"]
@@ -10843,8 +10854,18 @@ class MultiTraffic(Realm):
                     while obj_name in self.yt_obj_dict[ce]:
                         if ce == "parallel":
                             obj_no = ''
+                        if self.yt_obj_dict[ce][obj_name].get("obj") is None:
+                            logging.error(
+                                "Skipping report for %s: YouTube test did not complete (no data captured). "
+                                "Check the yt_test run log for the actual failure.", obj_name)
+                            if ce == "series":
+                                obj_no += 1
+                                obj_name = f"yt_test_{obj_no}"
+                                continue
+                            else:
+                                break
                         curr_yt_obj = copy.copy((self.yt_obj_dict[ce][obj_name]["obj"]))
-                        result_data = curr_yt_obj.stats_api_response
+                        result_data = curr_yt_obj.stats_api_response or {}
                         for device, stats in result_data.items():
                             curr_yt_obj.mydatajson.setdefault(device, {}).update({
                                 "Viewport": stats.get("Viewport", ""),
@@ -12436,14 +12457,20 @@ class MultiTraffic(Realm):
 
     @staticmethod
     def _json_safe(value):
-        """Convert pandas/numpy values into values accepted by json.dump."""
+        """Convert pandas/numpy values into values accepted by json.dump.
+
+        Missing data (NaN, None) is reported as the string "NA" rather than
+        null, so every gap in the JSON output reads the same way.
+        """
         if isinstance(value, dict):
             return {str(key): MultiTraffic._json_safe(item) for key, item in value.items()}
         if isinstance(value, (list, tuple)):
             return [MultiTraffic._json_safe(item) for item in value]
+        if value is None:
+            return "NA"
         try:
             if pd.isna(value):
-                return None
+                return "NA"
         except (TypeError, ValueError):
             pass
         if hasattr(value, "item"):
@@ -12453,31 +12480,89 @@ class MultiTraffic(Realm):
                 pass
         return value
 
+    # Normalized (stripped/lowercased) names of columns used across report tables to identify
+    # the client/station a row belongs to. Report tables are built independently per test type
+    # and don't share a naming convention, so matching ignores case and surrounding whitespace
+    # (e.g. " Clients", " Client Alias ", " Username").
+    _CLIENT_KEY_COLUMNS = {
+        "device", "device name", "wireless client", "hostname", "station",
+        "name", "client", "clients", "client alias", "username",
+    }
+
+    # Keys reserved for structural use on a test's report entry. Metric/column names
+    # that collide with one of these are dropped (with a log warning) instead of
+    # corrupting "test_setup"/"clients" -- real report columns never use these names.
+    _JSON_RESERVED_KEYS = {"test_setup", "clients"}
+
     def _capture_json_table(self, dataframe):
-        """Store a rendered report table as named metrics for the current test."""
+        """Store a rendered report table as parallel, index-aligned arrays for the current test.
+
+        "clients" holds the list of client/station identities (when the table has an
+        identity column). Every other column -- from that same table or any other
+        per-client table for this test -- becomes its own top-level list, where
+        column[i] always describes the same client as clients[i]. Columns missing
+        for a given client are filled with null rather than shifting the index, so
+        arrays never silently drift out of alignment with each other.
+        """
         if not isinstance(dataframe, pd.DataFrame) or not self._json_test_key:
             return
         test_report = self.json_metrics.setdefault(self._json_test_key, {
             "test_setup": {},
-            "metrics": {}
+            "clients": []
         })
-        metrics = test_report["metrics"]
+        key_column = next(
+            (col for col in dataframe.columns if str(col).strip().lower() in self._CLIENT_KEY_COLUMNS),
+            None
+        )
+        if key_column is not None:
+            clients_by_key = self._json_clients_by_key.setdefault(self._json_test_key, {})
+            for row in dataframe.to_dict(orient="records"):
+                client_key = str(self._json_safe(row[key_column]))
+                client_entry = clients_by_key.setdefault(client_key, {})
+                for column, value in row.items():
+                    if column == key_column:
+                        continue
+                    client_entry[str(column)] = self._json_safe(value)
+            client_keys = list(clients_by_key.keys())
+            test_report["clients"] = client_keys
+            columns = []
+            seen_columns = set()
+            for entry in clients_by_key.values():
+                for column in entry:
+                    if column not in seen_columns:
+                        seen_columns.add(column)
+                        columns.append(column)
+            for column in columns:
+                if column in self._JSON_RESERVED_KEYS:
+                    logging.warning(
+                        "Skipping report column %r for %s: name collides with a reserved JSON key.",
+                        column, self._json_test_key)
+                    continue
+                test_report[column] = [clients_by_key[key].get(column, "NA") for key in client_keys]
+            return
+        # No identity column: this table describes the test as a whole rather than
+        # individual clients (e.g. overall min/max/average). Append its columns as
+        # their own top-level lists so repeated tables with the same column name
+        # accumulate instead of overwriting each other.
         for column, values in dataframe.to_dict(orient="list").items():
             metric_name = str(column)
-            metric_value = self._json_safe(values)
-            if metric_name not in metrics:
-                metrics[metric_name] = metric_value
+            if metric_name in self._JSON_RESERVED_KEYS:
+                logging.warning(
+                    "Skipping report column %r for %s: name collides with a reserved JSON key.",
+                    metric_name, self._json_test_key)
                 continue
-            # Several report sections can contain the same column name. Keep one
-            # metric and append adjacent values so related columns remain lists.
-            existing_value = metrics[metric_name]
+            metric_value = self._json_safe(values)
+            if metric_name not in test_report:
+                test_report[metric_name] = metric_value
+                continue
+            existing_value = test_report[metric_name]
             if not isinstance(existing_value, list):
                 existing_value = [existing_value]
             if isinstance(metric_value, list):
                 existing_value.extend(metric_value)
             else:
                 existing_value.append(metric_value)
-            metrics[metric_name] = existing_value
+            test_report[metric_name] = existing_value
 
     def _capture_json_setup(self, setup_data):
         """Store report setup fields alongside the test metrics."""
@@ -12485,7 +12570,7 @@ class MultiTraffic(Realm):
             return
         test_report = self.json_metrics.setdefault(self._json_test_key, {
             "test_setup": {},
-            "metrics": {}
+            "clients": []
         })
         setup = test_report["test_setup"]
         for name, value in setup_data.items():
@@ -12497,6 +12582,7 @@ class MultiTraffic(Realm):
         """Capture the same tables/setup data that are written to the PDF."""
         self.json_metrics = {}
         self._json_test_key = None
+        self._json_clients_by_key = {}
         report = self.overall_report
         original_set_table_dataframe = report.set_table_dataframe
         original_test_setup_table = report.test_setup_table
