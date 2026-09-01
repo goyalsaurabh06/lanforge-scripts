@@ -178,7 +178,6 @@ import json
 import shutil
 import asyncio
 import csv
-import matplotlib.pyplot as plt
 import re
 import threading
 from collections import OrderedDict
@@ -200,8 +199,9 @@ realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
 from lf_report import lf_report  # noqa: E402
 import lf_interop_bg_ping  # noqa: E402
-from lf_graph import lf_bar_graph_horizontal, lf_bar_graph  # noqa: E402
+# from lf_graph import lf_bar_graph_horizontal, lf_bar_graph  # noqa: E402
 # from lf_graph import lf_line_graph  # noqa: E402
+from lf_modern_report import lf_report, lf_bar_graph, lf_bar_graph_horizontal, lf_line_graph  # noqa: E402
 
 from datetime import datetime, timedelta  # noqa: E402
 
@@ -2606,67 +2606,17 @@ class Throughput(Realm):
             cx_incremental_capacity_names_lists.append(new_cx_names_list)
         return cx_incremental_capacity_names_lists, cx_incremental_capacity_lists, created_cx_lists_keys, incremental_capacity_list_values
 
-    # Ensures maximum of 60 plots in line graph
     def build_line_graph(self, data_set, xaxis_name, yaxis_name, xaxis_categories, label, graph_image_name):
-        """
-        Creates and saves a line graph showing throughput over time.
-
-        - Plots each data point for all throughput data in dataset.
-        - Shows only up to 60 labels on the x-axis to keep it readable.
-
-        Returns:
-        The name of the saved image file.
-        """
-        figsize = (10, 5)
-        plt.figure(figsize=(figsize[0] + 5, figsize[1] + 2))
-
-        color = ['forestgreen', 'c', 'r', 'g', 'b', 'p']
-        marker = ['s', 'o', 'v']
-        xaxis_categories = xaxis_categories[:-1]
-        data_set = [data[:-1] for data in data_set]
-        # Plot each dataset
-        for i, data in enumerate(data_set):
-            plt.plot(
-                xaxis_categories,
-                data,
-                color=color[i % len(color)],  # Ensure no index error
-                label=label[i],
-                marker=marker[i % len(marker)]
-            )
-
-        plt.xlabel(xaxis_name, fontweight='bold', fontsize=15)
-        plt.ylabel(yaxis_name, fontweight='bold', fontsize=15)
-
-        # Handle x-axis ticks dynamically based on data size
-        data_size = len(xaxis_categories)
-        if data_size <= 60:
-            tick_positions = list(range(data_size))
-        else:
-            # Ensure 60 points including the first and last
-            tick_count = min(60, data_size)
-            interval = data_size / (tick_count - 1)
-            tick_positions = [round(i * interval) for i in range(tick_count)]
-            tick_positions = sorted(set(min(data_size - 1, max(0, pos)) for pos in tick_positions))
-        tick_labels = [xaxis_categories[i] for i in tick_positions]
-
-        plt.xticks(ticks=tick_positions, labels=tick_labels, rotation=90)
-
-        plt.grid(True, linestyle=':')  # Grid with dotted lines
-
-        # Legend settings
-        plt.legend(loc="best", ncol=1)
-
-        plt.suptitle("", fontsize=16)
-        plt.tight_layout()
-
-        # Save the graph as an image
-        plt.savefig(f"{graph_image_name}.png", dpi=96, bbox_inches="tight")
-        plt.close()
-
-        logger.debug("{}.png".format(graph_image_name))
-        logger.debug("{}.csv".format(graph_image_name))
-
-        return f"{graph_image_name}.png"
+        """Renders the throughput-over-time line graph. Delegates to
+        lf_modern_report.lf_line_graph (interactive chart-card markup) instead
+        of the matplotlib PNG this method used to draw itself."""
+        graph = lf_line_graph(_data_set=data_set,
+                              _xaxis_name=xaxis_name,
+                              _yaxis_name=yaxis_name,
+                              _xaxis_categories=xaxis_categories,
+                              _label=label,
+                              _graph_image_name=graph_image_name)
+        return graph.build_line_graph()
 
     def convert_to_table(self, configured_devices_check):
         """
@@ -2805,7 +2755,7 @@ class Throughput(Realm):
             report.set_graph_image(graph_png)
             # need to move the graph image to the results directory
             report.move_graph_image()
-            report.set_csv_filename(graph_png)
+            report.set_csv_filename(graph.graph_image_name)
             report.move_csv_file()
             report.build_graph()
 
