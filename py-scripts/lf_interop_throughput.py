@@ -275,7 +275,8 @@ class Throughput(Realm):
                  user_list=None, real_client_list=None, real_client_list1=None, hw_list=None, laptop_list=None, android_list=None, mac_list=None, windows_list=None, linux_list=None,
                  total_resources_list=None, working_resources_list=None, hostname_list=None, username_list=None, eid_list=None,
                  devices_available=None, input_devices_list=None, mac_id1_list=None, mac_id_list=None, overall_avg_rssi=None,
-                 coordinate_list=None, rotation_enabled=None, robo_ip=None, angle_list=None, do_bandsteering=False, total_cycles=1, bssids=None, duration_to_skip=None):
+                 coordinate_list=None, rotation_enabled=None, robo_ip=None, angle_list=None, do_bandsteering=False, total_cycles=1, bssids=None, duration_to_skip=None,
+                 return_to_charge=False):
         super().__init__(lfclient_host=host,
                          lfclient_port=port)
         self.ssid_list = []
@@ -419,6 +420,7 @@ class Throughput(Realm):
             self.robot.time_to_reach = int(duration_to_skip) * 60
             self.robot.coordinate_list = self.coordinate_list
             self.robot.total_cycles = self.total_cycles
+        self.return_to_charge_enabled = return_to_charge
 
     def record_device_issue(self, device, issue, api_response=""):
         """Append a timestamped device/issue entry, later written out as clients_issue.csv."""
@@ -657,11 +659,14 @@ class Throughput(Realm):
             last_idx = all_dataframes.index[-1]
 
             all_dataframes.loc[last_idx, "status"] = "Stopped"
-
-            last_row_df = all_dataframes.loc[[last_idx]]
-            if self.dowebgui:
-                last_row_df.to_csv(f"{args.result_dir}/throughput_data.csv", mode="a", header=False, index=False)
             self.stop()
+
+            if self.return_to_charge_enabled and not self.stopped_by_user:
+                try:
+                    logging.info(f"Test completed. Returning to charge point '{self.robot.charge_point_name}'")
+                    self.robot.return_to_charge()
+                except Exception as e:
+                    logger.error(f"Robot failed to return to charging station, error: {e}")
             if args.postcleanup:
                 self.cleanup()
             self.ensure_monitoring_data_collected()
@@ -670,6 +675,8 @@ class Throughput(Realm):
             if self.dowebgui:
                 # copying to home directory i.e home/user_name
                 self.copy_reports_to_home_dir()
+                last_row_df = all_dataframes.loc[[last_idx]]
+                last_row_df.to_csv(f"{args.result_dir}/throughput_data.csv", mode="a", header=False, index=False)
             exit(1)
 
         # Loop through the coordinate list when coordinates are specified.
@@ -782,14 +789,24 @@ class Throughput(Realm):
             if test_stopped_by_user:
                 break
 
-        #     logger.info("connections download {}".format(connections_download))
-        #     logger.info("connections upload {}".format(connections_upload))
             self.stop()
         if args.postcleanup:
             self.cleanup()
 
         self.ensure_monitoring_data_collected()
-
+        if self.return_to_charge_enabled and not self.stopped_by_user:
+            try:
+                logging.info("Test completed. Returning to charge point '{}'".format(self.robot.charge_point_name))
+                self.robot.return_to_charge()
+            except Exception:
+                logger.error("Robot failed to return to charging station")
+        try:
+            self.generate_report_robo(list(set(iterations_before_test_stopped_by_user)), incremental_capacity_list, data=all_dataframes, data1=to_run_cxs_len, report_path=self.result_dir)
+        except Exception as e:
+            logger.error(f"Failed to generate report: {e}")
+        if self.dowebgui:
+            # copying to home directory i.e home/user_name
+            self.copy_reports_to_home_dir()
         # Mark nav_data.json as completed for the Web UI.
         if args.dowebgui:
             with open(nav_data, 'r') as x:
@@ -800,10 +817,6 @@ class Throughput(Realm):
                 navdata['Test_status'] = 'Completed'
             with open(nav_data, 'w') as x:
                 json.dump(navdata, x, indent=4)
-        self.generate_report_robo(list(set(iterations_before_test_stopped_by_user)), incremental_capacity_list, data=all_dataframes, data1=to_run_cxs_len, report_path=self.result_dir)
-        if self.dowebgui:
-            # copying to home directory i.e home/user_name
-            self.copy_reports_to_home_dir()
 
     def os_type(self):
         """
@@ -5129,6 +5142,7 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
     optional.add_argument('--coordinate', help="Points at which the robot pauses")
     optional.add_argument('--rotation', help="The set of angles to rotate at a particular point")
     optional.add_argument('--bssids', type=str, help='Comma separated list of BSSIDs to be used for the test', default="")
+    optional.add_argument('--return_to_charge', help='After the robot test finishes, send the robot back to its charging point', action='store_true')
 
     args = parser.parse_args()
 
@@ -5288,7 +5302,8 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
                                 do_bandsteering=args.do_bandsteering,
                                 total_cycles=args.total_cycles,
                                 bssids=args.bssids.split(",") if args.bssids else [],
-                                duration_to_skip=args.duration_to_skip
+                                duration_to_skip=args.duration_to_skip,
+                                return_to_charge=args.return_to_charge
                                 )
 
         if gave_incremental:
