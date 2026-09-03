@@ -2627,6 +2627,341 @@ class Throughput(Realm):
             "Configuration Status": ["Pass" if status else "Fail" for status in configured_devices_check.values()]
         }
 
+    # --- RSSI Distribution section -------------------------------------
+    # This part is specific to Wi-Fi client signal quality, so it lives
+    # here in the test script rather than in lf_modern_report.py (that
+    # file only knows how to draw charts in general, not what "Excellent"
+    # or "5 GHz" mean).
+    RSSI_BUCKET_ORDER = ["Excellent (-30 to -50)", "Good (-50 to -65)", "Fair (-65 to -75)", "Poor (< -75)"]
+
+    @staticmethod
+    def _classify_rssi_bucket(rssi_dbm):
+        """Turns a signal reading like -55 into a simple label: Excellent,
+        Good, Fair, or Poor. The cutoffs are the usual ones people use for
+        Wi-Fi signal strength."""
+        if rssi_dbm >= -50:
+            return Throughput.RSSI_BUCKET_ORDER[0]
+        if rssi_dbm >= -65:
+            return Throughput.RSSI_BUCKET_ORDER[1]
+        if rssi_dbm >= -75:
+            return Throughput.RSSI_BUCKET_ORDER[2]
+        return Throughput.RSSI_BUCKET_ORDER[3]
+
+    @staticmethod
+    def _channel_to_band(channel):
+        """Works out whether a Wi-Fi channel number is 2.4 GHz, 5 GHz, or
+        6 GHz. Channels 1-14 are 2.4 GHz, 15-177 are 5 GHz, anything higher
+        is 6 GHz. Returns None if the channel is missing or not a real
+        number (e.g. the device wasn't connected).
+
+        Note: this is a best guess. LANforge only tells us the channel
+        number, not the exact frequency, and a few very low 6 GHz channel
+        numbers happen to look the same as 2.4 GHz ones.
+        """
+        try:
+            ch = int(str(channel).strip())
+        except (TypeError, ValueError):
+            return None
+        if ch <= 0:
+            return None
+        if ch <= 14:
+            return "2.4 GHz"
+        if ch <= 177:
+            return "5 GHz"
+        return "6 GHz"
+
+    # One color per signal-quality bucket, in the same order as RSSI_BUCKET_ORDER -- a green-to-red
+    # gradient so the color itself says how good the signal is: Excellent=green, Poor=red, Good/Fair in between.
+    RSSI_BUCKET_COLORS = ["#2e8b57", "#f2c94c", "#f2994a", "#eb5757"]
+
+    def build_rssi_distribution_charts(self, report, rssi_values, channels, device_names=None, chart_id_prefix="rssi-dist"):
+        """Adds a "RSSI Distribution" section to the report: one pie chart per Wi-Fi band that
+        actually has clients on it, placed side by side, showing how many clients had Excellent,
+        Good, Fair, or Poor signal in that band. A band with no clients gets no chart at all.
+        Hovering a slice lists the actual clients and their RSSI readings, not just the count.
+
+        Args:
+            report: the report we're building.
+            rssi_values: each client's average signal reading, as a plain positive number (e.g. 55
+                means -55 dBm) -- same style used for RSSI everywhere else in this file. A 0 or
+                missing value means "no reading for this client", and is skipped.
+            channels: each client's Wi-Fi channel number, in the same order as rssi_values -- used
+                to work out which band they're on.
+            device_names: each client's name, in the same order as rssi_values -- shown in the
+                hover tooltip. If not given, clients are labeled "Client 1", "Client 2", etc.
+            chart_id_prefix: a short label used to keep these charts from clashing with another copy
+                of this same section elsewhere on the page (e.g. pass "rssi-dist-iter{}".format(i)
+                if this gets called once per test iteration).
+        """
+        bands = ["2.4 GHz", "5 GHz", "6 GHz"]
+        counts = {band: {bucket: 0 for bucket in self.RSSI_BUCKET_ORDER} for band in bands}
+        # Per band/bucket, the actual clients behind that count -- shown in the tooltip instead of just the number.
+        client_lines = {band: {bucket: [] for bucket in self.RSSI_BUCKET_ORDER} for band in bands}
+
+        if device_names is None:
+            device_names = ["Client {}".format(n + 1) for n in range(len(rssi_values))]
+
+        for rssi, channel, name in zip(rssi_values, channels, device_names):
+            band = self._channel_to_band(channel)
+            if band is None or not rssi:
+                continue
+            bucket = self._classify_rssi_bucket(-abs(rssi))
+            counts[band][bucket] += 1
+            client_lines[band][bucket].append("{}: -{} dBm".format(name, abs(rssi)))
+
+        bands_with_clients = [band for band in bands if sum(counts[band].values()) > 0]
+        if not bands_with_clients:
+            return
+
+        report.set_obj_html(
+            _obj_title="RSSI Distribution",
+            _obj=("These charts show the distribution of clients across different RSSI ranges for "
+                  "each band that had clients connected, where the client's average RSSI value over "
+                  "the test duration is used for classification into Excellent, Good, Fair, or Poor "
+                  "signal categories. Hover a slice to see which clients and their RSSI readings."))
+        report.build_objective()
+
+        # Floats instead of flexbox: the report also gets rendered to PDF through wkhtmltopdf's older
+        # rendering engine, which doesn't reliably support flex/gap -- floats work everywhere.
+        item_width_pct = 100 // len(bands_with_clients)
+        pies = []
+        for band in bands_with_clients:
+            graph = lf_pie_graph(
+                _data_set=[counts[band][bucket] for bucket in self.RSSI_BUCKET_ORDER],
+                _label=self.RSSI_BUCKET_ORDER,
+                _colors=self.RSSI_BUCKET_COLORS,
+                _item_details=client_lines[band],
+                _show_labels=False,
+                # A zero inner radius makes this the solid "pie-simple"
+                # style from the Apache ECharts example, rather than the
+                # report helper's donut default.
+                _radius=["0%", "68%"],
+                _graph_title="{} Clients RSSI".format(band),
+                _graph_image_name="{}-{}".format(chart_id_prefix, band.replace(" ", "").replace(".", "")),
+            )
+            pies.append(
+                "<div style='float:left;width:{}%;box-sizing:border-box;padding:0 10px;'>{}</div>".format(
+                    item_width_pct, graph.build_pie_graph()))
+
+        report.set_graph_image("<div style='overflow:hidden;'>{}</div>".format("".join(pies)))
+        report.build_graph()
+
+    # TARGET_ACHIEVEMENT_LEVELS: how close to the target counts as good, kept as data instead of hardcoded in the method below.
+    TARGET_ACHIEVEMENT_LEVELS = (
+        (50, "critical", "significantly below the intended load"),
+        (75, "warning", "below the intended load, indicating moderate utilization of the configured target"),
+        (90, "neutral", "reasonably close to the intended load"),
+        (100, "positive", "close to the intended target"),
+    )
+
+    @staticmethod
+    def format_throughput(value):
+        """Turns a Mbps number into readable text, switching to Gbps at 1000+ (e.g. 4530.88 -> "4.53 Gbps")."""
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return None
+        if value != value:  # NaN
+            return None
+        if abs(value) >= 1000:
+            return "{:,.2f} Gbps".format(value / 1000)
+        return "{:,.2f} Mbps".format(value)
+
+    @staticmethod
+    def percentage_of(part, whole):
+        """What percent `part` is of `whole`, or None instead of crashing when `whole` is zero/missing."""
+        try:
+            part = float(part)
+            whole = float(whole)
+        except (TypeError, ValueError):
+            return None
+        if not whole or whole != whole or part != part:
+            return None
+        return part / whole * 100
+
+    @classmethod
+    def describe_target_achievement(cls, pct):
+        """Turns a percent-of-target number into a (severity, phrase) pair, using TARGET_ACHIEVEMENT_LEVELS."""
+        for level, label, phrase in cls.TARGET_ACHIEVEMENT_LEVELS:
+            if pct < level:
+                return label, phrase
+        return "positive", "at or above the configured target"
+
+    def build_key_findings(self, download_data, upload_data, devices, incremental_capacity):
+        """Turns this iteration's throughput numbers into plain-English "Key Findings" sentences.
+
+        Reads the target/band/pass-fail settings straight from self (self.cx_profile, self.load_type,
+        self.channel_list, self.expected_passfail_value) since this is a method on the test itself,
+        the same way build_rssi_distribution_charts() does. Only download_data/upload_data/devices/
+        incremental_capacity are passed in, since those are this iteration's local values, not
+        something self already knows on its own.
+
+        Args:
+            download_data / upload_data: this iteration's per-client Mbps numbers, already sliced to
+                the active client count -- 0 for a client that wasn't sending in that direction.
+            devices: this iteration's active client name list (we only use how many there are).
+            incremental_capacity: how many clients were active this iteration.
+
+        Returns:
+            A list of {"type": ..., "text": ...} dicts (type is positive/neutral/warning/critical),
+            most important first, ready for report.build_findings_card(). Empty list if there's
+            nothing meaningful to say.
+        """
+        findings = []
+        download_data = download_data or []
+        upload_data = upload_data or []
+        total_download = sum(v for v in download_data if v)
+        total_upload = sum(v for v in upload_data if v)
+        total_achieved = total_download + total_upload
+        num_clients = len(devices) if devices else 0
+        channels = self.channel_list[0:num_clients] if self.channel_list else []
+
+        # 1. Did we hit the target we configured?
+        try:
+            side_a_mbps = int(self.cx_profile.side_a_min_bps) / 1000000
+            side_b_mbps = int(self.cx_profile.side_b_min_bps) / 1000000
+            if self.load_type != "wc_intended_load":
+                client_count = max(int(incremental_capacity or 0), 1)
+                side_a_mbps *= client_count
+                side_b_mbps *= client_count
+            intended_mbps = side_a_mbps + side_b_mbps
+        except (TypeError, ValueError):
+            intended_mbps = None
+
+        if intended_mbps and total_achieved:
+            pct = self.percentage_of(total_achieved, intended_mbps)
+            if pct is not None:
+                label, phrase = self.describe_target_achievement(pct)
+                findings.append({
+                    "type": label,
+                    "text": "The AP achieved {achieved} against an intended load of {intended}, reaching {pct:.1f}% "
+                            "of the target -- {phrase}.".format(
+                                achieved=self.format_throughput(total_achieved),
+                                intended=self.format_throughput(intended_mbps), pct=pct, phrase=phrase)
+                })
+
+        # 2. Was it mostly download, mostly upload, or a mix?
+        if total_achieved > 0:
+            dl_pct = self.percentage_of(total_download, total_achieved)
+            ul_pct = self.percentage_of(total_upload, total_achieved)
+            if dl_pct is not None and ul_pct is not None:
+                if dl_pct == 0:
+                    text = "Upload traffic accounted for all measured throughput ({upload}); no download " \
+                          "traffic was observed.".format(upload=self.format_throughput(total_upload))
+                elif ul_pct == 0:
+                    text = "Download traffic accounted for all measured throughput ({download}); no upload " \
+                          "traffic was observed.".format(download=self.format_throughput(total_download))
+                elif abs(dl_pct - ul_pct) < 15:
+                    text = "Traffic was relatively balanced between download ({download}, {dl_pct:.0f}%) and " \
+                          "upload ({upload}, {ul_pct:.0f}%).".format(
+                              download=self.format_throughput(total_download), dl_pct=dl_pct,
+                              upload=self.format_throughput(total_upload), ul_pct=ul_pct)
+                elif dl_pct > ul_pct:
+                    text = "Download traffic dominated, contributing {dl_pct:.0f}% ({download}) versus " \
+                          "{ul_pct:.0f}% ({upload}) for upload.".format(
+                              dl_pct=dl_pct, download=self.format_throughput(total_download),
+                              ul_pct=ul_pct, upload=self.format_throughput(total_upload))
+                else:
+                    text = "Upload traffic dominated, contributing {ul_pct:.0f}% ({upload}) versus " \
+                          "{dl_pct:.0f}% ({download}) for download.".format(
+                              ul_pct=ul_pct, upload=self.format_throughput(total_upload),
+                              dl_pct=dl_pct, download=self.format_throughput(total_download))
+                findings.append({"type": "neutral", "text": text})
+
+        # 3. How many clients, and was any one of them left far behind?
+        if num_clients > 0 and total_achieved > 0:
+            per_client_totals = [
+                (download_data[i] if i < len(download_data) and download_data[i] else 0) +
+                (upload_data[i] if i < len(upload_data) and upload_data[i] else 0)
+                for i in range(num_clients)
+            ]
+            if per_client_totals:
+                avg_c = sum(per_client_totals) / len(per_client_totals)
+                findings.append({
+                    "type": "neutral",
+                    "text": "The test included {n} client{s} with an average throughput of {avg} per "
+                            "client.".format(n=num_clients, s="" if num_clients == 1 else "s",
+                                              avg=self.format_throughput(avg_c))
+                })
+                if len(per_client_totals) > 1 and avg_c > 0:
+                    lowest = min(per_client_totals)
+                    if lowest < avg_c * 0.5:
+                        findings.append({
+                            "type": "warning",
+                            "text": "Client throughput is uneven -- the lowest-performing client achieved "
+                                    "{low}, well below the {avg} test average.".format(
+                                        low=self.format_throughput(lowest), avg=self.format_throughput(avg_c))
+                        })
+
+        # 4. Which Wi-Fi band did the throughput actually come from?
+        if channels and total_achieved > 0:
+            band_totals = {}
+            for idx in range(min(len(channels), num_clients)):
+                band = self._channel_to_band(channels[idx])
+                if band is None:
+                    continue
+                client_total = (
+                    (download_data[idx] if idx < len(download_data) and download_data[idx] else 0) +
+                    (upload_data[idx] if idx < len(upload_data) and upload_data[idx] else 0)
+                )
+                band_totals[band] = band_totals.get(band, 0) + client_total
+            band_sum = sum(band_totals.values())
+            if band_sum > 0:
+                ordered = sorted(((b, v) for b, v in band_totals.items() if v > 0), key=lambda kv: -kv[1])
+                if len(ordered) == 1:
+                    findings.append({
+                        "type": "neutral",
+                        "text": "All measured throughput was delivered through the {} band.".format(ordered[0][0])
+                    })
+                elif ordered:
+                    top_band, top_val = ordered[0]
+                    top_pct = top_val / band_sum * 100
+                    parts = ["{} at {:.0f}%".format(b, v / band_sum * 100) for b, v in ordered[1:]]
+                    if top_pct > 60:
+                        findings.append({
+                            "type": "neutral",
+                            "text": "Most of the achieved throughput came from the {band} band ({pct:.0f}%), "
+                                    "followed by {rest}.".format(band=top_band, pct=top_pct, rest=", ".join(parts))
+                        })
+                    else:
+                        all_parts = ["{} at {:.0f}%".format(b, v / band_sum * 100) for b, v in ordered]
+                        findings.append({
+                            "type": "neutral",
+                            "text": "Throughput was distributed relatively evenly across bands: "
+                                    "{}.".format(", ".join(all_parts))
+                        })
+
+        # 5. Only say PASS/FAIL if the user actually configured a number to check against.
+        if self.expected_passfail_value not in (None, ""):
+            try:
+                threshold = float(self.expected_passfail_value)
+                if total_achieved > 0:
+                    if total_achieved >= threshold:
+                        findings.append({
+                            "type": "positive",
+                            "text": "PASS -- the achieved throughput of {a} is at or above the required "
+                                    "threshold of {t}.".format(a=self.format_throughput(total_achieved),
+                                                                t=self.format_throughput(threshold))
+                        })
+                    else:
+                        findings.append({
+                            "type": "critical",
+                            "text": "FAIL -- the achieved throughput of {a} is below the required threshold "
+                                    "of {t}.".format(a=self.format_throughput(total_achieved),
+                                                      t=self.format_throughput(threshold))
+                        })
+            except (TypeError, ValueError):
+                pass
+
+        # No target/direction/band/pass-fail finding fired, but clients were running -- say we measured nothing.
+        if not findings and num_clients > 0 and (download_data or upload_data):
+            findings.append({
+                "type": "critical",
+                "text": "No throughput was measured for any client during this iteration."
+            })
+
+        return findings[:7]
+
     def get_bandsteering_stats(self, report=None, df=None, data1=None):
         """
         Retrieves and adds bandsteering statistics to the report.
@@ -2938,7 +3273,33 @@ class Throughput(Realm):
 
             if iot_summary:
                 test_setup_info = with_iot_params_in_table(test_setup_info, iot_summary)
-            report.test_setup_table(test_setup_data=test_setup_info, value="Test Configuration")
+
+            # Device List/Configured Devices and No of Devices are skipped here --
+            # the Devices card below already shows the device count and list.
+            skip_fields = {"Device List", "Configured Devices", "No of Devices"}
+            report.build_info_card(
+                "Test Configuration",
+                [{"label": k, "value": v} for k, v in test_setup_info.items() if k not in skip_fields])
+            # Platform icons are just inline SVGs per OS, defined here and handed
+            # to lf_modern_report's generic card builder as data -- it has no
+            # idea what "Android"/"iOS" mean, it just places whatever icon a
+            # caller gives it next to that platform's count.
+            _android_icon = "<svg viewBox='0 0 24 24' fill='#3DDC84'><path d='M6 9v7a1 1 0 0 0 1 1h1v3a1.5 1.5 0 0 0 3 0v-3h2v3a1.5 1.5 0 0 0 3 0v-3h1a1 1 0 0 0 1-1V9zM7 8h10V7A5 5 0 0 0 7 7zM8.5 4.5l-1-1.5M15.5 4.5l1-1.5M4 10.5a1 1 0 0 0-2 0V15a1 1 0 0 0 2 0zM22 10.5a1 1 0 0 0-2 0V15a1 1 0 0 0 2 0z'/></svg>"
+            _apple_icon = "<svg viewBox='0 0 24 24' fill='#111827'><path d='M16.5 12.3c0-2.2 1.8-3.3 1.9-3.4-1-1.5-2.6-1.7-3.2-1.7-1.4-.1-2.6.8-3.3.8-.7 0-1.7-.8-2.9-.8-1.5 0-2.9.9-3.6 2.2-1.6 2.7-.4 6.7 1.1 8.9.7 1.1 1.6 2.3 2.8 2.2 1.1 0 1.5-.7 2.9-.7 1.3 0 1.7.7 2.9.7 1.2 0 2-1.1 2.7-2.2.6-.9.9-1.7 1.1-2.4-2.7-1-3.2-3-3.2-3.6zM14.3 5.4c.6-.7 1-1.7.9-2.7-.9.1-2 .6-2.6 1.4-.6.6-1.1 1.7-.9 2.6.9.1 1.9-.4 2.6-1.3z'/></svg>"
+            _windows_icon = "<svg viewBox='0 0 24 24'><rect x='2' y='2' width='9' height='9' fill='#F25022'/><rect x='13' y='2' width='9' height='9' fill='#7FBA00'/><rect x='2' y='13' width='9' height='9' fill='#00A4EF'/><rect x='13' y='13' width='9' height='9' fill='#FFB900'/></svg>"
+            _linux_icon = ("<svg viewBox='0 0 24 24'><ellipse cx='12' cy='14' rx='6' ry='8' fill='#111827'/>"
+                          "<ellipse cx='12' cy='15' rx='3.2' ry='5.5' fill='#ffffff'/>"
+                          "<circle cx='9.5' cy='8' r='1' fill='#ffffff'/><circle cx='14.5' cy='8' r='1' fill='#ffffff'/>"
+                          "<circle cx='9.7' cy='8.2' r='0.5' fill='#111827'/><circle cx='14.3' cy='8.2' r='0.5' fill='#111827'/>"
+                          "<path d='M12 9.5l-1 1.5h2z' fill='#F5A623'/>"
+                          "<ellipse cx='7' cy='18' rx='1.4' ry='0.8' fill='#F5A623'/><ellipse cx='17' cy='18' rx='1.4' ry='0.8' fill='#F5A623'/></svg>")
+            platform_icons = {"Android": _android_icon, "iOS": _apple_icon, "Windows": _windows_icon,
+                              "Mac": _apple_icon, "Linux": _linux_icon}
+            devices_for_card = [
+                {"name": name.rsplit("(", 1)[0], "platform": platform}
+                for name, platform in zip(all_devices_names, device_type)
+            ]
+            report.build_device_summary_card(devices_for_card, platform_icons=platform_icons)
 
             # Loop through iterations and build graphs, tables for each iteration
             for i in range(len(iterations_before_test_stopped_by_user)):
@@ -3161,6 +3522,12 @@ class Throughput(Realm):
                 report.move_graph_image()
 
                 report.build_graph()
+                key_findings = self.build_key_findings(
+                    download_data=download_data[0:int(incremental_capacity_list[i])],
+                    upload_data=upload_data[0:int(incremental_capacity_list[i])],
+                    devices=devices_on_running,
+                    incremental_capacity=incremental_capacity_list[i])
+                report.build_findings_card("Key Findings", key_findings)
                 x_fig_size = 15
                 y_fig_size = len(devices_on_running) * .5 + 4
                 report.set_obj_html(
@@ -3168,11 +3535,18 @@ class Throughput(Realm):
                     _obj=" ")
                 report.build_objective()
                 devices_on_running_trimmed = [n[:17] if len(n) > 17 else n for n in devices_on_running]
-                graph = lf_bar_graph_horizontal(_data_set=devices_data_to_create_bar_graph,
+                # Always show Download, Upload, and Bidirectional(UL+DL) as three
+                # separate bars per client -- download_data/upload_data are always
+                # both fully populated (0 for whichever direction wasn't active),
+                # so Bidirectional is just their elementwise sum.
+                bidirectional_data = [round(d + u, 2) for d, u in zip(download_data, upload_data)]
+                per_client_data_set = [download_data, upload_data, bidirectional_data]
+                per_client_label_data = ['Download', 'Upload', 'Bidirectional(UL+DL)']
+                graph = lf_bar_graph_horizontal(_data_set=per_client_data_set,
                                                 _xaxis_name="Avg Throughput(Mbps)",
                                                 _yaxis_name="Devices",
                                                 _graph_image_name=f"image_name{i}",
-                                                _label=label_data,
+                                                _label=per_client_label_data,
                                                 _yaxis_categories=devices_on_running_trimmed,
                                                 _legend_loc="best",
                                                 _legend_box=(1.0, 1.0),
@@ -3208,6 +3582,12 @@ class Throughput(Realm):
                 report.set_graph_image(graph_png)
                 report.move_graph_image()
                 report.build_graph()
+                self.build_rssi_distribution_charts(
+                    report,
+                    rssi_values=rssi_data[0:int(incremental_capacity_list[i])],
+                    channels=self.channel_list[0:int(incremental_capacity_list[i])],
+                    device_names=devices_on_running_trimmed[0:int(incremental_capacity_list[i])],
+                    chart_id_prefix="rssi-dist-iter{}".format(i))
                 # If band steering is enabled, collect and add band steering details to the report
                 if self.do_bandsteering:
                     self.get_bandsteering_stats(report, data, devices_on_running_trimmed)
@@ -3560,6 +3940,12 @@ class Throughput(Realm):
                 report.move_graph_image()
 
                 report.build_graph()
+                key_findings = self.build_key_findings(
+                    download_data=download_data[0:int(incremental_capacity_list[i])],
+                    upload_data=upload_data[0:int(incremental_capacity_list[i])],
+                    devices=devices_on_running,
+                    incremental_capacity=incremental_capacity_list[i])
+                report.build_findings_card("Key Findings", key_findings)
                 x_fig_size = 15
                 y_fig_size = len(devices_on_running) * .5 + 4
                 report.set_obj_html(
@@ -3567,11 +3953,18 @@ class Throughput(Realm):
                     _obj=" ")
                 report.build_objective()
                 devices_on_running_trimmed = [n[:17] if len(n) > 17 else n for n in devices_on_running]
-                graph = lf_bar_graph_horizontal(_data_set=devices_data_to_create_bar_graph,
+                # Always show Download, Upload, and Bidirectional(UL+DL) as three
+                # separate bars per client -- download_data/upload_data are always
+                # both fully populated (0 for whichever direction wasn't active),
+                # so Bidirectional is just their elementwise sum.
+                bidirectional_data = [round(d + u, 2) for d, u in zip(download_data, upload_data)]
+                per_client_data_set = [download_data, upload_data, bidirectional_data]
+                per_client_label_data = ['Download', 'Upload', 'Bidirectional(UL+DL)']
+                graph = lf_bar_graph_horizontal(_data_set=per_client_data_set,
                                                 _xaxis_name="Avg Throughput(Mbps)",
                                                 _yaxis_name="Devices",
                                                 _graph_image_name=f"image_name{i}",
-                                                _label=label_data,
+                                                _label=per_client_label_data,
                                                 _yaxis_categories=devices_on_running_trimmed,
                                                 _legend_loc="best",
                                                 _legend_box=(1.0, 1.0),
@@ -3607,6 +4000,12 @@ class Throughput(Realm):
                 report.set_graph_image(graph_png)
                 report.move_graph_image()
                 report.build_graph()
+                self.build_rssi_distribution_charts(
+                    report,
+                    rssi_values=rssi_data[0:int(incremental_capacity_list[i])],
+                    channels=self.channel_list[0:int(incremental_capacity_list[i])],
+                    device_names=devices_on_running_trimmed[0:int(incremental_capacity_list[i])],
+                    chart_id_prefix="rssi-dist-iter{}".format(i))
 
                 report.set_obj_html(
                     _obj_title="Detailed Result Table ",

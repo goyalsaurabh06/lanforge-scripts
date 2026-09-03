@@ -36,6 +36,7 @@ import os
 import sys
 import json
 import shutil
+import base64
 import datetime
 
 import pandas as pd
@@ -56,13 +57,26 @@ lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 lf_csv = importlib.import_module("py-scripts.lf_csv").lf_csv
 os_name = platform.system()
 
-__all__ = ["lf_report", "lf_bar_graph", "lf_bar_graph_horizontal", "lf_line_graph"]
+__all__ = ["lf_report", "lf_bar_graph", "lf_bar_graph_horizontal", "lf_line_graph", "lf_pie_graph",
+          "create_pie_chart", "create_info_card", "create_device_summary_card", "create_findings_card"]
 
 # ECharts styling conventions below are lifted verbatim (palette, baseOption,
 # tooltip/legend/axis/dataZoom conventions, named-series coloring) from the
 # existing modern report sample so any interactive chart added through this
 # module looks consistent with that established visual language.
 _ECHARTS_PALETTE = ["#1f6f58", "#f1b24a", "#2f80ed", "#1d9a8a", "#d95f5f", "#d48b1f"]
+
+# Auto-assigned DOM ids for charts created without an explicit chart_id (e.g.
+# create_pie_chart(data=..., title=...) with no chart_id kwarg), so multiple
+# charts can be dropped into the same report without the caller having to
+# invent/track unique ids themselves.
+_chart_id_counter = 0
+
+
+def _next_chart_id(prefix):
+    global _chart_id_counter
+    _chart_id_counter += 1
+    return "{}-{}".format(prefix, _chart_id_counter)
 
 _ECHARTS_RUNTIME_JS = """
 <script>
@@ -142,8 +156,30 @@ _ECHARTS_RUNTIME_JS = """
     option.xAxis.data = payload.categories || [];
     option.series = payload.series.map(function (s) {
       var c = s.color || namedColor(s.name);
-      return { name: s.name, type: "bar", data: s.data, barMaxWidth: 34, itemStyle: c ? { color: c } : undefined };
+      return {
+        name: s.name, type: "bar", data: s.data, barMaxWidth: 34,
+        stack: payload.stacked ? "total" : undefined,
+        itemStyle: c ? { color: c } : undefined
+      };
     });
+    // Optional per-category, per-series breakdown (e.g. the individual
+    // clients behind one stacked segment's count) shown in the tooltip
+    // instead of just that segment's total. Generic: keyed only by category
+    // name and series name, so any stacked/grouped bar chart can supply this
+    // -- lf_modern_report.py itself has no idea what the detail lines mean.
+    // Switches the tooltip to per-segment (trigger: "item") instead of the
+    // default whole-category (trigger: "axis") so hovering one segment only
+    // shows that segment's items, not every series at that category.
+    if (payload.itemDetails) {
+      option.tooltip.trigger = "item";
+      option.tooltip.formatter = function (p) {
+        var details = (payload.itemDetails[p.name] || {})[p.seriesName] || [];
+        var body = details.length
+          ? details.map(function (t) { return "&nbsp;&nbsp;" + t; }).join("<br/>")
+          : "&nbsp;&nbsp;<i>none</i>";
+        return "<b>" + p.name + "</b> &mdash; " + p.marker + " <b>" + p.seriesName + "</b><br/>" + body;
+      };
+    }
     chart.setOption(option);
     window.addEventListener("resize", function () { chart.resize(); });
   };
@@ -160,10 +196,23 @@ _ECHARTS_RUNTIME_JS = """
       nameTextStyle: { color: "#2c3e50", fontWeight: 600 },
       axisLabel: { color: "#5f6f82" }
     };
-    option.yAxis = { type: "category", data: payload.categories || [], axisLabel: { color: "#2c3e50", fontWeight: 600 } };
+    option.yAxis = {
+      type: "category", data: payload.categories || [],
+      axisLabel: {
+        color: "#2c3e50", fontWeight: 600,
+        // Truncate only what's shown on the axis -- the full category name
+        // stays in the data, so hovering a bar's tooltip still shows it in full.
+        formatter: function (value) { return value.length > 9 ? value.slice(0, 9) + "…" : value; }
+      }
+    };
     option.series = payload.series.map(function (s) {
       var c = s.color || namedColor(s.name);
-      return { name: s.name, type: "bar", stack: "total", data: s.data, itemStyle: c ? { color: c } : undefined, label: { show: true, color: "#ffffff" } };
+      return {
+        name: s.name, type: "bar", data: s.data,
+        stack: payload.stacked ? "total" : undefined,
+        itemStyle: c ? { color: c } : undefined,
+        label: { show: true, color: payload.stacked ? "#ffffff" : "#2c3e50", position: payload.stacked ? "inside" : "right" }
+      };
     });
     chart.setOption(option);
     window.addEventListener("resize", function () { chart.resize(); });
@@ -171,24 +220,169 @@ _ECHARTS_RUNTIME_JS = """
 
   window.__lfModernReport.renderPieChart = function (id, payload) {
     var el = document.getElementById(id);
-    if (!el || !payload || !payload.slices) { renderFallback(id); return; }
+    if (!el || !payload || !payload.slices || !payload.slices.length) {
+      renderFallback(id, payload && payload.emptyMessage);
+      return;
+    }
     var chart = window.echarts.init(el);
-    chart.setOption({
-      color: PALETTE,
-      tooltip: { trigger: "item" },
-      legend: { bottom: 0, textStyle: { color: "#5f6f82", fontSize: 12 } },
+    var showPct = !!payload.showPercentage;
+    var labelFmt = payload.labelFormatter || (showPct ? "{b}\\n{d}%%" : "{b}\\n{c}");
+    var tooltipFmt = payload.tooltipFormatter || "{b}: {c} ({d}%%)";
+    function formatPieLabel(p) {
+      // ECharts may still lay out labels for zero-sized slices. Keep those
+      // categories in the legend, but do not draw a misleading 0%% label.
+      if (!(Number(p.value) > 0)) { return ""; }
+      return String(labelFmt)
+        .replace(/\\{b\\}/g, p.name)
+        .replace(/\\{c\\}/g, p.value)
+        .replace(/\\{d\\}/g, p.percent);
+    }
+    var option = {
+      color: payload.colors || PALETTE,
+      tooltip: { trigger: "item", formatter: tooltipFmt },
+      legend: (payload.legend === false) ? { show: false } : { bottom: 0, textStyle: { color: "#5f6f82", fontSize: 12 } },
       series: [{
-        type: "pie", radius: ["38%%", "68%%"], center: ["50%%", "44%%"],
-        label: { formatter: "{b}\\n{c}" },
-        itemStyle: { borderColor: "#ffffff", borderWidth: 2 },
+        type: "pie",
+        radius: payload.radius || ["38%%", "68%%"],
+        center: payload.center || ["50%%", "44%%"],
+        // When the selected slices total zero, ECharts otherwise renders
+        // them as equal wedges. Zero values must occupy no area.
+        stillShowZeroSum: false,
+        label: (payload.showLabels === false) ? { show: false } : { formatter: formatPieLabel },
+        labelLine: { show: payload.showLabels !== false },
+        itemStyle: { borderWidth: 0 },
         data: payload.slices
       }]
-    });
+    };
+    // Optional per-slice breakdown (e.g. the individual clients behind one
+    // slice's count) shown in the tooltip instead of just that slice's
+    // total. Generic: keyed only by slice name, so any pie chart can supply
+    // this -- lf_modern_report.py has no idea what the detail lines mean.
+    if (payload.itemDetails) {
+      option.tooltip.formatter = function (p) {
+        var items = payload.itemDetails[p.name] || [];
+        var body = items.length
+          ? items.map(function (t) { return "&nbsp;&nbsp;" + t; }).join("<br/>")
+          : "&nbsp;&nbsp;<i>none</i>";
+        return p.marker + " <b>" + p.name + "</b>: " + p.value + " (" + p.percent + "%%)<br/>" + body;
+      };
+    }
+    if (payload.centerLabel) {
+      var main = (typeof payload.centerLabel === "object") ? (payload.centerLabel.main || "") : String(payload.centerLabel);
+      var sub = (typeof payload.centerLabel === "object") ? (payload.centerLabel.sub || "") : "";
+      option.graphic = [{
+        type: "text",
+        left: "center",
+        top: (payload.center && payload.center[1]) || "44%%",
+        style: {
+          text: sub ? (main + "\\n" + sub) : main,
+          textAlign: "center",
+          fill: "#2c3e50",
+          fontSize: 20,
+          fontWeight: 700,
+          lineHeight: 24
+        }
+      }];
+    }
+    chart.setOption(option);
     window.addEventListener("resize", function () { chart.resize(); });
   };
 })();
 </script>
 """ % {"palette": json.dumps(_ECHARTS_PALETTE)}
+
+# Shared runtime for the searchable/paginated device table in
+# create_device_summary_card()/build_device_summary_card(). Kept as its own
+# small runtime (injected once per page, same convention as
+# _ECHARTS_RUNTIME_JS) rather than folded into the ECharts one, since it has
+# nothing to do with charting -- it only needs plain DOM APIs.
+_TABLE_RUNTIME_JS = """
+<script>
+(function () {
+  window.__lfModernReport = window.__lfModernReport || {};
+
+  // rows: [{cellsHtml: "<td>...</td><td>...</td>", searchText: "lowercased ... "}]
+  window.__lfModernReport.initSearchTable = function (rootId, rows, pageSize) {
+    var root = document.getElementById(rootId);
+    if (!root) { return; }
+    var tbody = root.querySelector(".device-table tbody");
+    var searchInput = root.querySelector(".device-search");
+    var pageSizeSelect = root.querySelector(".rows-per-page select");
+    var paginationEl = root.querySelector(".pagination");
+    var countEl = root.querySelector(".device-count-label");
+    var viewAllBtn = root.querySelector(".view-all-btn");
+    if (!tbody) { return; }
+
+    var state = { filtered: rows, page: 1, pageSize: pageSize || rows.length || 10 };
+
+    function renderRows() {
+      var total = state.filtered.length;
+      var pages = Math.max(1, Math.ceil(total / state.pageSize));
+      if (state.page > pages) { state.page = pages; }
+      var start = (state.page - 1) * state.pageSize;
+      var pageRows = state.filtered.slice(start, start + state.pageSize);
+      tbody.innerHTML = pageRows.map(function (r, i) {
+        return "<tr><td>" + (start + i + 1) + "</td>" + r.cellsHtml + "</tr>";
+      }).join("") || "<tr><td colspan='99' style='text-align:center;color:var(--muted);'>No matching rows</td></tr>";
+      if (countEl) {
+        countEl.textContent = total === 0
+          ? "No rows found"
+          : ("Showing " + (start + 1) + " to " + Math.min(start + state.pageSize, total) + " of " + total + " rows");
+      }
+      renderPagination(pages);
+    }
+
+    function renderPagination(pages) {
+      if (!paginationEl) { return; }
+      var parts = [];
+      parts.push('<button data-page="' + (state.page - 1) + '"' + (state.page === 1 ? " disabled" : "") + ">&lsaquo;</button>");
+      var shown = [];
+      for (var p = 1; p <= pages; p++) {
+        if (p === 1 || p === pages || Math.abs(p - state.page) <= 1) { shown.push(p); }
+        else if (shown[shown.length - 1] !== "...") { shown.push("..."); }
+      }
+      shown.forEach(function (p) {
+        if (p === "...") { parts.push('<span class="pagination-ellipsis">&hellip;</span>'); }
+        else { parts.push('<button data-page="' + p + '" class="' + (p === state.page ? "active" : "") + '">' + p + "</button>"); }
+      });
+      parts.push('<button data-page="' + (state.page + 1) + '"' + (state.page === pages ? " disabled" : "") + ">&rsaquo;</button>");
+      paginationEl.innerHTML = parts.join("");
+      Array.prototype.forEach.call(paginationEl.querySelectorAll("button[data-page]"), function (btn) {
+        btn.addEventListener("click", function () {
+          state.page = parseInt(btn.getAttribute("data-page"), 10);
+          renderRows();
+        });
+      });
+    }
+
+    if (searchInput) {
+      searchInput.addEventListener("input", function () {
+        var q = searchInput.value.trim().toLowerCase();
+        state.filtered = !q ? rows : rows.filter(function (r) { return r.searchText.indexOf(q) !== -1; });
+        state.page = 1;
+        renderRows();
+      });
+    }
+    if (pageSizeSelect) {
+      pageSizeSelect.addEventListener("change", function () {
+        state.pageSize = pageSizeSelect.value === "all" ? rows.length : parseInt(pageSizeSelect.value, 10);
+        state.page = 1;
+        renderRows();
+      });
+    }
+    if (viewAllBtn) {
+      viewAllBtn.addEventListener("click", function () {
+        state.pageSize = rows.length || 1;
+        state.page = 1;
+        if (pageSizeSelect) { pageSizeSelect.value = "all"; }
+        renderRows();
+      });
+    }
+    renderRows();
+  };
+})();
+</script>
+"""
 
 
 class lf_report:
@@ -287,6 +481,7 @@ class lf_report:
         self.modern_css_file = "modern-report.css"
         self.echarts_file = "echarts.min.js"
         self._echarts_runtime_emitted = False
+        self._table_runtime_emitted = False
 
         # note: the following 3 calls must be in order
         self.set_date_time_directory(_date, _results_dir_name)
@@ -754,18 +949,55 @@ class lf_report:
         self.build_table()
         self.end_content_div()
 
+    # These two helpers make the report work as one single .html file -- no report.css/custom.css/
+    # echarts.min.js/images alongside it needed -- so it still looks and works right if someone
+    # copies or emails just the one .html file instead of the whole report folder.
+    _ASSET_MIME_TYPES = {".css": "text/css", ".js": "text/javascript", ".png": "image/png", ".woff": "font/woff"}
+
+    def _read_report_asset(self, filename):
+        """Reads a file already copied into this report's folder. Returns "" if it's missing,
+        so a report still builds (just without that one piece) instead of crashing."""
+        try:
+            with open(os.path.join(self.path_date_time, filename), "r", encoding="utf-8") as f:
+                return f.read()
+        except OSError:
+            return ""
+
+    def _report_asset_as_data_uri(self, filename):
+        """Turns a report asset (an image, a font) into a "data:...;base64,..." string that can go
+        straight into an src="..." attribute, so the browser doesn't need to fetch a separate file."""
+        try:
+            with open(os.path.join(self.path_date_time, filename), "rb") as f:
+                raw_bytes = f.read()
+        except OSError:
+            return filename
+        ext = os.path.splitext(filename)[1].lower()
+        mime = self._ASSET_MIME_TYPES.get(ext, "application/octet-stream")
+        return "data:{};base64,{}".format(mime, base64.b64encode(raw_bytes).decode("ascii"))
+
     def get_html_head(self, title='Untitled'):
+        report_css = self._read_report_asset("report.css")
+        font_data_uri = self._report_asset_as_data_uri(self.font_file)
+        report_css = report_css.replace('url("{}")'.format(self.font_file), 'url("{}")'.format(font_data_uri))
+        custom_css = self._read_report_asset("custom.css")
+        echarts_js = self._read_report_asset(self.echarts_file)
         return """<head>
         <meta charset='UTF-8'>
         <meta name='viewport' content='width=device-width, initial-scale=1' />
         <style>
         body {{ margin: 0; padding: 0; }}
         </style>
-        <link rel='stylesheet' href='report.css' />
-        <link rel='stylesheet' href='custom.css' />
-        <script src='echarts.min.js'></script>
+        <style>
+        {report_css}
+        </style>
+        <style>
+        {custom_css}
+        </style>
+        <script>
+        {echarts_js}
+        </script>
         <title>{title}</title>
-    </head>""".format(title=title)
+    </head>""".format(title=title, report_css=report_css, custom_css=custom_css, echarts_js=echarts_js)
 
     def build_banner(self):
         self.banner_html = """<!DOCTYPE html>
@@ -775,7 +1007,7 @@ class lf_report:
         <div class='report-shell'>
         <div id='BannerBack'>
             <div id='Banner'>
-                <img id='BannerLogo' align='right' src="CandelaLogo2-90dpi-200x90-trans.png" border='0'/>
+                <img id='BannerLogo' align='right' src="{logo_data_uri}" border='0'/>
                 <div class='HeaderStyle'>
                     <h1 class='TitleFontPrint'>{title}</h1>
                     <h4 class='TitleFontPrintSub'>{date}</h4>
@@ -784,6 +1016,7 @@ class lf_report:
         </div>
                  """.format(
             head_tag=self.get_html_head(title=self.title),
+            logo_data_uri=self._report_asset_as_data_uri(self.logo_file_name),
             title=self.title,
             date=self.date,
         )
@@ -797,7 +1030,7 @@ class lf_report:
         <div class='report-shell'>
         <div id='BannerBack'>
             <div id='BannerLeft'>
-                <img id='BannerLogo' align='right' src="CandelaLogo2-90dpi-200x90-trans.png" border='0'/>
+                <img id='BannerLogo' align='right' src="{logo_data_uri}" border='0'/>
                 <div class='HeaderStyle'>
                     <h1 class='TitleFontPrint'>{title}</h1>
                     <h4 class='TitleFontPrintSub'>{date}</h4>
@@ -806,6 +1039,7 @@ class lf_report:
         </div>
                  """.format(
             head_tag=self.get_html_head(title=self.title),
+            logo_data_uri=self._report_asset_as_data_uri(self.logo_file_name),
             title=self.title,
             date=self.date,
         )
@@ -819,7 +1053,7 @@ class lf_report:
         <div class='report-shell'>
         <div id='BannerBack'>
             <div id='BannerLeft'>
-                <img id='BannerLogo' align='right' src="CandelaLogo2-90dpi-200x90-trans.png" border='0'/>
+                <img id='BannerLogo' align='right' src="{logo_data_uri}" border='0'/>
                 <div class='HeaderStyle'>
                     <h2 class='TitleFontPrint'>{title}</h2>
                     <h4 class='TitleFontPrintSub'>{date}</h4>
@@ -828,6 +1062,7 @@ class lf_report:
         </div>
                  """.format(
             head_tag=self.get_html_head(title=self.title),
+            logo_data_uri=self._report_asset_as_data_uri(self.logo_file_name),
             title=self.title,
             date=self.date,
         )
@@ -841,7 +1076,7 @@ class lf_report:
                <div class='report-shell'>
                <div id='BannerBack' style='height: 100%; max-height: 100%;'>
                    <div id='BannerLeft' style="margin: 0%; max-height: 100%; max-width: 100%; width: 100%; height: 100%;">
-                       <img id='BannerLogo' align='right' src="CandelaLogo2-90dpi-200x90-trans.png" border='0'/>
+                       <img id='BannerLogo' align='right' src="{logo_data_uri}" border='0'/>
                        <div class='HeaderStyle'>
                            <h1 class='TitleFontPrint'>{title}</h1>
                            <h4 class='TitleFontPrintSub'>{date}</h4>
@@ -850,6 +1085,7 @@ class lf_report:
                </div>
                         """.format(
             head_tag=self.get_html_head(title=self.title),
+            logo_data_uri=self._report_asset_as_data_uri(self.logo_file_name),
             title=self.title,
             date=self.date,
         )
@@ -984,12 +1220,12 @@ class lf_report:
         self.footer_html = """
     <footer class='FooterStyle'>
         <a href="https://www.candelatech.com/"><img
-            id='BannerLogoFooter' align='right' src="candela_swirl_small-72h.png" border='0'/></a>
+            id='BannerLogoFooter' align='right' src="{logo_footer_data_uri}" border='0'/></a>
         <p>Generated by Candela Technologies LANforge network testing tool</p>
         <p><a href="https://www.candelatech.com">www.candelatech.com</a><p>
     </footer>
     </div><!-- end report-shell -->
-        """
+        """.format(logo_footer_data_uri=self._report_asset_as_data_uri(self.logo_footer_file_name))
         self.html += self.footer_html
 
     def build_footer_no_png(self):
@@ -1156,9 +1392,51 @@ function copyTextToClipboard(ele) {
     def build_pie_chart_interactive(self, chart_id, labels, values, title=""):
         """Interactive donut/pie chart from parallel labels/values lists.
         (lf_graph.py has no pie-chart class to mirror, so this stays a
-        report-level convenience rather than a standalone class.)"""
-        payload = {"slices": [{"name": labels[i], "value": values[i]} for i in range(len(labels))]}
-        self.build_echarts_chart(chart_id, "pie", payload, title=title)
+        report-level convenience rather than a standalone class.)
+        Kept for existing callers; delegates to the generic create_pie_chart()
+        module function -- see that function for the full option set (center
+        labels, subtitles, custom tooltips, percentages, dimensions, ...)."""
+        data = [{"name": labels[i], "value": values[i]} for i in range(len(labels))]
+        if not self._echarts_runtime_emitted:
+            self.html += _ECHARTS_RUNTIME_JS
+            self._echarts_runtime_emitted = True
+        self.html += create_pie_chart(data, title=title, chart_id=chart_id, show_percentage=False)
+
+    def build_pie_chart(self, data, title="", **kwargs):
+        """Add a create_pie_chart() chart directly to the report (handles the
+        one-time ECharts runtime injection for callers not going through
+        set_graph_image()/build_graph()). See create_pie_chart() for the full
+        set of optional kwargs (subtitle, chart_id, legend, show_percentage,
+        center_label, tooltip_formatter, label_formatter, width, height,
+        radius, center, empty_message)."""
+        if not self._echarts_runtime_emitted:
+            self.html += _ECHARTS_RUNTIME_JS
+            self._echarts_runtime_emitted = True
+        self.html += create_pie_chart(data, title=title, **kwargs)
+
+    def build_info_card(self, title, items, icon=None, card_id=None):
+        """Add a create_info_card() card directly to the report. See
+        create_info_card() for the full option set."""
+        self.html += create_info_card(title, items, icon=icon, card_id=card_id)
+
+    def build_findings_card(self, title, findings, card_id=None):
+        """Add a create_findings_card() card directly to the report. See
+        create_findings_card() for the full option set."""
+        self.html += create_findings_card(title, findings, card_id=card_id)
+
+    def build_device_summary_card(self, devices, **kwargs):
+        """Add a create_device_summary_card() card directly to the report
+        (handles the one-time ECharts + search-table runtime injection).
+        See create_device_summary_card() for the full set of optional
+        kwargs (name_field, platform_field, columns, platform_icons,
+        page_size, card_id, title)."""
+        if not self._echarts_runtime_emitted:
+            self.html += _ECHARTS_RUNTIME_JS
+            self._echarts_runtime_emitted = True
+        if not self._table_runtime_emitted:
+            self.html += _TABLE_RUNTIME_JS
+            self._table_runtime_emitted = True
+        self.html += create_device_summary_card(devices, **kwargs)
 
 
 def _chart_markup(chart_id, chart_type, payload, title="", y_name="", x_name=""):
@@ -1202,6 +1480,429 @@ def _chart_markup(chart_id, chart_type, payload, title="", y_name="", x_name="")
         renderer=renderer,
         payload=json.dumps(payload),
         extra_args=extra_args,
+    )
+
+
+def _sanitize_pie_slices(data):
+    """Coerce a generic pie-chart `data` argument into a clean list of
+    {"name": str, "value": float} slices, dropping/repairing anything that
+    would otherwise crash json.dumps(), produce a NaN percentage in ECharts,
+    or silently render nothing. Never raises -- worst case returns []."""
+    if not data:
+        return []
+    slices = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name")
+        if name is None or str(name).strip() == "":
+            continue
+        value = item.get("value")
+        if value is None:
+            value = 0
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            value = 0
+        if value < 0 or value != value:  # negative or NaN
+            value = 0
+        slices.append({"name": str(name), "value": value})
+    return slices
+
+
+def create_pie_chart(data, title="", subtitle="", chart_id=None, legend=True,
+                     show_percentage=True, show_labels=True, center_label=None,
+                     tooltip_formatter=None, label_formatter=None, colors=None,
+                     item_details=None, width=None, height=None, radius=None, center=None,
+                     empty_message="No data available"):
+    """Build a single reusable, self-contained ECharts pie/donut chart-card.
+
+    This is the one generic pie-chart building block for the whole report --
+    every section that needs a pie chart (RSSI distribution, pass/fail
+    summary, band distribution, device connectivity, ...) should call this
+    instead of hand-rolling its own chart markup.
+
+    Args:
+        data: generic slice list, e.g.
+            [{"name": "Pass", "value": 80}, {"name": "Fail", "value": 15}].
+            Category names are never hard-coded here -- pass whatever this
+            report section's categories are. Missing/None/negative/non-numeric
+            values are coerced to 0 rather than raising; entries without a
+            usable "name" are dropped. Empty/None `data` is handled gracefully
+            (renders an inline "no data" card instead of a chart).
+        title: chart title, rendered above the chart (h3).
+        subtitle: optional one-line description rendered under the title.
+        chart_id: unique DOM id for the chart container. Auto-generated
+            (and guaranteed unique within the process) when omitted, so
+            multiple pie charts can be dropped into one report without the
+            caller having to invent/track ids.
+        legend: show/hide the bottom legend.
+        show_percentage: show "<name> <percent>%" on each slice label (the
+            tooltip always shows both the raw value and the percentage
+            regardless of this flag, e.g. "Passed: 85 (85%)").
+        show_labels: show/hide the on-slice text labels entirely (independent
+            of show_percentage) -- turn off for a small/compact donut where
+            slice labels would just overlap; the tooltip is unaffected.
+        center_label: optional text shown in the middle of the donut hole.
+            Either a plain string, or {"main": "70%", "sub": "Online"} for a
+            two-line main/sub label (e.g. a total count with a caption).
+        tooltip_formatter / label_formatter: optional raw ECharts formatter
+            strings (e.g. "{b}: {c}") to override the defaults above.
+        colors: optional list of CSS colors, one per slice in `data` order
+            (e.g. a green-to-red severity gradient) -- overrides the report's
+            default color palette for this one chart.
+        item_details: optional {slice_name: [detail line, ...]} shown in the
+            tooltip when hovering that slice, in place of just its count --
+            e.g. the actual clients behind one signal-quality bucket's count.
+            A slice with no entry (or an empty list) shows "none".
+        width / height: optional CSS size for the chart container (int -> px,
+            or any CSS length string, e.g. "480px", "60%").
+        radius / center: optional ECharts pie radius/center overrides (2-item
+            lists), e.g. radius=["0%", "70%"] for a solid pie instead of a
+            donut, or center=["50%", "50%"] to drop the legend-reserved gap.
+        empty_message: message shown when `data` is empty/None or every value
+            is 0 (avoids ECharts rendering an all-NaN-percentage chart).
+
+    Returns:
+        HTML string: a self-contained "<div class='chart-card'>...</div>"
+        chart card (container + inline init call, no title/subtitle markup
+        omitted). Hand it to lf_report via
+        `report.set_graph_image(chart_html); report.build_graph()` (same
+        pattern used by lf_bar_graph/lf_line_graph's build_*() markup), or
+        append it directly to an `lf_report` instance's `.html` after making
+        sure the shared ECharts runtime has been emitted once (see
+        lf_report.build_echarts_chart / build_pie_chart_interactive for that
+        pattern) if not routing through set_graph_image()/build_graph().
+    """
+    chart_id = chart_id or _next_chart_id("pie-chart")
+    slices = _sanitize_pie_slices(data)
+    total = sum(s["value"] for s in slices)
+
+    title_html = "<h3>{}</h3>".format(title) if title else ""
+    subtitle_html = "<p class='chart-subtitle'>{}</p>".format(subtitle) if subtitle else ""
+
+    if not slices or total <= 0:
+        # Graceful empty/all-zero fallback -- still valid, self-contained
+        # markup (no chart gets initialized, so no NaN percentages), and
+        # visually matches the client-side renderFallback() look.
+        return """
+            <div class='chart-card'>
+              {title_html}
+              {subtitle_html}
+              <div id='{chart_id}' class='chart'>
+                <div class='chart-fallback'>{message}</div>
+              </div>
+            </div>
+            """.format(
+            title_html=title_html,
+            subtitle_html=subtitle_html,
+            chart_id=chart_id,
+            message=empty_message,
+        )
+
+    payload = {"slices": slices, "showPercentage": bool(show_percentage)}
+    if not legend:
+        payload["legend"] = False
+    if not show_labels:
+        payload["showLabels"] = False
+    if center_label is not None:
+        payload["centerLabel"] = center_label
+    if tooltip_formatter:
+        payload["tooltipFormatter"] = tooltip_formatter
+    if label_formatter:
+        payload["labelFormatter"] = label_formatter
+    if colors:
+        payload["colors"] = list(colors)
+    if item_details:
+        payload["itemDetails"] = item_details
+    if radius:
+        payload["radius"] = list(radius)
+    if center:
+        payload["center"] = list(center)
+
+    style_parts = []
+    if width:
+        style_parts.append("width:{}".format(width if isinstance(width, str) else "{}px".format(width)))
+    if height:
+        style_parts.append("height:{}".format(height if isinstance(height, str) else "{}px".format(height)))
+    container_style = " style='{}'".format(";".join(style_parts)) if style_parts else ""
+
+    return """
+            <div class='chart-card'>
+              {title_html}
+              {subtitle_html}
+              <div id='{chart_id}' class='chart'{container_style}></div>
+              <script>
+                window.__lfModernReport.renderPieChart({chart_id_json}, {payload});
+              </script>
+            </div>
+            """.format(
+        title_html=title_html,
+        subtitle_html=subtitle_html,
+        chart_id=chart_id,
+        container_style=container_style,
+        chart_id_json=json.dumps(chart_id),
+        payload=json.dumps(payload),
+    )
+
+
+def create_info_card(title, items, icon=None, card_id=None):
+    """Build a reusable "info card": a titled card containing a responsive
+    grid of icon + label + value blocks -- e.g. a test's configuration
+    summary (traffic type, duration, rates, ...). Generic across scripts:
+    nothing here is tied to any particular kind of test or field, the
+    caller supplies whatever (icon, label, value) triples make sense for
+    their report.
+
+    Args:
+        title: card header text, e.g. "Test Configuration".
+        items: list of {"icon": <inline HTML, optional>, "label": str,
+            "value": str}. Items with a missing/empty value are skipped.
+            `icon` may be any inline HTML snippet (an emoji character, an
+            inline "<svg>...</svg>", ...) -- this function doesn't
+            interpret it, just places it in a small badge; items with no
+            icon get no badge at all (just the label/value box).
+        icon: optional inline HTML for the card header's own icon badge.
+        card_id: optional DOM id for the card (only useful if a script
+            wants to reference/style a specific card).
+
+    Returns:
+        HTML string: a self-contained "<div class='info-card'>...</div>".
+    """
+    rows = []
+    for item in items or []:
+        value = item.get("value")
+        if value is None or str(value).strip() == "":
+            continue
+        item_icon_html = "<div class='icon-badge'>{}</div>".format(item["icon"]) if item.get("icon") else ""
+        rows.append("""
+            <div class='info-item'>
+              {icon}
+              <div class='info-item-body'>
+                <div class='info-item-label'>{label}</div>
+                <div class='info-item-value'>{value}</div>
+              </div>
+            </div>
+            """.format(icon=item_icon_html, label=item.get("label", ""), value=value))
+
+    id_attr = " id='{}'".format(card_id) if card_id else ""
+    header_icon_html = "<div class='icon-badge'>{}</div>".format(icon) if icon else ""
+
+    return """
+            <div class='info-card'{id_attr}>
+              <div class='info-card-header'>{header_icon}{title}</div>
+              <div class='info-grid'>{rows}</div>
+            </div>
+            """.format(id_attr=id_attr, header_icon=header_icon_html, title=title, rows="".join(rows))
+
+
+_FINDING_TYPE_ICON = {"positive": "&#10003;", "neutral": "&bull;", "warning": "&#9888;", "critical": "&#10007;"}
+
+
+def create_findings_card(title, findings, card_id=None):
+    """Build a reusable "Key Findings" style card: a short, prioritized
+    bulleted list of plain-English observations, each tagged with a subtle
+    severity marker (checkmark/dot/warning/cross) rather than a raw value
+    dump. Generic across scripts -- this function has no idea what a
+    "throughput" or "RSSI" or "band" is, it only renders whatever finding
+    dicts a caller hands it; a script's own analysis code decides what the
+    findings say.
+
+    Args:
+        title: card header text, e.g. "Key Findings".
+        findings: list of {"type": "positive"|"neutral"|"warning"|"critical"
+            (optional, defaults to "neutral"), "text": str}, most important
+            first. Findings with empty/missing text are skipped.
+        card_id: optional DOM id for the card.
+
+    Returns:
+        HTML string: a self-contained "<div class='info-card'>...</div>".
+        If `findings` is empty (or every entry is empty), renders a plain
+        "no findings" message instead of an empty list.
+    """
+    items = []
+    for f in findings or []:
+        text = f.get("text")
+        if not text or not str(text).strip():
+            continue
+        ftype = f.get("type") if f.get("type") in _FINDING_TYPE_ICON else "neutral"
+        items.append("""
+            <li class='finding finding-{ftype}'>
+              <span class='finding-icon'>{icon}</span>
+              <span class='finding-text'>{text}</span>
+            </li>
+            """.format(ftype=ftype, icon=_FINDING_TYPE_ICON[ftype], text=text))
+
+    id_attr = " id='{}'".format(card_id) if card_id else ""
+
+    if not items:
+        return """
+            <div class='info-card'{id_attr}>
+              <div class='info-card-header'>{title}</div>
+              <p style='color:var(--muted);'>No findings available for this data.</p>
+            </div>
+            """.format(id_attr=id_attr, title=title)
+
+    return """
+            <div class='info-card'{id_attr}>
+              <div class='info-card-header'>{title}</div>
+              <ul class='findings-list'>{items}</ul>
+            </div>
+            """.format(id_attr=id_attr, title=title, items="".join(items))
+
+
+def create_device_summary_card(devices, name_field="name", platform_field="platform",
+                               columns=None, platform_icons=None, page_size=10,
+                               card_id=None, title="Devices"):
+    """Build a reusable "device summary" card: total/per-category counts, a
+    donut breakdown, and a searchable, paginated table. Generic across
+    scripts -- despite the name, `devices` can be any list of dicts: real
+    clients, IoT devices, APs, whatever the caller's "platform"/category
+    field is; nothing here is Wi-Fi- or device-specific.
+
+    Args:
+        devices: list of dicts, e.g.
+            [{"name": "vivo V12", "platform": "Android"}, ...].
+        name_field / platform_field: which keys in each device dict hold its
+            display name and its category (used for the counts/donut).
+        columns: table columns as [{"key": ..., "label": ...}, ...].
+            Defaults to name_field -> "Device Name", platform_field ->
+            "Platform".
+        platform_icons: optional {category_value: inline HTML/emoji} shown
+            next to that category's count. Categories without an entry get
+            a plain bullet.
+        page_size: initial rows-per-page for the table (also offered in the
+            rows-per-page dropdown alongside 5/10/25/50 and "All").
+        card_id: DOM id prefix. Auto-generated when omitted, so multiple
+            device cards on one page never collide.
+        title: card header text.
+
+    Returns:
+        HTML string: a self-contained "<div class='info-card'>...</div>"
+        card (stats + donut + search/paginated table, with their init
+        script). The caller must make sure the shared ECharts and table
+        runtimes are already on the page -- lf_report.build_device_summary_card()
+        does that for you; going straight through create_device_summary_card()
+        means injecting _ECHARTS_RUNTIME_JS and _TABLE_RUNTIME_JS yourself
+        (once each, same convention as every other interactive chart here).
+    """
+    devices = devices or []
+    card_id = card_id or _next_chart_id("device-summary")
+    columns = columns or [{"key": name_field, "label": "Device Name"}, {"key": platform_field, "label": "OS type"}]
+    platform_icons = platform_icons or {}
+
+    if not devices:
+        return """
+            <div class='info-card' id='{card_id}'>
+              <div class='info-card-header'>{title}</div>
+              <p style='color:var(--muted);'>No devices to show.</p>
+            </div>
+            """.format(card_id=card_id, title=title)
+
+    total = len(devices)
+    platform_counts = {}
+    for d in devices:
+        p = d.get(platform_field) or "Unknown"
+        platform_counts[p] = platform_counts.get(p, 0) + 1
+    # Count-descending so the biggest group leads, same as the stat row.
+    ordered_platforms = sorted(platform_counts, key=lambda p: -platform_counts[p])
+
+    stat_items = "".join("""
+            <div class='device-stat'>
+              <div class='icon-badge'>{icon}</div>
+              <div>
+                <div class='stat-value'>{count}</div>
+                <div class='stat-label'>{label}</div>
+              </div>
+            </div>
+            """.format(icon=platform_icons.get(p, "&bull;"), count=platform_counts[p], label=p)
+        for p in ordered_platforms)
+    stats_html = """
+            <div class='device-stats-col'>
+              <div class='device-stat'>
+                <div class='icon-badge'>&#9679;</div>
+                <div>
+                  <div class='stat-value'>{total}</div>
+                  <div class='stat-label'>Total Devices</div>
+                </div>
+              </div>
+              {stat_items}
+            </div>
+            """.format(total=total, stat_items=stat_items)
+
+    slices, legend_items = [], []
+    for i, p in enumerate(ordered_platforms):
+        count = platform_counts[p]
+        pct = count / total * 100
+        color = _ECHARTS_PALETTE[i % len(_ECHARTS_PALETTE)]
+        slices.append({"name": p, "value": count})
+        legend_items.append("""
+            <div class='device-legend-item'>
+              <span class='device-legend-dot' style='background:{color}'></span>
+              <span class='device-legend-name'>{name} ({count})</span>
+              <span class='device-legend-pct'>{pct:.1f}%</span>
+            </div>
+            """.format(color=color, name=p, count=count, pct=pct))
+
+    donut_id = "{}-donut".format(card_id)
+    donut_payload = {"slices": slices, "legend": False, "showLabels": False,
+                     "tooltipFormatter": "{b}: {c} ({d}%)"}
+    donut_html = """
+            <div class='device-donut-col'>
+              <div id='{donut_id}' class='device-donut'></div>
+              <div class='device-legend'>{legend}</div>
+            </div>
+            <script>
+              window.__lfModernReport.renderPieChart({donut_id_json}, {donut_payload});
+            </script>
+            """.format(donut_id=donut_id, legend="".join(legend_items),
+                       donut_id_json=json.dumps(donut_id), donut_payload=json.dumps(donut_payload))
+
+    rows_payload = []
+    for d in devices:
+        cells = "".join("<td>{}</td>".format(d.get(c["key"], "")) for c in columns)
+        search_text = " ".join(str(d.get(c["key"], "")) for c in columns).lower()
+        rows_payload.append({"cellsHtml": cells, "searchText": search_text})
+    header_cells = "".join("<th>{}</th>".format(c["label"]) for c in columns)
+
+    default_page_size = min(page_size, total) if page_size else total
+    size_choices = sorted({n for n in (5, 10, 25, 50, default_page_size) if n <= total})
+    page_size_options = "".join(
+        "<option value='{n}'{sel}>{n}</option>".format(n=n, sel=" selected" if n == default_page_size else "")
+        for n in size_choices
+    ) + "<option value='all'>All</option>"
+
+    return """
+            <div class='info-card' id='{card_id}'>
+              <div class='info-card-header'>{title}</div>
+              <div class='device-summary-row'>
+                {stats}
+                {donut}
+              </div>
+              <div class='device-toolbar'>
+                <input class='device-search' type='text' placeholder='Search device...' />
+                <button class='btn-outline view-all-btn' type='button'>View All Devices</button>
+              </div>
+              <p class='device-count-label'></p>
+              <div class='table-wrap'>
+                <table class='device-table'>
+                  <thead><tr><th>S.No.</th>{header_cells}</tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+              <div class='device-footer'>
+                <div class='rows-per-page'>Rows per page: <select>{page_size_options}</select></div>
+                <div class='pagination'></div>
+              </div>
+              <script>
+                window.__lfModernReport.initSearchTable({card_id_json}, {rows}, {default_page_size});
+              </script>
+            </div>
+            """.format(
+        card_id=card_id, title=title, stats=stats_html, donut=donut_html,
+        header_cells=header_cells, page_size_options=page_size_options,
+        card_id_json=json.dumps(card_id), rows=json.dumps(rows_payload),
+        default_page_size=default_page_size,
     )
 
 
@@ -1256,7 +1957,9 @@ class lf_bar_graph:
                  _dpi=96,
                  _enable_csv=False,
                  _remove_border=None,
-                 _alignment=None
+                 _alignment=None,
+                 _stacked=False,
+                 _extra_payload=None
                  ):
         if _data_set is None:
             _data_set = [[30.4, 55.3, 69.2, 37.1], [45.1, 67.2, 34.3, 22.4], [22.5, 45.6, 12.7, 34.8]]
@@ -1303,6 +2006,8 @@ class lf_bar_graph:
         self.remove_border = _remove_border
         self.alignment = _alignment
         self.xticks_rotation = _xticks_rotation
+        self.stacked = _stacked
+        self.extra_payload = _extra_payload
 
     def build_bar_graph(self):
         colors = self.color if self.color is not None else self.color_name
@@ -1332,7 +2037,12 @@ class lf_bar_graph:
         else:
             categories = [str(c) for c in self.xaxis_categories]
 
-        markup = _chart_markup(self.graph_image_name, "bar", {"categories": categories, "series": series},
+        payload = {"categories": categories, "series": series}
+        if self.stacked:
+            payload["stacked"] = True
+        if self.extra_payload:
+            payload.update(self.extra_payload)
+        markup = _chart_markup(self.graph_image_name, "bar", payload,
                                title=self.title, x_name=self.xaxis_name, y_name=self.yaxis_name)
 
         if self.enable_csv:
@@ -1384,7 +2094,8 @@ class lf_bar_graph_horizontal:
                  _dpi=96,
                  _enable_csv=False,
                  _remove_border=None,
-                 _alignment=None
+                 _alignment=None,
+                 _stacked=False
                  ):
         if _data_set is None:
             _data_set = [[30.4, 55.3, 69.2, 37.1], [45.1, 67.2, 34.3, 22.4], [22.5, 45.6, 12.7, 34.8]]
@@ -1431,6 +2142,7 @@ class lf_bar_graph_horizontal:
         self.remove_border = _remove_border
         self.alignment = _alignment
         self.yticks_rotation = _yticks_rotation
+        self.stacked = _stacked
 
     def build_bar_graph_horizontal(self):
         colors = self.color if self.color is not None else self.color_name
@@ -1448,7 +2160,10 @@ class lf_bar_graph_horizontal:
         else:
             categories = [str(c) for c in self.yaxis_categories]
 
-        markup = _chart_markup(self.graph_image_name, "horizontal_bar", {"categories": categories, "series": series},
+        payload = {"categories": categories, "series": series}
+        if self.stacked:
+            payload["stacked"] = True
+        markup = _chart_markup(self.graph_image_name, "horizontal_bar", payload,
                                title=self.title, x_name=self.xaxis_name)
 
         if self.enable_csv:
@@ -1568,6 +2283,97 @@ class lf_line_graph:
         return markup
 
 
+class lf_pie_graph:
+    """Interactive pie/donut chart class mirroring the lf_bar_graph/
+    lf_bar_graph_horizontal/lf_line_graph classes above: build_pie_graph()
+    returns interactive chart-card markup (for use with
+    lf_report.set_graph_image()/build_graph()) instead of saving a
+    matplotlib PNG -- lf_graph.py has no pie-chart class to mirror, so this
+    follows the same _data_set/_label/_graph_image_name conventions as its
+    siblings. Thin wrapper around the generic create_pie_chart() function
+    below, which does the actual data-sanitizing/markup-building work and
+    remains the right choice for callers that already have {"name",
+    "value"} dicts."""
+
+    def __init__(self, _data_set=None,
+                 _label=None,
+                 _graph_title="",
+                 _graph_image_name="pie_chart",
+                 _subtitle="",
+                 _legend=True,
+                 _show_percentage=True,
+                 _show_labels=True,
+                 _center_label=None,
+                 _tooltip_formatter=None,
+                 _label_formatter=None,
+                 _colors=None,
+                 _item_details=None,
+                 _radius=None,
+                 _center=None,
+                 _figsize=None,
+                 _empty_message="No data available",
+                 _enable_csv=False):
+        if _data_set is None:
+            _data_set = [30.4, 55.3, 69.2, 37.1]
+        if _label is None:
+            _label = ["a", "b", "c", "d"]
+        self.data_set = _data_set
+        self.label = _label
+        self.title = _graph_title
+        self.graph_image_name = _graph_image_name
+        self.subtitle = _subtitle
+        self.legend = _legend
+        self.show_percentage = _show_percentage
+        self.show_labels = _show_labels
+        self.center_label = _center_label
+        self.tooltip_formatter = _tooltip_formatter
+        self.label_formatter = _label_formatter
+        self.colors = _colors
+        self.item_details = _item_details
+        self.radius = _radius
+        self.center = _center
+        # accepted for signature parity with the other graph classes'
+        # _figsize (matplotlib inches); interactive charts size via CSS, so
+        # only pull an explicit width/height out of it when provided.
+        self.width, self.height = _figsize if _figsize else (None, None)
+        self.empty_message = _empty_message
+        self.enable_csv = _enable_csv
+
+    def build_pie_graph(self):
+        data = [
+            {"name": self.label[i] if i < len(self.label) else "series-{}".format(i), "value": v}
+            for i, v in enumerate(self.data_set)
+        ]
+        markup = create_pie_chart(
+            data=data,
+            title=self.title,
+            subtitle=self.subtitle,
+            chart_id=self.graph_image_name,
+            legend=self.legend,
+            show_percentage=self.show_percentage,
+            show_labels=self.show_labels,
+            center_label=self.center_label,
+            tooltip_formatter=self.tooltip_formatter,
+            label_formatter=self.label_formatter,
+            colors=self.colors,
+            item_details=self.item_details,
+            radius=self.radius,
+            center=self.center,
+            width=self.width,
+            height=self.height,
+            empty_message=self.empty_message,
+        )
+
+        if self.enable_csv:
+            lf_csv_obj = lf_csv()
+            lf_csv_obj.columns = list(self.label)
+            lf_csv_obj.rows = [self.data_set]
+            lf_csv_obj.filename = "{}.csv".format(self.graph_image_name)
+            lf_csv_obj.generate_csv()
+
+        return markup
+
+
 # Unit Test
 if __name__ == "__main__":
     help_summary = '''\
@@ -1639,6 +2445,39 @@ if __name__ == "__main__":
         y_name="Throughput (Mbps)",
         x_name="Sample",
     )
+
+    # create_pie_chart() demo: the same generic function reused for two
+    # unrelated report sections, with no hard-coded category names and no
+    # chart_id collision (auto-assigned when omitted).
+    report.build_pie_chart(
+        data=[
+            {"name": "Online", "value": 70},
+            {"name": "Offline", "value": 30},
+        ],
+        title="Device Connectivity",
+    )
+    report.build_pie_chart(
+        data=[
+            {"name": "Passed", "value": 85},
+            {"name": "Failed", "value": 10},
+            {"name": "Warning", "value": 5},
+        ],
+        title="Test Results",
+        subtitle="Across all iterations",
+        center_label={"main": "100", "sub": "Total"},
+    )
+    # Edge case: empty/zero data renders a graceful inline message instead of
+    # a broken chart or a crash.
+    report.build_pie_chart(data=[], title="No Data Example")
+
+    # lf_pie_graph demo: class-based counterpart to lf_bar_graph/lf_line_graph
+    # above (parallel _data_set/_label lists instead of {"name","value"} dicts).
+    pie = lf_pie_graph(_data_set=[40, 45, 15],
+                       _label=["2.4 GHz", "5 GHz", "6 GHz"],
+                       _graph_title="Band Distribution",
+                       _graph_image_name="demo-band-distribution")
+    report.set_graph_image(pie.build_pie_graph())
+    report.build_graph()
 
     report.build_footer_no_png()
 
