@@ -88,7 +88,10 @@ _ECHARTS_RUNTIME_JS = """
     return {
       color: PALETTE,
       tooltip: { trigger: "axis", axisPointer: { type: "cross" } },
-      legend: { bottom: 0, textStyle: { color: "#5f6f82", fontSize: 12 } },
+      // itemWidth/itemHeight wider than the ECharts default (25x14) so a dashed series'
+      // legend swatch has room to draw a couple of full dashes instead of one small
+      // fragment that reads as a broken line next to the solid series' swatches.
+      legend: { bottom: 0, textStyle: { color: "#5f6f82", fontSize: 12 }, itemWidth: 30, itemHeight: 14 },
       grid: { left: 76, right: 28, top: 48, bottom: 84, containLabel: true },
       xAxis: {
         type: "category", name: xName || "", nameLocation: "middle", nameGap: 34,
@@ -140,7 +143,12 @@ _ECHARTS_RUNTIME_JS = """
       var c = s.color || namedColor(s.name);
       return {
         name: s.name, type: "line", smooth: false, symbol: "none", connectNulls: false,
-        data: s.data, lineStyle: { width: 2, color: c }, itemStyle: c ? { color: c } : undefined
+        data: s.data,
+        // A named "dashed" type default to a short pattern that, at legend-swatch size,
+        // draws as one small fragment rather than a recognizable dashed line -- an
+        // explicit [dash, gap] pattern keeps it looking dashed at that size too.
+        lineStyle: { width: 2, color: c, type: s.dashed ? [6, 4] : "solid" },
+        itemStyle: c ? { color: c } : undefined
       };
     });
     chart.setOption(option);
@@ -215,6 +223,90 @@ _ECHARTS_RUNTIME_JS = """
       };
     });
     chart.setOption(option);
+    window.addEventListener("resize", function () { chart.resize(); });
+  };
+
+  window.__lfModernReport.renderConnectivityTimeline = function (id, payload) {
+    var el = document.getElementById(id);
+    var clients = (payload && payload.clients) || [];
+    var stations = (payload && payload.stations) || [];
+    var segments = (payload && payload.segments) || [];
+    if (!el || !clients.length || !segments.length) {
+      renderFallback(id, payload && payload.emptyMessage);
+      return;
+    }
+
+    el.style.height = Math.max(320, clients.length * 38 + 150) + "px";
+    var chart = window.echarts.init(el);
+
+    function renderSegment(params, api) {
+      var category = api.value(0);
+      var start = api.coord([api.value(1), category]);
+      var end = api.coord([api.value(2), category]);
+      var height = api.size([0, 1])[1] * 0.56;
+      var shape = echarts.graphic.clipRectByRect({
+        x: start[0],
+        y: start[1] - height / 2,
+        width: Math.max(end[0] - start[0], 1),
+        height: height
+      }, {
+        x: params.coordSys.x,
+        y: params.coordSys.y,
+        width: params.coordSys.width,
+        height: params.coordSys.height
+      });
+      return shape && { type: "rect", shape: shape, style: api.style() };
+    }
+
+    function seriesFor(status, label, color) {
+      return {
+        name: label,
+        type: "custom",
+        renderItem: renderSegment,
+        itemStyle: { color: color },
+        encode: { x: [1, 2], y: 0 },
+        data: segments.filter(function (s) { return s.status === status; })
+          .map(function (s) { return [s.clientIndex, s.start, s.end]; })
+      };
+    }
+
+    chart.setOption({
+      tooltip: {
+        trigger: "item",
+        formatter: function (p) {
+          var values = p.value || [];
+          var station = stations[values[0]];
+          var stationLine = station ? " (" + station + ")" : "";
+          return p.marker + " <b>" + clients[values[0]] + "</b>" + stationLine + "<br/>" +
+            p.seriesName + ": " + Number(values[1]).toFixed(1) + "–" +
+            Number(values[2]).toFixed(1) + " s";
+        }
+      },
+      legend: { bottom: 0, data: ["Up", "Drop"], textStyle: { color: "#5f6f82" } },
+      grid: { left: 165, right: 30, top: 25, bottom: 72, containLabel: false },
+      xAxis: {
+        type: "value",
+        min: 0,
+        max: payload.duration,
+        name: "Time (seconds)",
+        nameLocation: "middle",
+        nameGap: 36,
+        axisLabel: { color: "#5f6f82" },
+        splitLine: { lineStyle: { color: "#ecf1f6" } }
+      },
+      yAxis: {
+        type: "category",
+        inverse: true,
+        data: clients,
+        axisLabel: { color: "#2c3e50", fontWeight: 600, width: 145, overflow: "truncate" },
+        axisTick: { show: false },
+        axisLine: { show: false }
+      },
+      series: [
+        seriesFor("up", "Up", "#2e8b57"),
+        seriesFor("drop", "Drop", "#eb5757")
+      ]
+    });
     window.addEventListener("resize", function () { chart.resize(); });
   };
 
@@ -324,11 +416,6 @@ _TABLE_RUNTIME_JS = """
       tbody.innerHTML = pageRows.map(function (r, i) {
         return "<tr><td>" + (start + i + 1) + "</td>" + r.cellsHtml + "</tr>";
       }).join("") || "<tr><td colspan='99' style='text-align:center;color:var(--muted);'>No matching rows</td></tr>";
-      if (countEl) {
-        countEl.textContent = total === 0
-          ? "No rows found"
-          : ("Showing " + (start + 1) + " to " + Math.min(start + state.pageSize, total) + " of " + total + " rows");
-      }
       renderPagination(pages);
     }
 
@@ -380,6 +467,53 @@ _TABLE_RUNTIME_JS = """
     }
     renderRows();
   };
+})();
+</script>
+"""
+
+# Makes every plain report table (built by build_table()/pass_failed_build_table(), class
+# "data-table") sortable by clicking a column header. Injected once at the end of the page,
+# after all tables have been appended, so it can just scan the DOM rather than needing each
+# build_table() call to wire anything up.
+_SORTABLE_TABLE_JS = """
+<script>
+(function () {
+  function cellSortValue(cell) {
+    var text = cell.textContent.trim();
+    var numeric = parseFloat(text.replace(/,/g, ""));
+    if (!isNaN(numeric) && /^-?[\\d.,]+/.test(text)) { return numeric; }
+    return text.toLowerCase();
+  }
+
+  function sortTable(table, columnIndex, ascending) {
+    var tbody = table.tBodies[0];
+    if (!tbody) { return; }
+    var rows = Array.prototype.slice.call(tbody.rows);
+    rows.sort(function (rowA, rowB) {
+      var a = cellSortValue(rowA.cells[columnIndex]);
+      var b = cellSortValue(rowB.cells[columnIndex]);
+      if (a < b) { return ascending ? -1 : 1; }
+      if (a > b) { return ascending ? 1 : -1; }
+      return 0;
+    });
+    rows.forEach(function (row) { tbody.appendChild(row); });
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll("table.data-table"), function (table) {
+    var headerRow = table.tHead && table.tHead.rows[0];
+    if (!headerRow || !table.tBodies.length) { return; }
+    Array.prototype.forEach.call(headerRow.cells, function (th, columnIndex) {
+      th.classList.add("sortable");
+      th.addEventListener("click", function () {
+        var ascending = !th.classList.contains("sort-asc");
+        Array.prototype.forEach.call(headerRow.cells, function (cell) {
+          cell.classList.remove("sort-asc", "sort-desc");
+        });
+        th.classList.add(ascending ? "sort-asc" : "sort-desc");
+        sortTable(table, columnIndex, ascending);
+      });
+    });
+  });
 })();
 </script>
 """
@@ -885,6 +1019,23 @@ class lf_report:
     # https://wkhtmltopdf.org/usage/wkhtmltopdf.txt
     # page_size A4, A3, Letter, Legal
     # orientation Portrait , Landscape
+    @staticmethod
+    def _write_pdf_file(input_html, output_pdf, options, configuration=None):
+        """Run wkhtmltopdf, retrying once when its Qt renderer segfaults."""
+        kwargs = {'options': options}
+        if configuration is not None:
+            kwargs['configuration'] = configuration
+
+        try:
+            pdfkit.from_file(input_html, output_pdf, **kwargs)
+        except OSError as error:
+            # wkhtmltopdf 0.12.x occasionally exits with SIGSEGV (-11) even
+            # though the same document succeeds immediately afterward.
+            if 'non-zero code -11' not in str(error):
+                raise
+            logger.warning('wkhtmltopdf crashed with exit code -11; retrying PDF generation once')
+            pdfkit.from_file(input_html, output_pdf, **kwargs)
+
     def write_pdf(self, _page_size='A4', _orientation='Portrait'):
         if not self.output_pdf:
             logger.info("write_pdf: no pdf file name, skipping pdf output")
@@ -896,9 +1047,9 @@ class lf_report:
         if (os_name == "Windows"):
             path_to_wkhtmltopdf = r'C:\Program Files\wkhtmltopdf\bin\wkhtmltopdf.exe'
             config = pdfkit.configuration(wkhtmltopdf=path_to_wkhtmltopdf)
-            pdfkit.from_file(self.write_output_html, self.write_output_pdf, options=options, configuration=config)
+            self._write_pdf_file(self.write_output_html, self.write_output_pdf, options, configuration=config)
         else:
-            pdfkit.from_file(self.write_output_html, self.write_output_pdf, options=options)
+            self._write_pdf_file(self.write_output_html, self.write_output_pdf, options)
 
     def write_pdf_with_timestamp(self, _page_size='A4', _orientation='Portrait'):
         if not self.output_pdf:
@@ -908,7 +1059,7 @@ class lf_report:
                    'orientation': _orientation,
                    'page-size': _page_size}
         self.write_output_pdf = "{}/{}-{}".format(self.path_date_time, self.date, self.output_pdf)
-        pdfkit.from_file(self.write_output_html, self.write_output_pdf, options=options)
+        self._write_pdf_file(self.write_output_html, self.write_output_pdf, options)
 
     def get_pdf_path(self):
         pdf_link_path = "{}/{}-{}".format(self.path_date_time, self.date, self.output_pdf)
@@ -1227,6 +1378,7 @@ class lf_report:
     </div><!-- end report-shell -->
         """.format(logo_footer_data_uri=self._report_asset_as_data_uri(self.logo_footer_file_name))
         self.html += self.footer_html
+        self.html += _SORTABLE_TABLE_JS
 
     def build_footer_no_png(self):
         self.footer_html = """
@@ -1236,6 +1388,7 @@ class lf_report:
     </footer>
     </div><!-- end report-shell -->"""
         self.html += self.footer_html
+        self.html += _SORTABLE_TABLE_JS
 
     def copy_js(self):
         self.html += """
@@ -1378,11 +1531,13 @@ function copyTextToClipboard(ele) {
         """Add an interactive ECharts chart-card.
 
         chart_id: unique DOM id for the chart container.
-        chart_type: one of "line", "bar", "horizontal_bar", "pie".
+        chart_type: one of "line", "bar", "horizontal_bar",
+            "connectivity_timeline", "pie".
         payload: dict matching the shape the corresponding JS renderer expects,
             e.g. {"categories": [...], "series": [{"name": ..., "data": [...]}, ...]}
-            for line/bar/horizontal_bar, or {"slices": [{"name": ..., "value": ...}, ...]}
-            for pie.
+            for line/bar/horizontal_bar; {"clients": [...], "segments": [...],
+            "duration": ...} for connectivity_timeline; or
+            {"slices": [{"name": ..., "value": ...}, ...]} for pie.
         """
         if not self._echarts_runtime_emitted:
             self.html += _ECHARTS_RUNTIME_JS
@@ -1452,6 +1607,7 @@ def _chart_markup(chart_id, chart_type, payload, title="", y_name="", x_name="")
         "line": "renderLineChart",
         "bar": "renderBarChart",
         "horizontal_bar": "renderHorizontalBarChart",
+        "connectivity_timeline": "renderConnectivityTimeline",
         "pie": "renderPieChart",
     }
     renderer = renderer_by_type.get(chart_type)
@@ -2209,7 +2365,8 @@ class lf_line_graph:
                  _grid=True,
                  _enable_csv=False,
                  _reverse_x=False,
-                 _reverse_y=False):
+                 _reverse_y=False,
+                 _dashed=None):
         if _data_set is None:
             _data_set = [[30.4, 55.3, 69.2, 37.1, 44.0], [45.1, 67.2, 34.3, 22.4, 37.6], [22.5, 45.6, 12.7, 34.8, 22.5]]
         if _xaxis_categories is None:
@@ -2251,6 +2408,9 @@ class lf_line_graph:
         self.legend_fontsize = _legend_fontsize
         self.reverse_x = _reverse_x
         self.reverse_y = _reverse_y
+        # Per-series flag for a dashed reference/target line (e.g. an intended-load line drawn
+        # alongside the achieved-throughput line) instead of the usual solid measured line.
+        self.dashed = _dashed or []
 
     def build_line_graph(self):
         series = [
@@ -2258,6 +2418,7 @@ class lf_line_graph:
                 "name": self.label[i] if i < len(self.label) else "series-{}".format(i),
                 "data": self.data_set[i],
                 "color": _css_color(self.color[i % len(self.color)]),
+                "dashed": bool(self.dashed[i]) if i < len(self.dashed) else False,
             }
             for i in range(len(self.data_set))
         ]

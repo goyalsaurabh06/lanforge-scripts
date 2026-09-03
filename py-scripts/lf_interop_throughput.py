@@ -201,7 +201,7 @@ from lf_report import lf_report  # noqa: E402
 import lf_interop_bg_ping  # noqa: E402
 # from lf_graph import lf_bar_graph_horizontal, lf_bar_graph  # noqa: E402
 # from lf_graph import lf_line_graph  # noqa: E402
-from lf_modern_report import lf_report, lf_bar_graph, lf_bar_graph_horizontal, lf_line_graph  # noqa: E402
+from lf_modern_report import lf_report, lf_bar_graph, lf_bar_graph_horizontal, lf_line_graph, lf_pie_graph  # noqa: E402
 
 from datetime import datetime, timedelta  # noqa: E402
 
@@ -2606,17 +2606,53 @@ class Throughput(Realm):
             cx_incremental_capacity_names_lists.append(new_cx_names_list)
         return cx_incremental_capacity_names_lists, cx_incremental_capacity_lists, created_cx_lists_keys, incremental_capacity_list_values
 
-    def build_line_graph(self, data_set, xaxis_name, yaxis_name, xaxis_categories, label, graph_image_name):
+    # Color for the combined bi-directional "Intended Load" reference line -- distinct from the
+    # achieved Download/Upload colors (teal/amber) so it doesn't read as either one specifically.
+    INTENDED_LOAD_COLOR = "#2f80ed"
+
+    def build_line_graph(self, data_set, xaxis_name, yaxis_name, xaxis_categories, label, graph_image_name, dashed=None, color=None):
         """Renders the throughput-over-time line graph. Delegates to
         lf_modern_report.lf_line_graph (interactive chart-card markup) instead
-        of the matplotlib PNG this method used to draw itself."""
+        of the matplotlib PNG this method used to draw itself.
+
+        dashed: optional list of booleans parallel to data_set/label, marking which series
+        (e.g. an intended-load reference line) should be drawn dashed instead of solid.
+        color: optional list of colors parallel to data_set/label ('#rrggbb' or None). A None
+        entry leaves that series to the chart's own Download/Upload/Bidirectional name-based
+        coloring instead of forcing a specific color."""
         graph = lf_line_graph(_data_set=data_set,
                               _xaxis_name=xaxis_name,
                               _yaxis_name=yaxis_name,
                               _xaxis_categories=xaxis_categories,
                               _label=label,
-                              _graph_image_name=graph_image_name)
+                              _graph_image_name=graph_image_name,
+                              _dashed=dashed,
+                              _color=color)
         return graph.build_line_graph()
+
+    def intended_rates_mbps(self, incremental_capacity):
+        """Returns (download_mbps, upload_mbps): the configured target throughput for the given
+        iteration's active client count.
+
+        self.cx_profile.side_a_min_bps/side_b_min_bps are upload/download respectively (see the
+        "Upload Rate(Mbps)"/"Download Rate(Mbps)" test_setup_info fields). Unless self.load_type
+        is "wc_intended_load" (where the configured value is already the total across every
+        client), the configured value is per-client and needs multiplying by the active client
+        count to get the total intended rate this iteration -- the same scaling
+        build_key_findings() uses for its pass/fail check.
+
+        Returns (None, None) if the configured rates cannot be read as numbers.
+        """
+        try:
+            upload_mbps = int(self.cx_profile.side_a_min_bps) / 1000000
+            download_mbps = int(self.cx_profile.side_b_min_bps) / 1000000
+        except (TypeError, ValueError):
+            return None, None
+        if self.load_type != "wc_intended_load":
+            client_count = max(int(incremental_capacity or 0), 1)
+            upload_mbps *= client_count
+            download_mbps *= client_count
+        return download_mbps, upload_mbps
 
     def convert_to_table(self, configured_devices_check):
         """
@@ -2731,11 +2767,13 @@ class Throughput(Realm):
                 _label=self.RSSI_BUCKET_ORDER,
                 _colors=self.RSSI_BUCKET_COLORS,
                 _item_details=client_lines[band],
+                _legend=False,
                 _show_labels=False,
                 # A zero inner radius makes this the solid "pie-simple"
                 # style from the Apache ECharts example, rather than the
                 # report helper's donut default.
                 _radius=["0%", "68%"],
+                _center=["50%", "50%"],
                 _graph_title="{} Clients RSSI".format(band),
                 _graph_image_name="{}-{}".format(chart_id_prefix, band.replace(" ", "").replace(".", "")),
             )
@@ -2743,7 +2781,18 @@ class Throughput(Realm):
                 "<div style='float:left;width:{}%;box-sizing:border-box;padding:0 10px;'>{}</div>".format(
                     item_width_pct, graph.build_pie_graph()))
 
-        report.set_graph_image("<div style='overflow:hidden;'>{}</div>".format("".join(pies)))
+        legend_items = []
+        for bucket, color in zip(self.RSSI_BUCKET_ORDER, self.RSSI_BUCKET_COLORS):
+            legend_items.append(
+                "<span style='display:inline-block;margin:0 10px 6px 0;color:#5f6f82;font-size:12px;'>"
+                "<span style='display:inline-block;width:25px;height:14px;border-radius:4px;"
+                "background:{};vertical-align:-2px;margin-right:6px;'></span>{}</span>".format(color, bucket))
+        shared_legend = (
+            "<div style='clear:both;text-align:center;padding:12px 10px 4px;'>{}</div>".format(
+                "".join(legend_items)))
+
+        report.set_graph_image(
+            "<div style='overflow:hidden;'>{}{}</div>".format("".join(pies), shared_legend))
         report.build_graph()
 
     # TARGET_ACHIEVEMENT_LEVELS: how close to the target counts as good, kept as data instead of hardcoded in the method below.
@@ -2817,16 +2866,8 @@ class Throughput(Realm):
         channels = self.channel_list[0:num_clients] if self.channel_list else []
 
         # 1. Did we hit the target we configured?
-        try:
-            side_a_mbps = int(self.cx_profile.side_a_min_bps) / 1000000
-            side_b_mbps = int(self.cx_profile.side_b_min_bps) / 1000000
-            if self.load_type != "wc_intended_load":
-                client_count = max(int(incremental_capacity or 0), 1)
-                side_a_mbps *= client_count
-                side_b_mbps *= client_count
-            intended_mbps = side_a_mbps + side_b_mbps
-        except (TypeError, ValueError):
-            intended_mbps = None
+        intended_download, intended_upload = self.intended_rates_mbps(incremental_capacity)
+        intended_mbps = (intended_download + intended_upload) if intended_download is not None else None
 
         if intended_mbps and total_achieved:
             pct = self.percentage_of(total_achieved, intended_mbps)
@@ -2961,6 +3002,96 @@ class Throughput(Realm):
             })
 
         return findings[:7]
+
+    def build_ping_key_findings(self):
+        """Turns the background ping's per-client packet loss/latency stats into plain-English
+        "Key Findings" sentences, the same {"type": ..., "text": ...} shape build_key_findings()
+        returns, so the two lists can be shown together in one findings card.
+
+        The background ping covers the whole test duration rather than a single iteration, so
+        this is meant to be computed once per report, not once per iteration.
+
+        Returns:
+            A list of finding dicts, most important first. Empty list when the background ping
+            did not run or produced no statistics.
+        """
+        background_ping = getattr(self, 'background_ping', None)
+        if not background_ping or not background_ping.stats:
+            return []
+
+        findings = []
+        rows = list(background_ping.stats.values())
+        total_clients = len(rows)
+
+        # 1. Connectivity -- did any client see packet loss on the background ping.
+        lossy_clients = [row for row in rows if row['sent'] and row['dropped'] > 0]
+        clean_clients = total_clients - len(lossy_clients)
+        if lossy_clients:
+            findings.append({
+                "type": "warning" if len(lossy_clients) > total_clients / 2 else "neutral",
+                "text": "During the test, {n} of {total} client{s} experienced packet loss on the background "
+                        "ping; the remaining {clean} maintained an uninterrupted connection throughout.".format(
+                            n=len(lossy_clients), total=total_clients, s="" if total_clients == 1 else "s",
+                            clean=clean_clients)
+            })
+        elif total_clients:
+            findings.append({
+                "type": "positive",
+                "text": "All {n} client{s} maintained an uninterrupted background-ping connection throughout "
+                        "the test, with no packet loss observed.".format(
+                            n=total_clients, s="" if total_clients == 1 else "s")
+            })
+
+        # 2. How much loss, and who was worst affected.
+        loss_values = [row['loss_percent'] for row in rows if row['sent']]
+        if loss_values:
+            avg_loss = sum(loss_values) / len(loss_values)
+            worst = max(rows, key=lambda row: row['loss_percent'])
+            if avg_loss < 2 and worst['loss_percent'] < 5:
+                findings.append({
+                    "type": "positive",
+                    "text": "Packet loss was minimal, averaging {avg:.2f}% across all clients, indicating "
+                            "reliable communication under load.".format(avg=avg_loss)
+                })
+            else:
+                findings.append({
+                    "type": "warning",
+                    "text": "Average packet loss across clients was {avg:.2f}%, with {name} the worst affected "
+                            "at {loss:.2f}%.".format(avg=avg_loss, name=worst['name'], loss=worst['loss_percent'])
+                })
+
+        # 3. Latency -- was it low and steady, or did some client drag the average up.
+        rtts = [row['avg_rtt'] for row in rows if row['avg_rtt']]
+        if rtts:
+            avg_rtt = sum(rtts) / len(rtts)
+            worst_rtt = max(rows, key=lambda row: row['avg_rtt'])
+            if avg_rtt < 20 and worst_rtt['avg_rtt'] < 50:
+                findings.append({
+                    "type": "positive",
+                    "text": "Latency remained low across all connected clients, averaging {avg:.1f} ms, "
+                            "indicating throughput results were not impacted by poor wireless "
+                            "conditions.".format(avg=avg_rtt)
+                })
+            else:
+                findings.append({
+                    "type": "neutral",
+                    "text": "Average ping latency across clients was {avg:.1f} ms, with {name} seeing the "
+                            "highest average round-trip time at {rtt:.1f} ms.".format(
+                                avg=avg_rtt, name=worst_rtt['name'], rtt=worst_rtt['avg_rtt'])
+                })
+
+        # 4. A client that never produced ping traffic is a setup problem worth calling out directly.
+        silent_clients = [row for row in rows if not row['sent'] and not row['recv']]
+        if silent_clients:
+            findings.append({
+                "type": "critical",
+                "text": "{n} client{s} produced no background-ping traffic at all ({names}) -- check that "
+                        "the ping command is runnable there.".format(
+                            n=len(silent_clients), s="" if len(silent_clients) == 1 else "s",
+                            names=", ".join(row['name'] for row in silent_clients))
+            })
+
+        return findings
 
     def get_bandsteering_stats(self, report=None, df=None, data1=None):
         """
@@ -3501,9 +3632,50 @@ class Throughput(Realm):
                     label_data = ['Upload']
                     real_time_data = f"Real Time Throughput: Achieved Throughput: Upload : {round((sum(upload_data[0:int(incremental_capacity_list[i])])), 2)} Mbps"
 
+                # Overlay the configured target as a dashed reference line alongside the achieved
+                # throughput, so the graph shows how far off the target the AP actually ran.
+                # Bi-directional tests get one combined "Intended Load" line (up+down together,
+                # in a distinct orange) instead of two separate dashed lines; Download-only/
+                # Upload-only tests only have one direction to begin with, so their single
+                # intended line just reuses that direction's own Download/Upload color.
+                line_graph_dashed = [False] * len(data_set_in_graph)
+                line_graph_colors = [None] * len(data_set_in_graph)
+                intended_download, intended_upload = self.intended_rates_mbps(incremental_capacity_list[i])
+                if intended_download is not None and data_set_in_graph:
+                    num_points = len(data_set_in_graph[0])
+                    if self.direction == "Bi-direction":
+                        data_set_in_graph.append([intended_download + intended_upload] * num_points)
+                        label_data.append("Intended Load")
+                        line_graph_dashed.append(True)
+                        line_graph_colors.append(self.INTENDED_LOAD_COLOR)
+                    elif self.direction == 'Download':
+                        data_set_in_graph.append([intended_download] * num_points)
+                        label_data.append("Intended Download")
+                        line_graph_dashed.append(True)
+                        line_graph_colors.append(None)
+                    elif self.direction == 'Upload':
+                        data_set_in_graph.append([intended_upload] * num_points)
+                        label_data.append("Intended Upload")
+                        line_graph_dashed.append(True)
+                        line_graph_colors.append(None)
+
                 if len(incremental_capacity_list) > 1:
                     report.set_custom_html(f"<h2><u>Iteration-{i + 1}: Number of Devices Running : {len(devices_on_running)}</u></h2>")
                     report.build_custom()
+
+                # Key Findings is shown right under the test input parameters/device summary
+                # (and, for multi-iteration tests, right under this iteration's heading) rather
+                # than after the graphs, so it reads as the takeaway before the raw data.
+                key_findings = self.build_key_findings(
+                    download_data=download_data[0:int(incremental_capacity_list[i])],
+                    upload_data=upload_data[0:int(incremental_capacity_list[i])],
+                    devices=devices_on_running,
+                    incremental_capacity=incremental_capacity_list[i])
+                if i == 0:
+                    # The background ping covers the whole test, not just this iteration, so its
+                    # findings are only shown once rather than repeated on every iteration.
+                    key_findings = key_findings + self.build_ping_key_findings()
+                report.build_findings_card("Key Findings", key_findings)
 
                 report.set_obj_html(
                     _obj_title=f"{real_time_data}",
@@ -3515,19 +3687,15 @@ class Throughput(Realm):
                     yaxis_name="Throughput (Mbps)",
                     xaxis_categories=data['TIMESTAMP'][data['Iteration'] == i + 1].values.tolist(),
                     label=label_data,
-                    graph_image_name=f"line_graph{i}"
+                    graph_image_name=f"line_graph{i}",
+                    dashed=line_graph_dashed,
+                    color=line_graph_colors
                 )
                 logger.info("graph name {}".format(graph_png))
                 report.set_graph_image(graph_png)
                 report.move_graph_image()
 
                 report.build_graph()
-                key_findings = self.build_key_findings(
-                    download_data=download_data[0:int(incremental_capacity_list[i])],
-                    upload_data=upload_data[0:int(incremental_capacity_list[i])],
-                    devices=devices_on_running,
-                    incremental_capacity=incremental_capacity_list[i])
-                report.build_findings_card("Key Findings", key_findings)
                 x_fig_size = 15
                 y_fig_size = len(devices_on_running) * .5 + 4
                 report.set_obj_html(
@@ -3663,8 +3831,8 @@ class Throughput(Realm):
                             report.build_table()
                 else:
                     bk_dataframe = {
-                        " Device Type ": device_type[0:int(incremental_capacity_list[i])],
                         " Username": devices_on_running[0:int(incremental_capacity_list[i])],
+                        " Device Type ": device_type[0:int(incremental_capacity_list[i])],
                         " SSID ": self.ssid_list[0:int(incremental_capacity_list[i])],
                         " MAC ": self.mac_id_list[0:int(incremental_capacity_list[i])],
                         " Channel ": self.channel_list[0:int(incremental_capacity_list[i])],
@@ -3920,8 +4088,49 @@ class Throughput(Realm):
                         f"{round(sum(upload_data[0:int(incremental_capacity_list[i])]) / len(upload_data[0:int(incremental_capacity_list[i])]), 2)} Mbps"
                     )
 
+                # Overlay the configured target as a dashed reference line alongside the achieved
+                # throughput, so the graph shows how far off the target the AP actually ran.
+                # Bi-directional tests get one combined "Intended Load" line (up+down together,
+                # in a distinct orange) instead of two separate dashed lines; Download-only/
+                # Upload-only tests only have one direction to begin with, so their single
+                # intended line just reuses that direction's own Download/Upload color.
+                line_graph_dashed = [False] * len(data_set_in_graph)
+                line_graph_colors = [None] * len(data_set_in_graph)
+                intended_download, intended_upload = self.intended_rates_mbps(incremental_capacity_list[i])
+                if intended_download is not None and data_set_in_graph:
+                    num_points = len(data_set_in_graph[0])
+                    if self.direction == "Bi-direction":
+                        data_set_in_graph.append([intended_download + intended_upload] * num_points)
+                        label_data.append("Intended Load")
+                        line_graph_dashed.append(True)
+                        line_graph_colors.append(self.INTENDED_LOAD_COLOR)
+                    elif self.direction == 'Download':
+                        data_set_in_graph.append([intended_download] * num_points)
+                        label_data.append("Intended Download")
+                        line_graph_dashed.append(True)
+                        line_graph_colors.append(None)
+                    elif self.direction == 'Upload':
+                        data_set_in_graph.append([intended_upload] * num_points)
+                        label_data.append("Intended Upload")
+                        line_graph_dashed.append(True)
+                        line_graph_colors.append(None)
+
                 report.set_custom_html(f"<h2><u>{i + 1}. Test On Device {', '.join(devices_on_running)}:</u></h2>")
                 report.build_custom()
+
+                # Key Findings is shown right under the test input parameters/device summary
+                # (and this device's heading) rather than after the graphs, so it reads as the
+                # takeaway before the raw data.
+                key_findings = self.build_key_findings(
+                    download_data=download_data[0:int(incremental_capacity_list[i])],
+                    upload_data=upload_data[0:int(incremental_capacity_list[i])],
+                    devices=devices_on_running,
+                    incremental_capacity=incremental_capacity_list[i])
+                if i == 0:
+                    # The background ping covers the whole test, not just this device, so its
+                    # findings are only shown once rather than repeated for every device.
+                    key_findings = key_findings + self.build_ping_key_findings()
+                report.build_findings_card("Key Findings", key_findings)
 
                 report.set_obj_html(
                     _obj_title=f"{real_time_data}",
@@ -3933,19 +4142,15 @@ class Throughput(Realm):
                     yaxis_name="Throughput (Mbps)",
                     xaxis_categories=data['TIMESTAMP'][data['Iteration'] == i + 1].values.tolist(),
                     label=label_data,
-                    graph_image_name=f"line_graph{i}"
+                    graph_image_name=f"line_graph{i}",
+                    dashed=line_graph_dashed,
+                    color=line_graph_colors
                 )
                 logger.info("graph name {}".format(graph_png))
                 report.set_graph_image(graph_png)
                 report.move_graph_image()
 
                 report.build_graph()
-                key_findings = self.build_key_findings(
-                    download_data=download_data[0:int(incremental_capacity_list[i])],
-                    upload_data=upload_data[0:int(incremental_capacity_list[i])],
-                    devices=devices_on_running,
-                    incremental_capacity=incremental_capacity_list[i])
-                report.build_findings_card("Key Findings", key_findings)
                 x_fig_size = 15
                 y_fig_size = len(devices_on_running) * .5 + 4
                 report.set_obj_html(
@@ -4620,8 +4825,8 @@ class Throughput(Realm):
                                     report.build_table()
                         else:
                             bk_dataframe = {
-                                " Device Type ": device_type[0:int(incremental_capacity_list[i])],
                                 " Username": devices_on_running[0:int(incremental_capacity_list[i])],
+                                " Device Type ": device_type[0:int(incremental_capacity_list[i])],
                                 " SSID ": self.ssid_list[0:int(incremental_capacity_list[i])],
                                 " MAC ": self.mac_id_list[0:int(incremental_capacity_list[i])],
                                 " Channel ": self.channel_list[0:int(incremental_capacity_list[i])],
@@ -4766,8 +4971,8 @@ class Throughput(Realm):
         if devpacketsize != []:
             if len(username) != 0:
                 dataframe = {
-                    " Device Type ": device_type,
                     " Username": username,
+                    " Device Type ": device_type,
                     " SSID ": ssid,
                     " MAC ": mac,
                     " Channel ": channel,
@@ -4803,8 +5008,8 @@ class Throughput(Realm):
         else:
             if len(username) != 0:
                 dataframe = {
-                    " Device Type ": device_type,
                     " Username": username,
+                    " Device Type ": device_type,
                     " SSID ": ssid,
                     " MAC ": mac,
                     " Channel ": channel,
@@ -5688,20 +5893,18 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
             logger.error("Incremental values given for selected devices are incorrect")
             return
 
-        # starting the ping on the selected clients, it keeps running until the traffic is stopped
-        throughput.background_ping = lf_interop_bg_ping.from_args(
-            args,
-            host=args.mgr,
-            port=args.mgr_port,
-            device_list=throughput.input_devices_list,
-            default_target=args.upstream_port)
-
         created_cxs = throughput.build()
         time.sleep(10)
         created_cxs = list(created_cxs.keys())
 
         if args.robot_ip:
             # Execute Robo test execution when robot IP is provided
+            throughput.background_ping = lf_interop_bg_ping.from_args(
+                args,
+                host=args.mgr,
+                port=args.mgr_port,
+                device_list=throughput.input_devices_list,
+                default_target=args.upstream_port)
             throughput.perform_robo(args, clients_to_run)
             if throughput.background_ping:
                 throughput.background_ping.stop()
@@ -5775,6 +5978,16 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
             else:
                 device_names = created_cx_lists_keys[:to_run_cxs_len[i][-1]]
 
+            if i == 0:
+                # Start background ping immediately before throughput monitoring,
+                # excluding CX build, prechecks and client configuration time.
+                throughput.background_ping = lf_interop_bg_ping.from_args(
+                    args,
+                    host=args.mgr,
+                    port=args.mgr_port,
+                    device_list=throughput.input_devices_list,
+                    default_target=args.upstream_port)
+
             # Monitor throughput and capture all dataframes and test stop status
             all_dataframes, test_stopped_by_user = throughput.monitor(i, individual_df, device_names, incremental_capacity_list, overall_start_time, overall_end_time, is_device_configured)
             if args.do_interopability and "iOS" not in to_run_cxs[i][0] and args.interopability_config:
@@ -5793,10 +6006,10 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
 
     #     logger.info("connections download {}".format(connections_download))
     #     logger.info("connections upload {}".format(connections_upload))
-    throughput.remove_missing_cx()
-    throughput.stop()
     if throughput.background_ping:
         throughput.background_ping.stop()
+    throughput.remove_missing_cx()
+    throughput.stop()
     if args.postcleanup:
         throughput.cleanup()
     throughput.ensure_monitoring_data_collected()
