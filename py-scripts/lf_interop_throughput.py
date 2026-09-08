@@ -199,6 +199,7 @@ realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
 from lf_report import lf_report  # noqa: E402
 import lf_interop_bg_ping  # noqa: E402
+from lf_wifi_msgs import RealClientAnalysis  # noqa: E402
 # from lf_graph import lf_bar_graph_horizontal, lf_bar_graph  # noqa: E402
 # from lf_graph import lf_line_graph  # noqa: E402
 from lf_modern_report import lf_report, lf_bar_graph, lf_bar_graph_horizontal, lf_line_graph, lf_pie_graph  # noqa: E402
@@ -605,27 +606,14 @@ class Throughput(Realm):
             overall_end_time = overall_start_time + timedelta(seconds=int(args.test_duration) * len(incremental_capacity_list))
             curr_cycle = 1
             logger.info("Current Cycle: {}".format(curr_cycle))
+            all_dataframes = []
             # Iterate through all the points and monitoring throughput,bandsteering stats and as well as robot position
-            for coord in coordinate_list_with_robo:
-                if self.stop_test:
-                    logger.info("Stopping band-steering run because all CXs are missing or the test was stopped.")
-                    break
-                pause, stopped = self.robot.wait_for_battery(lambda: self.monitor(
-                    0,
-                    individual_df,
-                    device_names,
-                    incremental_capacity_list,
-                    overall_start_time,
-                    overall_end_time,
-                    is_device_configured
-                )
-                )
-                if self.stop_test or stopped:
-                    break
-
-                matched, abort, all_dataframes = self.robot.move_to_coordinate(
-                    coord,
-                    monitor_function=lambda: self.monitor(
+            try:
+                for coord in coordinate_list_with_robo:
+                    if self.stop_test:
+                        logger.info("Stopping band-steering run because all CXs are missing or the test was stopped.")
+                        break
+                    pause, stopped = self.robot.wait_for_battery(lambda: self.monitor(
                         0,
                         individual_df,
                         device_names,
@@ -634,19 +622,38 @@ class Throughput(Realm):
                         overall_end_time,
                         is_device_configured
                     )
-                )
-                if abort or self.stop_test:
-                    break
+                    )
+                    if self.stop_test or stopped:
+                        break
 
-                if coord == self.coordinate_list[0]:
-                    curr_cycle += 1
-                    if curr_cycle > int(self.total_cycles):
-                        logger.info("Completed all {} cycles".format(self.total_cycles))
-                    else:
-                        logger.info("current cycle {}".format(curr_cycle))
+                    matched, abort, all_dataframes = self.robot.move_to_coordinate(
+                        coord,
+                        monitor_function=lambda: self.monitor(
+                            0,
+                            individual_df,
+                            device_names,
+                            incremental_capacity_list,
+                            overall_start_time,
+                            overall_end_time,
+                            is_device_configured
+                        )
+                    )
+                    if abort or self.stop_test:
+                        break
 
-                if not matched:
-                    continue
+                    if coord == self.coordinate_list[0]:
+                        curr_cycle += 1
+                        if curr_cycle > int(self.total_cycles):
+                            logger.info("Completed all {} cycles".format(self.total_cycles))
+                        else:
+                            logger.info("current cycle {}".format(curr_cycle))
+
+                    if not matched:
+                        continue
+            except Exception as e:
+                # A mid-test failure must not skip cleanup/reporting -- log it and fall through
+                # to the reporting below with whatever data was collected so far.
+                logger.error("Band-steering monitoring failed: %s", e)
             # Generate a band-steering report only when monitoring collected rows.
             collected_dataframes = [df for df in all_dataframes if isinstance(df, pd.DataFrame)]
             if not collected_dataframes or all(df.empty for df in collected_dataframes):
@@ -667,6 +674,7 @@ class Throughput(Realm):
                 self.cleanup()
             self.ensure_monitoring_data_collected()
             iterations_before_test_stopped_by_user.append(0)
+            self.stop_wifi_analysis()
             self.generate_report(list(set(iterations_before_test_stopped_by_user)), incremental_capacity_list, data=all_dataframes, data1=to_run_cxs_len, report_path=self.result_dir)
             if self.dowebgui:
                 # copying to home directory i.e home/user_name
@@ -674,6 +682,7 @@ class Throughput(Realm):
             exit(1)
 
         # Loop through the coordinate list when coordinates are specified.
+        all_dataframes = None
         for coord in self.coordinate_list:
             if self.stop_test:
                 logger.info("Stopping robot run because all CXs are missing or the test was stopped.")
@@ -763,11 +772,19 @@ class Throughput(Realm):
                 else:
                     device_names = created_cx_lists_keys[:to_run_cxs_len[i][-1]]
 
-                # Monitor throughput and capture all dataframes and test stop status
-                all_dataframes, test_stopped_by_user = self.monitor_for_robo(i, individual_df, device_names, incremental_capacity_list, overall_start_time, overall_end_time, is_device_configured)
-                if args.do_interopability and "iOS" not in to_run_cxs[i][0] and args.interopability_config:
-                    # Disconnecting device after running the test
-                    self.disconnect_all_devices([device_to_run_resource])
+                try:
+                    # Monitor throughput and capture all dataframes and test stop status
+                    all_dataframes, test_stopped_by_user = self.monitor_for_robo(i, individual_df, device_names, incremental_capacity_list, overall_start_time, overall_end_time, is_device_configured)
+                    if args.do_interopability and "iOS" not in to_run_cxs[i][0] and args.interopability_config:
+                        # Disconnecting device after running the test
+                        self.disconnect_all_devices([device_to_run_resource])
+                except Exception as e:
+                    # A mid-test failure must not skip cleanup/reporting -- log it and fall
+                    # through to the reporting below with whatever data was collected so far.
+                    logger.error("Robot monitoring failed on iteration %s: %s", i, e)
+                    iterations_before_test_stopped_by_user.append(i)
+                    test_stopped_by_user = True
+                    break
                 # Check if the test was stopped by the user
                 if test_stopped_by_user is False:
 
@@ -801,6 +818,7 @@ class Throughput(Realm):
                 navdata['Test_status'] = 'Completed'
             with open(nav_data, 'w') as x:
                 json.dump(navdata, x, indent=4)
+        self.stop_wifi_analysis()
         self.generate_report_robo(list(set(iterations_before_test_stopped_by_user)), incremental_capacity_list, data=all_dataframes, data1=to_run_cxs_len, report_path=self.result_dir)
         if self.dowebgui:
             # copying to home directory i.e home/user_name
@@ -3093,6 +3111,190 @@ class Throughput(Realm):
 
         return findings
 
+    def build_wifi_analysis_key_findings(self):
+        """Turns the wifi connectivity analysis stats into plain-English "Key Findings" sentences,
+        the same {"type": ..., "text": ...} shape build_key_findings() returns, so the two lists
+        can be shown together in one findings card.
+
+        The wifi connectivity analysis covers the whole test duration rather than a single
+        iteration, so this is meant to be computed once per report, not once per iteration.
+
+        Returns:
+            A list of finding dicts, most important first. Empty list when the analysis did not
+            run or produced no statistics.
+        """
+        wifi_analysis_stats = getattr(self, 'wifi_analysis_stats', None)
+        wifi_analysis = getattr(self, 'wifi_analysis', None)
+        if not wifi_analysis_stats or not wifi_analysis:
+            return []
+
+        try:
+            devices, connect_attempt, disconnected, scanning, association_rejection, connected, remarks, cx_time = \
+                wifi_analysis.dicttolist(wifi_analysis_stats)
+        except Exception as e:
+            logger.warning("Wifi connectivity analysis key findings could not be computed: %s", e)
+            return []
+
+        total_devices = len(devices)
+        if not total_devices:
+            return []
+
+        findings = []
+
+        # 1. Overall stability -- did any device disconnect during the test.
+        devices_with_disconnects = sum(1 for d in disconnected if d > 0)
+        if devices_with_disconnects:
+            findings.append({
+                "type": "warning" if devices_with_disconnects > total_devices / 2 else "neutral",
+                "text": "{n} of {total} device{s} disconnected {total_disc} time(s) in total during the "
+                        "test.".format(n=devices_with_disconnects, total=total_devices,
+                                       s="" if total_devices == 1 else "s", total_disc=sum(disconnected))
+            })
+        else:
+            findings.append({
+                "type": "positive",
+                "text": "All {n} device{s} maintained their wireless connection with no disconnections "
+                        "observed during the test.".format(n=total_devices, s="" if total_devices == 1 else "s")
+            })
+
+        # 2. Association rejections -- did any device struggle to (re)connect.
+        devices_with_rejections = sum(1 for r in association_rejection if r > 0)
+        if devices_with_rejections:
+            findings.append({
+                "type": "warning",
+                "text": "{n} of {total} device{s} hit {total_rej} association rejection(s) while attempting "
+                        "to (re)connect.".format(n=devices_with_rejections, total=total_devices,
+                                                  s="" if total_devices == 1 else "s",
+                                                  total_rej=sum(association_rejection))
+            })
+
+        # 3. A device that never connected is the most serious finding -- surface it directly.
+        never_connected = [devices[i] for i in range(total_devices) if connected[i] == 0]
+        if never_connected:
+            findings.append({
+                "type": "critical",
+                "text": "{n} device{s} never successfully connected during the analyzed window: "
+                        "{names}.".format(n=len(never_connected), s="" if len(never_connected) == 1 else "s",
+                                          names=", ".join(str(name) for name in never_connected))
+            })
+
+        return findings
+
+    def build_test_summary(self, rssi_values=None):
+        """Builds a handful of plain-English narrative sentences giving an executive-level
+        overview of the whole test -- connectivity/reconnection, packet loss, signal quality, and
+        an overall verdict -- each fusing several metrics into one sentence, rather than the many
+        granular one-metric-per-item entries in the Key Findings card.
+
+        Meant to be computed once per report (like build_ping_key_findings()/
+        build_wifi_analysis_key_findings()), not once per iteration.
+
+        Args:
+            rssi_values: this iteration's client RSSI readings (same style as
+                build_rssi_distribution_charts() -- positive numbers, e.g. 55 means -55 dBm).
+
+        Returns:
+            A list of plain strings, most important first. Empty list when none of the underlying
+            analyses (wifi connectivity, background ping, RSSI) produced any data.
+        """
+        summary = []
+        has_issue = False
+
+        # 1. Connectivity / reconnection, from the wifi connectivity analysis.
+        wifi_analysis_stats = getattr(self, 'wifi_analysis_stats', None)
+        wifi_analysis = getattr(self, 'wifi_analysis', None)
+        if wifi_analysis_stats and wifi_analysis:
+            try:
+                devices, connect_attempt, disconnected, scanning, association_rejection, connected, remarks, cx_time = \
+                    wifi_analysis.dicttolist(wifi_analysis_stats)
+                total_devices = len(devices)
+                total_disconnects = sum(disconnected)
+                never_connected = sum(1 for c in connected if c == 0)
+                plural = "" if total_devices == 1 else "s"
+                if total_devices:
+                    if not total_disconnects:
+                        summary.append(
+                            "All {total} client{s} maintained a stable wireless connection throughout the "
+                            "test, with no disconnections observed.".format(total=total_devices, s=plural))
+                    elif not never_connected:
+                        summary.append(
+                            "During the test, clients experienced {n} connect/disconnect event(s); however, "
+                            "all {total} client{s} were able to reconnect successfully by the end of the "
+                            "test.".format(n=total_disconnects, total=total_devices, s=plural))
+                    else:
+                        has_issue = True
+                        summary.append(
+                            "During the test, clients experienced {n} connect/disconnect event(s); {never} "
+                            "of {total} client{s} did not reconnect by the end of the test.".format(
+                                n=total_disconnects, never=never_connected, total=total_devices, s=plural))
+            except Exception as e:
+                logger.warning("Test summary connectivity bullet could not be computed: %s", e)
+
+        # 2. Packet loss, from the background ping.
+        background_ping = getattr(self, 'background_ping', None)
+        if background_ping and background_ping.stats:
+            rows = list(background_ping.stats.values())
+            loss_values = [row['loss_percent'] for row in rows if row['sent']]
+            if loss_values:
+                avg_loss = sum(loss_values) / len(loss_values)
+                if avg_loss < 2:
+                    summary.append(
+                        "Packet loss was minimal, averaging {avg:.1f}% across all clients, indicating "
+                        "reliable communication under load.".format(avg=avg_loss))
+                elif avg_loss < 10:
+                    summary.append(
+                        "Packet loss was moderate, averaging {avg:.1f}% across all clients.".format(avg=avg_loss))
+                else:
+                    has_issue = True
+                    summary.append(
+                        "Packet loss was significant, averaging {avg:.1f}% across all clients, indicating "
+                        "unreliable communication under load.".format(avg=avg_loss))
+
+        # 3. Signal quality, from RSSI.
+        readings = [abs(v) for v in (rssi_values or []) if v]
+        if readings:
+            buckets = [self._classify_rssi_bucket(-v) for v in readings]
+            weak = sum(1 for b in buckets if b in (self.RSSI_BUCKET_ORDER[2], self.RSSI_BUCKET_ORDER[3]))
+            if not weak:
+                summary.append(
+                    "Signal quality remained strong for all connected clients, ensuring throughput results "
+                    "were not impacted by poor wireless conditions.")
+            else:
+                has_issue = True
+                summary.append(
+                    "{weak} of {total} client(s) experienced weak signal (Fair or Poor RSSI) during the "
+                    "test, which may have impacted their throughput results.".format(weak=weak, total=len(buckets)))
+
+        # 4. Overall verdict, once there's at least something to summarize.
+        if summary:
+            if has_issue:
+                summary.append("Overall, the AP showed some instability or degraded performance during the test.")
+            else:
+                summary.append("Overall, the AP demonstrated good performance and stable operation.")
+
+        return summary
+
+    def add_test_summary_to_report(self, report, rssi_values=None):
+        """Appends the "Test Summary" card (see build_test_summary()) to the report as a plain
+        bulleted list -- no severity icons, unlike the Key Findings card -- since it's meant to
+        read as a short executive summary rather than an itemized list of individual metrics.
+
+        Safe to call unconditionally, nothing is added when there is nothing to summarize.
+        """
+        summary = self.build_test_summary(rssi_values=rssi_values)
+        if not summary:
+            return
+        try:
+            items = "".join("<li style='font-size:14px; color:var(--ink); line-height:1.5;'>{}</li>".format(point)
+                            for point in summary)
+            report.set_custom_html(
+                "<div class='info-card'><div class='info-card-header'>Test Summary</div>"
+                "<ul style='margin:0; padding-left:20px; display:flex; flex-direction:column; "
+                "gap:10px;'>{}</ul></div>".format(items))
+            report.build_custom()
+        except Exception as e:
+            logger.warning("Test summary could not be added to the report: %s", e)
+
     def get_bandsteering_stats(self, report=None, df=None, data1=None):
         """
         Retrieves and adds bandsteering statistics to the report.
@@ -3239,6 +3441,102 @@ class Throughput(Realm):
             table_df = pd.DataFrame(table_df)
             report.set_table_dataframe(table_df)
             report.build_table()
+
+    def start_wifi_analysis(self, host, port, device_list, ssid):
+        """Starts a RealClientAnalysis window for the devices under test.
+
+        Records the moment this is called (i.e. when the test starts monitoring) as the window's
+        start, so stop_wifi_analysis() later analyzes only what happened during this test. Never
+        raises -- a failure here (e.g. REST hiccup) just means the analysis is skipped.
+        """
+        self.wifi_analysis = None
+        self.wifi_analysis_stats = {}
+        if not device_list:
+            return
+        try:
+            self.wifi_analysis = RealClientAnalysis(host=host, port=port, device_list=list(device_list),
+                                                    ssid=ssid or "", debug=self.debug)
+            self.wifi_analysis_start_time = int(time.time() * 1000)
+        except Exception as e:
+            logger.warning("Wifi connectivity analysis could not be started: %s", e)
+            self.wifi_analysis = None
+
+    def stop_wifi_analysis(self):
+        """Analyzes '/wifi-msgs' from start_wifi_analysis() up to now, into self.wifi_analysis_stats.
+
+        Safe to call unconditionally -- including from a 'finally' block after the monitored test
+        failed partway through -- since every step is guarded and only ever logs on failure.
+        """
+        if not getattr(self, 'wifi_analysis', None):
+            return
+        try:
+            self.wifi_analysis.query_devices_1()
+            local_dict = self.wifi_analysis.create_local_dict()
+            if not local_dict:
+                logger.warning("None of the wifi connectivity analysis devices resolved to a device LANforge knows about")
+                return
+            self.wifi_analysis_stats = self.wifi_analysis.get_client_connectivity_stats_from_timestamp(
+                self.wifi_analysis_start_time, None, local_dict)
+        except Exception as e:
+            logger.warning("Wifi connectivity analysis results could not be collected: %s", e)
+
+    def add_wifi_analysis_to_report(self, report):
+        """Appends the wifi connectivity event summary graph and stats table to the test's own
+        report. Safe to call unconditionally, nothing is added when the analysis produced no stats.
+        """
+        if not getattr(self, 'wifi_analysis_stats', None):
+            return
+        try:
+            devices, connect_attempt, disconnected, scanning, association_rejection, connected, remarks, cx_time = \
+                self.wifi_analysis.dicttolist(self.wifi_analysis_stats)
+
+            categories = ["Disconnected", "Scans", "Association Attempts", "Association Rejected", "Connected"]
+            totals = [sum(disconnected), sum(scanning), sum(connect_attempt), sum(association_rejection), sum(connected)]
+            colors = ['#e67e22', '#1e824c', '#2980b9', '#8e44ad', '#27ae60']
+
+            report.set_obj_html(
+                _obj_title="Client Connectivity Event Summary",
+                _obj="This graph summarizes connection-related events observed during the throughput test. "
+                     "These metrics provide insight into client stability and wireless connectivity performance.")
+            report.build_objective()
+            graph = lf_bar_graph(_data_set=[[v] for v in totals],
+                                 _xaxis_name="Count",
+                                 _yaxis_name="",
+                                 _xaxis_categories=[""],
+                                 _graph_image_name="wifi_connectivity_status",
+                                 _label=categories,
+                                 _graph_title="Client Connectivity Status",
+                                 _title_size=16,
+                                 _color_edge='black',
+                                 _bar_width=0.3,
+                                 _figsize=(10, 6),
+                                 _legend_loc="best",
+                                 _dpi=96,
+                                 _show_bar_value=True,
+                                 _enable_csv=True,
+                                 _color=colors,
+                                 _color_name=colors)
+            graph_png = graph.build_bar_graph()
+            report.set_graph_image(graph_png)
+            report.move_graph_image()
+            report.set_csv_filename(graph.graph_image_name)
+            report.move_csv_file()
+            report.build_graph()
+
+            dataframe = pd.DataFrame({
+                "Device": devices,
+                "ConnectAttempt": connect_attempt,
+                "Disconnected": disconnected,
+                "Scanning": scanning,
+                "Association Rejection": association_rejection,
+                "Connected": connected,
+            })
+            report.set_table_title("Wifi Connectivity Analysis")
+            report.build_table_title()
+            report.set_table_dataframe(dataframe)
+            report.build_table()
+        except Exception as e:
+            logger.warning("Wifi connectivity analysis could not be added to the report: %s", e)
 
     def generate_report(self, iterations_before_test_stopped_by_user, incremental_capacity_list, data=None, data1=None, report_path='', result_dir_name='Throughput_Test_report',
                         selected_real_clients_names=None, iot_summary=None):
@@ -3672,9 +3970,11 @@ class Throughput(Realm):
                     devices=devices_on_running,
                     incremental_capacity=incremental_capacity_list[i])
                 if i == 0:
-                    # The background ping covers the whole test, not just this iteration, so its
-                    # findings are only shown once rather than repeated on every iteration.
-                    key_findings = key_findings + self.build_ping_key_findings()
+                    # The background ping and wifi connectivity analysis cover the whole test, not
+                    # just this iteration, so their findings/summary are only shown once rather
+                    # than repeated on every iteration.
+                    key_findings = key_findings + self.build_ping_key_findings() + self.build_wifi_analysis_key_findings()
+                    self.add_test_summary_to_report(report, rssi_values=rssi_data[0:int(incremental_capacity_list[i])])
                 report.build_findings_card("Key Findings", key_findings)
 
                 report.set_obj_html(
@@ -4127,9 +4427,11 @@ class Throughput(Realm):
                     devices=devices_on_running,
                     incremental_capacity=incremental_capacity_list[i])
                 if i == 0:
-                    # The background ping covers the whole test, not just this device, so its
-                    # findings are only shown once rather than repeated for every device.
-                    key_findings = key_findings + self.build_ping_key_findings()
+                    # The background ping and wifi connectivity analysis cover the whole test, not
+                    # just this device, so their findings/summary are only shown once rather than
+                    # repeated for every device.
+                    key_findings = key_findings + self.build_ping_key_findings() + self.build_wifi_analysis_key_findings()
+                    self.add_test_summary_to_report(report, rssi_values=rssi_data[0:int(incremental_capacity_list[i])])
                 report.build_findings_card("Key Findings", key_findings)
 
                 report.set_obj_html(
@@ -4279,6 +4581,8 @@ class Throughput(Realm):
         # ping statistics collected on the clients while the traffic was running
         if getattr(self, 'background_ping', None):
             self.background_ping.add_to_report(report)
+        # wifi connectivity stats (connects/disconnects/scans/rejections) collected while the traffic was running
+        self.add_wifi_analysis_to_report(report)
         if self.device_issue_log:
             pd.DataFrame(self.device_issue_log).to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
         # report.build_custom()
@@ -4874,6 +5178,8 @@ class Throughput(Realm):
         # ping statistics collected on the clients while the traffic was running
         if getattr(self, 'background_ping', None):
             self.background_ping.add_to_report(report)
+        # wifi connectivity stats (connects/disconnects/scans/rejections) collected while the traffic was running
+        self.add_wifi_analysis_to_report(report)
         if self.device_issue_log:
             pd.DataFrame(self.device_issue_log).to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
         # report.build_custom()
@@ -5692,6 +5998,10 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
     optional.add_argument('--bssids', type=str, help='Comma separated list of BSSIDs to be used for the test', default="")
 
     lf_interop_bg_ping.add_arguments(parser)
+    parser.add_argument('--wifi_analysis',
+                        action='store_true',
+                        help='Analyze real-client wifi-msgs (connects/disconnects/scans/association rejections) '
+                             'for the duration of the test and include the results in the report')
 
     args = parser.parse_args()
 
@@ -5905,10 +6215,18 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
                 port=args.mgr_port,
                 device_list=throughput.input_devices_list,
                 default_target=args.upstream_port)
-            throughput.perform_robo(args, clients_to_run)
-            if throughput.background_ping:
-                throughput.background_ping.stop()
-                throughput.background_ping.cleanup()
+            if args.wifi_analysis:
+                throughput.start_wifi_analysis(host=args.mgr, port=args.mgr_port,
+                                               device_list=throughput.input_devices_list, ssid=args.ssid)
+            try:
+                throughput.perform_robo(args, clients_to_run)
+            finally:
+                # Guarantees the analysis window's stats are collected even if the robot run
+                # raised partway through and never reached its own report generation.
+                throughput.stop_wifi_analysis()
+                if throughput.background_ping:
+                    throughput.background_ping.stop()
+                    throughput.background_ping.cleanup()
             exit(1)
 
         if not throughput.precheck_all_created_cx_endpoints():
@@ -5933,6 +6251,7 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
         overall_start_time = datetime.now()
         overall_end_time = overall_start_time + timedelta(seconds=int(args.test_duration) * len(incremental_capacity_list))
 
+        all_dataframes = None
         for i in range(len(to_run_cxs)):
             is_device_configured = True
             if args.do_interopability:
@@ -5987,12 +6306,23 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
                     port=args.mgr_port,
                     device_list=throughput.input_devices_list,
                     default_target=args.upstream_port)
+                if args.wifi_analysis:
+                    throughput.start_wifi_analysis(host=args.mgr, port=args.mgr_port,
+                                                   device_list=throughput.input_devices_list, ssid=args.ssid)
 
-            # Monitor throughput and capture all dataframes and test stop status
-            all_dataframes, test_stopped_by_user = throughput.monitor(i, individual_df, device_names, incremental_capacity_list, overall_start_time, overall_end_time, is_device_configured)
-            if args.do_interopability and "iOS" not in to_run_cxs[i][0] and args.interopability_config:
-                # Disconnecting device after running the test
-                throughput.disconnect_all_devices([device_to_run_resource])
+            try:
+                # Monitor throughput and capture all dataframes and test stop status
+                all_dataframes, test_stopped_by_user = throughput.monitor(i, individual_df, device_names, incremental_capacity_list, overall_start_time, overall_end_time, is_device_configured)
+                if args.do_interopability and "iOS" not in to_run_cxs[i][0] and args.interopability_config:
+                    # Disconnecting device after running the test
+                    throughput.disconnect_all_devices([device_to_run_resource])
+            except Exception as e:
+                # A mid-test failure must not skip cleanup/reporting -- log it, stop this
+                # iteration's monitoring here, and fall through to the reporting below with
+                # whatever data was collected so far.
+                logger.error("Throughput monitoring failed on iteration %s: %s", i, e)
+                iterations_before_test_stopped_by_user.append(i)
+                break
             # Check if the test was stopped by the user
             if test_stopped_by_user is False:
 
@@ -6008,6 +6338,7 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
     #     logger.info("connections upload {}".format(connections_upload))
     if throughput.background_ping:
         throughput.background_ping.stop()
+    throughput.stop_wifi_analysis()
     throughput.remove_missing_cx()
     throughput.stop()
     if args.postcleanup:

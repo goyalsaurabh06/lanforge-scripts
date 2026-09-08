@@ -728,11 +728,6 @@ class BackgroundPing:
             'Max Latency (ms)': [row['max_rtt'] for row in rows],
         }
 
-        # The remarks column only earns its place when something actually went wrong
-        remarks = [', '.join(row['remarks']) for row in rows]
-        if any(remarks):
-            table['Remarks'] = remarks
-
         return pd.DataFrame(table)
 
     def add_to_report(self, report):

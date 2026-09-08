@@ -23,10 +23,20 @@ EXAMPLE:
     for entry in wifi_msgs.poll(interval=2):   # stop with break / wifi_msgs.stop_polling()
         handle(entry)
 
+    # per-real-client connect/disconnect/scan/rejection stats (needs pandas, tabulate,
+    # DeviceConfig -- see RealClientAnalysis's docstring)
+    from lf_wifi_msgs import RealClientAnalysis
+    analysis = RealClientAnalysis(host="192.168.1.31", device_list=["1.10", "1.13"], ssid="my-ssid")
+    analysis.query_devices_1()
+    local_dict = analysis.create_local_dict()
+    stats = analysis.get_client_connectivity_stats_from_timestamp(start_time, end_time, local_dict)
+
 NOTES:
     LANforge time-stamps are epoch milliseconds. --since / --between values are
     sent through unchanged; --duration is computed off the newest message.
     Raw output is '<time-stamp> <resource>  <text>' per line; --output json keeps the full entry dicts.
+    RealClientAnalysis (per-real-client connectivity stats) needs pandas, tabulate and DeviceConfig;
+    those are optional for this file overall so plain WifiMessages usage doesn't require them.
 
 SCRIPT_CLASSIFICATION: Reporting, Wi-Fi Messages
 
@@ -63,6 +73,21 @@ LFCliBase = lfcli_base.LFCliBase
 realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
+
+# RealClientAnalysis-only dependencies. Kept optional so importing WifiMessages (the common
+# case, e.g. "from lf_wifi_msgs import WifiMessages") still works in an environment that
+# doesn't have these installed; RealClientAnalysis itself raises a clear error if used
+# without them (see RealClientAnalysis.__init__).
+try:
+    import pandas as pd
+    from tabulate import tabulate
+    from DeviceConfig import DeviceConfig
+    _REAL_CLIENT_ANALYSIS_IMPORT_ERROR = None
+except ImportError as _import_error:
+    pd = None
+    tabulate = None
+    DeviceConfig = None
+    _REAL_CLIENT_ANALYSIS_IMPORT_ERROR = _import_error
 
 RETRY_TIMEOUT = 40      # seconds to keep retrying a /wifi-msgs GET that returns nothing
 RETRY_INTERVAL = 5      # seconds between those retries
@@ -192,6 +217,42 @@ class WifiMessages(Realm):
         """
         return self.get_wifi_messages("/wifi-msgs/between=time/{}/{}".format(start, end))
 
+    @staticmethod
+    def keyed(entries: List[dict]) -> List[dict]:
+        """Re-wrap normalized entries as '[{"<resource>.<time-stamp>": entry}, ...]'.
+
+        Args:
+            entries: normalized wifi-msg dicts (as returned by last()/since()/between()/etc.).
+
+        Some callers (e.g. per-device connectivity analysis) index a batch of messages by a
+        '<resource>.<time-stamp>' key rather than working off the flat entry list normalize_messages()
+        returns. This produces that shape from the same normalized entries, so callers needing it
+        don't have to re-implement their own '/wifi-msgs' fetching/retry logic to get it.
+        """
+        keyed_entries = []
+        for entry in entries:
+            resource = entry.get("resource", "")
+            ts = entry.get("time-stamp", entry.get("timestamp", ""))
+            keyed_entries.append({"{}.{}".format(resource, ts): entry})
+        return keyed_entries
+
+    def since_keyed(self, timestamp: int) -> List[dict]:
+        """Like since(), but each entry is wrapped '{"<resource>.<time-stamp>": entry}'.
+
+        Args:
+            timestamp: LANforge epoch-ms time-stamp.
+        """
+        return self.keyed(self.since(timestamp))
+
+    def between_keyed(self, start: int, end: int) -> List[dict]:
+        """Like between(), but each entry is wrapped '{"<resource>.<time-stamp>": entry}'.
+
+        Args:
+            start: window start, LANforge epoch-ms time-stamp.
+            end: window end, LANforge epoch-ms time-stamp.
+        """
+        return self.keyed(self.between(start, end))
+
     def duration(self, seconds: float) -> List[dict]:
         """Messages from the last 'seconds': the newest message's stamp minus the window, via since=time.
            Falls back to last=time with no baseline.
@@ -288,6 +349,514 @@ class WifiMessages(Realm):
             text = entry.get("text", [])
             for line in (text if isinstance(text, list) else [text]):
                 stream.write("{} {}  {}\n".format(ts, resource, line))
+
+
+class RealClientAnalysis(Realm):
+    """Per-real-client Wi-Fi connectivity stats (connects/disconnects/scans/rejections),
+    derived from '/wifi-msgs' via WifiMessages plus device discovery via DeviceConfig.
+
+    Ported from lf_get_client_stats_sd.py's LFGetClientStats so other scripts can reuse this
+    analysis without depending on that standalone script; the '/wifi-msgs' fetching itself is
+    delegated to WifiMessages (since_keyed()/between_keyed()) instead of re-implementing it here.
+
+    Needs pandas, tabulate and DeviceConfig -- optional dependencies for this file (see the
+    import block near the top) so that plain 'from lf_wifi_msgs import WifiMessages' still works
+    without them. Raises ImportError on construction if they aren't installed.
+    """
+
+    def __init__(self, host: Optional[str] = None, port: int = 8080,
+                 device_list: Optional[List[str]] = None, ssid: str = "", debug: bool = False) -> None:
+        """Build a real-client connectivity analyzer.
+
+        Args:
+            host: LANforge manager IP or hostname.
+            port: LANforge GUI REST port (default 8080).
+            device_list: resource IDs (e.g. '1.10') and/or ADB serials/hostnames to analyze.
+            ssid: expected SSID; used to double-check a client actually landed on it.
+            debug: pass through to the REST layer for verbose logging.
+        """
+        if _REAL_CLIENT_ANALYSIS_IMPORT_ERROR is not None:
+            raise ImportError(
+                "RealClientAnalysis needs pandas, tabulate and DeviceConfig, which are not "
+                "available: {}".format(_REAL_CLIENT_ANALYSIS_IMPORT_ERROR))
+
+        super().__init__(host, port, debug_=debug)
+        self.host = host
+        self.port = port
+        self.device_list = list(device_list) if device_list else []
+        self.ssid = ssid
+        self.wifi_msgs = WifiMessages(host=host, port=port, debug=debug)
+        self.device_config_obj = DeviceConfig(lanforge_ip=host, port=port)
+        self.resource_id_to_abs = {}
+        self.windows_list = []
+        self.virtual_station_list = []
+        self.resource_id_list = []
+
+    def get_virtual_stations(self) -> List[dict]:
+        """Discovers non-phantom, up, real (not-yet-mapped-by-resource) WIFI-STA ports.
+
+        These are stations that exist as LANforge ports but weren't already picked up as a
+        laptop/ADB resource (e.g. a station brought up directly rather than through a resource) --
+        tracked separately in self.virtual_station_list so create_local_dict() can find them too.
+        """
+        devices_data = []
+        response_port = self.json_get("/port/all")
+        if "interfaces" not in response_port.keys():
+            logger.error("'interfaces' key not found in /port/all response")
+            exit(1)
+        for interface in response_port['interfaces']:
+            for port, port_data in interface.items():
+                shelf, resource, alias = port.split(".")
+                eid = shelf + "." + resource
+                if (not port_data['phantom'] and not port_data['down']
+                        and port_data['port type'] == "WIFI-STA" and eid not in self.resource_id_list):
+                    devices_data.append({
+                        "shelf": shelf, "resource": resource, "type": "virtual",
+                        "alias": alias, "os": "Lin",
+                    })
+                    self.virtual_station_list.append(port)
+        logger.debug("virtual stations: %s", devices_data)
+        return devices_data
+
+    def create_local_dict(self) -> dict:
+        """Builds the per-device counter dict get_time_from_wifi_msgs()/get_count() fill in.
+
+        Covers three device sources: Android devices from /adb/ that match self.device_list,
+        laptops already resolved to an absolute port name (self.resource_id_to_abs), and
+        virtual stations (self.virtual_station_list) -- each keyed by its LANforge port name.
+        """
+        adb_resources = self.json_get("/adb/")
+        android_devices = adb_resources["devices"]
+        local_dict = {}
+        port_name_list = []
+
+        if isinstance(android_devices, dict):
+            android_devices = [android_devices]
+
+        for device in android_devices:
+            actual_device = list(device.values())[0]
+            res = actual_device.get("resource-id")
+            name = actual_device.get("name")
+            for i in self.device_list:
+                if res in i and res != "":
+                    local_dict[name] = None
+                    port_name_list.append(res + ".wlan0")
+
+        for dev in self.resource_id_to_abs.values():
+            res_id = "{}.{}".format(dev.split('.')[0], dev.split('.')[1])
+            for i in self.device_list:
+                if res_id in i:
+                    local_dict[dev] = None
+                    port_name_list.append(dev)
+
+        for dev in self.virtual_station_list:
+            if dev in self.device_list:
+                local_dict[dev] = None
+                port_name_list.append(dev)
+
+        keys_list = ["ConnectAttempt", "Disconnected", "Scanning", "Association Rejection", "Connected", "port_name"]
+        sec_dict = dict.fromkeys(keys_list)
+        for i, key in enumerate(local_dict.keys()):
+            local_dict[key] = sec_dict.copy()
+            local_dict[key]["port_name"] = port_name_list[i]
+        logger.debug("local dict: %s", local_dict)
+        return local_dict
+
+    def display_available_devices(self, all_devices: List[dict]):
+        """A DataFrame of the discovered LANforge devices (resource ID/serial, OS)."""
+        rows = []
+        for device in all_devices:
+            res_id = device["shelf"] + '.' + device["resource"]
+            os_type = device.get("os", "Unknown")
+            if device["type"] == 'laptop':
+                dev_name = device.get("hostname", "Unknown")
+            elif device["type"] == "adb":
+                dev_name = device.get("serial", "Unknown")
+            else:
+                dev_name = device.get("alias", "Unknown")
+                res_id = res_id + "." + dev_name
+            rows.append({
+                "Res_Id/serial": "{} / {}".format(res_id, dev_name),
+                "OS": os_type,
+                "remarks": "Available in LANforge"
+            })
+        return pd.DataFrame(rows)
+
+    def filter_device_list(self, dev_list: List[str], name_to_res: dict, res_to_name: dict):
+        """Resolves each requested device against the discovered LANforge devices.
+
+        Returns (final_dev_list, remarks_df): the subset that was actually found (deduplicated,
+        whichever form -- resource ID or name -- was given first wins) plus a DataFrame explaining
+        anything not found or dropped as a duplicate.
+        """
+        final_dev_list = []
+        final_df = pd.DataFrame(columns=['Res_Id/serial', 'remarks'])
+
+        for dev in dev_list:
+            if len(dev.split('.')) in (2, 3):
+                duplicated_with = "Serial {}".format(res_to_name.get(dev, None))
+                dev_str = "{} / {}".format(dev, res_to_name.get(dev, None))
+                res_id = dev
+            else:
+                duplicated_with = "Resource ID {}".format(name_to_res.get(dev, None))
+                res_id = name_to_res.get(dev, None)
+                dev_str = '{} / {}'.format(res_id, dev)
+
+            if dev not in name_to_res.keys() and dev not in res_to_name.keys():
+                logger.warning("The device %s is not found in LANforge.", dev)
+                final_df = pd.concat([
+                    final_df,
+                    pd.DataFrame([[dev_str, 'Not found in LANforge']], columns=['Res_Id/serial', 'remarks'])
+                ], ignore_index=True)
+            else:
+                if (dev not in final_dev_list and res_to_name.get(dev, None) not in final_dev_list
+                        and name_to_res.get(dev, None) not in final_dev_list):
+                    final_dev_list.append(dev)
+                    final_df = pd.concat([
+                        final_df,
+                        pd.DataFrame([[dev_str, 'Found in LANforge']], columns=['Res_Id/serial', 'remarks'])
+                    ], ignore_index=True)
+                else:
+                    if dev in final_dev_list:
+                        msg = "The device {} is duplicated with itself in the provided device list".format(dev)
+                    else:
+                        msg = "The device {} is duplicated with {}".format(dev, duplicated_with)
+                    logger.warning(msg)
+                    final_df = pd.concat([
+                        final_df,
+                        pd.DataFrame([[dev_str, msg]], columns=['Res_Id/serial', 'remarks'])
+                    ], ignore_index=True)
+
+        return final_dev_list, final_df
+
+    @staticmethod
+    def remove_files_with_duplicate_names(folder_path: str) -> None:
+        """Keeps only the first file seen for each basename under folder_path, deleting the rest."""
+        file_names = {}
+        for root, _, files in os.walk(folder_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                file_name = os.path.basename(file_path)
+                if file_name in file_names:
+                    os.remove(file_path)
+                    logger.debug("Removed duplicate file: %s", file_path)
+                else:
+                    file_names[file_name] = file_path
+
+    @staticmethod
+    def create_log_file(json_list, file_name: str = "empty.json") -> None:
+        """Dumps json_list to Wifi_Messages/<file_name>, creating the directory if needed."""
+        json_string = json.dumps(json_list)
+        new_folder = "Wifi_Messages"
+        if not (os.path.exists(new_folder) and os.path.isdir(new_folder)):
+            os.makedirs(new_folder)
+        with open(os.path.join(new_folder, file_name), 'w') as file:
+            file.write(json_string)
+
+    def get_count(self, value=None, keys_list=None, device=None, filter=None) -> int:
+        """Counts how many keyed wifi-msg entries for 'device' contain 'filter' in their text.
+
+        Args:
+            value: keyed wifi-msg entries, e.g. from WifiMessages.since_keyed()/between_keyed().
+            keys_list: the '<resource>.<time-stamp>'-style keys of 'value', same order.
+            device: the LANforge port name (e.g. '1.10.wlan0') to match messages against.
+            filter: the keyword (or space-joined keyword sequence) that marks the event being counted.
+        """
+        count_ = []
+        device_split = device.split(".")
+        device = device_split[2]
+        resource_id = device_split[0] + "." + device_split[1]
+        for i, y in zip(keys_list, range(len(keys_list))):
+            wifi_msg_text = value[y][i]['text']
+            resource = value[y][i]['resource']
+            if type(wifi_msg_text) is str:
+                wifi_msg_text_keyword_list = value[y][i]['text'].split(" ")
+                if device is None:
+                    continue
+                if resource != resource_id:
+                    continue
+                flag = any(device in msg for msg in wifi_msg_text_keyword_list)
+                if flag:
+                    if filter in wifi_msg_text_keyword_list:
+                        count_.append("YES")
+                    else:
+                        with_empty_filter = filter.split(" ")
+                        if all(item in wifi_msg_text_keyword_list for item in with_empty_filter):
+                            count_.append("YES")
+                else:
+                    if "IFNAME={}".format(device) in wifi_msg_text_keyword_list:  # for linux
+                        if filter in wifi_msg_text_keyword_list:
+                            count_.append("YES")
+                        else:
+                            with_empty_filter = filter.split(" ")
+                            if all(item in wifi_msg_text_keyword_list for item in with_empty_filter):
+                                count_.append("YES")
+            else:  # wifi_msg_text is a list
+                for item in wifi_msg_text:
+                    wifi_msg_text_keyword_list = item.split(" ")
+                    if device is None or resource != resource_id:
+                        continue
+                    if device in wifi_msg_text_keyword_list:  # for android
+                        if filter in wifi_msg_text_keyword_list:
+                            count_.append("YES")
+                        else:
+                            with_empty_filter = filter.split(" ")
+                            if all(item in wifi_msg_text_keyword_list for item in with_empty_filter):
+                                count_.append("YES")
+                    else:
+                        if "IFNAME={}".format(device) in wifi_msg_text_keyword_list:  # for linux
+                            if filter in wifi_msg_text_keyword_list:
+                                count_.append("YES")
+                            else:
+                                with_empty_filter = filter.split(" ")
+                                if all(item in wifi_msg_text_keyword_list for item in with_empty_filter):
+                                    count_.append("YES")
+        return count_.count("YES")
+
+    def get_time_from_wifi_msgs(self, local_dict=None, phn_name=None, start_time=None,
+                                end_time=None, file_name: str = "dummy.json", reset_cnt=None) -> dict:
+        """Fills in local_dict[phn_name]'s connect/disconnect/scan/rejection counters for one
+        device, from the '/wifi-msgs' entries between start_time and end_time (or since start_time
+        if end_time isn't given). The exact messages counted differ per OS, since Android/Windows/
+        Linux log wifi state changes in different formats.
+        """
+        if start_time and end_time:
+            values = self.wifi_msgs.between_keyed(start_time, end_time)
+        else:
+            values = self.wifi_msgs.since_keyed(start_time)
+        logger.debug("Counting DISCONNECTIONS/SCANNING/ASSOC ATTEMPTS/ASSOC REJECTIONS/CONNECTS for device %s", phn_name)
+        self.create_log_file(json_list=values, file_name=file_name)
+        self.remove_files_with_duplicate_names(folder_path="/Wifi_Messages/")
+        keys_list = [list(v.keys())[0] for v in values]
+
+        android = False
+        for device_data in self.json_get('/adb/')['devices']:
+            device_name = list(device_data.keys())[0]
+            if phn_name in device_name:
+                android = True
+                break
+
+        if android:
+            adb_disconnect_count = self.get_count(value=values, keys_list=keys_list, device=phn_name,
+                                                   filter="Terminating...")
+            local_dict[phn_name]["Disconnected"] = adb_disconnect_count
+            adb_scan_count = self.get_count(value=values, keys_list=keys_list, device=phn_name, filter="SCAN-STARTED")
+            local_dict[str(phn_name)]["Scanning"] = adb_scan_count
+            adb_association_attempt = self.get_count(value=values, keys_list=keys_list, device=phn_name,
+                                                       filter="Trying to associate with")
+            local_dict[str(phn_name)]["ConnectAttempt"] = adb_association_attempt
+            adb_association_rejection = self.get_count(value=values, keys_list=keys_list, device=phn_name,
+                                                        filter="ASSOC_REJECT")
+            local_dict[str(phn_name)]["Association Rejection"] = adb_association_rejection
+            adb_connected_count = self.get_count(value=values, keys_list=keys_list, device=phn_name,
+                                                  filter="CTRL-EVENT-CONNECTED")
+            local_dict[str(phn_name)]["Connected"] = adb_connected_count
+            local_dict[str(phn_name)]["Remarks"] = "NA"
+            if adb_association_attempt > adb_connected_count:
+                adb_association_rejection = adb_association_attempt - adb_connected_count
+            local_dict[str(phn_name)]["Association Rejection"] = adb_association_rejection
+            if adb_connected_count > 0:
+                _, shelf, serial = phn_name.split('.')
+                resource_id = self.json_get('/adb/1/{}/{}?fields=resource-id'.format(shelf, serial))
+                resource_id = resource_id['devices']['resource-id']
+                port_ssid_query = self.json_get('port/1/{}/wlan0?fields=cx time (us)'.format(resource_id.split('.')[1]))
+                local_dict[str(phn_name)]['cx time (us)'] = port_ssid_query['interface']['cx time (us)']
+            else:
+                local_dict[str(phn_name)]['cx time (us)'] = 'NA'
+        else:
+            if phn_name in self.windows_list:  # for windows
+                win_disconnect_count = self.get_count(value=values, keys_list=keys_list, device=phn_name,
+                                                       filter="Wireless security stopped.")
+                if win_disconnect_count == 0:
+                    win_disconnect_count = self.get_count(
+                        value=values, keys_list=keys_list, device=phn_name,
+                        filter="WLAN AutoConfig service has successfully disconnected from a wireless network")
+                local_dict[phn_name]["Disconnected"] = win_disconnect_count
+                win_scan_count = self.get_count(value=values, keys_list=keys_list, device=phn_name, filter="service started")
+                local_dict[str(phn_name)]["Scanning"] = win_scan_count
+                win_association_attempt = self.get_count(value=values, keys_list=keys_list, device=phn_name,
+                                                           filter="association started.")
+                local_dict[str(phn_name)]["ConnectAttempt"] = win_association_attempt
+                win_association_rejection = self.get_count(value=values, keys_list=keys_list, device=phn_name,
+                                                             filter="failed to connect")
+                local_dict[str(phn_name)]["Association Rejection"] = win_association_rejection
+                win_connected_count = self.get_count(value=values, keys_list=keys_list, device=phn_name, filter="connected")
+                if win_association_rejection:
+                    actual_connects = win_association_attempt - win_association_rejection
+                    win_connected_count = win_connected_count if actual_connects == win_connected_count else actual_connects
+                local_dict[str(phn_name)]["Connected"] = win_connected_count
+                if win_association_attempt > win_connected_count:
+                    win_association_rejection = win_association_attempt - win_connected_count
+                local_dict[str(phn_name)]["Association Rejection"] = win_association_rejection
+                remarks = "NA"
+                if win_disconnect_count == 0 and win_connected_count == 1:
+                    remarks = "No Disconnections are seen but Client is UP and connected to user given SSID."
+                elif win_disconnect_count >= 1 and win_connected_count == 0:
+                    remarks = "The Disconnections are seen but Client did not connected to user given SSID."
+                local_dict[str(phn_name)]["Remarks"] = remarks
+                if win_connected_count > 0:
+                    port_name = phn_name.split(".")
+                    port_ssid_query = self.json_get(
+                        "port/{}/{}/{}?fields=cx time (us)".format(port_name[0], port_name[1], port_name[2]))
+                    local_dict[str(phn_name)]['cx time (us)'] = port_ssid_query['interface']['cx time (us)']
+                else:
+                    local_dict[str(phn_name)]['cx time (us)'] = 'NA'
+            else:  # linux, mac
+                other_disconnect_count = self.get_count(value=values, keys_list=keys_list, device=phn_name,
+                                                         filter="disconnected")
+                if other_disconnect_count == 0:
+                    other_disconnect_count = self.get_count(value=values, keys_list=keys_list, device=phn_name,
+                                                             filter="<3>CTRL-EVENT-DSCP-POLICY clear_all")
+                local_dict[phn_name]["Disconnected"] = other_disconnect_count
+                other_scan_count = self.get_count(value=values, keys_list=keys_list, device=phn_name,
+                                                   filter="<3>CTRL-EVENT-SCAN-STARTED")
+                local_dict[str(phn_name)]["Scanning"] = other_scan_count
+                other_association_attempt = self.get_count(value=values, keys_list=keys_list, device=phn_name,
+                                                             filter="<3>Trying to associate with")
+                local_dict[str(phn_name)]["ConnectAttempt"] = other_association_attempt
+                other_association_rejection = self.get_count(value=values, keys_list=keys_list, device=phn_name,
+                                                               filter="NoneValue")
+                local_dict[str(phn_name)]["Association Rejection"] = other_association_rejection
+                other_connected_count = self.get_count(value=values, keys_list=keys_list, device=phn_name,
+                                                        filter="<3>CTRL-EVENT-CONNECTED")
+                if other_association_rejection:
+                    actual_connects = other_association_attempt - other_association_rejection
+                    other_connected_count = other_connected_count if actual_connects == other_connected_count else actual_connects
+                local_dict[str(phn_name)]["Connected"] = other_connected_count
+                if other_association_attempt > other_connected_count:
+                    other_association_rejection = other_association_attempt - other_connected_count
+                local_dict[str(phn_name)]["Association Rejection"] = other_association_rejection
+                remarks = "NA"
+                if other_disconnect_count == 0 and other_connected_count == 1:
+                    remarks = "No Disconnections are seen but Client is UP and connected to user given SSID."
+                elif other_disconnect_count >= 1 and other_connected_count == 0:
+                    remarks = "The Disconnections are seen but Client did not connected to user given SSID."
+                local_dict[str(phn_name)]["Remarks"] = remarks
+                if other_connected_count > 0:
+                    port_name = phn_name.split(".")
+                    port_ssid_query = self.json_get(
+                        "port/{}/{}/{}?fields=cx time (us)".format(port_name[0], port_name[1], port_name[2]))
+                    local_dict[str(phn_name)]['cx time (us)'] = port_ssid_query['interface']['cx time (us)']
+                else:
+                    local_dict[str(phn_name)]['cx time (us)'] = 'NA'
+
+        return local_dict
+
+    def get_client_connectivity_stats_from_timestamp(self, start_time, end_time, local_dict: dict) -> dict:
+        """Runs get_time_from_wifi_msgs() for every device already keyed in local_dict."""
+        for phn_name in local_dict.keys():
+            local_dict = self.get_time_from_wifi_msgs(local_dict=local_dict, phn_name=phn_name,
+                                                       start_time=start_time, end_time=end_time)
+        return local_dict
+
+    def query_devices(self):
+        """Interactively discovers LANforge devices, prompts for which to analyze (or 'all'),
+        and resolves the answer against LANforge. Prints device/remarks tables via tabulate.
+
+        Returns the resolved device list; see query_devices_1() for a non-interactive equivalent
+        that just populates self.resource_id_list/self.windows_list/self.resource_id_to_abs.
+        """
+        filtered_all_devices = []
+        all_devices = self.device_config_obj.get_all_devices()
+        dev_list_all = []
+        for data in all_devices:
+            res_id = "{}.{}".format(data["shelf"], data["resource"])
+            if data["shelf"] != "" and data["resource"] != "":
+                dev_list_all.append(res_id)
+            if data["type"].lower() == "laptop":
+                res_id_abs = "{}.{}.{}".format(data["shelf"], data["resource"], data["sta_name"])
+                self.resource_id_to_abs[res_id] = res_id_abs
+                if data["os"].lower() == "win":
+                    self.windows_list.append(res_id_abs)
+
+        response_port = self.json_get("/port/all")
+        if "interfaces" not in response_port.keys():
+            logger.error("'interfaces' key not found in /port/all response")
+            exit(1)
+        for interface in response_port['interfaces']:
+            for port, port_data in interface.items():
+                if not port_data['phantom'] and not port_data['down'] \
+                        and port_data['parent dev'] == "wiphy0" and port_data['alias'] != 'p2p0':
+                    for data in all_devices:
+                        res_id = "{}.{}".format(data["shelf"], data["resource"])
+                        if res_id + "." in port:
+                            self.resource_id_list.append(res_id)
+                            filtered_all_devices.append(data)
+
+        filtered_all_devices.extend(self.get_virtual_stations())
+
+        available_df = self.display_available_devices(filtered_all_devices)
+        print(tabulate(available_df, headers='keys', tablefmt='fancy_grid'))
+
+        if len(self.device_list) != 0:
+            dev_list = self.device_list.copy()
+        else:
+            dev_list = input("Enter the desired resources to run the test: "
+                             "(for androids enter serial/resource id for other enter only resource id)").split(',')
+        if "all" in dev_list:
+            dev_list = dev_list_all.copy()
+
+        name_to_res = {}
+        res_to_name = {}
+        for device in filtered_all_devices:
+            if device["type"] == 'laptop':
+                name_to_res[device["hostname"]] = device["shelf"] + '.' + device["resource"]
+                res_to_name[device["shelf"] + '.' + device["resource"]] = device["hostname"]
+            elif device["type"] == "adb":
+                name_to_res[device["serial"]] = device["eid"]
+                res_to_name[device["eid"]] = device["serial"]
+            else:
+                name_to_res[device["alias"]] = device["shelf"] + '.' + device["resource"] + '.' + device["alias"]
+                res_to_name[device["shelf"] + '.' + device["resource"] + '.' + device["alias"]] = device["alias"]
+
+        filtered_dev_list, remarks_df = self.filter_device_list(dev_list, name_to_res, res_to_name)
+        print(tabulate(remarks_df, headers='keys', tablefmt='fancy_grid'))
+        return filtered_dev_list
+
+    def query_devices_1(self) -> None:
+        """Non-interactive device discovery: populates self.resource_id_list, self.windows_list,
+        self.resource_id_to_abs and self.virtual_station_list from the devices already given in
+        self.device_list, without prompting or printing a report (see query_devices() for that)."""
+        all_devices = self.device_config_obj.get_all_devices()
+        for data in all_devices:
+            if data["type"].lower() == "laptop":
+                res_id = "{}.{}".format(data["shelf"], data["resource"])
+                res_id_abs = "{}.{}.{}".format(data["shelf"], data["resource"], data["sta_name"])
+                self.resource_id_to_abs[res_id] = res_id_abs
+                if data["os"].lower() == "win":
+                    self.windows_list.append(res_id_abs)
+
+        response_port = self.json_get("/port/all")
+        if "interfaces" not in response_port.keys():
+            logger.error("'interfaces' key not found in /port/all response")
+            exit(1)
+        for interface in response_port['interfaces']:
+            for port, port_data in interface.items():
+                if not port_data['phantom'] and not port_data['down'] \
+                        and port_data['parent dev'] == "wiphy0" and port_data['alias'] != 'p2p0':
+                    for data in all_devices:
+                        res_id = "{}.{}".format(data["shelf"], data["resource"])
+                        if res_id + "." in port:
+                            self.resource_id_list.append(res_id)
+        self.get_virtual_stations()
+
+    @staticmethod
+    def dicttolist(client_connectivity_stats: dict):
+        """Splits the per-device stats dict into parallel lists (devices, ConnectAttempt,
+        Disconnected, Scanning, Association Rejection, Connected, Remarks, cx_time) -- convenient
+        for building a table/DataFrame out of get_client_connectivity_stats_from_timestamp()'s result."""
+        devices, connect_attempt, disconnected, scanning = [], [], [], []
+        association_rejection, connected, remarks, cx_time = [], [], [], []
+        for i in client_connectivity_stats.keys():
+            connect_attempt.append(client_connectivity_stats[i]["ConnectAttempt"])
+            disconnected.append(client_connectivity_stats[i]["Disconnected"])
+            scanning.append(client_connectivity_stats[i]["Scanning"])
+            association_rejection.append(client_connectivity_stats[i]["Association Rejection"])
+            connected.append(client_connectivity_stats[i]["Connected"])
+            remarks.append(client_connectivity_stats[i]["Remarks"])
+            cx_time.append(client_connectivity_stats[i]["cx time (us)"])
+            devices.append(client_connectivity_stats[i]["port_name"])
+        return devices, connect_attempt, disconnected, scanning, association_rejection, connected, remarks, cx_time
 
 
 def main() -> None:
