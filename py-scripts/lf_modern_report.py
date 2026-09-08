@@ -975,14 +975,12 @@ class lf_report:
             traceback.print_exception(Exception, x, x.__traceback__, chain=True)
             logger.warning("Either no allure report history present or the copy of history failed.")
 
-    def copy_allure_report(self):
-        # NOTE: ported as-is from lf_report.py, including its pre-existing reference
-        # to an undefined `allure_results` name. Not called by any known caller.
-        if allure_results == "":  # noqa F821 - undefined name
+    def copy_allure_report(self, allure_results_path=""):
+        if allure_results_path == "":
             self.allure_results_history_path = os.path.join(self.path_date_time, "history")
             self.allure_results = "{allure_results_path}".format(allure_results_path=self.path_date_time)
         else:
-            self.allure_results = allure_results  # noqa F821 - undefined name
+            self.allure_results = allure_results_path
             self.allure_results_history_path = os.path.join(self.allure_results, "history")
 
         logger.info("copying history from {allure_report} to {allure_results}".format(allure_report=self.allure_report_history, allure_results=self.allure_results_history_path))
@@ -1311,11 +1309,33 @@ class lf_report:
         self.dataframe_html = badge_df.to_html(index=False, justify='center', classes='data-table', escape=False)
         self.html += "<div class='table-wrap'>" + self.dataframe_html + "</div>"
 
+    def rating_build_table(self, rating_column, rating_colors):
+        """Like pass_failed_build_table(), but for an arbitrary column of rating labels (e.g.
+        "Excellent"/"Good"/"Average"/"Poor") instead of a fixed Success/Failed pair -- renders
+        that column's values as colored badges via inline styles rather than a raw text cell.
+
+        Args:
+            rating_column: name of the column in self.dataframe to badge.
+            rating_colors: {label: css_color} -- labels not present here are left as plain text.
+        """
+        def _badge(value):
+            color = rating_colors.get(value)
+            if not color:
+                return value
+            return ("<span style='background:{color}; color:#fff; padding:2px 10px; "
+                    "border-radius:10px; font-weight:600; white-space:nowrap;'>{value}</span>"
+                    ).format(color=color, value=value)
+
+        badge_df = self.dataframe.copy()
+        badge_df[rating_column] = badge_df[rating_column].apply(_badge)
+        self.dataframe_html = badge_df.to_html(index=False, justify='center', classes='data-table', escape=False)
+        self.html += "<div class='table-wrap'>" + self.dataframe_html + "</div>"
+
     def save_csv(self, file_name, save_to_csv_data):
         save_to_csv_data.to_csv(str(self.path_date_time) + "/" + file_name)
 
     def save_pie_chart(self, pie_chart_data):
-        pie_chart_data.plot.pie(y='Pass/Fail', autopct="%.2f%%", figsize=(8, 8),  # noqa E841 - unused variable
+        pie_chart_data.plot.pie(y='Pass/Fail', autopct="%.2f%%", figsize=(8, 8), 
                                 shadow=False, startangle=90,
                                 colors=['#1d9a8a', '#d95f5f'])
         plt.tight_layout()

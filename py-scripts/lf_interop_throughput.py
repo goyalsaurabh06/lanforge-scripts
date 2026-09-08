@@ -2728,6 +2728,46 @@ class Throughput(Realm):
     # gradient so the color itself says how good the signal is: Excellent=green, Poor=red, Good/Fair in between.
     RSSI_BUCKET_COLORS = ["#2e8b57", "#f2c94c", "#f2994a", "#eb5757"]
 
+    # Score band -> (label, color), same tiers as RSSI's Excellent/Good/Fair/Poor.
+    SCORE_RATING_BANDS = [(85, "Excellent", "#1e7e34"), (70, "Good", "#28a745"),
+                          (50, "Average", "#f1c40f"), (0, "Poor", "#e74c3c")]
+
+    @staticmethod
+    def _parse_mbps(value):
+        # Some offered-rate lists store "9.5", others "9.5Mbps" -- strip the unit either way.
+        try:
+            return float(str(value).strip().replace("Mbps", "").replace("mbps", "").strip())
+        except (TypeError, ValueError):
+            return 0.0
+
+    @classmethod
+    def _throughput_ratio_to_score(cls, achieved, offered):
+        # 100 = achieved the full offered/intended load; less = fell short.
+        achieved = cls._parse_mbps(achieved)
+        offered = cls._parse_mbps(offered)
+        if offered <= 0:
+            return 100 if achieved > 0 else 0
+        return max(0, min(100, int(round(achieved / offered * 100))))
+
+    @classmethod
+    def _classify_score_rating(cls, score):
+        for threshold, label, color in cls.SCORE_RATING_BANDS:
+            if score >= threshold:
+                return label, color
+        return cls.SCORE_RATING_BANDS[-1][1], cls.SCORE_RATING_BANDS[-1][2]
+
+    def build_client_scores(self, offered_download, achieved_download, offered_upload, achieved_upload):
+        # DL/UL score = achieved/offered throughput as a percent; Overall = their rounded average.
+        dl_scores = [self._throughput_ratio_to_score(a, o) for a, o in zip(achieved_download, offered_download)]
+        ul_scores = [self._throughput_ratio_to_score(a, o) for a, o in zip(achieved_upload, offered_upload)]
+        overall_scores = [int(dl + ul + 1) // 2 for dl, ul in zip(dl_scores, ul_scores)]
+        ratings, rating_colors = [], []
+        for score in overall_scores:
+            label, color = self._classify_score_rating(score)
+            ratings.append(label)
+            rating_colors.append(color)
+        return dl_scores, ul_scores, overall_scores, ratings, rating_colors
+
     def build_rssi_distribution_charts(self, report, rssi_values, channels, device_names=None, chart_id_prefix="rssi-dist"):
         """Adds a "RSSI Distribution" section to the report: one pie chart per Wi-Fi band that
         actually has clients on it, placed side by side, showing how many clients had Excellent,
@@ -3111,74 +3151,24 @@ class Throughput(Realm):
 
         return findings
 
-    def build_wifi_analysis_key_findings(self):
-        """Turns the wifi connectivity analysis stats into plain-English "Key Findings" sentences,
-        the same {"type": ..., "text": ...} shape build_key_findings() returns, so the two lists
-        can be shown together in one findings card.
+    def resolve_wifi_analysis_device_names(self, devices):
+        """Maps each wifi connectivity analysis device (a LANforge port name -- dicttolist()
+        reports each entry's 'port_name', not its dict key, e.g. the ADB name Android entries are
+        actually keyed by) to the same display name already used elsewhere in this report.
 
-        The wifi connectivity analysis covers the whole test duration rather than a single
-        iteration, so this is meant to be computed once per report, not once per iteration.
-
-        Returns:
-            A list of finding dicts, most important first. Empty list when the analysis did not
-            run or produced no statistics.
+        self.input_devices_list (LANforge port names) and self.real_client_list ("<eid> <type>
+        <name>" strings) are built side by side, one entry per requested device in the same
+        order -- the same pairing the per-client throughput tables rely on for their display
+        names. Falls back to the raw port name when no match is found (e.g. a mismatched list
+        length).
         """
-        wifi_analysis_stats = getattr(self, 'wifi_analysis_stats', None)
-        wifi_analysis = getattr(self, 'wifi_analysis', None)
-        if not wifi_analysis_stats or not wifi_analysis:
-            return []
+        port_to_name = {}
+        for port_name, entry in zip(self.input_devices_list, self.real_client_list):
+            parts = entry.split(" ")
+            if parts and parts[-1]:
+                port_to_name[port_name] = parts[-1]
 
-        try:
-            devices, connect_attempt, disconnected, scanning, association_rejection, connected, remarks, cx_time = \
-                wifi_analysis.dicttolist(wifi_analysis_stats)
-        except Exception as e:
-            logger.warning("Wifi connectivity analysis key findings could not be computed: %s", e)
-            return []
-
-        total_devices = len(devices)
-        if not total_devices:
-            return []
-
-        findings = []
-
-        # 1. Overall stability -- did any device disconnect during the test.
-        devices_with_disconnects = sum(1 for d in disconnected if d > 0)
-        if devices_with_disconnects:
-            findings.append({
-                "type": "warning" if devices_with_disconnects > total_devices / 2 else "neutral",
-                "text": "{n} of {total} device{s} disconnected {total_disc} time(s) in total during the "
-                        "test.".format(n=devices_with_disconnects, total=total_devices,
-                                       s="" if total_devices == 1 else "s", total_disc=sum(disconnected))
-            })
-        else:
-            findings.append({
-                "type": "positive",
-                "text": "All {n} device{s} maintained their wireless connection with no disconnections "
-                        "observed during the test.".format(n=total_devices, s="" if total_devices == 1 else "s")
-            })
-
-        # 2. Association rejections -- did any device struggle to (re)connect.
-        devices_with_rejections = sum(1 for r in association_rejection if r > 0)
-        if devices_with_rejections:
-            findings.append({
-                "type": "warning",
-                "text": "{n} of {total} device{s} hit {total_rej} association rejection(s) while attempting "
-                        "to (re)connect.".format(n=devices_with_rejections, total=total_devices,
-                                                  s="" if total_devices == 1 else "s",
-                                                  total_rej=sum(association_rejection))
-            })
-
-        # 3. A device that never connected is the most serious finding -- surface it directly.
-        never_connected = [devices[i] for i in range(total_devices) if connected[i] == 0]
-        if never_connected:
-            findings.append({
-                "type": "critical",
-                "text": "{n} device{s} never successfully connected during the analyzed window: "
-                        "{names}.".format(n=len(never_connected), s="" if len(never_connected) == 1 else "s",
-                                          names=", ".join(str(name) for name in never_connected))
-            })
-
-        return findings
+        return [port_to_name.get(port_name, port_name) for port_name in devices]
 
     def build_test_summary(self, rssi_values=None):
         """Builds a handful of plain-English narrative sentences giving an executive-level
@@ -3186,8 +3176,8 @@ class Throughput(Realm):
         an overall verdict -- each fusing several metrics into one sentence, rather than the many
         granular one-metric-per-item entries in the Key Findings card.
 
-        Meant to be computed once per report (like build_ping_key_findings()/
-        build_wifi_analysis_key_findings()), not once per iteration.
+        Meant to be computed once per report (like build_ping_key_findings()), not once per
+        iteration.
 
         Args:
             rssi_values: this iteration's client RSSI readings (same style as
@@ -3489,6 +3479,7 @@ class Throughput(Realm):
         try:
             devices, connect_attempt, disconnected, scanning, association_rejection, connected, remarks, cx_time = \
                 self.wifi_analysis.dicttolist(self.wifi_analysis_stats)
+            devices = self.resolve_wifi_analysis_device_names(devices)
 
             categories = ["Disconnected", "Scans", "Association Attempts", "Association Rejected", "Connected"]
             totals = [sum(disconnected), sum(scanning), sum(connect_attempt), sum(association_rejection), sum(connected)]
@@ -3499,16 +3490,19 @@ class Throughput(Realm):
                 _obj="This graph summarizes connection-related events observed during the throughput test. "
                      "These metrics provide insight into client stability and wireless connectivity performance.")
             report.build_objective()
-            graph = lf_bar_graph(_data_set=[[v] for v in totals],
-                                 _xaxis_name="Count",
-                                 _yaxis_name="",
-                                 _xaxis_categories=[""],
+            # One series across 5 categories (rather than 5 single-value series sharing one
+            # category) so the bars spread across the chart's full width, each under its own
+            # x-axis label, instead of clustering together in the middle.
+            graph = lf_bar_graph(_data_set=[totals],
+                                 _xaxis_name="",
+                                 _yaxis_name="Count",
+                                 _xaxis_categories=categories,
                                  _graph_image_name="wifi_connectivity_status",
-                                 _label=categories,
+                                 _label=["Client Connectivity Status"],
                                  _graph_title="Client Connectivity Status",
                                  _title_size=16,
                                  _color_edge='black',
-                                 _bar_width=0.3,
+                                 _bar_width=0.5,
                                  _figsize=(10, 6),
                                  _legend_loc="best",
                                  _dpi=96,
@@ -3525,7 +3519,6 @@ class Throughput(Realm):
 
             dataframe = pd.DataFrame({
                 "Device": devices,
-                "ConnectAttempt": connect_attempt,
                 "Disconnected": disconnected,
                 "Scanning": scanning,
                 "Association Rejection": association_rejection,
@@ -3671,7 +3664,6 @@ class Throughput(Realm):
                     "Configuration": configmap,
                     "Configured Devices": ", ".join(all_devices_names),
                     "No of Devices": "Total" + f"({str(self.num_stations)})" + total_devices,
-                    "Increment": incremental_capacity_data,
                     "Traffic Duration in minutes": round(int(self.test_duration) * len(incremental_capacity_list) / 60, 2),
                     "Traffic Type": (self.traffic_type.strip("lf_")).upper(),
                     "Traffic Direction": self.direction,
@@ -3685,7 +3677,6 @@ class Throughput(Realm):
                     "Test name": self.test_name,
                     "Device List": ", ".join(all_devices_names),
                     "No of Devices": "Total" + f"({str(self.num_stations)})" + total_devices,
-                    "Increment": incremental_capacity_data,
                     "Traffic Duration in minutes": round(int(self.test_duration) * len(incremental_capacity_list) / 60, 2),
                     "Traffic Type": (self.traffic_type.strip("lf_")).upper(),
                     "Traffic Direction": self.direction,
@@ -3702,6 +3693,10 @@ class Throughput(Realm):
 
             if iot_summary:
                 test_setup_info = with_iot_params_in_table(test_setup_info, iot_summary)
+
+            # Increment goes last, and is skipped entirely when there's nothing to show.
+            if incremental_capacity_data != "None":
+                test_setup_info["Increment"] = incremental_capacity_data
 
             # Device List/Configured Devices and No of Devices are skipped here --
             # the Devices card below already shows the device count and list.
@@ -3973,7 +3968,7 @@ class Throughput(Realm):
                     # The background ping and wifi connectivity analysis cover the whole test, not
                     # just this iteration, so their findings/summary are only shown once rather
                     # than repeated on every iteration.
-                    key_findings = key_findings + self.build_ping_key_findings() + self.build_wifi_analysis_key_findings()
+                    key_findings = key_findings + self.build_ping_key_findings()
                     self.add_test_summary_to_report(report, rssi_values=rssi_data[0:int(incremental_capacity_list[i])])
                 report.build_findings_card("Key Findings", key_findings)
 
@@ -3991,7 +3986,7 @@ class Throughput(Realm):
                     dashed=line_graph_dashed,
                     color=line_graph_colors
                 )
-                logger.info("graph name {}".format(graph_png))
+                # logger.info("graph name {}".format(graph_png))
                 report.set_graph_image(graph_png)
                 report.move_graph_image()
 
@@ -4023,7 +4018,7 @@ class Throughput(Realm):
                                                 )
 
                 graph_png = graph.build_bar_graph_horizontal()
-                logger.info("graph name {}".format(graph_png))
+                # logger.info("graph name {}".format(graph_png))
                 graph.build_bar_graph_horizontal()
                 report.set_graph_image(graph_png)
                 report.move_graph_image()
@@ -4045,7 +4040,7 @@ class Throughput(Realm):
                                                 #    _color=['lightcoral']
                                                 )
                 graph_png = graph.build_bar_graph_horizontal()
-                logger.info("graph name {}".format(graph_png))
+                # logger.info("graph name {}".format(graph_png))
                 graph.build_bar_graph_horizontal()
                 report.set_graph_image(graph_png)
                 report.move_graph_image()
@@ -4162,9 +4157,18 @@ class Throughput(Realm):
                     if self.expected_passfail_value or self.device_csv_name:
                         bk_dataframe[" Expected " + self.direction + " rate "] = [str(n) + " Mbps" for n in test_input_list]
                         bk_dataframe[" Status "] = pass_fail_list
+                    dl_scores, ul_scores, overall_scores, ratings, _ = self.build_client_scores(
+                        download_list[0:int(incremental_capacity_list[i])],
+                        download_data[0:int(incremental_capacity_list[i])],
+                        upload_list[0:int(incremental_capacity_list[i])],
+                        upload_data[0:int(incremental_capacity_list[i])])
+                    bk_dataframe["DL Score"] = dl_scores
+                    bk_dataframe["UL Score"] = ul_scores
+                    bk_dataframe["Overall Score"] = overall_scores
+                    bk_dataframe["Rating"] = ratings
                     dataframe1 = pd.DataFrame(bk_dataframe)
                     report.set_table_dataframe(dataframe1)
-                    report.build_table()
+                    report.rating_build_table("Rating", {label: color for _, label, color in self.SCORE_RATING_BANDS})
 
                 report.set_custom_html('<hr>')
                 report.build_custom()
@@ -4430,7 +4434,7 @@ class Throughput(Realm):
                     # The background ping and wifi connectivity analysis cover the whole test, not
                     # just this device, so their findings/summary are only shown once rather than
                     # repeated for every device.
-                    key_findings = key_findings + self.build_ping_key_findings() + self.build_wifi_analysis_key_findings()
+                    key_findings = key_findings + self.build_ping_key_findings()
                     self.add_test_summary_to_report(report, rssi_values=rssi_data[0:int(incremental_capacity_list[i])])
                 report.build_findings_card("Key Findings", key_findings)
 
@@ -4448,7 +4452,7 @@ class Throughput(Realm):
                     dashed=line_graph_dashed,
                     color=line_graph_colors
                 )
-                logger.info("graph name {}".format(graph_png))
+                # logger.info("graph name {}".format(graph_png))
                 report.set_graph_image(graph_png)
                 report.move_graph_image()
 
@@ -4480,7 +4484,7 @@ class Throughput(Realm):
                                                 )
 
                 graph_png = graph.build_bar_graph_horizontal()
-                logger.info("graph name {}".format(graph_png))
+                # logger.info("graph name {}".format(graph_png))
                 graph.build_bar_graph_horizontal()
                 report.set_graph_image(graph_png)
                 report.move_graph_image()
@@ -4502,7 +4506,7 @@ class Throughput(Realm):
                                                 #    _color=['lightcoral']
                                                 )
                 graph_png = graph.build_bar_graph_horizontal()
-                logger.info("graph name {}".format(graph_png))
+                # logger.info("graph name {}".format(graph_png))
                 graph.build_bar_graph_horizontal()
                 report.set_graph_image(graph_png)
                 report.move_graph_image()
@@ -4567,9 +4571,17 @@ class Throughput(Realm):
                 if self.expected_passfail_value or self.device_csv_name:
                     bk_dataframe[" Expected " + self.direction + " rate "] = test_input_list
                     bk_dataframe[" Status "] = pass_fail_list
+                dl_score = self._throughput_ratio_to_score(download_data[-1], download_list[-1])
+                ul_score = self._throughput_ratio_to_score(upload_data[-1], upload_list[-1])
+                overall_score = (dl_score + ul_score + 1) // 2
+                rating, _ = self._classify_score_rating(overall_score)
+                bk_dataframe["DL Score"] = dl_score
+                bk_dataframe["UL Score"] = ul_score
+                bk_dataframe["Overall Score"] = overall_score
+                bk_dataframe["Rating"] = rating
                 dataframe1 = pd.DataFrame(bk_dataframe)
                 report.set_table_dataframe(dataframe1)
-                report.build_table()
+                report.rating_build_table("Rating", {label: color for _, label, color in self.SCORE_RATING_BANDS})
 
                 report.set_custom_html('<hr>')
                 report.build_custom()
@@ -4726,7 +4738,6 @@ class Throughput(Realm):
                     "Configuration": configmap,
                     "Configured Devices": ", ".join(all_devices_names),
                     "No of Devices": "Total" + f"({str(self.num_stations)})" + total_devices,
-                    "Increment": incremental_capacity_data,
                     "Traffic Duration in minutes": round(int(self.test_duration) * len(incremental_capacity_list) / 60, 2),
                     "Traffic Type": (self.traffic_type.strip("lf_")).upper(),
                     "Traffic Direction": self.direction,
@@ -4740,7 +4751,6 @@ class Throughput(Realm):
                     "Test name": self.test_name,
                     "Device List": ", ".join(all_devices_names),
                     "No of Devices": "Total" + f"({str(self.num_stations)})" + total_devices,
-                    "Increment": incremental_capacity_data,
                     "Traffic Duration in minutes": round(int(self.test_duration) * len(incremental_capacity_list) / 60, 2),
                     "Traffic Type": (self.traffic_type.strip("lf_")).upper(),
                     "Traffic Direction": self.direction,
@@ -4754,6 +4764,10 @@ class Throughput(Realm):
             test_setup_info["Selected Coordinates"] = ",".join(self.coordinates_completed)
             if self.rotation_enabled:
                 test_setup_info["Selected Angles"] = ",".join(self.angle_list)
+
+            # Increment goes last, and is skipped entirely when there's nothing to show.
+            if incremental_capacity_data != "None":
+                test_setup_info["Increment"] = incremental_capacity_data
 
             report.test_setup_table(test_setup_data=test_setup_info, value="Test Configuration")
 
@@ -5056,7 +5070,7 @@ class Throughput(Realm):
                             label=label_data,
                             graph_image_name=graph_image_name
                         )
-                        logger.info("graph name {}".format(graph_png))
+                        # logger.info("graph name {}".format(graph_png))
                         report.set_graph_image(graph_png)
                         report.move_graph_image()
 
