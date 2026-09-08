@@ -531,10 +531,20 @@ _TABLE_SEARCH_JS = """
   searchBar.appendChild(input);
   searchBar.appendChild(count);
 
-  // Placed right above the first real table (e.g. after the Test Configuration/Objective
-  // sections, which aren't tables), rather than at the very top of the page.
-  var firstWrap = tables[0].closest(".table-wrap") || tables[0].parentNode;
-  firstWrap.parentNode.insertBefore(searchBar, firstWrap);
+  // Placed right below the Key Findings card when the report has one (found by header text,
+  // since build_findings_card() doesn't assign it a stable id); otherwise right above the first
+  // real table, so it still lands after the Test Configuration/Objective sections.
+  var keyFindingsCard = null;
+  Array.prototype.forEach.call(document.querySelectorAll(".info-card"), function (card) {
+    var header = card.querySelector(".info-card-header");
+    if (header && header.textContent.trim() === "Key Findings") { keyFindingsCard = card; }
+  });
+  if (keyFindingsCard) {
+    keyFindingsCard.parentNode.insertBefore(searchBar, keyFindingsCard.nextSibling);
+  } else {
+    var firstWrap = tables[0].closest(".table-wrap") || tables[0].parentNode;
+    firstWrap.parentNode.insertBefore(searchBar, firstWrap);
+  }
 
   function applyFilter() {
     var query = input.value.trim().toLowerCase();
