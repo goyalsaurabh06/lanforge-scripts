@@ -393,12 +393,11 @@ _TABLE_RUNTIME_JS = """
 (function () {
   window.__lfModernReport = window.__lfModernReport || {};
 
-  // rows: [{cellsHtml: "<td>...</td><td>...</td>", searchText: "lowercased ... "}]
+  // rows: [{cellsHtml: "<td>...</td><td>...</td>"}]
   window.__lfModernReport.initSearchTable = function (rootId, rows, pageSize) {
     var root = document.getElementById(rootId);
     if (!root) { return; }
     var tbody = root.querySelector(".device-table tbody");
-    var searchInput = root.querySelector(".device-search");
     var pageSizeSelect = root.querySelector(".rows-per-page select");
     var paginationEl = root.querySelector(".pagination");
     var countEl = root.querySelector(".device-count-label");
@@ -442,14 +441,6 @@ _TABLE_RUNTIME_JS = """
       });
     }
 
-    if (searchInput) {
-      searchInput.addEventListener("input", function () {
-        var q = searchInput.value.trim().toLowerCase();
-        state.filtered = !q ? rows : rows.filter(function (r) { return r.searchText.indexOf(q) !== -1; });
-        state.page = 1;
-        renderRows();
-      });
-    }
     if (pageSizeSelect) {
       pageSizeSelect.addEventListener("change", function () {
         state.pageSize = pageSizeSelect.value === "all" ? rows.length : parseInt(pageSizeSelect.value, 10);
@@ -514,6 +505,51 @@ _SORTABLE_TABLE_JS = """
       });
     });
   });
+})();
+</script>
+"""
+
+# Adds one sticky search box, near the top of the page, that filters every plain report table
+# (class "data-table") at once: a row is hidden unless it contains the typed text, in any of its
+# own table's columns. Injected once at the end of the page, same convention as
+# _SORTABLE_TABLE_JS, so no build_table() call site has to opt in individually.
+_TABLE_SEARCH_JS = """
+<script>
+(function () {
+  var tables = Array.prototype.slice.call(document.querySelectorAll("table.data-table"))
+    .filter(function (table) { return table.tBodies.length > 0; });
+  if (!tables.length) { return; }
+
+  var searchBar = document.createElement("div");
+  searchBar.className = "table-search-bar";
+  var input = document.createElement("input");
+  input.type = "text";
+  input.className = "table-search-input";
+  input.placeholder = "Search for a device, value, or anything else across every table below\\u2026";
+  var count = document.createElement("span");
+  count.className = "table-search-count";
+  searchBar.appendChild(input);
+  searchBar.appendChild(count);
+
+  // Placed right above the first real table (e.g. after the Test Configuration/Objective
+  // sections, which aren't tables), rather than at the very top of the page.
+  var firstWrap = tables[0].closest(".table-wrap") || tables[0].parentNode;
+  firstWrap.parentNode.insertBefore(searchBar, firstWrap);
+
+  function applyFilter() {
+    var query = input.value.trim().toLowerCase();
+    var shown = 0, total = 0;
+    tables.forEach(function (table) {
+      Array.prototype.forEach.call(table.tBodies[0].rows, function (row) {
+        total++;
+        var match = !query || row.textContent.toLowerCase().indexOf(query) !== -1;
+        row.style.display = match ? "" : "none";
+        if (match) { shown++; }
+      });
+    });
+    count.textContent = query ? (shown + " / " + total + " rows across " + tables.length + " tables") : "";
+  }
+  input.addEventListener("input", applyFilter);
 })();
 </script>
 """
@@ -1399,6 +1435,7 @@ class lf_report:
         """.format(logo_footer_data_uri=self._report_asset_as_data_uri(self.logo_footer_file_name))
         self.html += self.footer_html
         self.html += _SORTABLE_TABLE_JS
+        self.html += _TABLE_SEARCH_JS
 
     def build_footer_no_png(self):
         self.footer_html = """
@@ -1409,6 +1446,7 @@ class lf_report:
     </div><!-- end report-shell -->"""
         self.html += self.footer_html
         self.html += _SORTABLE_TABLE_JS
+        self.html += _TABLE_SEARCH_JS
 
     def copy_js(self):
         self.html += """
@@ -2037,8 +2075,7 @@ def create_device_summary_card(devices, name_field="name", platform_field="platf
     rows_payload = []
     for d in devices:
         cells = "".join("<td>{}</td>".format(d.get(c["key"], "")) for c in columns)
-        search_text = " ".join(str(d.get(c["key"], "")) for c in columns).lower()
-        rows_payload.append({"cellsHtml": cells, "searchText": search_text})
+        rows_payload.append({"cellsHtml": cells})
     header_cells = "".join("<th>{}</th>".format(c["label"]) for c in columns)
 
     default_page_size = min(page_size, total) if page_size else total
@@ -2056,7 +2093,6 @@ def create_device_summary_card(devices, name_field="name", platform_field="platf
                 {donut}
               </div>
               <div class='device-toolbar'>
-                <input class='device-search' type='text' placeholder='Search device...' />
                 <button class='btn-outline view-all-btn' type='button'>View All Devices</button>
               </div>
               <p class='device-count-label'></p>
