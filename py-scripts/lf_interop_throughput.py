@@ -2824,6 +2824,89 @@ class Throughput(Realm):
             report.set_table_dataframe(table_df)
             report.build_table()
 
+    def build_ping_key_findings(self):
+        """Turn the background ping's per-client packet loss/latency stats into plain-English
+        "Key Findings" sentences. Computed once per report, not once per iteration -- the
+        background ping covers the whole test duration rather than a single iteration.
+        """
+        background_ping = getattr(self, 'background_ping', None)
+        if not background_ping or not background_ping.stats:
+            return []
+
+        findings = []
+        rows = list(background_ping.stats.values())
+        total_clients = len(rows)
+
+        # 1. Connectivity -- did any client see packet loss on the background ping.
+        lossy_clients = [row for row in rows if row['sent'] and row['dropped'] > 0]
+        clean_clients = total_clients - len(lossy_clients)
+        if lossy_clients:
+            findings.append({
+                "type": "warning" if len(lossy_clients) > total_clients / 2 else "neutral",
+                "text": "During the test, {n} of {total} client{s} experienced packet loss on the background "
+                        "ping; the remaining {clean} maintained an uninterrupted connection throughout.".format(
+                            n=len(lossy_clients), total=total_clients, s="" if total_clients == 1 else "s",
+                            clean=clean_clients)
+            })
+        elif total_clients:
+            findings.append({
+                "type": "positive",
+                "text": "All {n} client{s} maintained an uninterrupted background-ping connection throughout "
+                        "the test, with no packet loss observed.".format(
+                            n=total_clients, s="" if total_clients == 1 else "s")
+            })
+
+        # 2. How much loss, and who was worst affected.
+        loss_values = [row['loss_percent'] for row in rows if row['sent']]
+        if loss_values:
+            avg_loss = sum(loss_values) / len(loss_values)
+            worst = max(rows, key=lambda row: row['loss_percent'])
+            if avg_loss < 2 and worst['loss_percent'] < 5:
+                findings.append({
+                    "type": "positive",
+                    "text": "Packet loss was minimal, averaging {avg:.2f}% across all clients, indicating "
+                            "reliable communication under load.".format(avg=avg_loss)
+                })
+            else:
+                findings.append({
+                    "type": "warning",
+                    "text": "Average packet loss across clients was {avg:.2f}%, with {name} the worst affected "
+                            "at {loss:.2f}%.".format(avg=avg_loss, name=worst['name'], loss=worst['loss_percent'])
+                })
+
+        # 3. Latency -- was it low and steady, or did some client drag the average up.
+        rtts = [row['avg_rtt'] for row in rows if row['avg_rtt']]
+        if rtts:
+            avg_rtt = sum(rtts) / len(rtts)
+            worst_rtt = max(rows, key=lambda row: row['avg_rtt'])
+            if avg_rtt < 20 and worst_rtt['avg_rtt'] < 50:
+                findings.append({
+                    "type": "positive",
+                    "text": "Latency remained low across all connected clients, averaging {avg:.1f} ms, "
+                            "indicating throughput results were not impacted by poor wireless "
+                            "conditions.".format(avg=avg_rtt)
+                })
+            else:
+                findings.append({
+                    "type": "neutral",
+                    "text": "Average ping latency across clients was {avg:.1f} ms, with {name} seeing the "
+                            "highest average round-trip time at {rtt:.1f} ms.".format(
+                                avg=avg_rtt, name=worst_rtt['name'], rtt=worst_rtt['avg_rtt'])
+                })
+
+        # 4. A client that never produced ping traffic is a setup problem worth calling out directly.
+        silent_clients = [row for row in rows if not row['sent'] and not row['recv']]
+        if silent_clients:
+            findings.append({
+                "type": "critical",
+                "text": "{n} client{s} produced no background-ping traffic at all ({names}) -- check that "
+                        "the ping command is runnable there.".format(
+                            n=len(silent_clients), s="" if len(silent_clients) == 1 else "s",
+                            names=", ".join(row['name'] for row in silent_clients))
+            })
+
+        return findings
+
     def generate_report(self, iterations_before_test_stopped_by_user, incremental_capacity_list, data=None, data1=None, report_path='', result_dir_name='Throughput_Test_report',
                         selected_real_clients_names=None, iot_summary=None):
 

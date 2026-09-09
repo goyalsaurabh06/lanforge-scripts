@@ -123,6 +123,7 @@ class BackgroundPing:
         self.device_os = {}
         self.device_data = {}
         self.samples = {}
+        self.timeline_samples = {}
         self.started = False
         self.start_time = None
         self.stop_time = None
@@ -195,6 +196,7 @@ class BackgroundPing:
             return []
 
         resource_os = {}
+        resource_name = {}
         ios_resources = set()
         for resource_entry in resources['resources']:
             resource_id = list(resource_entry.keys())[0]
@@ -205,6 +207,10 @@ class BackgroundPing:
             # A custom kernel means a LANforge resource rather than a real client
             if resource_data.get('ct-kernel'):
                 continue
+
+            # The device's human-readable name lives on the resource, not the port, and is
+            # what the rest of the report (e.g. the detailed result table) labels it by
+            resource_name[resource_id] = resource_data.get('user', '') or resource_data.get('hostname', '')
 
             hw_version = resource_data.get('hw version', '')
             app_id = resource_data.get('app-id', '')
@@ -269,7 +275,9 @@ class BackgroundPing:
 
             selected.append(port_id)
             self.device_os[port_id] = resource_os[resource_id]
-            self.device_data[port_id] = port_data
+            device_data = dict(port_data)
+            device_data.setdefault('user', resource_name.get(resource_id, ''))
+            self.device_data[port_id] = device_data
 
         unmatched = sorted((requested_ports | requested_resources) - matched_requests)
         if unmatched:
@@ -335,6 +343,10 @@ class BackgroundPing:
         self.ping.real_sta_list = devices
         self.ping.sta_list = list(devices)
         self.samples = {device: self._empty_sample() for device in devices}
+        self.timeline_samples = {
+            device: [{'time': 0.0, 'sent': 0, 'received': 0, 'dropped': 0}]
+            for device in devices
+        }
         self._previous_lines = {device: [] for device in devices}
 
         try:
@@ -407,15 +419,19 @@ class BackgroundPing:
                 'count': 0, 'total': 0.0, 'observed_min': None, 'observed_max': None,
                 'last_line': ''}
 
-    def sample(self):
+    def sample(self, record_timeline=True):
         """Reads the endpoint output once and folds it into the running per device statistics.
 
         Sampling while the test runs means the statistics survive an endpoint that stops
         reporting, and it keeps 'last results' from rolling over unread on long runs.
         """
+        sample_time = time.time()
         for device, endpoint_data in self._results_by_device().items():
             if device not in self.samples:
                 continue
+
+            if record_timeline:
+                self._record_timeline_sample(device, endpoint_data, sample_time)
 
             last_results = endpoint_data.get('last results', '') or ''
             lines = [line for line in last_results.split('\n') if line.strip()]
@@ -465,6 +481,95 @@ class BackgroundPing:
                 if stats['observed_max'] is None or rtt > stats['observed_max']:
                     stats['observed_max'] = rtt
 
+    def _record_timeline_sample(self, device, endpoint_data, sample_time):
+        """Stores cumulative packet counters for the connectivity timeline."""
+        if self.start_time is None:
+            return
+
+        sent = self._as_int(endpoint_data.get('tx pkts'))
+        received = self._as_int(endpoint_data.get('rx pkts'))
+        dropped = self._as_int(endpoint_data.get('dropped'))
+        if not sent:
+            sent = received + dropped
+
+        self.timeline_samples.setdefault(device, []).append({
+            'time': max(0.0, sample_time - self.start_time),
+            'sent': sent,
+            'received': received,
+            'dropped': dropped,
+        })
+
+    def connectivity_timeline_payload(self):
+        """Converts sampled cumulative counters into green/red time spans.
+
+        Each span is bounded by two real counter samples. Windows with no transmitted
+        packets and unsampled time after the last point are not rendered. A red span
+        means packet loss was observed between samples; exact loss time cannot be
+        inferred from cumulative counters, so the complete affected window is red.
+        """
+        if not self.timeline_samples or not self.start_time:
+            return None
+
+        end_time = self.stop_time if self.stop_time else time.time()
+        duration = max(0.1, end_time - self.start_time)
+        clients = []
+        stations = []
+        segments = []
+
+        for device in self.ping.real_sta_list:
+            points = list(self.timeline_samples.get(device, []))
+            if not points:
+                continue
+
+            points.sort(key=lambda point: point['time'])
+
+            device_data = self.device_data.get(device, {})
+            label = device_data.get('user', '') or device_data.get('hostname', '') or device
+            client_index = len(clients)
+            clients.append(label)
+            stations.append(device)
+
+            client_segments = []
+            for previous, current in zip(points, points[1:]):
+                start = max(0.0, float(previous['time']))
+                end = min(duration, float(current['time']))
+                if end <= start:
+                    continue
+
+                sent_delta = max(0, current['sent'] - previous['sent'])
+                dropped_delta = max(0, current['dropped'] - previous['dropped'])
+                if sent_delta == 0:
+                    continue
+                # A sent/received mismatch at a sampling boundary can simply mean
+                # that a reply is still in flight. Only the endpoint's explicit
+                # dropped counter is authoritative packet-loss data.
+                status = 'drop' if dropped_delta > 0 else 'up'
+
+                # Joining adjacent spans with the same state reduces the
+                # amount of custom-series data without changing the graph.
+                if client_segments and client_segments[-1]['status'] == status:
+                    client_segments[-1]['end'] = round(end, 3)
+                else:
+                    client_segments.append({
+                        'clientIndex': client_index,
+                        'start': round(start, 3),
+                        'end': round(end, 3),
+                        'status': status,
+                    })
+
+            segments.extend(client_segments)
+
+        if not clients or not segments:
+            return None
+
+        return {
+            'clients': clients,
+            'stations': stations,
+            'segments': segments,
+            'duration': round(duration, 3),
+            'emptyMessage': 'No time-series ping samples were collected',
+        }
+
     @staticmethod
     def _new_lines(previous_lines, current_lines):
         """Returns the lines of current_lines that were not already present in previous_lines."""
@@ -488,17 +593,24 @@ class BackgroundPing:
         if self._sampler_thread:
             self._sampler_thread.join(timeout=self.sample_interval + 5)
 
+        # Capture one final live counter point. Sampling only after the endpoint is
+        # stopped can return unchanged/stale counters and create a false red tail.
+        try:
+            self.sample()
+        except Exception as e:
+            logger.warning('Final live background ping sample could not be collected: %s', e)
+
+        self.stop_time = time.time()
+
         try:
             self.ping.stop_generic()
         except Exception as e:
             logger.warning('Background ping could not be stopped cleanly: %s', e)
 
-        self.stop_time = time.time()
-
         # The min/avg/max summary is only printed once the ping process has been killed
         time.sleep(2)
         try:
-            self.sample()
+            self.sample(record_timeline=False)
             self.stats = self._build_stats()
         except Exception as e:
             logger.warning('Background ping results could not be collected: %s', e)
@@ -604,7 +716,9 @@ class BackgroundPing:
 
         rows = list(self.stats.values())
         table = {
-            'Wireless Client': ['{} {}'.format(row['name'], row['os']) for row in rows],
+            'Username': [row['name'] for row in rows],
+            'Device Type': [row['os'] for row in rows],
+            'Station': [row['device'] for row in rows],
             'Packets Sent': [row['sent'] for row in rows],
             'Packets Received': [row['recv'] for row in rows],
             'Packets Loss': [row['dropped'] for row in rows],
@@ -613,11 +727,6 @@ class BackgroundPing:
             'Average Latency (ms)': [row['avg_rtt'] for row in rows],
             'Max Latency (ms)': [row['max_rtt'] for row in rows],
         }
-
-        # The remarks column only earns its place when something actually went wrong
-        remarks = [', '.join(row['remarks']) for row in rows]
-        if any(remarks):
-            table['Remarks'] = remarks
 
         return pd.DataFrame(table)
 
@@ -631,8 +740,23 @@ class BackgroundPing:
             return False
 
         try:
+            timeline = self.connectivity_timeline_payload()
+            if timeline and hasattr(report, 'build_echarts_chart'):
+                report.set_obj_html(
+                    _obj_title='Client Connectivity Results Throughout the Test Duration',
+                    _obj=('This chart shows wireless-client connectivity from the background ping samples. '
+                          'Green indicates sampled windows with transmitted packets and no loss; red indicates '
+                          'sampled windows where packet loss was observed. Windows without transmitted packets '
+                          'or samples are left unclassified. Hover a segment for its time range.'))
+                report.build_objective()
+                report.build_echarts_chart(
+                    chart_id='background-ping-connectivity-timeline',
+                    chart_type='connectivity_timeline',
+                    payload=timeline,
+                    title='Wireless Client Connectivity Status vs Time')
+
             report.set_table_title(
-                'Ping Statistics: pinged {} for {} at a {} second interval while the test was running'.format(
+                'Ping Statistics: '.format(
                     self.target, self.duration_string(), self.interval))
             report.build_table_title()
             report.set_table_dataframe(dataframe)
