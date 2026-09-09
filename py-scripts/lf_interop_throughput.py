@@ -2646,13 +2646,27 @@ class Throughput(Realm):
 
         color = ['forestgreen', 'c', 'r', 'g', 'b', 'p']
         marker = ['s', 'o', 'v']
-        xaxis_categories = xaxis_categories[:-1]
-        data_set = [data[:-1] for data in data_set]
+        # Plot the complete CSV independently of UI pagination. Break across
+        # missing sampling intervals instead of drawing an invented bridge.
+        stamps = pd.to_datetime(xaxis_categories, format='%d/%m %I:%M:%S %p', errors='coerce')
+        deltas = pd.Series(stamps).diff().dt.total_seconds()
+        positive = deltas[deltas > 0]
+        cadence = positive.median() if not positive.empty else None
+        gaps = {index for index, delta in enumerate(deltas)
+                if pd.isna(delta) or delta <= 0 or
+                (cadence is not None and delta > 3 * cadence)} - {0}
         # Plot each dataset
         for i, data in enumerate(data_set):
+            plot_x, plot_y = [], []
+            for index, value in enumerate(data):
+                if index in gaps:
+                    plot_x.append(index - 0.5)
+                    plot_y.append(float('nan'))
+                plot_x.append(index)
+                plot_y.append(value)
             plt.plot(
-                xaxis_categories,
-                data,
+                plot_x,
+                plot_y,
                 color=color[i % len(color)],  # Ensure no index error
                 label=label[i],
                 marker=marker[i % len(marker)]
@@ -2847,6 +2861,73 @@ class Throughput(Realm):
             table_df = pd.DataFrame(table_df)
             report.set_table_dataframe(table_df)
             report.build_table()
+
+    @staticmethod
+    def _report_bucket_seconds(timestamps):
+        """Use the same automatic bucket sizes as Manager monitoring reports."""
+        span_seconds = (timestamps.max() - timestamps.min()).total_seconds()
+        if span_seconds <= 6 * 3600:
+            return 10
+        if span_seconds <= 24 * 3600:
+            return 60
+        if span_seconds <= 7 * 24 * 3600:
+            return 300
+        return 900
+
+    def add_timestamped_bucket_summary(self, report, csv_path):
+        """Add a time-series summary of throughput_data.csv to the report.
+
+        Mirrors the speed test report and the live graph: the samples are
+        averaged into the bucket size the new webGUI picks from the run span
+        (10s up to 6h, 60s up to 24h, 5m up to 7d, 15m beyond).
+        """
+        try:
+            if not os.path.isfile(csv_path):
+                return
+            samples = pd.read_csv(csv_path)
+            if "TIMESTAMP" not in samples.columns or samples.empty:
+                return
+
+            # TIMESTAMP has no year (e.g. "08/09 01:19:02 PM"); assume the run
+            # happened this year and repair the roll-over at new year's eve.
+            stamps = pd.to_datetime(
+                samples["TIMESTAMP"].astype(str).str.strip(),
+                format="%d/%m %I:%M:%S %p",
+                errors="coerce",
+            )
+            if stamps.isna().all():
+                stamps = pd.to_datetime(
+                    samples["TIMESTAMP"].astype(str).str.strip(),
+                    format="%m/%d %I:%M:%S %p",
+                    errors="coerce",
+                )
+            samples["TIMESTAMP"] = stamps.map(
+                lambda value: value if pd.isna(value) else value.replace(year=datetime.now().year)
+            )
+            samples = samples.dropna(subset=["TIMESTAMP"])
+            if samples.empty:
+                return
+
+            bucket_seconds = self._report_bucket_seconds(samples["TIMESTAMP"])
+            metric_columns = [column for column in ("Overall Download", "Overall Upload") if column in samples]
+            if not metric_columns:
+                return
+            values = pd.DataFrame({
+                column: pd.to_numeric(samples[column], errors="coerce") for column in metric_columns
+            })
+            values["Timestamp"] = samples["TIMESTAMP"].dt.floor("{}s".format(bucket_seconds))
+            grouped = values.groupby("Timestamp", as_index=False)
+            summary = grouped.mean(numeric_only=True).round(2)
+            summary.insert(1, "Samples", grouped.size()["size"].to_numpy())
+            summary["Timestamp"] = summary["Timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S")
+            report.set_table_title("Time-Series Summary ({}-second buckets)".format(bucket_seconds))
+            report.build_table_title()
+            report.set_table_dataframe(summary)
+            report.build_table()
+            report.set_custom_html('<hr>')
+            report.build_custom()
+        except Exception as error:
+            logger.warning("could not add timestamped report summary: %s", error)
 
     def generate_report(self, iterations_before_test_stopped_by_user, incremental_capacity_list, data=None, data1=None, report_path='', result_dir_name='Throughput_Test_report',
                         selected_real_clients_names=None, iot_summary=None):
@@ -3744,6 +3825,9 @@ class Throughput(Realm):
 
             if self.dowebgui and self.get_live_view and self.do_interopability:
                 self.add_live_view_images_to_report(report)
+        # throughput_data.csv has been moved into the report folder above.
+        self.add_timestamped_bucket_summary(
+            report, os.path.join(report_path_date_time, 'throughput_data.csv'))
         if iot_summary:
             self.build_iot_report_section(report, iot_summary)
         if self.device_issue_log:
