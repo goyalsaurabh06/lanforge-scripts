@@ -98,6 +98,7 @@ Realm = realm.Realm
 base_RealDevice = base.RealDevice
 lf_report = importlib.import_module("py-scripts.lf_report")
 lf_report_pdf = importlib.import_module("py-scripts.lf_report")
+lf_interop_bg_ping = importlib.import_module("py-scripts.lf_interop_bg_ping")
 lf_graph = importlib.import_module("py-scripts.lf_graph")
 
 # Set up logging configuration for the script
@@ -1320,6 +1321,9 @@ class RealBrowserTest(Realm):
         dataframe3 = pd.DataFrame(dataframe2)
         report.set_table_dataframe(dataframe3)
         report.build_table()
+        # ping statistics collected on the clients while the browsing was running
+        if getattr(self, 'background_ping', None):
+            self.background_ping.add_to_report(report)
         report.build_footer()
         report.write_html()
         report.write_pdf()
@@ -1442,6 +1446,8 @@ def main():
     parser.add_argument('--postcleanup', help="Cleanup the cross connections after test is stopped", action='store_true')
     parser.add_argument('--precleanup', help="Cleanup the cross connections before test is started", action='store_true')
     parser.add_argument('--help_summary', help='Show summary of what this script does', action="store_true")
+
+    lf_interop_bg_ping.add_arguments(parser)
 
     args = parser.parse_args()
 
@@ -1673,6 +1679,13 @@ def main():
     test_time = test_time.strftime("%b %d %H:%M:%S")
 
     logging.info("Initiating Test...")
+    # starting the ping on the selected clients, it keeps running until the browsing is stopped
+    obj.background_ping = lf_interop_bg_ping.from_args(
+        args,
+        host=args.host,
+        port=8080,
+        device_list=available_resources,
+        default_target=getattr(args, 'upstream_port', None))
     obj.build()
     time.sleep(5)
     # TODO : To create cx for laptop devices
@@ -1838,6 +1851,8 @@ def main():
 
     # Stop the test execution
     obj.stop()
+    if obj.background_ping:
+        obj.background_ping.stop()
 
     # Generate CSV for webGUI results if dowebgui is True
     if args.dowebgui:
@@ -1937,6 +1952,9 @@ def main():
         obj.generate_report(date, "realBrowser.csv", test_setup_info=test_setup_info, dataset2=dataset2, dataset=dataset, lis=lis, bands=bands, total_urls=total_urls, uc_min_value=uc_min_value, cx_order_list=cx_order_list)  # noqa: E501
     elif obj.resource_ids:
         obj.generate_report(date, "realBrowser.csv", test_setup_info=test_setup_info, dataset2=dataset2, dataset=dataset, lis=lis, bands=bands, total_urls=total_urls, uc_min_value=uc_min_value)
+
+    if obj.background_ping:
+        obj.background_ping.cleanup()
 
     # Perform post-cleanup operations
     if args.postcleanup:

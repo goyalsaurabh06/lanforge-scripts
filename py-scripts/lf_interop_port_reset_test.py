@@ -77,6 +77,7 @@ lf_csv = importlib.import_module("py-scripts.lf_csv")
 realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
 lf_report_pdf = importlib.import_module("py-scripts.lf_report")
+lf_interop_bg_ping = importlib.import_module("py-scripts.lf_interop_bg_ping")
 lf_graph = importlib.import_module("py-scripts.lf_graph")
 logger = logging.getLogger(__name__)
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
@@ -2105,6 +2106,10 @@ class InteropPortReset(Realm):
                 per_iteration_results=per_iteration_results, device_list=all_devices
             )
 
+            # ping statistics collected on the clients while the ports were being reset
+            if getattr(self, 'background_ping', None):
+                self.background_ping.add_to_report(self.lf_report)
+
             self.lf_report.build_footer()
             self.lf_report.write_html()
             if self.dowebgui:
@@ -2414,6 +2419,9 @@ class InteropPortReset(Realm):
                 device_summary_df = pd.DataFrame(device_summary_table)
                 self.lf_report.set_table_dataframe(device_summary_df)
                 self.lf_report.build_table()
+        # ping statistics collected on the clients while the ports were being reset
+        if getattr(self, 'background_ping', None):
+            self.background_ping.add_to_report(self.lf_report)
         self.lf_report.build_footer()
         self.lf_report.write_html()
         if self.dowebgui:
@@ -2684,6 +2692,7 @@ INCLUDE_IN_README: False
         help="Total floors from testhouse automation WebGui ",
         default="0",
     )
+    lf_interop_bg_ping.add_arguments(parser)
     args = parser.parse_args()
 
     if args.help_summary:
@@ -2729,10 +2738,21 @@ INCLUDE_IN_README: False
     port_reset_test.base_interop_profile.server_ip = port_reset_test.upstream_port
 
     port_reset_test.selecting_devices_from_available()
+
+    # starting the ping on the selected clients, it keeps running across every reset iteration
+    port_reset_test.background_ping = lf_interop_bg_ping.from_args(
+        args,
+        host=args.lanforge_ip,
+        port=args.lanforge_port,
+        device_list=port_reset_test.device_list,
+        default_target=port_reset_test.upstream_port)
+
     if port_reset_test.robot_test:
         port_reset_test.run()
     else:
         per_iteration_results, test_duration = port_reset_test.run()
+    if port_reset_test.background_ping:
+        port_reset_test.background_ping.stop()
     if args.dowebgui:
         port_reset_test.result_df["Status"] = "stopped"
         if port_reset_test.robot_test:
@@ -2757,6 +2777,9 @@ INCLUDE_IN_README: False
         port_reset_test.generate_report(
             per_iteration_results=per_iteration_results, test_duration=test_duration
         )
+
+    if port_reset_test.background_ping:
+        port_reset_test.background_ping.cleanup()
 
 
 if __name__ == "__main__":
