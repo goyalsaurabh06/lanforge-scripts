@@ -3572,12 +3572,13 @@ class Throughput(Realm):
                 )
             else:
                 report.set_obj_html(_obj_title="Test Overview",
-                                    _obj="The Candela Client Capacity test is designed to measure an Access Point’s client capacity and performance when handling different amounts of Real clients like android, Linux,"  # noqa: E501
-                                    " windows,MacOS and IOS. The test allows the user to increase the number of clients in user-defined steps for each test iteration and measure the per client and the overall throughput for"  # noqa: E501
-                                    " this test, we aim to assess the capacity of network to handle high volumes of traffic while"
-                                    " each trial. Along with throughput other measurements made are client connection times, Station 4-Way Handshake time, DHCP times, and more. The expected behavior is for the"  # noqa: E501
-                                    " AP to be able to handle several stations (within the limitations of the AP specs) and make sure all Clients get a fair amount of airtime both upstream and downstream. An AP that"  # noqa: E501
-                                    "scales well will not show a significant overall throughput decrease as more Real clients are added.")
+                                    _obj="The Candela throughput test is designed to measure an Access Point’s client capacity and performance"  # noqa: E501
+                                    " when handling different types of real clients, such as Android, Linux, Windows, and iOS. The test allows"  # noqa: E501
+                                    " the user to increase the number of clients in user-defined steps for each test iteration and measure the"  # noqa: E501
+                                    " per-client and overall throughput for each trial. The expected behavior is for the AP to be able to handle"  # noqa: E501
+                                    " several stations (within the limitations of the AP specifications) and ensure that all clients receive a"  # noqa: E501
+                                    " fair amount of airtime in both upstream and downstream directions. An AP that scales well should not show"  # noqa: E501
+                                    " a significant decrease in overall throughput as more real clients are added.")
             report.build_objective()
 
             # Initialize counts and lists for device types
@@ -4644,12 +4645,13 @@ class Throughput(Realm):
             report.build_banner()
 
             report.set_obj_html(_obj_title="Objective",
-                                _obj="The Candela Client Capacity test is designed to measure an Access Point’s client capacity and performance when handling different amounts of Real clients like android, Linux,"  # noqa: E501
-                                " windows,MacOS and IOS. The test allows the user to increase the number of clients in user-defined steps for each test iteration and measure the per client and the overall throughput for"  # noqa: E501
-                                " this test, we aim to assess the capacity of network to handle high volumes of traffic while"
-                                " each trial. Along with throughput other measurements made are client connection times, Station 4-Way Handshake time, DHCP times, and more. The expected behavior is for the"  # noqa: E501
-                                " AP to be able to handle several stations (within the limitations of the AP specs) and make sure all Clients get a fair amount of airtime both upstream and downstream. An AP that"  # noqa: E501
-                                "scales well will not show a significant overall throughput decrease as more Real clients are added.")
+                                _obj="The Candela throughput test is designed to measure an Access Point’s client capacity and performance"  # noqa: E501
+                                " when handling different types of real clients, such as Android, Linux, Windows, and iOS. The test allows"  # noqa: E501
+                                " the user to increase the number of clients in user-defined steps for each test iteration and measure the"  # noqa: E501
+                                " per-client and overall throughput for each trial. The expected behavior is for the AP to be able to handle"  # noqa: E501
+                                " several stations (within the limitations of the AP specifications) and ensure that all clients receive a"  # noqa: E501
+                                " fair amount of airtime in both upstream and downstream directions. An AP that scales well should not show"  # noqa: E501
+                                " a significant decrease in overall throughput as more real clients are added.")
             report.build_objective()
             report.set_obj_html(_obj_title="Input Parameters",
                                 _obj="The below tables provides the input parameters for the test")
