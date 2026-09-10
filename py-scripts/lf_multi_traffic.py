@@ -427,6 +427,7 @@ import importlib  # noqa: E402
 import json      # noqa: E402
 import logging   # noqa: E402
 import multiprocessing  # noqa: E402
+import pickle    # noqa: E402
 import threading  # noqa: E402
 import time      # noqa: E402
 import traceback  # noqa: E402
@@ -726,7 +727,15 @@ class MultiTraffic(Realm):
                                 obj_name = f"teams_test_{obj_no}"
                                 self.teams_obj_dict["series"][obj_name] = manager.dict({"obj": None, "data": None})
                                 logging.debug("Adding teams_test object to parallel execution")
-                            series_threads.append(multiprocessing.Process(target=run_test_safe(func, f"{label} [Series {idx + 1}]", args, self, duration_dict[test_name])))
+                            series_label = f"{label} [Series {idx + 1}]"
+                            series_proc = multiprocessing.Process(target=run_test_safe(func, series_label, args, self, duration_dict[test_name]))
+                            # Real-app automations sometimes call os._exit() directly on a hard
+                            # failure, which bypasses run_test_safe's own try/except and never
+                            # appends a row to test_results_list. Tag the process so a missed
+                            # result can still be recorded from the parent after join().
+                            series_proc.test_label = series_label
+                            series_proc.test_duration = duration_dict[test_name]
+                            series_threads.append(series_proc)
                         else:
                             series_threads.append(threading.Thread(
                                 target=run_test_safe(func, f"{label} [Series {idx + 1}]", args, self, duration_dict[test_name])
@@ -765,9 +774,15 @@ class MultiTraffic(Realm):
                                 self.teams_obj_dict["parallel"]["teams_test"] = manager.dict({"obj": None, "data": None})
                                 logging.debug("Adding teams_test object to parallel execution")
 
-                            parallel_threads.append(multiprocessing.Process(
-                                target=run_test_safe(func, f"{label} [Parallel {idx + 1}]", args, self, duration_dict[test_name])
-                            ))
+                            parallel_label = f"{label} [Parallel {idx + 1}]"
+                            parallel_proc = multiprocessing.Process(
+                                target=run_test_safe(func, parallel_label, args, self, duration_dict[test_name])
+                            )
+                            # See the matching comment in the series branch above: this lets a
+                            # hard os._exit() in the child still be reflected in the summary.
+                            parallel_proc.test_label = parallel_label
+                            parallel_proc.test_duration = duration_dict[test_name]
+                            parallel_threads.append(parallel_proc)
                         else:
                             parallel_threads.append(threading.Thread(
                                 target=run_test_safe(func, f"{label} [Parallel {idx + 1}]", args, self, duration_dict[test_name])
@@ -798,6 +813,7 @@ class MultiTraffic(Realm):
                 for t in series_threads:
                     t.start()
                     t.join()
+                    record_missed_process_result(t)
                     self.series_index += 1
 
                 # Then run parallel tests
@@ -813,6 +829,7 @@ class MultiTraffic(Realm):
                 self.parallel_index = 0
                 for t in parallel_threads:
                     t.join()
+                    record_missed_process_result(t)
                     self.parallel_index += 1
 
             else:
@@ -822,6 +839,7 @@ class MultiTraffic(Realm):
 
                 for t in parallel_threads:
                     t.join()
+                    record_missed_process_result(t)
 
                 if series_threads:
                     self.misc_clean_up(layer3=True, layer4=True, generic=True, port_5000=iszoom, port_5002=isyt, port_5003=isrb)
@@ -832,6 +850,7 @@ class MultiTraffic(Realm):
                 for t in series_threads:
                     t.start()
                     t.join()
+                    record_missed_process_result(t)
         else:
             logger.error("Provide either --parallel_tests or --series_tests")
             exit(1)
@@ -1247,6 +1266,104 @@ class MultiTraffic(Realm):
 
                 rotated = self.robot_obj.rotate_angle(1, 2, angle)
                 self.robo_rotated.value = rotated
+
+    @staticmethod
+    def store_obj_for_report(obj_dict_entry, obj, label):
+        """Store a real-application test object so the combined report can use it.
+
+        The real-application tests (yt_test, rb_test, zoom_test, teams_test) each run
+        in their own multiprocessing.Process and hand their test object back to the
+        parent through a Manager dict. Every write to a Manager dict pickles the value,
+        and these objects hold live runtime state that cannot be pickled -- a
+        threading.Event used to wait for client logs, a Flask callback server, or the
+        report object carrying the JSON capture wrappers installed by
+        _install_json_report_capture(). A single such attribute made the whole write
+        raise, the object never reached the parent, and the test's section was then
+        silently missing from the combined report/PDF even though the test had passed.
+
+        Copy the object and blank out only the attributes that genuinely cannot be
+        pickled, then store it. Everything the report reads is plain data (stats
+        dictionaries, device names, counters) and is preserved. The caller's object is
+        never modified, so the child process can keep using it for cleanup afterwards.
+
+        Returns True when the object was stored.
+        """
+        try:
+            safe_obj = copy.copy(obj)
+        except Exception as e:
+            logging.error("Could not copy the %s test object for the report: %s", label, e)
+            return False
+
+        attributes = getattr(safe_obj, "__dict__", None)
+        if attributes is not None:
+            dropped = []
+            for name, value in list(attributes.items()):
+                try:
+                    pickle.dumps(value)
+                except Exception:
+                    setattr(safe_obj, name, None)
+                    dropped.append(name)
+            if dropped:
+                logging.info(
+                    "Dropped non-transferable attribute(s) from the %s test object before "
+                    "storing it for the report: %s", label, ", ".join(sorted(dropped)))
+
+        try:
+            obj_dict_entry["obj"] = safe_obj
+        except Exception as e:
+            logging.error(
+                "Could not store the %s test object for the combined report (%s). The test's "
+                "own report is unaffected, but its section will be missing from the combined "
+                "report.", label, e)
+            return False
+        return True
+
+    @staticmethod
+    def _ping_last_line(last_results):
+        """Return the last non-empty line of a generic endpoint's ping output.
+
+        The reported line is normally the ping summary. Ping output can also be
+        empty, truncated, or a single line (unknown host, no buffer space, the
+        endpoint never produced output), so pick the line by scanning instead of
+        indexing blindly -- indexing raised IndexError and silently dropped the
+        whole station from the results.
+        """
+        if not last_results:
+            return ""
+        lines = [line for line in str(last_results).splitlines() if line.strip()]
+        return lines[-1] if lines else ""
+
+    @staticmethod
+    def _ping_rtts(last_results):
+        """Return (min_rtt, avg_rtt, max_rtt) as strings from a ping output.
+
+        Looks for the 'min/avg/max' summary line and pulls the slash separated
+        values out of it. The values are not always the final token on that line:
+        several ping builds append a unit ('... = 20.7/35.4/63.0 ms') and Linux
+        adds a fourth mdev field, so scan the tokens for the last one that really
+        parses as slash separated numbers rather than assuming a position.
+
+        Anything unparseable (no summary line, a partial line, a ping dialect that
+        does not report min/avg/max) degrades to zeros so the station still appears
+        in the report -- with its packet counts and the generated remarks explaining
+        the failure -- instead of being dropped from the results entirely.
+        """
+        zeros = ('0', '0', '0')
+        summary_line = MultiTraffic._ping_last_line(last_results)
+        if 'min/avg/max' not in summary_line:
+            return zeros
+        for token in reversed(summary_line.split()):
+            # Strip a leading label such as 'min/avg/max:' before splitting values.
+            values = token.split(':')[-1].split('/')
+            if len(values) < 3:
+                continue
+            try:
+                [float(value) for value in values[:3]]
+            except ValueError:
+                continue
+            return (values[0], values[1], values[2])
+        logging.warning("Could not parse ping min/avg/max from summary line: %r", summary_line)
+        return zeros
 
     def run_ping_test(
         self,
@@ -1770,14 +1887,15 @@ class MultiTraffic(Realm):
                         current_device_data = ports_data[station]
                         if (station.split('.')[2] in result_data['name']):
                             try:
+                                min_rtt, avg_rtt, max_rtt = self._ping_rtts(result_data.get('last results'))
                                 self.ping_obj_dict[ce][obj_name]["obj"].result_json[station] = {
-                                    'command': result_data['command'],
-                                    'sent': result_data['tx pkts'],
-                                    'recv': result_data['rx pkts'],
-                                    'dropped': result_data['dropped'],
-                                    'min_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split('/')[0] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
-                                    'avg_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split('/')[1] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
-                                    'max_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split('/')[2] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                    'command': result_data.get('command', ''),
+                                    'sent': result_data.get('tx pkts', 0),
+                                    'recv': result_data.get('rx pkts', 0),
+                                    'dropped': result_data.get('dropped', 0),
+                                    'min_rtt': min_rtt,
+                                    'avg_rtt': avg_rtt,
+                                    'max_rtt': max_rtt,
                                     'mac': current_device_data['mac'],
                                     'channel': current_device_data['channel'],
                                     'ssid': current_device_data['ssid'],
@@ -1785,12 +1903,12 @@ class MultiTraffic(Realm):
                                     'name': station,
                                     'os': 'Virtual',
                                     'remarks': [],
-                                    'last_result': [result_data['last results'].split('\n')[-2] if len(result_data['last results']) != 0 else ""][0]
+                                    'last_result': self._ping_last_line(result_data.get('last results'))
                                 }
                                 self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['remarks'] = self.ping_obj_dict[ce][obj_name]["obj"].generate_remarks(
                                     self.ping_obj_dict[ce][obj_name]["obj"].result_json[station])
-                            except Exception:
-                                logging.error('Failed parsing the result for the station {}'.format(station))
+                            except Exception as e:
+                                logging.error('Failed parsing the result for the station {}: {}'.format(station, e))
 
             else:
                 for station in self.ping_obj_dict[ce][obj_name]["obj"].sta_list:
@@ -1801,14 +1919,15 @@ class MultiTraffic(Realm):
                                 0], list(ping_device.values())[0]
                             if (station.split('.')[2] in ping_endp):
                                 try:
+                                    min_rtt, avg_rtt, max_rtt = self._ping_rtts(ping_data.get('last results'))
                                     self.ping_obj_dict[ce][obj_name]["obj"].result_json[station] = {
-                                        'command': ping_data['command'],
-                                        'sent': ping_data['tx pkts'],
-                                        'recv': ping_data['rx pkts'],
-                                        'dropped': ping_data['dropped'],
-                                        'min_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split('/')[0] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
-                                        'avg_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split('/')[1] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
-                                        'max_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split('/')[2] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                        'command': ping_data.get('command', ''),
+                                        'sent': ping_data.get('tx pkts', 0),
+                                        'recv': ping_data.get('rx pkts', 0),
+                                        'dropped': ping_data.get('dropped', 0),
+                                        'min_rtt': min_rtt,
+                                        'avg_rtt': avg_rtt,
+                                        'max_rtt': max_rtt,
                                         'mac': current_device_data['mac'],
                                         'ssid': current_device_data['ssid'],
                                         'channel': current_device_data['channel'],
@@ -1816,29 +1935,31 @@ class MultiTraffic(Realm):
                                         'name': station,
                                         'os': 'Virtual',
                                         'remarks': [],
-                                        'last_result': [ping_data['last results'].split('\n')[-2] if len(ping_data['last results']) != 0 else ""][0]
+                                        'last_result': self._ping_last_line(ping_data.get('last results'))
                                     }
                                     self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['remarks'] = self.ping_obj_dict[ce][obj_name]["obj"].generate_remarks(
                                         self.ping_obj_dict[ce][obj_name]["obj"].result_json[station])
-                                except Exception:
-                                    logging.error('Failed parsing the result for the station {}'.format(station))
+                                except Exception as e:
+                                    logging.error('Failed parsing the result for the station {}: {}'.format(station, e))
 
         if (real):
             if (isinstance(result_data, dict)):
                 for station in self.ping_obj_dict[ce][obj_name]["obj"].real_sta_list:
-                    current_device_data = Devices.devices_data[station]
-                    # logging.info(current_device_data)
+                    current_device_data = Devices.devices_data.get(station)
+                    if current_device_data is None:
+                        logging.error('No device data available for the station %s; skipping it.', station)
+                        continue
                     if (station in result_data['name']):
                         try:
-                            # logging.info(result_data['last results'].split('\n'))
+                            min_rtt, avg_rtt, max_rtt = self._ping_rtts(result_data.get('last results'))
                             self.ping_obj_dict[ce][obj_name]["obj"].result_json[station] = {
-                                'command': result_data['command'],
-                                'sent': result_data['tx pkts'],
-                                'recv': result_data['rx pkts'],
-                                'dropped': result_data['dropped'],
-                                'min_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[0] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
-                                'avg_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[1] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
-                                'max_rtt': [result_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[2] if len(result_data['last results']) != 0 and 'min/avg/max' in result_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                'command': result_data.get('command', ''),
+                                'sent': result_data.get('tx pkts', 0),
+                                'recv': result_data.get('rx pkts', 0),
+                                'dropped': result_data.get('dropped', 0),
+                                'min_rtt': min_rtt,
+                                'avg_rtt': avg_rtt,
+                                'max_rtt': max_rtt,
                                 'mac': current_device_data['mac'],
                                 'ssid': current_device_data['ssid'],
                                 'channel': current_device_data['channel'],
@@ -1846,28 +1967,32 @@ class MultiTraffic(Realm):
                                 'name': [current_device_data['user'] if current_device_data['user'] != '' else current_device_data['hostname']][0],
                                 'os': ['Windows' if 'Win' in current_device_data['hw version'] else 'Linux' if 'Linux' in current_device_data['hw version'] else 'Mac' if 'Apple' in current_device_data['hw version'] else 'Android'][0],  # noqa E501
                                 'remarks': [],
-                                'last_result': [result_data['last results'].split('\n')[-2] if len(result_data['last results']) != 0 else ""][0]
+                                'last_result': self._ping_last_line(result_data.get('last results'))
                             }
                             self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['remarks'] = self.ping_obj_dict[ce][obj_name]["obj"].generate_remarks(
                                 self.ping_obj_dict[ce][obj_name]["obj"].result_json[station])
-                        except Exception:
-                            logging.error('Failed parsing the result for the station {}'.format(station))
+                        except Exception as e:
+                            logging.error('Failed parsing the result for the station {}: {}'.format(station, e))
             else:
                 for station in self.ping_obj_dict[ce][obj_name]["obj"].real_sta_list:
-                    current_device_data = Devices.devices_data[station]
+                    current_device_data = Devices.devices_data.get(station)
+                    if current_device_data is None:
+                        logging.error('No device data available for the station %s; skipping it.', station)
+                        continue
                     for ping_device in result_data:
                         ping_endp, ping_data = list(ping_device.keys())[
                             0], list(ping_device.values())[0]
                         if (station in ping_endp):
                             try:
+                                min_rtt, avg_rtt, max_rtt = self._ping_rtts(ping_data.get('last results'))
                                 self.ping_obj_dict[ce][obj_name]["obj"].result_json[station] = {
-                                    'command': ping_data['command'],
-                                    'sent': ping_data['tx pkts'],
-                                    'recv': ping_data['rx pkts'],
-                                    'dropped': ping_data['dropped'],
-                                    'min_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[0] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
-                                    'avg_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[1] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
-                                    'max_rtt': [ping_data['last results'].split('\n')[-2].split()[-1].split(':')[-1].split('/')[2] if len(ping_data['last results']) != 0 and 'min/avg/max' in ping_data['last results'].split('\n')[-2] else '0'][0],  # noqa E501
+                                    'command': ping_data.get('command', ''),
+                                    'sent': ping_data.get('tx pkts', 0),
+                                    'recv': ping_data.get('rx pkts', 0),
+                                    'dropped': ping_data.get('dropped', 0),
+                                    'min_rtt': min_rtt,
+                                    'avg_rtt': avg_rtt,
+                                    'max_rtt': max_rtt,
                                     'mac': current_device_data['mac'],
                                     'ssid': current_device_data['ssid'],
                                     'channel': current_device_data['channel'],
@@ -1875,12 +2000,12 @@ class MultiTraffic(Realm):
                                     'name': [current_device_data['user'] if current_device_data['user'] != '' else current_device_data['hostname']][0],
                                     'os': ['Windows' if 'Win' in current_device_data['hw version'] else 'Linux' if 'Linux' in current_device_data['hw version'] else 'Mac' if 'Apple' in current_device_data['hw version'] else 'Android'][0],  # noqa E501
                                     'remarks': [],
-                                    'last_result': [ping_data['last results'].split('\n')[-2] if len(ping_data['last results']) != 0 else ""][0]
+                                    'last_result': self._ping_last_line(ping_data.get('last results'))
                                 }
                                 self.ping_obj_dict[ce][obj_name]["obj"].result_json[station]['remarks'] = self.ping_obj_dict[ce][obj_name]["obj"].generate_remarks(
                                     self.ping_obj_dict[ce][obj_name]["obj"].result_json[station])
-                            except Exception:
-                                logging.error('Failed parsing the result for the station {}'.format(station))
+                            except Exception as e:
+                                logging.error('Failed parsing the result for the station {}: {}'.format(station, e))
 
         logging.info(self.ping_obj_dict[ce][obj_name]["obj"].result_json)
 
@@ -1900,6 +2025,17 @@ class MultiTraffic(Realm):
                                   "remaining_time": ""})
             df1 = pd.DataFrame(temp_json)
             df1.to_csv('{}/ping_datavalues.csv'.format(self.result_dir), index=False)
+        if not self.ping_obj_dict[ce][obj_name]["obj"].result_json:
+            # No station's ping result was successfully parsed above (see the "Failed parsing
+            # the result for the station ..." errors for the actual cause). generate_report()
+            # unconditionally builds a per-station bar graph, which crashes with an IndexError
+            # on an empty category list when there is nothing to plot. Skip it and leave "data"
+            # unset so this run is reported as not completed, consistent with other tests.
+            logging.error(
+                "No ping data was parsed for any station in %s; skipping report generation. "
+                "Check the 'Failed parsing the result for the station ...' errors above for why.",
+                obj_name)
+            return False
         if local_lf_report_dir == "":
             # Report generation when groups are specified but no custom report path is provided
             if group_name:
@@ -5542,11 +5678,12 @@ class MultiTraffic(Realm):
                 # traceback.print_exc()
                 self.yt_test_obj.stop()
                 if self.current_exec == "parallel":
-                    self.yt_obj_dict["parallel"]["yt_test"]["obj"] = self.yt_test_obj
+                    self.store_obj_for_report(self.yt_obj_dict["parallel"]["yt_test"], self.yt_test_obj, "YouTube")
                 else:
                     for i in range(len(self.yt_obj_dict["series"])):
                         if self.yt_obj_dict["series"][f"yt_test_{i + 1}"]["obj"] is None:
-                            self.yt_obj_dict["series"][f"yt_test_{i + 1}"]["obj"] = self.yt_test_obj
+                            self.store_obj_for_report(
+                                self.yt_obj_dict["series"][f"yt_test_{i + 1}"], self.yt_test_obj, "YouTube")
                             break
                 # Stopping the Youtube test
                 if do_webUI:
@@ -5879,11 +6016,12 @@ class MultiTraffic(Realm):
                 if self.dowebgui:
                     self.webgui_test_done("zoom")
                 if self.current_exec == "parallel":
-                    self.zoom_obj_dict["parallel"]["zoom_test"]["obj"] = self.zoom_test_obj
+                    self.store_obj_for_report(self.zoom_obj_dict["parallel"]["zoom_test"], self.zoom_test_obj, "Zoom")
                 else:
                     for i in range(len(self.zoom_obj_dict["series"])):
                         if self.zoom_obj_dict["series"][f"zoom_test_{i + 1}"]["obj"] is None:
-                            self.zoom_obj_dict["series"][f"zoom_test_{i + 1}"]["obj"] = self.zoom_test_obj
+                            self.store_obj_for_report(
+                                self.zoom_obj_dict["series"][f"zoom_test_{i + 1}"], self.zoom_test_obj, "Zoom")
                             break
                 logging.info("Waiting for Browser Cleanup in Laptops")
                 self.zoom_test_obj.generic_endps_profile.cleanup()
@@ -6038,11 +6176,12 @@ class MultiTraffic(Realm):
                 self.webgui_test_done("rb")
             self.rb_test.app = None
             if self.current_exec == "parallel":
-                self.rb_obj_dict["parallel"]["rb_test"]["obj"] = self.rb_test
+                self.store_obj_for_report(self.rb_obj_dict["parallel"]["rb_test"], self.rb_test, "Real Browser")
             else:
                 for i in range(len(self.rb_obj_dict["series"])):
                     if self.rb_obj_dict["series"][f"rb_test_{i + 1}"]["obj"] is None:
-                        self.rb_obj_dict["series"][f"rb_test_{i + 1}"]["obj"] = self.rb_test
+                        self.store_obj_for_report(
+                            self.rb_obj_dict["series"][f"rb_test_{i + 1}"], self.rb_test, "Real Browser")
                         break
 
         return True
@@ -6227,11 +6366,12 @@ class MultiTraffic(Realm):
                 logger.info(" Teams Test Completed")
                 teams.app = None
                 if self.current_exec == "parallel":
-                    self.teams_obj_dict["parallel"]["teams_test"]["obj"] = teams
+                    self.store_obj_for_report(self.teams_obj_dict["parallel"]["teams_test"], teams, "Teams")
                 else:
                     for i in range(len(self.teams_obj_dict["series"])):
                         if self.teams_obj_dict["series"][f"teams_test_{i + 1}"]["obj"] is None:
-                            self.teams_obj_dict["series"][f"teams_test_{i + 1}"]["obj"] = teams
+                            self.store_obj_for_report(
+                                self.teams_obj_dict["series"][f"teams_test_{i + 1}"], teams, "Teams")
                             break
         return True
 
@@ -6319,6 +6459,18 @@ class MultiTraffic(Realm):
         logging.info(f"test_map: {test_map}")
         logging.info(f"unq_tests: {unq_tests}")
         for test_name in unq_tests:
+            # All tables produced below are also collected for the machine-readable
+            # report.  A suffix is used only when the same test is run more than once.
+            self._json_test_key = test_name
+            if self._json_test_key in self.json_metrics:
+                occurrence = 2
+                while f"{test_name}_{occurrence}" in self.json_metrics:
+                    occurrence += 1
+                self._json_test_key = f"{test_name}_{occurrence}"
+            self.json_metrics.setdefault(self._json_test_key, {
+                "test_setup": {},
+                "clients": []
+            })
             try:
                 if test_name == "http_test":
                     """Processes HTTP test reporting and visualizations."""
@@ -8284,7 +8436,18 @@ class MultiTraffic(Realm):
                     while obj_name in self.ping_obj_dict[ce]:
                         if ce == "parallel":
                             obj_no = ''
-                        params = self.ping_obj_dict[ce][obj_name]["data"].copy()
+                        ping_entry = self.ping_obj_dict[ce][obj_name]
+                        if ping_entry.get("data") is None or ping_entry.get("obj") is None:
+                            logging.error(
+                                "Skipping report for %s: ping test did not complete (no data captured). "
+                                "Check the ping test run log for the actual failure.", obj_name)
+                            if ce == "series":
+                                obj_no += 1
+                                obj_name = f"ping_test_{obj_no}"
+                                continue
+                            else:
+                                break
+                        params = ping_entry["data"].copy()
                         result_json = params["result_json"]
                         report_path = params["report_path"]
                         config_devices = params["config_devices"]
@@ -9773,6 +9936,18 @@ class MultiTraffic(Realm):
                         if ce == "parallel":
                             obj_no = ''
 
+                        vs_entry = self.vs_obj_dict[ce][obj_name]
+                        if vs_entry.get("data") is None or vs_entry.get("obj") is None:
+                            logging.error(
+                                "Skipping report for %s: video streaming test did not complete "
+                                "(no data captured). Check the vs_test run log for the actual "
+                                "failure.", obj_name)
+                            if ce == "series":
+                                obj_no += 1
+                                obj_name = f"vs_test_{obj_no}"
+                                continue
+                            else:
+                                break
                         curr_vs_obj = copy.copy(self.vs_obj_dict[ce][obj_name]["obj"])
                         if not self.robot_test or (self.robot_test and self.do_bandsteering):
                             if not self.do_bandsteering:
@@ -10230,18 +10405,29 @@ class MultiTraffic(Realm):
                                 if curr_rb_obj.csv_file_names[i].startswith("real_time_data.csv") and not self.do_bandsteering:
                                     continue
 
+                                csv_path = "{}/{}".format(csv_paths, curr_rb_obj.csv_file_names[i])
+                                # Only per-device result CSVs can be charted here. Other files that
+                                # end up in the report folder (endpoint_status_changes.csv, ...)
+                                # have no per-device columns, and reading them used to raise and
+                                # abort the whole Real Browser report section.
+                                try:
+                                    csv_columns = pd.read_csv(csv_path, nrows=0).columns
+                                except Exception as e:
+                                    logging.warning("Skipping %s in the Real Browser report: %s", csv_path, e)
+                                    continue
+                                if 'device_name' not in csv_columns or 'total_urls' not in csv_columns:
+                                    logging.warning(
+                                        "Skipping %s in the Real Browser report: not a per-device "
+                                        "results file (no device_name/total_urls columns).", csv_path)
+                                    continue
+
                                 final_eid_data, mac_data, channel_data, signal_data, ssid_data, tx_rate_data, device_names, device_type_data = curr_rb_obj.extract_device_data(
-                                    "{}/{}".format(csv_paths, curr_rb_obj.csv_file_names[i]))
+                                    csv_path)
                                 self.overall_report.set_graph_title("Successful URL's per Device")
                                 self.overall_report.build_graph_title()
 
-                                data = pd.read_csv("{}/{}".format(csv_paths, curr_rb_obj.csv_file_names[i]))
-
-                                # Extract device names from CSV
-                                if 'total_urls' in data.columns:
-                                    total_urls = data['total_urls'].tolist()
-                                else:
-                                    raise ValueError("The 'total_urls' column was not found in the CSV file.")
+                                data = pd.read_csv(csv_path)
+                                total_urls = data['total_urls'].tolist()
                                 x_fig_size = 18
                                 y_fig_size = len(device_type_data) * 1 + 4
                                 logging.info(f"Device names for {self.rb_obj_dict[ce][obj_name]['obj'].csv_file_names[i]}: {device_names}")
@@ -10831,8 +11017,18 @@ class MultiTraffic(Realm):
                     while obj_name in self.yt_obj_dict[ce]:
                         if ce == "parallel":
                             obj_no = ''
+                        if self.yt_obj_dict[ce][obj_name].get("obj") is None:
+                            logging.error(
+                                "Skipping report for %s: YouTube test did not complete (no data captured). "
+                                "Check the yt_test run log for the actual failure.", obj_name)
+                            if ce == "series":
+                                obj_no += 1
+                                obj_name = f"yt_test_{obj_no}"
+                                continue
+                            else:
+                                break
                         curr_yt_obj = copy.copy((self.yt_obj_dict[ce][obj_name]["obj"]))
-                        result_data = curr_yt_obj.stats_api_response
+                        result_data = curr_yt_obj.stats_api_response or {}
                         for device, stats in result_data.items():
                             curr_yt_obj.mydatajson.setdefault(device, {}).update({
                                 "Viewport": stats.get("Viewport", ""),
@@ -11662,6 +11858,12 @@ class MultiTraffic(Realm):
 
                                     final_dataset.append(per_client_data.copy())
 
+                            if not client_array:
+                                logging.warning(
+                                    "No client CSV data captured for %s: skipping audio/video graphs "
+                                    "(the zoom call likely never started). Check the zoom_test run log "
+                                    "for the actual failure.", obj_name)
+
                             try:
                                 src_dir = curr_zoom_obj.report.path_date_time
                                 dst_dir = self.overall_report.path_date_time
@@ -11690,7 +11892,7 @@ class MultiTraffic(Realm):
                             self.overall_report.set_table_dataframe(device_details)
                             self.overall_report.build_table()
 
-                            if curr_zoom_obj.audio:
+                            if curr_zoom_obj.audio and client_array:
                                 self.overall_report.set_graph_title("Audio Latency (Sent/Received)")
                                 self.overall_report.build_graph_title()
                                 x_data_set = [max_audio_latency_s.copy(), min_audio_latency_s.copy(), max_audio_latency_r.copy(), min_audio_latency_r.copy()]
@@ -11812,7 +12014,7 @@ class MultiTraffic(Realm):
                                 self.overall_report.dataframe_html = self.overall_report.dataframe.to_html(index=False,
                                                                                                            justify='center', render_links=True, escape=False)  # have the index be able to be passed in.
                                 self.overall_report.html += self.overall_report.dataframe_html
-                            if curr_zoom_obj.video:
+                            if curr_zoom_obj.video and client_array:
                                 self.overall_report.set_graph_title("Video Latency (Sent/Received)")
                                 self.overall_report.build_graph_title()
                                 x_data_set = [max_video_latency_s.copy(), min_video_latency_s.copy(), max_video_latency_r.copy(), min_video_latency_r.copy()]
@@ -12294,10 +12496,20 @@ class MultiTraffic(Realm):
                         if ce == "parallel":
                             obj_no = ''
 
+                        obj = self.teams_obj_dict[ce][obj_name]["obj"]
+                        if obj is None:
+                            logging.error(
+                                "Skipping report for %s: teams test did not complete (no data captured). "
+                                "Check the teams_test run log for the actual failure.", obj_name)
+                            if ce == "series":
+                                obj_no += 1
+                                obj_name = f"teams_test_{obj_no}"
+                                continue
+                            else:
+                                break
                         self.overall_report.set_table_title("Test Parameters:")
                         self.overall_report.build_table_title()
                         testtype = ""
-                        obj = self.teams_obj_dict[ce][obj_name]["obj"]
                         if obj.audio and obj.video:
                             testtype = "AUDIO & VIDEO"
                         elif obj.audio:
@@ -12381,10 +12593,16 @@ class MultiTraffic(Realm):
                         if obj.do_bs:
                             obj.add_bandsteering_report_section()
 
-                        self.teams_obj_dict[ce][obj_name]["obj"] = obj
+                        # The report object is only needed for the calls above. Drop the
+                        # reference before storing obj back: teams_obj_dict is a Manager
+                        # dict, so every write pickles the value, and the report carries the
+                        # capture wrappers installed by _install_json_report_capture() which
+                        # are local functions and cannot be pickled.
+                        obj.report = None
+                        self.store_obj_for_report(self.teams_obj_dict[ce][obj_name], obj, "Teams")
                         if ce == "series":
                             obj_no += 1
-                            obj_name = f"rb_test_{obj_no}"
+                            obj_name = f"teams_test_{obj_no}"
                         else:
                             break
 
@@ -12422,6 +12640,157 @@ class MultiTraffic(Realm):
                 series_df = series_df[["s/no", "test_name", "Duration", "status"]]
         return series_df, parallel_df
 
+    @staticmethod
+    def _json_safe(value):
+        """Convert pandas/numpy values into values accepted by json.dump.
+
+        Missing data (NaN, None) is reported as the string "NA" rather than
+        null, so every gap in the JSON output reads the same way.
+        """
+        if isinstance(value, dict):
+            return {str(key): MultiTraffic._json_safe(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [MultiTraffic._json_safe(item) for item in value]
+        if value is None:
+            return "NA"
+        try:
+            if pd.isna(value):
+                return "NA"
+        except (TypeError, ValueError):
+            pass
+        if hasattr(value, "item"):
+            try:
+                return MultiTraffic._json_safe(value.item())
+            except (TypeError, ValueError):
+                pass
+        return value
+
+    # Normalized (stripped/lowercased) names of columns used across report tables to identify
+    # the client/station a row belongs to. Report tables are built independently per test type
+    # and don't share a naming convention, so matching ignores case and surrounding whitespace
+    # (e.g. " Clients", " Client Alias ", " Username").
+    _CLIENT_KEY_COLUMNS = {
+        "device", "device name", "wireless client", "hostname", "station",
+        "name", "client", "clients", "client alias", "username",
+    }
+
+    # Keys reserved for structural use on a test's report entry. Metric/column names
+    # that collide with one of these are dropped (with a log warning) instead of
+    # corrupting "test_setup"/"clients" -- real report columns never use these names.
+    _JSON_RESERVED_KEYS = {"test_setup", "clients"}
+
+    def _capture_json_table(self, dataframe):
+        """Store a rendered report table as parallel, index-aligned arrays for the current test.
+
+        "clients" holds the list of client/station identities (when the table has an
+        identity column). Every other column -- from that same table or any other
+        per-client table for this test -- becomes its own top-level list, where
+        column[i] always describes the same client as clients[i]. Columns missing
+        for a given client are filled with null rather than shifting the index, so
+        arrays never silently drift out of alignment with each other.
+        """
+        if not isinstance(dataframe, pd.DataFrame) or not self._json_test_key:
+            return
+        test_report = self.json_metrics.setdefault(self._json_test_key, {
+            "test_setup": {},
+            "clients": []
+        })
+        key_column = next(
+            (col for col in dataframe.columns if str(col).strip().lower() in self._CLIENT_KEY_COLUMNS),
+            None
+        )
+        if key_column is not None:
+            clients_by_key = self._json_clients_by_key.setdefault(self._json_test_key, {})
+            for row in dataframe.to_dict(orient="records"):
+                client_key = str(self._json_safe(row[key_column]))
+                client_entry = clients_by_key.setdefault(client_key, {})
+                for column, value in row.items():
+                    if column == key_column:
+                        continue
+                    client_entry[str(column)] = self._json_safe(value)
+            client_keys = list(clients_by_key.keys())
+            test_report["clients"] = client_keys
+            columns = []
+            seen_columns = set()
+            for entry in clients_by_key.values():
+                for column in entry:
+                    if column not in seen_columns:
+                        seen_columns.add(column)
+                        columns.append(column)
+            for column in columns:
+                if column in self._JSON_RESERVED_KEYS:
+                    logging.warning(
+                        "Skipping report column %r for %s: name collides with a reserved JSON key.",
+                        column, self._json_test_key)
+                    continue
+                test_report[column] = [clients_by_key[key].get(column, "NA") for key in client_keys]
+            return
+        # No identity column: this table describes the test as a whole rather than
+        # individual clients (e.g. overall min/max/average). Append its columns as
+        # their own top-level lists so repeated tables with the same column name
+        # accumulate instead of overwriting each other.
+        for column, values in dataframe.to_dict(orient="list").items():
+            metric_name = str(column)
+            if metric_name in self._JSON_RESERVED_KEYS:
+                logging.warning(
+                    "Skipping report column %r for %s: name collides with a reserved JSON key.",
+                    metric_name, self._json_test_key)
+                continue
+            metric_value = self._json_safe(values)
+            if metric_name not in test_report:
+                test_report[metric_name] = metric_value
+                continue
+            existing_value = test_report[metric_name]
+            if not isinstance(existing_value, list):
+                existing_value = [existing_value]
+            if isinstance(metric_value, list):
+                existing_value.extend(metric_value)
+            else:
+                existing_value.append(metric_value)
+            test_report[metric_name] = existing_value
+
+    def _capture_json_setup(self, setup_data):
+        """Store report setup fields alongside the test metrics."""
+        if not isinstance(setup_data, dict) or not self._json_test_key:
+            return
+        test_report = self.json_metrics.setdefault(self._json_test_key, {
+            "test_setup": {},
+            "clients": []
+        })
+        setup = test_report["test_setup"]
+        for name, value in setup_data.items():
+            metric_name = str(name)
+            if metric_name not in setup:
+                setup[metric_name] = self._json_safe(value)
+
+    def _install_json_report_capture(self):
+        """Capture the same tables/setup data that are written to the PDF."""
+        self.json_metrics = {}
+        self._json_test_key = None
+        self._json_clients_by_key = {}
+        report = self.overall_report
+        original_set_table_dataframe = report.set_table_dataframe
+        original_test_setup_table = report.test_setup_table
+
+        def set_table_dataframe(dataframe):
+            self._capture_json_table(dataframe)
+            return original_set_table_dataframe(dataframe)
+
+        def test_setup_table(test_setup_data, value):
+            self._capture_json_setup(test_setup_data)
+            return original_test_setup_table(test_setup_data, value)
+
+        report.set_table_dataframe = set_table_dataframe
+        report.test_setup_table = test_setup_table
+
+    def _write_json_report(self):
+        """Write metrics keyed by test name next to the overall PDF report."""
+        json_path = os.path.join(self.overall_report.path_date_time, "lf_multi_traffic_overall.json")
+        with open(json_path, "w", encoding="utf-8") as json_file:
+            json.dump(self._json_safe(self.json_metrics), json_file, indent=2, ensure_ascii=False)
+        logging.info(f"Generated JSON report file: {json_path}")
+        return json_path
+
     def generate_overall_report(self, test_results_df='', args_dict=None):
         '''
         Generate Overall Report
@@ -12434,6 +12803,7 @@ class MultiTraffic(Realm):
         self.overall_report = lf_report.lf_report(_results_dir_name="lf_multi_traffic_Test_Overall_report", _output_html="lf_multi_traffic_overall.html",
                                                   _output_pdf="lf_multi_traffic_overall.pdf", _path=self.result_path if not self.dowebgui else self.result_dir)
         self.report_path_date_time = self.overall_report.get_path_date_time()
+        self._install_json_report_capture()
         self.overall_report.set_title("MULTI TRAFFIC TEST")
         self.overall_report.set_date(datetime.datetime.now())
         self.overall_report.build_banner()
@@ -12479,6 +12849,7 @@ class MultiTraffic(Realm):
         html_file = self.overall_report.write_html()
         logging.info(f"Generated HTML report file: {html_file}")
         self.overall_report.write_pdf()
+        self._write_json_report()
 
     def configure_devices(self, device_list=None, ssid=None, passwd='[BLANK]', security='open',
                           file_name='', wait_time=60, app_flags=None, upstream_port=None,
@@ -14155,6 +14526,33 @@ or a combination of both, with configurable execution priority.
     multi_traffic_obj.duration_dict = duration_dict.copy()
     # args.current = "series"
     multi_traffic_obj.start_tests(test_map, tests_to_run_series, tests_to_run_parallel, duration_dict, args, args_dict)
+
+
+def record_missed_process_result(process):
+    """Record a Test Results Summary row for a real-app test process that
+    terminated without going through run_test_safe's own bookkeeping.
+
+    Some real-app automations (teams/zoom/rb/yt) call os._exit() directly on
+    a hard failure (e.g. the host device never came up). os._exit() bypasses
+    Python's exception handling entirely, so the wrapper() closure built by
+    run_test_safe never gets a chance to append its own row to
+    test_results_list -- the test silently disappears from the summary
+    instead of showing as failed. This inspects the joined process's exit
+    code and backfills a "NOT EXECUTED" row when that happened.
+    """
+    if not isinstance(process, multiprocessing.Process):
+        return
+    label = getattr(process, "test_label", None)
+    if not label or process.exitcode in (0, None):
+        return
+    if any(entry.get("test_name") == label for entry in test_results_list):
+        return
+    logger.error(f"{label} NOT EXECUTED (child process exited with code {process.exitcode})")
+    test_results_list.append({
+        "test_name": label,
+        "Duration": getattr(process, "test_duration", ""),
+        "status": "NOT EXECUTED"
+    })
 
 
 def run_test_safe(test_func, test_name, args, multi_traffic_obj, duration):
