@@ -2929,6 +2929,88 @@ class Throughput(Realm):
         except Exception as error:
             logger.warning("could not add timestamped report summary: %s", error)
 
+    def write_interactive_throughput_report(self, csv_path, report_path):
+        """Write a browser-based companion report with an interactive graph.
+
+        PDF output remains available for printing and archival.  The HTML
+        companion keeps Plotly's zoom, pan, hover, legend toggles, range
+        selection, and reset controls for large throughput data sets.
+        """
+        try:
+            if not os.path.isfile(csv_path):
+                return
+            samples = pd.read_csv(csv_path)
+            if "TIMESTAMP" not in samples.columns or samples.empty:
+                return
+            stamps = pd.to_datetime(
+                samples["TIMESTAMP"].astype(str).str.strip(),
+                format="%d/%m %I:%M:%S %p", errors="coerce",
+            )
+            if stamps.isna().all():
+                stamps = pd.to_datetime(
+                    samples["TIMESTAMP"].astype(str).str.strip(),
+                    format="%m/%d %I:%M:%S %p", errors="coerce",
+                )
+            samples["Timestamp"] = stamps.map(
+                lambda value: value if pd.isna(value) else value.replace(year=datetime.now().year)
+            )
+            samples = samples.dropna(subset=["Timestamp"])
+            if samples.empty:
+                return
+
+            bucket_seconds = self._report_bucket_seconds(samples["Timestamp"])
+            metric_columns = [
+                column for column in ("Overall Download", "Overall Upload")
+                if column in samples.columns
+            ]
+            if not metric_columns:
+                return
+            bucketed = samples[["Timestamp"] + metric_columns].copy()
+            for column in metric_columns:
+                bucketed[column] = pd.to_numeric(bucketed[column], errors="coerce")
+            bucketed["Timestamp"] = bucketed["Timestamp"].dt.floor("{}s".format(bucket_seconds))
+            bucketed = bucketed.groupby("Timestamp", as_index=False).mean(numeric_only=True)
+
+            import plotly.graph_objects as go
+            figure = go.Figure()
+            labels = {
+                "Overall Download": "Download",
+                "Overall Upload": "Upload",
+            }
+            for column in metric_columns:
+                figure.add_trace(go.Scattergl(
+                    x=bucketed["Timestamp"],
+                    y=bucketed[column],
+                    mode="lines+markers",
+                    name=labels.get(column, column),
+                    connectgaps=False,
+                    hovertemplate=(
+                        "%{x|%Y-%m-%d %H:%M:%S}<br>"
+                        + labels.get(column, column)
+                        + ": %{y:.2f}<extra></extra>"
+                    ),
+                ))
+            figure.update_layout(
+                title="Throughput over time ({} second buckets)".format(bucket_seconds),
+                xaxis={"title": "Time", "rangeslider": {"visible": True}, "type": "date"},
+                yaxis={"title": "Throughput"},
+                hovermode="x unified",
+                legend={"itemclick": "toggle", "itemdoubleclick": "toggleothers"},
+                template="plotly_white",
+                margin={"l": 65, "r": 25, "t": 70, "b": 65},
+            )
+            os.makedirs(report_path, exist_ok=True)
+            output_path = os.path.join(report_path, "throughput_interactive.html")
+            figure.write_html(
+                output_path,
+                include_plotlyjs="cdn",
+                full_html=True,
+                config={"scrollZoom": True, "displaylogo": False, "responsive": True},
+            )
+            logger.info("Interactive throughput report: %s", output_path)
+        except Exception as error:
+            logger.warning("could not write interactive throughput report: %s", error)
+
     def generate_report(self, iterations_before_test_stopped_by_user, incremental_capacity_list, data=None, data1=None, report_path='', result_dir_name='Throughput_Test_report',
                         selected_real_clients_names=None, iot_summary=None):
 
@@ -3828,6 +3910,10 @@ class Throughput(Realm):
         # throughput_data.csv has been moved into the report folder above.
         self.add_timestamped_bucket_summary(
             report, os.path.join(report_path_date_time, 'throughput_data.csv'))
+        report_csv = os.path.join(report_path_date_time, 'throughput_data.csv')
+        if not os.path.isfile(report_csv):
+            report_csv = os.path.join(report_path_date_time, 'overall_throughput.csv')
+        self.write_interactive_throughput_report(report_csv, report_path_date_time)
         if iot_summary:
             self.build_iot_report_section(report, iot_summary)
         if self.device_issue_log:
