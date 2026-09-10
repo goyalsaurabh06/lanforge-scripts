@@ -605,27 +605,14 @@ class Throughput(Realm):
             overall_end_time = overall_start_time + timedelta(seconds=int(args.test_duration) * len(incremental_capacity_list))
             curr_cycle = 1
             logger.info("Current Cycle: {}".format(curr_cycle))
+            all_dataframes = []
             # Iterate through all the points and monitoring throughput,bandsteering stats and as well as robot position
-            for coord in coordinate_list_with_robo:
-                if self.stop_test:
-                    logger.info("Stopping band-steering run because all CXs are missing or the test was stopped.")
-                    break
-                pause, stopped = self.robot.wait_for_battery(lambda: self.monitor(
-                    0,
-                    individual_df,
-                    device_names,
-                    incremental_capacity_list,
-                    overall_start_time,
-                    overall_end_time,
-                    is_device_configured
-                )
-                )
-                if self.stop_test or stopped:
-                    break
-
-                matched, abort, all_dataframes = self.robot.move_to_coordinate(
-                    coord,
-                    monitor_function=lambda: self.monitor(
+            try:
+                for coord in coordinate_list_with_robo:
+                    if self.stop_test:
+                        logger.info("Stopping band-steering run because all CXs are missing or the test was stopped.")
+                        break
+                    pause, stopped = self.robot.wait_for_battery(lambda: self.monitor(
                         0,
                         individual_df,
                         device_names,
@@ -634,19 +621,38 @@ class Throughput(Realm):
                         overall_end_time,
                         is_device_configured
                     )
-                )
-                if abort or self.stop_test:
-                    break
+                    )
+                    if self.stop_test or stopped:
+                        break
 
-                if coord == self.coordinate_list[0]:
-                    curr_cycle += 1
-                    if curr_cycle > int(self.total_cycles):
-                        logger.info("Completed all {} cycles".format(self.total_cycles))
-                    else:
-                        logger.info("current cycle {}".format(curr_cycle))
+                    matched, abort, all_dataframes = self.robot.move_to_coordinate(
+                        coord,
+                        monitor_function=lambda: self.monitor(
+                            0,
+                            individual_df,
+                            device_names,
+                            incremental_capacity_list,
+                            overall_start_time,
+                            overall_end_time,
+                            is_device_configured
+                        )
+                    )
+                    if abort or self.stop_test:
+                        break
 
-                if not matched:
-                    continue
+                    if coord == self.coordinate_list[0]:
+                        curr_cycle += 1
+                        if curr_cycle > int(self.total_cycles):
+                            logger.info("Completed all {} cycles".format(self.total_cycles))
+                        else:
+                            logger.info("current cycle {}".format(curr_cycle))
+
+                    if not matched:
+                        continue
+            except Exception as e:
+                # A mid-test failure must not skip cleanup/reporting -- log it and fall through
+                # to the reporting below with whatever data was collected so far.
+                logger.error("Band-steering monitoring failed: %s", e)
             # Generate a band-steering report only when monitoring collected rows.
             collected_dataframes = [df for df in all_dataframes if isinstance(df, pd.DataFrame)]
             if not collected_dataframes or all(df.empty for df in collected_dataframes):
@@ -675,6 +681,7 @@ class Throughput(Realm):
             exit(1)
 
         # Loop through the coordinate list when coordinates are specified.
+        all_dataframes = None
         for coord in self.coordinate_list:
             if self.stop_test:
                 logger.info("Stopping robot run because all CXs are missing or the test was stopped.")
@@ -764,11 +771,19 @@ class Throughput(Realm):
                 else:
                     device_names = created_cx_lists_keys[:to_run_cxs_len[i][-1]]
 
-                # Monitor throughput and capture all dataframes and test stop status
-                all_dataframes, test_stopped_by_user = self.monitor_for_robo(i, individual_df, device_names, incremental_capacity_list, overall_start_time, overall_end_time, is_device_configured)
-                if args.do_interopability and "iOS" not in to_run_cxs[i][0] and args.interopability_config:
-                    # Disconnecting device after running the test
-                    self.disconnect_all_devices([device_to_run_resource])
+                try:
+                    # Monitor throughput and capture all dataframes and test stop status
+                    all_dataframes, test_stopped_by_user = self.monitor_for_robo(i, individual_df, device_names, incremental_capacity_list, overall_start_time, overall_end_time, is_device_configured)
+                    if args.do_interopability and "iOS" not in to_run_cxs[i][0] and args.interopability_config:
+                        # Disconnecting device after running the test
+                        self.disconnect_all_devices([device_to_run_resource])
+                except Exception as e:
+                    # A mid-test failure must not skip cleanup/reporting -- log it and fall
+                    # through to the reporting below with whatever data was collected so far.
+                    logger.error("Robot monitoring failed on iteration %s: %s", i, e)
+                    iterations_before_test_stopped_by_user.append(i)
+                    test_stopped_by_user = True
+                    break
                 # Check if the test was stopped by the user
                 if test_stopped_by_user is False:
 
@@ -5473,6 +5488,7 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
         overall_start_time = datetime.now()
         overall_end_time = overall_start_time + timedelta(seconds=int(args.test_duration) * len(incremental_capacity_list))
 
+        all_dataframes = None
         if args.wifi_analysis:
             throughput.start_wifi_analysis(host=args.mgr, port=args.mgr_port,
                                            device_list=throughput.input_devices_list, ssid=args.ssid)
@@ -5522,11 +5538,19 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
             else:
                 device_names = created_cx_lists_keys[:to_run_cxs_len[i][-1]]
 
-            # Monitor throughput and capture all dataframes and test stop status
-            all_dataframes, test_stopped_by_user = throughput.monitor(i, individual_df, device_names, incremental_capacity_list, overall_start_time, overall_end_time, is_device_configured)
-            if args.do_interopability and "iOS" not in to_run_cxs[i][0] and args.interopability_config:
-                # Disconnecting device after running the test
-                throughput.disconnect_all_devices([device_to_run_resource])
+            try:
+                # Monitor throughput and capture all dataframes and test stop status
+                all_dataframes, test_stopped_by_user = throughput.monitor(i, individual_df, device_names, incremental_capacity_list, overall_start_time, overall_end_time, is_device_configured)
+                if args.do_interopability and "iOS" not in to_run_cxs[i][0] and args.interopability_config:
+                    # Disconnecting device after running the test
+                    throughput.disconnect_all_devices([device_to_run_resource])
+            except Exception as e:
+                # A mid-test failure must not skip cleanup/reporting -- log it, stop this
+                # iteration's monitoring here, and fall through to the reporting below with
+                # whatever data was collected so far.
+                logger.error("Throughput monitoring failed on iteration %s: %s", i, e)
+                iterations_before_test_stopped_by_user.append(i)
+                break
             # Check if the test was stopped by the user
             if test_stopped_by_user is False:
 
