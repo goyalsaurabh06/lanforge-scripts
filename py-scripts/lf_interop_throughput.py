@@ -200,6 +200,7 @@ realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
 from lf_report import lf_report  # noqa: E402
 from lf_graph import lf_bar_graph_horizontal, lf_bar_graph  # noqa: E402
+from lf_wifi_msgs import RealClientAnalysis  # noqa: E402
 # from lf_graph import lf_line_graph  # noqa: E402
 
 from datetime import datetime, timedelta  # noqa: E402
@@ -666,6 +667,7 @@ class Throughput(Realm):
                 self.cleanup()
             self.ensure_monitoring_data_collected()
             iterations_before_test_stopped_by_user.append(0)
+            self.stop_wifi_analysis()
             self.generate_report(list(set(iterations_before_test_stopped_by_user)), incremental_capacity_list, data=all_dataframes, data1=to_run_cxs_len, report_path=self.result_dir)
             if self.dowebgui:
                 # copying to home directory i.e home/user_name
@@ -800,6 +802,7 @@ class Throughput(Realm):
                 navdata['Test_status'] = 'Completed'
             with open(nav_data, 'w') as x:
                 json.dump(navdata, x, indent=4)
+        self.stop_wifi_analysis()
         self.generate_report_robo(list(set(iterations_before_test_stopped_by_user)), incremental_capacity_list, data=all_dataframes, data1=to_run_cxs_len, report_path=self.result_dir)
         if self.dowebgui:
             # copying to home directory i.e home/user_name
@@ -2823,6 +2826,104 @@ class Throughput(Realm):
             report.set_table_dataframe(table_df)
             report.build_table()
 
+    def resolve_wifi_analysis_device_names(self, devices):
+        """Map each wifi-analysis device (a LANforge port name) to its display name."""
+        port_to_name = {}
+        for port_name, entry in zip(self.input_devices_list, self.real_client_list):
+            parts = entry.split(" ")
+            if parts and parts[-1]:
+                port_to_name[port_name] = parts[-1]
+
+        return [port_to_name.get(port_name, port_name) for port_name in devices]
+
+    def start_wifi_analysis(self, host, port, device_list, ssid):
+        """Start a RealClientAnalysis window covering the devices under test."""
+        self.wifi_analysis = None
+        self.wifi_analysis_stats = {}
+        if not device_list:
+            return
+        try:
+            self.wifi_analysis = RealClientAnalysis(host=host, port=port, device_list=list(device_list),
+                                                    ssid=ssid or "", debug=self.debug)
+            self.wifi_analysis_start_time = int(time.time() * 1000)
+        except Exception as e:
+            logger.warning("Wifi connectivity analysis could not be started: %s", e)
+            self.wifi_analysis = None
+
+    def stop_wifi_analysis(self):
+        """Analyze '/wifi-msgs' since start_wifi_analysis() into self.wifi_analysis_stats."""
+        if not getattr(self, 'wifi_analysis', None):
+            return
+        try:
+            self.wifi_analysis.query_devices_1()
+            local_dict = self.wifi_analysis.create_local_dict()
+            if not local_dict:
+                logger.warning("None of the wifi connectivity analysis devices resolved to a device LANforge knows about")
+                return
+            self.wifi_analysis_stats = self.wifi_analysis.get_client_connectivity_stats_from_timestamp(
+                self.wifi_analysis_start_time, None, local_dict)
+        except Exception as e:
+            logger.warning("Wifi connectivity analysis results could not be collected: %s", e)
+
+    def add_wifi_analysis_to_report(self, report):
+        """Append the wifi connectivity event summary graph and stats table to the report."""
+        if not getattr(self, 'wifi_analysis_stats', None):
+            return
+        try:
+            devices, connect_attempt, disconnected, scanning, association_rejection, connected, remarks, cx_time = \
+                self.wifi_analysis.dicttolist(self.wifi_analysis_stats)
+            devices = self.resolve_wifi_analysis_device_names(devices)
+
+            categories = ["Disconnected", "Scans", "Association Attempts", "Association Rejected", "Connected"]
+            totals = [sum(disconnected), sum(scanning), sum(connect_attempt), sum(association_rejection), sum(connected)]
+            colors = ['#e67e22', '#1e824c', '#2980b9', '#8e44ad', '#27ae60']
+
+            report.set_obj_html(
+                _obj_title="Client Connectivity Event Summary",
+                _obj="This graph summarizes connection-related events observed during the throughput test. "
+                     "These metrics provide insight into client stability and wireless connectivity performance.")
+            report.build_objective()
+            # One series across 5 categories so the bars spread across the chart's full width,
+            # each under its own x-axis label, instead of clustering together in the middle.
+            graph = lf_bar_graph(_data_set=[totals],
+                                 _xaxis_name="",
+                                 _yaxis_name="Count",
+                                 _xaxis_categories=categories,
+                                 _graph_image_name="wifi_connectivity_status",
+                                 _label=["Client Connectivity Status"],
+                                 _graph_title="Client Connectivity Status",
+                                 _title_size=16,
+                                 _color_edge='black',
+                                 _bar_width=0.5,
+                                 _figsize=(10, 6),
+                                 _legend_loc="best",
+                                 _dpi=96,
+                                 _show_bar_value=True,
+                                 _enable_csv=True,
+                                 _color=colors,
+                                 _color_name=colors)
+            graph_png = graph.build_bar_graph()
+            report.set_graph_image(graph_png)
+            report.move_graph_image()
+            report.set_csv_filename(graph.graph_image_name)
+            report.move_csv_file()
+            report.build_graph()
+
+            dataframe = pd.DataFrame({
+                "Device": devices,
+                "Association Attempts": connect_attempt,
+                "Disconnected": disconnected,
+                "Scanning": scanning,
+                "Association Rejection": association_rejection,
+                "Connected": connected,
+            })
+            report.set_table_title("Wifi Connectivity Analysis")
+            report.build_table_title()
+            report.set_table_dataframe(dataframe)
+            report.build_table()
+        except Exception as e:
+            logger.warning("Wifi connectivity analysis could not be added to the report: %s", e)
+
     def generate_report(self, iterations_before_test_stopped_by_user, incremental_capacity_list, data=None, data1=None, report_path='', result_dir_name='Throughput_Test_report',
                         selected_real_clients_names=None, iot_summary=None):
 
@@ -3721,6 +3822,8 @@ class Throughput(Realm):
                 self.add_live_view_images_to_report(report)
         if iot_summary:
             self.build_iot_report_section(report, iot_summary)
+        # wifi connectivity stats (connects/disconnects/scans/rejections) collected while the traffic was running
+        self.add_wifi_analysis_to_report(report)
         if self.device_issue_log:
             pd.DataFrame(self.device_issue_log).to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
         # report.build_custom()
@@ -4313,6 +4416,8 @@ class Throughput(Realm):
                         report.set_custom_html('<hr>')
                         report.build_custom()
 
+        # wifi connectivity stats (connects/disconnects/scans/rejections) collected while the traffic was running
+        self.add_wifi_analysis_to_report(report)
         if self.device_issue_log:
             pd.DataFrame(self.device_issue_log).to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
         # report.build_custom()
@@ -5129,6 +5234,10 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
     optional.add_argument('--coordinate', help="Points at which the robot pauses")
     optional.add_argument('--rotation', help="The set of angles to rotate at a particular point")
     optional.add_argument('--bssids', type=str, help='Comma separated list of BSSIDs to be used for the test', default="")
+    optional.add_argument('--wifi_analysis',
+                          action='store_true',
+                          help='Analyze real-client wifi-msgs (connects/disconnects/scans/association rejections) '
+                               'for the duration of the test and include the results in the report')
 
     args = parser.parse_args()
 
@@ -5336,6 +5445,9 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
 
         if args.robot_ip:
             # Execute Robo test execution when robot IP is provided
+            if args.wifi_analysis:
+                throughput.start_wifi_analysis(host=args.mgr, port=args.mgr_port,
+                                               device_list=throughput.input_devices_list, ssid=args.ssid)
             throughput.perform_robo(args, clients_to_run)
             exit(1)
 
@@ -5360,6 +5472,10 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
 
         overall_start_time = datetime.now()
         overall_end_time = overall_start_time + timedelta(seconds=int(args.test_duration) * len(incremental_capacity_list))
+
+        if args.wifi_analysis:
+            throughput.start_wifi_analysis(host=args.mgr, port=args.mgr_port,
+                                           device_list=throughput.input_devices_list, ssid=args.ssid)
 
         for i in range(len(to_run_cxs)):
             is_device_configured = True
@@ -5429,6 +5545,7 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
     if args.postcleanup:
         throughput.cleanup()
     throughput.ensure_monitoring_data_collected()
+    throughput.stop_wifi_analysis()
     iot_summary = None
     if args.iot_test and args.iot_testname:
         # Load IoT summary data from the specified JSON file
