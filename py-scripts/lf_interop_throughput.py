@@ -3066,7 +3066,9 @@ class Throughput(Realm):
         dl_pct = round((achieved_dl / intended_dl) * 100, 2) if intended_dl else 0
         ul_pct = round((achieved_ul / intended_ul) * 100, 2) if intended_ul else 0
         overall_score = self._throughput_ratio_to_score(achieved_dl + achieved_ul, intended_dl + intended_ul)
-        rating, _ = self._classify_score_rating(overall_score)
+        rating, rating_color = self._classify_score_rating(overall_score)
+        rating_html = "<span style='color:{color}; font-weight:800;'>{rating}</span>".format(
+            color=rating_color, rating=rating)
         report.build_info_card(
             title="Overall Test Verdict",
             items=[
@@ -3077,7 +3079,7 @@ class Throughput(Realm):
                 {"label": "Achieved Load (UL)", "value": "{} Mbps".format(round(achieved_ul, 1))},
                 {"label": "Load Achievement (DL)", "value": "{}%".format(dl_pct)},
                 {"label": "Load Achievement (UL)", "value": "{}%".format(ul_pct)},
-                {"label": "Overall Rating", "value": rating},
+                {"label": "Overall Rating", "value": rating_html},
             ])
 
     def build_test_summary(self, rssi_values=None):
@@ -3137,7 +3139,11 @@ class Throughput(Realm):
             loss_values = [row['loss_percent'] for row in rows if row['sent']]
             if loss_values:
                 avg_loss = sum(loss_values) / len(loss_values)
-                if avg_loss < 2:
+                if avg_loss <= 0:
+                    summary.append(
+                        "No packet loss was observed on the background ping for any client, indicating "
+                        "fully reliable communication under load.")
+                elif avg_loss < 2:
                     summary.append(
                         "Packet loss was minimal, averaging {avg:.1f}% across all clients, indicating "
                         "reliable communication under load.".format(avg=avg_loss))
@@ -3477,7 +3483,12 @@ class Throughput(Realm):
         if loss_values:
             avg_loss = sum(loss_values) / len(loss_values)
             worst = max(rows, key=lambda row: row['loss_percent'])
-            if avg_loss < 2 and worst['loss_percent'] < 5:
+            if worst['loss_percent'] <= 0:
+                findings.append({
+                    "type": "positive",
+                    "text": "No packet loss was observed on the background ping for any client."
+                })
+            elif avg_loss < 2 and worst['loss_percent'] < 5:
                 findings.append({
                     "type": "positive",
                     "text": "Packet loss was minimal, averaging {avg:.2f}% across all clients, indicating "
