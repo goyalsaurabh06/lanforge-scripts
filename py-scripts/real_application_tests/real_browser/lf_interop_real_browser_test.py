@@ -56,6 +56,40 @@ Pre-requisites: Real clients should be connected to the LANforge MGR and Interop
             --upstream_port 192.168.204.90 --expected_passfail_value 5 --do_robo --robo_ip 192.168.200.140 --coordinates 3,2,1 --rotations ""
             --duration_to_skip 1 --do_bandsteering --cycles 1 --bssids 94:A6:7E:74:26:31,94:A6:7E:74:26:22
 
+            --- clients_type / virtual-station examples ---
+
+            Example-10 (only real):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type real --device_list 1.10,1.12
+
+            Example-11 (only virtual - create new stations):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type virtual --radio "radio==wiphy0 stations==4 ssid==NETGEAR_5G_wpa2 ssid_pw==Password@123 security==wpa2"
+
+            Example-12 (only virtual - reuse existing stations, do not re-create):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type virtual --use_existing_station_list --existing_station_list 1.1.sta0000,1.1.sta0001,1.1.sta0002
+
+            Example-13 (real + virtual create):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type both --device_list 1.10,1.12
+            --radio "radio==wiphy0 stations==4 ssid==NETGEAR_5G_wpa2 ssid_pw==Password@123 security==wpa2"
+
+            Example-14 (virtual create + virtual existing):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type virtual --use_existing_station_list --existing_station_list 1.1.sta0000,1.1.sta0001
+            --radio "radio==wiphy1 stations==3 ssid==NETGEAR_2G_Open ssid_pw==NA security==open"
+
+            Example-15 (real + virtual existing):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type both --device_list 1.10,1.12
+            --use_existing_station_list --existing_station_list 1.1.sta0000,1.1.sta0001
+
+            Example-16 (all 3: real + virtual create + virtual existing):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type both --device_list 1.10,1.12
+            --use_existing_station_list --existing_station_list 1.1.sta0000,1.1.sta0001
+            --radio "radio==wiphy1 stations==3 ssid==NETGEAR_2G_Open ssid_pw==NA security==open"
 
             SCRIPT CLASSIFICATION: Test
 
@@ -2420,6 +2454,10 @@ class RealBrowserTest(Realm):
             self.file_name = self.file_name.removesuffix(".csv")
         else:
             self.file_name = None
+
+        if self.radio_name_list and self.clients_type not in ("virtual", "both"):
+            logging.error("Please provide --clients_type for radio")
+            os._exit(1)
 
     def process_group_profiles(self):
         """
