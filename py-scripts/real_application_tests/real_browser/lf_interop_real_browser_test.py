@@ -683,7 +683,7 @@ class RealBrowserTest(Realm):
         self.map_sta_ips_real(ports)
         logger.info("Create HTTP CXs..." + __name__)
 
-        for i in range(len(list(self.ip_map))):
+        for i in range(self.offset, len(list(self.ip_map))):
             url = None
             if i != len(list(self.ip_map)) - 1:
                 port_name = list(self.ip_map)[i]
@@ -883,6 +883,7 @@ class RealBrowserTest(Realm):
                 cx_post_data.append(endp_data)
                 self.created_cx[cx_name + str(resource) + "_l4"] = "CX_" + cx_name + str(resource) + "_l4"
         self.http_profile.created_cx = self.created_cx
+        self.offset += len(self.ip_map)
 
         for cx_data in cx_post_data:
             url = "/cli-json/add_cx"
@@ -1621,7 +1622,7 @@ class RealBrowserTest(Realm):
         """
         if self.incremental or self.dowebgui:
             incremental_capacity_list_values = self.get_incremental_capacity_list()
-            if incremental_capacity_list_values[-1] != len(available_resources):
+            if incremental_capacity_list_values[-1] != (len(available_resources) + len(self.sta_list)):
                 logger.error("Incremental capacity doesn't match available devices")
                 if not self.no_postcleanup:
                     self.postcleanup()
@@ -2339,7 +2340,7 @@ class RealBrowserTest(Realm):
         keys = list(self.created_cx.keys()) + self.generic_endps_profile.created_cx
         index = 0
 
-        if self.resource_ids:
+        if self.resource_ids or self.virtual:
             if not self.incremental:
                 self.incremental = [len(keys)]
 
@@ -2549,10 +2550,10 @@ class RealBrowserTest(Realm):
                 obj.incremental = incremental
         if (obj.incremental and obj.resource_ids) or args.webgui_incremental:
             # Check if the last incremental value is valid
-            if obj.incremental[-1] > len(available_resources):
+            if obj.incremental[-1] > (len(available_resources) + len(self.sta_list)):
                 logging.info("Exiting the program as incremental values are greater than the resource ids provided")
                 exit()
-            elif obj.incremental[-1] < len(available_resources) and len(obj.incremental) > 1:
+            elif obj.incremental[-1] < (len(available_resources) + len(self.sta_list)) and len(obj.incremental) > 1:
                 logging.info("Exiting the program as the last incremental value must be equal to selected devices")
                 exit()
 
@@ -2667,7 +2668,7 @@ class RealBrowserTest(Realm):
                                     # Save each mobile device's data to the Cache
                                     for i in range(len(total_urls)):
                                         row = {
-                                            'device_type': 'mobile',
+                                            'device_type': 'mobile' if not hostnames[i].startswith('sta') else 'Virtual Station',
                                             'device_name': hostnames[i],
                                             'total_urls': total_urls[i],
                                             'uc_min': float(uc_min[i]) / 1000,
@@ -2698,7 +2699,7 @@ class RealBrowserTest(Realm):
                                         if hostname not in time_taken:
                                             time_taken[hostname] = (datetime.now() - start_time).total_seconds()
                                     row = {
-                                        'device_type': 'mobile',
+                                        'device_type': 'mobile' if not hostname.startswith('sta') else 'Virtual Station',
                                         'device_name': hostname,
                                         'total_urls': pass_url,
                                         'uc_min': float(endpoint.get('uc-min', 0.0)) / 1000,
@@ -2889,42 +2890,31 @@ class RealBrowserTest(Realm):
         Returns:
             dict: Test setup information.
         """
+        num_clients = []
+        if self.real:
+            num_clients.append(f'W({self.windows}),L({self.linux}),M({self.mac}), A({self.android})')
+        if self.virtual:
+            num_clients.append(f'V({len(self.sta_list)})')
+
+        test_setup_info = {
+            'Configured Devies': self.hostname_os_combination,
+            'No of Clients': ', '.join(num_clients),
+            # 'Incremental Values': self.test_setup_info_incremental_values,
+            'Required URL Count': self.count,
+            'URL': self.url,
+            'Test Duration (min)': self.duration,
+        }
         if self.config:
-            test_setup_info = {
-                'Configured Devies': self.hostname_os_combination,
-                'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac}), A({self.android})',
-                # 'Incremental Values': self.test_setup_info_incremental_values,
-                'Required URL Count': self.count,
-                'URL': self.url,
-                'Test Duration (min)': self.duration,
-                'SSID': self.report_ssid,
-                "Security": self.encryp
-            }
+            test_setup_info['SSID'] = self.report_ssid
+            test_setup_info['Security'] = self.encryp
         elif len(self.selected_groups) > 0 and len(self.selected_profiles) > 0:
             # Map each group with a profile
             gp_pairs = zip(self.selected_groups, self.selected_profiles)
 
             # Create a string by joining the mapped pairs
             gp_map = ", ".join(f"{group} -> {profile}" for group, profile in gp_pairs)
+            test_setup_info['Configuration'] = gp_map
 
-            test_setup_info = {
-                'Configuration': gp_map,
-                'Configured Devies': self.hostname_os_combination,
-                'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac}), A({self.android})',
-                # 'Incremental Values': self.test_setup_info_incremental_values,
-                'Required URL Count': self.count,
-                'URL': self.url,
-                'Test Duration (min)': self.duration,
-            }
-        else:
-            test_setup_info = {
-                'Configured Devies': self.hostname_os_combination,
-                'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac}), A({self.android})',
-                # 'Incremental Values': self.test_setup_info_incremental_values,
-                'Required URL Count': self.count,
-                'URL': self.url,
-                'Test Duration (min)': self.duration,
-            }
         if self.do_bandsteering and 'Test Duration (min)' in test_setup_info:
             del test_setup_info['Test Duration (min)']
         return test_setup_info
@@ -3448,7 +3438,7 @@ class RealBrowserTest(Realm):
                 for key, value in interface.items():
                     temp_eid = key.split(".")
                     comb_eid = temp_eid[0] + "." + temp_eid[1]
-                    if (comb_eid == eid) and (value["parent dev"] != "") and (not value["down"]) and (value["ip"] != "0.0.0.0"):
+                    if (comb_eid == eid or temp_eid[-1] == eid) and (value["parent dev"] != "") and (not value["down"]) and (value["ip"] != "0.0.0.0"):
                         # logging.info("checking whether we are able to fetch device data from port manager")
                         mac_data.append(value.get("mac", 'None'))
                         channel_data.append(value.get("channel", 'None'))
@@ -4171,6 +4161,41 @@ def main():
             Command Line Interface to run the Real Browser Test with Robo and Device list
             python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "https://google.com" --duration 1m --debug --upstream_port 192.168.200.198
             --coordinates 1 --do_robo --robo_ip 192.168.200.140 --rotations 30 --device_list 1.5,1.11
+
+            --- clients_type / virtual-station examples ---
+
+            Example-7 (only real):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type real --device_list 1.10,1.12
+
+            Example-8 (only virtual - create new stations):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type virtual --radio "radio==wiphy0 stations==4 ssid==NETGEAR_5G_wpa2 ssid_pw==Password@123 security==wpa2"
+
+            Example-9 (only virtual - reuse existing stations, do not re-create):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type virtual --use_existing_station_list --existing_station_list 1.1.sta0000,1.1.sta0001,1.1.sta0002
+
+            Example-10 (real + virtual create):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type both --device_list 1.10,1.12
+            --radio "radio==wiphy0 stations==4 ssid==NETGEAR_5G_wpa2 ssid_pw==Password@123 security==wpa2"
+
+            Example-11 (virtual create + virtual existing):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type virtual --use_existing_station_list --existing_station_list 1.1.sta0000,1.1.sta0001
+            --radio "radio==wiphy1 stations==3 ssid==NETGEAR_2G_Open ssid_pw==NA security==open"
+
+            Example-12 (real + virtual existing):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type both --device_list 1.10,1.12
+            --use_existing_station_list --existing_station_list 1.1.sta0000,1.1.sta0001
+
+            Example-13 (all 3: real + virtual create + virtual existing):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type both --device_list 1.10,1.12
+            --use_existing_station_list --existing_station_list 1.1.sta0000,1.1.sta0001
+            --radio "radio==wiphy1 stations==3 ssid==NETGEAR_2G_Open ssid_pw==NA security==open"
 
 
             SCRIPT CLASSIFICATION: Test
