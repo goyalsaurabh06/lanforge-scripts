@@ -627,9 +627,18 @@ class BackgroundPing:
             endpoint_data = results.get(device, {})
             sampled = self.samples.get(device, self._empty_sample())
 
-            sent = self._as_int(endpoint_data.get('tx pkts'))
-            received = self._as_int(endpoint_data.get('rx pkts'))
-            dropped = self._as_int(endpoint_data.get('dropped'))
+            # _results_by_device() here runs after stop_generic() has already stopped the
+            # endpoint, which can report reset/near-zero counters (see the "final live counter
+            # point" comment in stop()). The last timeline sample was captured while the
+            # endpoint was still live, so it's the more trustworthy cumulative count when one
+            # was actually taken.
+            last_point = (self.timeline_samples.get(device) or [None])[-1]
+            if last_point:
+                sent, received, dropped = last_point['sent'], last_point['received'], last_point['dropped']
+            else:
+                sent = self._as_int(endpoint_data.get('tx pkts'))
+                received = self._as_int(endpoint_data.get('rx pkts'))
+                dropped = self._as_int(endpoint_data.get('dropped'))
 
             # Fall back to the totals lfping prints when the endpoint counters are unavailable
             if not received and sampled.get('rx') is not None:
