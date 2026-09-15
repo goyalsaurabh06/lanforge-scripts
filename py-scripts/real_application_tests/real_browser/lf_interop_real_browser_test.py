@@ -2713,6 +2713,7 @@ class RealBrowserTest(Realm):
                                 writer.writerow(row)
                                 last_data.append(row)
                     self.monitor_endpoint_status_changes()
+                    self.generate_real_time_csv(last_data)
                     time.sleep(1)
                 except Exception as e:
                     logging.exception(f"Error in get_stats function {e}", exc_info=True)
@@ -3366,6 +3367,21 @@ class RealBrowserTest(Realm):
 
                 log_dir = os.path.join(destination_dir, "log")
                 os.makedirs(log_dir, exist_ok=True)
+                report_csvs = set(self.csv_file_names) | {
+                    "real_time_data.csv", "endpoint_status_changes.csv", "device.csv"
+                }
+                for per_dev_csv in os.listdir(source_dir):
+                    if not per_dev_csv.endswith(".csv") or per_dev_csv in report_csvs:
+                        continue
+                    if per_dev_csv.startswith("iteration_"):
+                        continue
+                    src = os.path.join(source_dir, per_dev_csv)
+                    if os.path.isfile(src):
+                        try:
+                            shutil.move(src, os.path.join(log_dir, per_dev_csv))
+                            logging.info(f"Moved {per_dev_csv} to {log_dir}")
+                        except Exception as e:
+                            logging.warning(f"Could not move {per_dev_csv}: {e}")
                 for filename in self.log_file_names:
                     source_path = os.path.join(source_dir, filename)
 
@@ -3411,6 +3427,9 @@ class RealBrowserTest(Realm):
         rm_data = self.local_realm.json_get("resource/list/?fields=eid,Hostname,device type,user")
 
         for i in range(0, len(device_names)):
+            if device_type_data[i] == "Virtual Station" or device_names[i].startswith("sta"):
+                final_eid_data.append(device_names[i])
+                continue
             for resource in rm_data['resources']:
                 for _key, value in resource.items():
                     if value['hostname'] == device_names[i] and device_type_data[i] == "laptop":
@@ -3693,6 +3712,7 @@ class RealBrowserTest(Realm):
                                 writer.writerow(row)
                                 last_data.append(row)
                     self.monitor_endpoint_status_changes()
+                    self.generate_real_time_csv(last_data)
                     time.sleep(1)
                 except Exception as e:
                     logging.exception(f"Error in get_stats function {e}", exc_info=True)
@@ -3803,6 +3823,33 @@ class RealBrowserTest(Realm):
                         logging.info(f"Moved {filename} to {log_dir}")
                     except Exception as e:
                         logging.warning(f"Could not move {filename}: {e}")
+
+    def generate_real_time_csv(self, last_data):
+        current_time = datetime.now()
+        for data in last_data:
+            csv_name = data['device_name'] + ".csv"
+            if not os.path.exists(csv_name):
+                with open(csv_name, 'w') as file:
+                    header = ['timestamp', 'iteration', 'device_type', 'total_urls', 'uc_min', 'uc_avg', 'uc_max', 'total_err',
+                              'time_to_target_urls', 'cx_name', 'Link_speed', 'Mac', 'bssid', 'Rssi', 'Mode', 'Channel', 'Ssid']
+                    writer = csv.writer(file)
+                    writer.writerow(header)
+
+            with open(csv_name, 'a') as file:
+                writer = csv.writer(file)
+                row = [current_time.strftime("%d/%m/%Y %H:%M:%S"),
+                       self.iteration_value,
+                       data['device_type'],
+                       data['device_name'],
+                       data['total_urls'],
+                       data['uc_min'],
+                       data['uc_avg'],
+                       data['uc_max'],
+                       data['total_err'],
+                       data['time_to_target_urls'],
+                       data['cx_name'],
+                       ]
+                writer.writerow(row)
 
     def create_robo_graphs_test_results(self, csv_file, coordinate, angle=None):
         """
