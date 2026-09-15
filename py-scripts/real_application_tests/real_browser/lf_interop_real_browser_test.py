@@ -803,7 +803,7 @@ class RealBrowserTest(Realm):
                         "quiesce_after": self.quiesce_after
                     }
                 set_endp_data = {
-                    "alias": cx_name + str(resource) + "_l4",
+                    "alias": cx_name + "_l4",
                     "media_source": media_source,
                     "media_quality": media_quality,
                     # "media_playbacks":'0'
@@ -1021,15 +1021,20 @@ class RealBrowserTest(Realm):
         logging.info("Waiting for Browser Cleanup...")
         time.sleep(10)
 
-    def precleanup(self):
-        for port in self.laptops:
-            self.pre_cleanup_stale_endpoint(port)
-        for port in self.phone_data:
-            self.pre_cleanup_stale_android_endpoint(port)
-
     def postcleanup(self):
         self.cleanup_generic_endpoints()
         self.cleanup_layer4_endpoints()
+        self.cleanup_created_stations()
+
+    def cleanup_created_stations(self):
+        """
+        Remove the virtual stations this run created. Never touches stations
+        passed via --existing_station_list (those are left as we found them).
+        """
+        for sta in self.created_sta_names:
+            self.rm_port(sta, check_exists=True, debug_=self.debug)
+        LFUtils.wait_until_ports_disappear(base_url=self.local_realm.lfclient_url,
+                                           port_list=self.created_sta_names, debug=self.debug)
 
     def generic_endpoint_exists(self, endp_name):
         """True if LANforge currently has a generic endpoint by this name."""
@@ -1091,8 +1096,7 @@ class RealBrowserTest(Realm):
         if LANforge still actually reports it as present.
         """
         for cx_name in self.generic_endps_profile.created_cx:
-            if self.generic_endpoint_exists(cx_name):
-                self.json_post("cli-json/rm_cx", {"test_mgr": "default_tm", "cx_name": cx_name})
+            self.json_post("cli-json/rm_cx", {"test_mgr": "default_tm", "cx_name": cx_name})
 
         for endp_name in self.generic_endps_profile.created_endp:
             if self.generic_endpoint_exists(endp_name):
@@ -1106,8 +1110,8 @@ class RealBrowserTest(Realm):
         if LANforge still actually reports it as present.
         """
         for endp_name, cx_name in list(self.http_profile.created_cx.items()):
+            self.json_post("cli-json/rm_cx", {"test_mgr": "default_tm", "cx_name": cx_name})
             if self.layer4_endpoint_exists(endp_name):
-                self.json_post("cli-json/rm_cx", {"test_mgr": "default_tm", "cx_name": cx_name})
                 self.json_post("cli-json/rm_endp", {"endp_name": endp_name})
             else:
                 logger.debug(f"Layer4 endpoint {endp_name} no longer exists on LANforge — skipping delete.")
