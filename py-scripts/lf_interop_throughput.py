@@ -176,6 +176,7 @@ import importlib
 import logging
 import json
 import shutil
+import tempfile
 import asyncio
 import csv
 import matplotlib.pyplot as plt
@@ -203,6 +204,11 @@ from lf_graph import lf_bar_graph_horizontal, lf_bar_graph  # noqa: E402
 # from lf_graph import lf_line_graph  # noqa: E402
 
 from datetime import datetime, timedelta  # noqa: E402
+
+# Matches THROUGHPUT_GRAPH_WINDOW_SECONDS in interop-webGUI's resources/views.py:
+# the live graph reads the window CSVs this script writes below, so the two
+# window sizes must stay identical.
+THROUGHPUT_WINDOW_SECONDS = 3600
 
 DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
@@ -423,6 +429,15 @@ class Throughput(Realm):
         self.last_monitor_present_keys = []
         self.current_iteration_cxs = []
         self.monitor_start_time = None
+        # The sampled CSV is written as monitoring rows arrive.  It is kept
+        # separate from throughput_data.csv so the complete raw record is
+        # always available for investigation.
+        self.throughput_sampler = None
+        # The live graph reads small hourly window CSVs instead of the full
+        # raw CSV so it doesn't re-read a growing file on every poll.
+        self.throughput_window_writer = None
+        # Resolved lazily: the directory the run's CSV artifacts are written to.
+        self.run_csv_dir = None
         # Variables related to Robo
         self.robo_ip = robo_ip
         self.angle_list = angle_list if angle_list else [0]
@@ -539,6 +554,12 @@ class Throughput(Realm):
         if 'Angle' in dataframe.columns:
             row['Angle'] = self.current_angle if self.current_angle is not None else 0
         dataframe.loc[len(dataframe)] = [row[column] for column in dataframe.columns]
+        self.record_throughput_sample(
+            dataframe.columns,
+            [row[column] for column in dataframe.columns],
+            int(self.test_duration) * max(len(incremental_capacity_list), 1),
+        )
+        self.record_throughput_window_row(dataframe.columns, [row[column] for column in dataframe.columns])
         if self.dowebgui:
             runtime_csv = 'overall_throughput.csv' if self.group_name else 'throughput_data.csv'
             if self.robo_ip and self.current_coordinate is not None:
@@ -1744,6 +1765,12 @@ class Throughput(Realm):
 
                 # Append data to individual_df and save to CSV
                 individual_df.loc[len(individual_df)] = individual_df_data
+                self.record_throughput_sample(
+                    individual_df.columns,
+                    individual_df_data,
+                    int(self.test_duration) * max(len(incremental_capacity_list), 1),
+                )
+                self.record_throughput_window_row(individual_df.columns, individual_df_data)
 
                 # Check if test was stopped by the user
                 with open(runtime_dir + "/../../Running_instances/{}_{}_running.json".format(self.ip, self.test_name),
@@ -1856,7 +1883,13 @@ class Throughput(Realm):
                     robot_x, robot_y, from_coordinate, to_coordinate = self.robot.get_robot_pose()
                     individual_df_data.extend([robot_x, robot_y, from_coordinate, to_coordinate])
                 individual_df.loc[len(individual_df)] = individual_df_data
-                individual_df.to_csv('throughput_data.csv', index=False)
+                self.record_throughput_sample(
+                    individual_df.columns,
+                    individual_df_data,
+                    int(self.test_duration) * max(len(incremental_capacity_list), 1),
+                )
+                self.record_throughput_window_row(individual_df.columns, individual_df_data)
+                individual_df.to_csv(self._run_csv_path('throughput_data.csv'), index=False)
                 if self.do_bandsteering:
                     self.actual_monitoring_duration_seconds += (datetime.now() - start_time).total_seconds()
                     return individual_df, test_stopped_by_user
@@ -1930,6 +1963,12 @@ class Throughput(Realm):
                                        ', '.join(str(n) for n in incremental_capacity_list),
                                        'Stopped'])
         individual_df.loc[len(individual_df)] = individual_df_data
+        self.record_throughput_sample(
+            individual_df.columns,
+            individual_df_data,
+            int(self.test_duration) * max(len(incremental_capacity_list), 1),
+        )
+        self.record_throughput_window_row(individual_df.columns, individual_df_data)
         if self.dowebgui:
             individual_df_for_webui.loc[len(individual_df_for_webui)] = individual_df_data
 
@@ -1937,7 +1976,7 @@ class Throughput(Realm):
         if self.dowebgui:
             if self.group_name:
                 individual_df_for_webui.to_csv('{}/overall_throughput.csv'.format(runtime_dir), index=False)
-                individual_df.to_csv('overall_throughput.csv', index=False)
+                individual_df.to_csv(self._run_csv_path('overall_throughput.csv'), index=False)
             else:
                 if self.do_interopability:
                     append_latest_row(individual_df, '{}/throughput_data.csv'.format(runtime_dir))
@@ -1945,7 +1984,7 @@ class Throughput(Realm):
                     individual_df.to_csv('{}/throughput_data.csv'.format(runtime_dir), index=False)
                 individual_df.to_csv('throughput_data.csv', index=False)
         else:
-            individual_df.to_csv('throughput_data.csv', index=False)
+            individual_df.to_csv(self._run_csv_path('throughput_data.csv'), index=False)
 
         keys = list(connections_upload.keys())
         keys = list(connections_download.keys())
@@ -2325,7 +2364,7 @@ class Throughput(Realm):
                                                    'Running'])
 
                     individual_df.loc[len(individual_df)] = individual_df_data
-                    individual_df.to_csv('{}_throughput_data.csv'.format(self.current_coordinate), index=False)
+                    individual_df.to_csv(self._run_csv_path('{}_throughput_data.csv'.format(self.current_coordinate)), index=False)
 
                 if self.stop_test:
                     test_stopped_by_user = True
@@ -2431,9 +2470,9 @@ class Throughput(Realm):
                 individual_df.to_csv('{}_overall_throughput.csv', index=False)
             else:
                 individual_df_for_webui.to_csv('{}/{}_throughput_data.csv'.format(runtime_dir, self.current_coordinate), index=False)
-                individual_df.to_csv('{}_throughput_data.csv'.format(self.current_coordinate), index=False)
+                individual_df.to_csv(self._run_csv_path('{}_throughput_data.csv'.format(self.current_coordinate)), index=False)
         else:
-            individual_df.to_csv('{}_throughput_data.csv'.format(self.current_coordinate), index=False)
+            individual_df.to_csv(self._run_csv_path('{}_throughput_data.csv'.format(self.current_coordinate)), index=False)
 
         # Update the running Web GUI JSON with list of coordinates completed
         if self.dowebgui and self.robo_ip:
@@ -2862,76 +2901,408 @@ class Throughput(Realm):
             report.set_table_dataframe(table_df)
             report.build_table()
 
+    def _resolve_run_csv_dir(self):
+        """Return a writable directory for the run's CSV artifacts.
+
+        The test is usually launched with the install directory as the working
+        directory, and that directory is often owned by another account.  The
+        bare ``to_csv('throughput_data.csv')`` calls then raise PermissionError
+        on the first monitoring row and the run dies before any report is
+        built, so fall back to the result directory (and finally the system
+        temp directory) instead of insisting on the working directory.
+        """
+        if self.run_csv_dir:
+            return self.run_csv_dir
+
+        candidates = [os.getcwd()]
+        if self.result_dir:
+            candidates.append(os.path.join(self.result_dir, 'run_csv'))
+        candidates.append(os.path.join(tempfile.gettempdir(), 'lf_interop_throughput'))
+
+        for candidate in candidates:
+            try:
+                os.makedirs(candidate, exist_ok=True)
+                probe = os.path.join(candidate, '.throughput_write_test')
+                with open(probe, 'w'):
+                    pass
+                os.remove(probe)
+            except OSError as error:
+                logger.warning("cannot use %s for run CSVs: %s", candidate, error)
+                continue
+            self.run_csv_dir = os.path.abspath(candidate)
+            if self.run_csv_dir != os.path.abspath(candidates[0]):
+                logger.warning("working directory is not writable; writing run CSVs to %s", self.run_csv_dir)
+            return self.run_csv_dir
+
+        raise OSError("no writable directory available for the throughput run CSVs")
+
+    def ensure_writable_working_directory(self):
+        """Move the process into a writable directory before the test starts.
+
+        lf_graph saves every plot with a relative path (plt.savefig("%s.png")),
+        and lf_report then moves that file into the report folder, so the whole
+        report pipeline writes into the process working directory.  The webGUI
+        launches this script with cwd=<install>/py-scripts, which is often owned
+        by another account; the run then dies with PermissionError before any
+        report exists.  Switching to the run CSV directory keeps every relative
+        write inside the result directory, and also stops two concurrent tests
+        from overwriting each other's line_graph0.png.
+        """
+        target = self._resolve_run_csv_dir()
+        if os.path.abspath(os.getcwd()) == target:
+            return target
+        os.chdir(target)
+        logger.info("changed working directory to %s for the run's report artifacts", target)
+        return target
+
+    def _run_csv_path(self, filename):
+        return os.path.join(self._resolve_run_csv_dir(), filename)
+
+    def _move_run_csv(self, filename, destination_dir):
+        """Move one run CSV into the report folder if it was actually written."""
+        source = self._run_csv_path(filename)
+        if not os.path.isfile(source):
+            logger.warning("run CSV %s is missing; not moving it into the report", source)
+            return None
+        target = os.path.join(destination_dir, filename)
+        if os.path.abspath(source) == os.path.abspath(target):
+            return target
+        if os.path.exists(target):
+            os.remove(target)
+        shutil.move(source, target)
+        return target
+
     @staticmethod
-    def _report_bucket_seconds(timestamps):
-        """Use the same automatic bucket sizes as Manager monitoring reports."""
-        span_seconds = (timestamps.max() - timestamps.min()).total_seconds()
-        if span_seconds <= 6 * 3600:
-            return 10
-        if span_seconds <= 24 * 3600:
-            return 60
-        if span_seconds <= 7 * 24 * 3600:
-            return 300
-        return 900
+    def _throughput_sample_bucket_size(expected_rows, max_sampled_rows=200):
+        """Match WiFi Capacity's row-based sampling target."""
+        return max(int(max(expected_rows, 1) / (2 * max_sampled_rows)), 1)
 
-    def add_timestamped_bucket_summary(self, report, csv_path):
-        """Add a time-series summary of throughput_data.csv to the report.
+    def _throughput_sample_paths(self):
+        paths = [self._run_csv_path("throughput_data_sampled.csv")]
+        if self.dowebgui and self.result_dir:
+            runtime_path = os.path.abspath(os.path.join(self.result_dir, "throughput_data_sampled.csv"))
+            if runtime_path not in paths:
+                paths.append(runtime_path)
+        return paths
 
-        Mirrors the speed test report and the live graph: the samples are
-        averaged into the bucket size the new webGUI picks from the run span
-        (10s up to 6h, 60s up to 24h, 5m up to 7d, 15m beyond).
+    def _start_throughput_sampler(self, columns, expected_rows):
+        bucket_size = self._throughput_sample_bucket_size(expected_rows)
+        paths = self._throughput_sample_paths()
+        for path in paths:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            if os.path.exists(path):
+                os.remove(path)
+        self.throughput_sampler = {
+            "bucket_size": bucket_size,
+            "columns": list(columns),
+            "paths": paths,
+            "max_rows_per_part": 200,
+            "part_index": 1,
+            "part_rows": [],
+        }
+        logger.info(
+            "Initialized throughput sampled CSV with row bucket size %s (expected rows=%s)",
+            bucket_size, expected_rows,
+        )
+
+    @staticmethod
+    def _count_zero_runs(numeric_series):
+        zero_mask = numeric_series.notna() & numeric_series.eq(0)
+        return 0 if zero_mask.empty else int((zero_mask & ~zero_mask.shift(fill_value=False)).sum())
+
+    @staticmethod
+    def _first_present_value(series):
+        present = series.dropna()
+        return None if present.empty else present.iloc[0]
+
+    @staticmethod
+    def _split_indices_by_iteration(source_df, indices):
+        """Group indices into runs that share one Iteration value."""
+        if "Iteration" not in source_df.columns:
+            return [list(indices)]
+        groups = []
+        current_label = object()
+        for index in indices:
+            label = source_df.at[index, "Iteration"]
+            if not groups or label != current_label:
+                groups.append([])
+                current_label = label
+            groups[-1].append(index)
+        return groups
+
+    @staticmethod
+    def _parse_throughput_timestamps(values):
+        for pattern in ("%d/%m %I:%M:%S %p", "%m/%d %I:%M:%S %p"):
+            parsed = pd.to_datetime(values, errors="coerce", format=pattern)
+            if parsed.notna().any():
+                return parsed
+        return pd.to_datetime(values, errors="coerce")
+
+    def _build_sampled_throughput_part(self, source_df, part_index):
+        """Port of WiFi Capacity's sampled aggregate CSV selection logic."""
+        if source_df.empty:
+            return source_df
+        sampler = self.throughput_sampler
+        bucket_size = sampler["bucket_size"]
+        numeric_by_column = {
+            column: pd.to_numeric(source_df[column], errors="coerce")
+            for column in source_df.columns
+        }
+        numeric_columns = [
+            column for column, values in numeric_by_column.items()
+            if values.notna().any()
+        ]
+        shape_columns = [
+            column for column in ("Overall Download", "Overall Upload")
+            if column in numeric_columns
+        ] or [
+            column for column in numeric_columns
+            if column not in {"Iteration"}
+        ]
+        zero_shape_columns = set(shape_columns) & {"Overall Download", "Overall Upload"}
+        selected_reasons = {}
+        overall_min_values = {}
+        overall_max_values = {}
+        overall_zero_runs = {}
+
+        for column in shape_columns:
+            source_numeric = numeric_by_column[column]
+            valid_values = source_numeric.dropna()
+            if valid_values.empty:
+                continue
+            overall_min_values[column] = valid_values.min()
+            overall_max_values[column] = valid_values.max()
+            selected_reasons.setdefault(valid_values.idxmin(), set()).add("overall_min:{}".format(column))
+            selected_reasons.setdefault(valid_values.idxmax(), set()).add("overall_max:{}".format(column))
+            if column in zero_shape_columns:
+                overall_zero_runs[column] = self._count_zero_runs(source_numeric)
+                zero_mask = source_numeric.notna() & source_numeric.eq(0)
+                zero_run_starts = zero_mask & ~zero_mask.shift(fill_value=False)
+                for zero_index in zero_run_starts[zero_run_starts].index:
+                    selected_reasons.setdefault(zero_index, set()).add("zero:{}".format(column))
+
+        sampled_rows = []
+        for index in sorted(selected_reasons):
+            selected_position = source_df.index.get_loc(index)
+            row = source_df.loc[index].to_dict()
+            row.update({
+                "Sample_Type": "source_point",
+                "Sample_Reason": "|".join(sorted(selected_reasons[index])),
+                "Sample_Source_File": "throughput_data.csv",
+                "Sample_Source_Part_Index": part_index,
+                "Sample_Bucket_Index": int(selected_position // bucket_size) + 1,
+                "Sample_Bucket_Size": bucket_size,
+                "Sample_Window_Start_Row": selected_position + 1,
+                "Sample_Window_End_Row": selected_position + 1,
+                "Sample_Window_Row_Count": 1,
+                "Sample_Averaged_Point_Count": 1,
+            })
+            for column in shape_columns:
+                row["{}_Overall_Min".format(column)] = overall_min_values.get(column)
+                row["{}_Overall_Max".format(column)] = overall_max_values.get(column)
+                if column in zero_shape_columns:
+                    row["{}_Overall_Zero_Runs".format(column)] = overall_zero_runs.get(column, 0)
+            sampled_rows.append(row)
+
+        # The report graphs select their points with graph_data['Iteration'] == n,
+        # so an iteration label must never be averaged into a value such as 1.75
+        # (those rows would silently disappear from every graph).  Carry the
+        # label through untouched and keep each bucket inside one iteration so
+        # the averages do not mix two iterations either.
+        identity_columns = [
+            column for column in ("Iteration", "Angle", "Coordinate")
+            if column in source_df.columns
+        ]
+        remaining_indices = [index for index in source_df.index if index not in selected_reasons]
+        chunks = []
+        for group_indices in self._split_indices_by_iteration(source_df, remaining_indices):
+            for chunk_offset in range(0, len(group_indices), bucket_size):
+                chunk_indices = group_indices[chunk_offset:chunk_offset + bucket_size]
+                if chunk_indices:
+                    chunks.append((int(chunk_offset // bucket_size) + 1, chunk_indices))
+
+        for bucket_index, chunk_indices in chunks:
+            chunk_df = source_df.loc[chunk_indices]
+            chunk_positions = [source_df.index.get_loc(index) for index in chunk_indices]
+            row = {}
+            for column in source_df.columns:
+                if column == "TIMESTAMP":
+                    row[column] = self._first_present_value(chunk_df[column].iloc[::-1])
+                elif column in identity_columns:
+                    row[column] = self._first_present_value(chunk_df[column])
+                elif column in numeric_columns:
+                    value = numeric_by_column[column].loc[chunk_indices].mean()
+                    row[column] = value if pd.notna(value) else None
+                else:
+                    row[column] = self._first_present_value(chunk_df[column])
+            row.update({
+                "Sample_Type": "bucket_average",
+                "Sample_Reason": "regular_sample_average",
+                "Sample_Source_File": "throughput_data.csv",
+                "Sample_Source_Part_Index": part_index,
+                "Sample_Bucket_Index": bucket_index,
+                "Sample_Bucket_Size": bucket_size,
+                "Sample_Window_Start_Row": min(chunk_positions) + 1,
+                "Sample_Window_End_Row": max(chunk_positions) + 1,
+                "Sample_Window_Row_Count": len(chunk_indices),
+                "Sample_Averaged_Point_Count": len(chunk_indices),
+            })
+            for column in shape_columns:
+                row["{}_Overall_Min".format(column)] = overall_min_values.get(column)
+                row["{}_Overall_Max".format(column)] = overall_max_values.get(column)
+                if column in zero_shape_columns:
+                    row["{}_Overall_Zero_Runs".format(column)] = overall_zero_runs.get(column, 0)
+            sampled_rows.append(row)
+        sampled_df = pd.DataFrame(sampled_rows)
+        if "TIMESTAMP" in sampled_df.columns:
+            sampled_df["_Sample_Sort_Timestamp"] = self._parse_throughput_timestamps(sampled_df["TIMESTAMP"])
+            sampled_df = sampled_df.sort_values(
+                by=["_Sample_Sort_Timestamp", "Sample_Bucket_Index", "Sample_Type"],
+                kind="mergesort",
+            ).drop(columns=["_Sample_Sort_Timestamp"])
+        return sampled_df
+
+    def _flush_throughput_sample_part(self):
+        sampler = self.throughput_sampler
+        if not sampler or not sampler["part_rows"]:
+            return
+        source_df = pd.DataFrame(sampler["part_rows"], columns=sampler["columns"])
+        sampled_df = self._build_sampled_throughput_part(source_df, sampler["part_index"])
+        for path in sampler["paths"]:
+            write_header = not os.path.exists(path) or os.path.getsize(path) == 0
+            sampled_df.to_csv(path, mode="a", header=write_header, index=False)
+        logger.info(
+            "Appended throughput sampled part %s (source rows=%s, sampled rows=%s, bucket size=%s)",
+            sampler["part_index"], len(source_df), len(sampled_df), sampler["bucket_size"],
+        )
+        sampler["part_rows"] = []
+        sampler["part_index"] += 1
+
+    def _throughput_window_dir(self):
+        base = self.result_dir if self.result_dir else self._resolve_run_csv_dir()
+        path = os.path.join(base, "throughput_windows")
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    def record_throughput_window_row(self, columns, values):
+        """Append one raw monitoring row to its hourly window CSV as it arrives.
+
+        The webGUI's live graph used to re-read the whole throughput_data.csv
+        on every poll and recompute the current hour window in Python.
+        Writing the window file here, incrementally, means that endpoint only
+        ever reads one or two small files regardless of how long the test has
+        been running, and the window boundaries the two sides use always
+        agree because this script is the one deciding them.
         """
         try:
-            if not os.path.isfile(csv_path):
+            row = dict(zip(columns, values))
+            timestamp = self._parse_throughput_timestamps(pd.Series([row.get("TIMESTAMP")])).iloc[0]
+            if pd.isna(timestamp):
                 return
-            samples = pd.read_csv(csv_path)
-            if "TIMESTAMP" not in samples.columns or samples.empty:
-                return
+            state = self.throughput_window_writer
+            if state is None:
+                self.throughput_window_writer = state = {
+                    "anchor": timestamp,
+                    "page": None,
+                    "handle": None,
+                    "writer": None,
+                    "columns": list(columns),
+                }
+            elif list(columns) != state["columns"]:
+                for column in columns:
+                    if column not in state["columns"]:
+                        state["columns"].append(column)
 
-            # TIMESTAMP has no year (e.g. "08/09 01:19:02 PM"); assume the run
-            # happened this year and repair the roll-over at new year's eve.
-            stamps = pd.to_datetime(
-                samples["TIMESTAMP"].astype(str).str.strip(),
-                format="%d/%m %I:%M:%S %p",
-                errors="coerce",
-            )
-            if stamps.isna().all():
-                stamps = pd.to_datetime(
-                    samples["TIMESTAMP"].astype(str).str.strip(),
-                    format="%m/%d %I:%M:%S %p",
-                    errors="coerce",
-                )
-            samples["TIMESTAMP"] = stamps.map(
-                lambda value: value if pd.isna(value) else value.replace(year=datetime.now().year)
-            )
-            samples = samples.dropna(subset=["TIMESTAMP"])
-            if samples.empty:
-                return
+            elapsed = (timestamp - state["anchor"]).total_seconds()
+            page = int(elapsed // THROUGHPUT_WINDOW_SECONDS) + 1 if elapsed >= 0 else 1
+            if page != state["page"]:
+                if state["handle"]:
+                    state["handle"].close()
+                window_path = os.path.join(self._throughput_window_dir(), "hour_{:04d}.csv".format(page))
+                is_new_file = not os.path.isfile(window_path) or os.path.getsize(window_path) == 0
+                handle = open(window_path, "a", newline="")
+                writer = csv.DictWriter(handle, fieldnames=state["columns"])
+                if is_new_file:
+                    writer.writeheader()
+                state.update(page=page, handle=handle, writer=writer)
 
-            bucket_seconds = self._report_bucket_seconds(samples["TIMESTAMP"])
-            metric_columns = [column for column in ("Overall Download", "Overall Upload") if column in samples]
-            if not metric_columns:
-                return
-            values = pd.DataFrame({
-                column: pd.to_numeric(samples[column], errors="coerce") for column in metric_columns
-            })
-            values["Timestamp"] = samples["TIMESTAMP"].dt.floor("{}s".format(bucket_seconds))
-            grouped = values.groupby("Timestamp", as_index=False)
-            summary = grouped.mean(numeric_only=True).round(2)
-            summary.insert(1, "Samples", grouped.size()["size"].to_numpy())
-            summary["Timestamp"] = summary["Timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S")
-            report.set_table_title("Time-Series Summary ({}-second buckets)".format(bucket_seconds))
-            report.build_table_title()
-            report.set_table_dataframe(summary)
-            report.build_table()
-            report.set_custom_html('<hr>')
-            report.build_custom()
+            state["writer"].writerow({column: row.get(column) for column in state["columns"]})
+            state["handle"].flush()
         except Exception as error:
-            logger.warning("could not add timestamped report summary: %s", error)
+            logger.warning("could not record throughput window row: %s", error)
+
+    def finalize_throughput_window_writer(self):
+        state = self.throughput_window_writer
+        if state and state.get("handle"):
+            try:
+                state["handle"].close()
+            except Exception as error:
+                logger.warning("could not close the throughput window file: %s", error)
+        self.throughput_window_writer = None
+
+    def record_throughput_sample(self, columns, values, expected_rows):
+        """Add one raw monitoring row to the sampled CSV while the test runs.
+
+        Sampling is a reporting convenience, so a failure here is logged and
+        swallowed: it must never take down the traffic run it is observing.
+        """
+        try:
+            if self.throughput_sampler is None:
+                self._start_throughput_sampler(columns, expected_rows)
+            sampler = self.throughput_sampler
+            if list(columns) != sampler["columns"]:
+                # A later monitoring row added columns (robot pose, for
+                # example).  Widen the sampled schema instead of silently
+                # dropping the values that zip() would truncate.
+                for column in columns:
+                    if column not in sampler["columns"]:
+                        sampler["columns"].append(column)
+            row = dict(zip(columns, values))
+            sampler["part_rows"].append({column: row.get(column) for column in sampler["columns"]})
+            if len(sampler["part_rows"]) >= sampler["max_rows_per_part"]:
+                self._flush_throughput_sample_part()
+        except Exception as error:
+            logger.warning("could not record throughput sample: %s", error)
+
+    def finalize_throughput_sampler(self):
+        try:
+            self._flush_throughput_sample_part()
+        except Exception as error:
+            logger.warning("could not flush the final throughput sample part: %s", error)
+        if not self.throughput_sampler:
+            return None
+        sampler = self.throughput_sampler
+        for path in sampler["paths"]:
+            try:
+                if not os.path.isfile(path) or os.path.getsize(path) == 0:
+                    continue
+                sampled = pd.read_csv(path)
+                sort_columns = []
+                if "Sample_Source_Part_Index" in sampled.columns:
+                    sort_columns.append("Sample_Source_Part_Index")
+                if "TIMESTAMP" in sampled.columns:
+                    sampled["_Sample_Sort_Timestamp"] = self._parse_throughput_timestamps(sampled["TIMESTAMP"])
+                    sort_columns.append("_Sample_Sort_Timestamp")
+                for column in ("Sample_Bucket_Index", "Sample_Type"):
+                    if column in sampled.columns:
+                        sort_columns.append(column)
+                if sort_columns:
+                    sampled = sampled.sort_values(sort_columns, kind="mergesort")
+                if "_Sample_Sort_Timestamp" in sampled.columns:
+                    sampled = sampled.drop(columns=["_Sample_Sort_Timestamp"])
+                sampled.to_csv(path, index=False)
+            except Exception as error:
+                logger.warning("could not finalize sampled throughput CSV %s: %s", path, error)
+        primary = sampler["paths"][0]
+        return primary if os.path.isfile(primary) and os.path.getsize(primary) > 0 else None
 
     def generate_report(self, iterations_before_test_stopped_by_user, incremental_capacity_list, data=None, data1=None, report_path='', result_dir_name='Throughput_Test_report',
                         selected_real_clients_names=None, iot_summary=None):
 
+        sampled_csv_source = self.finalize_throughput_sampler()
+        self.finalize_throughput_window_writer()
+        sampled_report_path = None
+        graph_data = data
         if self.do_interopability:
             result_dir_name = "Interopability_Test_report"
 
@@ -2950,11 +3321,25 @@ class Throughput(Realm):
             # df.to_csv(os.path.join(report_path_date_time, 'throughput_data.csv'))
             # For groups and profiles configuration through webgui
             if self.dowebgui is True and self.group_name:
-                shutil.move('overall_throughput.csv', report_path_date_time)
+                self._move_run_csv('overall_throughput.csv', report_path_date_time)
             elif self.do_bandsteering:
                 pass
             else:
-                shutil.move('throughput_data.csv', report_path_date_time)
+                self._move_run_csv('throughput_data.csv', report_path_date_time)
+            if sampled_csv_source and os.path.isfile(sampled_csv_source):
+                sampled_report_path = os.path.join(report_path_date_time, "throughput_data_sampled.csv")
+                if os.path.exists(sampled_report_path):
+                    os.remove(sampled_report_path)
+                shutil.move(sampled_csv_source, sampled_report_path)
+                # finalize_throughput_sampler() already wrote the rows in
+                # chronological order; re-sorting by bucket index here would
+                # interleave the preserved min/max/zero points with the bucket
+                # averages and leave the graph x-axis jumping back in time.
+                try:
+                    graph_data = pd.read_csv(sampled_report_path)
+                except Exception as error:
+                    logger.warning("could not load sampled throughput CSV for report graphs: %s", error)
+                    graph_data = data
             logger.info("path: {}".format(report_path))
             logger.info("path_date_time: {}".format(report_path_date_time))
             report.set_title("Throughput Test")
@@ -3269,8 +3654,8 @@ class Throughput(Realm):
                 # Depending on the test direction, retrieve corresponding throughput data,
                 # organize it into datasets for graphing, and calculate real-time average throughput values accordingly.
                 if self.direction == "Bi-direction":
-                    download_values_list = data['Overall Download'][data['Iteration'] == i + 1].values.tolist()
-                    upload_values_list = data['Overall Upload'][data['Iteration'] == i + 1].values.tolist()
+                    download_values_list = graph_data['Overall Download'][graph_data['Iteration'] == i + 1].values.tolist()
+                    upload_values_list = graph_data['Overall Upload'][graph_data['Iteration'] == i + 1].values.tolist()
                     data_set_in_graph.append(download_values_list)
                     data_set_in_graph.append(upload_values_list)
                     devices_data_to_create_bar_graph.append(download_data)
@@ -3282,14 +3667,14 @@ class Throughput(Realm):
                     )
 
                 elif self.direction == 'Download':
-                    download_values_list = data['Overall Download'][data['Iteration'] == i + 1].values.tolist()
+                    download_values_list = graph_data['Overall Download'][graph_data['Iteration'] == i + 1].values.tolist()
                     data_set_in_graph.append(download_values_list)
                     devices_data_to_create_bar_graph.append(download_data)
                     label_data = ['Download']
                     real_time_data = f"Real Time Throughput: Achieved Throughput: Download : {round(((sum(download_data[0:int(incremental_capacity_list[i])]))), 2)} Mbps"
 
                 elif self.direction == 'Upload':
-                    upload_values_list = data['Overall Upload'][data['Iteration'] == i + 1].values.tolist()
+                    upload_values_list = graph_data['Overall Upload'][graph_data['Iteration'] == i + 1].values.tolist()
                     data_set_in_graph.append(upload_values_list)
                     devices_data_to_create_bar_graph.append(upload_data)
                     label_data = ['Upload']
@@ -3307,7 +3692,7 @@ class Throughput(Realm):
                     data_set=data_set_in_graph,
                     xaxis_name="Time",
                     yaxis_name="Throughput (Mbps)",
-                    xaxis_categories=data['TIMESTAMP'][data['Iteration'] == i + 1].values.tolist(),
+                    xaxis_categories=graph_data['TIMESTAMP'][graph_data['Iteration'] == i + 1].values.tolist(),
                     label=label_data,
                     graph_image_name=f"line_graph{i}"
                 )
@@ -3484,7 +3869,21 @@ class Throughput(Realm):
 
             # To store throughput_data.csv in report folder
             report_path_date_time = report.get_path_date_time()
-            shutil.move('throughput_data.csv', report_path_date_time)
+            self._move_run_csv('throughput_data.csv', report_path_date_time)
+            if sampled_csv_source and os.path.isfile(sampled_csv_source):
+                sampled_report_path = os.path.join(report_path_date_time, "throughput_data_sampled.csv")
+                if os.path.exists(sampled_report_path):
+                    os.remove(sampled_report_path)
+                shutil.move(sampled_csv_source, sampled_report_path)
+                # finalize_throughput_sampler() already wrote the rows in
+                # chronological order; re-sorting by bucket index here would
+                # interleave the preserved min/max/zero points with the bucket
+                # averages and leave the graph x-axis jumping back in time.
+                try:
+                    graph_data = pd.read_csv(sampled_report_path)
+                except Exception as error:
+                    logger.warning("could not load sampled throughput CSV for report graphs: %s", error)
+                    graph_data = data
 
             logger.info("path: {}".format(report_path))
             logger.info("path_date_time: {}".format(report_path_date_time))
@@ -3662,8 +4061,8 @@ class Throughput(Realm):
                 # Depending on the test direction, retrieve corresponding throughput data,
                 # organize it into datasets for graphing, and calculate real-time average throughput values accordingly.
                 if self.direction == "Bi-direction":
-                    download_values_list = data['Overall Download'][data['Iteration'] == i + 1].values.tolist()
-                    upload_values_list = data['Overall Upload'][data['Iteration'] == i + 1].values.tolist()
+                    download_values_list = graph_data['Overall Download'][graph_data['Iteration'] == i + 1].values.tolist()
+                    upload_values_list = graph_data['Overall Upload'][graph_data['Iteration'] == i + 1].values.tolist()
                     data_set_in_graph.append(download_values_list)
                     data_set_in_graph.append(upload_values_list)
                     devices_data_to_create_bar_graph.append(download_data)
@@ -3676,7 +4075,7 @@ class Throughput(Realm):
                     )
 
                 elif self.direction == 'Download':
-                    download_values_list = data['Overall Download'][data['Iteration'] == i + 1].values.tolist()
+                    download_values_list = graph_data['Overall Download'][graph_data['Iteration'] == i + 1].values.tolist()
                     data_set_in_graph.append(download_values_list)
                     devices_data_to_create_bar_graph.append(download_data)
                     label_data = ['Download']
@@ -3686,7 +4085,7 @@ class Throughput(Realm):
                     )
 
                 elif self.direction == 'Upload':
-                    upload_values_list = data['Overall Upload'][data['Iteration'] == i + 1].values.tolist()
+                    upload_values_list = graph_data['Overall Upload'][graph_data['Iteration'] == i + 1].values.tolist()
                     data_set_in_graph.append(upload_values_list)
                     devices_data_to_create_bar_graph.append(upload_data)
                     label_data = ['Upload']
@@ -3706,7 +4105,7 @@ class Throughput(Realm):
                     data_set=data_set_in_graph,
                     xaxis_name="Time",
                     yaxis_name="Throughput (Mbps)",
-                    xaxis_categories=data['TIMESTAMP'][data['Iteration'] == i + 1].values.tolist(),
+                    xaxis_categories=graph_data['TIMESTAMP'][graph_data['Iteration'] == i + 1].values.tolist(),
                     label=label_data,
                     graph_image_name=f"line_graph{i}"
                 )
@@ -3825,9 +4224,6 @@ class Throughput(Realm):
 
             if self.dowebgui and self.get_live_view and self.do_interopability:
                 self.add_live_view_images_to_report(report)
-        # throughput_data.csv has been moved into the report folder above.
-        self.add_timestamped_bucket_summary(
-            report, os.path.join(report_path_date_time, 'throughput_data.csv'))
         if iot_summary:
             self.build_iot_report_section(report, iot_summary)
         if self.device_issue_log:
@@ -4041,13 +4437,13 @@ class Throughput(Realm):
                     _obj_title=f"<h3 style='text-decoration: underline;'>Throughput Test Details – Robot Position: Point {coordinate}</h3>",
                     _obj=" ")
                 report.build_objective()
-                coordinate_csv = f"{coordinate}_throughput_data.csv"
+                coordinate_csv = self._run_csv_path(f"{coordinate}_throughput_data.csv")
                 data = pd.read_csv(coordinate_csv)
 
                 if self.dowebgui is True and self.group_name:
                     shutil.move('{}_overall_throughput.csv', report_path_date_time)
                 else:
-                    shutil.move('{}_throughput_data.csv'.format(coordinate), report_path_date_time)
+                    self._move_run_csv('{}_throughput_data.csv'.format(coordinate), report_path_date_time)
 
                 for angle in self.angle_list:
                     # Loop through iterations and build graphs, tables for each iteration
@@ -5402,6 +5798,7 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
 
         if gave_incremental:
             throughput.gave_incremental = True
+        throughput.ensure_writable_working_directory()
         throughput.os_type()
 
         check_condition, clients_to_run = throughput.phantom_check()
