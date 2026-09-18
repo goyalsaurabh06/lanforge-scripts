@@ -88,6 +88,41 @@ EXAMPLE:
             --iot_test --iot_ip 127.0.0.1 --iot_port 8000 --iot_iterations 1 --iot_delay 5 --iot_device_list "switch.smart_plug_1_socket_1"
             --iot_testname "mixedtraffics_iot_parallel"
 
+        # CLI for Mixed Traffic Test: Build the stations from a Chamber View scenario.
+        # The scenario supplies the stations, radios, SSIDs and security, so the
+        # --twog_*/--fiveg_*/--sixg_* arguments are not needed.
+
+            python3 lf_mixed_traffic.py --mgr 192.168.212.100 --scenario <scenario_name> --virtual
+            --tests 1 2 3 4 5 --target 10.0.0.10 --ping_interval 5 --upstream_port 1.1.eth1
+            --side_b_min_bps 3000000 --side_a_min 1000000 --side_b_min 1000000 --traffic_type lf_tcp --tos "VI"
+            --ftp_file_sizes 10MB --http_file_size 5MB --direction Download --mc_tos "BE"
+            --test_duration 1m --pre_cleanup
+
+        # CLI for Mixed Traffic Test: Chamber View scenario using WPA3 SAE (AES/CCMP) station security
+
+            python3 lf_mixed_traffic.py --mgr 192.168.212.100 --scenario <scenario_name> --security_config wpa3_aes_sae
+            --tests 1 2 3 4 5 --target 10.0.0.10 --ping_interval 5 --upstream_port 1.1.eth1 --virtual --test_duration 1m --pre_cleanup
+
+        # CLI for Mixed Traffic Test: Chamber View scenario using WPA3 SAE-EXT-KEY (GCMP-256) station security
+
+            python3 lf_mixed_traffic.py --mgr 192.168.212.100 --scenario <scenario_name> --security_config wpa3_gcmp_sae
+            --tests 1 2 3 4 5 --target 10.0.0.10 --ping_interval 5 --upstream_port 1.1.eth1 --virtual --test_duration 1m --pre_cleanup
+
+        # CLI for Mixed Traffic Test: Chamber View scenario using 802.1x / EAP station security
+
+            python3 lf_mixed_traffic.py --mgr 192.168.212.100 --scenario <scenario_name> --security_config 1x
+            --eap_method EAP-PEAP --eap_identity user --eap_password pass --key_mgmt WPA-EAP
+            --tests 1 2 3 4 5 --target 10.0.0.10 --ping_interval 5 --upstream_port 1.1.eth1 --virtual --test_duration 1m --pre_cleanup
+
+        # CLI for Mixed Traffic Test: Chamber View scenario with all tests running in parallel
+
+            python3 lf_mixed_traffic.py --mgr 192.168.204.71 --scenario <scenario_name> --virtual --parallel
+            --tests 1 2 3 4 5 --target 127.0.0.1 --ping_interval 1 --upstream_port 1.1.eth2
+            --side_b_min_bps 10000000 --side_a_min 0 --side_b_min 100000000 --traffic_type lf_tcp --tos "VO"
+            --ftp_file_sizes 5MB --http_file_size 5MB --direction Download --mc_tos "BK"
+            --test_duration 2m --pre_cleanup
+
+
 SCRIPT_CLASSIFICATION:  Multiples Tests, Creation, Report Generation (Both individual & Overall)
 
 SCRIPT_CATEGORIES:  Performance, Functional
@@ -143,6 +178,8 @@ lf_cleanup = importlib.import_module("py-scripts.lf_cleanup")
 LFUtils = importlib.import_module("py-json.LANforge.LFUtils")
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 lf_base_interop_profile = importlib.import_module("py-scripts.lf_base_interop_profile")
+cv_test_manager = importlib.import_module("py-json.cv_test_manager")
+add_sta = importlib.import_module("py-json.LANforge.add_sta")
 
 # importing scripts
 ping_test = importlib.import_module("py-scripts.lf_interop_ping")
@@ -234,6 +271,7 @@ class Mixed_Traffic(Realm):
                  device_list=None,
                  get_live_view: bool = False,
                  total_floors: int = 0,
+                 cv_scenario=None,
                  debug=False):
         super().__init__(lfclient_host=host,
                          lfclient_port=port)
@@ -319,6 +357,20 @@ class Mixed_Traffic(Realm):
         self.selected_bands = selected_bands
 
         self.band = ''
+        # Name of the Chamber View scenario to build stations from, or None for
+        # the ordinary CLI-driven station creation. Every cv_scenario branch below
+        # falls back to the existing behaviour when this is None.
+        self.cv_scenario = cv_scenario
+        # Populated by station_info() once a scenario has been built. Kept as an
+        # empty skeleton so the attribute is always safe to read.
+        self.sta_info = {
+            'station_list': [],
+            'radio_list': [],
+            'ssid_list': [],
+            'key_list': [],
+            'security_list': [],
+            'band_list': '-',
+        }
         self.mode = mode
         # self.radio = radio
         self.number_template = number_template
@@ -1226,6 +1278,12 @@ class Mixed_Traffic(Realm):
                         self.ftp_test_obj.num_sta = self.num_staions
                         self.ftp_test_obj.count = 0
                         self.ftp_test_obj.set_values()
+                        if self.cv_scenario:
+                            # A scenario's stations already exist and are already
+                            # admin-up; skip build()'s station re-create pass, which
+                            # set_values() just pointed at a --twog_radio/--fiveg_radio/
+                            # --sixg_radio value a scenario run never sets.
+                            self.ftp_test_obj.radio = []
                         # no L4 pre cleanup: global sweep breaks parallel HTTP test
                         self.ftp_test_obj.build()
                     if not self.ftp_test_obj.passes():
@@ -1236,7 +1294,13 @@ class Mixed_Traffic(Realm):
                     logger.info("FTP traffic started running at {}".format(time1))
                     if self.real:
                         self.ftp_test_obj.monitor_cx()
-                    self.ftp_test_obj.start(False, False)
+                    if not self.cv_scenario:
+                        self.ftp_test_obj.start(False, False)
+                    else:
+                        # start() loops "for _ in self.radio", which is [] because of
+                        # the reset above; start_cx() already starts every CX build()
+                        # created in one call, so call it directly instead.
+                        self.ftp_test_obj.cx_profile.start_cx()
                     if self.dowebgui or self.real:
                         self.ftp_test_obj.monitor_for_runtime_csv()
                         self.ftp_test_obj.my_monitor_for_real_devices()
@@ -1746,6 +1810,96 @@ class Mixed_Traffic(Realm):
                         False
                     ]
                 )
+
+    def station_info(self):
+        """Read back the stations a Chamber View scenario just built.
+
+        The --scenario flow does not know up front which stations, radios, SSIDs
+        or bands the scenario defines, so they are discovered from /port/list
+        after the build and used in place of the CLI --twog_*/--fiveg_*/--sixg_*
+        values.
+
+        /port/list's WIFI-STA ports include any real Android/laptop devices
+        connected to this LANforge system through the interop profile, not just
+        the scenario's own virtual stations -- those are excluded by checking
+        against RealDevice.get_devices() (the same real-vs-virtual signal
+        DeviceConfig.py's get_all_devices() is built on: a real device's
+        resource does not have LANforge's "ct-kernel" custom kernel).
+        """
+        self.sta_info = {
+            'station_list': list(),
+            'radio_list': list(),
+            'ssid_list': list(),
+            'key_list': list(),
+            'security_list': list(),
+            'band_list': list()
+        }
+        real_device_ports = set(self.base_interop_profile.get_devices())
+
+        response = super().json_get(
+            "/port/list?fields=_links,parent+dev,ssid,alias,device,port+type,key/phrase,security")
+        if response and 'interfaces' in response:
+            for x in range(len(response['interfaces'])):
+                for interface_name, interface_details in response['interfaces'][x].items():
+                    if not isinstance(interface_details, dict):
+                        logger.debug("Non-dictionary entry: {}".format(interface_name))
+                        continue
+                    if interface_name in real_device_ports:
+                        logger.debug("Skipping real device port: {}".format(interface_name))
+                        continue
+                    alias = interface_details.get('alias')
+                    if interface_details.get('port type') != "WIFI-STA" or not alias:
+                        continue
+                    # Every field is appended unconditionally so the lists stay
+                    # index-aligned; a station with a blank key or ssid would
+                    # otherwise silently desync them.
+                    ssid = interface_details.get('ssid') or ''
+                    self.sta_info['station_list'].append(interface_name)
+                    self.sta_info['ssid_list'].append(ssid)
+                    self.sta_info['key_list'].append(interface_details.get('key/phrase') or '')
+                    self.sta_info['security_list'].append(interface_details.get('security') or '')
+                    self.sta_info['radio_list'].append(interface_details.get('parent dev') or '')
+                    if '2G' in ssid or '2g' in ssid:
+                        self.sta_info['band_list'].append('2.4G')
+                    elif '5G' in ssid or '5g' in ssid:
+                        self.sta_info['band_list'].append('5G')
+                    elif '6G' in ssid or '6g' in ssid:
+                        self.sta_info['band_list'].append('6G')
+                    else:
+                        self.sta_info['band_list'].append('-')
+
+        # Downstream code treats band as a single value, not a list.
+        self.sta_info['band_list'] = self.sta_info['band_list'][0] if self.sta_info['band_list'] else '-'
+
+        if real_device_ports:
+            logger.info("Excluded {} real device port(s) from scenario station discovery: {}".format(len(real_device_ports), sorted(real_device_ports)))
+        logger.info("Scenario stations: {}".format(self.sta_info['station_list']))
+        logger.info("Scenario radios: {}".format(self.sta_info['radio_list']))
+        logger.info("Scenario ssids: {}".format(self.sta_info['ssid_list']))
+        logger.info("Scenario securities: {}".format(self.sta_info['security_list']))
+        logger.info("Scenario band: {}".format(self.sta_info['band_list']))
+
+        return self.sta_info
+
+    @staticmethod
+    def security_flag_for(security_str):
+        """Map a /port/list 'security' string (e.g. "WPA2-PSK", "Open") to the
+        add_sta.add_sta_flags name currently governing that station's security,
+        so callers can clear that specific bit before enabling a different one."""
+        if not security_str:
+            return None
+        security_str = security_str.lower()
+        if 'wpa3' in security_str:
+            return 'use-wpa3'
+        if 'wpa2' in security_str:
+            return 'wpa2_enable'
+        if 'wep' in security_str:
+            return 'wep_enable'
+        if 'owe' in security_str:
+            return 'use-owe'
+        if 'wpa' in security_str:
+            return 'wpa_enable'
+        return None
 
     def generate_all_report(self, iot_summary=None):
         logger.info("Generate the Mixed Traffic report with all tests")
@@ -2770,6 +2924,41 @@ EXAMPLE:
             --ping_test_duration 1m --qos_test_duration 30s --ftp_test_duration 30s --http_test_duration 30s --multicast_test_duration 30s
             --all_bands --pre_cleanup
 
+        # CLI for Mixed Traffic Test: Build the stations from a Chamber View scenario.
+        # The scenario supplies the stations, radios, SSIDs and security, so the
+        # --twog_*/--fiveg_*/--sixg_* arguments are not needed.
+
+            python3 lf_mixed_traffic.py --mgr 192.168.212.100 --scenario <scenario_name> --virtual
+            --tests 1 2 3 4 5 --target 10.0.0.10 --ping_interval 5 --upstream_port 1.1.eth1
+            --side_b_min_bps 3000000 --side_a_min 1000000 --side_b_min 1000000 --traffic_type lf_tcp --tos "VI"
+            --ftp_file_sizes 10MB --http_file_size 5MB --direction Download --mc_tos "BE"
+            --test_duration 1m --pre_cleanup
+
+        # CLI for Mixed Traffic Test: Chamber View scenario using WPA3 SAE (AES/CCMP) station security
+
+            python3 lf_mixed_traffic.py --mgr 192.168.212.100 --scenario <scenario_name> --security_config wpa3_aes_sae
+            --tests 1 2 3 4 5 --target 10.0.0.10 --ping_interval 5 --upstream_port 1.1.eth1 --virtual --test_duration 1m --pre_cleanup
+
+        # CLI for Mixed Traffic Test: Chamber View scenario using WPA3 SAE-EXT-KEY (GCMP-256) station security
+
+            python3 lf_mixed_traffic.py --mgr 192.168.212.100 --scenario <scenario_name> --security_config wpa3_gcmp_sae
+            --tests 1 2 3 4 5 --target 10.0.0.10 --ping_interval 5 --upstream_port 1.1.eth1 --virtual --test_duration 1m --pre_cleanup
+
+        # CLI for Mixed Traffic Test: Chamber View scenario using 802.1x / EAP station security
+
+            python3 lf_mixed_traffic.py --mgr 192.168.212.100 --scenario <scenario_name> --security_config 1x
+            --eap_method EAP-PEAP --eap_identity user --eap_password pass --key_mgmt WPA-EAP
+            --tests 1 2 3 4 5 --target 10.0.0.10 --ping_interval 5 --upstream_port 1.1.eth1 --virtual --test_duration 1m --pre_cleanup
+
+        # CLI for Mixed Traffic Test: Chamber View scenario with all tests running in parallel
+
+            python3 lf_mixed_traffic.py --mgr 192.168.204.71 --scenario <scenario_name> --virtual --parallel
+            --tests 1 2 3 4 5 --target 127.0.0.1 --ping_interval 1 --upstream_port 1.1.eth2
+            --side_b_min_bps 10000000 --side_a_min 0 --side_b_min 100000000 --traffic_type lf_tcp --tos "VO"
+            --ftp_file_sizes 5MB --http_file_size 5MB --direction Download --mc_tos "BK"
+            --test_duration 2m --pre_cleanup
+
+
 SCRIPT_CLASSIFICATION:  Multiples Tests, Creation, Report Generation (Both individual & Overall)
 
 SCRIPT_CATEGORIES:  Performance, Functional
@@ -2860,6 +3049,42 @@ INCLUDE_IN_README: False
     optional.add_argument('--dut_firmware', help='Specify the dut firmware. eg: --dut_firmware V1.0.0.10',
                           default="NA")
     optional.add_argument('--mixed_traffic_loop', type=int, help='Specify the number of times mixed traffic test should run', default=1)
+
+    # Chamber View scenario based station creation
+    optional.add_argument('--scenario', type=str,
+                          help='Provide the Scenario name of the Chamber view for building the station '
+                               'creation scenario. When given, stations come from the scenario instead of '
+                               'the --twog_*/--fiveg_*/--sixg_* arguments.')
+    optional.add_argument('--security_config',
+                          type=str,
+                          choices=['1x', 'wpa3_aes_sae', 'wpa3_gcmp_sae'],
+                          default=None,
+                          help='Station security setup to apply when building stations from a --scenario.\n'
+                               'If omitted, the scenario\'s own station security is left untouched:\n'
+                               '1x            --> 802.1x / EAP based station security\n'
+                               'wpa3_aes_sae  --> WPA3 SAE with AES/CCMP ciphers\n'
+                               'wpa3_gcmp_sae --> WPA3 SAE-EXT-KEY with GCMP-256 ciphers')
+    optional.add_argument('--security', type=str,
+                          help='Enter the security only when using --scenario to set the ieee80211w flag '
+                               'in additional config')
+    optional.add_argument('--key_mgmt', type=str, help='Enter the key management, e.g: WPA-EAP')
+    optional.add_argument('--pairwise_cipher', type=str, default='[BLANK]',
+                          help='Pairwise cipher, e.g: CCMP, GCMP-256, CCMP/GCMP-256 (wpa3)')
+    optional.add_argument('--groupwise_cipher', type=str, default='[BLANK]',
+                          help='Groupwise cipher, e.g: CCMP, GCMP-256 (wpa3), All')
+    optional.add_argument('--custom_wifi_cmd', type=str,
+                          help='Enter the custom wifi command to be used for station creation.')
+    optional.add_argument('--eap_method', type=str, help='Enter EAP method e.g: TLS')
+    optional.add_argument('--eap_identity', dest='eap_identity', type=str,
+                          help='This is synonymous with the RADIUS username.')
+    optional.add_argument('--eap_anonymous_identity', type=str, default='[BLANK]', help='')
+    optional.add_argument('--eap_password', '--radius_passwd', dest='eap_password', type=str,
+                          help='This is synonymous with the RADIUS password.')
+    optional.add_argument('--eap_phase1', type=str, default='[BLANK]', help='Enter the phase1 value')
+    optional.add_argument('--eap_phase2', type=str, default='[BLANK]', help='Enter the phase2 value')
+    optional.add_argument('--private_key', type=str, default='[BLANK]', help='Enter the private key path')
+    optional.add_argument('--ca_cert', type=str, default='[BLANK]', help='Enter the CA certificate path')
+    optional.add_argument('--pk_passwd', type=str, default='[BLANK]', help='Enter the private key password')
 
     # ping test args
     required.add_argument('--target', type=str, help='Target URL for ping test', default='192.168.1.3')
@@ -2992,11 +3217,49 @@ INCLUDE_IN_README: False
             "--mc_tos <input> should not contain single value not multiple values. eg : --mc_tos \"BE"))
         exit(0)
 
+    # LANforge GUI labels -> the values its CLI expects. Only used by the
+    # --scenario security_config paths; an unrecognised value is passed through
+    # untouched so raw CLI values still work.
+    EAP_METHOD_MAP = {
+        "DEFAULT": "DEFAULT", "EAP-MD5": "MD5", "MSCHAPV2": "MSCHAPV2", "EAP-OTP": "OTP",
+        "EAP-GTC": "GTC", "EAP-TLS": "TLS", "EAP-PEAP": "PEAP", "EAP-TTLS": "TTLS",
+        "EAP-SIM": "SIM", "EAP-AKA": "AKA", "EAP-PSK": "PSK", "EAP-IKEV2": "IKEV2",
+        "EAP-FAST": "FAST", "WFA-UNAUTH-TLS": "WFA-UNAUTH-TLS", "TTLS PEAP TLS": "TTLS PEAP TLS",
+    }
+    KEY_MGMT_MAP = {
+        "DEFAULT": "DEFAULT", "NONE": "NONE", "WPA-PSK": "WPA-PSK", "FT-PSK (11r)": "FT-PSK",
+        "FT-EAP (11r)": "FT-EAP", "FT-SAE (11r)": "FT-SAE", "FT-SAE-EXT-KEY (11r)": "FT-SAE-EXT-KEY",
+        "FT-EAP-SHA384 (11r)": "FT-EAP-SHA-384", "WPA-EAP": "WPA-EAP", "OSEN": "OSEN",
+        "IEEE8021X": "IEEE8021X", "WPA-PSK-SHA256": "WPA-PSK-SHA256", "WPA-EAP-SHA256": "WPA-EAP-SHA256",
+        "PSK & EAP 128": "WPA-PSK WPA-EAP", "PSK & EAP 256": "WPA-PSK-256 WPA-EAP-256",
+        "PSK & EAP 128/256": "WPA-PSK WPA-EAP WPA-PSK-256 WPA-EAP-256", "SAE": "SAE",
+        "SAE-EXT-KEY": "SAE-EXT-KEY", "WPA-EAP-SUITE-B": "WPA-EAP-SUITE-B",
+        "WPA-EAP-SUITE-B-192": "WPA-EAP-SUITE-B-192", "FILS-SHA256": "FILS-SHA256",
+        "FILS-SHA384": "FILS-SHA384", "OWE": "OWE",
+    }
+    PAIRWISE_CIPHER_MAP = {
+        "DEFAULT": "DEFAULT", "CCMP": "CCMP", "TKIP": "TKIP", "NONE": "NONE",
+        "CCMP TKIP": "CCMP TKIP", "CCMP-256": "CCMP-256", "GCMP (wpa3)": "GCMP",
+        "GCMP-256 (wpa3)": "GCMP-256", "CCMP/GCMP-256 (wpa3)": "GCMP-256 CCMP-256",
+    }
+    GROUPWISE_CIPHER_MAP = {
+        "DEFAULT": "DEFAULT", "CCMP": "CCMP", "WEP104": "WEP104", "WEP40": "WEP40",
+        "GTK_NOT_USED": "GTK_NOT_USED", "GCMP-256 (wpa3)": "GCMP-256", "CCMP-256 (wpa3)": "CCMP-256",
+        "GCMP/CCMP-256 (wpa3)": "GCMP-256 CCMP-256",
+        "All": "CCMP TKIP WEP104 WEP40 CCMP-256 GCMP-256",
+    }
+    eap_method = EAP_METHOD_MAP.get(args.eap_method, args.eap_method)
+    key_mgmt = KEY_MGMT_MAP.get(args.key_mgmt, args.key_mgmt)
+    pairwise_cipher = PAIRWISE_CIPHER_MAP.get(args.pairwise_cipher, args.pairwise_cipher)
+    groupwise_cipher = GROUPWISE_CIPHER_MAP.get(args.groupwise_cipher, args.groupwise_cipher)
+
     radio, ssid, security, password = [], [], [], []
     Bands = args.band[0].split(',')
 
     # checking all required arguments for wifi config
-    if (args.use_default_config is False):
+    # A --scenario supplies ssid/passwd/security per station, so the per-band
+    # CLI arguments are not required in that mode.
+    if (args.use_default_config is False) and (not args.scenario):
         if ('2.4G' in Bands):
             if (args.twog_ssid is None):
                 print('--twog_ssid is required')
@@ -3130,12 +3393,227 @@ INCLUDE_IN_README: False
                               result_dir=args.result_dir,
                               get_live_view=args.get_live_view,
                               total_floors=args.total_floors,
+                              cv_scenario=args.scenario,
                               # path=path
                               )
     # pre-cleaning & creating / selecting clients for both real and virtual
     twog_selected_devices, fiveg_selected_devices, sixg_selected_devices = None, None, None
     if args.pre_cleanup:
         mixed_obj.pre_cleanup()
+    if args.scenario:
+        # Build the stations from a Chamber View scenario instead of from the
+        # --twog_*/--fiveg_*/--sixg_* arguments. The scenario owns the station
+        # count, radios, SSIDs and security; station_info() reads them back so
+        # the rest of the run can use them.
+        cv_test_obj = cv_test_manager.cv_test(lfclient_host=args.mgr)
+        cv_test_obj.apply_cv_scenario(args.scenario)
+        cv_test_obj.build_cv_scenario()
+        cv_test_obj.create_test(test_name='Scenario Test', instance=args.scenario, load_old_cfg=False)
+        logger.info("Stations Initiated and waits until adminup and gets IP")
+        time.sleep(15)
+        mixed_obj.station_info()
+        mixed_obj.station_list = mixed_obj.sta_info['station_list']
+        mixed_obj.station_profile.station_names = mixed_obj.sta_info['station_list']
+        mixed_obj.num_staions = len(mixed_obj.sta_info['station_list'])
+
+        # --security_config re-applies station security on top of whatever the
+        # scenario built. Left alone when it is not given.
+        if args.security_config in ('wpa3_aes_sae', 'wpa3_gcmp_sae'):
+            for (stat, rad, ssids, pass_key) in zip(mixed_obj.sta_info['station_list'],
+                                                    mixed_obj.sta_info['radio_list'],
+                                                    mixed_obj.sta_info['ssid_list'],
+                                                    mixed_obj.sta_info['key_list']):
+                # flags 1099511627776 clears the station's "Disable MLO" bit.
+                add_sta_data = {
+                    'radio': rad,
+                    'sta_name': stat.split('.')[2],
+                    'ssid': ssids,
+                    'key': pass_key,
+                    'mode': 0,
+                    'flags': 1099511627776,
+                    'ieee80211w': 1,
+                    'shelf': stat.split('.')[0],
+                    'resource': stat.split('.')[1],
+                }
+                response = mixed_obj.json_post("cli-json/add_sta", add_sta_data, debug_=mixed_obj.debug)
+                time.sleep(3)
+                logger.info(response)
+
+                if args.security_config == 'wpa3_gcmp_sae':
+                    set_wifi_extra_data = {
+                        'shelf': stat.split('.')[0],
+                        'resource': stat.split('.')[1],
+                        'port': stat.split('.')[2],
+                        'key_mgmt': "SAE-EXT-KEY",
+                        'pairwise': "GCMP-256",
+                        'group': "GCMP-256",
+                    }
+                    response = mixed_obj.json_post("cli-json/set_wifi_extra", set_wifi_extra_data,
+                                                   debug_=mixed_obj.debug)
+                    time.sleep(3)
+                    logger.info(response)
+                elif args.security_config == 'wpa3_aes_sae':
+                    # Only send fields the user actually specified; if nothing was
+                    # given beyond the add_sta above, skip set_wifi_extra entirely.
+                    set_wifi_extra_data = {
+                        'shelf': stat.split('.')[0],
+                        'resource': stat.split('.')[1],
+                        'port': stat.split('.')[2],
+                    }
+                    if key_mgmt:
+                        set_wifi_extra_data['key_mgmt'] = key_mgmt
+                    if pairwise_cipher and pairwise_cipher != '[BLANK]':
+                        set_wifi_extra_data['pairwise'] = pairwise_cipher
+                    if groupwise_cipher and groupwise_cipher != '[BLANK]':
+                        set_wifi_extra_data['group'] = groupwise_cipher
+                    if eap_method:
+                        set_wifi_extra_data['eap'] = eap_method
+                        if args.eap_identity:
+                            set_wifi_extra_data['identity'] = args.eap_identity
+                        if args.eap_anonymous_identity and args.eap_anonymous_identity != '[BLANK]':
+                            set_wifi_extra_data['anonymous_identity'] = args.eap_anonymous_identity
+                        if args.eap_password:
+                            set_wifi_extra_data['password'] = args.eap_password
+                        if args.eap_phase1 and args.eap_phase1 != '[BLANK]':
+                            set_wifi_extra_data['phase1'] = args.eap_phase1
+                        if args.eap_phase2 and args.eap_phase2 != '[BLANK]':
+                            set_wifi_extra_data['phase2'] = args.eap_phase2
+                        if eap_method == 'TLS':
+                            if args.private_key:
+                                set_wifi_extra_data['private_key'] = args.private_key
+                            if args.ca_cert:
+                                set_wifi_extra_data['ca_cert'] = args.ca_cert
+                            if args.pk_passwd:
+                                set_wifi_extra_data['pk_passwd'] = args.pk_passwd
+
+                    if len(set_wifi_extra_data) > 3:  # more than just shelf/resource/port
+                        response = mixed_obj.json_post("cli-json/set_wifi_extra", set_wifi_extra_data,
+                                                       debug_=mixed_obj.debug)
+                        time.sleep(3)
+                        logger.info(response)
+
+        elif args.security_config == '1x':  # 802.1x / EAP based station security
+            for (stat, rad, ssids, sta_security) in zip(mixed_obj.sta_info['station_list'],
+                                                        mixed_obj.sta_info['radio_list'],
+                                                        mixed_obj.sta_info['ssid_list'],
+                                                        mixed_obj.sta_info['security_list']):
+                # 802.1x must be actively enabled on the station: clear whichever
+                # security bit the scenario build left set (read back via
+                # station_info()'s 'security' field) and turn on 8021x_radius.
+                current_flag = mixed_obj.security_flag_for(sta_security)
+                # 8021x_radius alone only enables 802.1x authentication - it still
+                # needs a WPA tier flag alongside it, the same way create_station.py
+                # layers 8021x_radius on top of whatever use_security() already set.
+                # Without this the station never reports WPA2 or WPA3 as its type.
+                security_target = (args.security or sta_security or 'wpa2').lower()
+                wpa_tier_flag = 'use-wpa3' if 'wpa3' in security_target else 'wpa2_enable'
+                desired_flags = ["8021x_radius", wpa_tier_flag]
+                desired_flags_mask = {"8021x_radius", wpa_tier_flag} | ({current_flag} if current_flag else set())
+                flags_value = sum(add_sta.add_sta_flags[name] for name in desired_flags)
+                flags_mask_value = sum(add_sta.add_sta_flags[name] for name in desired_flags_mask)
+                logger.info("Station {}: current security='{}' -> enabling 8021x_radius + {} "
+                            "(flags={}, flags_mask={})".format(stat, sta_security, wpa_tier_flag,
+                                                               flags_value, flags_mask_value))
+                iee80211w_flag = 2 if args.security == 'wpa3' or (args.scenario and sta_security.lower() == 'wpa3') else 1
+
+                add_sta_data = {
+                    'shelf': stat.split('.')[0],
+                    'resource': stat.split('.')[1],
+                    'sta_name': stat.split('.')[2],
+                    'radio': rad,
+                    'ssid': ssids,
+                    # LANforge add_sta treats omitted fields as "reset to blank" on an
+                    # existing station, not "leave unchanged" - 'NA' is the sentinel
+                    # for "don't touch this field" (see StationProfile.modify()).
+                    'key': 'NA',
+                    'mode': 0,
+                    'ap': 'NA',
+                    'mac': 'NA',
+                    'flags': flags_value,
+                    'flags_mask': flags_mask_value,
+                    'ieee80211w': iee80211w_flag,
+                }
+                response = mixed_obj.json_post("cli-json/add_sta", add_sta_data, debug_=mixed_obj.debug)
+                logger.info(response)
+
+                set_wifi_extra_data = None
+                if not eap_method:
+                    if args.key_mgmt:
+                        set_wifi_extra_data = {
+                            'shelf': stat.split('.')[0],
+                            'resource': stat.split('.')[1],
+                            'port': stat.split('.')[2],
+                            'key_mgmt': args.key_mgmt,
+                            'pairwise': pairwise_cipher,
+                            'group': groupwise_cipher,
+                            'password': "[BLANK]",
+                        }
+                else:
+                    if eap_method == 'TLS':
+                        set_wifi_extra_data = {
+                            'shelf': stat.split('.')[0],
+                            'resource': stat.split('.')[1],
+                            'port': stat.split('.')[2],
+                            'key_mgmt': key_mgmt,
+                            'pairwise': pairwise_cipher,
+                            'group': groupwise_cipher,
+                            'eap': eap_method,
+                            'identity': args.eap_identity,
+                            'password': args.eap_password,
+                            'private_key': args.private_key,
+                            'ca_cert': args.ca_cert,
+                            'pk_passwd': args.pk_passwd,
+                            'phase1': args.eap_phase1,
+                            'phase2': args.eap_phase2,
+                        }
+                    elif eap_method == 'TTLS' or eap_method == 'PEAP':
+                        set_wifi_extra_data = {
+                            'shelf': stat.split('.')[0],
+                            'resource': stat.split('.')[1],
+                            'port': stat.split('.')[2],
+                            'key_mgmt': key_mgmt,
+                            'pairwise': pairwise_cipher,
+                            'group': groupwise_cipher,
+                            'eap': eap_method,
+                            'identity': args.eap_identity,
+                            'anonymous_identity': args.eap_anonymous_identity,
+                            'password': args.eap_password,
+                            'phase1': args.eap_phase1,
+                            'phase2': args.eap_phase2,
+                        }
+
+                # Custom wifi setting
+                if args.custom_wifi_cmd:
+                    mixed_obj.set_custom_wifi(resource=int(stat.split('.')[1]),
+                                              station=str(stat.split('.')[2]),
+                                              cmd=args.custom_wifi_cmd)
+                # Guarded: with neither --eap_method nor --key_mgmt there is nothing
+                # to send, and posting an empty payload would blank the station.
+                if set_wifi_extra_data:
+                    response = mixed_obj.json_post("cli-json/set_wifi_extra", set_wifi_extra_data,
+                                                   debug_=mixed_obj.debug)
+                    logger.info(response)
+                time.sleep(3)
+
+        # Admin up every scenario station, then wait for them to get an IP before
+        # any test tries to use them. Neither admin_up() nor wait_for_ip() log
+        # anything on their own -- for a 10-station scenario, wait_for_ip's
+        # auto-timeout is 60 + 5s/station (~110s here) with no progress output
+        # in between, so a run can look stalled for up to that long while it
+        # is actually still working.
+        logger.info("Admin up on {} scenario station(s)".format(len(mixed_obj.station_list)))
+        for sta in mixed_obj.station_list:
+            mixed_obj.admin_up(sta)
+
+        logger.info("Waiting for scenario stations to get an IP (up to {}s)".format(
+            60 + 5 * len(mixed_obj.station_list)))
+        if Realm.wait_for_ip(self=mixed_obj, station_list=mixed_obj.station_list, timeout_sec=-1):
+            mixed_obj._pass("All stations got IPs", print_=True)
+            mixed_obj._pass("Station build finished", print_=True)
+        else:
+            mixed_obj._fail("Stations failed to get IPs", print_=True)
+            mixed_obj._fail("FAIL: Station build failed", print_=True)
+            logger.info("Please re-check the configuration applied")
     if args.real:
         if (configure):
             selected_serial_list = mixed_obj.selecting_devices_from_available()
@@ -3193,8 +3671,16 @@ INCLUDE_IN_README: False
         if (not configure):
             args.all_bands = True
         if not args.all_bands:
-            for band in Bands:  # band-based logic
-                mixed_obj.band = band
+            # A scenario supplies its own stations and band, so the per-band CLI
+            # loop collapses to one pass; band is None so none of the per-band
+            # station-creation branches below fire.
+            for band in ([None] if args.scenario else Bands):  # band-based logic
+                if args.scenario:
+                    mixed_obj.band = mixed_obj.sta_info['band_list']
+                    mixed_obj.radio = mixed_obj.sta_info['radio_list'][0] if mixed_obj.sta_info['radio_list'] else ''
+                    directory = str(' Scenario')
+                else:
+                    mixed_obj.band = band
                 path = os.path.join(parent_dir, directory)
                 if band == "2.4G":
                     security = args.twog_security
@@ -3235,6 +3721,11 @@ INCLUDE_IN_README: False
                 path = os.path.join(multiple_directory_path, directory)
                 os.mkdir(path)
                 mixed_obj.report_obj(band=band, path=path)  # setting a report object
+                if args.scenario:
+                    # The per-band branches above are skipped in scenario mode, so
+                    # take these from the stations the scenario actually built.
+                    ssid = ','.join(sorted({v for v in mixed_obj.sta_info['ssid_list'] if v}))
+                    security = ','.join(sorted({v for v in mixed_obj.sta_info['security_list'] if v}))
                 # updating ssid, security's for report
                 mixed_obj.ssid = ssid
                 mixed_obj.security = security
@@ -3287,7 +3778,7 @@ INCLUDE_IN_README: False
                                              'ssid': ssid,
                                              'password': password,
                                              'security': security,
-                                             'bands': band,
+                                             'bands': mixed_obj.band,
                                              'directions': args.direction,
                                              'file_sizes': args.ftp_file_sizes,
                                              'conn': t3_child
@@ -3364,7 +3855,8 @@ INCLUDE_IN_README: False
                                                side_a_min=args.side_a_min, side_b_min=args.side_b_min,
                                                side_a_max=args.side_a_max, side_b_max=args.side_b_min)
                         if "3" in args.tests:
-                            mixed_obj.ftp_test(ssid=ssid, password=password, security=security, bands=band,
+                            mixed_obj.ftp_test(ssid=ssid, password=password, security=security,
+                                               bands=mixed_obj.band,
                                                directions=args.direction, file_sizes=args.ftp_file_sizes)
                         if "4" in args.tests:
                             mixed_obj.http_test(ssid=ssid, password=password, security=security,
@@ -3380,8 +3872,12 @@ INCLUDE_IN_README: False
                     exit(0)
         else:
             # the tests will run irrespective to bands
-            mixed_obj.band = Bands[0]   # since all the test are band specific, passing band first item in the list #Todo: need to modify this , for now hardcoded
-            mixed_obj.radio = args.twog_radio   # taking a first twog-radio in a list as a default radio #Todo: need to modify this , for now hardcoded
+            if args.scenario:
+                mixed_obj.band = mixed_obj.sta_info['band_list']
+                mixed_obj.radio = mixed_obj.sta_info['radio_list'][0] if mixed_obj.sta_info['radio_list'] else ''
+            else:
+                mixed_obj.band = Bands[0]   # since all the test are band specific, passing band first item in the list #Todo: need to modify this , for now hardcoded
+                mixed_obj.radio = args.twog_radio   # taking a first twog-radio in a list as a default radio #Todo: need to modify this , for now hardcoded
             path = os.path.join(multiple_directory_path)
             mixed_obj.report_obj(band=None, path=path)  # setting a report object
             if args.real:
@@ -3395,7 +3891,7 @@ INCLUDE_IN_README: False
                     mixed_obj.base_interop_profile.get_devices()
                     mixed_obj.select_real_devices(real_devices=mixed_obj.base_interop_profile)
 
-            elif args.virtual:
+            elif args.virtual and not args.scenario:
                 sta_list_2g, sta_list_5g, sta_list_6g = [], [], []
                 if args.twog_num_stations:
                     sta_list_2g = mixed_obj.virtual_client_creation(ssid=args.twog_ssid, password=args.twog_passwd,
@@ -3417,7 +3913,12 @@ INCLUDE_IN_README: False
                 logger.info("List of selected virtual stations: {}".format(virtual_station_list))
                 mixed_obj.station_list = virtual_station_list
                 mixed_obj.num_staions = args.twog_num_stations + args.fiveg_num_stations + args.sixg_num_stations
-            if (args.use_default_config):
+            if args.scenario:
+                # The per-band --*_ssid args are unset in scenario mode, so take
+                # these from the stations the scenario actually built.
+                ssid = ','.join(sorted({s for s in mixed_obj.sta_info['ssid_list'] if s}))
+                security = ','.join(sorted({s for s in mixed_obj.sta_info['security_list'] if s}))
+            elif (args.use_default_config):
                 ssid = 'Test Configured'
                 security = 'Test Configured'
             else:
