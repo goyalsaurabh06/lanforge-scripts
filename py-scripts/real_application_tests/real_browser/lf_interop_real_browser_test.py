@@ -56,6 +56,40 @@ Pre-requisites: Real clients should be connected to the LANforge MGR and Interop
             --upstream_port 192.168.204.90 --expected_passfail_value 5 --do_robo --robo_ip 192.168.200.140 --coordinates 3,2,1 --rotations ""
             --duration_to_skip 1 --do_bandsteering --cycles 1 --bssids 94:A6:7E:74:26:31,94:A6:7E:74:26:22
 
+            --- clients_type / virtual-station examples ---
+
+            Example-10 (only real):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type real --device_list 1.10,1.12
+
+            Example-11 (only virtual - create new stations):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type virtual --radio "radio==wiphy0 stations==4 ssid==NETGEAR_5G_wpa2 ssid_pw==Password@123 security==wpa2"
+
+            Example-12 (only virtual - reuse existing stations, do not re-create):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type virtual --use_existing_station_list --existing_station_list 1.1.sta0000,1.1.sta0001,1.1.sta0002
+
+            Example-13 (real + virtual create):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type both --device_list 1.10,1.12
+            --radio "radio==wiphy0 stations==4 ssid==NETGEAR_5G_wpa2 ssid_pw==Password@123 security==wpa2"
+
+            Example-14 (virtual create + virtual existing):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type virtual --use_existing_station_list --existing_station_list 1.1.sta0000,1.1.sta0001
+            --radio "radio==wiphy1 stations==3 ssid==NETGEAR_2G_Open ssid_pw==NA security==open"
+
+            Example-15 (real + virtual existing):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type both --device_list 1.10,1.12
+            --use_existing_station_list --existing_station_list 1.1.sta0000,1.1.sta0001
+
+            Example-16 (all 3: real + virtual create + virtual existing):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type both --device_list 1.10,1.12
+            --use_existing_station_list --existing_station_list 1.1.sta0000,1.1.sta0001
+            --radio "radio==wiphy1 stations==3 ssid==NETGEAR_2G_Open ssid_pw==NA security==open"
 
             SCRIPT CLASSIFICATION: Test
 
@@ -134,6 +168,7 @@ lf_horizontal_stacked_graph = lf_graph.lf_horizontal_stacked_graph
 
 DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
 port_utils = importlib.import_module("py-json.port_utils")
+LFUtils = importlib.import_module("py-json.LANforge.LFUtils")
 PortUtils = port_utils.PortUtils
 
 # Set up logging configuration for the script
@@ -208,7 +243,47 @@ class RealBrowserTest(Realm):
                  duration_to_skip=None,
                  windows_dir=WINDOWS_REAL_BROWSER_DIR,
                  linux_dir=LINUX_REAL_BROWSER_DIR,
-                 mac_dir=MACOS_REAL_BROWSER_DIR
+                 mac_dir=MACOS_REAL_BROWSER_DIR,
+                 clients_type="real",
+                 sta_start_offset=0,
+                 use_existing_station_list=False,
+                 existing_station_list=None,
+                 radio_name_list=None,
+                 ssid_list=None,
+                 ssid_password_list=None,
+                 ssid_security_list=None,
+                 station_lists=None,
+                 wifi_mode_list=None,
+                 enable_flags_list=None,
+                 key_mgmt_list=None,
+                 pairwise_list=None,
+                 group_list=None,
+                 psk_list=None,
+                 wep_key_list=None,
+                 ca_cert_list=None,
+                 eap_list=None,
+                 identity_list=None,
+                 anonymous_identity_list=None,
+                 phase1_list=None,
+                 phase2_list=None,
+                 passwd_list=None,
+                 pin_list=None,
+                 pac_file_list=None,
+                 private_key_list=None,
+                 pk_password_list=None,
+                 hessid_list=None,
+                 realm_list=None,
+                 client_cert_list=None,
+                 imsi_list=None,
+                 milenage_list=None,
+                 domain_list=None,
+                 roaming_consortium_list=None,
+                 venue_group_list=None,
+                 network_type_list=None,
+                 ipaddr_type_avail_list=None,
+                 network_auth_type_list=None,
+                 anqp_3gpp_cell_net_list=None,
+                 ieee80211w_list=None
                  ):
         super().__init__(lfclient_host=host, lfclient_port=8080)
         # Initialize attributes with provided parameters
@@ -235,6 +310,8 @@ class RealBrowserTest(Realm):
         self.windows_dir = windows_dir
         self.linux_dir = linux_dir
         self.mac_dir = mac_dir
+        self.clients_type = clients_type
+        self.offset = 0
 
         self.app = Flask(__name__)
         self.app.logger.setLevel(logging.WARNING)
@@ -308,6 +385,63 @@ class RealBrowserTest(Realm):
         self.selected_groups = selected_groups
         self.selected_profiles = selected_profiles
         self.config_obj = None
+        self.sta_start_offset = int(sta_start_offset or 0)
+        self.use_existing_station_list = bool(use_existing_station_list)
+        # full station EIDs to reuse without (re)creating; full eid must be given
+        self.existing_station_lists = list(existing_station_list) if existing_station_list else []
+        self.station_profiles = []
+        self.station_names_list = []
+
+        # parallel per-radio lists parsed in main() (test_l3.py naming)
+        self.radio_name_list = radio_name_list or []
+        self.ssid_list = ssid_list or []
+        self.ssid_password_list = ssid_password_list or []
+        self.ssid_security_list = ssid_security_list or []
+        self.station_lists = station_lists or []
+        self.wifi_mode_list = wifi_mode_list or []
+        self.enable_flags_list = enable_flags_list or []
+        self.key_mgmt_list = key_mgmt_list or []
+        self.pairwise_list = pairwise_list or []
+        self.group_list = group_list or []
+        self.psk_list = psk_list or []
+        self.wep_key_list = wep_key_list or []
+        self.ca_cert_list = ca_cert_list or []
+        self.eap_list = eap_list or []
+        self.identity_list = identity_list or []
+        self.anonymous_identity_list = anonymous_identity_list or []
+        self.phase1_list = phase1_list or []
+        self.phase2_list = phase2_list or []
+        self.passwd_list = passwd_list or []
+        self.pin_list = pin_list or []
+        self.pac_file_list = pac_file_list or []
+        self.private_key_list = private_key_list or []
+        self.pk_password_list = pk_password_list or []
+        self.hessid_list = hessid_list or []
+        self.realm_list = realm_list or []
+        self.client_cert_list = client_cert_list or []
+        self.imsi_list = imsi_list or []
+        self.milenage_list = milenage_list or []
+        self.domain_list = domain_list or []
+        self.roaming_consortium_list = roaming_consortium_list or []
+        self.venue_group_list = venue_group_list or []
+        self.network_type_list = network_type_list or []
+        self.ipaddr_type_avail_list = ipaddr_type_avail_list or []
+        self.network_auth_type_list = network_auth_type_list or []
+        self.anqp_3gpp_cell_net_list = anqp_3gpp_cell_net_list or []
+        self.ieee80211w_list = ieee80211w_list or []
+
+        # setting the real and virtual flags according to client type
+        self.real = self.virtual = False
+
+        if self.clients_type.lower() == "both" or self.clients_type.lower() == "real":
+            self.real = True
+
+        if self.clients_type.lower() == "both" or self.clients_type.lower() == "virtual" or self.use_existing_station_list:
+            self.virtual = True
+
+        # Initialize virtual station list
+        self.sta_list = []
+        self.created_sta_names = []
         # Initialize RealDevice instance
         self.devices = base_RealDevice(manager_ip=self.host, selected_bands=[])
         # Initialize local realm
@@ -354,6 +488,66 @@ class RealBrowserTest(Realm):
                 self.bssids = []
             self.robo_csv_files = []
             self.robo_mobile_data = {}
+
+        # Build station profiles from the parallel per-radio lists (inline, as in test_l3.py __init__)
+        if self.virtual:
+            # Use existing station list is similar to no rebuild
+            if self.use_existing_station_list:
+                station_profile = self.new_station_profile()
+                for existing_station_list in self.existing_station_lists:
+                    station_profile.station_names.append(existing_station_list)
+                self.station_profiles.append(station_profile)
+
+            for (
+                    _radio_, ssid_, ssid_password_, ssid_security_, mode_, enable_flags_,
+                    key_mgmt_, pairwise_, group_, psk_, wep_key_, ca_cert_, eap_, identity_,
+                    anonymous_identity_, phase1_, phase2_, passwd_, pin_, pac_file_, private_key_,
+                    pk_password_, hessid_, realm_, client_cert_, imsi_, milenage_, domain_,
+                    roaming_consortium_, venue_group_, network_type_, ipaddr_type_avail_,
+                    network_auth_type_, anqp_3gpp_cell_net_, ieee80211w_) in zip(
+                    self.radio_name_list, self.ssid_list, self.ssid_password_list, self.ssid_security_list,
+                    self.wifi_mode_list, self.enable_flags_list, self.key_mgmt_list,
+                    self.pairwise_list, self.group_list, self.psk_list, self.wep_key_list, self.ca_cert_list,
+                    self.eap_list, self.identity_list, self.anonymous_identity_list, self.phase1_list,
+                    self.phase2_list, self.passwd_list, self.pin_list, self.pac_file_list, self.private_key_list,
+                    self.pk_password_list, self.hessid_list, self.realm_list, self.client_cert_list,
+                    self.imsi_list, self.milenage_list, self.domain_list, self.roaming_consortium_list,
+                    self.venue_group_list, self.network_type_list, self.ipaddr_type_avail_list,
+                    self.network_auth_type_list, self.anqp_3gpp_cell_net_list, self.ieee80211w_list):
+                station_profile = self.new_station_profile()
+                station_profile.lfclient_url = self.lfclient_url
+                station_profile.ssid = ssid_
+                station_profile.ssid_pass = ssid_password_
+                station_profile.security = ssid_security_
+                station_profile.number_template = "00"
+                station_profile.mode = mode_
+                station_profile.desired_add_sta_flags = enable_flags_.copy()
+                station_profile.desired_add_sta_flags_mask = enable_flags_.copy()
+
+                # set_wifi_extra
+                if key_mgmt_ != '[BLANK]':
+                    station_profile.set_wifi_extra(key_mgmt=key_mgmt_, pairwise=pairwise_, group=group_,
+                                                   psk=psk_, wep_key=wep_key_, ca_cert=ca_cert_, eap=eap_,
+                                                   identity=identity_, anonymous_identity=anonymous_identity_,
+                                                   phase1=phase1_, phase2=phase2_, passwd=passwd_, pin=pin_,
+                                                   pac_file=pac_file_, private_key=private_key_,
+                                                   pk_password=pk_password_, hessid=hessid_, realm=realm_,
+                                                   client_cert=client_cert_, imsi=imsi_, milenage=milenage_,
+                                                   domain=domain_, roaming_consortium=roaming_consortium_,
+                                                   venue_group=venue_group_, network_type=network_type_,
+                                                   ipaddr_type_avail=ipaddr_type_avail_,
+                                                   network_auth_type=network_auth_type_,
+                                                   anqp_3gpp_cell_net=anqp_3gpp_cell_net_)
+
+                    # Configure protected management frames (PMF)
+                    if ieee80211w_.lower() == 'disabled':
+                        station_profile.set_command_param("add_sta", "ieee80211w", 0)
+                    elif ieee80211w_.lower() == 'required':
+                        station_profile.set_command_param("add_sta", "ieee80211w", 2)
+                    else:
+                        station_profile.set_command_param("add_sta", "ieee80211w", 1)
+
+                self.station_profiles.append(station_profile)
 
     def get_test_results_data(self, test_results, group):
         groups_devices_map = self.config_obj.get_groups_devices(data=self.selected_groups, groupdevmap=True)
@@ -405,85 +599,102 @@ class RealBrowserTest(Realm):
         self.formatted_endtime_str = ""
         self.test_setup_info_incremental_values = None
 
-        # Retrieve resource data for phones
-        self.phone_data, self.laptops, self.laptop_os_types, self.user_name, self.mac_list = self.get_resource_data()
+        if self.real:
+            # Retrieve resource data for phones and laptops
+            self.phone_data, self.laptops, self.laptop_os_types, self.user_name, self.mac_list = self.get_resource_data()
 
         self.direction = 'dl'
         self.dest = '/dev/null'
         self.max_speed = self.max_speed
         self.requests_per_ten = 100
-        self.created_cx = self.http_profile.created_cx = self.convert_to_dict(self.phone_data)
-        if not self.no_precleanup:
-            self.precleanup()
+        url = self.url  # real block strips the scheme from self.url; restore it before the virtual block
+        cx_ports = (self.phone_data if self.real else []) + (self.sta_list if self.virtual else [])
+        self.created_cx = self.http_profile.created_cx = self.convert_to_dict(cx_ports)
         self.http_profile.created_cx.clear()
 
-        self.new_port_list = [item.split('.')[2] for item in self.laptops]
+        if self.real:
+            self.new_port_list = [item.split('.')[2] for item in self.laptops]
 
-        for port in self.laptops:
-            self.pre_cleanup_stale_endpoint(port)
-        for port in self.phone_data:
-            self.pre_cleanup_stale_android_endpoint(port)
+            if not self.no_precleanup:
+                for port in self.laptops:
+                    self.pre_cleanup_stale_endpoint(port)
+                for port in self.phone_data:
+                    self.pre_cleanup_stale_android_endpoint(port)
 
-        if self.generic_endps_profile.create(ports=self.laptops, sleep_time=.5, real_client_os_types=self.laptop_os_types,):
+            if self.generic_endps_profile.create(ports=self.laptops, sleep_time=.5, real_client_os_types=self.laptop_os_types,):
 
-            logging.info('Real client generic endpoint creation completed.')
-        else:
-            logging.error('Real client generic endpoint creation failed.')
-            exit(0)
+                logging.info('Real client generic endpoint creation completed.')
+            else:
+                logging.error('Real client generic endpoint creation failed.')
+                exit(0)
 
-        for i in range(0, len(self.laptop_os_types)):
-            if self.laptop_os_types[i] == 'windows':
-                cmd = (
-                    fr'"{self.windows_dir}\real_browser.bat" '
-                    '--url "%s" --server "%s" --duration %s'
-                    % (
+            for i in range(0, len(self.laptop_os_types)):
+                if self.laptop_os_types[i] == 'windows':
+                    cmd = (
+                        fr'"{self.windows_dir}\real_browser.bat" '
+                        '--url "%s" --server "%s" --duration %s'
+                        % (
+                            self.url,
+                            self.upstream_port,
+                            self.duration,
+                        )
+                    )
+                    self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
+                elif self.laptop_os_types[i] == 'linux':
+                    cmd = (
+                        f"su -l lanforge {self.linux_dir}/ctrb.bash "
+                        "%s %s %s %s"
+                    ) % (
+                        self.new_port_list[i],
                         self.url,
                         self.upstream_port,
                         self.duration,
                     )
-                )
-                self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
-            elif self.laptop_os_types[i] == 'linux':
-                cmd = (
-                    f"su -l lanforge {self.linux_dir}/ctrb.bash "
-                    "%s %s %s %s"
-                ) % (
-                    self.new_port_list[i],
-                    self.url,
-                    self.upstream_port,
-                    self.duration,
-                )
-                self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
-            elif self.laptop_os_types[i] == 'macos':
-                cmd = (
-                    f"sudo bash {self.mac_dir}/ctrb.bash "
-                    "--url %s --server %s --duration %s"
-                ) % (
-                    self.url,
-                    self.upstream_port,
-                    self.duration,
-                )
-                self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
+                    self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
+                elif self.laptop_os_types[i] == 'macos':
+                    cmd = (
+                        f"sudo bash {self.mac_dir}/ctrb.bash "
+                        "--url %s --server %s --duration %s"
+                    ) % (
+                        self.url,
+                        self.upstream_port,
+                        self.duration,
+                    )
+                    self.generic_endps_profile.set_cmd(self.generic_endps_profile.created_endp[i], cmd)
 
-        if len(self.phone_data) != 0:
+            if len(self.phone_data) != 0:
+                logging.info("Creating Layer-4 endpoints from the user inputs as test parameters")
+                upload_name = self.phone_data[-1].split('.')[-1]
+
+                if 'https' in self.url:
+                    self.url = self.url.replace("http://", "").replace("https://", "")
+                    self.create_real(ports=self.phone_data, sleep_time=.5,
+                                     suppress_related_commands_=None, https=True,
+                                     https_ip=self.url, interop=True, timeout=1000, media_source='1', media_quality='0', upload_name=upload_name)
+                elif 'http' in self.url:
+                    self.url = self.url.replace("http://", "").replace("https://", "")
+                    self.create_real(ports=self.phone_data, sleep_time=.5,
+                                     suppress_related_commands_=None, http=True,
+                                     http_ip=self.url, interop=True, timeout=1000, media_source='1', media_quality='0', upload_name=upload_name)
+
+                else:
+                    self.create_real(ports=self.phone_data, sleep_time=.5,
+                                     suppress_related_commands_=None, real=True,
+                                     http_ip=self.url, interop=True, timeout=1000, media_source='1', media_quality='0', upload_name=upload_name)
+
+        if self.virtual:
+            if self.real:
+                self.url = url  # real block strips the scheme from self.url; restore it here
             logging.info("Creating Layer-4 endpoints from the user inputs as test parameters")
-            upload_name = self.phone_data[-1].split('.')[-1]
-
-            if 'https' in self.url:
+            logger.info(f"self.url before creating cx {self.url}")
+            h1 = self.url.startswith("https://")
+            h2 = self.url.startswith("http://")
+            if h1 or h2:
                 self.url = self.url.replace("http://", "").replace("https://", "")
-                self.create_real(ports=self.phone_data, sleep_time=.5,
-                                 suppress_related_commands_=None, https=True,
-                                 https_ip=self.url, interop=True, timeout=1000, media_source='1', media_quality='0', upload_name=upload_name)
-            elif 'http' in self.url:
-                self.url = self.url.replace("http://", "").replace("https://", "")
-                self.create_real(ports=self.phone_data, sleep_time=.5,
-                                 suppress_related_commands_=None, http=True,
-                                 http_ip=self.url, interop=True, timeout=1000, media_source='1', media_quality='0', upload_name=upload_name)
-
-            else:
-                self.create_real(ports=self.phone_data, sleep_time=.5,
-                                 suppress_related_commands_=None, real=True,
-                                 http_ip=self.url, interop=True, timeout=1000, media_source='1', media_quality='0', upload_name=upload_name)
+            self.create_real(ports=self.sta_list, sleep_time=.5,
+                             suppress_related_commands_=None, https=h1, http=(not h1 and h2), virtual=(not h1 and not h2),
+                             https_ip=self.url if h1 else None, http_ip=self.url if not h1 else None,
+                             timeout=1000, media_source='1', media_quality='0')
 
     def map_sta_ips_real(self, sta_list=None):
         if sta_list is None:
@@ -495,7 +706,7 @@ class RealBrowserTest(Realm):
                 eid_key = "{eid0}.{eid1}.{eid2}".format(eid0=eid[0], eid1=eid[1], eid2=eid[2])
                 self.ip_map[eid_key] = sta_list['interface']['ip']
 
-    def create_real(self, ports=None, sleep_time=.5, debug_=False, suppress_related_commands_=None, http=False, ftp=False, real=False,
+    def create_real(self, ports=None, sleep_time=.5, debug_=False, suppress_related_commands_=None, http=False, ftp=False, real=False, virtual=False,
                     https=False, user=None, passwd=None, source=None, ftp_ip=None, upload_name=None, http_ip=None,
                     https_ip=None, interop=None, media_source=None, media_quality=None, timeout=10, proxy_auth_type=0x2200, windows_list=None, get_url_from_file=False):
         if windows_list is None:
@@ -506,7 +717,7 @@ class RealBrowserTest(Realm):
         self.map_sta_ips_real(ports)
         logger.info("Create HTTP CXs..." + __name__)
 
-        for i in range(len(list(self.ip_map))):
+        for i in range(self.offset, len(list(self.ip_map))):
             url = None
             if i != len(list(self.ip_map)) - 1:
                 port_name = list(self.ip_map)[i]
@@ -558,7 +769,7 @@ class RealBrowserTest(Realm):
                     self.port_util.set_http(port_name=name, resource=resource, on=True)
                     url = "%s https://%s/ %s" % (self.direction, ip_addr, self.dest)
 
-            if real:
+            if real or virtual:
                 if http_ip is not None:
                     if get_url_from_file:
                         self.port_util.set_http(port_name=name, resource=resource, on=True)
@@ -582,7 +793,7 @@ class RealBrowserTest(Realm):
                     logger.info("###### url:{}".format(url))
                 else:
                     raise ValueError("user: %s, passwd: %s, and source: %s must all be set" % (user, passwd, source))
-            if not http and not ftp and not https and not real:
+            if not http and not ftp and not https and not real and not virtual:
                 raise ValueError("Please specify ftp and/or http")
 
             if (url is None) or (url == ""):
@@ -626,7 +837,7 @@ class RealBrowserTest(Realm):
                         "quiesce_after": self.quiesce_after
                     }
                 set_endp_data = {
-                    "alias": cx_name + str(resource) + "_l4",
+                    "alias": cx_name + "_l4",
                     "media_source": media_source,
                     "media_quality": media_quality,
                     # "media_playbacks":'0'
@@ -706,6 +917,7 @@ class RealBrowserTest(Realm):
                 cx_post_data.append(endp_data)
                 self.created_cx[cx_name + str(resource) + "_l4"] = "CX_" + cx_name + str(resource) + "_l4"
         self.http_profile.created_cx = self.created_cx
+        self.offset += len(self.ip_map)
 
         for cx_data in cx_post_data:
             url = "/cli-json/add_cx"
@@ -844,15 +1056,20 @@ class RealBrowserTest(Realm):
         logging.info("Waiting for Browser Cleanup...")
         time.sleep(10)
 
-    def precleanup(self):
-        for port in self.laptops:
-            self.pre_cleanup_stale_endpoint(port)
-        for port in self.phone_data:
-            self.pre_cleanup_stale_android_endpoint(port)
-
     def postcleanup(self):
         self.cleanup_generic_endpoints()
         self.cleanup_layer4_endpoints()
+        self.cleanup_created_stations()
+
+    def cleanup_created_stations(self):
+        """
+        Remove the virtual stations this run created. Never touches stations
+        passed via --existing_station_list (those are left as we found them).
+        """
+        for sta in self.created_sta_names:
+            self.rm_port(sta, check_exists=True, debug_=self.debug)
+        LFUtils.wait_until_ports_disappear(base_url=self.local_realm.lfclient_url,
+                                           port_list=self.created_sta_names, debug=self.debug)
 
     def generic_endpoint_exists(self, endp_name):
         """True if LANforge currently has a generic endpoint by this name."""
@@ -914,8 +1131,7 @@ class RealBrowserTest(Realm):
         if LANforge still actually reports it as present.
         """
         for cx_name in self.generic_endps_profile.created_cx:
-            if self.generic_endpoint_exists(cx_name):
-                self.json_post("cli-json/rm_cx", {"test_mgr": "default_tm", "cx_name": cx_name})
+            self.json_post("cli-json/rm_cx", {"test_mgr": "default_tm", "cx_name": cx_name})
 
         for endp_name in self.generic_endps_profile.created_endp:
             if self.generic_endpoint_exists(endp_name):
@@ -929,8 +1145,8 @@ class RealBrowserTest(Realm):
         if LANforge still actually reports it as present.
         """
         for endp_name, cx_name in list(self.http_profile.created_cx.items()):
+            self.json_post("cli-json/rm_cx", {"test_mgr": "default_tm", "cx_name": cx_name})
             if self.layer4_endpoint_exists(endp_name):
-                self.json_post("cli-json/rm_cx", {"test_mgr": "default_tm", "cx_name": cx_name})
                 self.json_post("cli-json/rm_endp", {"endp_name": endp_name})
             else:
                 logger.debug(f"Layer4 endpoint {endp_name} no longer exists on LANforge — skipping delete.")
@@ -1440,7 +1656,7 @@ class RealBrowserTest(Realm):
         """
         if self.incremental or self.dowebgui:
             incremental_capacity_list_values = self.get_incremental_capacity_list()
-            if incremental_capacity_list_values[-1] != len(available_resources):
+            if incremental_capacity_list_values[-1] != (len(available_resources) + len(self.sta_list)):
                 logger.error("Incremental capacity doesn't match available devices")
                 if not self.no_postcleanup:
                     self.postcleanup()
@@ -2031,8 +2247,64 @@ class RealBrowserTest(Realm):
         Runs the test with calculated parameters.
         """
         logging.info("Initiating Test...")
-        available_resources.sort()
-        self.set_available_resources_ids(",".join(map(str, available_resources)))
+        if self.real:
+            available_resources.sort()
+            self.set_available_resources_ids(",".join(map(str, available_resources)))
+        if self.virtual:
+            # station_profiles[0] is the existing-stations profile (no --radio entry);
+            # --radio-derived profiles line up with radio_name_list/station_lists from index 0.
+            radio_idx = 0
+            for i, station_profile in enumerate(self.station_profiles):
+                if self.use_existing_station_list and i == 0:
+                    continue
+                station_profile.use_security(station_profile.security, station_profile.ssid, station_profile.ssid_pass)
+                station_profile.set_number_template(station_profile.number_template)
+                radio_name = self.radio_name_list[radio_idx]
+                existing = set(self.existing_station_lists)
+                # names in --existing_station_list are reused as-is; any other name already
+                # on the manager is stale and gets deleted, unless --no_precleanup says leave it.
+                chosen = [sta for sta in self.station_lists[radio_idx]
+                          if sta not in existing
+                          and not (self.no_precleanup and self.local_realm.port_exists(sta))]
+                to_delete = [sta for sta in chosen if self.local_realm.port_exists(sta)]
+                if to_delete:
+                    logger.info("Removing stale stations (names needed for this run, not in existing list): %s" % to_delete)
+                for sta in to_delete:
+                    self.rm_port(sta, check_exists=True, debug_=self.debug)
+                if to_delete:
+                    LFUtils.wait_until_ports_disappear(base_url=self.local_realm.lfclient_url,
+                                                       port_list=to_delete, debug=self.debug)
+                sta_names = chosen
+                self.created_sta_names.extend(sta_names)
+                logger.debug("Creating station port(s) on radio {}".format(radio_name))
+                station_profile.create(
+                    radio=radio_name,
+                    sta_names_=sta_names,
+                    debug=self.debug,
+                    sleep_time=0)
+                radio_idx += 1
+
+            # Generate list of all stations, both created and existing (test_l3.py build())
+            for station_profile in self.station_profiles:
+                self.station_names_list.extend(station_profile.station_names)
+            self.station_names_list = list(set(self.station_names_list))
+            self.sta_list = sorted(self.station_names_list)
+
+            # Admin up created station port(s)
+            for station_profile in self.station_profiles:
+                for sta in station_profile.station_names:
+                    self.admin_up(sta)
+            # Admin up existing station port(s)
+            if self.use_existing_station_list:
+                for existing_station in self.existing_station_lists:
+                    logger.debug("Bringing up existing stations {}".format(existing_station))
+                    self.admin_up(existing_station)
+
+            if self.wait_for_ip(self.sta_list):
+                self._pass("All stations got IPs", print_=True)
+            else:
+                self._fail("Stations failed to get IPs", print_=True)
+            logger.info(f"virtual station build is completed {self.sta_list}")
         self.build()
         self.process_incremental_values(available_resources)
         if not self.update_webui_json():
@@ -2102,7 +2374,7 @@ class RealBrowserTest(Realm):
         keys = list(self.created_cx.keys()) + self.generic_endps_profile.created_cx
         index = 0
 
-        if self.resource_ids:
+        if self.resource_ids or self.virtual:
             if not self.incremental:
                 self.incremental = [len(keys)]
 
@@ -2182,6 +2454,10 @@ class RealBrowserTest(Realm):
             self.file_name = self.file_name.removesuffix(".csv")
         else:
             self.file_name = None
+
+        if self.radio_name_list and self.clients_type not in ("virtual", "both"):
+            logging.error("Please provide --clients_type for radio")
+            os._exit(1)
 
     def process_group_profiles(self):
         """
@@ -2312,10 +2588,10 @@ class RealBrowserTest(Realm):
                 obj.incremental = incremental
         if (obj.incremental and obj.resource_ids) or args.webgui_incremental:
             # Check if the last incremental value is valid
-            if obj.incremental[-1] > len(available_resources):
+            if obj.incremental[-1] > (len(available_resources) + len(self.sta_list)):
                 logging.info("Exiting the program as incremental values are greater than the resource ids provided")
                 exit()
-            elif obj.incremental[-1] < len(available_resources) and len(obj.incremental) > 1:
+            elif obj.incremental[-1] < (len(available_resources) + len(self.sta_list)) and len(obj.incremental) > 1:
                 logging.info("Exiting the program as the last incremental value must be equal to selected devices")
                 exit()
 
@@ -2409,8 +2685,11 @@ class RealBrowserTest(Realm):
                                                 cx_name = value.get('name', 'NA')
                                                 match = re.search(r'http(\d+)', cx_name)
                                                 res_no = match.group(1) if match else 'NA'
-                                                hostname = self.local_realm.json_get("resource/1/%s/list?fields=user" % (res_no))
-                                                hostname = hostname["resource"]["user"]
+                                                if match:
+                                                    hostname = self.local_realm.json_get("resource/1/%s/list?fields=user" % (res_no))
+                                                    hostname = hostname["resource"]["user"]
+                                                else:
+                                                    hostname = cx_name.split('_')[1]
                                                 pass_url = value.get('total-urls', 0)
                                                 total_urls.append(pass_url)
                                                 uc_min.append(value.get('uc-min', 0.0))
@@ -2427,7 +2706,7 @@ class RealBrowserTest(Realm):
                                     # Save each mobile device's data to the Cache
                                     for i in range(len(total_urls)):
                                         row = {
-                                            'device_type': 'mobile',
+                                            'device_type': 'mobile' if not hostnames[i].startswith('sta') else 'Virtual Station',
                                             'device_name': hostnames[i],
                                             'total_urls': total_urls[i],
                                             'uc_min': float(uc_min[i]) / 1000,
@@ -2445,8 +2724,11 @@ class RealBrowserTest(Realm):
                                     cx_name = endpoint.get('name', 'NA')
                                     match = re.search(r'http(\d+)', cx_name)
                                     res_no = match.group(1) if match else 'NA'
-                                    hostname = self.local_realm.json_get("resource/1/%s/list?fields=user" % (res_no))
-                                    hostname = hostname["resource"]["user"]
+                                    if match:
+                                        hostname = self.local_realm.json_get("resource/1/%s/list?fields=user" % (res_no))
+                                        hostname = hostname["resource"]["user"]
+                                    else:
+                                        hostname = cx_name.split('_')[1]
                                     if hostname not in self.device_targets:
                                         self.device_targets[hostname] = initial_target_urls
                                     # Check if the mobile device reaches the current target URL count
@@ -2455,7 +2737,7 @@ class RealBrowserTest(Realm):
                                         if hostname not in time_taken:
                                             time_taken[hostname] = (datetime.now() - start_time).total_seconds()
                                     row = {
-                                        'device_type': 'mobile',
+                                        'device_type': 'mobile' if not hostname.startswith('sta') else 'Virtual Station',
                                         'device_name': hostname,
                                         'total_urls': pass_url,
                                         'uc_min': float(endpoint.get('uc-min', 0.0)) / 1000,
@@ -2470,6 +2752,7 @@ class RealBrowserTest(Realm):
                                 writer.writerow(row)
                                 last_data.append(row)
                     self.monitor_endpoint_status_changes()
+                    self.generate_real_time_csv(last_data)
                     time.sleep(1)
                 except Exception as e:
                     logging.exception(f"Error in get_stats function {e}", exc_info=True)
@@ -2645,42 +2928,31 @@ class RealBrowserTest(Realm):
         Returns:
             dict: Test setup information.
         """
+        num_clients = []
+        if self.real:
+            num_clients.append(f'W({self.windows}),L({self.linux}),M({self.mac}), A({self.android})')
+        if self.virtual:
+            num_clients.append(f'V({len(self.sta_list)})')
+
+        test_setup_info = {
+            'Configured Devies': self.hostname_os_combination,
+            'No of Clients': ', '.join(num_clients),
+            # 'Incremental Values': self.test_setup_info_incremental_values,
+            'Required URL Count': self.count,
+            'URL': self.url,
+            'Test Duration (min)': self.duration,
+        }
         if self.config:
-            test_setup_info = {
-                'Configured Devies': self.hostname_os_combination,
-                'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac}), A({self.android})',
-                # 'Incremental Values': self.test_setup_info_incremental_values,
-                'Required URL Count': self.count,
-                'URL': self.url,
-                'Test Duration (min)': self.duration,
-                'SSID': self.report_ssid,
-                "Security": self.encryp
-            }
+            test_setup_info['SSID'] = self.report_ssid
+            test_setup_info['Security'] = self.encryp
         elif len(self.selected_groups) > 0 and len(self.selected_profiles) > 0:
             # Map each group with a profile
             gp_pairs = zip(self.selected_groups, self.selected_profiles)
 
             # Create a string by joining the mapped pairs
             gp_map = ", ".join(f"{group} -> {profile}" for group, profile in gp_pairs)
+            test_setup_info['Configuration'] = gp_map
 
-            test_setup_info = {
-                'Configuration': gp_map,
-                'Configured Devies': self.hostname_os_combination,
-                'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac}), A({self.android})',
-                # 'Incremental Values': self.test_setup_info_incremental_values,
-                'Required URL Count': self.count,
-                'URL': self.url,
-                'Test Duration (min)': self.duration,
-            }
-        else:
-            test_setup_info = {
-                'Configured Devies': self.hostname_os_combination,
-                'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac}), A({self.android})',
-                # 'Incremental Values': self.test_setup_info_incremental_values,
-                'Required URL Count': self.count,
-                'URL': self.url,
-                'Test Duration (min)': self.duration,
-            }
         if self.do_bandsteering and 'Test Duration (min)' in test_setup_info:
             del test_setup_info['Test Duration (min)']
         return test_setup_info
@@ -3123,6 +3395,21 @@ class RealBrowserTest(Realm):
 
                 log_dir = os.path.join(destination_dir, "log")
                 os.makedirs(log_dir, exist_ok=True)
+                report_csvs = set(self.csv_file_names) | {
+                    "real_time_data.csv", "endpoint_status_changes.csv", "device.csv"
+                }
+                for per_dev_csv in os.listdir(source_dir):
+                    if not per_dev_csv.endswith(".csv") or per_dev_csv in report_csvs:
+                        continue
+                    if per_dev_csv.startswith("iteration_"):
+                        continue
+                    src = os.path.join(source_dir, per_dev_csv)
+                    if os.path.isfile(src):
+                        try:
+                            shutil.move(src, os.path.join(log_dir, per_dev_csv))
+                            logging.info(f"Moved {per_dev_csv} to {log_dir}")
+                        except Exception as e:
+                            logging.warning(f"Could not move {per_dev_csv}: {e}")
                 for filename in self.log_file_names:
                     source_path = os.path.join(source_dir, filename)
 
@@ -3168,6 +3455,9 @@ class RealBrowserTest(Realm):
         rm_data = self.local_realm.json_get("resource/list/?fields=eid,Hostname,device type,user")
 
         for i in range(0, len(device_names)):
+            if device_type_data[i] == "Virtual Station" or device_names[i].startswith("sta"):
+                final_eid_data.append(device_names[i])
+                continue
             for resource in rm_data['resources']:
                 for _key, value in resource.items():
                     if value['hostname'] == device_names[i] and device_type_data[i] == "laptop":
@@ -3186,7 +3476,7 @@ class RealBrowserTest(Realm):
                 for key, value in interface.items():
                     temp_eid = key.split(".")
                     comb_eid = temp_eid[0] + "." + temp_eid[1]
-                    if (comb_eid == eid) and (value["parent dev"] != "") and (not value["down"]) and (value["ip"] != "0.0.0.0"):
+                    if (comb_eid == eid or temp_eid[-1] == eid) and (value["parent dev"] != "") and (not value["down"]) and (value["ip"] != "0.0.0.0"):
                         # logging.info("checking whether we are able to fetch device data from port manager")
                         mac_data.append(value.get("mac", 'None'))
                         channel_data.append(value.get("channel", 'None'))
@@ -3450,6 +3740,7 @@ class RealBrowserTest(Realm):
                                 writer.writerow(row)
                                 last_data.append(row)
                     self.monitor_endpoint_status_changes()
+                    self.generate_real_time_csv(last_data)
                     time.sleep(1)
                 except Exception as e:
                     logging.exception(f"Error in get_stats function {e}", exc_info=True)
@@ -3560,6 +3851,33 @@ class RealBrowserTest(Realm):
                         logging.info(f"Moved {filename} to {log_dir}")
                     except Exception as e:
                         logging.warning(f"Could not move {filename}: {e}")
+
+    def generate_real_time_csv(self, last_data):
+        current_time = datetime.now()
+        for data in last_data:
+            csv_name = data['device_name'] + ".csv"
+            if not os.path.exists(csv_name):
+                with open(csv_name, 'w') as file:
+                    header = ['timestamp', 'iteration', 'device_type', 'total_urls', 'uc_min', 'uc_avg', 'uc_max', 'total_err',
+                              'time_to_target_urls', 'cx_name', 'Link_speed', 'Mac', 'bssid', 'Rssi', 'Mode', 'Channel', 'Ssid']
+                    writer = csv.writer(file)
+                    writer.writerow(header)
+
+            with open(csv_name, 'a') as file:
+                writer = csv.writer(file)
+                row = [current_time.strftime("%d/%m/%Y %H:%M:%S"),
+                       self.iteration_value,
+                       data['device_type'],
+                       data['device_name'],
+                       data['total_urls'],
+                       data['uc_min'],
+                       data['uc_avg'],
+                       data['uc_max'],
+                       data['total_err'],
+                       data['time_to_target_urls'],
+                       data['cx_name'],
+                       ]
+                writer.writerow(row)
 
     def create_robo_graphs_test_results(self, csv_file, coordinate, angle=None):
         """
@@ -3882,6 +4200,41 @@ def main():
             python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "https://google.com" --duration 1m --debug --upstream_port 192.168.200.198
             --coordinates 1 --do_robo --robo_ip 192.168.200.140 --rotations 30 --device_list 1.5,1.11
 
+            --- clients_type / virtual-station examples ---
+
+            Example-7 (only real):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type real --device_list 1.10,1.12
+
+            Example-8 (only virtual - create new stations):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type virtual --radio "radio==wiphy0 stations==4 ssid==NETGEAR_5G_wpa2 ssid_pw==Password@123 security==wpa2"
+
+            Example-9 (only virtual - reuse existing stations, do not re-create):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type virtual --use_existing_station_list --existing_station_list 1.1.sta0000,1.1.sta0001,1.1.sta0002
+
+            Example-10 (real + virtual create):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type both --device_list 1.10,1.12
+            --radio "radio==wiphy0 stations==4 ssid==NETGEAR_5G_wpa2 ssid_pw==Password@123 security==wpa2"
+
+            Example-11 (virtual create + virtual existing):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type virtual --use_existing_station_list --existing_station_list 1.1.sta0000,1.1.sta0001
+            --radio "radio==wiphy1 stations==3 ssid==NETGEAR_2G_Open ssid_pw==NA security==open"
+
+            Example-12 (real + virtual existing):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type both --device_list 1.10,1.12
+            --use_existing_station_list --existing_station_list 1.1.sta0000,1.1.sta0001
+
+            Example-13 (all 3: real + virtual create + virtual existing):
+            python3 lf_interop_real_browser_test.py --mgr 192.168.207.78 --url "http://google.com" --duration 1m --debug --upstream_port 1.1.eth1
+            --clients_type both --device_list 1.10,1.12
+            --use_existing_station_list --existing_station_list 1.1.sta0000,1.1.sta0001
+            --radio "radio==wiphy1 stations==3 ssid==NETGEAR_2G_Open ssid_pw==NA security==open"
+
 
             SCRIPT CLASSIFICATION: Test
 
@@ -3910,6 +4263,28 @@ def main():
         optional = parser.add_argument_group('Optional arguments to run lf_interop_real_browser_test.py')
         # Define robo specific arguments group
         robo = parser.add_argument_group('robo arguments')
+        parser.add_argument('--clients_type', default="real",
+                            help="clients to run the test on: real, virtual, or both")
+        parser.add_argument(
+            '-r', '--radio',
+            action='append',
+            nargs=1,
+            help=(' --radio'
+                  ' "radio==<number_of_wiphy> stations==<number of stations>'
+                  ' ssid==<ssid> ssid_pw==<ssid password> security==<security> '
+                  ' wifi_settings==True wifi_mode==<wifi_mode>'
+                  ' enable_flags==<enable_flags>" '
+                  )
+        )
+
+        parser.add_argument('--sta_start_offset', help='Station start offset for building stations',
+                            default='0')
+        parser.add_argument('--use_existing_station_list', help='--use_existing_station_list, full eid must be given, '
+                            'the script will use stations from the list, no configuration on the list, also prevents pre_cleanup',
+                            action='store_true')
+        parser.add_argument('--existing_station_list', action='append', nargs=1,
+                            help='--existing_station_list [list of stations], use the stations in the list, '
+                            'multiple station lists may be entered')
         parser.add_argument("--host", "--mgr", required=True, help='specify the GUI to connect to, assumes port '
                             '8080')
         parser.add_argument("--ssid", default=None, help='specify ssid on which the test will be running')
@@ -4041,6 +4416,371 @@ def main():
 
         iot_summary = None
 
+        if args.radio:
+            radios = args.radio
+        else:
+            radios = None
+
+        MAX_NUMBER_OF_STATIONS = 1000
+
+        # Lists to help with station creation
+        radio_name_list = []
+        number_of_stations_per_radio_list = []
+        ssid_list = []
+        ssid_password_list = []
+        ssid_security_list = []
+        station_lists = []
+        existing_station_lists = []
+
+        # wifi settings configuration
+        wifi_mode_list = []
+        wifi_enable_flags_list = []
+
+        # wifi extra configuration
+        key_mgmt_list = []
+        pairwise_list = []
+        group_list = []
+        psk_list = []
+        wep_key_list = []
+        ca_cert_list = []
+        eap_list = []
+        identity_list = []
+        anonymous_identity_list = []
+        phase1_list = []
+        phase2_list = []
+        passwd_list = []
+        pin_list = []
+        pac_file_list = []
+        private_key_list = []
+        pk_password_list = []
+        hessid_list = []
+        realm_list = []
+        client_cert_list = []
+        imsi_list = []
+        milenage_list = []
+        domain_list = []
+        roaming_consortium_list = []
+        venue_group_list = []
+        network_type_list = []
+        ipaddr_type_avail_list = []
+        network_auth_type_list = []
+        anqp_3gpp_cell_net_list = []
+        ieee80211w_list = []
+
+        logger.debug("Parse radio arguments used for station configuration")
+        if radios is not None:
+            logger.info("radios {}".format(radios))
+            for radio_ in radios:
+                radio_keys = ['radio', 'stations', 'ssid', 'ssid_pw', 'security']
+                logger.info("radio_dict before format {}".format(radio_))
+                radio_info_dict = dict(
+                    map(
+                        lambda x: x.split('=='),
+                        str(radio_).replace(
+                            '"',
+                            '').replace(
+                            '[',
+                            '').replace(
+                            ']',
+                            '').replace(
+                            "'",
+                            "").replace(
+                                ",",
+                            " ").split()))
+
+                logger.debug("radio_dict {}".format(radio_info_dict))
+
+                for key in radio_keys:
+                    if key not in radio_info_dict:
+                        logger.critical(
+                            "missing config, for the {}, all of the following need to be present {} ".format(
+                                key, radio_keys))
+                        exit(1)
+
+                radio_name_list.append(radio_info_dict['radio'])
+                number_of_stations_per_radio_list.append(
+                    radio_info_dict['stations'])
+                ssid_list.append(radio_info_dict['ssid'])
+                ssid_password_list.append(radio_info_dict['ssid_pw'])
+                ssid_security_list.append(radio_info_dict['security'])
+
+                # check for set_wifi_extra
+                if 'wifi_extra' in radio_info_dict:
+                    logger.info("wifi_extra_keys found")
+                    logger.debug("wifi_extra: {extra}".format(
+                        extra=radio_info_dict['wifi_extra']))
+
+                    wifi_extra_dict = dict(
+                        map(
+                            lambda x: x.split('&&'),
+                            str(radio_info_dict['wifi_extra']).replace(
+                                '"',
+                                '').replace(
+                                '[',
+                                '').replace(
+                                ']',
+                                '').replace(
+                                "'",
+                                "").replace(
+                                ",",
+                                " ").replace(
+                                "!!",
+                                " "
+                            )
+                            .split()))
+
+                    logger.info("wifi_extra_dict: {wifi_extra}".format(
+                        wifi_extra=wifi_extra_dict))
+
+                    if 'key_mgmt' in wifi_extra_dict:
+                        key_mgmt_list.append(wifi_extra_dict['key_mgmt'])
+                    else:
+                        key_mgmt_list.append('[BLANK]')
+
+                    if 'pairwise' in wifi_extra_dict:
+                        pairwise_list.append(wifi_extra_dict['pairwise'])
+                    else:
+                        pairwise_list.append('[BLANK]')
+
+                    if 'group' in wifi_extra_dict:
+                        group_list.append(wifi_extra_dict['group'])
+                    else:
+                        group_list.append('[BLANK]')
+
+                    if 'psk' in wifi_extra_dict:
+                        psk_list.append(wifi_extra_dict['psk'])
+                    else:
+                        psk_list.append('[BLANK]')
+
+                    if 'wep_key' in wifi_extra_dict:
+                        wep_key_list.append(wifi_extra_dict['wep_key'])
+                    else:
+                        wep_key_list.append('[BLANK]')
+
+                    if 'ca_cert' in wifi_extra_dict:
+                        ca_cert_list.append(wifi_extra_dict['ca_cert'])
+                    else:
+                        ca_cert_list.append('[BLANK]')
+
+                    if 'eap' in wifi_extra_dict:
+                        eap_list.append(wifi_extra_dict['eap'])
+                    else:
+                        eap_list.append('[BLANK]')
+
+                    if 'identity' in wifi_extra_dict:
+                        identity_list.append(wifi_extra_dict['identity'])
+                    else:
+                        identity_list.append('[BLANK]')
+
+                    if 'anonymous' in wifi_extra_dict:
+                        anonymous_identity_list.append(
+                            wifi_extra_dict['anonymous'])
+                    else:
+                        anonymous_identity_list.append('[BLANK]')
+
+                    if 'phase1' in wifi_extra_dict:
+                        phase1_list.append(wifi_extra_dict['phase1'])
+                    else:
+                        phase1_list.append('[BLANK]')
+
+                    if 'phase2' in wifi_extra_dict:
+                        phase2_list.append(wifi_extra_dict['phase2'])
+                    else:
+                        phase2_list.append('[BLANK]')
+
+                    if 'passwd' in wifi_extra_dict:
+                        passwd_list.append(wifi_extra_dict['passwd'])
+                    else:
+                        passwd_list.append('[BLANK]')
+
+                    if 'pin' in wifi_extra_dict:
+                        pin_list.append(wifi_extra_dict['pin'])
+                    else:
+                        pin_list.append('[BLANK]')
+
+                    if 'pac_file' in wifi_extra_dict:
+                        pac_file_list.append(wifi_extra_dict['pac_file'])
+                    else:
+                        pac_file_list.append('[BLANK]')
+
+                    if 'private_key' in wifi_extra_dict:
+                        private_key_list.append(wifi_extra_dict['private_key'])
+                    else:
+                        private_key_list.append('[BLANK]')
+
+                    if 'pk_password' in wifi_extra_dict:
+                        pk_password_list.append(wifi_extra_dict['pk_password'])
+                    else:
+                        pk_password_list.append('[BLANK]')
+
+                    if 'hessid' in wifi_extra_dict:
+                        hessid_list.append(wifi_extra_dict['hessid'])
+                    else:
+                        hessid_list.append("00:00:00:00:00:00")
+
+                    if 'realm' in wifi_extra_dict:
+                        realm_list.append(wifi_extra_dict['realm'])
+                    else:
+                        realm_list.append('[BLANK]')
+
+                    if 'client_cert' in wifi_extra_dict:
+                        client_cert_list.append(wifi_extra_dict['client_cert'])
+                    else:
+                        client_cert_list.append('[BLANK]')
+
+                    if 'imsi' in wifi_extra_dict:
+                        imsi_list.append(wifi_extra_dict['imsi'])
+                    else:
+                        imsi_list.append('[BLANK]')
+
+                    if 'milenage' in wifi_extra_dict:
+                        milenage_list.append(wifi_extra_dict['milenage'])
+                    else:
+                        milenage_list.append('[BLANK]')
+
+                    if 'domain' in wifi_extra_dict:
+                        domain_list.append(wifi_extra_dict['domain'])
+                    else:
+                        domain_list.append('[BLANK]')
+
+                    if 'roaming_consortium' in wifi_extra_dict:
+                        roaming_consortium_list.append(
+                            wifi_extra_dict['roaming_consortium'])
+                    else:
+                        roaming_consortium_list.append('[BLANK]')
+
+                    if 'venue_group' in wifi_extra_dict:
+                        venue_group_list.append(wifi_extra_dict['venue_group'])
+                    else:
+                        venue_group_list.append('[BLANK]')
+
+                    if 'network_type' in wifi_extra_dict:
+                        network_type_list.append(wifi_extra_dict['network_type'])
+                    else:
+                        network_type_list.append('[BLANK]')
+
+                    if 'ipaddr_type_avail' in wifi_extra_dict:
+                        ipaddr_type_avail_list.append(
+                            wifi_extra_dict['ipaddr_type_avail'])
+                    else:
+                        ipaddr_type_avail_list.append('[BLANK]')
+
+                    if 'network_auth_type' in wifi_extra_dict:
+                        network_auth_type_list.append(
+                            wifi_extra_dict['network_auth_type'])
+                    else:
+                        network_auth_type_list.append('[BLANK]')
+
+                    if 'anqp_3gpp_cell_net' in wifi_extra_dict:
+                        anqp_3gpp_cell_net_list.append(
+                            wifi_extra_dict['anqp_3gpp_cell_net'])
+                    else:
+                        anqp_3gpp_cell_net_list.append('[BLANK]')
+
+                    if 'ieee80211w' in wifi_extra_dict:
+                        ieee80211w_list.append(wifi_extra_dict['ieee80211w'])
+                    else:
+                        ieee80211w_list.append('Optional')
+                # no wifi extra for this station
+                else:
+                    key_mgmt_list.append('[BLANK]')
+                    pairwise_list.append('[BLANK]')
+                    group_list.append('[BLANK]')
+                    psk_list.append('[BLANK]')
+                    # for testing
+                    # psk_list.append(radio_info_dict['ssid_pw'])
+                    wep_key_list.append('[BLANK]')
+                    ca_cert_list.append('[BLANK]')
+                    eap_list.append('[BLANK]')
+                    identity_list.append('[BLANK]')
+                    anonymous_identity_list.append('[BLANK]')
+                    phase1_list.append('[BLANK]')
+                    phase2_list.append('[BLANK]')
+                    passwd_list.append('[BLANK]')
+                    pin_list.append('[BLANK]')
+                    pac_file_list.append('[BLANK]')
+                    private_key_list.append('[BLANK]')
+                    pk_password_list.append('[BLANK]')
+                    hessid_list.append("00:00:00:00:00:00")
+                    realm_list.append('[BLANK]')
+                    client_cert_list.append('[BLANK]')
+                    imsi_list.append('[BLANK]')
+                    milenage_list.append('[BLANK]')
+                    domain_list.append('[BLANK]')
+                    roaming_consortium_list.append('[BLANK]')
+                    venue_group_list.append('[BLANK]')
+                    network_type_list.append('[BLANK]')
+                    ipaddr_type_avail_list.append('[BLANK]')
+                    network_auth_type_list.append('[BLANK]')
+                    anqp_3gpp_cell_net_list.append('[BLANK]')
+                    ieee80211w_list.append('Optional')
+
+                # check for wifi_settings
+                if 'wifi_settings' in radio_info_dict:
+                    # Check for additional flags
+                    if {'wifi_mode', 'enable_flags'}.issubset(
+                            radio_info_dict.keys()):
+                        logger.debug("wifi_settings flags set")
+                    else:
+                        logger.debug("wifi_settings is present wifi_mode, enable_flags need to be set "
+                                     "or remove the wifi_settings or set wifi_settings==False flag on "
+                                     "the radio for defaults")
+                        exit(1)
+                    wifi_mode_list.append(radio_info_dict['wifi_mode'])
+                    enable_flags_str = radio_info_dict['enable_flags'].replace(
+                        '(', '').replace(')', '').replace('|', ',').replace('&&', ',')
+                    enable_flags_list = list(enable_flags_str.split(","))
+                    wifi_enable_flags_list.append(enable_flags_list)
+                else:
+                    logger.debug("wifi_settings_keys not enabled")
+                    wifi_mode_list.append(0)
+                    wifi_enable_flags_list.append(
+                        ["wpa2_enable", "80211u_enable", "create_admin_down"])
+                    # 8021x_radius is the same as Advanced/8021x on the gui
+
+            index = 0
+            for (radio_name_, number_of_stations_per_radio_) in zip(
+                    radio_name_list, number_of_stations_per_radio_list):
+                number_of_stations = int(number_of_stations_per_radio_)
+                if number_of_stations > MAX_NUMBER_OF_STATIONS:
+                    logger.critical("number of stations per radio exceeded max of : {}".format(
+                        MAX_NUMBER_OF_STATIONS))
+                    quit(1)
+                station_list = LFUtils.portNameSeries(
+                    prefix_="sta",
+                    start_id_=0 + index * 1000 + int(args.sta_start_offset),
+                    end_id_=number_of_stations - 1 + index *
+                    1000 + int(args.sta_start_offset),
+                    padding_number_=10000,
+                    radio=radio_name_)
+                station_lists.append(station_list)
+                index += 1
+
+        # create a secondary station_list
+        if args.use_existing_station_list:
+            if args.existing_station_list is not None:
+                # these are entered stations
+                for existing_sta_list in args.existing_station_list:
+                    existing_stations = str(existing_sta_list).replace(
+                        '"',
+                        '').replace(
+                        '[',
+                        '').replace(
+                        ']',
+                        '').replace(
+                        "'",
+                        "").replace(
+                            ",",
+                        " ").split()
+
+                    for existing_sta in existing_stations:
+                        existing_station_lists.append(existing_sta)
+            else:
+                logger.error(
+                    "--use_station_list set true, --station_list is None Exiting")
+                raise Exception(
+                    "--use_station_list is used in conjunction with a --station_list")
+
         # Initialize an instance of RealBrowserTest with various parameters
         obj = RealBrowserTest(host=args.host,
                               ssid=args.ssid,
@@ -4095,7 +4835,47 @@ def main():
                               duration_to_skip=args.duration_to_skip,
                               windows_dir=args.windows_dir,
                               linux_dir=args.linux_dir,
-                              mac_dir=args.mac_dir
+                              mac_dir=args.mac_dir,
+                              clients_type=args.clients_type,
+                              sta_start_offset=args.sta_start_offset,
+                              use_existing_station_list=args.use_existing_station_list,
+                              existing_station_list=existing_station_lists,
+                              radio_name_list=radio_name_list,
+                              ssid_list=ssid_list,
+                              ssid_password_list=ssid_password_list,
+                              ssid_security_list=ssid_security_list,
+                              station_lists=station_lists,
+                              wifi_mode_list=wifi_mode_list,
+                              enable_flags_list=wifi_enable_flags_list,
+                              key_mgmt_list=key_mgmt_list,
+                              pairwise_list=pairwise_list,
+                              group_list=group_list,
+                              psk_list=psk_list,
+                              wep_key_list=wep_key_list,
+                              ca_cert_list=ca_cert_list,
+                              eap_list=eap_list,
+                              identity_list=identity_list,
+                              anonymous_identity_list=anonymous_identity_list,
+                              phase1_list=phase1_list,
+                              phase2_list=phase2_list,
+                              passwd_list=passwd_list,
+                              pin_list=pin_list,
+                              pac_file_list=pac_file_list,
+                              private_key_list=private_key_list,
+                              pk_password_list=pk_password_list,
+                              hessid_list=hessid_list,
+                              realm_list=realm_list,
+                              client_cert_list=client_cert_list,
+                              imsi_list=imsi_list,
+                              milenage_list=milenage_list,
+                              domain_list=domain_list,
+                              roaming_consortium_list=roaming_consortium_list,
+                              venue_group_list=venue_group_list,
+                              network_type_list=network_type_list,
+                              ipaddr_type_avail_list=ipaddr_type_avail_list,
+                              network_auth_type_list=network_auth_type_list,
+                              anqp_3gpp_cell_net_list=anqp_3gpp_cell_net_list,
+                              ieee80211w_list=ieee80211w_list
                               )
         obj.change_port_to_ip()
         obj.validate_and_process_args()
@@ -4105,42 +4885,44 @@ def main():
         obj.run_flask_server()
         if args.iot_test:
             start_iot_thread(args)
-        if obj.group_name and obj.profile_name and obj.file_name:
-            available_resources = obj.process_group_profiles()
-        else:
-            # --- Build configuration dictionary for WiFi parameters ---
-            config_dict = {
-                'ssid': args.ssid,
-                'passwd': args.passwd,
-                'enc': args.encryp,
-                'eap_method': args.eap_method,
-                'eap_identity': args.eap_identity,
-                'ieee80211': args.ieee80211,
-                'ieee80211u': args.ieee80211u,
-                'ieee80211w': args.ieee80211w,
-                'enable_pkc': args.enable_pkc,
-                'bss_transition': args.bss_transition,
-                'power_save': args.power_save,
-                'disable_ofdma': args.disable_ofdma,
-                'roam_ft_ds': args.roam_ft_ds,
-                'key_management': args.key_management,
-                'pairwise': args.pairwise,
-                'private_key': args.private_key,
-                'ca_cert': args.ca_cert,
-                'client_cert': args.client_cert,
-                'pk_passwd': args.pk_passwd,
-                'pac_file': args.pac_file,
-                'server_ip': obj.upstream_port,
-            }
-            available_resources = obj.process_resources(config_dict)
-        if len(available_resources) != 0:
-            available_resources = obj.filter_ios_devices(available_resources)
-        if len(available_resources) == 0:
-            logging.error("No devices available to run the test. Exiting...")
-            exit(1)
+        available_resources = []
+        if obj.real:
+            if obj.group_name and obj.profile_name and obj.file_name:
+                available_resources = obj.process_group_profiles()
+            else:
+                # --- Build configuration dictionary for WiFi parameters ---
+                config_dict = {
+                    'ssid': args.ssid,
+                    'passwd': args.passwd,
+                    'enc': args.encryp,
+                    'eap_method': args.eap_method,
+                    'eap_identity': args.eap_identity,
+                    'ieee80211': args.ieee80211,
+                    'ieee80211u': args.ieee80211u,
+                    'ieee80211w': args.ieee80211w,
+                    'enable_pkc': args.enable_pkc,
+                    'bss_transition': args.bss_transition,
+                    'power_save': args.power_save,
+                    'disable_ofdma': args.disable_ofdma,
+                    'roam_ft_ds': args.roam_ft_ds,
+                    'key_management': args.key_management,
+                    'pairwise': args.pairwise,
+                    'private_key': args.private_key,
+                    'ca_cert': args.ca_cert,
+                    'client_cert': args.client_cert,
+                    'pk_passwd': args.pk_passwd,
+                    'pac_file': args.pac_file,
+                    'server_ip': obj.upstream_port,
+                }
+                available_resources = obj.process_resources(config_dict)
+            if len(available_resources) != 0:
+                available_resources = obj.filter_ios_devices(available_resources)
+            if len(available_resources) == 0:
+                logging.error("No devices available to run the test. Exiting...")
+                exit(1)
 
-        # --- Print available resources ---
-        logging.info("Devices available: {}".format(available_resources))
+            # --- Print available resources ---
+            logging.info("Devices available: {}".format(available_resources))
         if obj.expected_passfail_value or obj.device_csv_name:
             obj.update_passfail_value(available_resources)
         # --- Handle incremental values ---
