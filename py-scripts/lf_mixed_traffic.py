@@ -1882,6 +1882,43 @@ class Mixed_Traffic(Realm):
         return self.sta_info
 
     @staticmethod
+    def parse_wait_time(value):
+        """'90', '90s', '5m', '1h' -> seconds (same forms --test_duration takes).
+
+        Raises ValueError on anything else, including zero or negative values.
+        """
+        suffixes = {'s': 1, 'S': 1, 'm': 60, 'M': 60, 'h': 3600, 'H': 3600}
+        text = str(value).strip()
+        try:
+            seconds = int(text[:-1]) * suffixes[text[-1]] if text[-1:] in suffixes else int(text)
+        except ValueError:
+            raise ValueError("'{}' is not a valid time, use e.g. 90, 90s, 5m or 1h".format(value))
+        if seconds <= 0:
+            raise ValueError("'{}' must be greater than zero".format(value))
+        return seconds
+
+    def wait_for_scenario_built(self, cv_test_obj, timeout_sec):
+        """Block until the Chamber View scenario reports built, or timeout_sec passes.
+
+        apply/build/create are fire-and-forget POSTs to the GUI -- none of them
+        waits for the build -- so poll "cv is_built" instead of sleeping a fixed
+        time, the same way create_chamberview.py does. Any GUI pop-up is closed
+        on each pass, since an open dialog can hold a build up indefinitely.
+
+        Returns True once built, False if timeout_sec elapsed first.
+        """
+        logger.info("Waiting up to {}s for the Chamber View scenario to be built".format(timeout_sec))
+        start = time.time()
+        while True:
+            cv_test_obj.get_popup_info_and_close()
+            if cv_test_obj.get_cv_is_built():
+                logger.info("Chamber View scenario built after {:.0f}s".format(time.time() - start))
+                return True
+            if time.time() - start >= timeout_sec:
+                return False
+            time.sleep(1)
+
+    @staticmethod
     def security_flag_for(security_str):
         """Map a /port/list 'security' string (e.g. "WPA2-PSK", "Open") to the
         add_sta.add_sta_flags name currently governing that station's security,
@@ -3055,6 +3092,10 @@ INCLUDE_IN_README: False
                           help='Provide the Scenario name of the Chamber view for building the station '
                                'creation scenario. When given, stations come from the scenario instead of '
                                'the --twog_*/--fiveg_*/--sixg_* arguments.')
+    optional.add_argument('--scenario_wait_time', type=str, default='5m',
+                          help='Longest to wait for a --scenario to finish building before giving up, '
+                               'e.g. 90s, 5m, 1h (default 5m). The run continues as soon as the '
+                               'scenario reports built, so this is a limit, not a fixed delay.')
     optional.add_argument('--security_config',
                           type=str,
                           choices=['1x', 'wpa3_aes_sae', 'wpa3_gcmp_sae'],
@@ -3210,6 +3251,12 @@ INCLUDE_IN_README: False
     if args.lf_logger_config_json:
         logger_config.lf_logger_config_json = args.lf_logger_config_json
         logger_config.load_lf_logger_config()
+
+    try:
+        scenario_wait_secs = Mixed_Traffic.parse_wait_time(args.scenario_wait_time)
+    except ValueError as err:
+        print("--scenario_wait_time: {}".format(err))
+        exit(1)
 
     # checking multicast test tos separation
     if ',' in args.mc_tos:
@@ -3408,9 +3455,18 @@ INCLUDE_IN_README: False
         cv_test_obj = cv_test_manager.cv_test(lfclient_host=args.mgr)
         cv_test_obj.apply_cv_scenario(args.scenario)
         cv_test_obj.build_cv_scenario()
-        cv_test_obj.create_test(test_name='Scenario Test', instance=args.scenario, load_old_cfg=False)
+        create_response = cv_test_obj.create_test(test_name='Scenario Test', instance=args.scenario, load_old_cfg=False)
+        try:
+            create_ok = create_response[0]["LAST"]["response"] == "OK"
+        except (IndexError, KeyError, TypeError):
+            create_ok = False
+        if not create_ok:
+            logger.warning("Chamber View did not report the test as created: {}".format(create_response))
         logger.info("Stations Initiated and waits until adminup and gets IP")
-        time.sleep(15)
+        if not mixed_obj.wait_for_scenario_built(cv_test_obj, scenario_wait_secs):
+            logger.error("Scenario '{}' was not built within --scenario_wait_time {}. Exiting.".format(
+                args.scenario, args.scenario_wait_time))
+            exit(1)
         mixed_obj.station_info()
         mixed_obj.station_list = mixed_obj.sta_info['station_list']
         mixed_obj.station_profile.station_names = mixed_obj.sta_info['station_list']
