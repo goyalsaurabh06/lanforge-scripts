@@ -1837,7 +1837,7 @@ class Mixed_Traffic(Realm):
         real_device_ports = set(self.base_interop_profile.get_devices())
 
         response = super().json_get(
-            "/port/list?fields=_links,parent+dev,ssid,alias,device,port+type,key/phrase,security")
+            "/port/list?fields=_links,parent+dev,ssid,alias,device,port+type,key/phrase,security,channel")
         if response and 'interfaces' in response:
             for x in range(len(response['interfaces'])):
                 for interface_name, interface_details in response['interfaces'][x].items():
@@ -1859,14 +1859,7 @@ class Mixed_Traffic(Realm):
                     self.sta_info['key_list'].append(interface_details.get('key/phrase') or '')
                     self.sta_info['security_list'].append(interface_details.get('security') or '')
                     self.sta_info['radio_list'].append(interface_details.get('parent dev') or '')
-                    if '2G' in ssid or '2g' in ssid:
-                        self.sta_info['band_list'].append('2.4G')
-                    elif '5G' in ssid or '5g' in ssid:
-                        self.sta_info['band_list'].append('5G')
-                    elif '6G' in ssid or '6g' in ssid:
-                        self.sta_info['band_list'].append('6G')
-                    else:
-                        self.sta_info['band_list'].append('-')
+                    self.sta_info['band_list'].append(self.band_for_port(interface_details))
 
         # Downstream code treats band as a single value, not a list.
         self.sta_info['band_list'] = self.sta_info['band_list'][0] if self.sta_info['band_list'] else '-'
@@ -1917,6 +1910,40 @@ class Mixed_Traffic(Realm):
             if time.time() - start >= timeout_sec:
                 return False
             time.sleep(1)
+
+    @staticmethod
+    def band_for_port(interface_details):
+        """Work out a station's band from its /port/list entry.
+
+        Prefers the channel, which the port itself reports. Naming a band in the
+        SSID is only a convention, and the SSID reads back blank while a station
+        is still associating -- which leaves band as '-', and that then raises
+        "Invalid band '-'" in the HTTP test and gives the QoS test zero stations.
+        """
+        channel = str(interface_details.get('channel') or '').strip()
+        # A 6E channel can be written with an 'e' suffix (e.g. "1e"), and its
+        # number restarts from 1 -- so the suffix decides the band, not the number.
+        if channel[-1:] in ('e', 'E'):
+            return '6G'
+        try:
+            channel = int(channel)
+        except (TypeError, ValueError):
+            channel = None
+
+        if channel is not None and channel > 0:
+            if channel <= 14:
+                return '2.4G'
+            # realm.py maps 6E channels from 191 (5955 MHz) upwards.
+            return '5G' if channel < 191 else '6G'
+
+        ssid = interface_details.get('ssid') or ''
+        if '2G' in ssid or '2g' in ssid:
+            return '2.4G'
+        if '5G' in ssid or '5g' in ssid:
+            return '5G'
+        if '6G' in ssid or '6g' in ssid:
+            return '6G'
+        return '-'
 
     @staticmethod
     def security_flag_for(security_str):
