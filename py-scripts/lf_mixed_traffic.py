@@ -1911,6 +1911,78 @@ class Mixed_Traffic(Realm):
                 return False
             time.sleep(1)
 
+    def _sta_port_fields(self):
+        """{port name: {'down':..., 'ssid':...}} for every WIFI-STA port, real devices included.
+
+        One /port/list read rather than a /port GET per station: a 200-station
+        scenario would otherwise spend hundreds of round trips just to find out
+        which stations are up.
+        """
+        ports = {}
+        response = super().json_get("/port/list?fields=alias,port+type,down,ssid")
+        for entry in (response or {}).get('interfaces', []):
+            for name, details in entry.items():
+                if isinstance(details, dict) and details.get('port type') == "WIFI-STA":
+                    ports[name] = {
+                        'down': bool(details.get('down', True)),
+                        'ssid': (details.get('ssid') or '').strip(),
+                    }
+        return ports
+
+    def wait_for_scenario_stations(self, timeout_sec=120, settle_polls=2, poll_sec=2):
+        """Wait until the scenario's stations have settled and carry their SSID.
+
+        "cv is_built" is a global flag with no notion of *which* build it refers
+        to, so straight after a rebuild it can still report the previous scenario
+        as built. Reading /port/list at that moment catches stations mid-teardown,
+        and admin-upping one that has since gone fails with
+        "set_port rv: 22 (Invalid argument)". Waiting for the list to stop
+        changing avoids depending on that flag's timing.
+
+        A station also appears in /port/list before the port manager has filled
+        in its SSID and security, so a read taken the moment the build finishes
+        gets blank strings for some or all of them -- which is what leaves band
+        as '-'. A stable set of names is therefore not enough on its own; wait
+        for the SSIDs to show up as well.
+
+        Returns True once settled, False if timeout_sec passed first.
+        """
+        deadline = time.time() + timeout_sec
+        previous = None
+        previous_blank = None
+        stable = 0
+        while True:
+            ports = self._sta_port_fields()
+            current = sorted(ports)
+            blank = [name for name in current if not ports[name]['ssid']]
+
+            if current and current == previous and not blank:
+                stable += 1
+                if stable >= settle_polls:
+                    logger.info("Scenario stations settled: {} station port(s)".format(len(current)))
+                    return True
+            else:
+                if previous is not None and current != previous:
+                    logger.info("Scenario stations still changing ({} -> {} port(s))".format(
+                        len(previous), len(current)))
+                elif blank and len(blank) != previous_blank:
+                    # Only on change, so a slow build does not fill the log.
+                    logger.info("Waiting for SSID on {} of {} station(s)".format(
+                        len(blank), len(current)))
+                stable = 0
+
+            previous = current
+            previous_blank = len(blank)
+            if time.time() >= deadline:
+                if blank:
+                    logger.warning("{} of {} station(s) still had no SSID after {}s; continuing "
+                                   "(band may read '-')".format(len(blank), len(current), timeout_sec))
+                else:
+                    logger.warning("Scenario stations had not settled after {}s; continuing with "
+                                   "{} station port(s)".format(timeout_sec, len(current)))
+                return False
+            time.sleep(poll_sec)
+
     @staticmethod
     def band_for_port(interface_details):
         """Work out a station's band from its /port/list entry.
@@ -3511,6 +3583,9 @@ INCLUDE_IN_README: False
             logger.error("Scenario '{}' was not built within --scenario_wait_time {}. Exiting.".format(
                 args.scenario, args.scenario_wait_time))
             exit(1)
+        # "cv is_built" can still be reporting the previous scenario, so wait for the
+        # station list itself to stop changing before reading it.
+        mixed_obj.wait_for_scenario_stations(timeout_sec=scenario_wait_secs)
         mixed_obj.station_info()
         mixed_obj.station_list = mixed_obj.sta_info['station_list']
         mixed_obj.station_profile.station_names = mixed_obj.sta_info['station_list']
