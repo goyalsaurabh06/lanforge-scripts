@@ -1802,71 +1802,23 @@ class L3VariableTime(Realm):
                 if name.endswith("-A"):
                     logger.info("name has -A")
 
-                    if (isinstance(endp['rx rate'], str)
-                            and not endp['rx rate'].isnumeric()) or endp['rx rate'] is None:
-                        logging.debug(
-                            'Expected integer response for rx rate, received non-numeric string instead. Replacing with 0')
-                        total_dl_rate += 0
-                    else:
-                        total_dl_rate += int(endp["rx rate"])
+                    total_dl_rate += self.to_number(endp["rx rate"])
 
-                    if (isinstance(endp['rx rate ll'], str)
-                            and not endp['rx rate ll'].isnumeric()) or endp['rx rate ll'] is None:
-                        logging.debug(
-                            'Expected integer response for rx rate ll, received non-numeric string instead. Replacing with 0')
-                        total_dl_rate_ll += 0
-                    else:
-                        total_dl_rate_ll += int(endp["rx rate ll"])
+                    total_dl_rate_ll += self.to_number(endp["rx rate ll"])
 
-                    if (isinstance(endp['rx pkts ll'], str)
-                            and not endp['rx pkts ll'].isnumeric()) or endp['rx pkts ll'] is None:
-                        logging.debug(
-                            'Expected integer response for rx pkts ll, received non-numeric string instead. Replacing with 0')
-                        total_dl_pkts_ll += 0
-                    else:
-                        total_dl_pkts_ll += int(endp["rx pkts ll"])
+                    total_dl_pkts_ll += self.to_number(endp["rx pkts ll"])
 
-                    if (isinstance(endp['rx drop %'], str)
-                            and not endp['rx drop %'].isnumeric()) or endp['rx drop %'] is None:
-                        logging.debug(
-                            'Expected integer response for rx drop %, received non-numeric string instead. Replacing with 0')
-                        dl_rx_drop_percent = 0
-                    else:
-                        dl_rx_drop_percent = round(endp["rx drop %"], 2)
+                    dl_rx_drop_percent = self.to_number(endp["rx drop %"], ndigits=2)
 
                 # -B upload side
                 else:
-                    if (isinstance(endp['rx rate'], str)
-                            and not endp['rx rate'].isnumeric()) or endp['rx rate'] is None:
-                        logging.debug(
-                            'Expected integer response for rx rate, received non-numeric string instead. Replacing with 0')
-                        total_ul_rate += 0
-                    else:
-                        total_ul_rate += int(endp["rx rate"])
+                    total_ul_rate += self.to_number(endp["rx rate"])
 
-                    if (isinstance(endp['rx rate ll'], str)
-                            and not endp['rx rate ll'].isnumeric()) or endp['rx rate ll'] is None:
-                        logging.debug(
-                            'Expected integer response for rx rate ll, received non-numeric string instead. Replacing with 0')
-                        total_ul_rate_ll += 0
-                    else:
-                        total_ul_rate_ll += int(endp["rx rate ll"])
+                    total_ul_rate_ll += self.to_number(endp["rx rate ll"])
 
-                    if (isinstance(endp['rx pkts ll'], str)
-                            and not endp['rx pkts ll'].isnumeric()) or endp['rx pkts ll'] is None:
-                        logging.debug(
-                            'Expected integer response for rx pkts ll, received non-numeric string instead. Replacing with 0')
-                        total_ul_pkts_ll += 0
-                    else:
-                        total_ul_pkts_ll += int(endp["rx pkts ll"])
+                    total_ul_pkts_ll += self.to_number(endp["rx pkts ll"])
 
-                    if (isinstance(endp['rx drop %'], str)
-                            and not endp['rx drop %'].isnumeric()) or endp['rx drop %'] is None:
-                        logging.debug(
-                            'Expected integer response for rx drop %, received non-numeric string instead. Replacing with 0')
-                        ul_rx_drop_percent = 0
-                    else:
-                        ul_rx_drop_percent = round(endp["rx drop %"], 2)
+                    ul_rx_drop_percent = self.to_number(endp["rx drop %"], ndigits=2)
 
                     # total_ul_rate += int(endp["rx rate"])
                     # total_ul_rate_ll += int(endp["rx rate ll"])
@@ -1923,20 +1875,16 @@ class L3VariableTime(Realm):
                         "multicast endpoint: {item} value:\n".format(item=item))
                     logger.debug(endp_value)
                     for value_name, value in endp_value.items():
-                        if isinstance(value, str) and not value.isnumeric():
-                            logging.debug(
-                                'Expected integer response for rx rate, received non-numeric string instead. Replacing with 0')
-                            value = 0
                         if value_name == 'rx rate':
                             if "-mrx-" in item:
-                                total_dl += int(value)
+                                total_dl += self.to_number(value)
                             else:
-                                total_ul += int(value)
+                                total_ul += self.to_number(value)
                         if value_name == 'rx rate ll':
                             if "-mrx-" in item:
-                                total_dl_ll += int(value)
+                                total_dl_ll += self.to_number(value)
                             else:
-                                total_ul_ll += int(value)
+                                total_ul_ll += self.to_number(value)
 
         # Unicast endpoints
         for e in self.cx_profile.created_endp.keys():
@@ -1951,23 +1899,15 @@ class L3VariableTime(Realm):
 
                     for value_name, value in endp_value.items():
                         if value_name == 'rx rate':
-                            if isinstance(value, str) and not value.isnumeric():
-                                logging.debug(
-                                    'Expected integer response for rx rate, received non-numeric string instead. Replacing with 0')
-                                value = 0
                             if item.endswith("-A"):
-                                total_dl += int(value)
+                                total_dl += self.to_number(value)
                             elif item.endswith("-B"):
-                                total_ul += int(value)
+                                total_ul += self.to_number(value)
                         if value_name == 'rx rate ll':
-                            if isinstance(value, str) and not value.isnumeric():
-                                logging.debug(
-                                    'Expected integer response for rx rate ll, received non-numeric string instead. Replacing with 0')
-                                value = 0
                             if item.endswith("-A"):
-                                total_dl_ll += int(value)
+                                total_dl_ll += self.to_number(value)
                             elif item.endswith("-B"):
-                                total_ul_ll += int(value)
+                                total_ul_ll += self.to_number(value)
         # logger.debug("total-dl: ", total_dl, " total-ul: ", total_ul, "\n")
         return True, endps, total_dl, total_ul, total_dl_ll, total_ul_ll
     # This script supports resetting ports, allowing one to test AP/controller under data load
