@@ -557,6 +557,24 @@ class Ping(Realm):
         return False
 
     @staticmethod
+    def validate_count(value):
+        """Read a packet counter back as an int, treating 'no data' as 0.
+
+        tx pkts / rx pkts / dropped come back as '' from an endpoint that has
+        not reported yet, and int('') raises -- which would lose the whole
+        report over one slow endpoint. 0 is the value the rest of the report
+        already treats as "nothing sent": the percent-loss maths guards on
+        packets_sent[i] == 0, and the bar graph plots it as an empty bar.
+
+        Deliberately returns a value for every input rather than skipping, so
+        the counter lists stay index-aligned with device_names and os_type.
+        """
+        try:
+            return int(float(str(value).replace(',', '').strip()))
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
     def validate_rtt(min_rtt, avg_rtt, max_rtt):
         """Check whether min/avg/max RTT values represent a real ping result.
 
@@ -831,11 +849,12 @@ class Ping(Realm):
         # packet_count_data = {}
         os_type = []
         for device, device_data in self.result_json.items():
-            logger.debug('Device data: {} {}'.format(device, device_data))
+            if device_data['sent'] == '' or device_data['recv'] == '' or device_data['dropped'] == '':
+                logger.info('Device data: {} {}'.format(device, device_data))
             os_type.append(device_data['os'])
-            self.packets_sent.append(int(device_data['sent']))
-            self.packets_received.append(int(device_data['recv']))
-            self.packets_dropped.append(int(device_data['dropped']))
+            self.packets_sent.append(self.validate_count(device_data['sent']))
+            self.packets_received.append(self.validate_count(device_data['recv']))
+            self.packets_dropped.append(self.validate_count(device_data['dropped']))
             self.device_names.append(device_data['name'] + ' ' + device_data['os'])
             self.device_modes.append(device_data['mode'])
             self.device_channels.append(device_data['channel'])
