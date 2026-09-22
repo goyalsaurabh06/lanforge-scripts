@@ -3455,13 +3455,30 @@ INCLUDE_IN_README: False
         cv_test_obj = cv_test_manager.cv_test(lfclient_host=args.mgr)
         cv_test_obj.apply_cv_scenario(args.scenario)
         cv_test_obj.build_cv_scenario()
-        create_response = cv_test_obj.create_test(test_name='Scenario Test', instance=args.scenario, load_old_cfg=False)
-        try:
-            create_ok = create_response[0]["LAST"]["response"] == "OK"
-        except (IndexError, KeyError, TypeError):
-            create_ok = False
-        if not create_ok:
-            logger.warning("Chamber View did not report the test as created: {}".format(create_response))
+        # Chamber View answers "BUSY: ChamberView is clearing ports or busy, please
+        # try again a bit later" while it is still tearing the previous scenario
+        # down. That is a retry, not a failure: without one the scenario is never
+        # created and the run carries on against whatever ports were left over.
+        create_deadline = time.time() + scenario_wait_secs
+        while True:
+            create_response = cv_test_obj.create_test(test_name='Scenario Test', instance=args.scenario,
+                                                      load_old_cfg=False)
+            try:
+                response_text = str(create_response[0]["LAST"]["response"])
+            except (IndexError, KeyError, TypeError):
+                response_text = str(create_response)
+            if response_text == "OK":
+                break
+            if "BUSY" not in response_text.upper():
+                logger.warning("Chamber View did not report the test as created: {}".format(create_response))
+                break
+            if time.time() >= create_deadline:
+                logger.error("Chamber View stayed busy for {}s; scenario '{}' was never created. "
+                             "Exiting rather than testing whatever ports are left over.".format(
+                                 scenario_wait_secs, args.scenario))
+                exit(1)
+            logger.info("Chamber View is busy clearing ports; retrying scenario create")
+            time.sleep(2)
         logger.info("Stations Initiated and waits until adminup and gets IP")
         if not mixed_obj.wait_for_scenario_built(cv_test_obj, scenario_wait_secs):
             logger.error("Scenario '{}' was not built within --scenario_wait_time {}. Exiting.".format(
