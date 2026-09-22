@@ -632,7 +632,9 @@ class HttpDownload(Realm):
             if isinstance(per_radio, list)
             for sta in per_radio
         ]
-        virtual_ports = list(dict.fromkeys(created_stations))
+        virtual_ports = list(dict.fromkeys(
+            created_stations + self.existing_station_list
+        ))
         if self.client_type == "Real":
             return self.port_list
         if self.client_type == "Virtual":
@@ -673,7 +675,8 @@ class HttpDownload(Realm):
             elif self.bands == "6G":
                 self.station_profile.mode = 15
             for rad in range(len(self.radio)):
-                chosen = [sta for sta in self.station_list[rad]]
+                existing = set(self.existing_station_list)
+                chosen = [sta for sta in self.station_list[rad] if sta not in existing]
                 to_delete = [sta for sta in chosen if self.local_realm.port_exists(sta)]
                 for sta in to_delete:
                     self.local_realm.rm_port(sta, check_exists=True, debug_=self.debug)
@@ -693,27 +696,34 @@ class HttpDownload(Realm):
                 else:
                     self.local_realm._fail("Stations failed to get IPs")
                 all_port_list.extend(sta_names)
-                if self.client_type in ["Real", "Both"]:
-                    all_port_list = self.port_list + all_port_list
-                # building layer4
-                self.http_profile.direction = 'dl'
-                self.http_profile.dest = '/dev/null'
-                ip_upstream = self.get_upstream_ip()
-                if ip_upstream is None:
-                    raise RuntimeError("Failed to determine upstream IP")
-                # create http profile
-                if self.get_url_from_file:  # enabling the GET-URL-FROM-FILE flag if its ture
-                    self.http_profile.create(ports=all_port_list, sleep_time=.5,
-                                             suppress_related_commands_=None, http=True, user=self.lf_username,
-                                             passwd=self.lf_password, http_ip=self.file_path, proxy_auth_type=0x200,
-                                             timeout=1000, get_url_from_file=True, interop=(self.client_type != "Virtual"), windows_list=self.windows_ports)
-                else:
-                    self.http_profile.create(ports=all_port_list, sleep_time=.5,
-                                             suppress_related_commands_=None, http=True, user=self.lf_username,
-                                             passwd=self.lf_password, http_ip=ip_upstream + "/webpage.html",
-                                             proxy_auth_type=0x200, timeout=1000, interop=(self.client_type != "Virtual"), windows_list=self.windows_ports)
                 if self.count == 2:
                     self.station_profile.mode = 6
+            if self.existing_station_list:
+                all_port_list.extend(self.existing_station_list)
+                if self.local_realm.wait_for_ip(self.existing_station_list, timeout_sec=60):
+                    self.local_realm._pass("All stations got IPs")
+                else:
+                    self.local_realm._fail("Stations failed to get IPs")
+
+            if self.client_type in ["Real", "Both"]:
+                all_port_list = self.port_list + all_port_list
+            # building layer4
+            self.http_profile.direction = 'dl'
+            self.http_profile.dest = '/dev/null'
+            ip_upstream = self.get_upstream_ip()
+            if ip_upstream is None:
+                raise RuntimeError("Failed to determine upstream IP")
+            # create http profile
+            if self.get_url_from_file:  # enabling the GET-URL-FROM-FILE flag if its ture
+                self.http_profile.create(ports=all_port_list, sleep_time=.5,
+                                         suppress_related_commands_=None, http=True, user=self.lf_username,
+                                         passwd=self.lf_password, http_ip=self.file_path, proxy_auth_type=0x200,
+                                         timeout=1000, get_url_from_file=True, interop=(self.client_type != "Virtual"), windows_list=self.windows_ports)
+            else:
+                self.http_profile.create(ports=all_port_list, sleep_time=.5,
+                                         suppress_related_commands_=None, http=True, user=self.lf_username,
+                                         passwd=self.lf_password, http_ip=ip_upstream + "/webpage.html",
+                                         proxy_auth_type=0x200, timeout=1000, interop=(self.client_type != "Virtual"), windows_list=self.windows_ports)
         else:
             if self.client_type == "Real":
                 self.http_profile.direction = 'dl'
@@ -1238,8 +1248,10 @@ class HttpDownload(Realm):
 
     def postcleanup(self):
         self.http_profile.cleanup()
-        self.station_profile.cleanup()
-        LFUtils.wait_until_ports_disappear(base_url=self.local_realm.lfclient_url, port_list=self.station_profile.station_names,
+        stations_to_cleanup = [sta for sta in self.station_profile.station_names
+                               if sta not in self.existing_station_list]
+        self.station_profile.cleanup(stations_to_cleanup)
+        LFUtils.wait_until_ports_disappear(base_url=self.local_realm.lfclient_url, port_list=stations_to_cleanup,
                                            debug=self.debug)
 
     def file_create(self, ssh_port):
@@ -2858,6 +2870,12 @@ def main():
     required.add_argument('--mgr_port', help='port LANforge GUI HTTP service is running on', default=8080)
     required.add_argument('--upstream_port', help='non-station port that generates traffic: eg: eth1', default='eth2')
     optional.add_argument('--num_stations', type=int, help='number of stations to create for virtual clients', default=0)
+    optional.add_argument('--use_existing_station_list', action='store_true',
+                          help='full eid must be given, the script will use stations from the list, '
+                               'no configuration on the list, also prevents pre_cleanup')
+    optional.add_argument('--existing_station_list', action='append',
+                          help='[list of stations], use the stations in the list, '
+                               'multiple station lists may be entered')
     optional.add_argument('--twog_radio', help='specify radio for 2.4G clients', default='wiphy3')
     optional.add_argument('--fiveg_radio', help='specify radio for 5 GHz client', default='wiphy0')
     optional.add_argument('--sixg_radio', help='Specify radio for 6GHz client', default='wiphy2')
@@ -3161,376 +3179,408 @@ times the file is downloaded.
                     http.updating_webui_runningjson(obj)
             if args.client_type == "Real":
                 args.num_stations = len(port_list)
-            if not args.get_url_from_file:
-                http.file_create(ssh_port=args.ssh_port)
-            else:
-                if args.file_path is None:
-                    print("WARNING: Please Specify the path of the file, if you select the --get_url_from_file")
-                    exit(0)
-            if args.num_stations:
-                http.set_values()
-
-            # Keep one authoritative list for monitoring, reporting and counts.
-            all_client_list = http.active_ports()
-            # Virtual stations only, i.e. what active_ports() adds on top of port_list.
-            station_list = [] if args.client_type == "Real" else all_client_list[len(port_list):]
-
-            args.num_stations = len(all_client_list)
-
-            http.precleanup()
-            if args.iot_test:
-                if args.iot_iterations > 1:
-                    thread = threading.Thread(target=trigger_iot, args=(iot_ip, iot_port, iot_iterations, iot_delay, iot_device_list, iot_testname, iot_increment))
-                    thread.start()
+        if not args.get_url_from_file:
+            http.file_create(ssh_port=args.ssh_port)
+        else:
+            if args.file_path is None:
+                print("WARNING: Please Specify the path of the file, if you select the --get_url_from_file")
+                exit(0)
+        if args.num_stations:
+            http.set_values()
+        # Existing-station validation (--use_existing_station_list)
+        existing_sta_list = []
+        if args.client_type in ("Virtual", "Both") and args.use_existing_station_list:
+            raw_existing_list = args.existing_station_list
+            if raw_existing_list:
+                flat = [s.strip() for s in ','.join(raw_existing_list).split(',') if s.strip()]
+                if not flat:
+                    logger.warning("validate_existing_stations: no EIDs found after parsing.")
                 else:
-                    total_secs = int(args.duration)
-                    iot_iterations = max(1, total_secs // args.iot_delay)
-                    iot_thread = threading.Thread(
-                        target=trigger_iot,
-                        args=(
-                            args.iot_ip,
-                            args.iot_port,
-                            iot_iterations,
-                            args.iot_delay,
-                            args.iot_device_list,
-                            args.iot_testname,
-                            args.iot_increment
-                        ),
-                        daemon=True
-                    )
-                    iot_thread.start()
-            http.build()
-            if args.client_type in ('Real', 'Both'):
-                http.monitor_cx()
-                logger.info(f'Test started on the devices : {http.port_list}')
-            test_time = datetime.now()
-            # Solution For Leap Year conflict changed it to %Y
-            test_time = test_time.strftime("%Y %d %H:%M:%S")
-            print("Test started at ", test_time)
+                    port_data = {}
+                    try:
+                        port_resp = http.local_realm.json_get("/port/all")
+                        if port_resp and "interfaces" in port_resp:
+                            for iface in port_resp["interfaces"]:
+                                port_data.update(iface)
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch /port/all for IP validation: {e}")
 
-            if args.robot_test:
-                # To perform robot test
-                http.perform_robo()
+                    validated = []
+                    for eid in dict.fromkeys(flat):
+                        ip = (port_data.get(eid) or {}).get("ip")
+                        if ip and ip != "0.0.0.0":
+                            validated.append(eid)
+                            logger.info(f"validate_existing_stations: confirmed port '{eid}' with IP")
+                        else:
+                            logger.warning(f"validate_existing_stations: port '{eid}' missing or has no IP - skipping.")
+
+                    if not validated:
+                        logger.error(
+                            "validate_existing_stations: none of the supplied existing stations "
+                            "exist in LANforge.  Aborting.")
+                        exit(1)
+
+                logger.info(f"validate_existing_stations: {len(validated)} valid port(s): {validated}")
+                existing_sta_list = validated
+                logger.info(f"Existing stations after validation: {existing_sta_list}")
             else:
-                http.start()
-                # To fetch runtime csv during runtime
-                http.monitor_for_runtime_csv(args.duration)
-                http.stop()
-            # taking http.data, which got updated in the monitor_for_runtime_csv method
-            if args.client_type in ('Real', 'Both'):
-                uc_avg_val = http.data['uc_avg']
-                url_times = http.data['url_data']
-                rx_bytes_val = http.data['bytes_rd']
-                rx_rate_val = list(http.data['rx rate (1m)'])
+                logger.warning("--use_existing_station_list set but --existing_station_list is empty — ignoring.")
+
+        # Merge existing stations into the global station list
+        http.existing_station_list = existing_sta_list
+
+        # Keep one authoritative list for monitoring, reporting and counts.
+        all_client_list = http.active_ports()
+        # Virtual stations only, i.e. what active_ports() adds on top of port_list.
+        station_list = [] if args.client_type == "Real" else all_client_list[len(port_list):]
+
+        args.num_stations = len(all_client_list)
+
+        http.precleanup()
+        if args.iot_test:
+            if args.iot_iterations > 1:
+                thread = threading.Thread(target=trigger_iot, args=(iot_ip, iot_port, iot_iterations, iot_delay, iot_device_list, iot_testname, iot_increment))
+                thread.start()
             else:
-                uc_avg_val = http.my_monitor('uc-avg')
-                url_times = http.my_monitor('total-urls')
-                rx_bytes_val = http.my_monitor('bytes-rd')
-                rx_rate_val = http.my_monitor('rx rate')
-            if args.dowebgui:
-                http.data_for_webui["url_data"] = url_times  # storing the layer-4 url data at the end of test
-            if args.client_type == 'Real':  # for real clients
-                listReal.extend(uc_avg_val)
-                listReal_bytes.extend(rx_bytes_val)
-                listReal_speed.extend(rx_rate_val)
-                listReal_urltimes.extend(url_times)
-                logger.info("%s %s %s", listReal, listReal_bytes, listReal_speed)
-                final_dict[bands]['dl_time'] = listReal
-                min2.append(min(listReal))
-                final_dict[bands]['min'] = min2
-                max2.append(max(listReal))
-                final_dict[bands]['max'] = max2
-                avg2.append((sum(listReal) / args.num_stations))
-                final_dict[bands]['avg'] = avg2
-                final_dict[bands]['bytes_rd'] = listReal_bytes
-                final_dict[bands]['speed'] = listReal_speed
-                final_dict[bands]['url_times'] = listReal_urltimes
-            else:
-                if bands == "5G":
-                    list5G.extend(uc_avg_val)
-                    list5G_bytes.extend(rx_bytes_val)
-                    list5G_speed.extend(rx_rate_val)
-                    list5G_urltimes.extend(url_times)
-                    logger.info("%s %s %s %s", list5G, list5G_bytes, list5G_speed, list5G_urltimes)
-                    final_dict['5G']['dl_time'] = list5G
-                    min5.append(min(list5G))
-                    final_dict['5G']['min'] = min5
-                    max5.append(max(list5G))
-                    final_dict['5G']['max'] = max5
-                    avg5.append((sum(list5G) / args.num_stations))
-                    final_dict['5G']['avg'] = avg5
-                    final_dict['5G']['bytes_rd'] = list5G_bytes
-                    final_dict['5G']['speed'] = list5G_speed
-                    final_dict['5G']['url_times'] = list5G_urltimes
-                elif bands == "6G":
-                    list6G.extend(uc_avg_val)
-                    list6G_bytes.extend(rx_bytes_val)
-                    list6G_speed.extend(rx_rate_val)
-                    list6G_urltimes.extend(url_times)
-                    final_dict['6G']['dl_time'] = list6G
-                    min6.append(min(list6G))
-                    final_dict['6G']['min'] = min6
-                    max6.append(max(list6G))
-                    final_dict['6G']['max'] = max6
-                    avg6.append((sum(list6G) / args.num_stations))
-                    final_dict['6G']['avg'] = avg6
-                    final_dict['6G']['bytes_rd'] = list6G_bytes
-                    final_dict['6G']['speed'] = list6G_speed
-                    final_dict['6G']['url_times'] = list6G_urltimes
-                elif bands == "2.4G":
-                    list2G.extend(uc_avg_val)
-                    list2G_bytes.extend(rx_bytes_val)
-                    list2G_speed.extend(rx_rate_val)
-                    list2G_urltimes.extend(url_times)
-                    logger.info("%s %s %s", list2G, list2G_bytes, list2G_speed)
-                    final_dict['2.4G']['dl_time'] = list2G
-                    min2.append(min(list2G))
-                    final_dict['2.4G']['min'] = min2
-                    max2.append(max(list2G))
-                    final_dict['2.4G']['max'] = max2
-                    avg2.append((sum(list2G) / args.num_stations))
-                    final_dict['2.4G']['avg'] = avg2
-                    final_dict['2.4G']['bytes_rd'] = list2G_bytes
-                    final_dict['2.4G']['speed'] = list2G_speed
-                    final_dict['2.4G']['url_times'] = list2G_urltimes
-                elif bands == "Both":
-                    Both.extend(uc_avg_val)
-                    Both_bytes.extend(rx_bytes_val)
-                    Both_speed.extend(rx_rate_val)
-                    Both_urltimes.extend(url_times)
-                    final_dict['Both']['dl_time'] = Both
-                    min_both.append(min(Both))
-                    final_dict['Both']['min'] = min_both
-                    max_both.append(max(Both))
-                    final_dict['Both']['max'] = max_both
-                    avg_both.append((sum(Both) / args.num_stations))
-                    final_dict['Both']['avg'] = avg_both
-                    final_dict['Both']['bytes_rd'] = Both_bytes
-                    final_dict['Both']['speed'] = Both_speed
-                    final_dict['Both']['url_times'] = Both_urltimes
+                total_secs = int(args.duration)
+                iot_iterations = max(1, total_secs // args.iot_delay)
+                iot_thread = threading.Thread(
+                    target=trigger_iot,
+                    args=(
+                        args.iot_ip,
+                        args.iot_port,
+                        iot_iterations,
+                        args.iot_delay,
+                        args.iot_device_list,
+                        args.iot_testname,
+                        args.iot_increment
+                    ),
+                    daemon=True
+                )
+                iot_thread.start()
+        http.build()
+        if args.client_type in ('Real', 'Both'):
+            http.monitor_cx()
+            logger.info(f'Test started on the devices : {http.port_list}')
+        test_time = datetime.now()
+        # Solution For Leap Year conflict changed it to %Y
+        test_time = test_time.strftime("%Y %d %H:%M:%S")
+        print("Test started at ", test_time)
 
-            result_data = final_dict
-            print("result", result_data)
-            print("Test Finished")
-            test_end = datetime.now()
-            test_end = test_end.strftime("%Y %d %H:%M:%S")
-            print("Test ended at ", test_end)
-            s1 = test_time
-            s2 = test_end  # for example
-            FMT = '%Y %d %H:%M:%S'
-            test_duration = datetime.strptime(s2, FMT) - datetime.strptime(s1, FMT)
+        if args.robot_test:
+            # To perform robot test
+            http.perform_robo()
+        else:
+            http.start()
+            # To fetch runtime csv during runtime
+            http.monitor_for_runtime_csv(args.duration)
+            http.stop()
+        # taking http.data, which got updated in the monitor_for_runtime_csv method
+        if args.client_type in ('Real', 'Both'):
+            uc_avg_val = http.data['uc_avg']
+            url_times = http.data['url_data']
+            rx_bytes_val = http.data['bytes_rd']
+            rx_rate_val = list(http.data['rx rate (1m)'])
+        else:
+            uc_avg_val = http.my_monitor('uc-avg')
+            url_times = http.my_monitor('total-urls')
+            rx_bytes_val = http.my_monitor('bytes-rd')
+            rx_rate_val = http.my_monitor('rx rate')
+        if args.dowebgui:
+            http.data_for_webui["url_data"] = url_times  # storing the layer-4 url data at the end of test
+        if args.client_type == 'Real':  # for real clients
+            listReal.extend(uc_avg_val)
+            listReal_bytes.extend(rx_bytes_val)
+            listReal_speed.extend(rx_rate_val)
+            listReal_urltimes.extend(url_times)
+            logger.info("%s %s %s", listReal, listReal_bytes, listReal_speed)
+            final_dict[bands]['dl_time'] = listReal
+            min2.append(min(listReal))
+            final_dict[bands]['min'] = min2
+            max2.append(max(listReal))
+            final_dict[bands]['max'] = max2
+            avg2.append((sum(listReal) / args.num_stations))
+            final_dict[bands]['avg'] = avg2
+            final_dict[bands]['bytes_rd'] = listReal_bytes
+            final_dict[bands]['speed'] = listReal_speed
+            final_dict[bands]['url_times'] = listReal_urltimes
+        else:
+            if bands == "5G":
+                list5G.extend(uc_avg_val)
+                list5G_bytes.extend(rx_bytes_val)
+                list5G_speed.extend(rx_rate_val)
+                list5G_urltimes.extend(url_times)
+                logger.info("%s %s %s %s", list5G, list5G_bytes, list5G_speed, list5G_urltimes)
+                final_dict['5G']['dl_time'] = list5G
+                min5.append(min(list5G))
+                final_dict['5G']['min'] = min5
+                max5.append(max(list5G))
+                final_dict['5G']['max'] = max5
+                avg5.append((sum(list5G) / args.num_stations))
+                final_dict['5G']['avg'] = avg5
+                final_dict['5G']['bytes_rd'] = list5G_bytes
+                final_dict['5G']['speed'] = list5G_speed
+                final_dict['5G']['url_times'] = list5G_urltimes
+            elif bands == "6G":
+                list6G.extend(uc_avg_val)
+                list6G_bytes.extend(rx_bytes_val)
+                list6G_speed.extend(rx_rate_val)
+                list6G_urltimes.extend(url_times)
+                final_dict['6G']['dl_time'] = list6G
+                min6.append(min(list6G))
+                final_dict['6G']['min'] = min6
+                max6.append(max(list6G))
+                final_dict['6G']['max'] = max6
+                avg6.append((sum(list6G) / args.num_stations))
+                final_dict['6G']['avg'] = avg6
+                final_dict['6G']['bytes_rd'] = list6G_bytes
+                final_dict['6G']['speed'] = list6G_speed
+                final_dict['6G']['url_times'] = list6G_urltimes
+            elif bands == "2.4G":
+                list2G.extend(uc_avg_val)
+                list2G_bytes.extend(rx_bytes_val)
+                list2G_speed.extend(rx_rate_val)
+                list2G_urltimes.extend(url_times)
+                logger.info("%s %s %s", list2G, list2G_bytes, list2G_speed)
+                final_dict['2.4G']['dl_time'] = list2G
+                min2.append(min(list2G))
+                final_dict['2.4G']['min'] = min2
+                max2.append(max(list2G))
+                final_dict['2.4G']['max'] = max2
+                avg2.append((sum(list2G) / args.num_stations))
+                final_dict['2.4G']['avg'] = avg2
+                final_dict['2.4G']['bytes_rd'] = list2G_bytes
+                final_dict['2.4G']['speed'] = list2G_speed
+                final_dict['2.4G']['url_times'] = list2G_urltimes
+            elif bands == "Both":
+                Both.extend(uc_avg_val)
+                Both_bytes.extend(rx_bytes_val)
+                Both_speed.extend(rx_rate_val)
+                Both_urltimes.extend(url_times)
+                final_dict['Both']['dl_time'] = Both
+                min_both.append(min(Both))
+                final_dict['Both']['min'] = min_both
+                max_both.append(max(Both))
+                final_dict['Both']['max'] = max_both
+                avg_both.append((sum(Both) / args.num_stations))
+                final_dict['Both']['avg'] = avg_both
+                final_dict['Both']['bytes_rd'] = Both_bytes
+                final_dict['Both']['speed'] = Both_speed
+                final_dict['Both']['url_times'] = Both_urltimes
 
-            info_ssid = []
-            info_security = []
-            # For real clients
-            if args.client_type == 'Real':
-                info_ssid.append(args.ssid)
-                info_security.append(args.security)
-            else:
-                for band in args.bands:
-                    if band == "2.4G":
-                        info_ssid.extend(args.twog_ssid)
-                        info_security.extend(args.twog_security)
-                    elif band == "5G":
-                        info_ssid.extend(args.fiveg_ssid)
-                        info_security.extend(args.fiveg_security)
-                    elif band == "6G":
-                        info_ssid.extend(args.sixg_ssid)
-                        info_security.extend(args.sixg_security)
-                    elif band == "Both":
-                        info_ssid.extend(args.twog_ssid)
-                        info_security.extend(args.twog_security)
-                        info_ssid.extend(args.fiveg_ssid)
-                        info_security.extend(args.fiveg_security)
+        result_data = final_dict
+        print("result", result_data)
+        print("Test Finished")
+        test_end = datetime.now()
+        test_end = test_end.strftime("%Y %d %H:%M:%S")
+        print("Test ended at ", test_end)
+        s1 = test_time
+        s2 = test_end  # for example
+        FMT = '%Y %d %H:%M:%S'
+        test_duration = datetime.strptime(s2, FMT) - datetime.strptime(s1, FMT)
 
-            print("total test duration ", test_duration)
-            date = str(datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
-            duration = args.duration
-            if int(duration) < 60:
-                duration = str(duration) + "s"
-            elif int(duration == 60) or (int(duration) > 60 and int(duration) < 3600):
-                duration = str(duration / 60) + "m"
-            else:
-                if int(duration == 3600) or (int(duration) > 3600):
-                    duration = str(duration / 3600) + "h"
+        info_ssid = []
+        info_security = []
+        # For real clients
+        if args.client_type == 'Real':
+            info_ssid.append(args.ssid)
+            info_security.append(args.security)
+        else:
+            for band in args.bands:
+                if band == "2.4G":
+                    info_ssid.extend(args.twog_ssid or [])
+                    info_security.extend(args.twog_security or [])
+                elif band == "5G":
+                    info_ssid.extend(args.fiveg_ssid or [])
+                    info_security.extend(args.fiveg_security or [])
+                elif band == "6G":
+                    info_ssid.extend(args.sixg_ssid or [])
+                    info_security.extend(args.sixg_security or [])
+                elif band == "Both":
+                    info_ssid.extend(args.twog_ssid or [])
+                    info_security.extend(args.twog_security or [])
+                    info_ssid.extend(args.fiveg_ssid or [])
+                    info_security.extend(args.fiveg_security or [])
 
-            android_devices, windows_devices, linux_devices, mac_devices = 0, 0, 0, 0
-            all_devices_names = []
-            device_type = []
-            total_devices = ""
-            if args.client_type in ("Real", "Both"):
-                for i in http.devices_list:
-                    split_device_name = i.split(" ")
-                    if 'android' in split_device_name:
-                        all_devices_names.append(split_device_name[2] + ("(Android)"))
-                        device_type.append("Android")
-                        android_devices += 1
-                    elif 'Win' in split_device_name:
-                        all_devices_names.append(split_device_name[2] + ("(Windows)"))
-                        device_type.append("Windows")
-                        windows_devices += 1
-                    elif 'Lin' in split_device_name:
-                        all_devices_names.append(split_device_name[2] + ("(Linux)"))
-                        device_type.append("Linux")
-                        linux_devices += 1
-                    elif 'Mac' in split_device_name:
-                        all_devices_names.append(split_device_name[2] + ("(Mac)"))
-                        device_type.append("Mac")
-                        mac_devices += 1
+        print("total test duration ", test_duration)
+        date = str(datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
+        duration = args.duration
+        if int(duration) < 60:
+            duration = str(duration) + "s"
+        elif int(duration == 60) or (int(duration) > 60 and int(duration) < 3600):
+            duration = str(duration / 60) + "m"
+        else:
+            if int(duration == 3600) or (int(duration) > 3600):
+                duration = str(duration / 3600) + "h"
 
-                # Build total_devices string based on counts
-                if android_devices > 0:
-                    total_devices += f" Android({android_devices})"
-                if windows_devices > 0:
-                    total_devices += f" Windows({windows_devices})"
-                if linux_devices > 0:
-                    total_devices += f" Linux({linux_devices})"
-                if mac_devices > 0:
-                    total_devices += f" Mac({mac_devices})"
-            if args.client_type == "Real":
-                if args.group_name:
-                    group_names = ', '.join(configuration.keys())
-                    profile_names = ', '.join(configuration.values())
-                    configmap = "Groups:" + group_names + " -> Profiles:" + profile_names
-                    test_setup_info = {
-                        "AP name": args.ap_name,
-                        "Configuration": configmap,
-                        "Configured Devices": ", ".join(all_devices_names),
-                        "No of Devices": "Total" + f"({len(all_devices_names)})" + total_devices,
-                        "Traffic Direction": "Download",
-                        "Traffic Duration ": duration
-                    }
-                else:
-                    test_setup_info = {
-                        "AP Name": args.ap_name,
-                        "SSID": ssid,
-                        "Device List": ", ".join(all_devices_names),
-                        "Security": security,
-                        "No of Devices": "Total" + f"({len(all_devices_names)})" + total_devices,
-                        "Traffic Direction": "Download",
-                        "Traffic Duration ": duration
-                    }
-            elif args.client_type == "Virtual":
+        android_devices, windows_devices, linux_devices, mac_devices = 0, 0, 0, 0
+        all_devices_names = []
+        device_type = []
+        total_devices = ""
+        if args.client_type in ("Real", "Both"):
+            for i in http.devices_list:
+                split_device_name = i.split(" ")
+                if 'android' in split_device_name:
+                    all_devices_names.append(split_device_name[2] + ("(Android)"))
+                    device_type.append("Android")
+                    android_devices += 1
+                elif 'Win' in split_device_name:
+                    all_devices_names.append(split_device_name[2] + ("(Windows)"))
+                    device_type.append("Windows")
+                    windows_devices += 1
+                elif 'Lin' in split_device_name:
+                    all_devices_names.append(split_device_name[2] + ("(Linux)"))
+                    device_type.append("Linux")
+                    linux_devices += 1
+                elif 'Mac' in split_device_name:
+                    all_devices_names.append(split_device_name[2] + ("(Mac)"))
+                    device_type.append("Mac")
+                    mac_devices += 1
+
+            # Build total_devices string based on counts
+            if android_devices > 0:
+                total_devices += f" Android({android_devices})"
+            if windows_devices > 0:
+                total_devices += f" Windows({windows_devices})"
+            if linux_devices > 0:
+                total_devices += f" Linux({linux_devices})"
+            if mac_devices > 0:
+                total_devices += f" Mac({mac_devices})"
+        if args.client_type == "Real":
+            if args.group_name:
+                group_names = ', '.join(configuration.keys())
+                profile_names = ', '.join(configuration.values())
+                configmap = "Groups:" + group_names + " -> Profiles:" + profile_names
                 test_setup_info = {
-                    "AP Name": args.ap_name,
-                    "SSID": ssid,
-                    "Device List": ", ".join(station_list),
-                    "Security": security,
-                    "No of Devices:": "Total" + f"({args.num_stations})" + f" Virtual({len(station_list)}) ",
+                    "AP name": args.ap_name,
+                    "Configuration": configmap,
+                    "Configured Devices": ", ".join(all_devices_names),
+                    "No of Devices": "Total" + f"({len(all_devices_names)})" + total_devices,
                     "Traffic Direction": "Download",
                     "Traffic Duration ": duration
                 }
-            elif args.client_type == "Both":
-                if args.group_name:
-                    group_names = ', '.join(configuration.keys())
-                    profile_names = ', '.join(configuration.values())
-                    configmap = "Groups:" + group_names + " -> Profiles:" + profile_names
-                    test_setup_info = {
-                        "AP name": args.ap_name,
-                        "Configuration": configmap,
-                        "Configured Devices": ", ".join(all_devices_names) + ", ".join(station_list),
-                        "No of Devices": "Total" + f"({len(all_devices_names + args.num_stations)})" + total_devices + f" Virtual({len(station_list)}) ",
-                        "Traffic Direction": "Download",
-                        "Traffic Duration ": duration
-                    }
-                else:
-                    test_setup_info = {
-                        "AP_Name": args.ap_name,
-                        "SSID": ssid,
-                        "Device List": ", ".join(all_devices_names) + ", ".join(station_list),
-                        "Security": security,
-                        "No of Devices": "Total" + f"({len(all_devices_names + args.num_stations)})" + total_devices + f" Virtual({len(station_list)}) ",
-                        "Traffic Direction": "Download",
-                        "Traffic Duration ": duration
-                    }
             else:
                 test_setup_info = {
                     "AP Name": args.ap_name,
                     "SSID": ssid,
+                    "Device List": ", ".join(all_devices_names),
                     "Security": security,
-                    "No of Devices": args.num_stations,
+                    "No of Devices": "Total" + f"({len(all_devices_names)})" + total_devices,
                     "Traffic Direction": "Download",
                     "Traffic Duration ": duration
                 }
-            test_input_infor = {
-                "LANforge ip": args.mgr,
-                "Bands": args.bands,
-                "Upstream": args.upstream_port,
-                "Stations": args.num_stations,
-                "SSID": ','.join(filter(None, info_ssid)) if info_ssid else "",
-                "Security": ', '.join(filter(None, info_security)) if info_security else "",
-                "Duration": args.duration,
-                "Contact": "support@candelatech.com"
+        elif args.client_type == "Virtual":
+            test_setup_info = {
+                "AP Name": args.ap_name,
+                "SSID": ssid,
+                "Device List": ", ".join(station_list),
+                "Security": security,
+                "No of Devices:": "Total" + f"({args.num_stations})" + f" Virtual({len(station_list)}) ",
+                "Traffic Direction": "Download",
+                "Traffic Duration ": duration
             }
-            if not args.file_path:
-                test_setup_info["File size"] = args.file_size
-                test_setup_info["File location"] = "/usr/local/lanforge/nginx/html"
-                test_input_infor["File size"] = args.file_size
+        else:
+            if args.group_name:
+                group_names = ', '.join(configuration.keys())
+                profile_names = ', '.join(configuration.values())
+                configmap = "Groups:" + group_names + " -> Profiles:" + profile_names
+                test_setup_info = {
+                    "AP name": args.ap_name,
+                    "Configuration": configmap,
+                    "Configured Devices": ", ".join(all_devices_names) + ", ".join(station_list),
+                    "No of Devices": "Total" + f"({args.num_stations})" + total_devices + f" Virtual({len(station_list)}) ",
+                    "Traffic Direction": "Download",
+                    "Traffic Duration ": duration
+                }
             else:
-                test_setup_info["File location (URLs from the File)"] = args.file_path
-            if args.client_type in ("Real", "Both"):
-                test_setup_info["failed_cx's"] = http.failed_cx if http.failed_cx else "NONE"
-            # dataset = http.download_time_in_sec(result_data=result_data)
-            rx_rate = []
-            for i in result_data:
-                dataset = result_data[i]['dl_time']
-                dataset2 = result_data[i]['url_times']
-                bytes_rd = result_data[i]['bytes_rd']
-                rx_rate = result_data[i]['speed']
-            dataset1 = [round(x / 1000000, 4) for x in bytes_rd]
-            rx_rate = [round(x / 1000000, 4) for x in rx_rate]  # converting bps to mbps
+                test_setup_info = {
+                    "AP_Name": args.ap_name,
+                    "SSID": ssid,
+                    "Device List": ", ".join(all_devices_names) + ", ".join(station_list),
+                    "Security": security,
+                    "No of Devices": "Total" + f"({args.num_stations})" + total_devices + f" Virtual({len(station_list)}) ",
+                    "Traffic Direction": "Download",
+                    "Traffic Duration ": duration
+                }
+        test_input_infor = {
+            "LANforge ip": args.mgr,
+            "Bands": args.bands,
+            "Upstream": args.upstream_port,
+            "Stations": args.num_stations,
+            "SSID": ','.join(filter(None, info_ssid)) if info_ssid else "",
+            "Security": ', '.join(filter(None, info_security)) if info_security else "",
+            "Duration": args.duration,
+            "Contact": "support@candelatech.com"
+        }
+        if not args.file_path:
+            test_setup_info["File size"] = args.file_size
+            test_setup_info["File location"] = "/usr/local/lanforge/nginx/html"
+            test_input_infor["File size"] = args.file_size
+        else:
+            test_setup_info["File location (URLs from the File)"] = args.file_path
+        if args.client_type in ("Real", "Both"):
+            test_setup_info["failed_cx's"] = http.failed_cx if http.failed_cx else "NONE"
+        # dataset = http.download_time_in_sec(result_data=result_data)
+        rx_rate = []
+        for i in result_data:
+            dataset = result_data[i]['dl_time']
+            dataset2 = result_data[i]['url_times']
+            bytes_rd = result_data[i]['bytes_rd']
+            rx_rate = result_data[i]['speed']
+        dataset1 = [round(x / 1000000, 4) for x in bytes_rd]
+        rx_rate = [round(x / 1000000, 4) for x in rx_rate]  # converting bps to mbps
 
-            lis = []
-            if bands == "Both":
-                for i in range(1, args.num_stations * 2 + 1):
-                    lis.append(i)
-            else:
-                for i in range(1, args.num_stations + 1):
-                    lis.append(i)
+        lis = []
+        if bands == "Both":
+            for i in range(1, args.num_stations * 2 + 1):
+                lis.append(i)
+        else:
+            for i in range(1, args.num_stations + 1):
+                lis.append(i)
 
-            # dataset2 = http.speed_in_Mbps(result_data=result_data)
+        # dataset2 = http.speed_in_Mbps(result_data=result_data)
 
-            # data = http.summary_calculation(
-                # result_data=result_data,
-                # bands=args.bands,
-                # threshold_5g=args.threshold_5g,
-                # threshold_2g=args.threshold_2g,
-                # threshold_both=args.threshold_both)
-            # summary_table_value = {
-                # "": args.bands,
-                # "PASS/FAIL": data
-            # }
-            iot_summary = None
-            if args.iot_test and args.iot_testname:
-                base = os.path.join("results", args.iot_testname)
-                p = os.path.join(base, "iot_summary.json")
-                if os.path.exists(p):
-                    with open(p) as f:
-                        iot_summary = json.load(f)
-            if args.dowebgui:
-                http.data_for_webui["status"] = ["STOPPED"] * len(http.devices_list)
-                http.data_for_webui['rx rate (1m)'] = http.data['rx rate (1m)']
-                http.data_for_webui['total_err'] = http.data['total_err']
-                http.data_for_webui["start_time"] = http.data["start_time"]
-                http.data_for_webui["end_time"] = http.data["end_time"]
-                http.data_for_webui["remaining_time"] = http.data["remaining_time"]
-                df1 = pd.DataFrame(http.data_for_webui)
-                df1.to_csv('{}/http_datavalues.csv'.format(http.result_dir), index=False)
+        # data = http.summary_calculation(
+            # result_data=result_data,
+            # bands=args.bands,
+            # threshold_5g=args.threshold_5g,
+            # threshold_2g=args.threshold_2g,
+            # threshold_both=args.threshold_both)
+        # summary_table_value = {
+            # "": args.bands,
+            # "PASS/FAIL": data
+        # }
+        iot_summary = None
+        if args.iot_test and args.iot_testname:
+            base = os.path.join("results", args.iot_testname)
+            p = os.path.join(base, "iot_summary.json")
+            if os.path.exists(p):
+                with open(p) as f:
+                    iot_summary = json.load(f)
+        if args.dowebgui:
+            http.data_for_webui["status"] = ["STOPPED"] * len(http.devices_list)
+            http.data_for_webui['rx rate (1m)'] = http.data['rx rate (1m)']
+            http.data_for_webui['total_err'] = http.data['total_err']
+            http.data_for_webui["start_time"] = http.data["start_time"]
+            http.data_for_webui["end_time"] = http.data["end_time"]
+            http.data_for_webui["remaining_time"] = http.data["remaining_time"]
+            df1 = pd.DataFrame(http.data_for_webui)
+            df1.to_csv('{}/http_datavalues.csv'.format(http.result_dir), index=False)
 
-            http.generate_report(date, num_stations=args.num_stations,
-                                 duration=args.duration, test_setup_info=test_setup_info, dataset=dataset, lis=lis,
-                                 bands=args.bands, threshold_2g=args.threshold_2g, threshold_5g=args.threshold_5g,
-                                 threshold_both=args.threshold_both, dataset2=dataset2, dataset1=dataset1,
-                                 # summary_table_value=summary_table_value,
-                                 result_data=result_data, rx_rate=rx_rate,
-                                 test_rig=args.test_rig, test_tag=args.test_tag, dut_hw_version=args.dut_hw_version,
-                                 dut_sw_version=args.dut_sw_version, dut_model_num=args.dut_model_num,
-                                 dut_serial_num=args.dut_serial_num, test_id=args.test_id,
-                                 test_input_infor=test_input_infor, csv_outfile=args.csv_outfile, iot_summary=iot_summary)
-            http.postcleanup()
-            # FOR WEBGUI, filling csv at the end to get the last terminal logs
-            if args.dowebgui:
-                http.copy_reports_to_home_dir()
+        http.generate_report(date, num_stations=args.num_stations,
+                             duration=args.duration, test_setup_info=test_setup_info, dataset=dataset, lis=lis,
+                             bands=args.bands, threshold_2g=args.threshold_2g, threshold_5g=args.threshold_5g,
+                             threshold_both=args.threshold_both, dataset2=dataset2, dataset1=dataset1,
+                             # summary_table_value=summary_table_value,
+                             result_data=result_data, rx_rate=rx_rate,
+                             test_rig=args.test_rig, test_tag=args.test_tag, dut_hw_version=args.dut_hw_version,
+                             dut_sw_version=args.dut_sw_version, dut_model_num=args.dut_model_num,
+                             dut_serial_num=args.dut_serial_num, test_id=args.test_id,
+                             test_input_infor=test_input_infor, csv_outfile=args.csv_outfile, iot_summary=iot_summary)
+        http.postcleanup()
+        # FOR WEBGUI, filling csv at the end to get the last terminal logs
+        if args.dowebgui:
+            http.copy_reports_to_home_dir()
 
 
 if __name__ == '__main__':
