@@ -1719,6 +1719,7 @@ class HttpDownload(Realm):
 
         # To store http_datavalues.csv in report folder
         report_path_date_time = report.get_path_date_time()
+        log_dir = os.path.join(report_path_date_time, "log")
         # It ensures no blocker for virtual clients
         if self.client_type == 'Real':
             shutil.move('http_datavalues.csv', report_path_date_time)
@@ -1727,10 +1728,10 @@ class HttpDownload(Realm):
             except Exception:
                 logging.info("failed to generate all l4 data csv")
             # Moving indiviudal csv's to report directory
-            for csv_name in self.individual_device_csv_names:
-                shutil.move(f"{csv_name}.csv", report_path_date_time)
         if bands == "Both":
             num_stations = num_stations * 2
+        for csv_name in self.individual_device_csv_names:
+            shutil.move(f"{csv_name}.csv", log_dir)
         report.set_title("HTTP TEST Including IoT Devices" if iot_summary else "HTTP DOWNLOAD TEST")
         report.set_date(date)
         report.build_banner()
