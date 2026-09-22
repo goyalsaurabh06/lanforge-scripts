@@ -1308,6 +1308,12 @@ class Mixed_Traffic(Realm):
                         time.sleep(self.ftp_test_duration)
                         self.ftp_test_obj.my_monitor()
 
+                    # lf_ftp's stop() ends with station_profile.admin_down(), which downs
+                    # every station in station_names -- and under --parallel those stations
+                    # are shared with the QoS, HTTP, ping and multicast tests still running.
+                    # The scenario owns these stations, not this test, so empty the list and
+                    # leave them up; nothing after this point reads it.
+                    self.ftp_test_obj.station_profile.station_names = []
                     self.ftp_test_obj.stop()
                     logger.info("FTP traffic stopped running")
                     self.ftp_test_obj.cx_profile.cleanup()
