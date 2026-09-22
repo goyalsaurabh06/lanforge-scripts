@@ -1092,9 +1092,9 @@ class Mixed_Traffic(Realm):
                                                                          port=self.port,
                                                                          number_template="0000",
                                                                          ap_name=ap_name,
-                                                                         num_stations_2g=self.num_staions if "2.4G" in self.band else 0,
-                                                                         num_stations_5g=self.num_staions if "5G" in self.band else 0,
-                                                                         num_stations_6g=self.num_staions if "6G" in self.band else 0,
+                                                                         num_stations_2g=self.stations_on_band("2.4G"),
+                                                                         num_stations_5g=self.stations_on_band("5G"),
+                                                                         num_stations_6g=self.stations_on_band("6G"),
                                                                          sta_list=self.station_list,
                                                                          create_sta=False,
                                                                          name_prefix="TOS-",
@@ -1861,8 +1861,22 @@ class Mixed_Traffic(Realm):
                     self.sta_info['radio_list'].append(interface_details.get('parent dev') or '')
                     self.sta_info['band_list'].append(self.band_for_port(interface_details))
 
-        # Downstream code treats band as a single value, not a list.
-        self.sta_info['band_list'] = self.sta_info['band_list'][0] if self.sta_info['band_list'] else '-'
+        # A scenario routinely spans 2.4G, 5G and 6G at once. Keep the per-band
+        # counts before band_list collapses, so the QoS test can be told how many
+        # stations are really on each band instead of having the whole total
+        # attributed to one of them.
+        band_counts = {}
+        for station_band in self.sta_info['band_list']:
+            band_counts[station_band] = band_counts.get(station_band, 0) + 1
+        self.sta_info['band_counts'] = band_counts
+        self.sta_info['bands'] = [b for b in ('2.4G', '5G', '6G') if b in band_counts]
+
+        # Downstream code -- HTTP's report bucket, the report directory names,
+        # lf_ftp -- treats band as a single value, not a list. Use the band most
+        # of the stations are on rather than whichever was read first, and ignore
+        # stations that have not associated yet ('-') when picking it.
+        real_bands = {b: n for b, n in band_counts.items() if b != '-'}
+        self.sta_info['band_list'] = max(real_bands, key=real_bands.get) if real_bands else '-'
 
         if real_device_ports:
             logger.info("Excluded {} real device port(s) from scenario station discovery: {}".format(len(real_device_ports), sorted(real_device_ports)))
@@ -1870,7 +1884,9 @@ class Mixed_Traffic(Realm):
         logger.info("Scenario radios: {}".format(self.sta_info['radio_list']))
         logger.info("Scenario ssids: {}".format(self.sta_info['ssid_list']))
         logger.info("Scenario securities: {}".format(self.sta_info['security_list']))
-        logger.info("Scenario band: {}".format(self.sta_info['band_list']))
+        logger.info("Scenario band: {} (stations per band: {})".format(
+            self.sta_info['band_list'],
+            ", ".join("{} x{}".format(b, n) for b, n in sorted(self.sta_info['band_counts'].items()))))
 
         return self.sta_info
 
@@ -1910,6 +1926,18 @@ class Mixed_Traffic(Realm):
             if time.time() - start >= timeout_sec:
                 return False
             time.sleep(1)
+
+    def stations_on_band(self, band):
+        """How many stations are on this band.
+
+        A scenario discovers its stations and can span several bands at once, so
+        the count comes from what was discovered. Without a scenario the run is
+        single-band by construction, so every station belongs to self.band.
+        """
+        counts = self.sta_info.get('band_counts') if isinstance(self.sta_info, dict) else None
+        if counts:
+            return counts.get(band, 0)
+        return self.num_staions if band in (self.band or '') else 0
 
     def _sta_port_fields(self):
         """{port name: {'down':..., 'ssid':...}} for every WIFI-STA port, real devices included.
