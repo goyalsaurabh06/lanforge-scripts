@@ -3250,6 +3250,10 @@ INCLUDE_IN_README: False
                                '(default 25). Each pass re-reads the port list, admin ups whatever '
                                'is still down and waits 5s. The run moves on as soon as every '
                                'station is up, so this is a limit, not a fixed cost.')
+    optional.add_argument('--station_ip_wait_time', type=str, default='300s',
+                          help='Longest to wait for --scenario stations to get an IPv4 address, '
+                               'e.g. 90s, 5m, 1h (default 300s). The run continues as soon as every '
+                               'station has an address, so this is a limit, not a fixed delay.')
     optional.add_argument('--security_config',
                           type=str,
                           choices=['1x', 'wpa3_aes_sae', 'wpa3_gcmp_sae'],
@@ -3410,6 +3414,12 @@ INCLUDE_IN_README: False
         scenario_wait_secs = Mixed_Traffic.parse_wait_time(args.scenario_wait_time)
     except ValueError as err:
         print("--scenario_wait_time: {}".format(err))
+        exit(1)
+
+    try:
+        station_ip_wait_secs = Mixed_Traffic.parse_wait_time(args.station_ip_wait_time)
+    except ValueError as err:
+        print("--station_ip_wait_time: {}".format(err))
         exit(1)
 
     if args.admin_up_retries < 1:
@@ -3832,21 +3842,38 @@ INCLUDE_IN_README: False
         # Admin up every scenario station, then wait for them to get an IP before
         # any test tries to use them. Neither admin_up() nor wait_for_ip() log
         # anything on their own -- for a 10-station scenario, wait_for_ip's
-        # auto-timeout is 60 + 5s/station (~110s here) with no progress output
-        # in between, so a run can look stalled for up to that long while it
-        # is actually still working.
+        # wait_for_ip logs nothing on its own, so a run can look stalled for the
+        # whole --station_ip_wait_time while it is actually still working.
         logger.info("Admin up on {} scenario station(s)".format(len(mixed_obj.station_list)))
         mixed_obj.admin_up_stations(mixed_obj.station_list, attempts=args.admin_up_retries)
 
-        logger.info("Waiting for scenario stations to get an IP (up to {}s)".format(
-            60 + 5 * len(mixed_obj.station_list)))
-        if Realm.wait_for_ip(self=mixed_obj, station_list=mixed_obj.station_list, timeout_sec=-1):
+        logger.info("Waiting for scenario stations to get an IP (up to {})".format(
+            args.station_ip_wait_time))
+        if Realm.wait_for_ip(self=mixed_obj, station_list=mixed_obj.station_list,
+                             timeout_sec=station_ip_wait_secs):
             mixed_obj._pass("All stations got IPs", print_=True)
             mixed_obj._pass("Station build finished", print_=True)
         else:
             mixed_obj._fail("Stations failed to get IPs", print_=True)
             mixed_obj._fail("FAIL: Station build failed", print_=True)
             logger.info("Please re-check the configuration applied")
+
+        # Re-read the stations now that they are up and addressed.
+        #
+        # The first read happens straight after the scenario is built, while the
+        # stations are still down -- and a station reports no channel and no SSID
+        # until it associates. That left band as '-', which fails the HTTP test
+        # with "Invalid band '-'" and gives the QoS test zero stations (its
+        # '2.4G' in band check never matches), whose empty station column then
+        # fails the report with "All arrays must be of the same length".
+        previous_stations = list(mixed_obj.station_list)
+        mixed_obj.station_info()
+        if mixed_obj.sta_info['station_list'] != previous_stations:
+            logger.warning("Station list changed while coming up: {} -> {} station(s)".format(
+                len(previous_stations), len(mixed_obj.sta_info['station_list'])))
+        mixed_obj.station_list = mixed_obj.sta_info['station_list']
+        mixed_obj.station_profile.station_names = mixed_obj.sta_info['station_list']
+        mixed_obj.num_staions = len(mixed_obj.sta_info['station_list'])
     if args.real:
         if (configure):
             selected_serial_list = mixed_obj.selecting_devices_from_available()
