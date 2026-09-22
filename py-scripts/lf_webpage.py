@@ -557,52 +557,42 @@ class HttpDownload(Realm):
     def set_values(self):
         # This method will set values according user input
         if self.bands == "5G":
-            self.radio = [self.fiveg_radio]
-            self.station_list = [LFUtils.portNameSeries(prefix_="http_sta", start_id_=self.sta_start_id,
-                                                        end_id_=self.num_sta - 1, padding_number_=10000,
-                                                        radio=self.fiveg_radio)]
+            self.radio = self.fiveg_radio
         elif self.bands == "6G":
-            self.radio = [self.sixg_radio]
-            self.station_list = [LFUtils.portNameSeries(prefix_="http_sta", start_id_=self.sta_start_id,
-                                                        end_id_=self.num_sta - 1, padding_number_=10000,
-                                                        radio=self.sixg_radio)]
+            self.radio = self.sixg_radio
         elif self.bands == "2.4G":
-            self.radio = [self.twog_radio]
-            self.station_list = [LFUtils.portNameSeries(prefix_="http_sta", start_id_=self.sta_start_id,
-                                                        end_id_=self.num_sta - 1, padding_number_=10000,
-                                                        radio=self.twog_radio)]
+            self.radio = self.twog_radio
         elif self.bands == "Both":
-            self.radio = [self.twog_radio, self.fiveg_radio]
+            self.radio = self.twog_radio + self.fiveg_radio
             # self.num_sta = self.num_sta // 2
+        if self.radio:
             self.station_list = [
-                LFUtils.portNameSeries(prefix_="http_sta", start_id_=self.sta_start_id,
-                                       end_id_=self.num_sta - 1, padding_number_=10000,
-                                       radio=self.twog_radio),
-                LFUtils.portNameSeries(prefix_="http_sta", start_id_=self.sta_start_id,
-                                       end_id_=self.num_sta - 1, padding_number_=10000,
-                                       radio=self.fiveg_radio)
-            ]
+                LFUtils.portNameSeries(prefix_="http_sta", start_id_=self.sta_start_id + (i * 1000),
+                                       end_id_=self.sta_start_id + self.num_sta + (i * 1000) - 1, padding_number_=10000,
+                                       radio=rad)
+                for i, rad in enumerate(self.radio)]
 
     def precleanup(self):
-        self.count = 0
+        self.after_2g = False
+        self.seen_2g = False
         for rad in range(len(self.radio)):
-            if self.radio[rad] == self.fiveg_radio:
+            if self.radio[rad] in (self.fiveg_radio or []):
                 # select an mode
                 self.station_profile.mode = 14
-                self.count = self.count + 1
-            elif self.radio[rad] == self.sixg_radio:
+                if self.seen_2g:
+                    self.after_2g = True
+            elif self.radio[rad] in (self.sixg_radio or []):
                 # select an mode
                 self.station_profile.mode = 15
-                self.count = self.count + 1
-            elif self.radio[rad] == self.twog_radio:
+            elif self.radio[rad] in (self.twog_radio or []):
                 # select an mode
                 self.station_profile.mode = 13
-                self.count = self.count + 1
+                self.seen_2g = True
 
-            if self.count == 2:
+            if self.after_2g:
                 self.sta_start_id = self.num_sta
                 self.num_sta = 2 * (self.num_sta)
-                self.station_profile.mode = 10
+                self.station_profile.mode = 6
                 self.http_profile.cleanup()
                 # cleanup station list which started sta_id 20
                 self.station_profile.cleanup(self.station_list[rad], debug_=self.local_realm.debug)
@@ -667,7 +657,25 @@ class HttpDownload(Realm):
         self.port_util.set_http(port_name=self.local_realm.name_to_eid(self.upstream)[2],
                                 resource=self.local_realm.name_to_eid(self.upstream)[1], on=True)
         all_port_list = []
+        # building layer4
+        self.http_profile.direction = 'dl'
+        self.http_profile.dest = '/dev/null'
+        ip_upstream = self.get_upstream_ip()
+        if ip_upstream is None:
+            raise RuntimeError("Failed to determine upstream IP")
         if self.client_type in ["Virtual", "Both"]:
+            if self.use_existing_station_list:
+                # create http profile
+                if self.get_url_from_file:  # enabling the GET-URL-FROM-FILE flag if its ture
+                    self.http_profile.create(ports=self.existing_station_list, sleep_time=.5,
+                                             suppress_related_commands_=None, http=True, user=self.lf_username,
+                                             passwd=self.lf_password, http_ip=self.file_path, proxy_auth_type=0x200,
+                                             timeout=1000, get_url_from_file=True, interop=(self.client_type != "Virtual"), windows_list=self.windows_ports)
+                else:
+                    self.http_profile.create(ports=self.existing_station_list, sleep_time=.5,
+                                             suppress_related_commands_=None, http=True, user=self.lf_username,
+                                             passwd=self.lf_password, http_ip=ip_upstream + "/webpage.html",
+                                             proxy_auth_type=0x200, timeout=1000, interop=(self.client_type != "Virtual"), windows_list=self.windows_ports)
             if self.bands == "2.4G":
                 self.station_profile.mode = 13
             elif self.bands == "5G":
@@ -696,40 +704,24 @@ class HttpDownload(Realm):
                 else:
                     self.local_realm._fail("Stations failed to get IPs")
                 all_port_list.extend(sta_names)
-                if self.count == 2:
-                    self.station_profile.mode = 6
-            if self.existing_station_list:
-                all_port_list.extend(self.existing_station_list)
-                if self.local_realm.wait_for_ip(self.existing_station_list, timeout_sec=60):
-                    self.local_realm._pass("All stations got IPs")
-                else:
-                    self.local_realm._fail("Stations failed to get IPs")
+                if self.after_2g and rad == len(self.twog_radio) - 1:
+                    self.station_profile.mode = 10
 
-            if self.client_type in ["Real", "Both"]:
-                all_port_list = self.port_list + all_port_list
-            # building layer4
-            self.http_profile.direction = 'dl'
-            self.http_profile.dest = '/dev/null'
-            ip_upstream = self.get_upstream_ip()
-            if ip_upstream is None:
-                raise RuntimeError("Failed to determine upstream IP")
-            # create http profile
-            if self.get_url_from_file:  # enabling the GET-URL-FROM-FILE flag if its ture
-                self.http_profile.create(ports=all_port_list, sleep_time=.5,
-                                         suppress_related_commands_=None, http=True, user=self.lf_username,
-                                         passwd=self.lf_password, http_ip=self.file_path, proxy_auth_type=0x200,
-                                         timeout=1000, get_url_from_file=True, interop=(self.client_type != "Virtual"), windows_list=self.windows_ports)
-            else:
-                self.http_profile.create(ports=all_port_list, sleep_time=.5,
-                                         suppress_related_commands_=None, http=True, user=self.lf_username,
-                                         passwd=self.lf_password, http_ip=ip_upstream + "/webpage.html",
-                                         proxy_auth_type=0x200, timeout=1000, interop=(self.client_type != "Virtual"), windows_list=self.windows_ports)
+                if self.client_type == "Both":
+                    all_port_list = self.port_list + all_port_list
+                # create http profile
+                if self.get_url_from_file:  # enabling the GET-URL-FROM-FILE flag if its ture
+                    self.http_profile.create(ports=all_port_list, sleep_time=.5,
+                                             suppress_related_commands_=None, http=True, user=self.lf_username,
+                                             passwd=self.lf_password, http_ip=self.file_path, proxy_auth_type=0x200,
+                                             timeout=1000, get_url_from_file=True, interop=(self.client_type != "Virtual"), windows_list=self.windows_ports)
+                else:
+                    self.http_profile.create(ports=all_port_list, sleep_time=.5,
+                                             suppress_related_commands_=None, http=True, user=self.lf_username,
+                                             passwd=self.lf_password, http_ip=ip_upstream + "/webpage.html",
+                                             proxy_auth_type=0x200, timeout=1000, interop=(self.client_type != "Virtual"), windows_list=self.windows_ports)
         else:
             if self.client_type == "Real":
-                self.http_profile.direction = 'dl'
-                ip_upstream = self.get_upstream_ip()
-                if ip_upstream is None:
-                    raise RuntimeError("Failed to determine upstream IP")
 
                 self.http_profile.create(ports=self.port_list, sleep_time=.5,
                                          suppress_related_commands_=None, http=True, interop=True,
@@ -2864,6 +2856,9 @@ def main():
     INCLUDE_IN_README: False
 
         ''')
+
+    def list_type(x):
+        return x.split(',')
     required = parser.add_argument_group('Required arguments to run lf_webpage.py')
     optional = parser.add_argument_group('Optional arguments to run lf_webpage.py')
 
@@ -2877,24 +2872,24 @@ def main():
     optional.add_argument('--existing_station_list', action='append',
                           help='[list of stations], use the stations in the list, '
                                'multiple station lists may be entered')
-    optional.add_argument('--twog_radio', help='specify radio for 2.4G clients', default='wiphy3')
-    optional.add_argument('--fiveg_radio', help='specify radio for 5 GHz client', default='wiphy0')
-    optional.add_argument('--sixg_radio', help='Specify radio for 6GHz client', default='wiphy2')
-    optional.add_argument('--twog_security', help='WiFi Security protocol: {open|wep|wpa2|wpa3} for 2.4G clients')
-    optional.add_argument('--twog_ssid', help='WiFi SSID for script object to associate for 2.4G clients')
-    optional.add_argument('--twog_passwd', help='WiFi passphrase/password/key for 2.4G clients')
-    optional.add_argument('--fiveg_security', help='WiFi Security protocol: {open|wep|wpa2|wpa3} for 5G clients')
-    optional.add_argument('--fiveg_ssid', help='WiFi SSID for script object to associate for 5G clients')
-    optional.add_argument('--fiveg_passwd', help='WiFi passphrase/password/key for 5G clients')
-    optional.add_argument('--sixg_security', help='WiFi Security protocol: {open|wep|wpa2|wpa3} for 2.4G clients')
-    optional.add_argument('--sixg_ssid', help='WiFi SSID for script object to associate for 2.4G clients')
-    optional.add_argument('--sixg_passwd', help='WiFi passphrase/password/key for 2.4G clients')
+    optional.add_argument('--twog_radio', help='specify radio for 2.4G clients', type=list_type)
+    optional.add_argument('--fiveg_radio', help='specify radio for 5 GHz client', type=list_type)
+    optional.add_argument('--sixg_radio', help='Specify radio for 6GHz client', type=list_type)
+    optional.add_argument('--twog_security', help='WiFi Security protocol: {open|wep|wpa2|wpa3} for 2.4G clients', type=list_type)
+    optional.add_argument('--twog_ssid', help='WiFi SSID for script object to associate for 2.4G clients', type=list_type)
+    optional.add_argument('--twog_passwd', help='WiFi passphrase/password/key for 2.4G clients', type=list_type)
+    optional.add_argument('--fiveg_security', help='WiFi Security protocol: {open|wep|wpa2|wpa3} for 5G clients', type=list_type)
+    optional.add_argument('--fiveg_ssid', help='WiFi SSID for script object to associate for 5G clients', type=list_type)
+    optional.add_argument('--fiveg_passwd', help='WiFi passphrase/password/key for 5G clients', type=list_type)
+    optional.add_argument('--sixg_security', help='WiFi Security protocol: {open|wep|wpa2|wpa3} for 6G clients', type=list_type)
+    optional.add_argument('--sixg_ssid', help='WiFi SSID for script object to associate for 6 clients', type=list_type)
+    optional.add_argument('--sixg_passwd', help='WiFi passphrase/password/key for 6G clients', type=list_type)
     optional.add_argument('--target_per_ten', help='number of request per 10 minutes', default=100)
     required.add_argument('--file_size', type=str, help='specify the size of file you want to download', default='5MB')
-    required.add_argument('--bands', nargs="+", help='specify which band testing you want to run eg 5G, 2.4G, 6G',
-                          default=["5G", "2.4G", "6G"])
+    required.add_argument('--bands', nargs="+", help='specify which band testing you want to run eg --bands 2.4G 5G 6G',
+                          choices=["5G", "2.4G", "6G", "Both"])
     required.add_argument('--duration', help='Please enter the duration in s,m,h (seconds or minutes or hours).Eg: 30s,5m,48h')
-    required.add_argument('--client_type', help='Enter the type of client. Example:"Real","Virtual"')
+    required.add_argument('--client_type', help='Enter the type of client. Example:"Real","Virtual","Both"', choices=["Real", "Virtual", "Both"])
     optional.add_argument('--threshold_5g', help="Enter the threshold value for 5G Pass/Fail criteria", default="60")
     optional.add_argument('--threshold_2g', help="Enter the threshold value for 2.4G Pass/Fail criteria", default="90")
     optional.add_argument('--threshold_both', help="Enter the threshold value for Both Pass/Fail criteria", default="50")
@@ -3087,21 +3082,21 @@ times the file is downloaded.
             security = args.security
         else:
             if bands == "2.4G":
-                security = [args.twog_security]
-                ssid = [args.twog_ssid]
-                passwd = [args.twog_passwd]
+                security = args.twog_security
+                ssid = args.twog_ssid
+                passwd = args.twog_passwd
             elif bands == "5G":
-                security = [args.fiveg_security]
-                ssid = [args.fiveg_ssid]
-                passwd = [args.fiveg_passwd]
+                security = args.fiveg_security
+                ssid = args.fiveg_ssid
+                passwd = args.fiveg_passwd
             elif bands == "6G":
-                security = [args.sixg_security]
-                ssid = [args.sixg_ssid]
-                passwd = [args.sixg_passwd]
+                security = args.sixg_security
+                ssid = args.sixg_ssid
+                passwd = args.sixg_passwd
             elif bands == "Both":
-                security = [args.twog_security, args.fiveg_security]
-                ssid = [args.twog_ssid, args.fiveg_ssid]
-                passwd = [args.twog_passwd, args.fiveg_passwd]
+                security = args.twog_security + args.fiveg_security
+                ssid = args.twog_ssid + args.fiveg_ssid
+                passwd = args.twog_passwd + args.fiveg_passwd
         http = HttpDownload(lfclient_host=args.mgr, lfclient_port=args.mgr_port,
                             upstream=args.upstream_port, num_sta=args.num_stations,
                             security=security, ap_name=args.ap_name,
@@ -3228,6 +3223,7 @@ times the file is downloaded.
                 logger.warning("--use_existing_station_list set but --existing_station_list is empty — ignoring.")
 
         # Merge existing stations into the global station list
+        http.use_existing_station_list = args.use_existing_station_list
         http.existing_station_list = existing_sta_list
 
         # Keep one authoritative list for monitoring, reporting and counts.
