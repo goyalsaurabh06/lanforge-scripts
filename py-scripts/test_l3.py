@@ -1711,6 +1711,27 @@ class L3VariableTime(Realm):
         return self.csv_results_file.name
 
     # Find avg latency, jitter for connections using specified port.
+    @staticmethod
+    def to_number(value, default=0, ndigits=None):
+        """Read a LANforge endpoint stat as a number, falling back to `default`.
+
+        These fields come back as '' from an endpoint that has not reported yet,
+        and sometimes as a numeric string rather than a number. int('') raises,
+        and so does round('12', 2) -- either loses a whole monitor pass.
+
+        Replaces a set of hand-written guards that each got some of this wrong:
+        two tested `value is str`, which compares against the str *type* and so
+        is never true, and the rest used value.isnumeric(), which is false for
+        '12.5' and '-5' and so silently zeroed real readings.
+        """
+        try:
+            number = float(str(value).strip())
+        except (TypeError, ValueError):
+            logger.debug("Expected a number for an endpoint stat, got {!r}; using {}".format(
+                value, default))
+            return default
+        return round(number, ndigits) if ndigits is not None else int(number)
+
     def get_endp_stats_for_port(self, port_eid, endps):
         lat = 0
         jit = 0
@@ -1750,19 +1771,8 @@ class L3VariableTime(Realm):
             # Note: the endp eid is shelf.resource.port.endp-id, the eid can be treated somewhat as
             # child class of port-eid , and look up the port the eid is using.
             if eid[0] == eid_endp[0] and eid[1] == eid_endp[1] and eid[2] == eid_endp[2]:
-                if ((endp['delay'] is str and not endp['delay'].isnumeric()) or endp['delay'] is None):
-                    logging.debug(
-                        'Expected integer response for delay, received non-numeric string instead. Replacing with 0')
-                    lat += 0
-                else:
-                    lat += int(endp['delay'])
-
-                if ((endp['jitter'] is str and not endp['jitter'].isnumeric()) or endp['jitter'] is None):
-                    logging.debug(
-                        'Expected integer response for jitter, received non-numeric string instead. Replacing with 0')
-                    jit += 0
-                else:
-                    jit += int(endp["jitter"])
+                lat += self.to_number(endp['delay'])
+                jit += self.to_number(endp['jitter'])
                 # lat += int(endp["delay"])
                 # jit += int(endp["jitter"])
                 name = endp["name"]
