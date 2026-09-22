@@ -1929,6 +1929,56 @@ class Mixed_Traffic(Realm):
                     }
         return ports
 
+    def _sta_port_states(self):
+        """{port name: is it admin down?} for every WIFI-STA port."""
+        return {name: fields['down'] for name, fields in self._sta_port_fields().items()}
+
+    def admin_up_stations(self, station_list, attempts=25, settle_sec=5):
+        """Admin up scenario stations, retrying the ones that do not come up.
+
+        set_port answers "rv: 22 (Invalid argument)" for a port that is not on
+        the system -- which is what a station list read while Chamber View was
+        still tearing the previous scenario down is full of. Checking the port
+        list first keeps that error out of the log, and retrying in passes
+        rather than per station keeps the cost flat for a 200-station scenario.
+
+        Returns the stations that never came up.
+        """
+        pending = list(station_list)
+        for attempt in range(1, attempts + 1):
+            states = self._sta_port_states()
+
+            missing = [sta for sta in pending if sta not in states]
+            if missing:
+                logger.warning("{} station(s) are not on the system, not admin upping: {}{}".format(
+                    len(missing), missing[:5], " ..." if len(missing) > 5 else ""))
+
+            for sta in pending:
+                if sta in states:
+                    self.admin_up(sta)
+
+            time.sleep(settle_sec)
+
+            # A station that has gone counts as still pending, so a scenario that
+            # is mid-rebuild gets another pass rather than being written off.
+            states = self._sta_port_states()
+            pending = [sta for sta in pending if states.get(sta, True)]
+
+            if not pending:
+                # Returning here is why a high attempt count costs nothing: the
+                # passes are only spent when stations are genuinely not coming up.
+                logger.info("All {} scenario station(s) admin up".format(len(station_list)))
+                return []
+            if attempt < attempts:
+                logger.info("{} station(s) still down after attempt {}/{}; retrying admin up".format(
+                    len(pending), attempt, attempts))
+
+        # Not fatal: wait_for_ip() runs next and gives slow stations longer.
+        logger.warning("{} of {} station(s) still down after {} attempts, continuing: {}{}".format(
+            len(pending), len(station_list), attempts, pending[:10],
+            " ..." if len(pending) > 10 else ""))
+        return pending
+
     def wait_for_scenario_stations(self, timeout_sec=120, settle_polls=2, poll_sec=2):
         """Wait until the scenario's stations have settled and carry their SSID.
 
@@ -3195,6 +3245,11 @@ INCLUDE_IN_README: False
                           help='Longest to wait for a --scenario to finish building before giving up, '
                                'e.g. 90s, 5m, 1h (default 5m). The run continues as soon as the '
                                'scenario reports built, so this is a limit, not a fixed delay.')
+    optional.add_argument('--admin_up_retries', type=int, default=25,
+                          help='How many passes to make bringing --scenario stations admin up '
+                               '(default 25). Each pass re-reads the port list, admin ups whatever '
+                               'is still down and waits 5s. The run moves on as soon as every '
+                               'station is up, so this is a limit, not a fixed cost.')
     optional.add_argument('--security_config',
                           type=str,
                           choices=['1x', 'wpa3_aes_sae', 'wpa3_gcmp_sae'],
@@ -3355,6 +3410,10 @@ INCLUDE_IN_README: False
         scenario_wait_secs = Mixed_Traffic.parse_wait_time(args.scenario_wait_time)
     except ValueError as err:
         print("--scenario_wait_time: {}".format(err))
+        exit(1)
+
+    if args.admin_up_retries < 1:
+        print("--admin_up_retries: must be at least 1")
         exit(1)
 
     # checking multicast test tos separation
@@ -3777,8 +3836,7 @@ INCLUDE_IN_README: False
         # in between, so a run can look stalled for up to that long while it
         # is actually still working.
         logger.info("Admin up on {} scenario station(s)".format(len(mixed_obj.station_list)))
-        for sta in mixed_obj.station_list:
-            mixed_obj.admin_up(sta)
+        mixed_obj.admin_up_stations(mixed_obj.station_list, attempts=args.admin_up_retries)
 
         logger.info("Waiting for scenario stations to get an IP (up to {}s)".format(
             60 + 5 * len(mixed_obj.station_list)))
