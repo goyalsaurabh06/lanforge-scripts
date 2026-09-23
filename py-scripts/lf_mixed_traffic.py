@@ -1427,16 +1427,14 @@ class Mixed_Traffic(Realm):
                 # print(self.station_list)
                 # self.http_obj.station_list = [[self.station_list]]
                 # no L4 pre cleanup: global sweep breaks parallel FTP test
-                self.station_profile.admin_up()
-                logger.info("Waiting for all station ports to come up (maximum wait: 300 seconds)")
-                if not LFUtils.wait_until_ports_admin_up(base_url=self.lfclient_url,
-                                                         port_list=self.station_list,
-                                                         debug_=self.debug):
-                    self._fail("Unable to bring all stations up")
-                    return
-                logger.info("Waiting to get IP for all stations")
-                logger.info("Admin up all the stations")
-                Realm.wait_for_ip(self=self, station_list=self.station_list, timeout_sec=-1)
+
+                # No admin up / wait_for_ip here. The stations are already up and
+                # addressed before any test starts -- virtual_client_creation() does
+                # it for the CLI flow, main() does it for --scenario. Repeating it
+                # cost one set_port per station (a few seconds for a 10-station run,
+                # around a minute for 200) before this test could send any traffic,
+                # and under --parallel that delay is pure skew against the other
+                # tests, which are already running.
 
                 # building layer4   #Todo: Since the lf_webpage script itself only support "download", so need to add upload functionality in future
                 self.http_obj.http_profile.direction = 'dl'
