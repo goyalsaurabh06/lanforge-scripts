@@ -3398,21 +3398,23 @@ class Throughput(Realm):
 
             categories = ["Disconnected", "Scans", "Association Attempts", "Association Rejected", "Connected"]
             totals = [sum(disconnected), sum(scanning), sum(connect_attempt), sum(association_rejection), sum(connected)]
-            colors = ['#e67e22', '#1e824c', '#2980b9', '#8e44ad', '#27ae60']
+            # Red=Disconnected, Yellow=Scans, Orange=Association Attempts, Grey=Rejected, Green=Connected.
+            colors = ['#e74c3c', '#f1c40f', '#e67e22', '#95a5a6', '#27ae60']
 
             report.set_obj_html(
                 _obj_title="Client Connectivity Event Summary",
                 _obj="This graph summarizes connection-related events observed during the throughput test. "
                      "These metrics provide insight into client stability and wireless connectivity performance.")
             report.build_objective()
-            # One series across 5 categories so the bars spread across the chart's full width,
-            # each under its own x-axis label, instead of clustering together in the middle.
-            graph = lf_bar_graph(_data_set=[totals],
+            # One named+colored series per category (stacked, so still full bar width) instead of one combined series, so each category gets its own legend entry.
+            data_set = [[value if i == series_index else 0 for i, value in enumerate(totals)]
+                       for series_index in range(len(categories))]
+            graph = lf_bar_graph(_data_set=data_set,
                                  _xaxis_name="",
                                  _yaxis_name="Count",
                                  _xaxis_categories=categories,
                                  _graph_image_name="wifi_connectivity_status",
-                                 _label=["Client Connectivity Status"],
+                                 _label=categories,
                                  _graph_title="Client Connectivity Status",
                                  _title_size=16,
                                  _color_edge='black',
@@ -3422,6 +3424,7 @@ class Throughput(Realm):
                                  _dpi=96,
                                  _show_bar_value=True,
                                  _enable_csv=True,
+                                 _stacked=True,
                                  _color=colors,
                                  _color_name=colors)
             graph_png = graph.build_bar_graph()
