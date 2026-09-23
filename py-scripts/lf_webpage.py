@@ -1449,6 +1449,24 @@ class HttpDownload(Realm):
     def check_station_ip(self):
         pass
 
+    @staticmethod
+    def align_to_labels(dataset, labels, what):
+        """Make a graph dataset the same length as its label list.
+
+        A per-client dataset that is short by even one value makes lf_graph
+        raise "The number of FixedLocator locations ... does not match the
+        number of labels", which loses the whole report. Pad with 0 instead so
+        the client still shows up, with an empty bar saying it had no reading.
+        """
+        dataset = list(dataset or [])
+        if len(dataset) == len(labels):
+            return dataset
+        logger.warning("%s has %d value(s) for %d client(s); reconciling so the report still builds",
+                       what, len(dataset), len(labels))
+        if len(dataset) < len(labels):
+            return dataset + [0] * (len(labels) - len(dataset))
+        return dataset[:len(labels)]
+
     def generate_graph(self, dataset, lis, bands, graph_image_name="ucg-avg_http"):
         bands = ['Download']
         if self.client_type == "Real":
@@ -1456,6 +1474,7 @@ class HttpDownload(Realm):
         elif self.client_type == "Virtual":
             lis = self.station_list[0]
         logger.info("%s %s", dataset, lis)
+        dataset = self.align_to_labels(dataset, lis, "Average download time")
         x_fig_size = 18
         y_fig_size = len(lis) * .5 + 4
         # graph = lf_graph.lf_bar_graph(_data_set=dataset, _xaxis_name="Stations", _yaxis_name="Time in Seconds",
@@ -1498,6 +1517,7 @@ class HttpDownload(Realm):
             lis = self.station_list[0]
         print(dataset2)
         print(lis)
+        dataset2 = self.align_to_labels(dataset2, lis, "Total URL count")
         x_fig_size = 18
         y_fig_size = len(lis) * .5 + 4
         graph_2 = lf_bar_graph_horizontal(_data_set=[dataset2], _xaxis_name="No of times file Download",
