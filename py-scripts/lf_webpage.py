@@ -1236,10 +1236,27 @@ class HttpDownload(Realm):
             if self.num_sta == 1:
                 data1.append(data[data_mon])
             else:
+                # One value per CX, in created_cx order, whether or not LANforge
+                # returned that endpoint. Appending only the ones it did return
+                # leaves the list shorter than the client list, which kills the
+                # report in lf_graph with "FixedLocator locations ... does not
+                # match the number of labels" -- and, worse, shifts every later
+                # value onto the wrong client when the gap is in the middle.
+                missing = []
                 for cx in self.http_profile.created_cx.keys():
+                    value = None
                     for info in data:
                         if cx in info:
-                            data1.append(info[cx][data_mon])
+                            value = info[cx][data_mon]
+                            break
+                    if value is None:
+                        missing.append(cx)
+                        value = 0
+                    data1.append(value)
+                if missing:
+                    logger.warning("%s missing for %d of %d CX(s), recorded as 0: %s%s",
+                                   data_mon, len(missing), len(self.http_profile.created_cx),
+                                   missing[:5], " ..." if len(missing) > 5 else "")
             return data1
         except Exception as e:
             total_data = self.local_realm.json_get("layer4/all")
