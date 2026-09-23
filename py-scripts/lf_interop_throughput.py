@@ -2721,9 +2721,9 @@ class Throughput(Realm):
     # gradient so the color itself says how good the signal is: Excellent=green, Poor=red, Good/Fair in between.
     RSSI_BUCKET_COLORS = ["#2e8b57", "#f2c94c", "#f2994a", "#eb5757"]
 
-    # Score band -> (label, color), same tiers as RSSI's Excellent/Good/Fair/Poor.
-    SCORE_RATING_BANDS = [(85, "Excellent", "#1e7e34"), (70, "Good", "#28a745"),
-                          (50, "Average", "#f1c40f"), (0, "Poor", "#e74c3c")]
+    # Score band -> (label, color): Excellent 90-100, Good 80-89, Average 70-79, Poor <70.
+    SCORE_RATING_BANDS = [(90, "Excellent", "#1e7e34"), (80, "Good", "#28a745"),
+                          (70, "Average", "#f1c40f"), (0, "Poor", "#e74c3c")]
 
     @staticmethod
     def _parse_mbps(value):
