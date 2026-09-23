@@ -550,13 +550,14 @@ class cv_test(Realm):
         kpi_csv_data_present = False
         kpi_csv = ''
 
-        if self.local_lf_report_dir is None or self.local_lf_report_dir == "":
-            logger.info("Local report directory not specified. No KPI results present.")
+        if self.pull_report and (self.local_lf_report_dir is None or self.local_lf_report_dir == ""):
+            logger.info("Local report directory not specified. Defaulting to current working directory.")
+            self.local_lf_report_dir = os.getcwd()
+        elif not self.pull_report:
             return False
-        else:
-            kpi_location = self.local_lf_report_dir + "/" + os.path.basename(self.lf_report_dir)
-            # the lf_report_dir is the parent directory,  need to get the directory name
-            kpi_csv = "{kpi_location}/kpi.csv".format(kpi_location=kpi_location)
+        kpi_location = self.local_lf_report_dir + "/" + os.path.basename(self.lf_report_dir)
+        # the lf_report_dir is the parent directory,  need to get the directory name
+        kpi_csv = "{kpi_location}/kpi.csv".format(kpi_location=kpi_location)
 
         if os.path.isfile(kpi_csv):
             kpi_size = os.path.getsize(kpi_csv)
