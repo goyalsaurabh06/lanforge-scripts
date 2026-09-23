@@ -149,7 +149,8 @@ if os.path.exists(iot_scripts_path):
 
 class HttpDownload(Realm):
     def __init__(self, lfclient_host, lfclient_port, upstream, num_sta, security, ssid, password, ap_name,
-                 target_per_ten, file_size, bands, start_id=0, twog_radio=None, fiveg_radio=None, sixg_radio=None, _debug_on=False, _exit_on_error=False,
+                 target_per_ten, file_size, bands, start_id=0, twog_ssid=None, twog_password=None, twog_security=None, twog_radio=None, fiveg_ssid=None, fiveg_password=None, fiveg_security=None,
+                 fiveg_radio=None, sixg_ssid=None, sixg_password=None, sixg_security=None, sixg_radio=None, _debug_on=False, _exit_on_error=False,
                  test_name=None, _exit_on_fail=False, client_type="", port_list=None, devices_list=None, macid_list=None, lf_username="lanforge", lf_password="lanforge", result_dir="", dowebgui=False,
                  device_list=None, get_url_from_file=None, file_path=None, device_csv_name='', expected_passfail_value=None, file_name=None, group_name=None, profile_name=None, eap_method=None,
                  eap_identity=None, ieee80211=None, ieee80211u=None, ieee80211w=None, enable_pkc=None, bss_transition=None, power_save=None, disable_ofdma=None, roam_ft_ds=None, key_management=None,
@@ -170,8 +171,17 @@ class HttpDownload(Realm):
         self.sta_start_id = start_id
         self.password = password
         self.twog_radio = twog_radio
+        self.twog_ssid = twog_ssid
+        self.twog_security = twog_security
+        self.twog_password = twog_password
         self.fiveg_radio = fiveg_radio
+        self.fiveg_ssid = fiveg_ssid
+        self.fiveg_security = fiveg_security
+        self.fiveg_password = fiveg_password
         self.sixg_radio = sixg_radio
+        self.sixg_ssid = sixg_ssid
+        self.sixg_security = sixg_security
+        self.sixg_password = sixg_password
         self.target_per_ten = target_per_ten
         self.file_size = file_size
         self.bands = bands
@@ -463,7 +473,8 @@ class HttpDownload(Realm):
                     real_client_list2.append((user_list[j])[:25])
         logger.info("REAL CLIENT LIST: %s", real_client_list1)
 
-        self.num_sta = len(real_client_list1)
+        if self.client_type == 'Real':
+            self.num_sta = len(real_client_list1)
 
         for eid in resource_eid_list2:
             for i in mac_id_list1:
@@ -546,52 +557,42 @@ class HttpDownload(Realm):
     def set_values(self):
         # This method will set values according user input
         if self.bands == "5G":
-            self.radio = [self.fiveg_radio]
-            self.station_list = [LFUtils.portNameSeries(prefix_="http_sta", start_id_=self.sta_start_id,
-                                                        end_id_=self.num_sta - 1, padding_number_=10000,
-                                                        radio=self.fiveg_radio)]
+            self.radio = self.fiveg_radio
         elif self.bands == "6G":
-            self.radio = [self.sixg_radio]
-            self.station_list = [LFUtils.portNameSeries(prefix_="http_sta", start_id_=self.sta_start_id,
-                                                        end_id_=self.num_sta - 1, padding_number_=10000,
-                                                        radio=self.sixg_radio)]
+            self.radio = self.sixg_radio
         elif self.bands == "2.4G":
-            self.radio = [self.twog_radio]
-            self.station_list = [LFUtils.portNameSeries(prefix_="http_sta", start_id_=self.sta_start_id,
-                                                        end_id_=self.num_sta - 1, padding_number_=10000,
-                                                        radio=self.twog_radio)]
+            self.radio = self.twog_radio
         elif self.bands == "Both":
-            self.radio = [self.twog_radio, self.fiveg_radio]
+            self.radio = self.twog_radio + self.fiveg_radio
             # self.num_sta = self.num_sta // 2
+        if self.radio:
             self.station_list = [
-                LFUtils.portNameSeries(prefix_="http_sta", start_id_=self.sta_start_id,
-                                       end_id_=self.num_sta - 1, padding_number_=10000,
-                                       radio=self.twog_radio),
-                LFUtils.portNameSeries(prefix_="http_sta", start_id_=self.sta_start_id,
-                                       end_id_=self.num_sta - 1, padding_number_=10000,
-                                       radio=self.fiveg_radio)
-            ]
+                LFUtils.portNameSeries(prefix_="http_sta", start_id_=self.sta_start_id + (i * 1000),
+                                       end_id_=self.sta_start_id + self.num_sta + (i * 1000) - 1, padding_number_=10000,
+                                       radio=rad)
+                for i, rad in enumerate(self.radio)]
 
     def precleanup(self):
-        self.count = 0
-        for rad in range(len(self.radio)):
-            if self.radio[rad] == self.fiveg_radio:
+        self.after_2g = False
+        self.seen_2g = False
+        for rad in range(len(self.radio or [])):
+            if self.radio[rad] in (self.fiveg_radio or []):
                 # select an mode
                 self.station_profile.mode = 14
-                self.count = self.count + 1
-            elif self.radio[rad] == self.sixg_radio:
+                if self.seen_2g:
+                    self.after_2g = True
+            elif self.radio[rad] in (self.sixg_radio or []):
                 # select an mode
                 self.station_profile.mode = 15
-                self.count = self.count + 1
-            elif self.radio[rad] == self.twog_radio:
+            elif self.radio[rad] in (self.twog_radio or []):
                 # select an mode
                 self.station_profile.mode = 13
-                self.count = self.count + 1
+                self.seen_2g = True
 
-            if self.count == 2:
+            if self.after_2g:
                 self.sta_start_id = self.num_sta
                 self.num_sta = 2 * (self.num_sta)
-                self.station_profile.mode = 10
+                self.station_profile.mode = 6
                 self.http_profile.cleanup()
                 # cleanup station list which started sta_id 20
                 self.station_profile.cleanup(self.station_list[rad], debug_=self.local_realm.debug)
@@ -609,6 +610,26 @@ class HttpDownload(Realm):
                                                debug=self.local_realm.debug)
             time.sleep(1)
         print("precleanup done")
+
+    def active_ports(self):
+        """Ports carrying traffic for the current client_type, in CX-creation order.
+
+        set_values() builds station_list per radio, so flatten it to port names.
+        """
+        created_stations = [
+            sta
+            for per_radio in self.station_list
+            if isinstance(per_radio, list)
+            for sta in per_radio
+        ]
+        virtual_ports = list(dict.fromkeys(
+            created_stations + self.existing_station_list
+        ))
+        if self.client_type == "Real":
+            return self.port_list
+        if self.client_type == "Virtual":
+            return virtual_ports
+        return self.port_list + virtual_ports
 
     def get_upstream_ip(self):
         """Gives the upstream ip."""
@@ -635,7 +656,26 @@ class HttpDownload(Realm):
         # enable http on ethernet
         self.port_util.set_http(port_name=self.local_realm.name_to_eid(self.upstream)[2],
                                 resource=self.local_realm.name_to_eid(self.upstream)[1], on=True)
-        if self.client_type == "Virtual":
+        all_port_list = []
+        # building layer4
+        self.http_profile.direction = 'dl'
+        self.http_profile.dest = '/dev/null'
+        ip_upstream = self.get_upstream_ip()
+        if ip_upstream is None:
+            raise RuntimeError("Failed to determine upstream IP")
+        if self.client_type in ["Virtual", "Both"]:
+            if self.use_existing_station_list:
+                # create http profile
+                if self.get_url_from_file:  # enabling the GET-URL-FROM-FILE flag if its ture
+                    self.http_profile.create(ports=self.existing_station_list, sleep_time=.5,
+                                             suppress_related_commands_=None, http=True, user=self.lf_username,
+                                             passwd=self.lf_password, http_ip=self.file_path, proxy_auth_type=0x200,
+                                             timeout=1000, get_url_from_file=True, interop=(self.client_type != "Virtual"), windows_list=self.windows_ports)
+                else:
+                    self.http_profile.create(ports=self.existing_station_list, sleep_time=.5,
+                                             suppress_related_commands_=None, http=True, user=self.lf_username,
+                                             passwd=self.lf_password, http_ip=ip_upstream + "/webpage.html",
+                                             proxy_auth_type=0x200, timeout=1000, interop=(self.client_type != "Virtual"), windows_list=self.windows_ports)
             if self.bands == "2.4G":
                 self.station_profile.mode = 13
             elif self.bands == "5G":
@@ -643,42 +683,66 @@ class HttpDownload(Realm):
             elif self.bands == "6G":
                 self.station_profile.mode = 15
             for rad in range(len(self.radio)):
+                existing = set(self.existing_station_list)
+                chosen = [sta for sta in self.station_list[rad] if sta not in existing]
+                to_delete = [sta for sta in chosen if self.local_realm.port_exists(sta)]
+                for sta in to_delete:
+                    self.local_realm.rm_port(sta, check_exists=True, debug_=self.debug)
+                if to_delete:
+                    LFUtils.wait_until_ports_disappear(base_url=self.local_realm.lfclient_url,
+                                                       port_list=to_delete, debug=self.debug)
+                sta_names = chosen
                 self.station_profile.use_security(self.security[rad], self.ssid[rad], self.password[rad])
                 self.station_profile.set_command_flag("add_sta", "create_admin_down", 1)
                 self.station_profile.set_command_param("set_port", "report_timer", 1500)
                 self.station_profile.set_command_flag("set_port", "rpt_timer", 1)
-                self.station_profile.create(radio=self.radio[rad], sta_names_=self.station_list[rad], debug=self.local_realm.debug)
-                self.local_realm.wait_until_ports_appear(sta_list=self.station_list[rad])
+                extra = self.wifi_extra_list[rad] if rad < len(self.wifi_extra_list) else {}
+                extra_state = {}
+                if 'key_mgmt' in extra:
+                    for key in ('wifi_extra_data', 'wifi_extra_data_modified', 'add_sta_data',
+                                'desired_add_sta_flags', 'desired_add_sta_flags_mask'):
+                        value = getattr(self.station_profile, key)
+                        extra_state[key] = value.copy() if isinstance(value, (dict, list)) else value
+                    self.station_profile.set_wifi_extra(**{
+                        k: v for k, v in extra.items() if k not in ('ieee80211w', 'enable_pkc', 'power_save', 'bss_transition', 'roam_ft_ds')})
+                    self.station_profile.set_command_flag("add_sta", "8021x_radius", 1)
+                    pmf = extra.get('ieee80211w', 'Optional').lower()
+                    self.station_profile.set_command_param(
+                        "add_sta", "ieee80211w", {'disabled': 0, 'required': 2}.get(pmf, 1))
+                    for key, flag in (('enable_pkc', '80211r_pmska_cache'),
+                                      ('power_save', 'power_save_enable'),
+                                      ('bss_transition', 'use-bss-transition'),
+                                      ('roam_ft_ds', 'ft-roam-over-ds')):
+                        if extra.get(key, '').lower() in ('1', 'true', 'enabled'):
+                            self.station_profile.set_command_flag("add_sta", flag, 1)
+                self.station_profile.create(radio=self.radio[rad], sta_names_=sta_names, debug=self.local_realm.debug)
+                self.local_realm.wait_until_ports_appear(sta_list=sta_names)
                 self.station_profile.admin_up()
-                if self.local_realm.wait_for_ip(self.station_list[rad], timeout_sec=60):
+                for key, value in extra_state.items():
+                    setattr(self.station_profile, key, value)
+                if self.local_realm.wait_for_ip(sta_names, timeout_sec=60):
                     self.local_realm._pass("All stations got IPs")
                 else:
                     self.local_realm._fail("Stations failed to get IPs")
-                # building layer4
-                self.http_profile.direction = 'dl'
-                self.http_profile.dest = '/dev/null'
-                ip_upstream = self.get_upstream_ip()
-                if ip_upstream is None:
-                    raise RuntimeError("Failed to determine upstream IP")
+                all_port_list.extend(sta_names)
+                if self.after_2g and rad == len(self.twog_radio) - 1:
+                    self.station_profile.mode = 10
+
+                if self.client_type == "Both":
+                    all_port_list = self.port_list + all_port_list
                 # create http profile
                 if self.get_url_from_file:  # enabling the GET-URL-FROM-FILE flag if its ture
-                    self.http_profile.create(ports=self.station_profile.station_names, sleep_time=.5,
+                    self.http_profile.create(ports=all_port_list, sleep_time=.5,
                                              suppress_related_commands_=None, http=True, user=self.lf_username,
                                              passwd=self.lf_password, http_ip=self.file_path, proxy_auth_type=0x200,
-                                             timeout=1000, get_url_from_file=True)
+                                             timeout=1000, get_url_from_file=True, interop=(self.client_type != "Virtual"), windows_list=self.windows_ports)
                 else:
-                    self.http_profile.create(ports=self.station_profile.station_names, sleep_time=.5,
+                    self.http_profile.create(ports=all_port_list, sleep_time=.5,
                                              suppress_related_commands_=None, http=True, user=self.lf_username,
                                              passwd=self.lf_password, http_ip=ip_upstream + "/webpage.html",
-                                             proxy_auth_type=0x200, timeout=1000)
-                if self.count == 2:
-                    self.station_profile.mode = 6
+                                             proxy_auth_type=0x200, timeout=1000, interop=(self.client_type != "Virtual"), windows_list=self.windows_ports)
         else:
             if self.client_type == "Real":
-                self.http_profile.direction = 'dl'
-                ip_upstream = self.get_upstream_ip()
-                if ip_upstream is None:
-                    raise RuntimeError("Failed to determine upstream IP")
 
                 self.http_profile.create(ports=self.port_list, sleep_time=.5,
                                          suppress_related_commands_=None, http=True, interop=True,
@@ -918,14 +982,15 @@ class HttpDownload(Realm):
         end_time = endtime
         # endtime = endtime
         current_time = datetime.now()
+        devices_names = self.active_ports()
         self.data = {}
-        self.data["client"] = self.devices_list
+        self.data["client"] = devices_names
         # self.data["url_data"] = []
         self.data_for_webui = {}
-        self.data_for_webui["client"] = self.devices_list
+        self.data_for_webui["client"] = devices_names
         self.get_device_port_details()
         # Creating individual Dataframe for each device
-        for port in self.port_list:
+        for port in devices_names:
             # Added this check to handle multiple external monitor calls for band steering.
             # This is common to both cases and does not affect the current execution.
             # It simply ensures safe handling when the monitor is invoked from lf_base_robo.
@@ -1025,7 +1090,7 @@ class HttpDownload(Realm):
             rssi_list, tx_rate_list, rx_rate_list, bssid_list, channel_list = self.get_signal_and_link_speed_data()  # these data collected from port manager
             individual_rx_data = []
             individual_rx_data.extend([current_time])
-            for i, port in enumerate(self.port_list):
+            for i, port in enumerate(devices_names):
                 # logger.info(f"row data HTTP",row_data)
 
                 try:
@@ -1043,9 +1108,9 @@ class HttpDownload(Realm):
             rx_rate, bytes_rd = self.aggregate_rx_bytes(rx_rate, bytes_rd)
             # dataset = [round(x / 1000000,4) for x in dataset] #converting bps to mbps
 
-            if len(url_times) == len(self.devices_list):
+            if len(url_times) == len(devices_names):
 
-                self.data["status"] = ["RUNNING"] * len(self.devices_list)
+                self.data["status"] = ["RUNNING"] * len(devices_names)
                 self.data["url_data"] = url_times
                 self.data["uc_min"] = uc_min_data
                 self.data["uc_max"] = uc_max_data
@@ -1054,26 +1119,26 @@ class HttpDownload(Realm):
                 self.data["rx rate (1m)"] = rx_rate
                 self.data["total_err"] = total_err
             else:
-                logger.error("Runtime data mismatch: Devices=%d URLs=%d RX=%d Bytes=%d", len(self.devices_list), len(url_times), len(rx_rate), len(bytes_rd))
-                self.data["status"] = ["RUNNING"] * len(self.devices_list)
-                self.data["url_data"] = [0] * len(self.devices_list)
-                self.data["uc_avg"] = [0] * len(self.devices_list)
-                self.data["uc_max"] = [0] * len(self.devices_list)
-                self.data["uc_min"] = [0] * len(self.devices_list)
-                self.data["bytes_rd"] = [0] * len(self.devices_list)
-                self.data["rx rate (1m)"] = [0] * len(self.devices_list)
-                self.data["total_err"] = [0] * len(self.devices_list)
+                logger.error("Runtime data mismatch: Devices=%d URLs=%d RX=%d Bytes=%d", len(devices_names), len(url_times), len(rx_rate), len(bytes_rd))
+                self.data["status"] = ["RUNNING"] * len(devices_names)
+                self.data["url_data"] = [0] * len(devices_names)
+                self.data["uc_avg"] = [0] * len(devices_names)
+                self.data["uc_max"] = [0] * len(devices_names)
+                self.data["uc_min"] = [0] * len(devices_names)
+                self.data["bytes_rd"] = [0] * len(devices_names)
+                self.data["rx rate (1m)"] = [0] * len(devices_names)
+                self.data["total_err"] = [0] * len(devices_names)
             time_difference = abs(end_time - datetime.now())
             total_hours = time_difference.total_seconds() / 3600
             remaining_minutes = (total_hours % 1) * 60
-            self.data["start_time"] = [starttime] * len(self.devices_list)
+            self.data["start_time"] = [starttime] * len(devices_names)
             if self.robot_test:
                 # To update end time at each interval
                 end_time = endtime
-            self.data["end_time"] = [end_time.strftime("%d/%m %I:%M:%S %p")] * len(self.devices_list)
+            self.data["end_time"] = [end_time.strftime("%d/%m %I:%M:%S %p")] * len(devices_names)
             self.data["remaining_time"] = [[str(int(total_hours)) + " hr and " + str(
                 int(remaining_minutes)) + " min" if int(total_hours) != 0 or int(remaining_minutes) != 0 else '<1 min'][
-                0]] * len(self.devices_list)
+                0]] * len(devices_names)
             if self.robot_test and self.rotation_enabled:
                 self.data["current_angle"] = [self.current_angle] * len(self.devices_list)
             try:
@@ -1196,8 +1261,10 @@ class HttpDownload(Realm):
 
     def postcleanup(self):
         self.http_profile.cleanup()
-        self.station_profile.cleanup()
-        LFUtils.wait_until_ports_disappear(base_url=self.local_realm.lfclient_url, port_list=self.station_profile.station_names,
+        stations_to_cleanup = [sta for sta in self.station_profile.station_names
+                               if sta not in self.existing_station_list]
+        self.station_profile.cleanup(stations_to_cleanup)
+        LFUtils.wait_until_ports_disappear(base_url=self.local_realm.lfclient_url, port_list=stations_to_cleanup,
                                            debug=self.debug)
 
     def file_create(self, ssh_port):
@@ -1382,7 +1449,9 @@ class HttpDownload(Realm):
         if self.client_type == "Real":
             lis = self.devices_list
         elif self.client_type == "Virtual":
-            lis = self.station_list[0]
+            lis = self.active_ports()
+        elif self.client_type == "Both":
+            lis = self.devices_list + self.active_ports()[len(self.port_list):]
         logger.info("%s %s", dataset, lis)
         x_fig_size = 18
         y_fig_size = len(lis) * .5 + 4
@@ -1423,7 +1492,9 @@ class HttpDownload(Realm):
         if self.client_type == "Real":
             lis = self.devices_list
         elif self.client_type == "Virtual":
-            lis = self.station_list[0]
+            lis = self.active_ports()
+        elif self.client_type == "Both":
+            lis = self.devices_list + self.active_ports()[len(self.port_list):]
         print(dataset2)
         print(lis)
         x_fig_size = 18
@@ -1452,27 +1523,36 @@ class HttpDownload(Realm):
 
     def get_device_port_details(self):
         self.response_port = self.local_realm.json_get("/port/all")
-        # Initialize lists to store channel, mode, and SSID information
-        self.channel_list, self.mode_list, self.ssid_list = [], [], []
+        # Initialize lists to store channel, mode, MAC and SSID information
+        self.channel_list, self.mode_list, self.ssid_list, self.macid_list = [], [], [], []
+        interfaces_dict = dict()
         if self.client_type == "Real":
             self.devices = self.devices_list
-            interfaces_dict = dict()
-            for interface in self.response_port['interfaces']:
-                interfaces_dict.update(interface)
-            for port in self.port_list:
-                if port in interfaces_dict:
-                    port_data = interfaces_dict[port]
-                    channel_value = str(port_data.get('channel', ''))
-                    if channel_value in ('', '0', '-1'):
-                        self.channel_list.append('NA')
-                    else:
-                        self.channel_list.append(channel_value)
-                    self.mode_list.append(str(port_data['mode']))
-                    self.ssid_list.append(str(port_data['ssid']))
-                else:
+            match_ports = self.port_list
+        elif self.client_type == "Virtual":
+            self.devices = self.active_ports()
+            match_ports = self.devices
+        else:
+            match_ports = self.active_ports()
+            self.devices = self.devices_list + match_ports[len(self.port_list):]
+        for interface in self.response_port['interfaces']:
+            interfaces_dict.update(interface)
+        for port in match_ports:
+            if port in interfaces_dict:
+                port_data = interfaces_dict[port]
+                channel_value = str(port_data.get('channel', ''))
+                if channel_value in ('', '0', '-1'):
                     self.channel_list.append('NA')
-                    self.mode_list.append('-')
-                    self.ssid_list.append('-')
+                else:
+                    self.channel_list.append(channel_value)
+                self.mode_list.append(str(port_data['mode']))
+                self.macid_list.append(str(port_data['mac']))
+                self.ssid_list.append(str(port_data['ssid']))
+            else:
+                self.channel_list.append('NA')
+                self.mode_list.append('-')
+                self.macid_list.append('-')
+                self.ssid_list.append('-')
 
     def add_live_view_images_to_report(self, report):
         for floor in range(0, int(self.total_floors)):
@@ -1652,6 +1732,7 @@ class HttpDownload(Realm):
 
         # To store http_datavalues.csv in report folder
         report_path_date_time = report.get_path_date_time()
+        log_dir = os.path.join(report_path_date_time, "log")
         # It ensures no blocker for virtual clients
         if self.client_type == 'Real':
             shutil.move('http_datavalues.csv', report_path_date_time)
@@ -1660,10 +1741,10 @@ class HttpDownload(Realm):
             except Exception:
                 logging.info("failed to generate all l4 data csv")
             # Moving indiviudal csv's to report directory
-            for csv_name in self.individual_device_csv_names:
-                shutil.move(f"{csv_name}.csv", report_path_date_time)
         if bands == "Both":
             num_stations = num_stations * 2
+        for csv_name in self.individual_device_csv_names:
+            shutil.move(f"{csv_name}.csv", log_dir)
         report.set_title("HTTP TEST Including IoT Devices" if iot_summary else "HTTP DOWNLOAD TEST")
         report.set_date(date)
         report.build_banner()
@@ -1768,32 +1849,27 @@ class HttpDownload(Realm):
         # print(response_port)
         # print("port list",self.port_list)
         # To set channel_list,mode_list,port_list to append once again
-        self.channel_list, self.mode_list, self.ssid_list = [], [], []
+        self.channel_list, self.mode_list, self.ssid_list, self.macid_list = [], [], [], []
         if self.client_type == "Real":
             self.devices = self.devices_list
-            for interface in self.response_port['interfaces']:
-                for port, port_data in interface.items():
-                    if port in self.port_list:
-                        channel_value = str(port_data.get('channel', ''))
-                        if channel_value in ('', '0', '-1'):
-                            self.channel_list.append('NA')
-                        else:
-                            self.channel_list.append(channel_value)
-                        self.mode_list.append(str(port_data['mode']))
-                        self.ssid_list.append(str(port_data['ssid']))
+            match_ports = self.port_list
         elif self.client_type == "Virtual":
-            self.devices = self.station_list[0]
-            for interface in self.response_port['interfaces']:
-                for port, port_data in interface.items():
-                    if port in self.station_list[0]:
-                        channel_value = str(port_data.get('channel', ''))
-                        if channel_value in ('', '0', '-1'):
-                            self.channel_list.append('NA')
-                        else:
-                            self.channel_list.append(channel_value)
-                        self.mode_list.append(str(port_data['mode']))
-                        self.macid_list.append(str(port_data['mac']))
-                        self.ssid_list.append(str(port_data['ssid']))
+            self.devices = self.active_ports()
+            match_ports = self.devices
+        else:
+            match_ports = self.active_ports()
+            self.devices = self.devices_list + match_ports[len(self.port_list):]
+        for interface in self.response_port['interfaces']:
+            for port, port_data in interface.items():
+                if port in match_ports:
+                    channel_value = str(port_data.get('channel', ''))
+                    if channel_value in ('', '0', '-1'):
+                        self.channel_list.append('NA')
+                    else:
+                        self.channel_list.append(channel_value)
+                    self.mode_list.append(str(port_data['mode']))
+                    self.macid_list.append(str(port_data['mac']))
+                    self.ssid_list.append(str(port_data['ssid']))
 
         x = []
         for fcc in list(result_data.keys()):
@@ -1905,7 +1981,7 @@ class HttpDownload(Realm):
         else:
             report.set_table_title("Overall Results")
         report.build_table_title()
-        if self.client_type == "Real":
+        if self.client_type in ("Real", "Both"):
             # When pass_fail criteria specified (expected_passfail_value / device_csv_name)
             if self.expected_passfail_value or self.device_csv_name:
                 test_input_list, pass_fail_list = self.get_pass_fail_list(dataset2)
@@ -2179,7 +2255,7 @@ class HttpDownload(Realm):
         Retrieves signal strength, rx rate and link speed data for the specified stations from port.
 
         """
-        station_names = self.port_list
+        station_names = self.active_ports()
         signal_list = []
         link_speed_list = []
         rx_rate_list = []
@@ -2801,6 +2877,22 @@ def main():
     INCLUDE_IN_README: False
 
         ''')
+
+    def list_type(x):
+        return x.split(',')
+
+    def parse_wifi_extra(value):
+        parsed = []
+        for entry in value.split(','):
+            pairs = {}
+            for item in str(entry).strip().split('!!'):
+                if '&&' in item:
+                    key, _, value = item.partition('&&')
+                    pairs[key.strip()] = value.strip()
+                elif item and item != '[BLANK]':
+                    logger.warning("Ignoring malformed wifi_extra item %r (expected key&&value)", item)
+            parsed.append(pairs)
+        return parsed
     required = parser.add_argument_group('Required arguments to run lf_webpage.py')
     optional = parser.add_argument_group('Optional arguments to run lf_webpage.py')
 
@@ -2808,24 +2900,30 @@ def main():
     required.add_argument('--mgr_port', help='port LANforge GUI HTTP service is running on', default=8080)
     required.add_argument('--upstream_port', help='non-station port that generates traffic: eg: eth1', default='eth2')
     optional.add_argument('--num_stations', type=int, help='number of stations to create for virtual clients', default=0)
-    optional.add_argument('--twog_radio', help='specify radio for 2.4G clients', default='wiphy3')
-    optional.add_argument('--fiveg_radio', help='specify radio for 5 GHz client', default='wiphy0')
-    optional.add_argument('--sixg_radio', help='Specify radio for 6GHz client', default='wiphy2')
-    optional.add_argument('--twog_security', help='WiFi Security protocol: {open|wep|wpa2|wpa3} for 2.4G clients')
-    optional.add_argument('--twog_ssid', help='WiFi SSID for script object to associate for 2.4G clients')
-    optional.add_argument('--twog_passwd', help='WiFi passphrase/password/key for 2.4G clients')
-    optional.add_argument('--fiveg_security', help='WiFi Security protocol: {open|wep|wpa2|wpa3} for 5G clients')
-    optional.add_argument('--fiveg_ssid', help='WiFi SSID for script object to associate for 5G clients')
-    optional.add_argument('--fiveg_passwd', help='WiFi passphrase/password/key for 5G clients')
-    optional.add_argument('--sixg_security', help='WiFi Security protocol: {open|wep|wpa2|wpa3} for 2.4G clients')
-    optional.add_argument('--sixg_ssid', help='WiFi SSID for script object to associate for 2.4G clients')
-    optional.add_argument('--sixg_passwd', help='WiFi passphrase/password/key for 2.4G clients')
+    optional.add_argument('--use_existing_station_list', action='store_true',
+                          help='full eid must be given, the script will use stations from the list, '
+                               'no configuration on the list, also prevents pre_cleanup')
+    optional.add_argument('--existing_station_list', action='append',
+                          help='[list of stations], use the stations in the list, '
+                               'multiple station lists may be entered')
+    optional.add_argument('--twog_radio', help='specify radio for 2.4G clients', type=list_type)
+    optional.add_argument('--fiveg_radio', help='specify radio for 5 GHz client', type=list_type)
+    optional.add_argument('--sixg_radio', help='Specify radio for 6GHz client', type=list_type)
+    optional.add_argument('--twog_security', help='WiFi Security protocol: {open|wep|wpa2|wpa3} for 2.4G clients', type=list_type)
+    optional.add_argument('--twog_ssid', help='WiFi SSID for script object to associate for 2.4G clients', type=list_type)
+    optional.add_argument('--twog_passwd', help='WiFi passphrase/password/key for 2.4G clients', type=list_type)
+    optional.add_argument('--fiveg_security', help='WiFi Security protocol: {open|wep|wpa2|wpa3} for 5G clients', type=list_type)
+    optional.add_argument('--fiveg_ssid', help='WiFi SSID for script object to associate for 5G clients', type=list_type)
+    optional.add_argument('--fiveg_passwd', help='WiFi passphrase/password/key for 5G clients', type=list_type)
+    optional.add_argument('--sixg_security', help='WiFi Security protocol: {open|wep|wpa2|wpa3} for 6G clients', type=list_type)
+    optional.add_argument('--sixg_ssid', help='WiFi SSID for script object to associate for 6 clients', type=list_type)
+    optional.add_argument('--sixg_passwd', help='WiFi passphrase/password/key for 6G clients', type=list_type)
     optional.add_argument('--target_per_ten', help='number of request per 10 minutes', default=100)
     required.add_argument('--file_size', type=str, help='specify the size of file you want to download', default='5MB')
-    required.add_argument('--bands', nargs="+", help='specify which band testing you want to run eg 5G, 2.4G, 6G',
-                          default=["5G", "2.4G", "6G"])
+    required.add_argument('--bands', nargs="+", help='specify which band testing you want to run eg --bands 2.4G 5G 6G',
+                          choices=["5G", "2.4G", "6G", "Both"])
     required.add_argument('--duration', help='Please enter the duration in s,m,h (seconds or minutes or hours).Eg: 30s,5m,48h')
-    required.add_argument('--client_type', help='Enter the type of client. Example:"Real","Virtual"')
+    required.add_argument('--client_type', help='Enter the type of client. Example:"Real","Virtual","Both"', choices=["Real", "Virtual", "Both"])
     optional.add_argument('--threshold_5g', help="Enter the threshold value for 5G Pass/Fail criteria", default="60")
     optional.add_argument('--threshold_2g', help="Enter the threshold value for 2.4G Pass/Fail criteria", default="90")
     optional.add_argument('--threshold_both', help="Enter the threshold value for Both Pass/Fail criteria", default="50")
@@ -2887,6 +2985,12 @@ def main():
     optional.add_argument("--client_cert", type=str, default='NA', help='Specify the client certificate file name')
     optional.add_argument("--pk_passwd", type=str, default='NA', help='Specify the password for the private key')
     optional.add_argument("--pac_file", type=str, default='NA', help='Specify the pac file name')
+    for band in ('twog', 'fiveg', 'sixg'):
+        optional.add_argument(f'--{band}_wifi_extra', type=parse_wifi_extra, default=[],
+                              help='Per-radio extra WiFi config: key&&value!!key&&value; '
+                                   'comma-separated entries, [BLANK] to skip a radio. '
+                                   'Supports set_wifi_extra keys plus ieee80211w, enable_pkc, '
+                                   'power_save, bss_transition and roam_ft_ds.')
     optional.add_argument("--expected_passfail_value", help="Specify the expected number of urls", default=None)
     optional.add_argument("--device_csv_name", type=str, help='Specify the csv name to store expected url values', default=None)
     optional.add_argument("--wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
@@ -3016,22 +3120,28 @@ times the file is downloaded.
             ssid = args.ssid
             passwd = args.passwd
             security = args.security
-        elif bands == "2.4G":
-            security = [args.twog_security]
-            ssid = [args.twog_ssid]
-            passwd = [args.twog_passwd]
-        elif bands == "5G":
-            security = [args.fiveg_security]
-            ssid = [args.fiveg_ssid]
-            passwd = [args.fiveg_passwd]
-        elif bands == "6G":
-            security = [args.sixg_security]
-            ssid = [args.sixg_ssid]
-            passwd = [args.sixg_passwd]
-        elif bands == "Both":
-            security = [args.twog_security, args.fiveg_security]
-            ssid = [args.twog_ssid, args.fiveg_ssid]
-            passwd = [args.twog_passwd, args.fiveg_passwd]
+            wifi_extra = []
+        else:
+            if bands == "2.4G":
+                security = args.twog_security
+                ssid = args.twog_ssid
+                passwd = args.twog_passwd
+                wifi_extra = args.twog_wifi_extra
+            elif bands == "5G":
+                security = args.fiveg_security
+                ssid = args.fiveg_ssid
+                passwd = args.fiveg_passwd
+                wifi_extra = args.fiveg_wifi_extra
+            elif bands == "6G":
+                security = args.sixg_security
+                ssid = args.sixg_ssid
+                passwd = args.sixg_passwd
+                wifi_extra = args.sixg_wifi_extra
+            elif bands == "Both":
+                security = args.twog_security + args.fiveg_security
+                ssid = args.twog_ssid + args.fiveg_ssid
+                passwd = args.twog_passwd + args.fiveg_passwd
+                wifi_extra = args.twog_wifi_extra + args.fiveg_wifi_extra
         http = HttpDownload(lfclient_host=args.mgr, lfclient_port=args.mgr_port,
                             upstream=args.upstream_port, num_sta=args.num_stations,
                             security=security, ap_name=args.ap_name,
@@ -3086,7 +3196,7 @@ times the file is downloaded.
                             bssids=args.bssids,
                             duration_to_skip=args.duration_to_skip
                             )
-        if args.client_type == "Real":
+        if args.client_type in ["Real", "Both"]:
             if not isinstance(args.device_list, list):
                 http.device_list = http.filter_iOS_devices(args.device_list)
                 if len(http.device_list) == 0:
@@ -3108,14 +3218,67 @@ times the file is downloaded.
                         "configuration_status": "configured"
                     }
                     http.updating_webui_runningjson(obj)
-            args.num_stations = len(port_list)
+            if args.client_type == "Real":
+                args.num_stations = len(port_list)
         if not args.get_url_from_file:
             http.file_create(ssh_port=args.ssh_port)
         else:
             if args.file_path is None:
                 print("WARNING: Please Specify the path of the file, if you select the --get_url_from_file")
                 exit(0)
-        http.set_values()
+        if args.num_stations:
+            http.set_values()
+        http.wifi_extra_list = wifi_extra
+        # Existing-station validation (--use_existing_station_list)
+        existing_sta_list = []
+        if args.client_type in ("Virtual", "Both") and args.use_existing_station_list:
+            raw_existing_list = args.existing_station_list
+            if raw_existing_list:
+                flat = [s.strip() for s in ','.join(raw_existing_list).split(',') if s.strip()]
+                if not flat:
+                    logger.warning("validate_existing_stations: no EIDs found after parsing.")
+                else:
+                    port_data = {}
+                    try:
+                        port_resp = http.local_realm.json_get("/port/all")
+                        if port_resp and "interfaces" in port_resp:
+                            for iface in port_resp["interfaces"]:
+                                port_data.update(iface)
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch /port/all for IP validation: {e}")
+
+                    validated = []
+                    for eid in dict.fromkeys(flat):
+                        ip = (port_data.get(eid) or {}).get("ip")
+                        if ip and ip != "0.0.0.0":
+                            validated.append(eid)
+                            logger.info(f"validate_existing_stations: confirmed port '{eid}' with IP")
+                        else:
+                            logger.warning(f"validate_existing_stations: port '{eid}' missing or has no IP - skipping.")
+
+                    if not validated:
+                        logger.error(
+                            "validate_existing_stations: none of the supplied existing stations "
+                            "exist in LANforge.  Aborting.")
+                        exit(1)
+
+                logger.info(f"validate_existing_stations: {len(validated)} valid port(s): {validated}")
+                existing_sta_list = validated
+                logger.info(f"Existing stations after validation: {existing_sta_list}")
+            else:
+                logger.warning("--use_existing_station_list set but --existing_station_list is empty — ignoring.")
+
+        # Merge existing stations into the global station list
+        http.use_existing_station_list = args.use_existing_station_list
+        http.existing_station_list = existing_sta_list
+
+        # Keep one authoritative list for monitoring, reporting and counts.
+        all_client_list = http.active_ports()
+        # Virtual stations only, i.e. what active_ports() adds on top of port_list.
+        station_list = [] if args.client_type == "Real" else all_client_list[len(port_list):]
+
+        args.num_stations = len(all_client_list)
+
         http.precleanup()
         if args.iot_test:
             if args.iot_iterations > 1:
@@ -3139,7 +3302,7 @@ times the file is downloaded.
                 )
                 iot_thread.start()
         http.build()
-        if args.client_type == 'Real':
+        if args.client_type in ('Real', 'Both'):
             http.monitor_cx()
             logger.info(f'Test started on the devices : {http.port_list}')
         test_time = datetime.now()
@@ -3152,17 +3315,11 @@ times the file is downloaded.
             http.perform_robo()
         else:
             http.start()
-            if args.dowebgui:
-                # FOR WEBGUI, -This fumction is called to fetch the runtime data from layer-4
-                http.monitor_for_runtime_csv(args.duration)
-            elif args.client_type == 'Real':
-                # To fetch runtime csv during runtime
-                http.monitor_for_runtime_csv(args.duration)
-            else:
-                time.sleep(args.duration)
+            # To fetch runtime csv during runtime
+            http.monitor_for_runtime_csv(args.duration)
             http.stop()
         # taking http.data, which got updated in the monitor_for_runtime_csv method
-        if args.client_type == 'Real':
+        if args.client_type in ('Real', 'Both'):
             uc_avg_val = http.data['uc_avg']
             url_times = http.data['url_data']
             rx_bytes_val = http.data['bytes_rd']
@@ -3254,194 +3411,219 @@ times the file is downloaded.
                 final_dict['Both']['speed'] = Both_speed
                 final_dict['Both']['url_times'] = Both_urltimes
 
-    result_data = final_dict
-    print("result", result_data)
-    print("Test Finished")
-    test_end = datetime.now()
-    test_end = test_end.strftime("%Y %d %H:%M:%S")
-    print("Test ended at ", test_end)
-    s1 = test_time
-    s2 = test_end  # for example
-    FMT = '%Y %d %H:%M:%S'
-    test_duration = datetime.strptime(s2, FMT) - datetime.strptime(s1, FMT)
+        result_data = final_dict
+        print("result", result_data)
+        print("Test Finished")
+        test_end = datetime.now()
+        test_end = test_end.strftime("%Y %d %H:%M:%S")
+        print("Test ended at ", test_end)
+        s1 = test_time
+        s2 = test_end  # for example
+        FMT = '%Y %d %H:%M:%S'
+        test_duration = datetime.strptime(s2, FMT) - datetime.strptime(s1, FMT)
 
-    info_ssid = []
-    info_security = []
-    # For real clients
-    if args.client_type == 'Real':
-        info_ssid.append(args.ssid)
-        info_security.append(args.security)
-    else:
-        for band in args.bands:
-            if band == "2.4G":
-                info_ssid.append(args.twog_ssid)
-                info_security.append(args.twog_security)
-            elif band == "5G":
-                info_ssid.append(args.fiveg_ssid)
-                info_security.append(args.fiveg_security)
-            elif band == "6G":
-                info_ssid.append(args.sixg_ssid)
-                info_security.append(args.sixg_security)
-            elif band == "Both":
-                info_ssid.append(args.fiveg_ssid)
-                info_security.append(args.fiveg_security)
-                info_ssid.append(args.twog_ssid)
-                info_security.append(args.twog_security)
+        info_ssid = []
+        info_security = []
+        # For real clients
+        if args.client_type == 'Real':
+            info_ssid.append(args.ssid)
+            info_security.append(args.security)
+        else:
+            for band in args.bands:
+                if band == "2.4G":
+                    info_ssid.extend(args.twog_ssid or [])
+                    info_security.extend(args.twog_security or [])
+                elif band == "5G":
+                    info_ssid.extend(args.fiveg_ssid or [])
+                    info_security.extend(args.fiveg_security or [])
+                elif band == "6G":
+                    info_ssid.extend(args.sixg_ssid or [])
+                    info_security.extend(args.sixg_security or [])
+                elif band == "Both":
+                    info_ssid.extend(args.twog_ssid or [])
+                    info_security.extend(args.twog_security or [])
+                    info_ssid.extend(args.fiveg_ssid or [])
+                    info_security.extend(args.fiveg_security or [])
 
-    print("total test duration ", test_duration)
-    date = str(datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
-    duration = args.duration
-    if int(duration) < 60:
-        duration = str(duration) + "s"
-    elif int(duration == 60) or (int(duration) > 60 and int(duration) < 3600):
-        duration = str(duration / 60) + "m"
-    else:
-        if int(duration == 3600) or (int(duration) > 3600):
-            duration = str(duration / 3600) + "h"
+        print("total test duration ", test_duration)
+        date = str(datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
+        duration = args.duration
+        if int(duration) < 60:
+            duration = str(duration) + "s"
+        elif int(duration == 60) or (int(duration) > 60 and int(duration) < 3600):
+            duration = str(duration / 60) + "m"
+        else:
+            if int(duration == 3600) or (int(duration) > 3600):
+                duration = str(duration / 3600) + "h"
 
-    if args.client_type == "Real":
         android_devices, windows_devices, linux_devices, mac_devices = 0, 0, 0, 0
         all_devices_names = []
         device_type = []
         total_devices = ""
-        for i in http.devices_list:
-            split_device_name = i.split(" ")
-            if 'android' in split_device_name:
-                all_devices_names.append(split_device_name[2] + ("(Android)"))
-                device_type.append("Android")
-                android_devices += 1
-            elif 'Win' in split_device_name:
-                all_devices_names.append(split_device_name[2] + ("(Windows)"))
-                device_type.append("Windows")
-                windows_devices += 1
-            elif 'Lin' in split_device_name:
-                all_devices_names.append(split_device_name[2] + ("(Linux)"))
-                device_type.append("Linux")
-                linux_devices += 1
-            elif 'Mac' in split_device_name:
-                all_devices_names.append(split_device_name[2] + ("(Mac)"))
-                device_type.append("Mac")
-                mac_devices += 1
+        if args.client_type in ("Real", "Both"):
+            for i in http.devices_list:
+                split_device_name = i.split(" ")
+                if 'android' in split_device_name:
+                    all_devices_names.append(split_device_name[2] + ("(Android)"))
+                    device_type.append("Android")
+                    android_devices += 1
+                elif 'Win' in split_device_name:
+                    all_devices_names.append(split_device_name[2] + ("(Windows)"))
+                    device_type.append("Windows")
+                    windows_devices += 1
+                elif 'Lin' in split_device_name:
+                    all_devices_names.append(split_device_name[2] + ("(Linux)"))
+                    device_type.append("Linux")
+                    linux_devices += 1
+                elif 'Mac' in split_device_name:
+                    all_devices_names.append(split_device_name[2] + ("(Mac)"))
+                    device_type.append("Mac")
+                    mac_devices += 1
 
-        # Build total_devices string based on counts
-        if android_devices > 0:
-            total_devices += f" Android({android_devices})"
-        if windows_devices > 0:
-            total_devices += f" Windows({windows_devices})"
-        if linux_devices > 0:
-            total_devices += f" Linux({linux_devices})"
-        if mac_devices > 0:
-            total_devices += f" Mac({mac_devices})"
-        if args.group_name:
-            group_names = ', '.join(configuration.keys())
-            profile_names = ', '.join(configuration.values())
-            configmap = "Groups:" + group_names + " -> Profiles:" + profile_names
+            # Build total_devices string based on counts
+            if android_devices > 0:
+                total_devices += f" Android({android_devices})"
+            if windows_devices > 0:
+                total_devices += f" Windows({windows_devices})"
+            if linux_devices > 0:
+                total_devices += f" Linux({linux_devices})"
+            if mac_devices > 0:
+                total_devices += f" Mac({mac_devices})"
+        if args.client_type == "Real":
+            if args.group_name:
+                group_names = ', '.join(configuration.keys())
+                profile_names = ', '.join(configuration.values())
+                configmap = "Groups:" + group_names + " -> Profiles:" + profile_names
+                test_setup_info = {
+                    "AP name": args.ap_name,
+                    "Configuration": configmap,
+                    "Configured Devices": ", ".join(all_devices_names),
+                    "No of Devices": "Total" + f"({len(all_devices_names)})" + total_devices,
+                    "Traffic Direction": "Download",
+                    "Traffic Duration ": duration
+                }
+            else:
+                test_setup_info = {
+                    "AP Name": args.ap_name,
+                    "SSID": ssid,
+                    "Device List": ", ".join(all_devices_names),
+                    "Security": security,
+                    "No of Devices": "Total" + f"({len(all_devices_names)})" + total_devices,
+                    "Traffic Direction": "Download",
+                    "Traffic Duration ": duration
+                }
+        elif args.client_type == "Virtual":
             test_setup_info = {
-                "AP name": args.ap_name,
-                "Configuration": configmap,
-                "Configured Devices": ", ".join(all_devices_names),
-                "No of Devices": "Total" + f"({len(all_devices_names)})" + total_devices,
+                "AP Name": args.ap_name,
+                "SSID": ssid,
+                "Device List": ", ".join(station_list),
+                "Security": security,
+                "No of Devices:": "Total" + f"({args.num_stations})" + f" Virtual({len(station_list)}) ",
                 "Traffic Direction": "Download",
                 "Traffic Duration ": duration
             }
         else:
-            test_setup_info = {
-                "AP Name": args.ap_name,
-                "SSID": ssid,
-                "Device List": ", ".join(all_devices_names),
-                "Security": security,
-                "No of Devices": "Total" + f"({len(all_devices_names)})" + total_devices,
-                "Traffic Direction": "Download",
-                "Traffic Duration ": duration
-            }
-    else:
-        test_setup_info = {
-            "AP Name": args.ap_name,
-            "SSID": ssid,
-            "Security": security,
-            "No of Devices": args.num_stations,
-            "Traffic Direction": "Download",
-            "Traffic Duration ": duration
+            if args.group_name:
+                group_names = ', '.join(configuration.keys())
+                profile_names = ', '.join(configuration.values())
+                configmap = "Groups:" + group_names + " -> Profiles:" + profile_names
+                test_setup_info = {
+                    "AP name": args.ap_name,
+                    "Configuration": configmap,
+                    "Configured Devices": ", ".join(all_devices_names) + ", ".join(station_list),
+                    "No of Devices": "Total" + f"({args.num_stations})" + total_devices + f" Virtual({len(station_list)}) ",
+                    "Traffic Direction": "Download",
+                    "Traffic Duration ": duration
+                }
+            else:
+                test_setup_info = {
+                    "AP_Name": args.ap_name,
+                    "SSID": ssid,
+                    "Device List": ", ".join(all_devices_names) + ", ".join(station_list),
+                    "Security": security,
+                    "No of Devices": "Total" + f"({args.num_stations})" + total_devices + f" Virtual({len(station_list)}) ",
+                    "Traffic Direction": "Download",
+                    "Traffic Duration ": duration
+                }
+        test_input_infor = {
+            "LANforge ip": args.mgr,
+            "Bands": args.bands,
+            "Upstream": args.upstream_port,
+            "Stations": args.num_stations,
+            "SSID": ','.join(filter(None, info_ssid)) if info_ssid else "",
+            "Security": ', '.join(filter(None, info_security)) if info_security else "",
+            "Duration": args.duration,
+            "Contact": "support@candelatech.com"
         }
-    test_input_infor = {
-        "LANforge ip": args.mgr,
-        "Bands": args.bands,
-        "Upstream": args.upstream_port,
-        "Stations": args.num_stations,
-        "SSID": ','.join(filter(None, info_ssid)) if info_ssid else "",
-        "Security": ', '.join(filter(None, info_security)) if info_security else "",
-        "Duration": args.duration,
-        "Contact": "support@candelatech.com"
-    }
-    if not args.file_path:
-        test_setup_info["File size"] = args.file_size
-        test_setup_info["File location"] = "/usr/local/lanforge/nginx/html"
-        test_input_infor["File size"] = args.file_size
-    else:
-        test_setup_info["File location (URLs from the File)"] = args.file_path
-    if args.client_type == "Real":
-        test_setup_info["failed_cx's"] = http.failed_cx if http.failed_cx else "NONE"
-    # dataset = http.download_time_in_sec(result_data=result_data)
-    rx_rate = []
-    for i in result_data:
-        dataset = result_data[i]['dl_time']
-        dataset2 = result_data[i]['url_times']
-        bytes_rd = result_data[i]['bytes_rd']
-        rx_rate = result_data[i]['speed']
-    dataset1 = [round(x / 1000000, 4) for x in bytes_rd]
-    rx_rate = [round(x / 1000000, 4) for x in rx_rate]  # converting bps to mbps
+        if not args.file_path:
+            test_setup_info["File size"] = args.file_size
+            test_setup_info["File location"] = "/usr/local/lanforge/nginx/html"
+            test_input_infor["File size"] = args.file_size
+        else:
+            test_setup_info["File location (URLs from the File)"] = args.file_path
+        if args.client_type in ("Real", "Both"):
+            test_setup_info["failed_cx's"] = http.failed_cx if http.failed_cx else "NONE"
+        # dataset = http.download_time_in_sec(result_data=result_data)
+        rx_rate = []
+        for i in result_data:
+            dataset = result_data[i]['dl_time']
+            dataset2 = result_data[i]['url_times']
+            bytes_rd = result_data[i]['bytes_rd']
+            rx_rate = result_data[i]['speed']
+        dataset1 = [round(x / 1000000, 4) for x in bytes_rd]
+        rx_rate = [round(x / 1000000, 4) for x in rx_rate]  # converting bps to mbps
 
-    lis = []
-    if bands == "Both":
-        for i in range(1, args.num_stations * 2 + 1):
-            lis.append(i)
-    else:
-        for i in range(1, args.num_stations + 1):
-            lis.append(i)
+        lis = []
+        if bands == "Both":
+            for i in range(1, args.num_stations * 2 + 1):
+                lis.append(i)
+        else:
+            for i in range(1, args.num_stations + 1):
+                lis.append(i)
 
-    # dataset2 = http.speed_in_Mbps(result_data=result_data)
+        # dataset2 = http.speed_in_Mbps(result_data=result_data)
 
-    # data = http.summary_calculation(
-        # result_data=result_data,
-        # bands=args.bands,
-        # threshold_5g=args.threshold_5g,
-        # threshold_2g=args.threshold_2g,
-        # threshold_both=args.threshold_both)
-    # summary_table_value = {
-        # "": args.bands,
-        # "PASS/FAIL": data
-    # }
-    iot_summary = None
-    if args.iot_test and args.iot_testname:
-        base = os.path.join("results", args.iot_testname)
-        p = os.path.join(base, "iot_summary.json")
-        if os.path.exists(p):
-            with open(p) as f:
-                iot_summary = json.load(f)
-    if args.dowebgui:
-        http.data_for_webui["status"] = ["STOPPED"] * len(http.devices_list)
-        http.data_for_webui['rx rate (1m)'] = http.data['rx rate (1m)']
-        http.data_for_webui['total_err'] = http.data['total_err']
-        http.data_for_webui["start_time"] = http.data["start_time"]
-        http.data_for_webui["end_time"] = http.data["end_time"]
-        http.data_for_webui["remaining_time"] = http.data["remaining_time"]
-        df1 = pd.DataFrame(http.data_for_webui)
-        df1.to_csv('{}/http_datavalues.csv'.format(http.result_dir), index=False)
+        # data = http.summary_calculation(
+            # result_data=result_data,
+            # bands=args.bands,
+            # threshold_5g=args.threshold_5g,
+            # threshold_2g=args.threshold_2g,
+            # threshold_both=args.threshold_both)
+        # summary_table_value = {
+            # "": args.bands,
+            # "PASS/FAIL": data
+        # }
+        iot_summary = None
+        if args.iot_test and args.iot_testname:
+            base = os.path.join("results", args.iot_testname)
+            p = os.path.join(base, "iot_summary.json")
+            if os.path.exists(p):
+                with open(p) as f:
+                    iot_summary = json.load(f)
+        if args.dowebgui:
+            http.data_for_webui["status"] = ["STOPPED"] * len(http.devices_list)
+            http.data_for_webui['rx rate (1m)'] = http.data['rx rate (1m)']
+            http.data_for_webui['total_err'] = http.data['total_err']
+            http.data_for_webui["start_time"] = http.data["start_time"]
+            http.data_for_webui["end_time"] = http.data["end_time"]
+            http.data_for_webui["remaining_time"] = http.data["remaining_time"]
+            df1 = pd.DataFrame(http.data_for_webui)
+            df1.to_csv('{}/http_datavalues.csv'.format(http.result_dir), index=False)
 
-    http.generate_report(date, num_stations=args.num_stations,
-                         duration=args.duration, test_setup_info=test_setup_info, dataset=dataset, lis=lis,
-                         bands=args.bands, threshold_2g=args.threshold_2g, threshold_5g=args.threshold_5g,
-                         threshold_both=args.threshold_both, dataset2=dataset2, dataset1=dataset1,
-                         # summary_table_value=summary_table_value,
-                         result_data=result_data, rx_rate=rx_rate,
-                         test_rig=args.test_rig, test_tag=args.test_tag, dut_hw_version=args.dut_hw_version,
-                         dut_sw_version=args.dut_sw_version, dut_model_num=args.dut_model_num,
-                         dut_serial_num=args.dut_serial_num, test_id=args.test_id,
-                         test_input_infor=test_input_infor, csv_outfile=args.csv_outfile, iot_summary=iot_summary)
-    http.postcleanup()
-    # FOR WEBGUI, filling csv at the end to get the last terminal logs
-    if args.dowebgui:
-        http.copy_reports_to_home_dir()
+        http.generate_report(date, num_stations=args.num_stations,
+                             duration=args.duration, test_setup_info=test_setup_info, dataset=dataset, lis=lis,
+                             bands=args.bands, threshold_2g=args.threshold_2g, threshold_5g=args.threshold_5g,
+                             threshold_both=args.threshold_both, dataset2=dataset2, dataset1=dataset1,
+                             # summary_table_value=summary_table_value,
+                             result_data=result_data, rx_rate=rx_rate,
+                             test_rig=args.test_rig, test_tag=args.test_tag, dut_hw_version=args.dut_hw_version,
+                             dut_sw_version=args.dut_sw_version, dut_model_num=args.dut_model_num,
+                             dut_serial_num=args.dut_serial_num, test_id=args.test_id,
+                             test_input_infor=test_input_infor, csv_outfile=args.csv_outfile, iot_summary=iot_summary)
+        http.postcleanup()
+        # FOR WEBGUI, filling csv at the end to get the last terminal logs
+        if args.dowebgui:
+            http.copy_reports_to_home_dir()
 
 
 if __name__ == '__main__':
