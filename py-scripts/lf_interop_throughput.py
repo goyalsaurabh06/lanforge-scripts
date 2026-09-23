@@ -406,6 +406,8 @@ class Throughput(Realm):
         self.last_monitor_present_keys = []
         self.current_iteration_cxs = []
         self.monitor_start_time = None
+        # Updated after every monitor() call; gives background_ping the real monitoring window.
+        self.monitor_end_time = None
         # Variables related to Robo
         self.robo_ip = robo_ip
         self.angle_list = angle_list if angle_list else [0]
@@ -4587,6 +4589,8 @@ class Throughput(Realm):
         # ping statistics collected on the clients while the traffic was running --
         # "Client Connectivity Results Throughout the Test Duration"
         if getattr(self, 'background_ping', None):
+            # Anchors the connectivity graph to the real monitoring window, not background_ping's own wider lifetime.
+            self.background_ping.set_monitor_window(self.monitor_start_time, self.monitor_end_time)
             self.background_ping.add_to_report(report, device_info={
                 port_name: {"mac": mac, "channel": channel, "rssi": rssi}
                 for port_name, mac, channel, rssi in zip(
@@ -5204,6 +5208,8 @@ class Throughput(Realm):
         # ping statistics collected on the clients while the traffic was running --
         # "Client Connectivity Results Throughout the Test Duration"
         if getattr(self, 'background_ping', None):
+            # Anchors the connectivity graph to the real monitoring window, not background_ping's own wider lifetime.
+            self.background_ping.set_monitor_window(self.monitor_start_time, self.monitor_end_time)
             self.background_ping.add_to_report(report, device_info={
                 port_name: {"mac": mac, "channel": channel, "rssi": rssi}
                 for port_name, mac, channel, rssi in zip(
@@ -6232,13 +6238,8 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
             logger.error("Incremental values given for selected devices are incorrect")
             return
 
-        # starting the ping on the selected clients, it keeps running until the traffic is stopped
-        throughput.background_ping = lf_interop_bg_ping.from_args(
-            args,
-            host=args.mgr,
-            port=args.mgr_port,
-            device_list=throughput.input_devices_list,
-            default_target=args.upstream_port)
+        # Set below, once CX build/precheck is done, so its duration excludes CX setup time.
+        throughput.background_ping = None
 
         created_cxs = throughput.build()
         time.sleep(10)
@@ -6258,6 +6259,14 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
         if not throughput.precheck_all_created_cx_endpoints():
             throughput.stop()
             return
+
+        # Starting the ping here, right as monitoring begins, keeps its duration aligned with the test; it keeps running across every iteration below.
+        throughput.background_ping = lf_interop_bg_ping.from_args(
+            args,
+            host=args.mgr,
+            port=args.mgr_port,
+            device_list=throughput.input_devices_list,
+            default_target=args.upstream_port)
 
         individual_dataframe_column = []
 
@@ -6330,14 +6339,16 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
             try:
                 # Monitor throughput and capture all dataframes and test stop status
                 all_dataframes, test_stopped_by_user = throughput.monitor(i, individual_df, device_names, incremental_capacity_list, overall_start_time, overall_end_time, is_device_configured)
+                throughput.monitor_end_time = datetime.now()
                 if args.do_interopability and "iOS" not in to_run_cxs[i][0] and args.interopability_config:
                     # Disconnecting device after running the test
                     throughput.disconnect_all_devices([device_to_run_resource])
             except Exception as e:
-                # A mid-test failure must not skip cleanup/reporting -- log it, stop this
-                # iteration's monitoring here, and fall through to the reporting below with
-                # whatever data was collected so far.
+                # Fall back to individual_df so generate_report() doesn't crash on a None all_dataframes below.
                 logger.error("Throughput monitoring failed on iteration %s: %s", i, e)
+                throughput.monitor_end_time = datetime.now()
+                if all_dataframes is None:
+                    all_dataframes = individual_df
                 iterations_before_test_stopped_by_user.append(i)
                 break
             # Check if the test was stopped by the user
