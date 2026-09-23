@@ -1171,6 +1171,58 @@ class HttpDownload(Realm):
 
         return result
 
+    def get_report_data(self, fields=('uc-avg', 'total-urls', 'bytes-rd', 'rx rate')):
+        """Read every report field for every CX in a single layer4 call.
+
+        Asking one field at a time -- my_monitor() per field -- means one HTTP
+        call and one snapshot per field, so LANforge can drop an endpoint
+        between them: 'uc-avg' comes back with 192 values while 'total-urls'
+        has 191. The report then dies in lf_graph on the length mismatch, and
+        wherever the counts happen to agree the values are silently attributed
+        to the wrong client.
+
+        One call keeps every field on the same snapshot, and every CX gets an
+        entry whether or not LANforge returned it -- the same contract
+        get_layer4_data() already gives the real-client path.
+
+        Returns {field: [one value per CX, in created_cx order]}.
+        """
+        cx_list = list(self.http_profile.created_cx.keys())
+        result = {field: [] for field in fields}
+        if not cx_list:
+            logger.warning("No CXs created; the report has nothing to read")
+            return result
+
+        url = "layer4/%s/list?fields=%s" % (
+            ','.join(cx_list), ','.join(field.replace(' ', '+') for field in fields))
+        response = self.local_realm.json_get(url)
+        endpoint_data = (response or {}).get('endpoint')
+        if endpoint_data is None:
+            logger.error("No layer4 endpoint data for the report; recording zeros. URL: %s", url)
+            endpoint_data = []
+        # LANforge returns a bare dict, not a list, when there is one endpoint.
+        if not isinstance(endpoint_data, list):
+            endpoint_data = [{endpoint_data.get('name', cx_list[0]): endpoint_data}]
+
+        by_cx = {}
+        for entry in endpoint_data:
+            if isinstance(entry, dict):
+                by_cx.update(entry)
+
+        missing = []
+        for cx in cx_list:
+            values = by_cx.get(cx)
+            if values is None:
+                missing.append(cx)
+            for field in fields:
+                result[field].append(0 if values is None else values.get(field, 0))
+
+        if missing:
+            logger.warning("%d of %d CX(s) missing from the layer4 report data, recorded as 0: %s%s",
+                           len(missing), len(cx_list), missing[:5],
+                           " ..." if len(missing) > 5 else "")
+        return result
+
     def my_monitor(self, data_mon):
         # data in json format
         data = self.local_realm.json_get("layer4/%s/list?fields=%s" %
@@ -3164,10 +3216,13 @@ times the file is downloaded.
             rx_bytes_val = http.data['bytes_rd']
             rx_rate_val = list(http.data['rx rate (1m)'])
         else:
-            uc_avg_val = http.my_monitor('uc-avg')
-            url_times = http.my_monitor('total-urls')
-            rx_bytes_val = http.my_monitor('bytes-rd')
-            rx_rate_val = http.my_monitor('rx rate')
+            # One call for every field, so they all come from the same snapshot
+            # and hold one value per CX (see get_report_data).
+            report_data = http.get_report_data()
+            uc_avg_val = report_data['uc-avg']
+            url_times = report_data['total-urls']
+            rx_bytes_val = report_data['bytes-rd']
+            rx_rate_val = report_data['rx rate']
         if args.dowebgui:
             http.data_for_webui["url_data"] = url_times  # storing the layer-4 url data at the end of test
         if args.client_type == 'Real':  # for real clients
