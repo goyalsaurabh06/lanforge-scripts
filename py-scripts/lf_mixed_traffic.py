@@ -1473,10 +1473,14 @@ class Mixed_Traffic(Realm):
                 rx_bytes_val = self.http_obj.data['bytes_rd']
                 rx_rate_val = self.http_obj.data['rx rate (1m)']
             else:
-                uc_avg_val = self.http_obj.my_monitor('uc-avg')
-                url_times = self.http_obj.my_monitor('total-urls')
-                rx_bytes_val = self.http_obj.my_monitor('bytes-rd')
-                rx_rate_val = self.http_obj.my_monitor('rx rate')
+                # One call for every field, so they all come from the same snapshot
+                # and hold one value per CX. Four separate my_monitor() calls could
+                # return different lengths, which killed the report in lf_graph.
+                report_data = self.http_obj.get_report_data()
+                uc_avg_val = report_data['uc-avg']
+                url_times = report_data['total-urls']
+                rx_bytes_val = report_data['bytes-rd']
+                rx_rate_val = report_data['rx rate']
             if self.dowebgui:
                 self.http_obj.data_for_webui["url_data"] = url_times
             if bands == "2.4G":
