@@ -435,6 +435,18 @@ class ThroughputQOS(Realm):
                 count += 1
         print("cross connections with TOS type created.")
 
+    @staticmethod
+    def to_number(value, default=0.0):
+        """Read a CX stat as a number, treating 'not reported' as `default`.
+
+        A CX missing from a poll, or a field that comes back as '', would
+        otherwise propagate into the averaging below and raise.
+        """
+        try:
+            return float(str(value).strip())
+        except (TypeError, ValueError):
+            return default
+
     def monitor(self):
         throughput, upload, download, upload_throughput, download_throughput, connections_upload, connections_download = {}, [], [], [], [], {}, {}
         drop_a, drop_a_per, drop_b, drop_b_per = [], [], [], []
@@ -462,9 +474,18 @@ class ThroughputQOS(Realm):
         [(upload.append([]), download.append([]), drop_a.append([]), drop_b.append([])) for i in range(len(self.cx_profile.created_cx))]
         while datetime.now() < end_time:
             index += 1
-            response = list(self.json_get('/cx/%s?fields=%s' % (','.join(self.cx_profile.created_cx.keys()), ",".join(['bps rx a', 'bps rx b', 'rx drop %25 a', 'rx drop %25 b']))).values())[2:]
-            throughput[index] = list(
-                map(lambda i: [x for x in i.values()], response))
+            fields = ['bps rx a', 'bps rx b', 'rx drop %25 a', 'rx drop %25 b']
+            response = self.json_get('/cx/%s?fields=%s' % (
+                ','.join(self.cx_profile.created_cx.keys()), ",".join(fields))) or {}
+            # Look each CX up by name rather than taking values()[2:] positionally:
+            # LANforge can leave a CX out of a poll, and dropping into position then
+            # shifts every later CX's reading onto the wrong connection -- or leaves
+            # the pre-sized lists below with an empty entry, which makes the
+            # sum(i)/len(i) averaging raise ZeroDivisionError.
+            throughput[index] = [
+                [self.to_number(response.get(cx, {}).get(field)) for field in fields]
+                for cx in self.cx_profile.created_cx.keys()
+            ]
             time.sleep(1)
         print("throughput", throughput)
         # # rx_rate list is calculated
