@@ -575,7 +575,7 @@ class HttpDownload(Realm):
     def precleanup(self):
         self.after_2g = False
         self.seen_2g = False
-        for rad in range(len(self.radio)):
+        for rad in range(len(self.radio or [])):
             if self.radio[rad] in (self.fiveg_radio or []):
                 # select an mode
                 self.station_profile.mode = 14
@@ -696,9 +696,30 @@ class HttpDownload(Realm):
                 self.station_profile.set_command_flag("add_sta", "create_admin_down", 1)
                 self.station_profile.set_command_param("set_port", "report_timer", 1500)
                 self.station_profile.set_command_flag("set_port", "rpt_timer", 1)
+                extra = self.wifi_extra_list[rad] if rad < len(self.wifi_extra_list) else {}
+                extra_state = {}
+                if 'key_mgmt' in extra:
+                    for key in ('wifi_extra_data', 'wifi_extra_data_modified', 'add_sta_data',
+                                'desired_add_sta_flags', 'desired_add_sta_flags_mask'):
+                        value = getattr(self.station_profile, key)
+                        extra_state[key] = value.copy() if isinstance(value, (dict, list)) else value
+                    self.station_profile.set_wifi_extra(**{
+                        k: v for k, v in extra.items() if k not in ('ieee80211w', 'enable_pkc', 'power_save', 'bss_transition', 'roam_ft_ds')})
+                    self.station_profile.set_command_flag("add_sta", "8021x_radius", 1)
+                    pmf = extra.get('ieee80211w', 'Optional').lower()
+                    self.station_profile.set_command_param(
+                        "add_sta", "ieee80211w", {'disabled': 0, 'required': 2}.get(pmf, 1))
+                    for key, flag in (('enable_pkc', '80211r_pmska_cache'),
+                                      ('power_save', 'power_save_enable'),
+                                      ('bss_transition', 'use-bss-transition'),
+                                      ('roam_ft_ds', 'ft-roam-over-ds')):
+                        if extra.get(key, '').lower() in ('1', 'true', 'enabled'):
+                            self.station_profile.set_command_flag("add_sta", flag, 1)
                 self.station_profile.create(radio=self.radio[rad], sta_names_=sta_names, debug=self.local_realm.debug)
                 self.local_realm.wait_until_ports_appear(sta_list=sta_names)
                 self.station_profile.admin_up()
+                for key, value in extra_state.items():
+                    setattr(self.station_profile, key, value)
                 if self.local_realm.wait_for_ip(sta_names, timeout_sec=60):
                     self.local_realm._pass("All stations got IPs")
                 else:
@@ -2859,6 +2880,19 @@ def main():
 
     def list_type(x):
         return x.split(',')
+
+    def parse_wifi_extra(value):
+        parsed = []
+        for entry in value.split(','):
+            pairs = {}
+            for item in str(entry).strip().split('!!'):
+                if '&&' in item:
+                    key, _, value = item.partition('&&')
+                    pairs[key.strip()] = value.strip()
+                elif item and item != '[BLANK]':
+                    logger.warning("Ignoring malformed wifi_extra item %r (expected key&&value)", item)
+            parsed.append(pairs)
+        return parsed
     required = parser.add_argument_group('Required arguments to run lf_webpage.py')
     optional = parser.add_argument_group('Optional arguments to run lf_webpage.py')
 
@@ -2951,6 +2985,12 @@ def main():
     optional.add_argument("--client_cert", type=str, default='NA', help='Specify the client certificate file name')
     optional.add_argument("--pk_passwd", type=str, default='NA', help='Specify the password for the private key')
     optional.add_argument("--pac_file", type=str, default='NA', help='Specify the pac file name')
+    for band in ('twog', 'fiveg', 'sixg'):
+        optional.add_argument(f'--{band}_wifi_extra', type=parse_wifi_extra, default=[],
+                              help='Per-radio extra WiFi config: key&&value!!key&&value; '
+                                   'comma-separated entries, [BLANK] to skip a radio. '
+                                   'Supports set_wifi_extra keys plus ieee80211w, enable_pkc, '
+                                   'power_save, bss_transition and roam_ft_ds.')
     optional.add_argument("--expected_passfail_value", help="Specify the expected number of urls", default=None)
     optional.add_argument("--device_csv_name", type=str, help='Specify the csv name to store expected url values', default=None)
     optional.add_argument("--wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
@@ -3080,23 +3120,28 @@ times the file is downloaded.
             ssid = args.ssid
             passwd = args.passwd
             security = args.security
+            wifi_extra = []
         else:
             if bands == "2.4G":
                 security = args.twog_security
                 ssid = args.twog_ssid
                 passwd = args.twog_passwd
+                wifi_extra = args.twog_wifi_extra
             elif bands == "5G":
                 security = args.fiveg_security
                 ssid = args.fiveg_ssid
                 passwd = args.fiveg_passwd
+                wifi_extra = args.fiveg_wifi_extra
             elif bands == "6G":
                 security = args.sixg_security
                 ssid = args.sixg_ssid
                 passwd = args.sixg_passwd
+                wifi_extra = args.sixg_wifi_extra
             elif bands == "Both":
                 security = args.twog_security + args.fiveg_security
                 ssid = args.twog_ssid + args.fiveg_ssid
                 passwd = args.twog_passwd + args.fiveg_passwd
+                wifi_extra = args.twog_wifi_extra + args.fiveg_wifi_extra
         http = HttpDownload(lfclient_host=args.mgr, lfclient_port=args.mgr_port,
                             upstream=args.upstream_port, num_sta=args.num_stations,
                             security=security, ap_name=args.ap_name,
@@ -3183,6 +3228,7 @@ times the file is downloaded.
                 exit(0)
         if args.num_stations:
             http.set_values()
+        http.wifi_extra_list = wifi_extra
         # Existing-station validation (--use_existing_station_list)
         existing_sta_list = []
         if args.client_type in ("Virtual", "Both") and args.use_existing_station_list:
