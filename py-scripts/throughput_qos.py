@@ -474,16 +474,21 @@ class ThroughputQOS(Realm):
         [(upload.append([]), download.append([]), drop_a.append([]), drop_b.append([])) for i in range(len(self.cx_profile.created_cx))]
         while datetime.now() < end_time:
             index += 1
-            fields = ['bps rx a', 'bps rx b', 'rx drop %25 a', 'rx drop %25 b']
+            # 'name' has to be requested: with it LANforge keys the response by CX
+            # name, without it the keys are internal CX ids ("2.1") that no lookup
+            # by name can match. The URL needs '%25' for the drop columns, but the
+            # response spells them back with a literal '%'.
+            query_fields = ['name', 'bps rx a', 'bps rx b', 'rx drop %25 a', 'rx drop %25 b']
+            result_fields = ['bps rx a', 'bps rx b', 'rx drop % a', 'rx drop % b']
             response = self.json_get('/cx/%s?fields=%s' % (
-                ','.join(self.cx_profile.created_cx.keys()), ",".join(fields))) or {}
+                ','.join(self.cx_profile.created_cx.keys()), ",".join(query_fields))) or {}
             # Look each CX up by name rather than taking values()[2:] positionally:
             # LANforge can leave a CX out of a poll, and dropping into position then
             # shifts every later CX's reading onto the wrong connection -- or leaves
             # the pre-sized lists below with an empty entry, which makes the
             # sum(i)/len(i) averaging raise ZeroDivisionError.
             throughput[index] = [
-                [self.to_number(response.get(cx, {}).get(field)) for field in fields]
+                [self.to_number(response.get(cx, {}).get(field)) for field in result_fields]
                 for cx in self.cx_profile.created_cx.keys()
             ]
             time.sleep(1)
