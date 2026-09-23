@@ -1503,8 +1503,10 @@ function copyTextToClipboard(ele) {
     def build_objective(self):
         self.obj_html = """
             <!-- Test Objective -->
-            <h3 align='left'>{title}</h3>
-            <p align='left' width='900'>{objective}</p>
+            <div class='chart-card' style='text-align:left;'>
+              <h3 align='left'>{title}</h3>
+              <p align='left' width='900'>{objective}</p>
+            </div>
             """.format(title=self.obj_title,
                        objective=self.objective)
         self.html += self.obj_html
