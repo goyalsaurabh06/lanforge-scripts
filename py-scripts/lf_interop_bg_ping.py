@@ -72,6 +72,13 @@ RX_PATTERN = re.compile(r'rx:\s*([0-9]+)')
 # Windows replies use 'time=1ms' or 'time<1ms', the rest use 'time=1.23 ms'.
 RTT_PATTERN = re.compile(r'time[=<]\s*([0-9]+\.?[0-9]*)\s*ms', re.IGNORECASE)
 
+# The ICMP sequence number of a single reply, used for per-packet RTT/loss tracking.
+SEQ_PATTERN = re.compile(r'icmp_seq=([0-9]+)')
+
+# lfping prints this when an out-of-order reply proves an earlier one is gone for good, e.g.
+# "Dropped packets detected: sq[64] last_sq+1[62]" means sequences 62-63 were lost.
+DROPPED_DETECTED_PATTERN = re.compile(r'Dropped packets detected:\s*sq\[(\d+)\]\s*last_sq\+1\[(\d+)\]')
+
 OS_TYPE_LABELS = {
     'android': 'Android',
     'windows': 'Windows',
@@ -105,6 +112,8 @@ class BackgroundPing:
         self.target = target
         self.interval = interval
         self.sample_interval = sample_interval
+        # Poll faster than the ping rate (2x oversampled) so a reply is read before LANforge's small buffer evicts it; floored so a very fast interval can't turn this into a tight loop.
+        self._sequence_poll_interval = max(0.25, self.interval / 2)
         self.debug = debug
         self.requested_devices = list(device_list) if device_list else []
 
@@ -124,13 +133,21 @@ class BackgroundPing:
         self.device_data = {}
         self.samples = {}
         self.timeline_samples = {}
+        # Per device: {icmp_seq: rtt_ms}, 0.0 means a confirmed loss; feeds the connectivity timeline graph.
+        self.sequence_rtts = {}
+        # Per device: last dropped-packet count already attributed to a sequence number, so later polls don't double-count.
+        self.sequence_dropped_total = {}
         self.started = False
         self.start_time = None
         self.stop_time = None
+        # Optional epoch-seconds window from set_monitor_window(); preferred over self.start_time/stop_time when set, since those are usually a bit wider (include endpoint setup time).
+        self.monitor_window_start = None
+        self.monitor_window_end = None
         self.stats = {}
         self._previous_lines = {}
         self._stop_event = threading.Event()
         self._sampler_thread = None
+        self._sequence_sampler_thread = None
 
     def json_get(self, path):
         try:
@@ -347,6 +364,8 @@ class BackgroundPing:
             device: [{'time': 0.0, 'sent': 0, 'received': 0, 'dropped': 0}]
             for device in devices
         }
+        self.sequence_rtts = {device: {} for device in devices}
+        self.sequence_dropped_total = {device: 0 for device in devices}
         self._previous_lines = {device: [] for device in devices}
 
         try:
@@ -372,6 +391,9 @@ class BackgroundPing:
             self._stop_event.clear()
             self._sampler_thread = threading.Thread(target=self._sampler, daemon=True)
             self._sampler_thread.start()
+            # Own thread so _sampler's heavier periodic work can't delay this faster poll.
+            self._sequence_sampler_thread = threading.Thread(target=self._sequence_sampler, daemon=True)
+            self._sequence_sampler_thread.start()
 
         return True
 
@@ -384,6 +406,15 @@ class BackgroundPing:
                 self.sample()
             except Exception as e:
                 logger.warning('Background ping sampling failed: %s', e)
+
+    def _sequence_sampler(self):
+        while not self._stop_event.is_set():
+            if self._stop_event.wait(self._sequence_poll_interval):
+                break
+            try:
+                self._sample_sequences()
+            except Exception as e:
+                logger.warning('Background ping per-packet sampling failed: %s', e)
 
     def _results_by_device(self):
         """Returns the raw endpoint data of every background ping endpoint, keyed by device."""
@@ -481,6 +512,50 @@ class BackgroundPing:
                 if stats['observed_max'] is None or rtt > stats['observed_max']:
                     stats['observed_max'] = rtt
 
+    def _sample_sequences(self):
+        """Reads and reprocesses each endpoint's whole reply buffer every poll (like lf_interop_ping_plotter.py), so a gap can only come from real eviction, never a diffing mismatch."""
+        for device, endpoint_data in self._results_by_device().items():
+            if device not in self.sequence_rtts:
+                continue
+
+            last_results = endpoint_data.get('last results', '') or ''
+            lines = [line for line in last_results.split('\n') if line.strip()]
+            if not lines:
+                continue
+
+            # Only the endpoint's own 'dropped' counter is trustworthy for a real loss (see _record_sequence_samples()).
+            authoritative_dropped = self._as_int(endpoint_data.get('dropped'))
+            self._record_sequence_samples(device, lines, authoritative_dropped)
+
+    def _record_sequence_samples(self, device, lines, authoritative_dropped):
+        """Records each reply's icmp_seq -> RTT; lfping's own 'Dropped packets detected' lines mark exactly which sequences were lost, with a rise in authoritative_dropped as a fallback for anything that line doesn't catch."""
+        sequence_rtts = self.sequence_rtts.setdefault(device, {})
+        previous_drop_total = self.sequence_dropped_total.get(device, 0)
+        latest_seq = None
+
+        for line in lines:
+            detected_match = DROPPED_DETECTED_PATTERN.search(line)
+            if detected_match:
+                arrived_seq, expected_seq = int(detected_match.group(1)), int(detected_match.group(2))
+                for lost_seq in range(expected_seq, arrived_seq):
+                    sequence_rtts.setdefault(lost_seq, 0.0)
+
+            seq_match = SEQ_PATTERN.search(line)
+            rtt_match = RTT_PATTERN.search(line)
+            if not seq_match or not rtt_match:
+                continue
+
+            seq_number = int(seq_match.group(1))
+            sequence_rtts[seq_number] = float(rtt_match.group(1))
+            latest_seq = seq_number
+
+        if latest_seq is not None and authoritative_dropped > previous_drop_total:
+            for offset in range(1, authoritative_dropped - previous_drop_total + 1):
+                sequence_rtts.setdefault(latest_seq - offset, 0.0)
+            previous_drop_total = authoritative_dropped
+
+        self.sequence_dropped_total[device] = previous_drop_total
+
     def _record_timeline_sample(self, device, endpoint_data, sample_time):
         """Stores cumulative packet counters for the connectivity timeline."""
         if self.start_time is None:
@@ -500,28 +575,27 @@ class BackgroundPing:
         })
 
     def connectivity_timeline_payload(self):
-        """Converts sampled cumulative counters into green/red time spans.
-
-        Each span is bounded by two real counter samples. Windows with no transmitted
-        packets and unsampled time after the last point are not rendered. A red span
-        means packet loss was observed between samples; exact loss time cannot be
-        inferred from cumulative counters, so the complete affected window is red.
-        """
-        if not self.timeline_samples or not self.start_time:
+        """Converts self.sequence_rtts into green/red time spans, one span per contiguous run of successful/lost replies, each sequence number occupying one ping interval."""
+        if not self.sequence_rtts or not self.start_time:
             return None
 
-        end_time = self.stop_time if self.stop_time else time.time()
-        duration = max(0.1, end_time - self.start_time)
+        if self.monitor_window_start is not None and self.monitor_window_end is not None:
+            window_start = self.monitor_window_start
+            window_end = self.monitor_window_end
+        else:
+            window_start = self.start_time
+            window_end = self.stop_time if self.stop_time else time.time()
+        duration = max(0.1, window_end - window_start)
+        # Segment times below are seconds since self.start_time; this re-anchors them onto window_start, clipping out anything from before/after the window.
+        offset = window_start - self.start_time
         clients = []
         stations = []
         segments = []
 
         for device in self.ping.real_sta_list:
-            points = list(self.timeline_samples.get(device, []))
-            if not points:
+            seq_rtts = self.sequence_rtts.get(device) or {}
+            if not seq_rtts:
                 continue
-
-            points.sort(key=lambda point: point['time'])
 
             device_data = self.device_data.get(device, {})
             label = device_data.get('user', '') or device_data.get('hostname', '') or device
@@ -530,21 +604,8 @@ class BackgroundPing:
             stations.append(device)
 
             client_segments = []
-            for previous, current in zip(points, points[1:]):
-                start = max(0.0, float(previous['time']))
-                end = min(duration, float(current['time']))
-                if end <= start:
-                    continue
 
-                sent_delta = max(0, current['sent'] - previous['sent'])
-                dropped_delta = max(0, current['dropped'] - previous['dropped'])
-                if sent_delta == 0:
-                    continue
-                # A sent/received mismatch at a sampling boundary can simply mean
-                # that a reply is still in flight. Only the endpoint's explicit
-                # dropped counter is authoritative packet-loss data.
-                status = 'drop' if dropped_delta > 0 else 'up'
-
+            def append_segment(status, start, end):
                 # Joining adjacent spans with the same state reduces the
                 # amount of custom-series data without changing the graph.
                 if client_segments and client_segments[-1]['status'] == status:
@@ -556,6 +617,24 @@ class BackgroundPing:
                         'end': round(end, 3),
                         'status': status,
                     })
+
+            covered_until = 0.0
+            for seq in sorted(seq_rtts):
+                status = 'drop' if seq_rtts[seq] == 0 else 'up'
+                start = max(0.0, (seq - 1) * self.interval - offset)
+                end = min(duration, seq * self.interval - offset)
+                if end <= start:
+                    continue
+
+                if start > covered_until:
+                    # No reply seen for this stretch; not treated as its own status, counted as up.
+                    append_segment('up', covered_until, start)
+
+                append_segment(status, start, end)
+                covered_until = max(covered_until, end)
+
+            if covered_until < duration:
+                append_segment('up', covered_until, duration)
 
             segments.extend(client_segments)
 
@@ -592,10 +671,13 @@ class BackgroundPing:
         self._stop_event.set()
         if self._sampler_thread:
             self._sampler_thread.join(timeout=self.sample_interval + 5)
+        if self._sequence_sampler_thread:
+            self._sequence_sampler_thread.join(timeout=self._sequence_poll_interval + 5)
 
         # Capture one final live counter point. Sampling only after the endpoint is
         # stopped can return unchanged/stale counters and create a false red tail.
         try:
+            self._sample_sequences()
             self.sample()
         except Exception as e:
             logger.warning('Final live background ping sample could not be collected: %s', e)
@@ -610,6 +692,7 @@ class BackgroundPing:
         # The min/avg/max summary is only printed once the ping process has been killed
         time.sleep(2)
         try:
+            self._sample_sequences()
             self.sample(record_timeline=False)
             self.stats = self._build_stats()
         except Exception as e:
@@ -627,11 +710,7 @@ class BackgroundPing:
             endpoint_data = results.get(device, {})
             sampled = self.samples.get(device, self._empty_sample())
 
-            # _results_by_device() here runs after stop_generic() has already stopped the
-            # endpoint, which can report reset/near-zero counters (see the "final live counter
-            # point" comment in stop()). The last timeline sample was captured while the
-            # endpoint was still live, so it's the more trustworthy cumulative count when one
-            # was actually taken.
+            # Prefer the last live timeline sample -- results fetched after stop_generic() can show reset/near-zero counters.
             last_point = (self.timeline_samples.get(device) or [None])[-1]
             if last_point:
                 sent, received, dropped = last_point['sent'], last_point['received'], last_point['dropped']
@@ -648,6 +727,14 @@ class BackgroundPing:
             if not sent:
                 sent = received + dropped
 
+            # A severely unstable client can freeze LANforge's own tx/rx/dropped counters while
+            # the reply text keeps accumulating real pings; trust the per-packet data instead when it clearly has more.
+            seq_rtts = self.sequence_rtts.get(device)
+            if seq_rtts and len(seq_rtts) > sent:
+                sent = len(seq_rtts)
+                dropped = sum(1 for rtt in seq_rtts.values() if rtt == 0)
+                received = sent - dropped
+
             minimum = sampled.get('min')
             average = sampled.get('avg')
             maximum = sampled.get('max')
@@ -655,6 +742,15 @@ class BackgroundPing:
                 minimum = sampled['observed_min']
                 maximum = sampled['observed_max']
                 average = sampled['total'] / sampled['count']
+
+            # Backfill a trailing drop that ended the test with no further reply line to attach it to.
+            known_drop_total = dropped
+            if seq_rtts and known_drop_total is not None:
+                attributed_drops = sum(1 for rtt in seq_rtts.values() if rtt == 0)
+                if known_drop_total > attributed_drops:
+                    max_seq = max(seq_rtts)
+                    for offset in range(known_drop_total - attributed_drops):
+                        seq_rtts.setdefault(max_seq + 1 + offset, 0.0)
 
             device_data = self.device_data.get(device, {})
             os_type = self.device_os.get(device, 'linux')
@@ -706,11 +802,25 @@ class BackgroundPing:
         except Exception as e:
             logger.warning('Background ping cleanup failed: %s', e)
 
+    def set_monitor_window(self, start_dt, end_dt):
+        """Sets the exact datetime.datetime window the calling test's monitor loop covered, so the graph/duration line up with it instead of bg_ping's own wider start-to-stop lifetime."""
+        if start_dt is None or end_dt is None:
+            return
+        try:
+            self.monitor_window_start = start_dt.timestamp()
+            self.monitor_window_end = end_dt.timestamp()
+        except (AttributeError, OSError, OverflowError, ValueError) as e:
+            logger.warning('Background ping could not use the given monitor window (%r, %r): %s', start_dt, end_dt, e)
+
     def duration_string(self):
-        if not self.start_time:
-            return ''
-        end = self.stop_time if self.stop_time else time.time()
-        minutes, seconds = divmod(int(end - self.start_time), 60)
+        if self.monitor_window_start is not None and self.monitor_window_end is not None:
+            total_seconds = int(self.monitor_window_end - self.monitor_window_start)
+        else:
+            if not self.start_time:
+                return ''
+            end = self.stop_time if self.stop_time else time.time()
+            total_seconds = int(end - self.start_time)
+        minutes, seconds = divmod(total_seconds, 60)
         hours, minutes = divmod(minutes, 60)
         return '{:02d}:{:02d}:{:02d}'.format(hours, minutes, seconds)
 
