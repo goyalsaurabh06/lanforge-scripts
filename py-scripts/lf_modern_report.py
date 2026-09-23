@@ -156,7 +156,7 @@ _ECHARTS_RUNTIME_JS = """
     var chart = window.echarts.init(el);
     var option = baseOption(yName, xName);
     if (payload.categories) { option.xAxis.data = payload.categories; option.xAxis.type = "category"; }
-    dropDataZoomIfFewCategories(option, payload.categories);
+    if (payload.xAxisType === "value") { option.xAxis.type = "value"; }
     if (payload.inverseX) { option.xAxis.inverse = true; }
     if (payload.inverseY) { option.yAxis.inverse = true; }
     option.series = payload.series.map(function (s) {
