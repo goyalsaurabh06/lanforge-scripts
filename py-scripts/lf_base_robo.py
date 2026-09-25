@@ -40,8 +40,10 @@ class RobotClass:
         # max time to reach a point in seconds
         self.time_to_reach = 60
         self.total_cycles = 1
+        # 1-based index of the cycle currently in progress; the caller bumps this
+        # per pass so nav_data.json can carry a "Cycle X of Y" for the webGUI.
+        self.current_cycle = 1
         self.coordinate_list = []
-        self.total_cycles = 1
 
         # Create waypoint list on initialization
         if self.robo_ip is not None:
@@ -82,15 +84,22 @@ class RobotClass:
             self.runtime_dir,
             "../../Running_instances/{}_{}_running.json".format(self.ip, self.testname))
 
+        # The webGUI STOP removes this file entirely, so a missing (or unreadable) file means the run is no longer tracked
+        # treat that as "stopped" too, otherwise the robot keeps moving/rotating after Stop was pressed.
         if not os.path.exists(file_path):
-            return False
+            logging.info("Running-instance file gone - treating as stopped by the user")
+            return True
 
-        with open(file_path, 'r') as f:
-            run_status = json.load(f)
+        try:
+            with open(file_path, 'r') as f:
+                run_status = json.load(f)
+        except (OSError, ValueError):
+            logging.info("Running-instance file unreadable - treating as stopped by the user")
+            return True
 
-            if 'status' in run_status.keys() and run_status["status"] != "Running":
-                logging.info("Test is stopped by the user")
-                return True
+        if run_status.get("status", "Running") != "Running":
+            logging.info("Test is stopped by the user")
+            return True
 
         return False
 
@@ -320,6 +329,9 @@ class RobotClass:
                 navdata['Canbee_location'] = coord
                 navdata['Canbee_angle'] = ''
                 navdata['Test_status'] = 'Running'
+            # Cycle progress for the webGUI's "Cycle X of Y" indicator and its per-cycle heatmap capture
+            navdata['current_cycle'] = int(getattr(self, 'current_cycle', 1) or 1)
+            navdata['total_cycles'] = int(self.total_cycles) if self.total_cycles else 1
             with open(self.nav_data_path, 'w') as x:
                 json.dump(navdata, x, indent=4)
         if self.do_bandsteering:
