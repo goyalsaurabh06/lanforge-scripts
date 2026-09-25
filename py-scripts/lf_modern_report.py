@@ -576,15 +576,18 @@ _TABLE_SEARCH_JS = """
   searchBar.appendChild(count);
 
   // Placed right below the Key Findings card when the report has one (found by header text,
-  // since build_findings_card() doesn't assign it a stable id); otherwise right above the first
-  // real table, so it still lands after the Test Configuration/Objective sections.
-  var keyFindingsCard = null;
+  // since build_findings_card() doesn't assign it a stable id); else right below the Overall
+  // Test Verdict card for reports that skip Key Findings; otherwise right above the first real
+  // table, so it still lands after the Test Configuration/Objective sections.
+  var anchorCard = null;
   Array.prototype.forEach.call(document.querySelectorAll(".info-card"), function (card) {
     var header = card.querySelector(".info-card-header");
-    if (header && header.textContent.trim() === "Key Findings") { keyFindingsCard = card; }
+    var text = header && header.textContent.trim();
+    if (text === "Key Findings") { anchorCard = card; }
+    else if (text === "Overall Test Verdict" && !anchorCard) { anchorCard = card; }
   });
-  if (keyFindingsCard) {
-    keyFindingsCard.parentNode.insertBefore(searchBar, keyFindingsCard.nextSibling);
+  if (anchorCard) {
+    anchorCard.parentNode.insertBefore(searchBar, anchorCard.nextSibling);
   } else {
     var firstWrap = tables[0].closest(".table-wrap") || tables[0].parentNode;
     firstWrap.parentNode.insertBefore(searchBar, firstWrap);
@@ -1421,6 +1424,35 @@ class lf_report:
         self.dataframe_html = badge_df.to_html(index=False, justify='center', classes='data-table', escape=False)
         self.html += "<div class='table-wrap'>" + self.dataframe_html + "</div>"
 
+    @staticmethod
+    def render_dataframe_html(dataframe, rating_column=None, rating_colors=None):
+        """Renders a dataframe to a "<div class='table-wrap'>...</div>" HTML string, same markup
+        build_table()/rating_build_table() produce, but returns it instead of appending to
+        self.html -- lets a caller embed one or more tables inside a card of its own (e.g. a single
+        chart-card holding a title, description and several tables) instead of each table getting
+        its own top-level card via build_table().
+
+        Args:
+            dataframe: the table to render (not self.dataframe -- this doesn't touch instance state).
+            rating_column / rating_colors: optional, same meaning as rating_build_table() -- badges
+                that column's values by color instead of rendering them as plain text.
+        """
+        if rating_column is not None and rating_colors is not None:
+            def _badge(value):
+                color = rating_colors.get(value)
+                if not color:
+                    return value
+                return ("<span style='background:{color}; color:#fff; padding:2px 10px; "
+                        "border-radius:10px; font-weight:600; white-space:nowrap;'>{value}</span>"
+                        ).format(color=color, value=value)
+
+            dataframe = dataframe.copy()
+            dataframe[rating_column] = dataframe[rating_column].apply(_badge)
+            table_html = dataframe.to_html(index=False, justify='center', classes='data-table', escape=False)
+        else:
+            table_html = dataframe.to_html(index=False, justify='center', classes='data-table')
+        return "<div class='table-wrap'>" + table_html + "</div>"
+
     def save_csv(self, file_name, save_to_csv_data):
         save_to_csv_data.to_csv(str(self.path_date_time) + "/" + file_name)
 
@@ -1708,7 +1740,7 @@ function copyTextToClipboard(ele) {
         self.html += create_device_summary_card(devices, **kwargs)
 
 
-def _chart_markup(chart_id, chart_type, payload, title="", y_name="", x_name=""):
+def _chart_markup(chart_id, chart_type, payload, title="", y_name="", x_name="", description=""):
     """Build the <div class='chart-card'>...</div> markup (chart container +
     inline script invoking the shared JS renderer) for one chart. Used by
     lf_report.build_echarts_chart() (which also injects the JS runtime once
@@ -1716,6 +1748,11 @@ def _chart_markup(chart_id, chart_type, payload, title="", y_name="", x_name="")
     lf_line_graph classes below, whose build_*() methods return this same
     markup instead of saving a matplotlib PNG -- the runtime script is
     injected once the caller hands the markup to lf_report.build_graph().
+
+    description: optional explanatory text rendered under the title, inside
+    the same chart-card -- lets a caller fold what would otherwise be a
+    separate build_objective() card (title + paragraph) into the one card
+    the chart itself already renders, instead of stacking two cards.
     """
     renderer_by_type = {
         "line": "renderLineChart",
@@ -1738,6 +1775,7 @@ def _chart_markup(chart_id, chart_type, payload, title="", y_name="", x_name="")
     return """
             <div class='chart-card'>
               {title_html}
+              {description_html}
               <div id='{chart_id}' class='chart'></div>
               <script>
                 window.__lfModernReport.{renderer}({chart_id_json}, {payload}{extra_args});
@@ -1745,6 +1783,7 @@ def _chart_markup(chart_id, chart_type, payload, title="", y_name="", x_name="")
             </div>
             """.format(
         title_html=("<h3>{}</h3>".format(title) if title else ""),
+        description_html=("<p align='left'>{}</p>".format(description) if description else ""),
         chart_id=chart_id,
         chart_id_json=json.dumps(chart_id),
         renderer=renderer,
@@ -2230,14 +2269,17 @@ class lf_bar_graph:
                  _remove_border=None,
                  _alignment=None,
                  _stacked=False,
-                 _extra_payload=None
+                 _extra_payload=None,
+                 _description=""
                  ):
         if _data_set is None:
             _data_set = [[30.4, 55.3, 69.2, 37.1], [45.1, 67.2, 34.3, 22.4], [22.5, 45.6, 12.7, 34.8]]
         if _xaxis_categories is None:
             _xaxis_categories = [1, 2, 3, 4]
-        if _xaxis_label is None:
-            _xaxis_label = ["a", "b", "c", "d"]
+        # No demo default for _xaxis_label -- unlike _xaxis_categories, this is an opt-in
+        # override (build_bar_graph() only uses it if a caller explicitly supplies one whose
+        # length matches the data). A truthy placeholder here would silently replace a caller's
+        # real _xaxis_categories whenever the category count happened to match its length.
         if _label is None:
             _label = ["bi-downlink", "bi-uplink", 'uplink']
         if _color_name is None:
@@ -2279,6 +2321,7 @@ class lf_bar_graph:
         self.xticks_rotation = _xticks_rotation
         self.stacked = _stacked
         self.extra_payload = _extra_payload
+        self.description = _description
 
     def build_bar_graph(self):
         colors = self.color if self.color is not None else self.color_name
@@ -2314,7 +2357,8 @@ class lf_bar_graph:
         if self.extra_payload:
             payload.update(self.extra_payload)
         markup = _chart_markup(self.graph_image_name, "bar", payload,
-                               title=self.title, x_name=self.xaxis_name, y_name=self.yaxis_name)
+                               title=self.title, x_name=self.xaxis_name, y_name=self.yaxis_name,
+                               description=self.description)
 
         if self.enable_csv:
             if self.xaxis_categories is not None and len(self.xaxis_categories) == len(self.data_set[0]):
@@ -2366,14 +2410,17 @@ class lf_bar_graph_horizontal:
                  _enable_csv=False,
                  _remove_border=None,
                  _alignment=None,
-                 _stacked=False
+                 _stacked=False,
+                 _description=""
                  ):
         if _data_set is None:
             _data_set = [[30.4, 55.3, 69.2, 37.1], [45.1, 67.2, 34.3, 22.4], [22.5, 45.6, 12.7, 34.8]]
         if _yaxis_categories is None:
             _yaxis_categories = [1, 2, 3, 4]
-        if _yaxis_label is None:
-            _yaxis_label = ["a", "b", "c", "d"]
+        # No demo default for _yaxis_label -- unlike _yaxis_categories, this is an opt-in
+        # override (build_bar_graph_horizontal() only uses it if a caller explicitly supplies
+        # one whose length matches the data). A truthy placeholder here would silently replace
+        # a caller's real _yaxis_categories whenever the category count happened to match its length.
         if _label is None:
             _label = ["bi-downlink", "bi-uplink", 'uplink']
         if _color_name is None:
@@ -2414,6 +2461,7 @@ class lf_bar_graph_horizontal:
         self.alignment = _alignment
         self.yticks_rotation = _yticks_rotation
         self.stacked = _stacked
+        self.description = _description
 
     def build_bar_graph_horizontal(self):
         colors = self.color if self.color is not None else self.color_name
@@ -2435,7 +2483,7 @@ class lf_bar_graph_horizontal:
         if self.stacked:
             payload["stacked"] = True
         markup = _chart_markup(self.graph_image_name, "horizontal_bar", payload,
-                               title=self.title, x_name=self.xaxis_name)
+                               title=self.title, x_name=self.xaxis_name, description=self.description)
 
         if self.enable_csv:
             if self.yaxis_categories is not None and len(self.yaxis_categories) == len(self.data_set[0]):
@@ -2481,7 +2529,8 @@ class lf_line_graph:
                  _enable_csv=False,
                  _reverse_x=False,
                  _reverse_y=False,
-                 _dashed=None):
+                 _dashed=None,
+                 _description=""):
         if _data_set is None:
             _data_set = [[30.4, 55.3, 69.2, 37.1, 44.0], [45.1, 67.2, 34.3, 22.4, 37.6], [22.5, 45.6, 12.7, 34.8, 22.5]]
         if _xaxis_categories is None:
@@ -2526,6 +2575,7 @@ class lf_line_graph:
         # Per-series flag for a dashed reference/target line (e.g. an intended-load line drawn
         # alongside the achieved-throughput line) instead of the usual solid measured line.
         self.dashed = _dashed or []
+        self.description = _description
 
     def build_line_graph(self):
         series = [
@@ -2544,7 +2594,8 @@ class lf_line_graph:
             "inverseY": bool(self.reverse_y),
         }
         markup = _chart_markup(self.graph_image_name, "line", payload,
-                               title=self.grp_title, x_name=self.xaxis_name, y_name=self.yaxis_name)
+                               title=self.grp_title, x_name=self.xaxis_name, y_name=self.yaxis_name,
+                               description=self.description)
 
         if self.enable_csv:
             if self.data_set is not None:
