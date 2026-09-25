@@ -131,12 +131,32 @@ _ECHARTS_RUNTIME_JS = """
 
   window.__lfModernReport = window.__lfModernReport || {};
 
+  // A dataZoom slider only earns its keep when there are enough categories that
+  // some of them would otherwise be crowded off-screen; on a handful of bars/points
+  // it just adds a dead scrollbar under an already-empty-looking chart.
+  var DATA_ZOOM_MIN_CATEGORIES = 10;
+
+  function dropDataZoomIfFewCategories(option, categories) {
+    if (!categories || categories.length < DATA_ZOOM_MIN_CATEGORIES) {
+      option.dataZoom = [];
+    }
+  }
+
+  // A fixed bar width only earns its keep once there are enough categories that
+  // an unbounded width would make bars comically fat; with a handful of bars
+  // (e.g. one per QoS class) it just leaves the chart looking mostly empty, so
+  // let bars grow wider the fewer categories there are.
+  function barMaxWidthFor(categories) {
+    return (categories || []).length <= 6 ? 90 : 34;
+  }
+
   window.__lfModernReport.renderLineChart = function (id, payload, yName, xName) {
     var el = document.getElementById(id);
     if (!el || !payload || !payload.series) { renderFallback(id); return; }
     var chart = window.echarts.init(el);
     var option = baseOption(yName, xName);
     if (payload.categories) { option.xAxis.data = payload.categories; option.xAxis.type = "category"; }
+    dropDataZoomIfFewCategories(option, payload.categories);
     if (payload.inverseX) { option.xAxis.inverse = true; }
     if (payload.inverseY) { option.yAxis.inverse = true; }
     option.series = payload.series.map(function (s) {
@@ -162,14 +182,38 @@ _ECHARTS_RUNTIME_JS = """
     var option = baseOption(yName, xName);
     option.tooltip.axisPointer = { type: "shadow" };
     option.xAxis.data = payload.categories || [];
-    option.series = payload.series.map(function (s) {
-      var c = s.color || namedColor(s.name);
-      return {
-        name: s.name, type: "bar", data: s.data, barMaxWidth: 34,
-        stack: payload.stacked ? "total" : undefined,
-        itemStyle: c ? { color: c } : undefined
-      };
-    });
+    dropDataZoomIfFewCategories(option, payload.categories);
+    var barMaxWidth = barMaxWidthFor(payload.categories);
+    // A single series whose bars are each colored individually (one bar per
+    // category, e.g. per-traffic-class throughput) has nothing meaningful to
+    // show in the default series-name legend -- split it into one series per
+    // category instead, so the legend lists the category names/colors and
+    // can toggle each bar independently. barGap "-100%%" keeps every bar at
+    // full width since only one series ever has a real value at each index.
+    var perCategoryColor = payload.categories && payload.series.length === 1 &&
+      payload.series[0].data.every(function (d) { return d && typeof d === "object" && d.itemStyle && d.itemStyle.color; });
+    if (perCategoryColor) {
+      option.legend.data = payload.categories;
+      option.series = payload.categories.map(function (cat, i) {
+        var point = payload.series[0].data[i];
+        var row = payload.categories.map(function () { return null; });
+        row[i] = point.value;
+        return {
+          name: cat, type: "bar", data: row, barMaxWidth: barMaxWidth,
+          barGap: "-100%%", barCategoryGap: "20%%",
+          itemStyle: { color: point.itemStyle.color }
+        };
+      });
+    } else {
+      option.series = payload.series.map(function (s) {
+        var c = s.color || namedColor(s.name);
+        return {
+          name: s.name, type: "bar", data: s.data, barMaxWidth: barMaxWidth,
+          stack: payload.stacked ? "total" : undefined,
+          itemStyle: c ? { color: c } : undefined
+        };
+      });
+    }
     // Optional per-category, per-series breakdown (e.g. the individual
     // clients behind one stacked segment's count) shown in the tooltip
     // instead of just that segment's total. Generic: keyed only by category
@@ -1898,7 +1942,10 @@ def create_info_card(title, items, icon=None, card_id=None):
     rows = []
     for item in items or []:
         value = item.get("value")
-        if value is None or str(value).strip() == "":
+        # Callers commonly pass str(some_attr) straight through, so an unset
+        # attribute (Python None) arrives here as the literal text "None"
+        # rather than an empty string -- treat that the same as empty.
+        if value is None or str(value).strip() == "" or str(value).strip().lower() == "none":
             continue
         item_icon_html = "<div class='icon-badge'>{}</div>".format(item["icon"]) if item.get("icon") else ""
         rows.append("""
