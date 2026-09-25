@@ -1889,10 +1889,10 @@ class MultiTraffic(Realm):
                             try:
                                 min_rtt, avg_rtt, max_rtt = self._ping_rtts(result_data.get('last results'))
                                 self.ping_obj_dict[ce][obj_name]["obj"].result_json[station] = {
-                                    'command': result_data.get('command', ''),
-                                    'sent': result_data.get('tx pkts', 0),
-                                    'recv': result_data.get('rx pkts', 0),
-                                    'dropped': result_data.get('dropped', 0),
+                                    'command': result_data['command'],
+                                    'sent': result_data['tx pkts'],
+                                    'recv': result_data['rx pkts'],
+                                    'dropped': result_data['dropped'],
                                     'min_rtt': min_rtt,
                                     'avg_rtt': avg_rtt,
                                     'max_rtt': max_rtt,
@@ -1921,10 +1921,10 @@ class MultiTraffic(Realm):
                                 try:
                                     min_rtt, avg_rtt, max_rtt = self._ping_rtts(ping_data.get('last results'))
                                     self.ping_obj_dict[ce][obj_name]["obj"].result_json[station] = {
-                                        'command': ping_data.get('command', ''),
-                                        'sent': ping_data.get('tx pkts', 0),
-                                        'recv': ping_data.get('rx pkts', 0),
-                                        'dropped': ping_data.get('dropped', 0),
+                                        'command': ping_data['command'],
+                                        'sent': ping_data['tx pkts'],
+                                        'recv': ping_data['rx pkts'],
+                                        'dropped': ping_data['dropped'],
                                         'min_rtt': min_rtt,
                                         'avg_rtt': avg_rtt,
                                         'max_rtt': max_rtt,
@@ -1953,10 +1953,10 @@ class MultiTraffic(Realm):
                         try:
                             min_rtt, avg_rtt, max_rtt = self._ping_rtts(result_data.get('last results'))
                             self.ping_obj_dict[ce][obj_name]["obj"].result_json[station] = {
-                                'command': result_data.get('command', ''),
-                                'sent': result_data.get('tx pkts', 0),
-                                'recv': result_data.get('rx pkts', 0),
-                                'dropped': result_data.get('dropped', 0),
+                                'command': result_data['command'],
+                                'sent': result_data['tx pkts'],
+                                'recv': result_data['rx pkts'],
+                                'dropped': result_data['dropped'],
                                 'min_rtt': min_rtt,
                                 'avg_rtt': avg_rtt,
                                 'max_rtt': max_rtt,
@@ -1986,10 +1986,10 @@ class MultiTraffic(Realm):
                             try:
                                 min_rtt, avg_rtt, max_rtt = self._ping_rtts(ping_data.get('last results'))
                                 self.ping_obj_dict[ce][obj_name]["obj"].result_json[station] = {
-                                    'command': ping_data.get('command', ''),
-                                    'sent': ping_data.get('tx pkts', 0),
-                                    'recv': ping_data.get('rx pkts', 0),
-                                    'dropped': ping_data.get('dropped', 0),
+                                    'command': ping_data['command'],
+                                    'sent': ping_data['tx pkts'],
+                                    'recv': ping_data['rx pkts'],
+                                    'dropped': ping_data['dropped'],
                                     'min_rtt': min_rtt,
                                     'avg_rtt': avg_rtt,
                                     'max_rtt': max_rtt,
