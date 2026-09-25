@@ -12656,14 +12656,35 @@ class MultiTraffic(Realm):
         try:
             if pd.isna(value):
                 return "NA"
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as e:
+            logging.debug(
+                "_json_safe: pd.isna() rejected %r (%s): %s",
+                value, type(value).__name__, e)
         if hasattr(value, "item"):
             try:
                 return MultiTraffic._json_safe(value.item())
-            except (TypeError, ValueError):
-                pass
+            except (TypeError, ValueError) as e:
+                logging.debug(
+                    "_json_safe: item() rejected %r (%s): %s",
+                    value, type(value).__name__, e)
         return value
+
+    def _warn_json_columns_missing_for_all_clients(self):
+        """Log per-client metric columns containing no captured values."""
+        for test_name, test_report in self.json_metrics.items():
+            clients = test_report.get("clients", [])
+            if not clients:
+                continue
+            missing_columns = []
+            for column, values in test_report.items():
+                if column in self._JSON_RESERVED_KEYS or not isinstance(values, list):
+                    continue
+                if len(values) == len(clients) and all(value == "NA" for value in values):
+                    missing_columns.append(column)
+            if missing_columns:
+                logging.warning(
+                    "No values were captured for any client in %s column(s): %s",
+                    test_name, ", ".join(sorted(missing_columns)))
 
     # Normalized (stripped/lowercased) names of columns used across report tables to identify
     # the client/station a row belongs to. Report tables are built independently per test type
@@ -12686,7 +12707,7 @@ class MultiTraffic(Realm):
         identity column). Every other column -- from that same table or any other
         per-client table for this test -- becomes its own top-level list, where
         column[i] always describes the same client as clients[i]. Columns missing
-        for a given client are filled with null rather than shifting the index, so
+        for a given client are filled with "NA" rather than shifting the index, so
         arrays never silently drift out of alignment with each other.
         """
         if not isinstance(dataframe, pd.DataFrame) or not self._json_test_key:
@@ -12786,6 +12807,7 @@ class MultiTraffic(Realm):
     def _write_json_report(self):
         """Write metrics keyed by test name next to the overall PDF report."""
         json_path = os.path.join(self.overall_report.path_date_time, "lf_multi_traffic_overall.json")
+        self._warn_json_columns_missing_for_all_clients()
         with open(json_path, "w", encoding="utf-8") as json_file:
             json.dump(self._json_safe(self.json_metrics), json_file, indent=2, ensure_ascii=False)
         logging.info(f"Generated JSON report file: {json_path}")
