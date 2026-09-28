@@ -59,10 +59,15 @@ a, a:visited { color: var(--blue); }
 
 /* ---- Layout shell ---- */
 
+/* The whole report content is one white panel on the grey page; sections inside it are flat. */
 .report-shell {
   max-width: 1180px;
-  margin: 0 auto;
-  padding: 24px 24px 64px 24px;
+  margin: 24px auto;
+  padding: 24px 32px 48px 32px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
 }
 
 /* ---- Hero / banner ---- */
@@ -70,8 +75,8 @@ a, a:visited { color: var(--blue); }
 #BannerBack {
   background: linear-gradient(135deg, var(--brand) 0%, var(--brand-dark) 100%);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow);
-  margin: 24px 0;
+  box-shadow: none;
+  margin: 0 0 8px 0;
   padding: 32px 36px;
   color: #ffffff;
 }
@@ -100,13 +105,15 @@ a, a:visited { color: var(--blue); }
 
 /* ---- Sections / cards ---- */
 
+/* Sections sit directly on the .report-shell white panel, separated only by spacing instead of
+   being boxed as separate cards. .chart-card and .info-card below follow the same flat style. */
 .contentDiv, .contentDiv2, .section, .card {
   background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow);
-  margin: 18px 0;
-  padding: 24px 28px;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  margin: 0;
+  padding: 24px 4px;
 }
 
 /* ---- Text blocks ---- */
@@ -126,9 +133,9 @@ a, a:visited { color: var(--blue); }
   top: 0;
   z-index: 20;
   background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow);
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 .table-search-input {
   flex: 1 1 auto;
@@ -246,11 +253,11 @@ table.noborder, table.noborder td, table.noborder th {
 
 .chart-card {
   background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow);
-  margin: 18px 0;
-  padding: 20px 24px;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  margin: 0;
+  padding: 24px 4px;
   text-align: center;
 }
 .chart-card img {
@@ -283,11 +290,11 @@ table.noborder, table.noborder td, table.noborder th {
 
 .info-card {
   background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow);
-  margin: 18px 0;
-  padding: 24px 28px;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  margin: 0;
+  padding: 24px 4px;
 }
 .info-card-header {
   display: flex;
