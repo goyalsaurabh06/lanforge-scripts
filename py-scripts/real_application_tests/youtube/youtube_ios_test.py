@@ -435,7 +435,6 @@ class YouTubeAutomation:
         options.set_capability('wdaLaunchTimeout', 240000)
         options.set_capability('waitForIdleTimeout', 0)
         options.set_capability('maxTypingFrequency', 60)
-        options.set_capability('mjpegServerPort', 0)
         if self.client_secret:
             options.set_capability('gads:clientSecret', self.client_secret)
         return options
