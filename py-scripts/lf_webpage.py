@@ -273,6 +273,7 @@ class HttpDownload(Realm):
         self.monitor_start_time = None
         self.actual_monitor_duration = 0
         self.all_devices_stopped = False
+        self.existing_station_list = []
 
 # The 'phantom_check' will be handled within the 'get_real_client_list' function
     def get_real_client_list(self):
