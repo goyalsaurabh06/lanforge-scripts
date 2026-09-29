@@ -1410,8 +1410,8 @@ class lf_report:
             elif cell_value == "Failed":
                 return highlight_fail
 
-    def build_table(self):
-        self.dataframe_html = self.dataframe.to_html(index=False, justify='center', classes='data-table')
+    def build_table(self, escape=False):
+        self.dataframe_html = self.dataframe.to_html(index=False, justify='center', classes='data-table', escape=escape)
         self.html += "<div class='table-wrap'>" + self.dataframe_html + "</div>"
 
     def pass_failed_build_table(self):

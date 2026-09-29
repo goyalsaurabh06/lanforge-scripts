@@ -2884,9 +2884,9 @@ class FtpTest(LFCliBase):
         else:
             self.report.set_obj_html(
                 "Test Overview" if self.clients_type == "Real" else "Objective",
-                "The Candela FTP Test is used to Verify that N clients connected on Specified band and can "
-                "simultaneously download some amount of file from FTP server and measuring the "
-                "time taken by client to Download the file."
+                "The FTP test evaluates the Access Point’s ability to support multiple real Wi-Fi clients "
+                "performing concurrent file downloads. The test measures download success, download performance, "
+                "and client reliability to assess overall FTP performance under load."
             )
         self.report.build_objective()
         if self.clients_type != "Real" and not self.robot_test:
@@ -2953,10 +2953,28 @@ class FtpTest(LFCliBase):
             self.report.set_custom_html('<style>.table-search-bar { display: none !important; }</style>')
             self.report.build_custom()
 
+            dir_name = self.direction if self.direction else "Download"
+            max_dl_single = max([int(x) for x in self.url_data]) if self.url_data else 0
+
+            # Color-code only the rating text in the Overall Test Verdict card (matching QoS style).
+            _rating_colors = {
+                "Excellent": "#1a7a2e",   # Dark Green
+                "Good":      "#4caf50",   # Light Green
+                "Average":   "#f0c040",   # Yellow
+                "Acceptable": "#f0c040",  # Yellow
+                "Poor":       "#e53935",  # Red
+            }
+            _rating_color = _rating_colors.get(overall_rating_label, overall_rating_color)
+            overall_rating_html = (
+                f"<span style='color:{_rating_color}; font-weight:800;'>{overall_rating_label}</span>"
+            )
+
             verdict_items = [
                 {"label": "Total Devices Tested", "value": str(len(client_list))},
-                {"label": f"Clients with Zero {self.direction}s", "value": str(zero_dl_count)},
-                {"label": "Overall Rating", "value": overall_rating_label},
+                {"label": f"Clients with Zero {dir_name}s", "value": str(zero_dl_count)},
+                {"label": f"Maximum {dir_name}s (Single Client)", "value": str(max_dl_single)},
+                {"label": "Overall FTP Efficiency", "value": f"{avg_score_pct}%"},
+                {"label": "Overall Rating", "value": overall_rating_html},
             ]
             self.report.build_info_card(
                 title="Overall Test Verdict",

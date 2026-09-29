@@ -1864,10 +1864,12 @@ class ThroughputQOS(Realm):
                         weak=weak, total=len(readings)))
 
         # 6. Overall verdict.
-        if has_issue or overall_rating == "Poor":
-            summary.append("Overall, the AP showed some instability or degraded QoS performance during the test.")
-        else:
+        if overall_rating == "Good":
             summary.append("Overall, the AP demonstrated stable QoS performance.")
+        elif overall_rating == "Acceptable":
+            summary.append("Overall, the AP demonstrated acceptable QoS performance.")
+        else:
+            summary.append("Overall, the AP showed some instability or degraded QoS performance during the test.")
 
         return summary
 
@@ -2055,20 +2057,23 @@ class ThroughputQOS(Realm):
             mapping = {'VO': 'Voice (VO)', 'VI': 'Video (VI)', 'BE': 'Best Effort (BE)', 'BK': 'Background (BK)'}
             return mapping.get(abbr, abbr)
 
+        pass_tag = "<span style='color:#1a7a2e; font-weight:700;'>Pass</span>"
+        fail_tag = "<span style='color:#e53935; font-weight:700;'>Fail</span>"
+
         priority_validation_data = {
             "Priority Level": ["Highest", "High", "Normal", "Low"],
             "Expected Order": ["Voice (VO)", "Video (VI)", "Best Effort (BE)", "Background (BK)"],
             "Observed Order": [f"{get_full_name(p)} ({priority_dict.get(p, 0.0)} Mbps)" for p in (priority_order + ['', '', '', ''])[:4]],
             "Status": [
-                "Pass" if len(priority_order) > 0 and priority_order[0] == 'VO' else "Fail",
-                "Pass" if len(priority_order) > 1 and priority_order[1] == 'VI' else "Fail",
-                "Pass" if len(priority_order) > 2 and priority_order[2] == 'BE' else "Fail",
-                "Pass" if len(priority_order) > 3 and priority_order[3] == 'BK' else "Fail"
+                pass_tag if len(priority_order) > 0 and priority_order[0] == 'VO' else fail_tag,
+                pass_tag if len(priority_order) > 1 and priority_order[1] == 'VI' else fail_tag,
+                pass_tag if len(priority_order) > 2 and priority_order[2] == 'BE' else fail_tag,
+                pass_tag if len(priority_order) > 3 and priority_order[3] == 'BK' else fail_tag
             ]
         }
         priority_df = pd.DataFrame(priority_validation_data)
         report.set_table_dataframe(priority_df)
-        report.build_table()
+        report.build_table(escape=False)
 
         # Device names/types for the Device Summary Card (built further down)
         all_devices_names = []
@@ -3086,22 +3091,24 @@ class ThroughputQOS(Realm):
 
     def get_pass_fail_list(self, test_input_list, individual_avgupload_list, individual_avgdownload_list):
         pass_fail_list = []
+        pass_tag = "<span style='color:#1a7a2e; font-weight:700;'>PASS</span>"
+        fail_tag = "<span style='color:#e53935; font-weight:700;'>FAIL</span>"
         for i in range(len(test_input_list)):
             if self.csv_direction.split('_')[2] == 'BiDi':
                 if float(test_input_list[i]) <= float(individual_avgupload_list[i].split(' ')[0]) + float(individual_avgdownload_list[i].split(' ')[0]):
-                    pass_fail_list.append('PASS')
+                    pass_fail_list.append(pass_tag)
                 else:
-                    pass_fail_list.append('FAIL')
+                    pass_fail_list.append(fail_tag)
             elif self.csv_direction.split('_')[2] == 'UL':
                 if float(test_input_list[i]) <= float(individual_avgupload_list[i].split(' ')[0]):
-                    pass_fail_list.append('PASS')
+                    pass_fail_list.append(pass_tag)
                 else:
-                    pass_fail_list.append('FAIL')
+                    pass_fail_list.append(fail_tag)
             else:
                 if float(test_input_list[i]) <= float(individual_avgdownload_list[i].split(' ')[0]):
-                    pass_fail_list.append('PASS')
+                    pass_fail_list.append(pass_tag)
                 else:
-                    pass_fail_list.append('FAIL')
+                    pass_fail_list.append(fail_tag)
         return pass_fail_list
 
     def get_csv_expected_val(self):
