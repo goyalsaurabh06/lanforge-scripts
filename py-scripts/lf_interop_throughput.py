@@ -2630,6 +2630,9 @@ class Throughput(Realm):
     # achieved Download/Upload colors (teal/amber) so it doesn't read as either one specifically.
     INTENDED_LOAD_COLOR = "#2f80ed"
 
+    # The "Key Findings" card is hidden from the report; set True to show it again.
+    SHOW_KEY_FINDINGS = False
+
     def build_line_graph(self, data_set, xaxis_name, yaxis_name, xaxis_categories, label, graph_image_name, dashed=None, color=None):
         """Render the throughput-over-time line graph via lf_modern_report.lf_line_graph
         (interactive chart-card markup) instead of a matplotlib PNG.
@@ -3958,7 +3961,8 @@ class Throughput(Realm):
                         devices=devices_on_running)
                     key_findings = key_findings + self.build_ping_key_findings()
                     self.add_test_summary_to_report(report, rssi_values=rssi_data[0:int(incremental_capacity_list[i])])
-                report.build_findings_card("Key Findings", key_findings)
+                if self.SHOW_KEY_FINDINGS:
+                    report.build_findings_card("Key Findings", key_findings)
 
                 report.set_obj_html(
                     _obj_title="Real Time Throughput",
@@ -3986,7 +3990,9 @@ class Throughput(Realm):
                 devices_on_running_trimmed = [n[:17] if len(n) > 17 else n for n in devices_on_running]
                 report.set_obj_html(
                     _obj_title="RSSI Of The Clients Connected",
-                    _obj=" ")
+                    _obj="The graph below illustrates the received signal strength (RSSI) of each Wi-Fi client "
+                         "connected during the test. The X-axis represents the signal strength in dBm, while the "
+                         "Y-axis lists the individual wireless client identifiers.")
                 report.build_objective()
                 graph = lf_bar_graph_horizontal(_data_set=[rssi_data],
                                                 _xaxis_name="Signal(-dBm)",
@@ -4426,7 +4432,8 @@ class Throughput(Realm):
                     # repeated for every device.
                     key_findings = key_findings + self.build_ping_key_findings()
                     self.add_test_summary_to_report(report, rssi_values=rssi_data[0:int(incremental_capacity_list[i])])
-                report.build_findings_card("Key Findings", key_findings)
+                if self.SHOW_KEY_FINDINGS:
+                    report.build_findings_card("Key Findings", key_findings)
 
                 report.set_obj_html(
                     _obj_title=f"{real_time_data}",
@@ -4483,7 +4490,9 @@ class Throughput(Realm):
                 report.build_graph()
                 report.set_obj_html(
                     _obj_title="RSSI Of The Clients Connected",
-                    _obj=" ")
+                    _obj="The graph below illustrates the received signal strength (RSSI) of each Wi-Fi client "
+                         "connected during the test. The X-axis represents the signal strength in dBm, while the "
+                         "Y-axis lists the individual wireless client identifiers.")
                 report.build_objective()
                 graph = lf_bar_graph_horizontal(_data_set=[rssi_data],
                                                 _xaxis_name="Signal(-dBm)",
