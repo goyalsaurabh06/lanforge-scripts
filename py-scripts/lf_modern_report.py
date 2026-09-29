@@ -157,6 +157,23 @@ _ECHARTS_RUNTIME_JS = """
     var option = baseOption(yName, xName);
     if (payload.categories) { option.xAxis.data = payload.categories; option.xAxis.type = "category"; }
     if (payload.xAxisType === "value") { option.xAxis.type = "value"; }
+    if (payload.clockOffsetSeconds !== undefined) {
+      var clockLabel = function (value) {
+        var seconds = ((Math.round(Number(value) + payload.clockOffsetSeconds) %% 86400) + 86400) %% 86400;
+        return [Math.floor(seconds / 3600), Math.floor(seconds / 60) %% 60, seconds %% 60]
+          .map(function (part) { return String(part).padStart(2, "0"); }).join(":");
+      };
+      option.xAxis.axisLabel.formatter = clockLabel;
+      option.xAxis.axisLabel.rotate = 45;
+      option.xAxis.nameGap = 60;
+      option.grid.bottom = 110;
+      option.xAxis.axisPointer = { label: { formatter: function (p) { return clockLabel(p.value); } } };
+      option.tooltip.formatter = function (params) {
+        return clockLabel(params[0].value[0]) + "<br/>" + params.map(function (p) {
+          return p.marker + p.seriesName + ": " + p.value[1];
+        }).join("<br/>");
+      };
+    }
     if (payload.inverseX) { option.xAxis.inverse = true; }
     if (payload.inverseY) { option.yAxis.inverse = true; }
     option.series = payload.series.map(function (s) {
@@ -250,6 +267,7 @@ _ECHARTS_RUNTIME_JS = """
     };
     option.yAxis = {
       type: "category", data: payload.categories || [],
+      name: payload.yAxisName || "", nameLocation: "middle", nameGap: 110,
       axisLabel: {
         color: "#2c3e50", fontWeight: 600,
         // Truncate only what's shown on the axis -- the full category name
@@ -326,13 +344,13 @@ _ECHARTS_RUNTIME_JS = """
             Number(values[2]).toFixed(1) + " s";
         }
       },
-      legend: { bottom: 0, data: ["Up", "Drop"], textStyle: { color: "#5f6f82" } },
+      legend: { bottom: 0, data: [payload.connectedLabel || "Up", "Drop"], textStyle: { color: "#5f6f82" } },
       grid: { left: 165, right: 30, top: 25, bottom: 72, containLabel: false },
       xAxis: {
         type: "value",
         min: 0,
         max: payload.duration,
-        name: "Time (seconds)",
+        name: payload.xAxisName || "Time (seconds)",
         nameLocation: "middle",
         nameGap: 36,
         axisLabel: { color: "#5f6f82" },
@@ -342,12 +360,13 @@ _ECHARTS_RUNTIME_JS = """
         type: "category",
         inverse: true,
         data: clients,
+        name: payload.yAxisName || "", nameLocation: "middle", nameGap: 150,
         axisLabel: { color: "#2c3e50", fontWeight: 600, width: 145, overflow: "truncate" },
         axisTick: { show: false },
         axisLine: { show: false }
       },
       series: [
-        seriesFor("up", "Up", "#2e8b57"),
+        seriesFor("up", payload.connectedLabel || "Up", "#2e8b57"),
         seriesFor("drop", "Drop", "#eb5757")
       ]
     });
@@ -2063,6 +2082,42 @@ def create_findings_card(title, findings, card_id=None):
             """.format(id_attr=id_attr, title=title, items="".join(items))
 
 
+# Inline artwork keeps platform badges available in offline HTML and PDF reports.
+_PLATFORM_ICON_SHAPES = {
+    "Android": '<g fill="#3d9b35"><path d="M5 10a7 7 0 0 1 14 0Z"/>'
+               '<rect x="5" y="11" width="14" height="8" rx="2"/>'
+               '<path d="M7 18h3v4H7zm7 0h3v4h-3z"/>'
+               '<rect x="1" y="10" width="3" height="9" rx="1.5"/>'
+               '<rect x="20" y="10" width="3" height="9" rx="1.5"/></g>'
+               '<path d="m7 4-2-3m12 3 2-3" stroke="#3d9b35" stroke-linecap="round"/>'
+               '<g fill="white"><circle cx="9" cy="7" r="1"/><circle cx="15" cy="7" r="1"/></g>',
+    "Windows": '<path fill="#0078d4" d="M2 4 11 2.8V11H2Zm11-1.5L22 1v10h-9Z'
+               'M2 13h9v8.2L2 20Zm11 0h9v10l-9-1.5Z"/>',
+    "Linux": '<path fill="#202938" d="M7 10V7a5 5 0 0 1 10 0v3l4 9-5 2H8l-5-2Z"/>'
+             '<ellipse cx="12" cy="15" rx="5" ry="6" fill="white"/>'
+             '<g fill="white"><ellipse cx="10" cy="7" rx="1.5" ry="2"/>'
+             '<ellipse cx="14" cy="7" rx="1.5" ry="2"/></g>'
+             '<g fill="#202938"><circle cx="10.5" cy="7" r=".7"/>'
+             '<circle cx="13.5" cy="7" r=".7"/></g>'
+             '<path fill="#f5b522" d="m9 10 3-2 3 2-3 2ZM2 20l5-2 3 4H2Zm12 2 3-4 5 2v2Z"/>',
+    "macOS": '<path fill="#374151" d="M16.8 1c.2 2-1.4 4-3.5 4.2C13 3.3 14.7 1.3 16.8 1Z'
+             'M20.5 7.5c-1.1-1.6-2.7-2.3-4.2-2.3-1.8 0-2.7 1-4.1 1-1.3 0-2.4-1-4-1'
+             'C5.4 5.2 3 7.6 3 11.3c0 4.7 3.3 10.7 6 10.7 1.5 0 2.1-.9 3.8-.9'
+             's2.1.9 3.7.9c2 0 4-3.4 4.8-5.5-4.1-1.7-4.7-6.5-.8-9Z"/>',
+}
+_PLATFORM_ICONS = {
+    name.lower(): '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
+          'width="24" height="24" style="width:24px;height:24px;display:block" '
+          'aria-hidden="true" focusable="false">' + shapes + '</svg>'
+    for name, shapes in _PLATFORM_ICON_SHAPES.items()
+}
+_PLATFORM_ICONS["ios"] = _PLATFORM_ICONS["macos"]
+for _alias in ("mac", "mac os", "mac os x", "osx", "darwin", "macbook"):
+    _PLATFORM_ICONS[_alias] = _PLATFORM_ICONS["macos"]
+for _alias in ("win", "win32", "win64"):
+    _PLATFORM_ICONS[_alias] = _PLATFORM_ICONS["windows"]
+
+
 def create_device_summary_card(devices, name_field="name", platform_field="platform",
                                columns=None, platform_icons=None, page_size=10,
                                card_id=None, title="Devices"):
@@ -2081,7 +2136,9 @@ def create_device_summary_card(devices, name_field="name", platform_field="platf
             Defaults to name_field -> "Device Name", platform_field ->
             "Platform".
         platform_icons: optional {category_value: inline HTML/emoji} shown
-            next to that category's count. Categories without an entry get
+            next to that category's count. Overrides the built-in Android, Linux,
+            Windows, macOS and iOS icons. Built-in names are case-insensitive
+            and support common Mac/Windows aliases; unknown categories get
             a plain bullet.
         page_size: initial rows-per-page for the table (also offered in the
             rows-per-page dropdown alongside 5/10/25/50 and "All").
@@ -2127,7 +2184,7 @@ def create_device_summary_card(devices, name_field="name", platform_field="platf
                 <div class='stat-label'>{label}</div>
               </div>
             </div>
-            """.format(icon=platform_icons.get(p, "&bull;"), count=platform_counts[p], label=p)
+            """.format(icon=platform_icons.get(p, _PLATFORM_ICONS.get(str(p).strip().lower(), "&bull;")), count=platform_counts[p], label=p)
         for p in ordered_platforms)
     stats_html = """
             <div class='device-stats-col'>
