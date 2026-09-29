@@ -247,6 +247,8 @@ class HttpDownload(Realm):
             self.rotation_list = rotation.split(',')
         self.current_coordinate = ""
         self.current_angle = 0
+        # robot_data is keyed coordinate -> cycle (-> angle)
+        self.current_cycle = 1
         self.robot_data = {}
         self.robot_obj = {}
         self.individual_device_data = {}
@@ -711,11 +713,11 @@ class HttpDownload(Realm):
             df1 = pd.DataFrame(self.data)
             df1.to_csv("http_datavalues.csv", index=False)
             if not self.do_bandsteering and self.robot_test:
-                # For Robot test, save data for each coordinate and rotation
+                # For Robot test, save data for each coordinate, cycle and rotation
                 if self.rotation_enabled:
-                    self.robot_data.setdefault(self.current_coordinate, {})[self.current_angle] = self.data
+                    self.robot_data.setdefault(self.current_coordinate, {}).setdefault(self.current_cycle, {})[self.current_angle] = self.data
                 else:
-                    self.robot_data[self.current_coordinate] = self.data
+                    self.robot_data.setdefault(self.current_coordinate, {})[self.current_cycle] = self.data
                 if self.dowebgui:
                     df1.to_csv(f"{self.result_dir}/{self.current_coordinate}_http_datavalues.csv", index=False)
                 else:
@@ -1475,23 +1477,57 @@ class HttpDownload(Realm):
                     self.ssid_list.append('-')
 
     def add_live_view_images_to_report(self, report):
-        for floor in range(0, int(self.total_floors)):
-            http_img_path = os.path.join(self.result_dir, "live_view_images", f"http_{self.test_name}_{floor + 1}.png")
-            timeout = 60  # seconds
-            start_time = time.time()
+        """
+        Adds the HTTP live view heatmaps uploaded by the webGUI to the report, one per floor and, on a
+        multi-cycle robot run, one per cycle (http_<test>_<floor>[_cycle<N>].png in 'live_view_images').
+        Waits up to 60 seconds for the images still being captured; a missing one gets a note instead.
+        """
+        images_dir = os.path.join(self.result_dir, "live_view_images")
+        # On band steering, --cycles counts band steering cycles, not per-cycle heatmaps
+        robot_cycles = self.robot_test and not self.do_bandsteering
+        total_cycles = int(self.cycles or 1) if robot_cycles else 1
+        multi_cycle = total_cycles > 1
+        # Cycles that measured something, and the one whose heatmap is captured last (after the run ends).
+        ran_cycles = {cycle for cycles in self.robot_data.values() for cycle in cycles} if robot_cycles else {None}
+        have_data = bool(ran_cycles)
+        last_cycle = max(ran_cycles) if multi_cycle and have_data else None
 
-            while not (os.path.exists(http_img_path)):
-                if time.time() - start_time > timeout:
-                    print("Timeout: Images not found within 60 seconds.")
-                    break
-                time.sleep(1)
-            while not os.path.exists(http_img_path):
-                if os.path.exists(http_img_path):
-                    break
-            if os.path.exists(http_img_path):
-                report.set_custom_html('<div style="page-break-before: always;"></div>')
-                report.build_custom()
-                report.set_custom_html(f'<img style="width:1200px" src="file://{http_img_path}"></img>')
+        def image_path(floor, cycle):
+            suffix = f"_cycle{cycle}" if cycle else ""
+            return os.path.join(images_dir, f"http_{self.test_name}_{floor + 1}{suffix}.png")
+
+        pending = [image_path(floor, last_cycle) for floor in range(int(self.total_floors))]
+        timeout = 60  # seconds
+        start_time = time.time()
+        while have_data and not all(os.path.exists(p) for p in pending):
+            if time.time() - start_time > timeout:
+                print(f"Timeout: heatmap images not found within {timeout} seconds: {[p for p in pending if not os.path.exists(p)]}")
+                break
+            time.sleep(1)
+
+        for floor in range(int(self.total_floors)):
+            for cycle in (range(1, total_cycles + 1) if multi_cycle else [None]):
+                img_path = image_path(floor, cycle)
+                label = f"HTTP heatmap{f' - Cycle {cycle}' if cycle else ''}"
+                if not self.robot_test:
+                    label += f" (Floor {floor + 1})"
+                # Only a real heatmap gets its own page, as before cycles - a missing one's note stays inline
+                if have_data and (cycle is None or cycle in ran_cycles) and os.path.exists(img_path):
+                    report.set_custom_html('<div style="page-break-before: always;"></div>')
+                    report.build_custom()
+                if multi_cycle:
+                    report.set_custom_html(f"<h2>Cycle {cycle} | Real Time HTTP file Downloads</h2>")
+                    report.build_custom()
+                # A cycle with no measurements gets a note instead of the webGUI's empty-heatmap screenshot.
+                if not have_data:
+                    report.set_custom_html(f'<p><i>{label} is not available - the test did not complete any coordinate measurements.</i></p>')
+                elif cycle is not None and cycle not in ran_cycles:
+                    report.set_custom_html(f'<p><i>{label} is not available - no coordinate was measured in this cycle '
+                                           '(the test was stopped before it, or the robot could not reach its points).</i></p>')
+                elif os.path.exists(img_path):
+                    report.set_custom_html(f'<img style="width:1200px" src="file://{img_path}"></img>')
+                else:
+                    report.set_custom_html(f'<p><i>{label} is not available - the capture may have failed or the browser was closed before it was uploaded.</i></p>')
                 report.build_custom()
 
     def get_bandsteering_stats(self, report):
@@ -1654,7 +1690,9 @@ class HttpDownload(Realm):
         report_path_date_time = report.get_path_date_time()
         # It ensures no blocker for virtual clients
         if self.client_type == 'Real':
-            shutil.move('http_datavalues.csv', report_path_date_time)
+            # Not written when a robot run never measured a point (e.g. the robot could not reach any)
+            if os.path.exists('http_datavalues.csv'):
+                shutil.move('http_datavalues.csv', report_path_date_time)
             try:
                 shutil.move('all_l4_data.csv', report_path_date_time)
             except Exception:
@@ -1675,6 +1713,8 @@ class HttpDownload(Realm):
             test_setup_info["Coordinates"] = self.coordinate
             if not self.do_bandsteering:
                 test_setup_info["Rotation"] = self.rotation
+                if int(self.cycles or 1) > 1:
+                    test_setup_info["No of Cycles"] = self.cycles
             else:
                 del test_setup_info["Traffic Duration "]
                 test_setup_info["No of Cycles"] = self.cycles
@@ -1703,15 +1743,16 @@ class HttpDownload(Realm):
             if self.dowebgui and self.get_live_view:
                 # Add live view images to the report
                 self.add_live_view_images_to_report(report)
-            if self.rotation_enabled:
-                for coord, rotation_dict in self.robot_data.items():
-                    for rotation, _ in rotation_dict.items():
-                        # Build graphs and table for each coordinate and rotation
-                        self.build_graphs_and_table(coord, rotation, report, lis, bands)
-            else:
-                for coord, _ in self.robot_data.items():
-                    # Build graphs and table for each coordinate
-                    self.build_graphs_and_table(coord, "", report, lis, bands)
+            # Every cycle's visit to a coordinate gets its own section
+            for coord, cycle_dict in self.robot_data.items():
+                for cycle, visit in cycle_dict.items():
+                    if self.rotation_enabled:
+                        for rotation in visit:
+                            # Build graphs and table for each coordinate, cycle and rotation
+                            self.build_graphs_and_table(coord, rotation, report, lis, bands, cycle)
+                    else:
+                        # Build graphs and table for each coordinate and cycle
+                        self.build_graphs_and_table(coord, "", report, lis, bands, cycle)
             if self.device_issue_log:
                 issues_df = pd.DataFrame(self.device_issue_log)
                 issues_df.to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
@@ -2446,12 +2487,19 @@ class HttpDownload(Realm):
                     logger.info("Reached the coordinate {}".format(coordinate))
             self.stop()
             return
-        for coordinate in range(len(self.coordinate_list)):
+        # 0/negative would skip every visit - run at least one cycle
+        total_cycles = max(1, int(self.cycles)) if self.cycles else 1
+        for visit_index, coordinate_name in enumerate(self.coordinate_list * total_cycles):
             # Check for battery status before moving to next coordinate
             if test_stopped_by_user or self.all_devices_stopped:
                 if self.all_devices_stopped:
                     logger.warning("Robot test stopped because no devices recovered within 40 seconds.")
                 break
+            coordinate = visit_index % len(self.coordinate_list)
+            self.current_cycle = (visit_index // len(self.coordinate_list)) + 1
+            self.robot_obj.current_cycle = self.current_cycle
+            if total_cycles > 1 and coordinate == 0:
+                logger.info("Starting cycle {} of {}".format(self.current_cycle, total_cycles))
             if_paused, test_stopped_by_user = self.robot_obj.wait_for_battery()
             # If test is stopped by user during battery wait
             if test_stopped_by_user:
@@ -2463,6 +2511,9 @@ class HttpDownload(Realm):
             # If robot reached the coordinate
             if robo_moved:
                 self.current_coordinate = self.coordinate_list[coordinate]
+                # Clear the previous cycle's rows from the CSV the webGUI charts
+                if self.current_cycle > 1 and self.dowebgui:
+                    open(f"{self.result_dir}/{coordinate_name}_http_datavalues.csv", 'w').close()
                 # if no rotation mode
                 if not self.rotation_enabled:
                     # Start the test
@@ -2488,8 +2539,19 @@ class HttpDownload(Realm):
                         # If test is stopped by user
                         if test_stopped_by_user or self.all_devices_stopped:
                             break
+        if self.dowebgui:
+            with open(self.robot_obj.nav_data_path, 'r') as x:
+                navdata = json.load(x)
+                navdata['status'] = ''
+                navdata['Canbee_location'] = ''
+                navdata['Canbee_angle'] = ''
+                navdata['Test_status'] = 'Completed'
+                navdata['current_cycle'] = max((cycle for cycles in self.robot_data.values() for cycle in cycles), default=1)
+                navdata['total_cycles'] = total_cycles
+            with open(self.robot_obj.nav_data_path, 'w') as x:
+                json.dump(navdata, x, indent=4)
 
-    def build_graphs_and_table(self, coord="", rotation="", report="", lis=None, bands=None):
+    def build_graphs_and_table(self, coord="", rotation="", report="", lis=None, bands=None, cycle=1):
         """
         Builds graphs and summary table for a given coordinate and rotation.
         Parameters
@@ -2506,11 +2568,16 @@ class HttpDownload(Realm):
         bands : list, optional
             List of bands used for graph
             labeling.
+        cycle : int, optional
+            Cycle the visit belongs to; on a multi-cycle run it is shown in the header and keeps graph names unique.
         """
+        multi_cycle = int(self.cycles or 1) > 1
         rotation_suffix = f"_{rotation}" if rotation else ""
-        coord_label = f"<h2>Coordinate: {coord}</h2>"
+        name_suffix = rotation_suffix + (f"_cycle{cycle}" if multi_cycle else "")
+        cycle_text = f" | Cycle: {cycle}" if multi_cycle else ""
+        coord_label = f"<h2>Coordinate: {coord}{cycle_text}</h2>"
         if self.rotation_enabled:
-            coord_label = f"<h2>Coordinate: {coord}{', Rotation: ' + str(rotation) if rotation else ''}</h2>"
+            coord_label = f"<h2>Coordinate: {coord}{cycle_text}{', Rotation: ' + str(rotation) if rotation else ''}</h2>"
         report.set_custom_html(coord_label)
         report.build_custom()
 
@@ -2519,11 +2586,11 @@ class HttpDownload(Realm):
                             "Client names.")
         report.build_objective()
 
-        robot_data = self.robot_data.get(coord, {})
+        robot_data = self.robot_data.get(coord, {}).get(cycle, {})
         if self.rotation_enabled:
             robot_data = robot_data.get(rotation, {})
 
-        graph2 = self.graph_2(robot_data['url_data'], lis=lis, bands=bands, graph_name=f"Total-url_http_{coord}{rotation_suffix}")
+        graph2 = self.graph_2(robot_data['url_data'], lis=lis, bands=bands, graph_name=f"Total-url_http_{coord}{name_suffix}")
         report.set_graph_image(graph2)
         report.set_csv_filename(graph2)
         report.move_csv_file()
@@ -2534,7 +2601,7 @@ class HttpDownload(Realm):
                             ".  X- axis shows “Average time taken to download a file ” and Y-axis shows "
                             "Client names.")
         report.build_objective()
-        graph = self.generate_graph(dataset=robot_data['uc_avg'], lis=lis, bands=bands, graph_image_name=f"ucg-avg_http_{coord}{rotation_suffix}")
+        graph = self.generate_graph(dataset=robot_data['uc_avg'], lis=lis, bands=bands, graph_image_name=f"ucg-avg_http_{coord}{name_suffix}")
         report.set_graph_image(graph)
         report.set_csv_filename(graph)
         report.move_csv_file()
@@ -2933,7 +3000,7 @@ def main():
     optional.add_argument('--coordinate', type=str, default='', help="The coordinate contains list of coordinates to be ")
     optional.add_argument('--rotation', type=str, default='', help="The set of angles to rotate at a particular point")
     optional.add_argument('--do_bandsteering', help='Enable bandsteering', action='store_true')
-    optional.add_argument('--cycles', type=int, default=1, help='No of cycles to perform band steering')
+    optional.add_argument('--cycles', type=int, default=1, help='No of cycles: how many times a robot test repeats the coordinate list')
     optional.add_argument('--bssids', type=str, default='', help='hostname for where Robot server is running')
     optional.add_argument("--duration_to_skip", type=int, help='Specify the maximum time in seconds to skip a point if there is an obstacle', default=60)
 
@@ -3442,6 +3509,14 @@ times the file is downloaded.
     # FOR WEBGUI, filling csv at the end to get the last terminal logs
     if args.dowebgui:
         http.copy_reports_to_home_dir()
+
+    # Test_status=Completed only means the robot is done - report_generated tells the webGUI when the report is on disk.
+    if args.robot_test and args.dowebgui and not args.do_bandsteering:
+        with open(http.robot_obj.nav_data_path, 'r') as x:
+            navdata = json.load(x)
+        navdata['report_generated'] = True
+        with open(http.robot_obj.nav_data_path, 'w') as x:
+            json.dump(navdata, x, indent=4)
 
 
 if __name__ == '__main__':
