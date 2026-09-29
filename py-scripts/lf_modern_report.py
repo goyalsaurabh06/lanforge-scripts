@@ -84,8 +84,14 @@ _ECHARTS_RUNTIME_JS = """
   if (typeof window.echarts === "undefined") { return; }
   var PALETTE = %(palette)s;
 
+  function initChart(el) {
+    var dpr = Math.max(2, window.devicePixelRatio || 1);
+    return window.echarts.init(el, null, { devicePixelRatio: dpr });
+  }
+
   function baseOption(yName, xName) {
     return {
+      textStyle: { fontFamily: '"Segoe UI", Roboto, Arial, Helvetica, sans-serif' },
       color: PALETTE,
       tooltip: { trigger: "axis", axisPointer: { type: "cross" } },
       // itemWidth/itemHeight wider than the ECharts default (25x14) so a dashed series'
@@ -153,7 +159,7 @@ _ECHARTS_RUNTIME_JS = """
   window.__lfModernReport.renderLineChart = function (id, payload, yName, xName) {
     var el = document.getElementById(id);
     if (!el || !payload || !payload.series) { renderFallback(id); return; }
-    var chart = window.echarts.init(el);
+    var chart = initChart(el);
     var option = baseOption(yName, xName);
     if (payload.categories) { option.xAxis.data = payload.categories; option.xAxis.type = "category"; }
     if (payload.xAxisType === "value") { option.xAxis.type = "value"; }
@@ -195,7 +201,7 @@ _ECHARTS_RUNTIME_JS = """
   window.__lfModernReport.renderBarChart = function (id, payload, yName, xName) {
     var el = document.getElementById(id);
     if (!el || !payload || !payload.series) { renderFallback(id); return; }
-    var chart = window.echarts.init(el);
+    var chart = initChart(el);
     var option = baseOption(yName, xName);
     option.tooltip.axisPointer = { type: "shadow" };
     option.xAxis.data = payload.categories || [];
@@ -253,21 +259,23 @@ _ECHARTS_RUNTIME_JS = """
     window.addEventListener("resize", function () { chart.resize(); });
   };
 
-  window.__lfModernReport.renderHorizontalBarChart = function (id, payload, xName) {
+  window.__lfModernReport.renderHorizontalBarChart = function (id, payload, xName, yName) {
     var el = document.getElementById(id);
     if (!el || !payload || !payload.series) { renderFallback(id); return; }
     el.style.height = Math.max(300, (payload.categories || []).length * 52 + 120) + "px";
-    var chart = window.echarts.init(el);
-    var option = baseOption(xName, "");
+    var chart = initChart(el);
+    var option = baseOption(yName, xName);
+    option.grid = { left: 70, right: 28, top: 48, bottom: 84, containLabel: true };
     option.xAxis = {
       type: "value", name: xName || "", min: 0,
       nameLocation: "middle", nameGap: 30,
-      nameTextStyle: { color: "#2c3e50", fontWeight: 600 },
+      nameTextStyle: { color: "#2c3e50", fontWeight: 600, fontSize: 13 },
       axisLabel: { color: "#5f6f82" }
     };
     option.yAxis = {
       type: "category", data: payload.categories || [],
-      name: payload.yAxisName || "", nameLocation: "middle", nameGap: 110,
+      name: payload.yAxisName || yName || "", nameLocation: "middle", nameGap: 115, nameRotate: 90,
+      nameTextStyle: { color: "#2c3e50", fontWeight: 600, fontSize: 13 },
       axisLabel: {
         color: "#2c3e50", fontWeight: 600,
         // Truncate only what's shown on the axis -- the full category name
@@ -299,7 +307,7 @@ _ECHARTS_RUNTIME_JS = """
     }
 
     el.style.height = Math.max(320, clients.length * 38 + 150) + "px";
-    var chart = window.echarts.init(el);
+    var chart = initChart(el);
 
     function renderSegment(params, api) {
       var category = api.value(0);
@@ -379,7 +387,7 @@ _ECHARTS_RUNTIME_JS = """
       renderFallback(id, payload && payload.emptyMessage);
       return;
     }
-    var chart = window.echarts.init(el);
+    var chart = initChart(el);
     var showPct = !!payload.showPercentage;
     var labelFmt = payload.labelFormatter || (showPct ? "{b}\\n{d}%%" : "{b}\\n{c}");
     var tooltipFmt = payload.tooltipFormatter || "{b}: {c} ({d}%%)";
@@ -1789,7 +1797,7 @@ def _chart_markup(chart_id, chart_type, payload, title="", y_name="", x_name="",
     if chart_type in ("line", "bar"):
         extra_args = ", {y}, {x}".format(y=json.dumps(y_name), x=json.dumps(x_name))
     elif chart_type == "horizontal_bar":
-        extra_args = ", {x}".format(x=json.dumps(x_name))
+        extra_args = ", {x}, {y}".format(x=json.dumps(x_name), y=json.dumps(y_name))
 
     return """
             <div class='chart-card'>
@@ -2540,7 +2548,7 @@ class lf_bar_graph_horizontal:
         if self.stacked:
             payload["stacked"] = True
         markup = _chart_markup(self.graph_image_name, "horizontal_bar", payload,
-                               title=self.title, x_name=self.xaxis_name, description=self.description)
+                               title=self.title, x_name=self.xaxis_name, y_name=self.yaxis_name, description=self.description)
 
         if self.enable_csv:
             if self.yaxis_categories is not None and len(self.yaxis_categories) == len(self.data_set[0]):

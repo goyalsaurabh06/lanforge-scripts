@@ -491,6 +491,10 @@ class ThroughputQOS(Realm):
         for interface in response_port['interfaces']:
             for port, port_data in interface.items():
                 if (not port_data['phantom'] and not port_data['down'] and port_data['parent dev'] == "wiphy0" and port_data['alias'] != 'p2p0'):
+                    port_ip = port_data.get('ip', '')
+                    if not port_ip or port_ip == '0.0.0.0':
+                        logger.info('Skipping port %s, the client has no IP address', port)
+                        continue
                     for id in self.eid_list:
                         if (id + '.' in port):
                             original_port_list.append(port)
@@ -756,6 +760,63 @@ class ThroughputQOS(Realm):
             self.mac_id_list = list(self.mac_id_list)
             self.num_stations = len(self.real_client_list)
 
+    # def remove_unreachable_devices(self):
+    #     """Re-checks port states and removes devices that cannot run traffic.
+
+    #     Catches devices that are phantom, down, or have no IP address. This is a
+    #     safety net that runs after CX creation to remove devices that slipped through
+    #     the initial phantom_check() due to timing, or that lost their IP between the
+    #     initial check and CX creation.
+    #     """
+    #     response_port = self.json_get("/port/all")
+    #     if not response_port or 'interfaces' not in response_port:
+    #         return
+
+    #     # Build a map of port-id → port-data for ports that are unreachable
+    #     unreachable_ports = set()
+    #     for interface in response_port['interfaces']:
+    #         for port, port_data in interface.items():
+    #             if port_data.get('phantom') or port_data.get('down'):
+    #                 unreachable_ports.add(port)
+    #                 continue
+    #             port_ip = port_data.get('ip', '')
+    #             if not port_ip or port_ip == '0.0.0.0':
+    #                 unreachable_ports.add(port)
+
+    #     # Find which devices in input_devices_list are unreachable
+    #     devices_to_remove = set()
+    #     for port in self.input_devices_list:
+    #         if port in unreachable_ports:
+    #             resource_eid = port.split('.')[0] + '.' + port.split('.')[1]
+    #             devices_to_remove.add(resource_eid)
+    #             logger.info('Removing unreachable device %s (phantom/down/no-IP) from the test', port)
+
+    #     if not devices_to_remove:
+    #         return
+
+    #     # Remove CXs for unreachable devices
+    #     cxs_to_remove = []
+    #     for cx in list(self.cx_profile.created_cx.keys()):
+    #         cx_prefix = cx.split('_')[0]
+    #         cx_eid_match = re.match(r'^[0-9.]+', cx_prefix)
+    #         if cx_eid_match and cx_eid_match.group() in devices_to_remove:
+    #             cxs_to_remove.append(cx)
+
+    #     for cx in cxs_to_remove:
+    #         logger.info('Removing CX for unreachable device: %s', cx)
+    #         super().rm_cx(cx)
+    #         del self.cx_profile.created_cx[cx]
+
+    #     # Filter all device lists consistently (same pattern as monitor_cx)
+    #     self.real_client_list1 = [item for item in self.real_client_list1 if item.split()[0] not in devices_to_remove]
+    #     self.input_devices_list = [item for item in self.input_devices_list if item.split('.')[0] + '.' + item.split('.')[1] not in devices_to_remove]
+    #     filtered = [(dev, mac) for dev, mac in zip(self.real_client_list, self.mac_id_list) if dev.split()[0] not in devices_to_remove]
+    #     self.real_client_list, self.mac_id_list = zip(*filtered) if filtered else ([], [])
+    #     self.real_client_list = list(self.real_client_list)
+    #     self.mac_id_list = list(self.mac_id_list)
+    #     self.num_stations = len(self.real_client_list)
+    #     logger.info('Removed %d unreachable device(s), %d device(s) remain', len(devices_to_remove), self.num_stations)
+
     def wait_for_any_cx_recovery(self, timeout=40, poll_interval=5):
         """Polls for any CX to reappear (or a user stop) for up to `timeout` seconds.
 
@@ -803,22 +864,24 @@ class ThroughputQOS(Realm):
             raise ValueError("Monitor needs a list of Layer 3 connections")
         # monitor columns
         start_time = datetime.now()
+        # Save the exact test traffic window so background_ping can clip its
+        # graph/duration to this window rather than its own wider start-to-stop lifetime.
+        self.monitor_window_start_dt = start_time
+        end_time = start_time + timedelta(seconds=int(self.test_duration))
+        self.monitor_window_end_dt = end_time
         if self.do_bandsteering:
             # Bandsteering invokes monitor() repeatedly as a per-tick callback within one
             # continuous session, so only set this once for the whole session.
             if self.monitor_start_time is None:
                 self.monitor_start_time = start_time
         else:
-            # Every other robot_test flow (plain coordinate loop, rotation loop) calls
-            # monitor() once per coordinate/rotation, with CXs freshly restarted just before
-            # each call - restart the grace period each time instead of only on the very
-            # first coordinate.
+            # Every other flow calls monitor() once per coordinate/rotation with CXs
+            # freshly restarted — restart the grace period each time.
             self.monitor_start_time = start_time
-        test_start_time = datetime.now().strftime("%Y %d %H:%M:%S")
+        test_start_time = start_time.strftime("%Y %d %H:%M:%S")
         if not self.do_bandsteering:
             print("Test started at: ", test_start_time)
             print("Monitoring cx and endpoints")
-        end_time = start_time + timedelta(seconds=int(self.test_duration))
         if not self.robot_test:
             self.overall = []
             self.df_for_webui = []
@@ -1867,11 +1930,11 @@ class ThroughputQOS(Realm):
             )
         else:
             report.set_obj_html(_obj_title="Test Overview",
-                                _obj="The Candela QoS (Quality of Service) Test is designed to measure the maximum"
-                                " achievable throughput of a network under specific QoS settings and conditions. By conducting"
-                                " this test, we assess the capacity of the network to handle high volumes of traffic while"
-                                " maintaining acceptable performance levels, ensuring that the network meets the required QoS"
-                                " standards and can adequately support the expected user demands.")
+                                _obj="The Candela QoS test is designed to measure an Access Point's ability to prioritize different types of "
+                                "traffic across real clients such as Android, Linux, Windows, MacBook and iOS devices. The test "
+                                "generates simultaneous traffic for multiple QoS classes including Voice (VO), Video (VI), Best Effort "
+                                "(BE), and Background (BK), and evaluates how effectively the AP enforces traffic prioritization "
+                                "under load.")
         report.build_objective()
 
         # Hide global table search bar for cleaner report
@@ -1904,6 +1967,19 @@ class ThroughputQOS(Realm):
         else:
             overall_rating = "Poor"
 
+        # Color-code only the rating text in the Overall Test Verdict card.
+        _rating_colors = {
+            "Excellent": "#1a7a2e",   # Dark Green
+            "Good":      "#4caf50",   # Light Green
+            "Acceptable": "#f0c040",  # Yellow
+            "Poor":       "#e53935",  # Red
+        }
+        _rating_color = _rating_colors.get(overall_rating, "#555555")
+        overall_rating_html = (
+            "<span style='color:{color}; font-weight:800;'>{rating}</span>".format(
+                color=_rating_color, rating=overall_rating)
+        )
+
         # --- Overall Test Verdict Info Card ---
         # Achieved Load gets its own box per TOS class instead of one cramped
         # "X Mbps (VO) / Y Mbps (VI) / ..." string, so each value is readable at a glance.
@@ -1916,16 +1992,13 @@ class ThroughputQOS(Realm):
             "Achieved Load (BK)": f"{bk_val} Mbps",
             "Total Aggregate Throughput": f"{total_aggregate:.2f} Mbps",
             "Priority Order Observed": " > ".join(priority_order),
-            "Overall Rating": overall_rating
+            "Overall Rating": overall_rating_html
         }
         report.build_info_card(
             title="Overall Test Verdict",
             items=[{"label": label, "value": value} for label, value in verdict_data.items()]
         )
 
-        # --- Test Summary ---
-        report.set_obj_html(_obj_title="Test Summary", _obj="")
-        report.build_objective()
 
         # Computed once here and reused below (for the background-ping device table)
         # instead of querying '/ports/all/' twice for the same live snapshot.
@@ -2060,7 +2133,7 @@ class ThroughputQOS(Realm):
         if self.do_bandsteering:
             self.get_bandsteering_stats(report=report, data=self.band_steering_df)
         self.generate_individual_graph(res, report, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b)
-        report.test_setup_table(test_setup_data=input_setup_info, value="Information")
+
         # To add charging timestamps of robot in report when bandsteering is enabled
         if self.do_bandsteering:
             if len(self.robot.charging_timestamps) != 0:
@@ -2384,7 +2457,7 @@ class ThroughputQOS(Realm):
                 tos = key.split('_')[-1].split('-')[0]
                 drop_res['drop_a'][tos].append(val)
         x_fig_size = 15
-        y_fig_size = len(self.real_client_list1) * .5 + 4
+        y_fig_size = max(5, len(self.real_client_list1) * .5 + 4)
         if len(res.keys()) > 0:
             if "throughput_table_df" in res:
                 res.pop("throughput_table_df")
@@ -2400,65 +2473,33 @@ class ThroughputQOS(Realm):
                         individual_drop_a_list = drop_res['drop_a']['VO']
                         individual_drop_b_list = drop_res['drop_b']['VO']
 
-                        # --- Download graph for VO ---
                         report.set_obj_html(
-                            _obj_title=f"Individual Download throughput with intended load {load}/station for traffic VO(WiFi).",
-                            _obj=f"The below graph represents individual Download throughput for {len(self.input_devices_list)} clients running VO "
-                            f"(WiFi) traffic. X-axis shows \"Throughput in Mbps\" and Y-axis shows \"client names\".")
+                            _obj_title="Per Client Average Throughput \u2013 Voice (VO)",
+                            _obj="The graph below illustrates the average throughput achieved by each client for Voice (VO) traffic. "
+                            "The X-axis represents individual client identifiers, while the Y-axis indicates throughput in Mbps.")
                         report.build_objective()
                         dl_data = list1[1][0]
-                        graph = lf_bar_graph_horizontal(_data_set=[dl_data], _xaxis_name="Throughput in Mbps",
-                                                        _yaxis_name="Client names",
-                                                        _yaxis_categories=[i for i in display_client_names],
-                                                        _yaxis_label=[i for i in display_client_names],
-                                                        _label=["Download"],
-                                                        _yaxis_step=1,
-                                                        _yticks_font=8,
-                                                        _yticks_rotation=None,
-                                                        _graph_title="Individual Download throughput for VO(WIFI) traffic",
-                                                        _title_size=16,
-                                                        _figsize=(x_fig_size, y_fig_size),
-                                                        _legend_loc="best",
-                                                        _legend_box=(1.0, 1.0),
-                                                        _color_name=['#1f6f58'],
-                                                        _show_bar_value=True,
-                                                        _enable_csv=True,
-                                                        _graph_image_name="voice_Download{}".format(graph_no),
-                                                        _color_edge=['black'],
-                                                        _color=['#1f6f58'])
-                        graph_png = graph.build_bar_graph_horizontal()
-                        report.set_graph_image(graph_png)
-                        report.move_graph_image()
-                        report.set_csv_filename(graph.graph_image_name)
-                        report.move_csv_file()
-                        report.build_graph()
-
-                        # --- Upload graph for VO ---
-                        report.set_obj_html(
-                            _obj_title=f"Individual Upload throughput with intended load {load}/station for traffic VO(WiFi).",
-                            _obj=f"The below graph represents individual Upload throughput for {len(self.input_devices_list)} clients running VO "
-                            f"(WiFi) traffic. X-axis shows \"Throughput in Mbps\" and Y-axis shows \"client names\".")
-                        report.build_objective()
                         ul_data = list1[1][1]
-                        graph = lf_bar_graph_horizontal(_data_set=[ul_data], _xaxis_name="Throughput in Mbps",
-                                                        _yaxis_name="Client names",
+                        graph = lf_bar_graph_horizontal(_data_set=[dl_data, ul_data], _xaxis_name="Average Throughput Attained",
+                                                        _yaxis_name="Wireless Clients",
                                                         _yaxis_categories=[i for i in display_client_names],
                                                         _yaxis_label=[i for i in display_client_names],
-                                                        _label=["Upload"],
+                                                        _label=["Download", "Upload"],
                                                         _yaxis_step=1,
                                                         _yticks_font=8,
                                                         _yticks_rotation=None,
-                                                        _graph_title="Individual Upload throughput for VO(WIFI) traffic",
+                                                        _yaxis_value_location=0.125,
+                                                        _graph_title="Per Client Average Throughput \u2013 Voice (VO)",
                                                         _title_size=16,
                                                         _figsize=(x_fig_size, y_fig_size),
                                                         _legend_loc="best",
                                                         _legend_box=(1.0, 1.0),
-                                                        _color_name=['lightgrey'],
+                                                        _color_name=['#1f6f58', 'lightgrey'],
                                                         _show_bar_value=True,
                                                         _enable_csv=True,
-                                                        _graph_image_name="voice_Upload{}".format(graph_no),
+                                                        _graph_image_name="voice_Bi-direction{}".format(graph_no),
                                                         _color_edge=['black'],
-                                                        _color=['lightgrey'])
+                                                        _color=['#1f6f58', 'lightgrey'])
                         graph_png = graph.build_bar_graph_horizontal()
                         report.set_graph_image(graph_png)
                         report.move_graph_image()
@@ -2468,7 +2509,7 @@ class ThroughputQOS(Realm):
                     else:
                         individual_set = [data_set[load]['VO']]
                         colors = ['#1f6f58']
-                        labels = ['VO']
+                        labels = [self.direction]
                         if self.direction == "Upload":
                             individual_upload_list = avg_res['Upload']['VO']
                             individual_drop_b_list = drop_res['drop_b']['VO']
@@ -2476,19 +2517,19 @@ class ThroughputQOS(Realm):
                             individual_download_list = avg_res['Download']['VO']
                             individual_drop_a_list = drop_res['drop_a']['VO']
                         report.set_obj_html(
-                            _obj_title=f"Individual {self.direction} throughput with intended load {load}/station for traffic VO(WiFi).",
-                            _obj=f"The below graph represents individual throughput for {len(self.input_devices_list)} clients running VO "
-                            f"(WiFi) traffic. X-axis shows \"Throughput in Mbps\" and Y-axis shows \"client names\".")
+                            _obj_title="Per Client Average Throughput \u2013 Voice (VO)",
+                            _obj="The graph below illustrates the average throughput achieved by each client for Voice (VO) traffic. "
+                            "The X-axis represents individual client identifiers, while the Y-axis indicates throughput in Mbps.")
                         report.build_objective()
-                        graph = lf_bar_graph_horizontal(_data_set=individual_set, _xaxis_name="Throughput in Mbps",
-                                                        _yaxis_name="Client names",
+                        graph = lf_bar_graph_horizontal(_data_set=individual_set, _xaxis_name="Average Throughput Attained",
+                                                        _yaxis_name="Wireless Clients",
                                                         _yaxis_categories=[i for i in display_client_names],
                                                         _yaxis_label=[i for i in display_client_names],
                                                         _label=labels,
                                                         _yaxis_step=1,
                                                         _yticks_font=8,
                                                         _yticks_rotation=None,
-                                                        _graph_title=f"Individual {self.direction} throughput for VO(WIFI) traffic",
+                                                        _graph_title="Per Client Average Throughput \u2013 Voice (VO)",
                                                         _title_size=16,
                                                         _figsize=(x_fig_size, y_fig_size),
                                                         _legend_loc="best",
@@ -2581,65 +2622,33 @@ class ThroughputQOS(Realm):
                         individual_drop_a_list = drop_res['drop_a']['VI']
                         individual_drop_b_list = drop_res['drop_b']['VI']
 
-                        # --- Download graph for VI ---
                         report.set_obj_html(
-                            _obj_title=f"Individual Download throughput with intended load {load}/station for traffic VI(WiFi).",
-                            _obj=f"The below graph represents individual Download throughput for {len(self.input_devices_list)} clients running VI "
-                            f"(WiFi) traffic. X-axis shows \"Throughput in Mbps\" and Y-axis shows \"client names\".")
+                            _obj_title="Per Client Average Throughput \u2013 Video (VI)",
+                            _obj="The graph below illustrates the average throughput achieved by each client for Video (VI) traffic. "
+                            "The X-axis represents individual client identifiers, while the Y-axis indicates throughput in Mbps.")
                         report.build_objective()
                         dl_data = list1[0][0]
-                        graph = lf_bar_graph_horizontal(_data_set=[dl_data], _xaxis_name="Throughput in Mbps",
-                                                        _yaxis_name="Client names",
-                                                        _yaxis_categories=[i for i in display_client_names],
-                                                        _yaxis_label=[i for i in display_client_names],
-                                                        _label=["Download"],
-                                                        _yaxis_step=1,
-                                                        _yticks_font=8,
-                                                        _yticks_rotation=None,
-                                                        _graph_title="Individual Download throughput for VI(WIFI) traffic",
-                                                        _title_size=16,
-                                                        _figsize=(x_fig_size, y_fig_size),
-                                                        _legend_loc="best",
-                                                        _legend_box=(1.0, 1.0),
-                                                        _color_name=['#2f80ed'],
-                                                        _show_bar_value=True,
-                                                        _enable_csv=True,
-                                                        _graph_image_name="video_Download{}".format(graph_no),
-                                                        _color_edge=['black'],
-                                                        _color=['#2f80ed'])
-                        graph_png = graph.build_bar_graph_horizontal()
-                        report.set_graph_image(graph_png)
-                        report.move_graph_image()
-                        report.set_csv_filename(graph.graph_image_name)
-                        report.move_csv_file()
-                        report.build_graph()
-
-                        # --- Upload graph for VI ---
-                        report.set_obj_html(
-                            _obj_title=f"Individual Upload throughput with intended load {load}/station for traffic VI(WiFi).",
-                            _obj=f"The below graph represents individual Upload throughput for {len(self.input_devices_list)} clients running VI "
-                            f"(WiFi) traffic. X-axis shows \"Throughput in Mbps\" and Y-axis shows \"client names\".")
-                        report.build_objective()
                         ul_data = list1[0][1]
-                        graph = lf_bar_graph_horizontal(_data_set=[ul_data], _xaxis_name="Throughput in Mbps",
-                                                        _yaxis_name="Client names",
+                        graph = lf_bar_graph_horizontal(_data_set=[dl_data, ul_data], _xaxis_name="Average Throughput Attained",
+                                                        _yaxis_name="Wireless Clients",
                                                         _yaxis_categories=[i for i in display_client_names],
                                                         _yaxis_label=[i for i in display_client_names],
-                                                        _label=["Upload"],
+                                                        _label=["Download", "Upload"],
                                                         _yaxis_step=1,
                                                         _yticks_font=8,
                                                         _yticks_rotation=None,
-                                                        _graph_title="Individual Upload throughput for VI(WIFI) traffic",
+                                                        _yaxis_value_location=0.125,
+                                                        _graph_title="Per Client Average Throughput \u2013 Video (VI)",
                                                         _title_size=16,
                                                         _figsize=(x_fig_size, y_fig_size),
                                                         _legend_loc="best",
                                                         _legend_box=(1.0, 1.0),
-                                                        _color_name=['lightskyblue'],
+                                                        _color_name=['#2f80ed', 'lightskyblue'],
                                                         _show_bar_value=True,
                                                         _enable_csv=True,
-                                                        _graph_image_name="video_Upload{}".format(graph_no),
+                                                        _graph_image_name="video_Bi-direction{}".format(graph_no),
                                                         _color_edge=['black'],
-                                                        _color=['lightskyblue'])
+                                                        _color=['#2f80ed', 'lightskyblue'])
                         graph_png = graph.build_bar_graph_horizontal()
                         report.set_graph_image(graph_png)
                         report.move_graph_image()
@@ -2649,7 +2658,7 @@ class ThroughputQOS(Realm):
                     else:
                         individual_set = [data_set[load]['VI']]
                         colors = ['#2f80ed']
-                        labels = ['VI']
+                        labels = [self.direction]
                         if self.direction == "Upload":
                             individual_upload_list = avg_res['Upload']['VI']
                             individual_drop_b_list = drop_res['drop_b']['VI']
@@ -2657,19 +2666,19 @@ class ThroughputQOS(Realm):
                             individual_download_list = avg_res['Download']['VI']
                             individual_drop_a_list = drop_res['drop_a']['VI']
                         report.set_obj_html(
-                            _obj_title=f"Individual {self.direction} throughput with intended load {load}/station for traffic VI(WiFi).",
-                            _obj=f"The below graph represents individual throughput for {len(self.input_devices_list)} clients running VI "
-                            f"(WiFi) traffic. X-axis shows \"Throughput in Mbps\" and Y-axis shows \"client names\".")
+                            _obj_title="Per Client Average Throughput \u2013 Video (VI)",
+                            _obj="The graph below illustrates the average throughput achieved by each client for Video (VI) traffic. "
+                            "The X-axis represents individual client identifiers, while the Y-axis indicates throughput in Mbps.")
                         report.build_objective()
-                        graph = lf_bar_graph_horizontal(_data_set=individual_set, _xaxis_name="Throughput in Mbps",
-                                                        _yaxis_name="Client names",
+                        graph = lf_bar_graph_horizontal(_data_set=individual_set, _xaxis_name="Average Throughput Attained",
+                                                        _yaxis_name="Wireless Clients",
                                                         _yaxis_categories=[i for i in display_client_names],
                                                         _yaxis_label=[i for i in display_client_names],
                                                         _label=labels,
                                                         _yaxis_step=1,
                                                         _yticks_font=8,
                                                         _yticks_rotation=None,
-                                                        _graph_title=f"Individual {self.direction} throughput for VI(WIFI) traffic",
+                                                        _graph_title="Per Client Average Throughput \u2013 Video (VI)",
                                                         _title_size=16,
                                                         _figsize=(x_fig_size, y_fig_size),
                                                         _legend_loc="best",
@@ -2761,63 +2770,33 @@ class ThroughputQOS(Realm):
                         individual_drop_a_list = drop_res['drop_a']['BE']
                         individual_drop_b_list = drop_res['drop_b']['BE']
 
-                        # --- Download graph for BE ---
                         report.set_obj_html(
-                            _obj_title=f"Individual Download throughput with intended load {load}/station for traffic BE(WiFi).",
-                            _obj=f"The below graph represents individual Download throughput for {len(self.input_devices_list)} clients running BE "
-                            f"(WiFi) traffic. X-axis shows \"Throughput in Mbps\" and Y-axis shows \"client names\".")
+                            _obj_title="Per Client Average Throughput \u2013 Best Effort (BE)",
+                            _obj="The graph below illustrates the average throughput achieved by each client for Best Effort (BE) traffic. "
+                            "The X-axis represents individual client identifiers, while the Y-axis indicates throughput in Mbps.")
                         report.build_objective()
                         dl_data = list1[3][0]
-                        graph = lf_bar_graph_horizontal(_data_set=[dl_data], _xaxis_name="Throughput in Mbps",
-                                                        _yaxis_name="Client names",
-                                                        _yaxis_categories=[i for i in display_client_names],
-                                                        _yaxis_label=[i for i in display_client_names],
-                                                        _label=["Download"],
-                                                        _yaxis_step=1,
-                                                        _yticks_font=8,
-                                                        _yticks_rotation=None,
-                                                        _graph_title="Individual Download throughput for BE(WIFI) traffic",
-                                                        _title_size=16,
-                                                        _figsize=(x_fig_size, y_fig_size),
-                                                        _legend_loc="best",
-                                                        _legend_box=(1.0, 1.0),
-                                                        _color_name=['#f1b24a'],
-                                                        _show_bar_value=True,
-                                                        _enable_csv=True,
-                                                        _graph_image_name="be_Download{}".format(graph_no), _color_edge=['black'],
-                                                        _color=['#f1b24a'])
-                        graph_png = graph.build_bar_graph_horizontal()
-                        report.set_graph_image(graph_png)
-                        report.move_graph_image()
-                        report.set_csv_filename(graph.graph_image_name)
-                        report.move_csv_file()
-                        report.build_graph()
-
-                        # --- Upload graph for BE ---
-                        report.set_obj_html(
-                            _obj_title=f"Individual Upload throughput with intended load {load}/station for traffic BE(WiFi).",
-                            _obj=f"The below graph represents individual Upload throughput for {len(self.input_devices_list)} clients running BE "
-                            f"(WiFi) traffic. X-axis shows \"Throughput in Mbps\" and Y-axis shows \"client names\".")
-                        report.build_objective()
                         ul_data = list1[3][1]
-                        graph = lf_bar_graph_horizontal(_data_set=[ul_data], _xaxis_name="Throughput in Mbps",
-                                                        _yaxis_name="Client names",
+                        graph = lf_bar_graph_horizontal(_data_set=[dl_data, ul_data], _xaxis_name="Average Throughput Attained",
+                                                        _yaxis_name="Wireless Clients",
                                                         _yaxis_categories=[i for i in display_client_names],
                                                         _yaxis_label=[i for i in display_client_names],
-                                                        _label=["Upload"],
+                                                        _label=["Download", "Upload"],
                                                         _yaxis_step=1,
                                                         _yticks_font=8,
                                                         _yticks_rotation=None,
-                                                        _graph_title="Individual Upload throughput for BE(WIFI) traffic",
+                                                        _yaxis_value_location=0.125,
+                                                        _graph_title="Per Client Average Throughput \u2013 Best Effort (BE)",
                                                         _title_size=16,
                                                         _figsize=(x_fig_size, y_fig_size),
                                                         _legend_loc="best",
                                                         _legend_box=(1.0, 1.0),
-                                                        _color_name=['mistyrose'],
+                                                        _color_name=['#f1b24a', 'mistyrose'],
                                                         _show_bar_value=True,
                                                         _enable_csv=True,
-                                                        _graph_image_name="be_Upload{}".format(graph_no), _color_edge=['black'],
-                                                        _color=['mistyrose'])
+                                                        _graph_image_name="be_Bi-direction{}".format(graph_no),
+                                                        _color_edge=['black'],
+                                                        _color=['#f1b24a', 'mistyrose'])
                         graph_png = graph.build_bar_graph_horizontal()
                         report.set_graph_image(graph_png)
                         report.move_graph_image()
@@ -2827,7 +2806,7 @@ class ThroughputQOS(Realm):
                     else:
                         individual_set = [data_set[load]['BE']]
                         colors = ['#f1b24a']
-                        labels = ['BE']
+                        labels = [self.direction]
                         if self.direction == "Upload":
                             individual_upload_list = avg_res['Upload']['BE']
                             individual_drop_b_list = drop_res['drop_b']['BE']
@@ -2835,19 +2814,19 @@ class ThroughputQOS(Realm):
                             individual_download_list = avg_res['Download']['BE']
                             individual_drop_a_list = drop_res['drop_a']['BE']
                         report.set_obj_html(
-                            _obj_title=f"Individual {self.direction} throughput with intended load {load}/station for traffic BE(WiFi).",
-                            _obj=f"The below graph represents individual throughput for {len(self.input_devices_list)} clients running BE "
-                            f"(WiFi) traffic. X-axis shows \"Throughput in Mbps\" and Y-axis shows \"client names\".")
+                            _obj_title="Per Client Average Throughput \u2013 Best Effort (BE)",
+                            _obj="The graph below illustrates the average throughput achieved by each client for Best Effort (BE) traffic. "
+                            "The X-axis represents individual client identifiers, while the Y-axis indicates throughput in Mbps.")
                         report.build_objective()
-                        graph = lf_bar_graph_horizontal(_data_set=individual_set, _xaxis_name="Throughput in Mbps",
-                                                        _yaxis_name="Client names",
+                        graph = lf_bar_graph_horizontal(_data_set=individual_set, _xaxis_name="Average Throughput Attained",
+                                                        _yaxis_name="Wireless Clients",
                                                         _yaxis_categories=[i for i in display_client_names],
                                                         _yaxis_label=[i for i in display_client_names],
                                                         _label=labels,
                                                         _yaxis_step=1,
                                                         _yticks_font=8,
                                                         _yticks_rotation=None,
-                                                        _graph_title=f"Individual {self.direction} throughput for BE(WIFI) traffic",
+                                                        _graph_title="Per Client Average Throughput \u2013 Best Effort (BE)",
                                                         _title_size=16,
                                                         _figsize=(x_fig_size, y_fig_size),
                                                         _legend_loc="best",
@@ -2938,63 +2917,33 @@ class ThroughputQOS(Realm):
                         individual_drop_a_list = drop_res['drop_a']['BK']
                         individual_drop_b_list = drop_res['drop_b']['BK']
 
-                        # --- Download graph for BK ---
                         report.set_obj_html(
-                            _obj_title=f"Individual Download throughput with intended load {load}/station for traffic BK(WiFi).",
-                            _obj=f"The below graph represents individual Download throughput for {len(self.input_devices_list)} clients running BK "
-                            f"(WiFi) traffic. X-axis shows \"Throughput in Mbps\" and Y-axis shows \"client names\".")
+                            _obj_title="Per Client Average Throughput \u2013 Background (BK)",
+                            _obj="The graph below illustrates the average throughput achieved by each client for Background (BK) traffic. "
+                            "The X-axis represents individual client identifiers, while the Y-axis indicates throughput in Mbps.")
                         report.build_objective()
                         dl_data = list1[2][0]
-                        graph = lf_bar_graph_horizontal(_data_set=[dl_data], _xaxis_name="Throughput in Mbps",
-                                                        _yaxis_name="Client names",
-                                                        _yaxis_categories=[i for i in display_client_names],
-                                                        _yaxis_label=[i for i in display_client_names],
-                                                        _label=["Download"],
-                                                        _yaxis_step=1,
-                                                        _yticks_font=8,
-                                                        _yticks_rotation=None,
-                                                        _graph_title="Individual Download throughput for BK(WIFI) traffic",
-                                                        _title_size=16,
-                                                        _figsize=(x_fig_size, y_fig_size),
-                                                        _legend_loc="best",
-                                                        _legend_box=(1.0, 1.0),
-                                                        _color_name=['#1d9a8a'],
-                                                        _show_bar_value=True,
-                                                        _enable_csv=True,
-                                                        _graph_image_name="bk_Download{}".format(graph_no), _color_edge=['black'],
-                                                        _color=['#1d9a8a'])
-                        graph_png = graph.build_bar_graph_horizontal()
-                        report.set_graph_image(graph_png)
-                        report.move_graph_image()
-                        report.set_csv_filename(graph.graph_image_name)
-                        report.move_csv_file()
-                        report.build_graph()
-
-                        # --- Upload graph for BK ---
-                        report.set_obj_html(
-                            _obj_title=f"Individual Upload throughput with intended load {load}/station for traffic BK(WiFi).",
-                            _obj=f"The below graph represents individual Upload throughput for {len(self.input_devices_list)} clients running BK "
-                            f"(WiFi) traffic. X-axis shows \"Throughput in Mbps\" and Y-axis shows \"client names\".")
-                        report.build_objective()
                         ul_data = list1[2][1]
-                        graph = lf_bar_graph_horizontal(_data_set=[ul_data], _xaxis_name="Throughput in Mbps",
-                                                        _yaxis_name="Client names",
+                        graph = lf_bar_graph_horizontal(_data_set=[dl_data, ul_data], _xaxis_name="Average Throughput Attained",
+                                                        _yaxis_name="Wireless Clients",
                                                         _yaxis_categories=[i for i in display_client_names],
                                                         _yaxis_label=[i for i in display_client_names],
-                                                        _label=["Upload"],
+                                                        _label=["Download", "Upload"],
                                                         _yaxis_step=1,
                                                         _yticks_font=8,
                                                         _yticks_rotation=None,
-                                                        _graph_title="Individual Upload throughput for BK(WIFI) traffic",
+                                                        _yaxis_value_location=0.125,
+                                                        _graph_title="Per Client Average Throughput \u2013 Background (BK)",
                                                         _title_size=16,
                                                         _figsize=(x_fig_size, y_fig_size),
                                                         _legend_loc="best",
                                                         _legend_box=(1.0, 1.0),
-                                                        _color_name=['wheat'],
+                                                        _color_name=['#1d9a8a', 'wheat'],
                                                         _show_bar_value=True,
                                                         _enable_csv=True,
-                                                        _graph_image_name="bk_Upload{}".format(graph_no), _color_edge=['black'],
-                                                        _color=['wheat'])
+                                                        _graph_image_name="bk_Bi-direction{}".format(graph_no),
+                                                        _color_edge=['black'],
+                                                        _color=['#1d9a8a', 'wheat'])
                         graph_png = graph.build_bar_graph_horizontal()
                         report.set_graph_image(graph_png)
                         report.move_graph_image()
@@ -3004,7 +2953,7 @@ class ThroughputQOS(Realm):
                     else:
                         individual_set = [data_set[load]['BK']]
                         colors = ['#1d9a8a']
-                        labels = ['BK']
+                        labels = [self.direction]
                         if self.direction == "Upload":
                             individual_upload_list = avg_res['Upload']['BK']
                             individual_drop_b_list = drop_res['drop_b']['BK']
@@ -3012,19 +2961,19 @@ class ThroughputQOS(Realm):
                             individual_download_list = avg_res['Download']['BK']
                             individual_drop_a_list = drop_res['drop_a']['BK']
                         report.set_obj_html(
-                            _obj_title=f"Individual {self.direction} throughput with intended load {load}/station for traffic BK(WiFi).",
-                            _obj=f"The below graph represents individual throughput for {len(self.input_devices_list)} clients running BK "
-                            f"(WiFi) traffic. X-axis shows \"Throughput in Mbps\" and Y-axis shows \"client names\".")
+                            _obj_title="Per Client Average Throughput \u2013 Background (BK)",
+                            _obj="The graph below illustrates the average throughput achieved by each client for Background (BK) traffic. "
+                            "The X-axis represents individual client identifiers, while the Y-axis indicates throughput in Mbps.")
                         report.build_objective()
-                        graph = lf_bar_graph_horizontal(_data_set=individual_set, _xaxis_name="Throughput in Mbps",
-                                                        _yaxis_name="Client names",
+                        graph = lf_bar_graph_horizontal(_data_set=individual_set, _xaxis_name="Average Throughput Attained",
+                                                        _yaxis_name="Wireless Clients",
                                                         _yaxis_categories=[i for i in display_client_names],
                                                         _yaxis_label=[i for i in display_client_names],
                                                         _label=labels,
                                                         _yaxis_step=1,
                                                         _yticks_font=8,
                                                         _yticks_rotation=None,
-                                                        _graph_title=f"Individual {self.direction} throughput for BK(WIFI) traffic",
+                                                        _graph_title="Per Client Average Throughput \u2013 Background (BK)",
                                                         _title_size=16,
                                                         _figsize=(x_fig_size, y_fig_size),
                                                         _legend_loc="best",
@@ -3430,7 +3379,7 @@ class ThroughputQOS(Realm):
             device_info = {port: {'mac': mac, 'channel': ch, 'rssi': rssi}
                            for port, mac, ch, rssi in zip(self.input_devices_list, self.mac_id_list, channel_list, rssi_list)}
             self.background_ping.add_to_report(report, device_info=device_info)
-        report.test_setup_table(test_setup_data=input_setup_info, value="Information")
+
         # any recorded device issues in the report folder
         if self.device_issue_log:
             issues_df = pd.DataFrame(self.device_issue_log)
@@ -4556,6 +4505,7 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
                                                device_list=throughput_qos.input_devices_list, ssid=args.ssid)
         throughput_qos.build()
         throughput_qos.monitor_cx()
+        # throughput_qos.remove_unreachable_devices()
         if args.robot_test:
             throughput_qos.perform_robo()
             if throughput_qos.background_ping:
@@ -4568,6 +4518,10 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
         connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b = throughput_qos.monitor()
         throughput_qos.stop()
         if throughput_qos.background_ping:
+            # Clip the bg ping graph to the exact test-traffic window (start → stop of monitor()).
+            bg_start = getattr(throughput_qos, 'monitor_window_start_dt', None)
+            bg_end = getattr(throughput_qos, 'monitor_window_end_dt', None)
+            throughput_qos.background_ping.set_monitor_window(bg_start, bg_end)
             throughput_qos.background_ping.stop()
         throughput_qos.stop_wifi_analysis()
         time.sleep(5)
