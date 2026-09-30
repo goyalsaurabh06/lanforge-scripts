@@ -1917,10 +1917,9 @@ class Youtube(Realm):
                            f"{max(averages):.2f} seconds. ")
             if low_buffer_clients:
                 buffer_text += (f"Buffer fell below 10 seconds on {low_buffer_clients} of "
-                                f"{len(buffers)} clients with buffer measurements, indicating reduced playback reserve.")
+                                f"{len(buffers)} clients.")
             else:
                 buffer_text += "All available buffer samples remained at or above 10 seconds, indicating healthy playback reserve."
-            buffer_text += " Buffer samples alone do not establish uninterrupted playback."
         else:
             buffer_text = "Buffer health could not be assessed because no valid buffer measurements were collected."
         if missing_buffer_samples:
@@ -1958,7 +1957,7 @@ class Youtube(Realm):
             strong = sum(value >= -67 for value in signals)
             signal = (f"Measured signal strength ranged from {min(signals):g} to {max(signals):g} dBm; "
                       f"{strong} of {len(signals)} clients with RSSI measurements met the strong-signal "
-                      "summary threshold (at least -67 dBm). These readings do not establish signal stability throughout the test.")
+                      "summary threshold (at least -67 dBm).")
             if len(signals) < len(names):
                 signal += f" RSSI was unavailable or invalid for {len(names) - len(signals)} configured clients."
         else:
@@ -1974,9 +1973,7 @@ class Youtube(Realm):
                        "sampled buffer reserve, dropped frames below 1%, and packet loss at or below 2%, "
                        "supporting a favorable streaming assessment under the configured test conditions.")
         else:
-            overall = ("Overall, the measurements show performance limitations under the configured test conditions. "
-                       "Review per-client ratings, buffer samples, dropped frames, and ping results; these measurements "
-                       "alone do not identify the AP as the cause.")
+            overall = "Overall, the measurements show performance limitations under the configured test conditions."
         return [ratings, buffer_text, connectivity, signal, overall]
 
     def _build_dropped_frames_percentage_graph(self, report, metrics):
