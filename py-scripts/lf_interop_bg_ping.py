@@ -849,7 +849,7 @@ class BackgroundPing:
 
         return pd.DataFrame(table)
 
-    def add_to_report(self, report, device_info=None):
+    def add_to_report(self, report, device_info=None, timeline_labels=None):
         """Appends the ping statistics table to the test's own report.
 
         Safe to call unconditionally, nothing is added when the background ping did not run.
@@ -862,6 +862,7 @@ class BackgroundPing:
         try:
             timeline = self.connectivity_timeline_payload()
             if timeline and hasattr(report, 'build_echarts_chart'):
+                timeline.update(timeline_labels or {})
                 report.set_obj_html(
                     _obj_title='Client Connectivity Results Throughout the Test Duration',
                     _obj=('The graph illustrates the connectivity status of all wireless clients during the '

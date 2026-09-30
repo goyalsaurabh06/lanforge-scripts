@@ -137,6 +137,7 @@ logger = logging.getLogger(__name__)
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 YOUTUBE_STATS_URL = "http://127.0.0.1:5002/youtube_stats"
+
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
@@ -1689,6 +1690,39 @@ class Youtube(Realm):
 
     @staticmethod
     def _score_rating(score):
+        """Rate scores as Excellent >=90, Good >=75, Average >=60, otherwise Poor."""
+        if score >= 90:
+            return "Excellent"
+        if score >= 75:
+            return "Good"
+        if score >= 60:
+            return "Average"
+        return "Poor"
+
+    @staticmethod
+    def _rating_html(rating):
+        """Use the same rating colors for the overall verdict and client tables."""
+        colors = {
+            "Excellent": "#1e7e34", "Good": "#28a745",
+            "Average": "#f1c40f", "Poor": "#e74c3c",
+        }
+        label = escape(str(rating))
+        color = colors.get(rating)
+        return (f"<span style='color:{color}; font-weight:800;'>{label}</span>"
+                if color else label)
+
+    def _build_client_metrics_table(self, rows):
+        frame = pd.DataFrame(rows)
+        for column in frame.columns:
+            frame[column] = frame[column].map(
+                self._rating_html if column == "Rating" else lambda value: escape(str(value)))
+        self.report.set_custom_html(frame.to_html(index=False, escape=False, justify="center"))
+        self.report.build_custom()
+        self.report.set_custom_html("")
+
+    @staticmethod
+    def _overall_score_rating(score):
+        """Rate the test average separately from individual client scores."""
         if score >= 90:
             return "Excellent"
         if score >= 80:
@@ -1952,8 +1986,9 @@ class Youtube(Realm):
         values = [metrics[name]["drop_percent"] for name in names]
         report.build_echarts_chart(
             "youtube-dropped-frames", "horizontal_bar",
-            {"categories": names, "series": [{"name": "Dropped Frames (%)", "data": values}]},
-            title="Dropped Frames per Device (%)", x_name="Dropped Frames (%)")
+            {"categories": names, "yAxisName": "Wireless Clients",
+             "series": [{"name": "Dropped Frames (%)", "data": values}]},
+            x_name="Dropped Frames (%)")
 
     def _build_resolution_distribution_graph(self, report, metrics):
         names = [name for name in self.real_sta_hostname if metrics.get(name)]
@@ -1965,28 +2000,34 @@ class Youtube(Realm):
             return
         report.build_echarts_chart(
             "youtube-resolution-distribution", "horizontal_bar",
-            {"categories": names, "stacked": True, "series": [
+            {"categories": names, "yAxisName": "WIRELESS CLIENTS", "stacked": True, "series": [
                 {"name": resolution, "data": [
                     round(metrics[name]["resolutions"].get(resolution, 0.0), 2) for name in names
                 ]} for resolution in resolutions]},
-            title="Video Playback Resolution Distribution Across Devices",
-            x_name="Observed Playback Time (%)")
+            x_name="VIDEO RESOLUTION PERCENTAGE")
 
-    def _build_buffer_health_graph(self, report, hostname, timestamps, buffer_health, suffix=""):
+    def _build_buffer_health_graph(self, report, hostname, timestamps, buffer_health, suffix="", clock_times=None):
         """Use numeric elapsed seconds so irregular sampling gaps remain visible."""
         values = pd.to_numeric(buffer_health, errors="coerce")
         valid = timestamps.notna() & values.notna()
         if not valid.any():
             return
         chart_id = re.sub(r"[^A-Za-z0-9_-]+", "_", f"youtube-buffer-{hostname}{suffix}")
+        clock_options = {}
+        if clock_times is not None:
+            clocks = pd.to_datetime(clock_times, format="%H:%M:%S", errors="coerce").dropna()
+            if not clocks.empty:
+                first = clocks.iloc[0]
+                clock_options["clockOffsetSeconds"] = first.hour * 3600 + first.minute * 60 + first.second
         report.build_echarts_chart(
             chart_id, "line",
-            {"xAxisType": "value", "series": [{"name": "Buffer Health", "data": [
+            {"xAxisType": "value", **clock_options, "series": [{"name": "Buffer Health", "data": [
                 [float(timestamp), float(value)]
                 for timestamp, value in zip(timestamps[valid], values[valid])
             ]}]},
-            title=f"Buffer Health vs Time — {hostname}",
-            x_name="Elapsed Time (s)", y_name="Buffer Health (s)")
+            title=f"Buffer Health vs Time Graph for {hostname}",
+            x_name="Time (HH:MM:SS)" if clock_options else "Elapsed Time (s)",
+            y_name="Buffer Health (Seconds)")
 
     def _add_connectivity_report(self, report):
         """Use the same interactive ping timeline and tables as throughput."""
@@ -2010,7 +2051,10 @@ class Youtube(Realm):
                 if index < len(self.rssi_list) else "Unavailable",
                 "channel": metadata.get("channel", "Unavailable"),
             }
-        ping.add_to_report(report, device_info=device_info)
+        ping.add_to_report(report, device_info=device_info, timeline_labels={
+            "xAxisName": "Time (in Seconds)", "yAxisName": "Wireless Clients",
+            "connectedLabel": "Connected",
+        })
 
     @staticmethod
     def _build_text_card(report):
@@ -2047,12 +2091,19 @@ class Youtube(Realm):
             .table-wrap { width: 100%; box-shadow: var(--shadow); }
             .youtube-observations { width: 100%; table-layout: fixed; }
             .youtube-observations th:nth-child(1) { width: 23%; }
-            .youtube-observations th:nth-child(2) { width: 17%; }
-            .youtube-observations th:nth-child(3) { width: 60%; }
-            .youtube-observations td { overflow-wrap: anywhere; text-align: left; }
+            .youtube-observations th:nth-child(2) { width: 60%; }
+            .youtube-observations th:nth-child(3) { width: 17%; }
+            table.data-table.youtube-observations td { overflow-wrap: anywhere; text-align: left; }
             .youtube-section-text ul { margin: 0; padding-left: 20px; }
             .youtube-section-text li + li { margin-top: 10px; }
             .info-item-value { overflow-wrap: anywhere; }
+            .youtube-results-heading {
+                margin: 24px 0 12px; padding-bottom: 8px;
+                font-size: 24px; font-weight: 700;
+                border-bottom: 1px solid #dbe2ea;
+                break-after: avoid; page-break-after: avoid;
+            }
+            .youtube-results-heading + .info-card { margin-top: 0; padding-top: 8px; }
         </style>""")
         report.build_custom()
         report.set_custom_html("")
@@ -2115,9 +2166,9 @@ class Youtube(Realm):
             self.report.set_obj_html(
                 _obj_title='Test Overview',
                 _obj=(
-                    "The objective is to conduct automated YouTube streaming tests across Android devices and laptops, "
-                    "collecting video quality, buffering and playback statistics. The following charts and tables "
-                    "summarize the measurements collected during the test."
+                    "The objective is to conduct an automated YouTube streaming test across multiple Android devices and laptops "
+                    "to gather streaming performance statistics. The test will collect key metrics related to video playback "
+                    "behavior, quality, buffering, and stability. Additionally, automated graphs will be generated using the collected data."
                 )
             )
         self._build_text_card(self.report)
@@ -2178,25 +2229,30 @@ class Youtube(Realm):
         scored = [(name, item) for name, item in measured if item["score"] is not None]
         average_score = sum(item["score"] for _, item in scored) / len(scored) if scored else None
         average_text = f"{average_score:.2f}%" if average_score is not None else "Unavailable"
-        overall_rating = (self._score_rating(average_score)
-                          if len(scored) == len(self.real_sta_hostname) and scored else "Incomplete data")
+        # Rate the same scored clients used in the average, even if others lack data.
+        overall_rating = (self._overall_score_rating(average_score)
+                          if scored else "Incomplete data")
+        rating_html = self._rating_html(overall_rating)
         self.report.build_info_card(title="Overall Test Verdict", items=[
             {"label": "Total Devices Configured", "value": len(self.real_sta_hostname)},
             {"label": "Devices with Streaming Data", "value": len(measured)},
             {"label": "Devices with Complete Scoring Data", "value": len(scored)},
             {"label": "Average YouTube Streaming Score (Scored Devices)", "value": average_text},
-            {"label": "Overall Rating", "value": overall_rating},
+            {"label": "Overall Rating", "value": rating_html},
         ])
         findings = self._test_summary_findings(metrics)
         self.report.set_obj_html(_obj_title="Test Summary", _obj="<ul>" + "".join(
             f"<li>{escape(finding)}</li>" for finding in findings) + "</ul>")
         self._build_text_card(self.report)
 
-        self.report.set_obj_html(_obj_title="Test Results", _obj="")
-        self._build_text_card(self.report)
+        self.report.set_custom_html('<h2 class="youtube-results-heading">Test Results</h2>')
+        self.report.build_custom()
+        self.report.set_custom_html("")
         self.report.set_obj_html(
             _obj_title="Dropped Frames per Device (%)",
-            _obj="Dropped-frame percentage is calculated from reset-aware dropped and total frame counters for each client.")
+            _obj="The graph below illustrates the percentage of dropped video frames observed for each wireless "
+                 "device during the test. The X-axis represents the dropped frame percentage, while the Y-axis lists "
+                 "the individual wireless client devices.")
         self._build_text_card(self.report)
         self._build_dropped_frames_percentage_graph(self.report, metrics)
 
@@ -2248,18 +2304,18 @@ class Youtube(Realm):
                     self.report.set_table_title(
                         f"Per-client Streaming Performance Metrics and Ratings — {group}")
                     self.report.build_table_title()
-                    self.report.set_table_dataframe(pd.DataFrame(group_rows))
-                    self.report.build_table()
+                    self._build_client_metrics_table(group_rows)
         elif table_rows:
             self.report.set_table_title("Per-client Streaming Performance Metrics and Ratings")
             self.report.build_table_title()
-            self.report.set_table_dataframe(pd.DataFrame(table_rows))
-            self.report.build_table()
+            self._build_client_metrics_table(table_rows)
         self.report.set_table_title("Per-client Observations")
         self.report.build_table_title()
         if observation_rows:
-            observations_frame = pd.DataFrame(observation_rows)
+            observations_frame = pd.DataFrame(
+                observation_rows, columns=["Device Name", "Observations", "Rating"])
             observations_frame["Device Name"] = observations_frame["Device Name"].map(lambda name: escape(str(name)))
+            observations_frame["Rating"] = observations_frame["Rating"].map(self._rating_html)
             observations_html = observations_frame.to_html(
                 index=False, escape=False, justify="center", classes="data-table youtube-observations")
             self.report.set_custom_html("<div class='table-wrap'>" + observations_html + "</div>")
@@ -2401,7 +2457,7 @@ class Youtube(Realm):
                 continue
 
             self._build_buffer_health_graph(
-                self.report, report_device_name, timestamps, buffer_health)
+                self.report, report_device_name, timestamps, buffer_health, clock_times=data['TimeStamp'])
 
         os.chdir(original_dir)
         if iot_summary:
@@ -3342,7 +3398,7 @@ class Youtube(Realm):
 
         self._build_buffer_health_graph(
             self.report, hostname, self._elapsed_seconds(timestamps), buffer_health,
-            suffix="-combined")
+            suffix="-combined", clock_times=timestamps)
 
     def add_frames_graphs_to_report(self, current_cord, current_angle):
         """
@@ -4049,5 +4105,3 @@ NOTES:
 
 if __name__ == "__main__":
     main()
-
-
