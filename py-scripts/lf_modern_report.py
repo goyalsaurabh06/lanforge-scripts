@@ -74,6 +74,7 @@ _chart_id_counter = 0
 
 
 def _next_chart_id(prefix):
+    """Returns a new unique chart id like '<prefix>-3', so charts on one page never clash."""
     global _chart_id_counter
     _chart_id_counter += 1
     return "{}-{}".format(prefix, _chart_id_counter)
@@ -640,6 +641,8 @@ _TABLE_SEARCH_JS = """
 
 
 class lf_report:
+    """Builds a LANforge HTML/PDF test report piece by piece (banner, text, tables, charts, footer).
+    Same API as the old lf_report.py; only the look is modernized."""
     def __init__(self,
                  # _path the report directory under which the report directories will be created.
                  _path="/home/lanforge/html-reports",
@@ -658,6 +661,8 @@ class lf_report:
                  _path_date_time="",
                  _custom_css='custom-example.css',
                  _allure_report_dir_name="allure-report"):  # this is where the final report is placed.
+        """Sets up the report and creates its '<date>_<results_dir_name>' folder under _path.
+        Also copies the CSS, logos, font and chart script into that folder."""
         # other report paths,
 
         # _path is where the directory with the data time will be created
@@ -751,11 +756,14 @@ class lf_report:
         self.copy_echarts()
 
     def copy_banner(self):
+        """Copies the banner image into the report folder."""
         banner_src_file = str(self.current_path) + '/' + str(self.banner_directory) + '/' + str(self.banner_file_name)
         banner_dst_file = str(self.path_date_time) + '/' + str(self.banner_file_name)
         shutil.copy(banner_src_file, banner_dst_file)
 
     def move_data(self, directory=None, _file_name=None, directory_name=None):
+        """Moves a file (or a whole directory, if directory_name is given) from the script folder
+        into the report folder, optionally into a sub-folder."""
         if directory_name is None:
             _src_file = str(self.current_path) + '/' + str(_file_name)
             if directory is None:
@@ -768,6 +776,7 @@ class lf_report:
         shutil.move(_src_file, _dst_file)
 
     def copy_css(self):
+        """Copies the stylesheet (saved as report.css), custom.css and the report font into the report folder."""
         # modern report stylesheet is copied to the same output filename ("report.css")
         # the legacy lf_report.py used, so get_html_head()'s <link> tags need no changes.
         reportcss_src_file = str(self.current_path) + '/' + str(self.banner_directory) + '/' + str(self.modern_css_file)
@@ -784,22 +793,27 @@ class lf_report:
         shutil.copy(font_src_file, font_dest_file)
 
     def copy_echarts(self):
+        """Copies the ECharts library (used by the interactive charts) into the report folder."""
         echarts_src_file = str(self.current_path) + '/' + str(self.banner_directory) + '/' + str(self.echarts_file)
         echarts_dst_file = str(self.path_date_time) + '/' + str(self.echarts_file)
         shutil.copy(echarts_src_file, echarts_dst_file)
 
     def copy_logo(self):
+        """Copies the header logo into the report folder."""
         logo_src_file = str(self.current_path) + '/' + str(self.logo_directory) + '/' + str(self.logo_file_name)
         logo_dst_file = str(self.path_date_time) + '/' + str(self.logo_file_name)
         shutil.copy(logo_src_file, logo_dst_file)
 
     def copy_logo_footer(self):
+        """Copies the small footer logo into the report folder."""
         logo_footer_src_file = str(self.current_path) + '/' + str(self.logo_directory) + '/' + str(
             self.logo_footer_file_name)
         logo_footer_dst_file = str(self.path_date_time) + '/' + str(self.logo_footer_file_name)
         shutil.copy(logo_footer_src_file, logo_footer_dst_file)
 
     def move_graph_image(self, ):
+        """Moves the current graph PNG into the report folder.
+        Does nothing for interactive charts, since those are HTML and not a file."""
         if _CHART_MARKUP_SENTINEL in str(self.graph_image):
             # self.graph_image holds interactive chart-card markup (from
             # lf_bar_graph/lf_bar_graph_horizontal/lf_line_graph), not a PNG
@@ -812,6 +826,7 @@ class lf_report:
         shutil.move(graph_src_file, graph_dst_file)
 
     def move_csv_file(self):
+        """Moves the current CSV file (set by set_csv_filename) into the report folder."""
         csv_src_file = str(self.csv_file_name)
         csv_dst_file = str(self.path_date_time) + '/' + str(self.csv_file_name)
         logger.info("csv_src_file: {}".format(csv_src_file))
@@ -819,9 +834,12 @@ class lf_report:
         shutil.move(csv_src_file, csv_dst_file)
 
     def set_path(self, _path):
+        """Sets the base folder the report folder is created under."""
         self.path = _path
 
     def set_date_time_directory(self, _date, _results_dir_name):
+        """Decides the report folder name: '<date>_<results_dir_name>'.
+        Uses the current date and time when no date is given."""
         self.date = _date
         self.results_dir_name = _results_dir_name
         if self.date != "":
@@ -831,6 +849,8 @@ class lf_report:
             self.date_time_directory = self.date + str("_") + str(self.results_dir_name)
 
     def build_date_time_directory(self):
+        """Creates the report folder on disk.
+        Falls back to a folder next to this script if the path can't be created."""
         if self.date_time_directory == "":
             self.set_date_time_directory()
         self.path_date_time = os.path.join(self.path, self.date_time_directory)
@@ -846,6 +866,7 @@ class lf_report:
         logger.info("report path : {}".format(self.path_date_time))
 
     def build_log_directory(self):
+        """Creates the 'log' sub-folder inside the report folder; exits if that fails."""
         if self.log_directory == "":
             self.log_directory = os.path.join(self.path_date_time, "log")
         try:
@@ -857,6 +878,7 @@ class lf_report:
             exit(1)
 
     def build_x_directory(self, directory_name=None):
+        """Creates a sub-folder with the given name inside the report folder; exits if that fails."""
         directory = None
         if directory_name:
             directory = os.path.join(self.path_date_time, str(directory_name))
@@ -869,81 +891,104 @@ class lf_report:
             exit(1)
 
     def set_text(self, _text):
+        """Sets the text used by the next build_text() or build_text_simple() call."""
         self.text = _text
 
     def set_title(self, _title):
+        """Sets the report title shown in the banner."""
         self.title = _title
 
     def set_table_title(self, _table_title):
+        """Sets the heading used by the next build_table_title() call."""
         self.table_title = _table_title
 
     def set_graph_title(self, _graph_title):
+        """Sets the heading used by the next build_graph_title() call."""
         self.graph_title = _graph_title
 
     # sets the csv file name as graph title
     def set_csv_filename(self, _graph_title):
+        """Sets the CSV file name to the graph name with a .csv extension."""
         fname, ext = os.path.splitext(_graph_title)
         self.csv_file_name = fname + ".csv"
 
     def write_dataframe_to_csv(self, _index=False):
+        """Saves the current table (dataframe) as a CSV in the report folder."""
         csv_file = "{path_date_time}/{csv_file_name}".format(path_date_time=self.path_date_time, csv_file_name=self.csv_file_name)
         self.dataframe.to_csv(csv_file, index=_index)
 
     # The _date is set when class is enstanciated / created so this set_date should be used with caution, used to synchronize results
     def set_date(self, _date):
+        """Overrides the report date (normally set once when the report is created)."""
         self.date = _date
 
     def set_table_dataframe(self, _dataframe):
+        """Sets the table (pandas DataFrame) used by the next build_table() call."""
         self.dataframe = _dataframe
 
     def set_table_dataframe_from_csv(self, _csv):
+        """Loads the table for the next build_table() call from a CSV file."""
         self.dataframe = pd.read_csv(_csv)
 
     def set_table_dataframe_from_csv_sep_tab(self, _csv):
+        """Loads the table for the next build_table() call from a tab-separated file."""
         self.dataframe = pd.read_csv(_csv, sep='\t')
 
     # TODO
     def set_table_dataframe_from_xlsx(self, _xlsx):
+        """Loads the table for the next build_table() call from an Excel file."""
         self.dataframe = pd.read_excel(_xlsx)
 
     def set_custom_html(self, _custom_html):
+        """Sets raw HTML to add with the next build_custom() call."""
         self.custom_html = _custom_html
 
     def set_obj_html(self, _obj_title, _obj):
+        """Sets the heading and text for the next build_objective() section."""
         self.objective = _obj
         self.obj_title = _obj_title
 
     def set_desc_html(self, _desc_title, _desc):
+        """Sets the heading and text for the next build_description() section."""
         self.description = _desc
         self.desc_title = _desc_title
 
     def set_graph_image(self, _graph_image):
+        """Sets the graph (a PNG path or interactive chart HTML) used by the next build_graph() call."""
         self.graph_image = _graph_image
 
     def get_date(self):
+        """Returns the report date string."""
         return self.date
 
     def get_path(self):
+        """Returns the base folder the report folder is created under."""
         return self.path
 
     def get_parent_path(self):
+        """Returns the parent folder of the base report path."""
         parent_path = os.path.dirname(self.path)
         return parent_path
 
     # get_path_date_time, get_report_path and need to be the same
     def get_path_date_time(self):
+        """Returns the full path of this report's folder."""
         return self.path_date_time
 
     def get_report_path(self):
+        """Returns the full path of this report's folder (same as get_path_date_time)."""
         return self.path_date_time
 
     def get_flat_dir_report_path(self):
+        """Returns the base report path, without the dated sub-folder."""
         return self.path
 
     def get_log_path(self):
+        """Returns the path of the report's 'log' sub-folder."""
         return self.log_directory
 
     def file_add_path(self, file):
+        """Returns the full path of a file name inside the report folder."""
         output_file = str(self.path_date_time) + '/' + str(file)
         logger.info("output file {}".format(output_file))
         return output_file
@@ -951,10 +996,12 @@ class lf_report:
     # Report Location:::/<locaton> as a key in lf_check.py
 
     def write_report_location(self):
+        """Logs 'Report Location:::<folder>' so lf_check.py can find this report."""
         self.report_location = self.path_date_time
         logger.info("Report Location:::{report_location}".format(report_location=self.report_location))
 
     def write_html(self):
+        """Writes the report HTML to the report folder and returns the file path."""
         if not self.output_html:
             logger.info("no html file name, skipping report generation")
             return
@@ -974,6 +1021,7 @@ class lf_report:
         return self.write_output_html
 
     def write_index_html(self):
+        """Writes a copy of the report HTML as readme.html in the report folder."""
         if not self.output_html:
             logger.info("no html file name, skipping report generation")
             return
@@ -989,6 +1037,7 @@ class lf_report:
         return self.write_output_index_html
 
     def write_html_with_timestamp(self):
+        """Writes the report HTML with the date added to the file name."""
         if not self.output_html:
             logger.info("no html file name, skipping report generation")
             return
@@ -1007,9 +1056,11 @@ class lf_report:
 
     # will put the set here
     def set_allure_environment_properties(self, allure_environment_properties=""):
+        """Sets the text for the Allure environment.properties file."""
         self.allure_environment_properties = allure_environment_properties
 
     def write_allure_environment_properties(self, allure_results_path=""):
+        """Writes environment.properties for Allure, to the report folder or the given path."""
         if allure_results_path == "":
             self.write_out_allure_environment_properties = "{}/environment.properties".format(self.path_date_time)
         else:
@@ -1027,9 +1078,11 @@ class lf_report:
         return self.write_out_allure_environment_properties, self.allure_environment_properties_dir
 
     def set_allure_executor(self, allure_executor):
+        """Sets the JSON text for the Allure executor.json file."""
         self.allure_executor = allure_executor
 
     def write_allure_executor(self, allure_results_path=""):
+        """Writes executor.json for Allure, to the report folder or the given path."""
         if allure_results_path == "":
             self.write_out_allure_executor = "{}/executor.json".format(self.path_date_time)
         else:
@@ -1047,9 +1100,11 @@ class lf_report:
         return self.write_out_allure_executor, self.allure_executor_dir
 
     def set_junit_results(self, junit_results):
+        """Sets the JUnit XML text to write with write_junit_results()."""
         self.junit = junit_results
 
     def write_junit_results(self, test_suite=""):
+        """Writes the JUnit XML file (junit.xml or <suite>_junit.xml) to the report folder."""
         self.junit_dir = "{}".format(self.path_date_time)
         if test_suite == "":
             self.write_output_junit = "{}/junit.xml".format(self.path_date_time)
@@ -1067,6 +1122,8 @@ class lf_report:
         return self.write_output_junit, self.junit_dir
 
     def update_allure_results_history(self, allure_results_path=""):
+        """Copies Allure history from the previous Allure report into the results folder,
+        so Allure trend graphs keep earlier runs."""
         if allure_results_path == "":
             self.allure_results_history_path = os.path.join(self.path_date_time, "history")
             self.allure_results = "{allure_results_path}".format(allure_results_path=self.path_date_time)
@@ -1096,6 +1153,7 @@ class lf_report:
             logger.warning("Either no allure report history present or the copy of history failed.")
 
     def copy_allure_report(self, allure_results_path=""):
+        """Copies the previous Allure report history into the results folder."""
         if allure_results_path == "":
             self.allure_results_history_path = os.path.join(self.path_date_time, "history")
             self.allure_results = "{allure_results_path}".format(allure_results_path=self.path_date_time)
@@ -1119,6 +1177,7 @@ class lf_report:
             logger.info("Either no allure report present or the copy of history failed.")
 
     def generate_allure_report(self):
+        """Runs the 'allure generate' command to build the Allure report from the results."""
         allure_command = "allure generate {allure_results} --report-dir {allure_report} --clean".format(allure_results=self.allure_results, allure_report=self.allure_report_dir)
         try:
             logger.info("allure command: {allure_command}".format(allure_command=allure_command))
@@ -1155,6 +1214,7 @@ class lf_report:
             pdfkit.from_file(input_html, output_pdf, **kwargs)
 
     def write_pdf(self, _page_size='A4', _orientation='Portrait'):
+        """Converts the written HTML report to a PDF (via wkhtmltopdf) in the report folder."""
         if not self.output_pdf:
             logger.info("write_pdf: no pdf file name, skipping pdf output")
             return
@@ -1170,6 +1230,7 @@ class lf_report:
             self._write_pdf_file(self.write_output_html, self.write_output_pdf, options)
 
     def write_pdf_with_timestamp(self, _page_size='A4', _orientation='Portrait'):
+        """Converts the HTML report to a PDF with the date added to the file name."""
         if not self.output_pdf:
             logger.info("write_pdf_with_timestamp: no pdf file name, skipping pdf output")
             return
@@ -1180,10 +1241,12 @@ class lf_report:
         self._write_pdf_file(self.write_output_html, self.write_output_pdf, options)
 
     def get_pdf_path(self):
+        """Returns the full path of the dated PDF file."""
         pdf_link_path = "{}/{}-{}".format(self.path_date_time, self.date, self.output_pdf)
         return pdf_link_path
 
     def get_pdf_file(self):
+        """Returns the dated PDF file name, or None if no PDF name was set."""
         if not self.output_pdf:
             logger.info("get_pdf_file: no pdf name, returning None")
             return None
@@ -1191,6 +1254,7 @@ class lf_report:
         return pdf_file
 
     def build_pdf_link(self, _pdf_link_name, _pdf_link_path):
+        """Adds a link to the PDF version of the report."""
         self.pdf_link_html = """
             <!-- pdf link -->
             <a href="{pdf_link_path}" target="_blank">{pdf_link_name}</a>
@@ -1199,6 +1263,7 @@ class lf_report:
         self.html += self.pdf_link_html
 
     def build_link(self, _link_name, _link_path):
+        """Adds a link with the given name and target."""
         self.link = """
             <!-- link -->
             <a href="{link_path}" target="_blank">{link_name}</a>
@@ -1207,11 +1272,13 @@ class lf_report:
         self.html += self.link
 
     def generate_report(self):
+        """Writes the HTML report, and the PDF too if a PDF name was set."""
         self.write_html()
         if self.output_pdf:
             self.write_pdf()
 
     def build_all(self):
+        """Builds a simple report: banner, table title and table."""
         self.build_banner()
         self.start_content_div()
         self.build_table_title()
@@ -1245,6 +1312,8 @@ class lf_report:
         return "data:{};base64,{}".format(mime, base64.b64encode(raw_bytes).decode("ascii"))
 
     def get_html_head(self, title='Untitled'):
+        """Returns the HTML <head> with the CSS, font and chart script inlined,
+        so the single .html file works without its folder."""
         report_css = self._read_report_asset("report.css")
         font_data_uri = self._report_asset_as_data_uri(self.font_file)
         report_css = report_css.replace('url("{}")'.format(self.font_file), 'url("{}")'.format(font_data_uri))
@@ -1269,6 +1338,7 @@ class lf_report:
     </head>""".format(title=title, report_css=report_css, custom_css=custom_css, echarts_js=echarts_js)
 
     def build_banner(self):
+        """Starts the page and adds the top banner with the title, date and logo on the right."""
         self.banner_html = """<!DOCTYPE html>
 <html lang='en'>
     {head_tag}
@@ -1292,6 +1362,7 @@ class lf_report:
         self.html += self.banner_html
 
     def build_banner_left(self):
+        """Starts the page and adds the top banner with the logo on the left."""
         self.banner_html = """<!DOCTYPE html>
 <html lang='en'>
     {head_tag}
@@ -1315,6 +1386,7 @@ class lf_report:
         self.html += self.banner_html
 
     def build_banner_left_h2_font(self):
+        """Same as build_banner_left(), with a smaller title font."""
         self.banner_html = """<!DOCTYPE html>
 <html lang='en'>
     {head_tag}
@@ -1338,6 +1410,7 @@ class lf_report:
         self.html += self.banner_html
 
     def build_banner_cover(self):
+        """Starts the page and adds a full-height cover banner."""
         self.banner_html = """<!DOCTYPE html>
        <html lang='en'>
            {head_tag}
@@ -1361,6 +1434,7 @@ class lf_report:
         self.html += self.banner_html
 
     def build_table_title(self):
+        """Adds the table heading set by set_table_title()."""
         self.table_title_html = """
                     <!-- Table Title-->
                     <h3 align='left'>{title}</h3>
@@ -1368,12 +1442,15 @@ class lf_report:
         self.html += self.table_title_html
 
     def start_content_div2(self):
+        """Opens a 'contentDiv2' section; close it with end_content_div()."""
         self.html += "\n<div class='contentDiv2'>\n"
 
     def start_content_div(self):
+        """Opens a 'contentDiv' section; close it with end_content_div()."""
         self.html += "\n<div class='contentDiv'>\n"
 
     def build_text(self):
+        """Adds the text set by set_text() as a heading."""
         # please do not use 'style=' tags unless you cannot override a class
         self.text_html = """
         <div class='HeaderStyle'>
@@ -1382,16 +1459,20 @@ class lf_report:
         self.html += self.text_html
 
     def build_text_simple(self):
+        """Adds the text set by set_text() as a normal paragraph."""
         self.text_html = """
             <p align='left' width='900'>{text}</p>
         """.format(text=self.text)
         self.html += self.text_html
 
     def build_date_time(self):
+        """Returns the current date and time as a folder-safe string."""
         self.date_time = str(datetime.datetime.now().strftime("%Y-%m-%d-%H-h-%m-m-%S-s")).replace(':', '-')
         return self.date_time
 
     def build_path_date_time(self):
+        """Creates a folder named after build_date_time() under the report path.
+        Falls back to the repo folder if that fails."""
         try:
             self.path_date_time = os.path.join(self.path, self.date_time)
             os.mkdir(self.path_date_time)
@@ -1402,6 +1483,7 @@ class lf_report:
             os.mkdir(self.path_date_time)
 
     def pass_fail_background(self, cell_value):
+        """Returns the cell color style for 'Success' (teal) or 'Failed' (red) values."""
         highlight_success = 'background-color: #1d9a8a; color: #ffffff;'
         highlight_fail = 'background-color: #d95f5f; color: #ffffff;'
         if type(cell_value) in [str]:
@@ -1410,15 +1492,18 @@ class lf_report:
             elif cell_value == "Failed":
                 return highlight_fail
 
-    def build_table(self, escape=False):
-        self.dataframe_html = self.dataframe.to_html(index=False, justify='center', classes='data-table', escape=escape)
+    def build_table(self):
+        """Adds the current table (set by set_table_dataframe) to the report."""
+        self.dataframe_html = self.dataframe.to_html(index=False, justify='center', classes='data-table')
         self.html += "<div class='table-wrap'>" + self.dataframe_html + "</div>"
 
     def pass_failed_build_table(self):
+        """Adds the current table with 'Success'/'Failed' values shown as colored badges."""
         # Render Success/Failed values as modern status badges instead of raw
         # cell background colors. This also sidesteps pandas Styler.hide_index(),
         # which was removed in current pandas and made this method unusable there.
         def _badge(value):
+            """Wraps 'Success'/'Failed' in a colored badge; other values are left as they are."""
             if value == "Success":
                 return '<span class="status-badge pass">Success</span>'
             if value == "Failed":
@@ -1439,6 +1524,7 @@ class lf_report:
             rating_colors: {label: css_color} -- labels not present here are left as plain text.
         """
         def _badge(value):
+            """Wraps a known rating label in a colored badge; other values are left as they are."""
             color = rating_colors.get(value)
             if not color:
                 return value
@@ -1466,6 +1552,7 @@ class lf_report:
         """
         if rating_column is not None and rating_colors is not None:
             def _badge(value):
+                """Wraps a known rating label in a colored badge; other values are left as they are."""
                 color = rating_colors.get(value)
                 if not color:
                     return value
@@ -1481,9 +1568,11 @@ class lf_report:
         return "<div class='table-wrap'>" + table_html + "</div>"
 
     def save_csv(self, file_name, save_to_csv_data):
+        """Saves a DataFrame as a CSV file in the report folder."""
         save_to_csv_data.to_csv(str(self.path_date_time) + "/" + file_name)
 
     def save_pie_chart(self, pie_chart_data):
+        """Saves a Pass/Fail pie chart as pie-chart.png in the report folder."""
         pie_chart_data.plot.pie(y='Pass/Fail', autopct="%.2f%%", figsize=(8, 8), 
                                 shadow=False, startangle=90,
                                 colors=['#1d9a8a', '#d95f5f'])
@@ -1492,6 +1581,7 @@ class lf_report:
         plt.close()
 
     def save_bar_chart(self, xlabel, ylabel, bar_chart_data, name):
+        """Saves a bar chart of the DataFrame as <name>.png in the report folder."""
         plot = bar_chart_data.plot.bar(alpha=0.9, rot=0, width=0.9, linewidth=0.9, figsize=(10, 6),
                                        color=_ECHARTS_PALETTE)
         plot.legend(bbox_to_anchor=(1.0, 1.0))
@@ -1511,6 +1601,7 @@ class lf_report:
         plt.close()
 
     def test_setup_table(self, test_setup_data, value):
+        """Adds a two-column 'setting: value' table, with the given label on the left."""
         if test_setup_data is None:
             return None
         else:
@@ -1537,6 +1628,7 @@ class lf_report:
         self.html += setup_information
 
     def build_footer(self):
+        """Adds the footer with the Candela logo and closes the page layout."""
         self.footer_html = """
     <footer class='FooterStyle'>
         <a href="https://www.candelatech.com/"><img
@@ -1551,6 +1643,7 @@ class lf_report:
         self.html += _TABLE_SEARCH_JS
 
     def build_footer_no_png(self):
+        """Adds the footer without the logo image and closes the page layout."""
         self.footer_html = """
     <footer class='FooterStyle'>
         <p>Generate by Candela Technologies LANforge network testing tool</p>
@@ -1562,6 +1655,7 @@ class lf_report:
         self.html += _TABLE_SEARCH_JS
 
     def copy_js(self):
+        """Adds the JavaScript that lets the page copy text to the clipboard."""
         self.html += """
 <script>
 function fallbackCopyTextToClipboard(text) {
@@ -1601,9 +1695,11 @@ function copyTextToClipboard(ele) {
         """
 
     def build_custom(self):
+        """Adds the raw HTML set by set_custom_html()."""
         self.html += self.custom_html
 
     def build_objective(self):
+        """Adds a heading and paragraph section, using the text from set_obj_html()."""
         self.obj_html = """
             <!-- Test Objective -->
             <div class='chart-card' style='text-align:left;'>
@@ -1615,6 +1711,7 @@ function copyTextToClipboard(ele) {
         self.html += self.obj_html
 
     def build_description(self):
+        """Adds a heading and paragraph, using the text from set_desc_html()."""
         self.obj_html = """
             <!-- Test Description -->
             <h3 align='left'>{title}</h3>
@@ -1624,6 +1721,7 @@ function copyTextToClipboard(ele) {
         self.html += self.obj_html
 
     def build_graph_title(self):
+        """Adds the graph heading set by set_graph_title()."""
         self.table_graph_html = """
             <div class='HeaderStyle'>
                 <h2 class='TitleFontPrint'>{title}</h2>
@@ -1631,6 +1729,8 @@ function copyTextToClipboard(ele) {
         self.html += self.table_graph_html
 
     def build_graph(self):
+        """Adds the graph set by set_graph_image(): a PNG inside a chart card,
+        or an interactive chart as it is."""
         content = str(self.graph_image)
         if _CHART_MARKUP_SENTINEL in content:
             # self.graph_image already holds a full interactive chart-card
@@ -1650,6 +1750,7 @@ function copyTextToClipboard(ele) {
         self.html += self.graph_html_obj
 
     def build_graph_without_border(self):
+        """Same as build_graph(), but a PNG is left-aligned."""
         content = str(self.graph_image)
         if _CHART_MARKUP_SENTINEL in content:
             if not self._echarts_runtime_emitted:
@@ -1665,9 +1766,11 @@ function copyTextToClipboard(ele) {
         self.html += self.graph_html_obj
 
     def end_content_div(self):
+        """Closes a section opened with start_content_div() or start_content_div2()."""
         self.html += "\n</div><!-- end contentDiv -->\n"
 
     def build_chart_title(self, chart_title):
+        """Adds a chart heading."""
         self.chart_title_html = """
             <div class='HeaderStyle'>
                 <h3 class='TitleFontPrint'>{title}</h3>
@@ -1675,6 +1778,7 @@ function copyTextToClipboard(ele) {
         self.html += self.chart_title_html
 
     def build_chart(self, name):
+        """Adds an image chart, centered and at most 500px wide."""
         self.chart_html_obj = """
             <div class='chart-card' style='max-width:500px;margin-left:auto;margin-right:auto;'>
               <img src='{image}' alt=''/>
@@ -1683,6 +1787,7 @@ function copyTextToClipboard(ele) {
         self.html += self.chart_html_obj
 
     def build_chart_custom(self, name, align='center', padding='15px', margin='5px 5px 2em 5px', width='500px', height='500px'):
+        """Adds an image chart with your own alignment, spacing and size."""
         self.chart_html_obj = """
             <div class='chart-card' style='text-align:{align};padding:{padding};margin:{margin};'>
               <img src='{image}' style='width:{width};height:{height};' alt=''/>
@@ -2292,6 +2397,7 @@ _MPL_SHORTHAND_COLORS = {
 
 
 def _css_color(c):
+    """Turns matplotlib short color codes (like 'r' or 'g') into CSS color names."""
     return _MPL_SHORTHAND_COLORS.get(c, c) if isinstance(c, str) else c
 
 
@@ -2337,6 +2443,8 @@ class lf_bar_graph:
                  _extra_payload=None,
                  _description=""
                  ):
+        """Stores the bar chart data and options.
+        Most matplotlib-only options are accepted but ignored, so old callers keep working."""
         if _data_set is None:
             _data_set = [[30.4, 55.3, 69.2, 37.1], [45.1, 67.2, 34.3, 22.4], [22.5, 45.6, 12.7, 34.8]]
         if _xaxis_categories is None:
@@ -2389,6 +2497,8 @@ class lf_bar_graph:
         self.description = _description
 
     def build_bar_graph(self):
+        """Returns the interactive bar chart as HTML for set_graph_image().
+        Also saves <graph_image_name>.csv when _enable_csv is True."""
         colors = self.color if self.color is not None else self.color_name
         # a single series with as many categories as bars gets one color per
         # bar/category (mirrors how scripts use this for e.g. per-item counts);
@@ -2478,6 +2588,8 @@ class lf_bar_graph_horizontal:
                  _stacked=False,
                  _description=""
                  ):
+        """Stores the horizontal bar chart data and options.
+        Most matplotlib-only options are accepted but ignored."""
         if _data_set is None:
             _data_set = [[30.4, 55.3, 69.2, 37.1], [45.1, 67.2, 34.3, 22.4], [22.5, 45.6, 12.7, 34.8]]
         if _yaxis_categories is None:
@@ -2529,6 +2641,8 @@ class lf_bar_graph_horizontal:
         self.description = _description
 
     def build_bar_graph_horizontal(self):
+        """Returns the interactive horizontal bar chart as HTML for set_graph_image().
+        Also saves <graph_image_name>.csv when _enable_csv is True."""
         colors = self.color if self.color is not None else self.color_name
         series = [
             {
@@ -2596,6 +2710,8 @@ class lf_line_graph:
                  _reverse_y=False,
                  _dashed=None,
                  _description=""):
+        """Stores the line chart data and options.
+        Use _dashed to draw some lines dashed, e.g. a target line."""
         if _data_set is None:
             _data_set = [[30.4, 55.3, 69.2, 37.1, 44.0], [45.1, 67.2, 34.3, 22.4, 37.6], [22.5, 45.6, 12.7, 34.8, 22.5]]
         if _xaxis_categories is None:
@@ -2643,6 +2759,8 @@ class lf_line_graph:
         self.description = _description
 
     def build_line_graph(self):
+        """Returns the interactive line chart as HTML for set_graph_image().
+        Also saves <graph_image_name>.csv when _enable_csv is True."""
         series = [
             {
                 "name": self.label[i] if i < len(self.label) else "series-{}".format(i),
@@ -2705,6 +2823,7 @@ class lf_pie_graph:
                  _figsize=None,
                  _empty_message="No data available",
                  _enable_csv=False):
+        """Stores the pie chart values, labels and display options."""
         if _data_set is None:
             _data_set = [30.4, 55.3, 69.2, 37.1]
         if _label is None:
@@ -2732,6 +2851,8 @@ class lf_pie_graph:
         self.enable_csv = _enable_csv
 
     def build_pie_graph(self):
+        """Returns the interactive pie chart as HTML for set_graph_image().
+        Also saves <graph_image_name>.csv when _enable_csv is True."""
         data = [
             {"name": self.label[i] if i < len(self.label) else "series-{}".format(i), "value": v}
             for i, v in enumerate(self.data_set)
