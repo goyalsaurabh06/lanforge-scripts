@@ -186,20 +186,6 @@ if os.path.exists(iot_scripts_path):
 
 
 class FtpTest(LFCliBase):
-    SCORE_RATING_BANDS = [
-        (85, "Excellent", "#1e7e34"),
-        (70, "Good", "#28a745"),
-        (50, "Average", "#f1c40f"),
-        (0, "Poor", "#e74c3c")
-    ]
-
-    @classmethod
-    def _classify_score_rating(cls, score):
-        for threshold, label, color in cls.SCORE_RATING_BANDS:
-            if score >= threshold:
-                return label, color
-        return cls.SCORE_RATING_BANDS[-1][1], cls.SCORE_RATING_BANDS[-1][2]
-
     def build_ftp_client_scores(self, url_data, uc_avg, total_err):
         """Computes Download Score (0-5), Time Stability Score (0-5), Reliability Score (0-5),
         Final Score (%) and Rating according to QA specification."""
@@ -226,7 +212,7 @@ class FtpTest(LFCliBase):
 
             final_s = (dl_s * 0.70) + (time_s * 0.20) + (rel_s * 0.10)
             final_pct = int(round((final_s / 5.0) * 100))
-            label, _ = self._classify_score_rating(final_pct)
+            label, _ = lf_report.classify_score_rating(final_pct)
 
             dl_scores.append(dl_s)
             time_scores.append(time_s)
@@ -2946,7 +2932,7 @@ class FtpTest(LFCliBase):
             dl_scores, time_scores, rel_scores, final_pcts, ratings = self.build_ftp_client_scores(
                 self.url_data, self.uc_avg, self.total_err)
             avg_score_pct = int(round(sum(final_pcts) / len(final_pcts))) if final_pcts else 0
-            overall_rating_label, overall_rating_color = self._classify_score_rating(avg_score_pct)
+            overall_rating_label, overall_rating_color = lf_report.classify_score_rating(avg_score_pct)
             if zero_dl_count > 0 and overall_rating_label == "Excellent":
                 overall_rating_label, overall_rating_color = "Good", "#28a745"
 
@@ -3103,7 +3089,7 @@ class FtpTest(LFCliBase):
                 dataframe1 = pd.DataFrame(dataframe)
                 self.report.set_table_dataframe(dataframe1)
                 if hasattr(self.report, 'rating_build_table'):
-                    self.report.rating_build_table("Rating", {label: color for _, label, color in self.SCORE_RATING_BANDS})
+                    self.report.rating_build_table("Rating", {label: color for _, label, color in lf_report.SCORE_RATING_BANDS})
                 else:
                     self.report.build_table()
 
@@ -3242,7 +3228,7 @@ class FtpTest(LFCliBase):
                 "Rating": ["Excellent", "Good", "Average", "Poor"]
             })
             self.report.set_table_dataframe(rating_bands_df)
-            self.report.rating_build_table("Rating", {label: color for _, label, color in self.SCORE_RATING_BANDS})
+            self.report.rating_build_table("Rating", {label: color for _, label, color in lf_report.SCORE_RATING_BANDS})
 
             # Test Configuration (info card / boxes format, matching throughput report)
             formatted_duration = duration

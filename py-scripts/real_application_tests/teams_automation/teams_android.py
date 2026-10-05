@@ -515,10 +515,10 @@ class TeamsAndroid:
         audio_stats_data = {
             "au_sent_bitrate": grab("0", "0", "Kbps"),
             "au_sent_pkts": grab("1", "0", "packets"),
-            "au_rtt": grab("2", "0", "ms"),
+            "au_rtt": grab("2", "NA", "ms"),
             "au_sent_codec": grab("3", "NA"),
             "au_recv_jitter": grab("4", "0", "ms"),
-            "au_recv_pkt_loss": grab("5", "0", "%"),
+            "au_recv_pkt_loss": grab("5", "NA", "%"),
             "au_recv_pkts": grab("6", "0", "packets"),
             "au_recv_codec": grab("7", "NA"),
         }
@@ -634,10 +634,10 @@ class TeamsAndroid:
         # Collect video stats
         video_stats_data = {
             "vi_sent_bitrate": grab("0", "0", "Mbps"),
-            "vi_recv_bitrate": grab("1", "0", "Mbps"),
-            "vi_sent_frame_rate": grab("2", "0", "fps"),
+            "vi_recv_bitrate": grab("1", "NA", "Mbps"),
+            "vi_sent_frame_rate": grab("2", "NA", "fps"),
             "vi_sent_res": grab("3", "NA", "px"),
-            "vi_rtt": grab("4", "0", "ms"),
+            "vi_rtt": grab("4", "NA", "ms"),
             "vi_sent_pkts": grab("5", "0", "packets"),
             "vi_sent_codec": grab("6", "NA"),
             "vi_processing": grab("7", "NA"),

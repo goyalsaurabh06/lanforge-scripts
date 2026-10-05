@@ -728,6 +728,10 @@ class RealClientAnalysis(Realm):
                 local_dict[str(phn_name)]["Association Rejection"] = other_association_rejection
                 other_connected_count = self.get_count(value=values, keys_list=keys_list, device=phn_name,
                                                         filter="<3>CTRL-EVENT-CONNECTED")
+                if other_connected_count == 0:
+                    # macOS reports connects as "en0: STA is connected to a wireless network."
+                    other_connected_count = self.get_count(value=values, keys_list=keys_list, device=phn_name,
+                                                           filter="STA is connected")
                 if other_association_rejection:
                     actual_connects = other_association_attempt - other_association_rejection
                     other_connected_count = other_connected_count if actual_connects == other_connected_count else actual_connects
