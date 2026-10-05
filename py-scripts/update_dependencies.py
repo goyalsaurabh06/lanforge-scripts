@@ -20,6 +20,8 @@ pip_packages: list = [
     'pandas',
     'paramiko',
     'pdfkit',
+    'pypdf==6.18.1',  
+    'playwright==1.62.0',  
     'pexpect',
     'pexpect-serial',
     'plotly',
