@@ -82,6 +82,11 @@
     python3 lf_interop_ping_plotter.py --mgr 192.168.207.78 --real --target 8.8.8.8 --ping_interval 1 --ping_duration 1m --use_default_config
     --robot_ip 192.168.204.76 --coordinate 3,4 --do_bandsteering --total_cycles 3 --bssids 94:A6:7E:74:26:33,94:A6:7E:74:26:22
 
+    EXAMPLE-17:
+    Command Line Interface to run ping plotter test on existing virtual stations along with real clients
+    python3 lf_interop_ping_plotter.py --mgr 192.168.200.103 --real --virtual --use_existing_station_list --existing_station_list 1.1.sta0000,1.1.sta0001
+    --target 192.168.1.61 --ping_interval 1 --ping_duration 1m --resources 1.10,1.11 --use_default_config
+
 
     SCRIPT_CLASSIFICATION : Test
 
@@ -176,7 +181,7 @@ class Ping(Realm):
                  wait_time=60,
                  floors=None,
                  get_live_view=None, robo_ip=None, angle_list=None, coordinate_list=None, rotation_enabled=None, local_lf_report_dir=None, do_bandsteering=False, total_cycles=1, bssids=None,
-                 duration_to_skip=None):
+                 duration_to_skip=None, use_existing_station_list=False):
         super().__init__(lfclient_host=host,
                          lfclient_port=port)
         self.host = host
@@ -196,6 +201,7 @@ class Ping(Realm):
         self.real_sta_data_dict = {}
         self.enable_virtual = virtual
         self.enable_real = real
+        self.use_existing_station_list = use_existing_station_list
         self.duration = duration
         self.android = 0
         self.virtual = 0
@@ -338,14 +344,16 @@ class Ping(Realm):
         if self.enable_virtual:
             # removing virtual stations if existing
             for station in self.sta_list:
-                logging.info('Removing the station {} if exists'.format(station))
                 self.generic_endps_profile.created_cx.append(
                     'CX_generic-{}'.format(station.split('.')[2]))
                 self.generic_endps_profile.created_endp.append(
                     'generic-{}'.format(station.split('.')[2]))
-                self.rm_port(station, check_exists=True)
+                # existing stations belong to the user, so only their generic endpoints are cleaned up
+                if not self.use_existing_station_list:
+                    logging.info('Removing the station {} if exists'.format(station))
+                    self.rm_port(station, check_exists=True)
 
-            if not LFUtils.wait_until_ports_disappear(base_url=self.host, port_list=self.sta_list, debug=self.debug):
+            if not self.use_existing_station_list and not LFUtils.wait_until_ports_disappear(base_url=self.host, port_list=self.sta_list, debug=self.debug):
                 logging.info('All stations are not removed or a timeout occured.')
                 logging.error('Aborting the test.')
                 exit(0)
@@ -1291,7 +1299,9 @@ class Ping(Realm):
 
         # test setup info
         if self.do_webUI:
-            self.real_sta_list = self.sta_list
+            # with virtual clients, real_sta_list already holds only the real devices
+            if not self.enable_virtual:
+                self.real_sta_list = self.sta_list
             for resource in self.real_sta_list:
                 shelf, r_id, _ = resource.split('.')
                 url = 'http://{}:{}/resource/{}/{}?fields=hw version'.format(self.host, self.port, shelf, r_id)
@@ -2968,13 +2978,27 @@ def validate_args(args):
     if args.virtual is False and args.real is False:
         logger.error('Atleast one of --real or --virtual is required')
         exit(1)
-    if args.virtual is True and args.radio is None:
+    if args.use_existing_station_list and not args.virtual:
+        logger.error('--use_existing_station_list requires --virtual')
+        exit(1)
+    if args.use_existing_station_list and not args.existing_station_list:
+        logger.error('--use_existing_station_list specified, but no stations provided. See --existing_station_list')
+        exit(1)
+    if args.existing_station_list and not args.use_existing_station_list:
+        logger.error('--existing_station_list specified, but --use_existing_station_list is not specified')
+        exit(1)
+    if args.use_existing_station_list:
+        for station in args.existing_station_list.split(','):
+            if len(station.split('.')) != 3:
+                logger.error('Existing station {} must be a full EID like 1.1.sta0000'.format(station))
+                exit(1)
+    if args.virtual is True and not args.use_existing_station_list and args.radio is None:
         logger.error('--radio required')
         exit(1)
-    if args.virtual is True and args.ssid is None:
+    if args.virtual is True and not args.use_existing_station_list and args.ssid is None:
         logger.error('--ssid required for virtual stations')
         exit(1)
-    if args.security != 'open' and args.passwd == '[BLANK]':
+    if args.security != 'open' and args.passwd == '[BLANK]' and not (args.use_existing_station_list and not args.real):
         logger.error('--passwd required')
         exit(1)
 
@@ -2984,7 +3008,8 @@ def validate_args(args):
     if args.ssid and args.passwd and args.group_name and args.profile_name:
         logger.error('either --ssid,--password or --profile_name,--group_name should be given')
         exit(1)
-    if args.use_default_config is False and args.group_name is None and args.file_name is None and args.profile_name is None:
+    # Wi-Fi configuration applies only to real devices
+    if args.real and args.use_default_config is False and args.group_name is None and args.file_name is None and args.profile_name is None:
         if args.ssid is None:
             logger.error('--ssid required for Wi-Fi configuration')
             exit(1)
@@ -2996,7 +3021,7 @@ def validate_args(args):
         if args.server_ip is None:
             logger.error('--server_ip or upstream ip required for Wi-fi configuration')
             exit(1)
-    elif args.use_default_config is False and args.resources and (args.ssid is None or args.passwd is None or args.security is None):
+    elif args.real and args.use_default_config is False and args.resources and (args.ssid is None or args.passwd is None or args.security is None):
         logger.error("Please provide ssid password and security when device list is given")
         exit(1)
 
@@ -3112,6 +3137,11 @@ connectivity problems.
         python3 lf_interop_ping_plotter.py --mgr 192.168.207.78 --real --target 8.8.8.8 --ping_interval 1 --ping_duration 1m --use_default_config
         --robot_ip 192.168.204.76 --coordinate 3,4 --do_bandsteering --total_cycles 3 --bssids 94:A6:7E:74:26:33,94:A6:7E:74:26:22
 
+        EXAMPLE-17:
+        Command Line Interface to run ping plotter test on existing virtual stations along with real clients
+        python3 lf_interop_ping_plotter.py --mgr 192.168.200.103 --real --virtual --use_existing_station_list --existing_station_list 1.1.sta0000,1.1.sta0001
+        --target 192.168.1.61 --ping_interval 1 --ping_duration 1m --resources 1.10,1.11 --use_default_config
+
 
 
         SCRIPT_CLASSIFICATION : Test
@@ -3205,6 +3235,15 @@ connectivity problems.
     optional.add_argument('--real',
                           action="store_true",
                           help='specify this flag if the test should run on real clients')
+
+    optional.add_argument('--use_existing_station_list',
+                          action='store_true',
+                          help='specify this flag to run the test on already existing virtual stations instead of creating new ones. '
+                               'The stations are not created or removed by the test')
+
+    optional.add_argument('--existing_station_list',
+                          type=str,
+                          help='full EIDs of the existing virtual stations separated by comma. Example: 1.1.sta0000,1.1.sta0001')
 
     optional.add_argument('--use_default_config',
                           action='store_true',
@@ -3370,7 +3409,7 @@ connectivity problems.
     do_webUI = args.do_webUI
     webUI_resources = args.resources
     ui_report_dir = args.ui_report_dir
-    if do_webUI and webUI_resources is None and group_name is None:
+    if do_webUI and webUI_resources is None and group_name is None and not args.virtual:
         print('--resources argument is required when --do_webUI is specified')
         exit(0)
     if do_webUI and ui_report_dir is None:
@@ -3410,10 +3449,14 @@ connectivity problems.
                 ui_report_dir=ui_report_dir, csv_name=args.device_csv_name, expected_passfail_val=args.expected_passfail_value, wait_time=args.wait_time, group_name=group_name,
                 floors=args.floors, get_live_view=args.get_live_view, robo_ip=robo_ip, rotation_enabled=rotation_enabled, coordinate_list=coord_list, angle_list=angle_list,
                 local_lf_report_dir=args.local_lf_report_dir, do_bandsteering=args.do_bandsteering, total_cycles=args.total_cycles, bssids=args.bssids.split(",") if args.bssids else [],
-                duration_to_skip=args.duration_to_skip)
+                duration_to_skip=args.duration_to_skip, use_existing_station_list=args.use_existing_station_list)
     ping.pingduration = duration
+    # using the existing virtual stations if --use_existing_station_list is specified
+    if args.use_existing_station_list:
+        ping.sta_list = args.existing_station_list.split(',')
+        logging.info('Using existing virtual stations: {}'.format(ping.sta_list))
     # creating virtual stations if --virtual flag is specified
-    if args.virtual:
+    elif args.virtual:
 
         logging.info('Proceeding to create {} virtual stations on {}'.format(num_sta, radio))
         station_list = LFUtils.portNameSeries(
@@ -3514,7 +3557,7 @@ connectivity problems.
     ping.cleanup()
 
     # building station if virtual
-    if args.virtual:
+    if args.virtual and not args.use_existing_station_list:
         ping.buildstation()
 
     # check if generic tab is enabled or not
