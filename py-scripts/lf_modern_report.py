@@ -1043,6 +1043,17 @@ def _run_pdf_worker():
 class lf_report:
     """Builds a LANforge HTML/PDF test report piece by piece (banner, text, tables, charts, footer).
     Same API as the old lf_report.py; only the look is modernized."""
+    # Score band -> (label, color): Excellent 90-100, Good 80-89, Average 70-79, Poor <70.
+    SCORE_RATING_BANDS = [(90, "Excellent", "#1e7e34"), (80, "Good", "#28a745"),
+                          (70, "Average", "#f1c40f"), (0, "Poor", "#e74c3c")]
+
+    @classmethod
+    def classify_score_rating(cls, score):
+        for threshold, label, color in cls.SCORE_RATING_BANDS:
+            if score >= threshold:
+                return label, color
+        return cls.SCORE_RATING_BANDS[-1][1], cls.SCORE_RATING_BANDS[-1][2]
+
     def __init__(self,
                  # _path the report directory under which the report directories will be created.
                  _path="/home/lanforge/html-reports",

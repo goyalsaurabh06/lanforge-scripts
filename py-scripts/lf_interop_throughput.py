@@ -2724,10 +2724,6 @@ class Throughput(Realm):
     # gradient so the color itself says how good the signal is: Excellent=green, Poor=red, Good/Fair in between.
     RSSI_BUCKET_COLORS = ["#2e8b57", "#f2c94c", "#f2994a", "#eb5757"]
 
-    # Score band -> (label, color): Excellent 90-100, Good 80-89, Average 70-79, Poor <70.
-    SCORE_RATING_BANDS = [(90, "Excellent", "#1e7e34"), (80, "Good", "#28a745"),
-                          (70, "Average", "#f1c40f"), (0, "Poor", "#e74c3c")]
-
     @staticmethod
     def _parse_mbps(value):
         # Some offered-rate lists store "9.5", others "9.5Mbps" -- strip the unit either way.
@@ -2747,13 +2743,6 @@ class Throughput(Realm):
             return 100.0 if achieved > 0 else 0.0
         return max(0.0, min(100.0, round(achieved / offered * 100, 2)))
 
-    @classmethod
-    def _classify_score_rating(cls, score):
-        for threshold, label, color in cls.SCORE_RATING_BANDS:
-            if score >= threshold:
-                return label, color
-        return cls.SCORE_RATING_BANDS[-1][1], cls.SCORE_RATING_BANDS[-1][2]
-
     def build_client_scores(self, offered_download, achieved_download, offered_upload, achieved_upload):
         # DL/UL score = achieved/offered throughput as a percent; Overall = their exact average.
         dl_scores = [self._throughput_ratio_to_score(a, o) for a, o in zip(achieved_download, offered_download)]
@@ -2761,7 +2750,7 @@ class Throughput(Realm):
         overall_scores = [round((dl + ul) / 2, 2) for dl, ul in zip(dl_scores, ul_scores)]
         ratings, rating_colors = [], []
         for score in overall_scores:
-            label, color = self._classify_score_rating(score)
+            label, color = lf_report.classify_score_rating(score)
             ratings.append(label)
             rating_colors.append(color)
         return dl_scores, ul_scores, overall_scores, ratings, rating_colors
@@ -3071,7 +3060,7 @@ class Throughput(Realm):
         dl_pct = round((achieved_dl / intended_dl) * 100, 2) if intended_dl else 0
         ul_pct = round((achieved_ul / intended_ul) * 100, 2) if intended_ul else 0
         overall_score = self._throughput_ratio_to_score(achieved_dl + achieved_ul, intended_dl + intended_ul)
-        rating, rating_color = self._classify_score_rating(overall_score)
+        rating, rating_color = lf_report.classify_score_rating(overall_score)
         rating_html = "<span style='color:{color}; font-weight:800;'>{rating}</span>".format(
             color=rating_color, rating=rating)
         report.build_info_card(
@@ -4161,7 +4150,7 @@ class Throughput(Realm):
                     bk_dataframe["Rating"] = ratings
                     dataframe1 = pd.DataFrame(bk_dataframe)
                     report.set_table_dataframe(dataframe1)
-                    report.rating_build_table("Rating", {label: color for _, label, color in self.SCORE_RATING_BANDS})
+                    report.rating_build_table("Rating", {label: color for _, label, color in lf_report.SCORE_RATING_BANDS})
 
                 report.set_custom_html('<hr>')
                 report.build_custom()
@@ -4576,14 +4565,14 @@ class Throughput(Realm):
                 dl_score = self._throughput_ratio_to_score(download_data[-1], download_list[-1])
                 ul_score = self._throughput_ratio_to_score(upload_data[-1], upload_list[-1])
                 overall_score = round((dl_score + ul_score) / 2, 2)
-                rating, _ = self._classify_score_rating(overall_score)
+                rating, _ = lf_report.classify_score_rating(overall_score)
                 bk_dataframe["DL Score"] = dl_score
                 bk_dataframe["UL Score"] = ul_score
                 bk_dataframe["Overall Score"] = overall_score
                 bk_dataframe["Rating"] = rating
                 dataframe1 = pd.DataFrame(bk_dataframe)
                 report.set_table_dataframe(dataframe1)
-                report.rating_build_table("Rating", {label: color for _, label, color in self.SCORE_RATING_BANDS})
+                report.rating_build_table("Rating", {label: color for _, label, color in lf_report.SCORE_RATING_BANDS})
 
                 report.set_custom_html('<hr>')
                 report.build_custom()

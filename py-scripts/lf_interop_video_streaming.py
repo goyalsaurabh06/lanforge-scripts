@@ -1457,11 +1457,6 @@ class VideoStreamingTest(Realm):
             non_zero_values = [item for item in lst if item != 0]
             return min(non_zero_values)
 
-    # Score band -> (label, color): same thresholds/colors lf_interop_throughput.py uses for its
-    # own SCORE_RATING_BANDS -- Excellent 90-100, Good 80-89, Average 70-79, Poor <70.
-    SCORE_RATING_BANDS = [(90, "Excellent", "#1e7e34"), (80, "Good", "#28a745"),
-                          (70, "Average", "#f1c40f"), (0, "Poor", "#e74c3c")]
-
     @staticmethod
     def _wait_time_score(wait_time):
         """Streaming Wait Time (sec) -> score, 40% weight. Lower wait time scores higher."""
@@ -1512,13 +1507,6 @@ class VideoStreamingTest(Realm):
         return 70
 
     @classmethod
-    def _classify_score_rating(cls, score):
-        for threshold, label, color in cls.SCORE_RATING_BANDS:
-            if score >= threshold:
-                return label, color
-        return cls.SCORE_RATING_BANDS[-1][1], cls.SCORE_RATING_BANDS[-1][2]
-
-    @classmethod
     def build_client_scores(cls, wait_times, bitrates, buffer_counts):
         """Per-client streaming score: (Wait Time Score x 0.40) + (Bitrate Score x 0.30) +
         (Buffer Score x 0.30), then classified into an Excellent/Good/Average/Poor rating.
@@ -1530,7 +1518,7 @@ class VideoStreamingTest(Realm):
             score = round(cls._wait_time_score(wait_time) * 0.40 +
                           cls._bitrate_score(bitrate) * 0.30 +
                           cls._buffer_score(buffer_count) * 0.30, 2)
-            rating, color = cls._classify_score_rating(score)
+            rating, color = lf_report.lf_report.classify_score_rating(score)
             scores.append(score)
             ratings.append(rating)
             rating_colors.append(color)
@@ -1543,7 +1531,7 @@ class VideoStreamingTest(Realm):
         """
         scores, _, _ = self.build_client_scores(wait_time_data, avg_video_rate, total_buffer)
         avg_score = round(sum(scores) / len(scores), 1) if scores else 0
-        overall_rating, rating_color = self._classify_score_rating(avg_score)
+        overall_rating, rating_color = lf_report.lf_report.classify_score_rating(avg_score)
         rating_html = "<span style='color:{color}; font-weight:800;'>{rating}</span>".format(
             color=rating_color, rating=overall_rating)
         avg_wait_time = round(sum(wait_time_data) / len(wait_time_data), 2) if wait_time_data else 0
@@ -1593,7 +1581,7 @@ class VideoStreamingTest(Realm):
         params_html = report.render_dataframe_html(params_df)
         rating_html = report.render_dataframe_html(
             rating_df, rating_column="Rating",
-            rating_colors={label: color for _, label, color in self.SCORE_RATING_BANDS})
+            rating_colors={label: color for _, label, color in lf_report.lf_report.SCORE_RATING_BANDS})
 
         report.set_custom_html(
             "<div class='chart-card' style='text-align:left;'>"
@@ -2116,7 +2104,7 @@ class VideoStreamingTest(Realm):
                 "Rating": ratings,
             })
             report.set_table_dataframe(scores_df)
-            report.rating_build_table("Rating", {label: color for _, label, color in self.SCORE_RATING_BANDS})
+            report.rating_build_table("Rating", {label: color for _, label, color in lf_report.lf_report.SCORE_RATING_BANDS})
 
             # Table 1
             report.set_obj_html("Overall - Detailed Result Table", "The below tables provides detailed information for the Video Streaming test.")
