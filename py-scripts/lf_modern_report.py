@@ -32,30 +32,83 @@ LICENSE:
 INCLUDE_IN_README
 """
 # CAUTION: adding imports to this file which are not in update_dependencies.py is not advised
-import os
-import sys
-import json
-import shutil
+import argparse
+import ast
 import base64
 import datetime
-
-import pandas as pd
-import pdfkit
-import argparse
-import traceback
-import logging
 import importlib
-
-from matplotlib import pyplot as plt
+import json
+import logging
+import os
 import platform
+import shutil
 import subprocess
+import sys
+import tempfile
+import time
+import traceback
+from contextlib import contextmanager
+from importlib import metadata
+from io import BytesIO
+from pathlib import Path
 
-sys.path.append(os.path.join(os.path.abspath(__file__ + "../../../")))
+if os.name == 'nt':
+    import msvcrt
+else:
+    import fcntl
 
-logger = logging.getLogger(__name__)
-lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
-lf_csv = importlib.import_module("py-scripts.lf_csv").lf_csv
-os_name = platform.system()
+# The PDF worker sets up its dependencies before loading browser/PDF modules.
+# It does not need the normal report's pandas, pdfkit, or matplotlib imports.
+_IS_PDF_WORKER = __name__ == '__main__' and '--pdf-worker' in sys.argv[1:]
+if not _IS_PDF_WORKER:
+    import pandas as pd
+    import pdfkit
+    from matplotlib import pyplot as plt
+
+if not _IS_PDF_WORKER:
+    sys.path.append(os.path.join(os.path.abspath(__file__ + "../../../")))
+
+    logger = logging.getLogger(__name__)
+    lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
+    lf_csv = importlib.import_module("py-scripts.lf_csv").lf_csv
+    os_name = platform.system()
+
+_PDF_PRINT_CSS = """
+/* Shared paged layout. Interactive HTML retains its screen styling. */
+@media print {
+  html, body { background: white; font-size: 10pt; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  .report-shell { max-width: none; width: 100%; margin: 0; padding: 0; border: 0; border-radius: 0; box-shadow: none; }
+  .table-search-bar, .device-toolbar, .device-footer, .hideFromPrint { display: none !important; }
+  .hideFromScreen { display: block; }
+  .table-wrap { overflow: visible; border-radius: 0; box-shadow: none; }
+  table { width: 100%; }
+  thead { display: table-header-group; }
+  tfoot { display: table-footer-group; }
+  tr, .info-item, .finding { break-inside: avoid; }
+  th, td { overflow-wrap: anywhere; padding: 5px 6px !important; }
+  table.data-table th { position: static; }
+  th.sortable::after { display: none; }
+  table.data-table, table.device-table { font-size: 10pt; }
+  table.pdf-table-compact th, table.pdf-table-compact td {
+    padding: 4px 3px !important; white-space: normal !important;
+    overflow-wrap: anywhere;
+  }
+  table.pdf-table-small, table.pdf-table-small th, table.pdf-table-small td {
+    font-size: 9pt !important;
+  }
+  h1, h2, h3, h4, .info-card-header { break-after: avoid; }
+  .chart-card, .info-card, .contentDiv, .contentDiv2 { padding: 6px 0; }
+  .chart-card h3 { margin-bottom: 6px; }
+  .chart-card p { margin-top: 4px; margin-bottom: 6px; }
+  .chart.pdf-compact-chart { height: var(--pdf-chart-height, 95mm) !important; }
+  .chart-card:has(.chart), .chart-card:has(img), .device-summary-row { break-inside: avoid; }
+  .chart-card img { max-width: 100%; max-height: 165mm; object-fit: contain; }
+  .info-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .info-item { padding: 8px; }
+  #BannerBack { padding: 16px 20px; break-inside: avoid; }
+  .FooterStyle { margin: 10px 0; padding: 8px; }
+}
+"""
 
 __all__ = ["lf_report", "lf_bar_graph", "lf_bar_graph_horizontal", "lf_line_graph", "lf_pie_graph",
           "create_pie_chart", "create_info_card", "create_device_summary_card", "create_findings_card"]
@@ -87,7 +140,7 @@ _ECHARTS_RUNTIME_JS = """
 
   function initChart(el) {
     var dpr = Math.max(2, window.devicePixelRatio || 1);
-    return window.echarts.init(el, null, { devicePixelRatio: dpr });
+    return window.echarts.init(el, null, { devicePixelRatio: dpr, renderer: window.__lfReportPdf ? "svg" : "canvas" });
   }
 
   function baseOption(yName, xName) {
@@ -638,6 +691,353 @@ _TABLE_SEARCH_JS = """
 })();
 </script>
 """
+
+
+@contextmanager
+def installation_lock(path, timeout=900):
+    """OS lock is released on process exit, including crashes."""
+    with open(path, 'a+b') as handle:
+        handle.seek(0)
+        if not handle.read(1):
+            handle.write(b'0')
+            handle.flush()
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                handle.seek(0)
+                if os.name == 'nt':
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except (BlockingIOError, OSError):
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('Timed out waiting for PDF dependency installation lock')
+                time.sleep(0.25)
+        try:
+            yield
+        finally:
+            handle.seek(0)
+            if os.name == 'nt':
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def run_install(arguments):
+    print('Setting up PDF dependencies: ' + ' '.join(arguments), file=sys.stderr, flush=True)
+    try:
+        result = subprocess.run([sys.executable, '-m', *arguments], capture_output=True,
+                                text=True, timeout=600)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError('PDF dependency installation timed out; check network access') from exc
+    if result.returncode:
+        raise RuntimeError('PDF dependency installation failed. Check network access and environment '
+                           'permissions; HTML and CSV files are preserved.\n' +
+                           (result.stdout + result.stderr)[-5000:])
+
+
+def ensure_dependencies():
+    # Read the installer's literal package list without importing its CLI/dependencies.
+    tree = ast.parse(Path(__file__).with_name('update_dependencies.py').read_text())
+    packages = next(ast.literal_eval(node.value) for node in tree.body
+                    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+                    and node.target.id == 'pip_packages')
+    requirement = next(package for package in packages if package.startswith('playwright=='))
+    pdf_requirement = next(package for package in packages if package.startswith('pypdf=='))
+    configured = os.environ.get('PLAYWRIGHT_BROWSERS_PATH')
+    if configured == '0':
+        raise RuntimeError('Use a persistent directory for PLAYWRIGHT_BROWSERS_PATH, not 0')
+    browser_dir = Path(configured).expanduser().resolve() if configured else (
+        Path.home() / '.cache' / 'lanforge' / 'report-browsers')
+    os.environ['PLAYWRIGHT_BROWSERS_PATH'] = str(browser_dir)
+    browser_dir.mkdir(parents=True, exist_ok=True)
+    auto_install = os.environ.get('LF_REPORT_PDF_AUTO_INSTALL', '1') != '0'
+    with installation_lock(browser_dir / '.install.lock'):
+        for dependency in (requirement, pdf_requirement):
+            package, expected = dependency.split('==')
+            try:
+                installed = metadata.version(package)
+            except metadata.PackageNotFoundError:
+                installed = None
+            if installed != expected:
+                if not auto_install:
+                    raise RuntimeError(f'PDF requires {dependency}; automatic installation is disabled')
+                run_install(['pip', 'install', '--disable-pip-version-check', dependency])
+        sync_playwright = importlib.import_module('playwright.sync_api').sync_playwright
+        with sync_playwright() as playwright:
+            override = os.environ.get('LF_REPORT_CHROMIUM_EXECUTABLE')
+            executable = Path(override).expanduser().resolve() if override else Path(playwright.chromium.executable_path)
+        if not executable.is_file():
+            if override:
+                raise RuntimeError(f'Configured Chromium executable does not exist: {executable}')
+            if not auto_install:
+                raise RuntimeError(f'Chromium missing at {executable}; automatic installation is disabled')
+            run_install(['playwright', 'install', 'chromium'])
+        if not executable.is_file():
+            raise RuntimeError(f'Browser installation did not produce {executable}')
+    return str(executable)
+
+
+def export_pdf(source, destination, page_size='A4', orientation='Portrait'):
+    source, destination = Path(source).resolve(), Path(destination).resolve()
+    if not source.is_file():
+        raise FileNotFoundError(source)
+    if orientation.lower() not in ('portrait', 'landscape'):
+        raise ValueError('PDF orientation must be Portrait or Landscape')
+    executable = ensure_dependencies()
+    sync_playwright = importlib.import_module('playwright.sync_api').sync_playwright
+    descriptor, temporary = tempfile.mkstemp(suffix='.pdf', dir=destination.parent)
+    os.close(descriptor)
+    try:
+        with sync_playwright() as playwright:
+            try:
+                browser = playwright.chromium.launch(executable_path=executable)
+            except Exception as exc:
+                raise RuntimeError(
+                    "Chromium is installed but could not launch. System libraries, browser permissions, "
+                    "or sandbox restrictions may need administrator setup. On supported Linux systems, "
+                    "ask the administrator to run this Python environment's `python -m playwright "
+                    "install-deps chromium`. No sudo or system-package installation was attempted.\n"
+                    + str(exc)) from exc
+            try:
+                page = browser.new_page(viewport={'width': 1100 if orientation.lower() == 'landscape' else 760, 'height': 900})
+                errors = []
+                page.on('pageerror', lambda error: errors.append(str(error)))
+                page.add_init_script('window.__lfReportPdf = true;')
+                page.emulate_media(media='print')
+                page.goto(source.as_uri(), wait_until='load', timeout=60000)
+                # Inject current print rules for saved reports as well as newly generated ones.
+                page.add_style_tag(content=_PDF_PRINT_CSS)
+                paper_mm = {'A4': (210, 297), 'A3': (297, 420), 'Letter': (215.9, 279.4),
+                            'Legal': (215.9, 355.6)}.get(page_size)
+                if paper_mm:
+                    width = paper_mm[1 if orientation.lower() == 'landscape' else 0] - 20
+                    page.add_style_tag(content='@media print { .report-shell { width: ' + str(width) + 'mm; } }')
+                compact_height = '80mm' if orientation.lower() == 'landscape' else '95mm'
+                page.add_style_tag(content='@media print { :root { --pdf-chart-height: ' + compact_height + '; } }')
+                page.evaluate('''async () => {
+                    await document.fonts.ready;
+                    await Promise.all(Array.from(document.images).map(image => {
+                        if (image.complete) {
+                            if (!image.naturalWidth) throw new Error('Missing image: ' + image.src.slice(0, 160));
+                            return;
+                        }
+                        return new Promise((resolve, reject) => {
+                            image.onload = resolve;
+                            image.onerror = () => reject(new Error('Image failed: ' + image.src.slice(0, 160)));
+                        });
+                    }));
+                    document.querySelectorAll('.view-all-btn').forEach(button => button.click());
+                    document.querySelectorAll('.table-search-input').forEach(input => {
+                        input.value = ''; input.dispatchEvent(new Event('input'));
+                    });
+                    // Use rendered width, not column count, to decide whether to split.
+                    for (const table of document.querySelectorAll('table.data-table, table.device-table')) {
+                        const shell = table.closest('.report-shell');
+                        const container = table.parentElement;
+                        const available = Math.min(container.clientWidth,
+                            shell ? shell.clientWidth : document.documentElement.clientWidth);
+                        const fits = candidate => candidate.getBoundingClientRect().width <= available + 1 &&
+                            candidate.scrollWidth <= available + 1;
+                        if (fits(table)) continue;
+                        table.classList.add('pdf-table-compact');
+                        if (fits(table)) continue;
+                        table.classList.add('pdf-table-small');
+                        if (fits(table)) continue;
+                        const rows = Array.from(table.rows);
+                        const count = rows.length ? rows[0].cells.length : 0;
+                        if (count < 2 || table.querySelector('colgroup') || rows.some(row => row.cells.length !== count ||
+                            Array.from(row.cells).some(cell => cell.colSpan !== 1 || cell.rowSpan !== 1))) {
+                            throw new Error('Custom table still exceeds printable width; use a larger page or adjust its layout');
+                        }
+                        const headers = Array.from(rows[0].cells).map(cell => cell.textContent.trim());
+                        const identifier = headers.findIndex(label => /^(device name|wireless client|client|station|hostname)$/i.test(label));
+                        const key = identifier >= 0 ? identifier : 0;
+                        const columns = Array.from({length: count}, (_, index) => index).filter(index => index !== key);
+                        const makePanel = selected => {
+                            const copy = table.cloneNode(true);
+                            copy.removeAttribute('id');
+                            copy.style.width = '100%';
+                            copy.style.minWidth = '0';
+                            copy.style.tableLayout = 'auto';
+                            for (const row of copy.rows) {
+                                Array.from(row.cells).forEach((cell, index) => {
+                                    if (index !== key && !selected.includes(index)) cell.remove();
+                                });
+                            }
+                            container.insertBefore(copy, table);
+                            return copy;
+                        };
+                        let start = 0;
+                        while (start < columns.length) {
+                            let end = start + 1;
+                            let panel = makePanel(columns.slice(start, end));
+                            if (!fits(panel)) {
+                                panel.remove();
+                                throw new Error('Table identifier and one column exceed printable width; use a larger page');
+                            }
+                            while (end < columns.length) {
+                                const trial = makePanel(columns.slice(start, end + 1));
+                                if (!fits(trial)) { trial.remove(); break; }
+                                panel.remove();
+                                panel = trial;
+                                end++;
+                            }
+                            if (start > 0) {
+                                const caption = panel.createCaption();
+                                caption.textContent += ' Continued — additional columns';
+                            }
+                            start = end;
+                        }
+                        table.remove();
+                    }
+                    const charts = Array.from(document.querySelectorAll('.chart, .device-donut'));
+                    for (const element of charts) {
+                        const chart = window.echarts && echarts.getInstanceByDom(element);
+                        if (!chart) {
+                            if (!element.querySelector('.chart-fallback')) throw new Error('Chart not rendered: ' + element.id);
+                            continue;
+                        }
+                        const option = chart.getOption();
+                        option.animation = false;
+                        option.dataZoom = [];
+                        // Time-series charts do not need the screen's 420px height or slider space.
+                        // Keep category charts tall enough to display all client labels.
+                        const hasClientAxis = option.yAxis && option.yAxis.some(axis => axis.type === 'category');
+                        if (element.classList.contains('chart') && !hasClientAxis &&
+                            option.series.every(series => series.type === 'line' || series.type === 'bar')) {
+                            element.classList.add('pdf-compact-chart');
+                            if (option.grid) option.grid.forEach(grid => {
+                                grid.top = Math.min(Number(grid.top) || 48, 28);
+                                // Leave extra room for rotated clock labels where explicitly requested.
+                                grid.bottom = Math.min(Number(grid.bottom) || 84, 90);
+                            });
+                        }
+                        if (option.legend) option.legend.forEach(legend => { legend.selected = {}; });
+                        if (option.yAxis) option.yAxis.forEach(axis => {
+                            if (axis.type === 'category') axis.axisLabel = Object.assign({}, axis.axisLabel,
+                                {formatter: null, overflow: 'break', width: 190});
+                        });
+                        // Split category charts into readable page-sized panels.
+                        const categoryAxis = option.yAxis && option.yAxis.find(axis => axis.type === 'category');
+                        const categories = categoryAxis && categoryAxis.data;
+                        const panelSize = 8;
+                        if (categories && categories.length > panelSize) {
+                            const card = element.closest('.chart-card');
+                            if (!card) throw new Error('Oversized chart has no card: ' + element.id);
+                            for (let start = 0; start < categories.length; start += panelSize) {
+                                const panel = card.cloneNode(true);
+                                panel.querySelectorAll('script').forEach(script => script.remove());
+                                const target = panel.querySelector('.chart');
+                                target.innerHTML = '';
+                                target.removeAttribute('_echarts_instance_');
+                                target.id = element.id + '-pdf-' + start;
+                                target.style.height = '410px';
+                                const heading = panel.querySelector('h3');
+                                if (heading && start) heading.textContent += ' (continued)';
+                                card.parentNode.insertBefore(panel, card);
+                                const panelOption = Object.assign({}, option);
+                                panelOption.yAxis = option.yAxis.map(axis => axis === categoryAxis
+                                    ? Object.assign({}, axis, {data: categories.slice(start, start + panelSize)}) : axis);
+                                panelOption.series = option.series.map(series => Object.assign({}, series, {
+                                    data: series.type === 'custom'
+                                        ? series.data.filter(point => point[0] >= start && point[0] < start + panelSize)
+                                            .map(point => [point[0] - start, ...point.slice(1)])
+                                        : series.data.slice(start, start + panelSize)
+                                }));
+                                echarts.init(target, null, {renderer: 'svg'}).setOption(panelOption);
+                            }
+                            chart.dispose();
+                            card.remove();
+                        } else {
+                            chart.setOption(option, true);
+                            chart.resize();
+                        }
+                    }
+                    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                }''')
+                if errors:
+                    raise RuntimeError('Report JavaScript errors: ' + '; '.join(errors))
+                # Capture the actual report banner so repeated pages retain the same
+                # title, date, logo, colors, and layout, including caller customizations.
+                # Chromium's header document cannot inherit the report stylesheet.
+                banner = page.locator('#BannerBack').first
+                header_template = '<span></span>'
+                later_header = header_template
+                top_margin_mm = 12
+                if banner.count() and banner.is_visible():
+                    bounds = banner.bounding_box()
+                    banner_png = banner.screenshot(type='png', animations='disabled')
+                    banner_uri = 'data:image/png;base64,' + base64.b64encode(banner_png).decode('ascii')
+                    height_mm = bounds['height'] * 25.4 / 96
+                    # Reserve the rendered banner height plus breathing room above/below.
+                    top_margin_mm = height_mm + 12
+                    if paper_mm:
+                        page_height = paper_mm[0 if orientation.lower() == 'landscape' else 1]
+                        if top_margin_mm + 40 > page_height:
+                            raise RuntimeError('Report banner is too tall to repeat on this PDF page size')
+                    header_template = (
+                        '<div style="width:100%;margin:0 10mm;padding:0;'
+                        '-webkit-print-color-adjust:exact;">'
+                        f'<img src="{banner_uri}" style="display:block;width:100%;height:{height_mm:.2f}mm;" />'
+                        '</div>')
+                    # Capture the same geometry without the colored background for later pages.
+                    plain_style = page.add_style_tag(content='@media print { #BannerBack { background: transparent !important; box-shadow:none !important; } #BannerBack .HeaderStyle h1, #BannerBack .HeaderStyle h2, #BannerBack .HeaderStyle h4 { color:#10243f !important; } }')
+                    plain_png = banner.screenshot(type='png', animations='disabled', omit_background=True)
+                    plain_uri = 'data:image/png;base64,' + base64.b64encode(plain_png).decode('ascii')
+                    later_header = header_template.replace(banner_uri, plain_uri)
+                    plain_style.evaluate('(element) => element.remove()')
+                    # The repeated header also appears on page one; avoid a duplicate banner.
+                    page.add_style_tag(content='@media print { #BannerBack { display:none !important; } }')
+                # Replace the end-of-document footer only in this PDF browser page.
+                page.add_style_tag(content='@media print { .FooterStyle { display:none !important; } }')
+                pdf_options = dict(format=page_size, landscape=orientation.lower() == 'landscape',
+                         print_background=True,
+                         margin={'top': f'{top_margin_mm:.2f}mm', 'bottom': '16mm', 'left': '10mm', 'right': '10mm'},
+                         display_header_footer=True,
+                         footer_template='<div style="font-family:Arial,sans-serif;font-size:9px;'
+                                         'color:#5f6f82;position:relative;text-align:center;width:100%;margin:0 10mm;">'
+                                         '© 2026 Candela Technologies – All Rights Reserved'
+                                         '<span style="position:absolute;right:0;top:0;">'
+                                         '<span class="pageNumber"></span> / <span class="totalPages"></span></span></div>')
+                # Identical content/margins in both passes preserve pagination and numbering.
+                pdf_module = importlib.import_module('pypdf')
+                PdfReader, PdfWriter = pdf_module.PdfReader, pdf_module.PdfWriter
+                later_pdf = page.pdf(header_template=later_header, **pdf_options)
+                reader = PdfReader(BytesIO(later_pdf))
+                if header_template != later_header:
+                    first_pdf = page.pdf(header_template=header_template, page_ranges='1', **pdf_options)
+                    first_reader = PdfReader(BytesIO(first_pdf))
+                    writer = PdfWriter()
+                    writer.add_page(first_reader.pages[0])
+                    for pdf_page in reader.pages[1:]:
+                        writer.add_page(pdf_page)
+                    with open(temporary, 'wb') as output:
+                        writer.write(output)
+                    writer.close()
+                else:
+                    Path(temporary).write_bytes(later_pdf)
+            finally:
+                browser.close()
+        if Path(temporary).stat().st_size < 100 or Path(temporary).read_bytes()[:5] != b'%PDF-':
+            raise RuntimeError('PDF export produced an invalid file')
+        os.replace(temporary, destination)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def _run_pdf_worker():
+    """Parse the isolated PDF worker command line and export the report."""
+    parser = argparse.ArgumentParser(description='Export saved report HTML to PDF')
+    parser.add_argument('--pdf-worker', action='store_true')
+    parser.add_argument('source')
+    parser.add_argument('destination')
+    parser.add_argument('--page-size', default='A4')
+    parser.add_argument('--orientation', default='Portrait')
+    args = parser.parse_args()
+    export_pdf(args.source, args.destination, args.page_size, args.orientation)
 
 
 class lf_report:
@@ -1198,7 +1598,24 @@ class lf_report:
     # orientation Portrait , Landscape
     @staticmethod
     def _write_pdf_file(input_html, output_pdf, options, configuration=None):
-        """Run wkhtmltopdf, retrying once when its Qt renderer segfaults."""
+        """Export in a worker process, keeping browser lifecycle out of callers."""
+        backend = os.environ.get("LF_REPORT_PDF_BACKEND", "chromium").lower()
+        if backend == "chromium":
+            worker = os.path.abspath(__file__)
+            result = subprocess.run(
+                [sys.executable, worker, "--pdf-worker", os.path.abspath(input_html), os.path.abspath(output_pdf),
+                 "--page-size", options.get("page-size", "A4"),
+                 "--orientation", options.get("orientation", "Portrait")],
+                capture_output=True, text=True, timeout=2400)
+            if result.returncode:
+                raise RuntimeError("Chromium PDF export failed; HTML is preserved. Install "
+                                   "the pinned Playwright dependency from update_dependencies.py and its matching Chromium browser. "
+                                   "Check PLAYWRIGHT_BROWSERS_PATH / LF_REPORT_CHROMIUM_EXECUTABLE.\n"
+                                   + result.stderr[-6000:])
+            return
+        if backend != "wkhtmltopdf":
+            raise ValueError("LF_REPORT_PDF_BACKEND must be chromium or wkhtmltopdf")
+        logger.warning("Using legacy wkhtmltopdf: interactive charts and layout may be incomplete")
         kwargs = {'options': options}
         if configuration is not None:
             kwargs['configuration'] = configuration
@@ -1222,7 +1639,7 @@ class lf_report:
                    'orientation': _orientation,
                    'page-size': _page_size}
         self.write_output_pdf = str(self.path_date_time) + '/' + str(self.output_pdf)
-        if (os_name == "Windows"):
+        if os_name == "Windows" and os.environ.get("LF_REPORT_PDF_BACKEND", "chromium").lower() == "wkhtmltopdf":
             path_to_wkhtmltopdf = r'C:\Program Files\wkhtmltopdf\bin\wkhtmltopdf.exe'
             config = pdfkit.configuration(wkhtmltopdf=path_to_wkhtmltopdf)
             self._write_pdf_file(self.write_output_html, self.write_output_pdf, options, configuration=config)
@@ -1318,6 +1735,7 @@ class lf_report:
         font_data_uri = self._report_asset_as_data_uri(self.font_file)
         report_css = report_css.replace('url("{}")'.format(self.font_file), 'url("{}")'.format(font_data_uri))
         custom_css = self._read_report_asset("custom.css")
+        custom_css += "\n" + _PDF_PRINT_CSS
         echarts_js = self._read_report_asset(self.echarts_file)
         return """<head>
         <meta charset='UTF-8'>
@@ -2885,6 +3303,11 @@ class lf_pie_graph:
             lf_csv_obj.generate_csv()
 
         return markup
+
+
+if __name__ == "__main__" and _IS_PDF_WORKER:
+    _run_pdf_worker()
+    sys.exit(0)
 
 
 # Unit Test
