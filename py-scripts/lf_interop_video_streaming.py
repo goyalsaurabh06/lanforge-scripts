@@ -131,6 +131,7 @@ import csv
 from datetime import datetime, timedelta
 from lf_graph import lf_bar_graph_horizontal
 from lf_graph import lf_line_graph, lf_bar_graph
+from lf_wifi_msgs import RealClientAnalysis
 import threading
 from collections import OrderedDict, Counter
 
@@ -146,8 +147,12 @@ realm = importlib.import_module("py-json.realm")
 LFCliBase = realm.LFCliBase
 Realm = realm.Realm
 base_RealDevice = base.RealDevice
-lf_report = importlib.import_module("py-scripts.lf_report")
-lf_report_pdf = importlib.import_module("py-scripts.lf_report")
+lf_report = importlib.import_module("py-scripts.lf_modern_report")
+# Modern report versions of the graph classes imported at the top of this file --
+# drop-in replacements, same call sites/signatures (see lf_interop_throughput.py's identical override).
+lf_bar_graph_horizontal = lf_report.lf_bar_graph_horizontal
+lf_line_graph = lf_report.lf_line_graph
+lf_bar_graph = lf_report.lf_bar_graph
 lf_graph = importlib.import_module("py-scripts.lf_graph")
 logging.basicConfig(
     level=logging.INFO,
@@ -158,6 +163,7 @@ lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 port_utils = importlib.import_module("py-json.port_utils")
 PortUtils = port_utils.PortUtils
 DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
+lf_interop_bg_ping = importlib.import_module("py-scripts.lf_interop_bg_ping")
 iot_scripts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../local/interop-webGUI/IoT/scripts/"))
 if os.path.exists(iot_scripts_path):
     sys.path.insert(0, iot_scripts_path)
@@ -382,6 +388,7 @@ class VideoStreamingTest(Realm):
         self.last_monitor_url = None
         self.last_monitor_response = None
         self.monitor_start_time = None
+        self.monitor_end_time = None
 
         self.req_total_urls = []
         self.req_urls_per_sec = []
@@ -1438,17 +1445,6 @@ class VideoStreamingTest(Realm):
             created_incremental_values = self.incremental
         return created_incremental_values
 
-    def trim_data(self, array_size, to_updated_array):
-        if array_size < 6:
-            updated_array = to_updated_array
-        else:
-            middle_elements_count = 4
-            step = (array_size - 1) / (middle_elements_count + 1)
-            middle_elements = [int(i * step) for i in range(1, middle_elements_count + 1)]
-            new_array = [0] + middle_elements + [array_size - 1]
-            updated_array = [to_updated_array[index] for index in new_array]
-        return updated_array
-
     def process_list(self, lst):
         # This function filters out initial zero values in the test video rate.
         # Before the video starts running, the rate is temporarily zero,
@@ -1460,6 +1456,250 @@ class VideoStreamingTest(Realm):
         else:
             non_zero_values = [item for item in lst if item != 0]
             return min(non_zero_values)
+
+    # Score band -> (label, color): same thresholds/colors lf_interop_throughput.py uses for its
+    # own SCORE_RATING_BANDS -- Excellent 90-100, Good 80-89, Average 70-79, Poor <70.
+    SCORE_RATING_BANDS = [(90, "Excellent", "#1e7e34"), (80, "Good", "#28a745"),
+                          (70, "Average", "#f1c40f"), (0, "Poor", "#e74c3c")]
+
+    @staticmethod
+    def _wait_time_score(wait_time):
+        """Streaming Wait Time (sec) -> score, 40% weight. Lower wait time scores higher."""
+        try:
+            wait_time = float(wait_time)
+        except (TypeError, ValueError):
+            return 75
+        if wait_time <= 0.10:
+            return 100
+        if wait_time <= 0.20:
+            return 95
+        if wait_time <= 0.30:
+            return 90
+        if wait_time <= 0.40:
+            return 85
+        return 75
+
+    @staticmethod
+    def _bitrate_score(bitrate):
+        """Avg Video Bitrate (Mbps) -> score, 30% weight. Higher bitrate scores higher."""
+        try:
+            bitrate = float(bitrate)
+        except (TypeError, ValueError):
+            return 85
+        if bitrate >= 0.82:
+            return 100
+        if bitrate >= 0.80:
+            return 95
+        if bitrate >= 0.78:
+            return 90
+        return 85
+
+    @staticmethod
+    def _buffer_score(buffer_count):
+        """Buffer Events (Count) -> score, 30% weight. Fewer buffers scores higher."""
+        try:
+            buffer_count = float(buffer_count)
+        except (TypeError, ValueError):
+            return 70
+        if buffer_count <= 0:
+            return 100
+        if buffer_count <= 2:
+            return 95
+        if buffer_count <= 4:
+            return 90
+        if buffer_count <= 6:
+            return 80
+        return 70
+
+    @classmethod
+    def _classify_score_rating(cls, score):
+        for threshold, label, color in cls.SCORE_RATING_BANDS:
+            if score >= threshold:
+                return label, color
+        return cls.SCORE_RATING_BANDS[-1][1], cls.SCORE_RATING_BANDS[-1][2]
+
+    @classmethod
+    def build_client_scores(cls, wait_times, bitrates, buffer_counts):
+        """Per-client streaming score: (Wait Time Score x 0.40) + (Bitrate Score x 0.30) +
+        (Buffer Score x 0.30), then classified into an Excellent/Good/Average/Poor rating.
+
+        Returns (scores, ratings, rating_colors), each a list aligned with the inputs.
+        """
+        scores, ratings, rating_colors = [], [], []
+        for wait_time, bitrate, buffer_count in zip(wait_times, bitrates, buffer_counts):
+            score = round(cls._wait_time_score(wait_time) * 0.40 +
+                          cls._bitrate_score(bitrate) * 0.30 +
+                          cls._buffer_score(buffer_count) * 0.30, 2)
+            rating, color = cls._classify_score_rating(score)
+            scores.append(score)
+            ratings.append(rating)
+            rating_colors.append(color)
+        return scores, ratings, rating_colors
+
+    def build_overall_test_verdict(self, report, wait_time_data, avg_video_rate, total_buffer, total_err, devices):
+        """Builds the "Overall Test Verdict" card: total devices, average streaming score, average
+        wait time/bitrate, total errors, and an overall rating -- the same scoring bands
+        build_client_scores() uses per client, averaged across the whole test.
+        """
+        scores, _, _ = self.build_client_scores(wait_time_data, avg_video_rate, total_buffer)
+        avg_score = round(sum(scores) / len(scores), 1) if scores else 0
+        overall_rating, rating_color = self._classify_score_rating(avg_score)
+        rating_html = "<span style='color:{color}; font-weight:800;'>{rating}</span>".format(
+            color=rating_color, rating=overall_rating)
+        avg_wait_time = round(sum(wait_time_data) / len(wait_time_data), 2) if wait_time_data else 0
+        avg_bitrate = round(sum(avg_video_rate) / len(avg_video_rate), 2) if avg_video_rate else 0
+        report.build_info_card(
+            title="Overall Test Verdict",
+            items=[
+                {"label": "Total Devices Tested", "value": len(devices)},
+                {"label": "Average Video Streaming Score", "value": "{}%".format(avg_score)},
+                {"label": "Average Streaming Wait Time", "value": "{} sec".format(avg_wait_time)},
+                {"label": "Average Video Bitrate", "value": "{} Mbps".format(avg_bitrate)},
+                {"label": "Total Errors Observed", "value": sum(total_err)},
+                {"label": "Overall Rating", "value": rating_html},
+            ])
+
+    def add_scoring_parameters_section(self, report):
+        """Appends the "Scoring Parameters and Weightage" reference section: the fixed
+        wait-time/bitrate/buffer score bands build_client_scores() uses, and the resulting
+        score-to-rating mapping. Static/reference data, not derived from a specific test run.
+
+        Rendered as one combined chart-card (title + description + both tables) via
+        report.render_dataframe_html(), instead of build_objective()/build_table() each
+        producing their own separate top-level card.
+        """
+        params_df = pd.DataFrame([
+            {"Metric": "Streaming Wait Time (sec)", "Measured Value Range": "<= 0.10", "Score Mapping": 100, "Weight": "40%"},
+            {"Metric": "Streaming Wait Time (sec)", "Measured Value Range": "0.11 - 0.20", "Score Mapping": 95, "Weight": "40%"},
+            {"Metric": "Streaming Wait Time (sec)", "Measured Value Range": "0.21 - 0.30", "Score Mapping": 90, "Weight": "40%"},
+            {"Metric": "Streaming Wait Time (sec)", "Measured Value Range": "0.31 - 0.40", "Score Mapping": 85, "Weight": "40%"},
+            {"Metric": "Streaming Wait Time (sec)", "Measured Value Range": "> 0.40", "Score Mapping": 75, "Weight": "40%"},
+            {"Metric": "Avg Video Bitrate (Mbps)", "Measured Value Range": ">= 0.82", "Score Mapping": 100, "Weight": "30%"},
+            {"Metric": "Avg Video Bitrate (Mbps)", "Measured Value Range": "0.80 - 0.81", "Score Mapping": 95, "Weight": "30%"},
+            {"Metric": "Avg Video Bitrate (Mbps)", "Measured Value Range": "0.78 - 0.79", "Score Mapping": 90, "Weight": "30%"},
+            {"Metric": "Avg Video Bitrate (Mbps)", "Measured Value Range": "< 0.78", "Score Mapping": 85, "Weight": "30%"},
+            {"Metric": "Buffer Events (Count)", "Measured Value Range": "0", "Score Mapping": 100, "Weight": "30%"},
+            {"Metric": "Buffer Events (Count)", "Measured Value Range": "1 - 2", "Score Mapping": 95, "Weight": "30%"},
+            {"Metric": "Buffer Events (Count)", "Measured Value Range": "3 - 4", "Score Mapping": 90, "Weight": "30%"},
+            {"Metric": "Buffer Events (Count)", "Measured Value Range": "5 - 6", "Score Mapping": 80, "Weight": "30%"},
+            {"Metric": "Buffer Events (Count)", "Measured Value Range": "> 6", "Score Mapping": 70, "Weight": "30%"},
+        ])
+        rating_df = pd.DataFrame([
+            {"Score": "90 - 100", "Rating": "Excellent"},
+            {"Score": "80 - 89", "Rating": "Good"},
+            {"Score": "70 - 79", "Rating": "Average"},
+            {"Score": "< 70", "Rating": "Poor"},
+        ])
+        params_html = report.render_dataframe_html(params_df)
+        rating_html = report.render_dataframe_html(
+            rating_df, rating_column="Rating",
+            rating_colors={label: color for _, label, color in self.SCORE_RATING_BANDS})
+
+        report.set_custom_html(
+            "<div class='chart-card' style='text-align:left;'>"
+            "<h3>Scoring Parameters and Weightage</h3>"
+            "<p>Final Score = (Wait Time Score x 0.40) + (Bitrate Score x 0.30) + (Buffer Score x 0.30)</p>"
+            "{params}{rating}</div>".format(params=params_html, rating=rating_html))
+        report.build_custom()
+
+    def start_wifi_analysis(self, host, port, device_list, ssid):
+        """Start a RealClientAnalysis window covering the devices under test.
+
+        device_list: resource IDs (e.g. '1.10') -- same format used for background_ping's
+        device_list (self.resource_ids.split(',')). See lf_interop_throughput.py's identical method.
+        """
+        self.wifi_analysis = None
+        self.wifi_analysis_stats = {}
+        if not device_list:
+            return
+        try:
+            self.wifi_analysis = RealClientAnalysis(host=host, port=port, device_list=list(device_list),
+                                                    ssid=ssid or "", debug=False)
+            self.wifi_analysis_start_time = int(time.time() * 1000)
+        except Exception as e:
+            logger.warning("Wifi connectivity analysis could not be started: %s", e)
+            self.wifi_analysis = None
+
+    def stop_wifi_analysis(self):
+        """Analyze '/wifi-msgs' since start_wifi_analysis() into self.wifi_analysis_stats."""
+        if not getattr(self, 'wifi_analysis', None):
+            return
+        try:
+            self.wifi_analysis.query_devices_1()
+            local_dict = self.wifi_analysis.create_local_dict()
+            if not local_dict:
+                logger.warning("None of the wifi connectivity analysis devices resolved to a device LANforge knows about")
+                return
+            self.wifi_analysis_stats = self.wifi_analysis.get_client_connectivity_stats_from_timestamp(
+                self.wifi_analysis_start_time, None, local_dict)
+        except Exception as e:
+            logger.warning("Wifi connectivity analysis results could not be collected: %s", e)
+
+    def add_wifi_analysis_to_report(self, report, device_info=None):
+        """Append the wifi connectivity event summary graph and stats table to the report.
+
+        device_info: the same {port_id: {"mac":, "channel":, "rssi":, "name":}} dict generate_report()
+        builds for background_ping -- used here only for its "name" field, to show a friendly
+        device name instead of the raw LANforge port id RealClientAnalysis reports by.
+        """
+        if not getattr(self, 'wifi_analysis_stats', None):
+            return
+        try:
+            devices, connect_attempt, disconnected, scanning, association_rejection, connected, remarks, cx_time = \
+                self.wifi_analysis.dicttolist(self.wifi_analysis_stats)
+            device_info = device_info or {}
+            devices = [device_info.get(d, {}).get('name', d) for d in devices]
+
+            categories = ["Disconnected", "Scans", "Association Attempts", "Association Rejected", "Connected"]
+            totals = [sum(disconnected), sum(scanning), sum(connect_attempt), sum(association_rejection), sum(connected)]
+            # Red=Disconnected, Yellow=Scans, Orange=Association Attempts, Grey=Rejected, Green=Connected.
+            colors = ['#e74c3c', '#f1c40f', '#e67e22', '#95a5a6', '#27ae60']
+
+            # One named+colored series per category (stacked, so still full bar width) instead of one combined series, so each category gets its own legend entry.
+            data_set = [[value if i == series_index else 0 for i, value in enumerate(totals)]
+                        for series_index in range(len(categories))]
+            graph = lf_bar_graph(_data_set=data_set,
+                                 _xaxis_name="",
+                                 _yaxis_name="Count",
+                                 _xaxis_categories=categories,
+                                 _graph_image_name="wifi_connectivity_status",
+                                 _label=categories,
+                                 _graph_title="Client Connectivity Status",
+                                 _title_size=16,
+                                 _color_edge='black',
+                                 _bar_width=0.5,
+                                 _figsize=(10, 6),
+                                 _legend_loc="best",
+                                 _dpi=96,
+                                 _show_bar_value=True,
+                                 _enable_csv=True,
+                                 _stacked=True,
+                                 _color=colors,
+                                 _color_name=colors,
+                                 _description="This graph summarizes connection-related events observed during the video "
+                                             "streaming test. These metrics provide insight into client stability and "
+                                             "wireless connectivity performance.")
+            graph_png = graph.build_bar_graph()
+            report.set_graph_image(graph_png)
+            report.move_graph_image()
+            report.set_csv_filename(graph.graph_image_name)
+            report.move_csv_file()
+            report.build_graph()
+
+            dataframe = pd.DataFrame({
+                "Device": devices,
+                "Association Attempts": connect_attempt,
+                "Disconnected": disconnected,
+                "Scanning": scanning,
+                "Association Rejection": association_rejection,
+                "Connected": connected,
+            })
+            report.set_table_title("Wifi Connectivity Analysis")
+            report.build_table_title()
+            report.set_table_dataframe(dataframe)
+            report.build_table()
+        except Exception as e:
+            logger.warning("Wifi connectivity analysis could not be added to the report: %s", e)
 
     def handle_passfail_criteria(self, data: dict):
         iter = data["iter"]
@@ -1604,7 +1844,7 @@ class VideoStreamingTest(Realm):
         report.build_banner()
         if iot_summary:
             report.set_obj_html(
-                "Objective",
+                "Test Overview",
                 "The Candela Video Streaming Test Including IoT Devices is designed to evaluate an Access Point’s "
                 "performance and stability when handling both Real clients (Android, Windows, Linux, iOS) and IoT devices "
                 "(controlled via Home Assistant) simultaneously. "
@@ -1617,15 +1857,13 @@ class VideoStreamingTest(Realm):
                 "video streaming for multiple real clients while maintaining responsive and consistent performance for IoT devices."
             )
         else:
-            report.set_obj_html("Objective", " The Candela Video streaming test is designed to measure the access point performance and stability by streaming the videos from the local browser"
-                                "or from over the Internet in real clients like android which are connected to the access point,"
-                                "this test allows the user to choose the options like video link, type of media source, media quality, number of playbacks."
+            report.set_obj_html("Test Overview", "The objective is to measure the access point performance and stability by streaming the videos from the local browser "
+                                "or from over the Internet in real clients like android which are connected to the access point, "
+                                "this test allows the user to choose the options like video link, type of media source, media quality, number of playbacks. "
                                 "Along with the performance other measurements like No of Buffers, Wait-Time, per client Video Bitrate, Video Quality, and more. "
-                                "The expected behavior is for the DUT to be able to handle several stations (within the limitations of the AP specs)"
-                                "and make sure all capable clients can browse the video. ")
+                                "The expected behavior is for the DUT to be able to handle several stations (within the limitations of the AP specs) "
+                                "and make sure all capable clients can browse the video.")
         report.build_objective()
-        report.set_table_title("Input Parameters")
-        report.build_table_title()
         if self.config:
             test_setup_info["SSID"] = self.test_setup_info_ssid
             test_setup_info["Password"] = self.passwd
@@ -1638,7 +1876,8 @@ class VideoStreamingTest(Realm):
             test_setup_info["Configuration"] = gp_map
         if iot_summary:
             test_setup_info = with_iot_params_in_table(test_setup_info, iot_summary)
-        report.test_setup_table(value="Test Setup Information", test_setup_data=test_setup_info)
+        # Rendered as the "Test Configuration" card at the end of the report, mirroring
+        # lf_interop_throughput.py's own placement -- see the build_info_card() call near the footer.
 
         device_type = []
         username = []
@@ -1649,6 +1888,10 @@ class VideoStreamingTest(Realm):
         rssi = []
         channel = []
         tx_rate = []
+        # mac/channel/rssi per port id (e.g. "1.10.wlan0"), the same key format
+        # lf_interop_bg_ping.discover_devices() uses -- fed to background_ping.add_to_report()
+        # below so its ping-stats table can show MAC/Channel/RSSI instead of blanks.
+        device_info = {}
         resource_ids = list(map(int, self.resource_ids.split(',')))
         try:
             eid_data = self.json_get("ports?fields=alias,mac,mode,Parent Dev,rx-rate,tx-rate,ssid,signal,channel")
@@ -1680,6 +1923,8 @@ class VideoStreamingTest(Realm):
                         else:
                             channel.append(alias[i]['channel'])
                         tx_rate.append(alias[i]['tx-rate'])
+                        device_info[i] = {"mac": alias[i]['mac'], "channel": channel[-1], "rssi": alias[i]['signal'],
+                                          "name": resource_hw_data['resource']['user']}
         total_urls = self.data["total_urls"]
         total_err = self.data["total_err"]
         total_buffer = self.data["total_buffer"]
@@ -1750,31 +1995,34 @@ class VideoStreamingTest(Realm):
             video_streaming_values_list = realtime_dataset['overall_video_format_bitrate'][realtime_dataset['iteration'] == iter + 1].values.tolist()
             data_set_in_graph.append(video_streaming_values_list)
 
-            # Trim the data in data_set_in_graph and append to trimmed_data_set_in_graph
-            for _ in range(len(data_set_in_graph)):
-                trimmed_data_set_in_graph.append(self.trim_data(len(data_set_in_graph[_]), data_set_in_graph[_]))
+            # Plot every collected sample instead of a fixed down-sampled subset, so the chart is genuinely realtime.
+            trimmed_data_set_in_graph = data_set_in_graph
 
             # If there are multiple incremental values, add custom HTML content to the report for the current iteration
             if len(created_incremental_values) > 1:
                 report.set_custom_html(f"<h2><u>Iteration-{iter + 1}</u></h2>")
                 report.build_custom()
 
-            report.set_obj_html(
-                _obj_title=f"Realtime Video Rate: Number of devices running: {len(device_names_on_running)}",
-                _obj="")
-            report.build_objective()
+            if iter == 0:
+                self.build_overall_test_verdict(report, wait_time_data, avg_video_rate, total_buffer[:created_incremental_values[iter]],
+                                                total_err[:created_incremental_values[iter]], device_names_on_running)
 
-            # Create a line graph for video rate over time
+            # Title + description render inside the graph's own chart-card (via _graph_title/
+            # _description) instead of a separate build_objective() card, so each section is a
+            # single card -- title, description, then chart -- matching the sample report.
             graph = lf_line_graph(_data_set=trimmed_data_set_in_graph,
                                   _xaxis_name="Time",
                                   _yaxis_name="Video Rate (Mbps)",
-                                  _xaxis_categories=self.trim_data(len(realtime_dataset['timestamp'][realtime_dataset['iteration'] == iter + 1].values.tolist()),
-                                                                   realtime_dataset['timestamp'][realtime_dataset['iteration'] == iter + 1].values.tolist()),
+                                  _xaxis_categories=realtime_dataset['timestamp'][realtime_dataset['iteration'] == iter + 1].values.tolist(),
                                   _label=['Rate'],
-                                  _graph_image_name=f"vs_line_graph{iter}"
+                                  _graph_image_name=f"vs_line_graph{iter}",
+                                  _graph_title=f"Realtime Video Bitrate: Number of devices running: {len(device_names_on_running)}",
+                                  _description=("The graph below illustrates the average video bitrate achieved by each wireless "
+                                                "device during the test. The X-axis represents the time, while the Y-axis "
+                                                "represents the bitrate in Mbps.")
                                   )
             graph_png = graph.build_line_graph()
-            logger.info("graph name {}".format(graph_png))
+            # logger.info("graph name {}".format(graph_png))
             report.set_graph_image(graph_png)
             report.move_graph_image()
 
@@ -1784,10 +2032,6 @@ class VideoStreamingTest(Realm):
             x_fig_size = 15
             y_fig_size = len(devices_on_running_state) * .5 + 4
 
-            report.set_obj_html(
-                _obj_title="Total Urls Per Device",
-                _obj="")
-            report.build_objective()
             # Create a horizontal bar graph for total URLs per device
             graph = lf_bar_graph_horizontal(_data_set=[total_urls[:created_incremental_values[iter]]],
                                             _xaxis_name="Total Urls",
@@ -1798,20 +2042,16 @@ class VideoStreamingTest(Realm):
                                             _legend_loc="best",
                                             _legend_box=(1.0, 1.0),
                                             _show_bar_value=True,
-                                            _figsize=(x_fig_size, y_fig_size)
+                                            _figsize=(x_fig_size, y_fig_size),
+                                            _graph_title="Total Urls Per Device"
                                             #    _color=['lightcoral']
                                             )
             graph_png = graph.build_bar_graph_horizontal()
-            logger.info("wait time graph name {}".format(graph_png))
+            # logger.info("wait time graph name {}".format(graph_png))
             graph.build_bar_graph_horizontal()
             report.set_graph_image(graph_png)
             report.move_graph_image()
             report.build_graph()
-
-            report.set_obj_html(
-                _obj_title="Max/Min Video Rate Per Device",
-                _obj="")
-            report.build_objective()
 
             # Create a horizontal bar graph for max and min video rates per device
             graph = lf_bar_graph_horizontal(_data_set=[max_video_rate, min_video_rate],
@@ -1823,20 +2063,16 @@ class VideoStreamingTest(Realm):
                                             _legend_loc="best",
                                             _legend_box=(1.0, 1.0),
                                             _show_bar_value=True,
-                                            _figsize=(x_fig_size, y_fig_size)
+                                            _figsize=(x_fig_size, y_fig_size),
+                                            _graph_title="Max/Min Video Rate Per Device"
                                             #    _color=['lightcoral']
                                             )
             graph_png = graph.build_bar_graph_horizontal()
-            logger.info("max/min graph name {}".format(graph_png))
+            # logger.info("max/min graph name {}".format(graph_png))
             graph.build_bar_graph_horizontal()
             report.set_graph_image(graph_png)
             report.move_graph_image()
             report.build_graph()
-
-            report.set_obj_html(
-                _obj_title="Wait Time Per Device",
-                _obj="")
-            report.build_objective()
 
             # Create a horizontal bar graph for wait time per device
             graph = lf_bar_graph_horizontal(_data_set=devices_data_to_create_wait_time_bar_graph,
@@ -1848,17 +2084,39 @@ class VideoStreamingTest(Realm):
                                             _legend_loc="best",
                                             _legend_box=(1.0, 1.0),
                                             _show_bar_value=True,
-                                            _figsize=(x_fig_size, y_fig_size)
+                                            _figsize=(x_fig_size, y_fig_size),
+                                            _graph_title="Average Wait Time (s) per Device",
+                                            _description=("The graph below illustrates the streaming wait time observed for each "
+                                                          "wireless device during the test. The X-axis represents the wait time in "
+                                                          "seconds, while the Y-axis lists individual wireless device identifiers.")
                                             #    _color=['lightcoral']
                                             )
             graph_png = graph.build_bar_graph_horizontal()
-            logger.info("wait time graph name {}".format(graph_png))
+            # logger.info("wait time graph name {}".format(graph_png))
             graph.build_bar_graph_horizontal()
             report.set_graph_image(graph_png)
             report.move_graph_image()
             report.build_graph()
             if self.dowebgui and self.get_live_view and not self.do_bandsteering:
                 self.add_buffer_and_wait_time_images(report=report)
+
+            scores, ratings, _ = self.build_client_scores(wait_time_data, avg_video_rate, total_buffer[:created_incremental_values[iter]])
+            report.set_obj_html("Per-client Streaming Performance Metrics and Ratings", "")
+            report.build_objective()
+            scores_df = pd.DataFrame({
+                "Device": device_names_on_running,
+                "MAC": mac[:created_incremental_values[iter]],
+                "OS Type": device_type[:created_incremental_values[iter]],
+                "RSSI (dBm)": ['' if n == 0 else '-' + str(n) for n in rssi_data[:created_incremental_values[iter]]],
+                "Total URL's": total_urls[:created_incremental_values[iter]],
+                "Buffers": total_buffer[:created_incremental_values[iter]],
+                "Average Wait Time (s)": wait_time_data,
+                "Avg Video Rate (Mbps)": avg_video_rate,
+                "Score": scores,
+                "Rating": ratings,
+            })
+            report.set_table_dataframe(scores_df)
+            report.rating_build_table("Rating", {label: color for _, label, color in self.SCORE_RATING_BANDS})
 
             # Table 1
             report.set_obj_html("Overall - Detailed Result Table", "The below tables provides detailed information for the Video Streaming test.")
@@ -1910,9 +2168,28 @@ class VideoStreamingTest(Realm):
             self.get_bandsteering_stats(report, realtime_dataset, devices_on_running_state, device_names_on_running)
         if iot_summary:
             self.build_iot_report_section(report, iot_summary)
+        # wifi connectivity stats (connects/disconnects/scans/rejections) collected while the video
+        # was streaming -- "Client Connectivity Event Summary" comes before the ping timeline/table below it
+        if getattr(self, 'wifi_analysis', None):
+            self.stop_wifi_analysis()
+            self.add_wifi_analysis_to_report(report, device_info=device_info)
+        # ping statistics collected on the clients while the video was streaming --
+        # "Ping Test Results Throughout the Test Duration"
+        if getattr(self, 'background_ping', None):
+            # Anchors the connectivity graph to the real monitoring window, not background_ping's own wider lifetime.
+            self.background_ping.set_monitor_window(self.monitor_start_time, self.monitor_end_time)
+            self.background_ping.add_to_report(report, device_info=device_info)
+        self.add_scoring_parameters_section(report)
         if self.device_issue_log:
             issues_df = pd.DataFrame(self.device_issue_log)
             issues_df.to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
+        # Test Configuration + Devices cards are the report's last section, after the
+        # per-client results above -- mirrors lf_interop_throughput.py's own placement.
+        report.build_info_card(
+            title="Test Configuration",
+            items=[{"label": label, "value": value} for label, value in test_setup_info.items()])
+        report.build_device_summary_card(
+            [{"name": name, "platform": platform} for name, platform in zip(username, device_type)])
         report.build_footer()
         report.write_html()
         report.write_pdf()
@@ -2280,8 +2557,6 @@ class VideoStreamingTest(Realm):
 
             test_setup_info = {
                 "Testname": self.test_name,
-                "Device List": self.device_list_str,
-                "No of Devices": "Total" + "( " + str(len(username)) + " ): Android(" + str(len(username)) + ")",
                 "Incremental Values": "",
                 "URL": self.url,
                 "Media Source": media_source,
@@ -2378,15 +2653,13 @@ class VideoStreamingTest(Realm):
         report.set_title("Video Streaming Test")
         report.set_date(date)
         report.build_banner()
-        report.set_obj_html("Objective", " The Candela Video streaming test is designed to measure the access point performance and stability by streaming the videos from the local browser"
-                            "or from over the Internet in real clients like android which are connected to the access point,"
-                            "this test allows the user to choose the options like video link, type of media source, media quality, number of playbacks."
+        report.set_obj_html("Test Overview", "The objective is to measure the access point performance and stability by streaming the videos from the local browser "
+                            "or from over the Internet in real clients like android which are connected to the access point, "
+                            "this test allows the user to choose the options like video link, type of media source, media quality, number of playbacks. "
                             "Along with the performance other measurements like No of Buffers, Wait-Time, per client Video Bitrate, Video Quality, and more. "
-                            "The expected behavior is for the DUT to be able to handle several stations (within the limitations of the AP specs)"
-                            "and make sure all capable clients can browse the video. ")
+                            "The expected behavior is for the DUT to be able to handle several stations (within the limitations of the AP specs) "
+                            "and make sure all capable clients can browse the video.")
         report.build_objective()
-        report.set_table_title("Input Parameters")
-        report.build_table_title()
         if self.config:
             test_setup_info["SSID"] = self.test_setup_info_ssid
             test_setup_info["Password"] = self.passwd
@@ -2402,7 +2675,8 @@ class VideoStreamingTest(Realm):
             if self.rotation_enabled:
                 test_setup_info["Rotations"] = self.rotation_list
 
-        report.test_setup_table(value="Test Setup Information", test_setup_data=test_setup_info)
+        # Rendered as the "Test Configuration" card at the end of the report, mirroring
+        # lf_interop_throughput.py's own placement -- see the build_info_card() call near the footer.
         device_type = []
         username = []
         ssid = []
@@ -2412,6 +2686,10 @@ class VideoStreamingTest(Realm):
         rssi = []
         channel = []
         tx_rate = []
+        # mac/channel/rssi per port id (e.g. "1.10.wlan0"), the same key format
+        # lf_interop_bg_ping.discover_devices() uses -- fed to background_ping.add_to_report()
+        # below so its ping-stats table can show MAC/Channel/RSSI instead of blanks.
+        device_info = {}
         resource_ids = list(map(int, self.resource_ids.split(',')))
         try:
             eid_data = self.json_get("ports?fields=alias,mac,mode,Parent Dev,rx-rate,tx-rate,ssid,signal,channel")
@@ -2443,6 +2721,8 @@ class VideoStreamingTest(Realm):
                         else:
                             channel.append(alias[i]['channel'])
                         tx_rate.append(alias[i]['tx-rate'])
+                        device_info[i] = {"mac": alias[i]['mac'], "channel": channel[-1], "rssi": alias[i]['signal'],
+                                          "name": resource_hw_data['resource']['user']}
 
         self.add_buffer_and_wait_time_images(report=report)
         for coordinate in range(len(self.coordinate_list)):
@@ -2466,9 +2746,28 @@ class VideoStreamingTest(Realm):
                 self.data = self.vs_data[self.coordinate_list[coordinate]]["self_data"]
                 shutil.move('video_streaming_realtime_data{}.csv'.format(csv_suffix), report_path_date_time)
                 self.generate_individual_coordinate(report, device_type, username, ssid, mac, channel, mode, rssi, tx_rate, created_incremental_values, keys)
+        # wifi connectivity stats (connects/disconnects/scans/rejections) collected while the video
+        # was streaming -- "Client Connectivity Event Summary" comes before the ping timeline/table below it
+        if getattr(self, 'wifi_analysis', None):
+            self.stop_wifi_analysis()
+            self.add_wifi_analysis_to_report(report, device_info=device_info)
+        # ping statistics collected on the clients while the video was streaming --
+        # "Ping Test Results Throughout the Test Duration"
+        if getattr(self, 'background_ping', None):
+            # Anchors the connectivity graph to the real monitoring window, not background_ping's own wider lifetime.
+            self.background_ping.set_monitor_window(self.monitor_start_time, self.monitor_end_time)
+            self.background_ping.add_to_report(report, device_info=device_info)
+        self.add_scoring_parameters_section(report)
         if self.device_issue_log:
             issues_df = pd.DataFrame(self.device_issue_log)
             issues_df.to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
+        # Test Configuration + Devices cards are the report's last section, after the
+        # per-coordinate results above -- mirrors lf_interop_throughput.py's own placement.
+        report.build_info_card(
+            title="Test Configuration",
+            items=[{"label": label, "value": value} for label, value in test_setup_info.items()])
+        report.build_device_summary_card(
+            [{"name": name, "platform": platform} for name, platform in zip(username, device_type)])
         report.build_footer()
         report.write_html()
         report.write_pdf()
@@ -2563,35 +2862,34 @@ class VideoStreamingTest(Realm):
             video_streaming_values_list = realtime_dataset['overall_video_format_bitrate'][realtime_dataset['iteration'] == iter + 1].values.tolist()
             data_set_in_graph.append(video_streaming_values_list)
 
-            # Trim the data in data_set_in_graph and append to trimmed_data_set_in_graph
-            for _ in range(len(data_set_in_graph)):
-                trimmed_data_set_in_graph.append(self.trim_data(len(data_set_in_graph[_]), data_set_in_graph[_]))
+            # Plot every collected sample instead of a fixed down-sampled subset, so the chart is genuinely realtime.
+            trimmed_data_set_in_graph = data_set_in_graph
 
             # If there are multiple incremental values, add custom HTML content to the report for the current iteration
             if len(created_incremental_values) > 1:
                 report.set_custom_html(f"<h2><u>Iteration-{iter + 1}</u></h2>")
                 report.build_custom()
             if self.rotation_enabled:
-                obj_title = f"Realtime Video Rate on Coordinate: {self.current_coordinate} | Rotation Angle: {self.current_angle}°: Number of devices running: {len(device_names_on_running)}"
+                obj_title = f"Realtime Video Bitrate on Coordinate: {self.current_coordinate} | Rotation Angle: {self.current_angle}°: Number of devices running: {len(device_names_on_running)}"
             else:
-                obj_title = f"Realtime Video Rate on Coordinate: {self.current_coordinate} : Number of devices running: {len(device_names_on_running)}"
+                obj_title = f"Realtime Video Bitrate on Coordinate: {self.current_coordinate} : Number of devices running: {len(device_names_on_running)}"
 
-            report.set_obj_html(
-                _obj_title=obj_title,
-                _obj="")
-            report.build_objective()
-
-            # Create a line graph for video rate over time
+            # Title + description render inside the graph's own chart-card (via _graph_title/
+            # _description) instead of a separate build_objective() card, so each section is a
+            # single card -- title, description, then chart -- matching the sample report.
             graph = lf_line_graph(_data_set=trimmed_data_set_in_graph,
                                   _xaxis_name="Time",
                                   _yaxis_name="Video Rate (Mbps)",
-                                  _xaxis_categories=self.trim_data(len(realtime_dataset['timestamp'][realtime_dataset['iteration'] == iter + 1].values.tolist()),
-                                                                   realtime_dataset['timestamp'][realtime_dataset['iteration'] == iter + 1].values.tolist()),
+                                  _xaxis_categories=realtime_dataset['timestamp'][realtime_dataset['iteration'] == iter + 1].values.tolist(),
                                   _label=['Rate'],
-                                  _graph_image_name=f"vs_line_graph{iter}{graph_suffix}"
+                                  _graph_image_name=f"vs_line_graph{iter}{graph_suffix}",
+                                  _graph_title=obj_title,
+                                  _description=("The graph below illustrates the average video bitrate achieved by each wireless "
+                                                "device during the test. The X-axis represents the time, while the Y-axis "
+                                                "represents the bitrate in Mbps.")
                                   )
             graph_png = graph.build_line_graph()
-            logger.info("graph name {}".format(graph_png))
+            # logger.info("graph name {}".format(graph_png))
             report.set_graph_image(graph_png)
             report.move_graph_image()
 
@@ -2601,10 +2899,6 @@ class VideoStreamingTest(Realm):
             x_fig_size = 15
             y_fig_size = len(devices_on_running_state) * .5 + 4
 
-            report.set_obj_html(
-                _obj_title="Total Urls Per Device",
-                _obj="")
-            report.build_objective()
             # Create a horizontal bar graph for total URLs per device
             graph = lf_bar_graph_horizontal(_data_set=[total_urls[:created_incremental_values[iter]]],
                                             _xaxis_name="Total Urls",
@@ -2615,20 +2909,16 @@ class VideoStreamingTest(Realm):
                                             _legend_loc="best",
                                             _legend_box=(1.0, 1.0),
                                             _show_bar_value=True,
-                                            _figsize=(x_fig_size, y_fig_size)
+                                            _figsize=(x_fig_size, y_fig_size),
+                                            _graph_title="Total Urls Per Device"
                                             #    _color=['lightcoral']
                                             )
             graph_png = graph.build_bar_graph_horizontal()
-            logger.info("wait time graph name {}".format(graph_png))
+            # logger.info("wait time graph name {}".format(graph_png))
             graph.build_bar_graph_horizontal()
             report.set_graph_image(graph_png)
             report.move_graph_image()
             report.build_graph()
-
-            report.set_obj_html(
-                _obj_title="Max/Min Video Rate Per Device",
-                _obj="")
-            report.build_objective()
 
             # Create a horizontal bar graph for max and min video rates per device
             graph = lf_bar_graph_horizontal(_data_set=[max_video_rate, min_video_rate],
@@ -2640,20 +2930,16 @@ class VideoStreamingTest(Realm):
                                             _legend_loc="best",
                                             _legend_box=(1.0, 1.0),
                                             _show_bar_value=True,
-                                            _figsize=(x_fig_size, y_fig_size)
+                                            _figsize=(x_fig_size, y_fig_size),
+                                            _graph_title="Max/Min Video Rate Per Device"
                                             #    _color=['lightcoral']
                                             )
             graph_png = graph.build_bar_graph_horizontal()
-            logger.info("max/min graph name {}".format(graph_png))
+            # logger.info("max/min graph name {}".format(graph_png))
             graph.build_bar_graph_horizontal()
             report.set_graph_image(graph_png)
             report.move_graph_image()
             report.build_graph()
-
-            report.set_obj_html(
-                _obj_title="Wait Time Per Device",
-                _obj="")
-            report.build_objective()
 
             # Create a horizontal bar graph for wait time per device
             graph = lf_bar_graph_horizontal(_data_set=devices_data_to_create_wait_time_bar_graph,
@@ -2665,11 +2951,15 @@ class VideoStreamingTest(Realm):
                                             _legend_loc="best",
                                             _legend_box=(1.0, 1.0),
                                             _show_bar_value=True,
-                                            _figsize=(x_fig_size, y_fig_size)
+                                            _figsize=(x_fig_size, y_fig_size),
+                                            _graph_title="Average Wait Time (s) per Device",
+                                            _description=("The graph below illustrates the streaming wait time observed for each "
+                                                          "wireless device during the test. The X-axis represents the wait time in "
+                                                          "seconds, while the Y-axis lists individual wireless device identifiers.")
                                             #    _color=['lightcoral']
                                             )
             graph_png = graph.build_bar_graph_horizontal()
-            logger.info("wait time graph name {}".format(graph_png))
+            # logger.info("wait time graph name {}".format(graph_png))
             graph.build_bar_graph_horizontal()
             report.set_graph_image(graph_png)
             report.move_graph_image()
@@ -3465,6 +3755,12 @@ def main():
     optional.add_argument('--do_bandsteering', help='Enable bandsteering', action='store_true')
     optional.add_argument('--bssids', type=str, help='Comma separated list of BSSIDs to be used for the test', default="")
     optional.add_argument('--total_cycles', help='Enable bandsteering', default="1")
+    optional.add_argument('--wifi_analysis',
+                          action='store_true',
+                          help='Analyze real-client wifi-msgs (connects/disconnects/scans/association rejections) '
+                               'for the duration of the test and include the results in the report')
+    lf_interop_bg_ping.add_arguments(parser)
+
     args = parser.parse_args()
 
     if args.help_summary:
@@ -3737,6 +4033,24 @@ def main():
                 daemon=True
             )
             iot_thread.start()
+    # starting the ping on the selected clients, it keeps running until the streaming is stopped
+    obj.background_ping = lf_interop_bg_ping.from_args(
+        args,
+        host=args.host,
+        port=8080,
+        device_list=obj.resource_ids.split(',') if obj.resource_ids else [],
+        default_target=args.upstream_port if args.upstream_port != 'NA' else None)
+
+    if args.wifi_analysis:
+        # obj.resource_ids is normalized to bare resource numbers ("10,14") above, but
+        # RealClientAnalysis.create_local_dict() matches devices by plain substring against
+        # the "resource-id" field from /adb/ (e.g. "1.10") -- it has none of lf_interop_bg_ping's
+        # single-part shelf-prefix inference, so a bare "10" never matches "1.10". Restore the
+        # "1." shelf prefix here so it resolves.
+        obj.start_wifi_analysis(host=args.host, port=8080,
+                                device_list=["1." + rid for rid in obj.resource_ids.split(',')] if obj.resource_ids else [],
+                                ssid=args.ssid)
+
     # To create cx for selected devices
     obj.build()
 
@@ -3872,8 +4186,10 @@ def main():
                         test_stopped_by_user = obj.monitor_for_runtime_csv(args.duration, file_path, individual_df, i, actual_start_time, cx_order_list[i])
                     else:
                         test_stopped_by_user = obj.monitor_for_runtime_csv(args.duration, file_path, individual_df, i, actual_start_time, cx_order_list[i])
+                    obj.monitor_end_time = datetime.now()
                 except RuntimeError:
                     # no devices responded for this stage; stop and report with the data collected so far
+                    obj.monitor_end_time = datetime.now()
                     obj.test_stopped = True
                     # this stage never ran a monitoring tick, so skip it in the report instead of feeding empty data
                     if not individual_df[individual_df['iteration'] == i + 1].empty:
@@ -3901,6 +4217,8 @@ def main():
                     iterations_before_test_stopped_by_user.append(i)
                     break
     obj.stop()
+    if obj.background_ping:
+        obj.background_ping.stop()
     date = str(datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
     iot_summary = None
     if args.iot_test and args.iot_testname:
@@ -3915,6 +4233,9 @@ def main():
         obj.generate_report(date, list(set(iterations_before_test_stopped_by_user)), test_setup_info=test_setup_info, realtime_dataset=individual_df, iot_summary=iot_summary)
     elif obj.resource_ids:
         obj.generate_report(date, list(set(iterations_before_test_stopped_by_user)), test_setup_info=test_setup_info, realtime_dataset=individual_df, iot_summary=iot_summary)
+
+    if obj.background_ping:
+        obj.background_ping.cleanup()
 
     # Perform post-cleanup operations
     if args.postcleanup:

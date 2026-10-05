@@ -72,6 +72,7 @@ if 'py-json' not in sys.path:
 
 from lf_graph import lf_bar_graph
 from lf_report import lf_report
+import lf_interop_bg_ping
 try:
     pass
     from lf_base_robo import RobotClass  # REAL
@@ -1800,6 +1801,10 @@ class SpeedTest(Realm):
             report.set_obj_html("Notes", "<br>".join(missing_notes))
             report.build_objective()
 
+        # ping statistics collected on the clients while the speedtests were running
+        if getattr(self, 'background_ping', None):
+            self.background_ping.add_to_report(report)
+
         # DONE
         report.build_footer()
         report.write_html()
@@ -1973,6 +1978,8 @@ def main():
 
     parser.add_argument('--help_summary', default=None, action="store_true", help='Show summary of what this script does')
 
+    lf_interop_bg_ping.add_arguments(parser)
+
     args = parser.parse_args()
 
     if args.help_summary:
@@ -1997,6 +2004,17 @@ def main():
 
     speedtest_obj.get_resource_data()
     speedtest_obj.create()
+
+    # starting the ping on the selected clients, it keeps running until every speedtest iteration is done
+    # androids are tracked by serial, so their port is taken from the device data instead of the key
+    speedtest_bg_ping_devices = list(speedtest_obj.laptop_data.keys())
+    speedtest_bg_ping_devices += [device['port'] for device in speedtest_obj.android_data.values() if device.get('port')]
+    speedtest_obj.background_ping = lf_interop_bg_ping.from_args(
+        args,
+        host=args.mgr,
+        port=8080,
+        device_list=speedtest_bg_ping_devices,
+        default_target=args.upstream_port)
 
     if args.robot_test:
         csv_file = f"speedtest_results_{args.instance_name}.csv"
@@ -2048,10 +2066,16 @@ def main():
             time.sleep(5)   # TODO: Hardcoded wait time to allow all devices to be ready for next iteration.
             speedtest_obj.result_json = {}
 
+    if speedtest_obj.background_ping:
+        speedtest_obj.background_ping.stop()
+
     if args.cleanup:
         speedtest_obj.cleanup()
 
     speedtest_obj.generate_report(result_dir_name=args.instance_name, do_webgui=args.do_webgui)
+
+    if speedtest_obj.background_ping:
+        speedtest_obj.background_ping.cleanup()
 
 
 if __name__ == "__main__":

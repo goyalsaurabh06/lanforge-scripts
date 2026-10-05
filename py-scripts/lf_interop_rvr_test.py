@@ -39,6 +39,7 @@ cv_add_base_parser = cv_test_manager.cv_add_base_parser
 cv_base_adjust_parser = cv_test_manager.cv_base_adjust_parser
 lf_graph = importlib.import_module("py-scripts.lf_graph")
 lf_bar_graph_horizontal = lf_graph.lf_bar_graph_horizontal
+lf_interop_bg_ping = importlib.import_module("py-scripts.lf_interop_bg_ping")
 interop_modify = importlib.import_module("py-scripts.lf_interop_modify")
 
 
@@ -530,6 +531,9 @@ class RvR(Realm):
         report.set_table_dataframe(phone_details)
         report.build_table()
         report.test_setup_table(test_setup_data=input_setup_info, value="Information")
+        # ping statistics collected on the clients while the traffic was running
+        if getattr(self, 'background_ping', None):
+            self.background_ping.add_to_report(report)
         report.build_custom()
         report.build_footer()
         report.write_html()
@@ -791,6 +795,8 @@ def main():
     optional.add_argument('--result_dir', type=str, default='', help='result directory for webui execution')
     optional.add_argument('--test_name', type=str, default=None, help='Test name parameter for webgui execution')
 
+    lf_interop_bg_ping.add_arguments(parser)
+
     args = parser.parse_args()
 
     help_summary = '''\
@@ -912,8 +918,18 @@ using programmable attenuators and throughput test is run at each distance/RSSI 
                   result_dir=args.result_dir,
                   _debug_on=args.debug)
 
+    # starting the ping on the selected clients, it keeps running for every attenuation step
+    rvr_obj.background_ping = lf_interop_bg_ping.from_args(
+        args,
+        host=args.mgr,
+        port=args.mgr_port,
+        device_list=rvr_obj.station_names,
+        default_target=args.upstream)
+
     data = rvr_obj.build()
     rvr_obj.stop_l3()
+    if rvr_obj.background_ping:
+        rvr_obj.background_ping.stop()
     rvr_obj.initialize_attenuator()
 
     test_end_time = datetime.now().strftime("%b %d %H:%M:%S")
@@ -939,6 +955,8 @@ using programmable attenuators and throughput test is run at each distance/RSSI 
         "contact": "support@candelatech.com"
     }
     rvr_obj.generate_report(data=data, test_setup_info=test_setup_info, input_setup_info=input_setup_info, report_path=rvr_obj.result_dir)
+    if rvr_obj.background_ping:
+        rvr_obj.background_ping.cleanup()
     rvr_obj.cleanup()
     if rvr_obj.dowebgui:
         rvr_obj.overall_df[-1][3] = "Stopped"

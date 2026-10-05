@@ -124,6 +124,8 @@ lf_report = importlib.import_module("py-scripts.lf_report")
 lf_report = lf_report.lf_report
 
 
+lf_interop_bg_ping = importlib.import_module("py-scripts.lf_interop_bg_ping")
+
 lf_graph = importlib.import_module("py-scripts.lf_graph")
 lf_bar_graph = lf_graph.lf_bar_graph
 lf_scatter_graph = lf_graph.lf_scatter_graph
@@ -3092,6 +3094,9 @@ class RealBrowserTest(Realm):
                 os.chdir(self.original_dir)
             if iot_summary:
                 add_iot_report_section(report, iot_summary)
+            # ping statistics collected on the clients while the browsing was running
+            if getattr(self, 'background_ping', None):
+                self.background_ping.add_to_report(report)
             report.build_custom()
             report.build_footer()
             report.write_html()
@@ -3530,6 +3535,9 @@ class RealBrowserTest(Realm):
             if self.dowebgui:
                 self.add_live_view_images_to_report()
                 os.chdir(self.original_dir)
+            # ping statistics collected on the clients while the browsing was running
+            if getattr(self, 'background_ping', None):
+                self.background_ping.add_to_report(self.report)
             self.report.build_custom()
             self.report.build_footer()
             self.report.write_html()
@@ -4018,6 +4026,8 @@ def main():
             help='bssid values'
         )
 
+        lf_interop_bg_ping.add_arguments(parser)
+
         args = parser.parse_args()
         if args.help_summary:
             print(help_summary)
@@ -4146,6 +4156,13 @@ def main():
         # --- Handle incremental values ---
         obj.handle_incremental(args, obj, available_resources, available_resources)
         obj.handle_duration()
+        # starting the ping on the selected clients, it keeps running until the browsing is stopped
+        obj.background_ping = lf_interop_bg_ping.from_args(
+            args,
+            host=args.mgr,
+            port=8080,
+            device_list=available_resources,
+            default_target=obj.upstream_port)
         obj.run_test(available_resources)
         if args.iot_test and args.iot_testname:
             base = os.path.join("results", args.iot_testname)
@@ -4161,6 +4178,9 @@ def main():
     finally:
         if '--help' not in sys.argv and '-h' not in sys.argv:
             obj.stop()
+            # the background ping has to be stopped before the report is built so its statistics are final
+            if getattr(obj, 'background_ping', None):
+                obj.background_ping.stop()
             if args.do_robo and args.do_bandsteering:
                 if args.dowebgui:
                     obj.stop_webui_test()
@@ -4174,6 +4194,8 @@ def main():
 
             if not args.no_postcleanup:
                 obj.postcleanup()
+                if getattr(obj, 'background_ping', None):
+                    obj.background_ping.cleanup()
 
 
 if __name__ == '__main__':

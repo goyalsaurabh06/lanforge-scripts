@@ -117,6 +117,7 @@ RealDevice = lf_base_interop_profile.RealDevice
 
 # robo_base_class = importlib.import_module("py-scripts.lf_robo_base_class")
 robo_base_class = importlib.import_module("py-scripts.lf_base_robo")
+lf_interop_bg_ping = importlib.import_module("py-scripts.lf_interop_bg_ping")
 
 # Set up logging
 log = logging.getLogger("werkzeug")
@@ -1466,6 +1467,9 @@ class TeamsAutomation(Realm):
                 self.add_live_view_images_to_report()
             if self.do_bs:
                 self.add_bandsteering_report_section()
+            # ping statistics collected on the clients while the meeting was running
+            if getattr(self, 'background_ping', None):
+                self.background_ping.add_to_report(self.report)
             # Save recorded device issues alongside the test report.
             if self.device_issue_log:
                 issues_df = pd.DataFrame(self.device_issue_log)
@@ -2976,6 +2980,8 @@ def main():
             help="Comma-separated list of BSSIDs for bandsteering test",
         )
 
+        lf_interop_bg_ping.add_arguments(parser)
+
         args = parser.parse_args()
 
         # set the logger level to debug
@@ -3050,6 +3056,15 @@ def main():
             teams.update_webui_data()
         teams.load_credentials()
         teams.handle_flask_server()
+
+        # starting the ping on the selected clients, it keeps running until the meeting is over
+        teams.background_ping = lf_interop_bg_ping.from_args(
+            args,
+            host=args.mgr,
+            port=8080,
+            device_list=teams.real_sta_list,
+            default_target=args.upstream_port)
+
         if args.do_robo:
             teams.run_robo_test()
         else:
@@ -3064,6 +3079,9 @@ def main():
         if args is not None and not ("--help" in sys.argv or "-h" in sys.argv):
             if teams is not None:
                 teams.stop_signal = True
+                # the background ping has to be stopped before the report is built so its statistics are final
+                if getattr(teams, 'background_ping', None):
+                    teams.background_ping.stop()
                 if args.do_webUI:
                     teams.stop_test_in_webui()
                 logger.info("Waiting for Browser Cleanup at Client Side")
@@ -3073,6 +3091,8 @@ def main():
                 teams.generate_report()
                 if not teams.no_post_cleanup:
                     teams.cleanup_generic_endpoints()
+                    if getattr(teams, 'background_ping', None):
+                        teams.background_ping.cleanup()
                 logger.info("Test Completed")
 
 

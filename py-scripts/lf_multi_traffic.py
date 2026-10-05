@@ -9077,7 +9077,7 @@ class MultiTraffic(Realm):
                                                  _xaxis_step=1,
                                                  _graph_title=f"Overall {self.qos_obj_dict[ce][obj_name]['obj'].direction} throughput – BK,BE,VO,VI traffic streams",
                                                  _title_size=16,
-                                                 _color=['orange', 'lightcoral', 'steelblue', 'lightgrey'],
+                                                 _color=['#1d9a8a', '#f1b24a', '#2f80ed', '#1f6f58'],
                                                  _color_edge='black',
                                                  _bar_width=0.15,
                                                  _figsize=(18, 6),
@@ -9086,7 +9086,7 @@ class MultiTraffic(Realm):
                                                  _dpi=96,
                                                  _show_bar_value=True,
                                                  _enable_csv=True,
-                                                 _color_name=['orange', 'lightcoral', 'steelblue', 'lightgrey'])
+                                                 _color_name=['#1d9a8a', '#f1b24a', '#2f80ed', '#1f6f58'])
                             graph_png = graph.build_bar_graph()
                             logging.info("graph name %s", graph_png)
                             self.overall_report.set_graph_image(graph_png)
