@@ -2069,6 +2069,25 @@ class MultiTraffic(Realm):
             self.webgui_test_done("ping")
         return True
 
+    @staticmethod
+    def _http_real_client_band_data(uc_avg, bytes_read, rx_rate, url_times):
+        """Build one band's HTTP metrics without retaining another band's values."""
+        metrics = {
+            'dl_time': list(uc_avg),
+            'bytes_rd': list(bytes_read),
+            'speed': list(rx_rate),
+            'url_times': list(url_times),
+        }
+        lengths = {name: len(values) for name, values in metrics.items()}
+        if len(set(lengths.values())) != 1:
+            raise ValueError("HTTP real-client metric lengths do not match: {}".format(lengths))
+
+        download_times = metrics['dl_time']
+        metrics['min'] = [min(download_times)] if download_times else []
+        metrics['max'] = [max(download_times)] if download_times else []
+        metrics['avg'] = [sum(download_times) / len(download_times)] if download_times else []
+        return metrics
+
     def run_http_test(
         self,
         upstream_port='eth2',
@@ -2188,7 +2207,6 @@ class MultiTraffic(Realm):
         list5G, list5G_bytes, list5G_speed, list5G_urltimes = [], [], [], []
         list2G, list2G_bytes, list2G_speed, list2G_urltimes = [], [], [], []
         Both, Both_bytes, Both_speed, Both_urltimes = [], [], [], []
-        listReal, listReal_bytes, listReal_speed, listReal_urltimes = [], [], [], []  # For real devices (not band specific)
         dict_keys = []
         dict_keys.extend(bands)
         # print(dict_keys)
@@ -2420,21 +2438,12 @@ class MultiTraffic(Realm):
             if dowebgui:
                 self.http_obj_dict[ce][obj_name]["obj"].data_for_webui["url_data"] = url_times  # storing the layer-4 url data at the end of test
             if client_type == 'Real':  # for real clients
-                listReal.extend(uc_avg_val)
-                listReal_bytes.extend(rx_bytes_val)
-                listReal_speed.extend(rx_rate_val)
-                listReal_urltimes.extend(url_times)
-                logger.info("%s %s %s", listReal, listReal_bytes, listReal_speed)
-                final_dict[band]['dl_time'] = listReal
-                min2.append(min(listReal))
-                final_dict[band]['min'] = min2
-                max2.append(max(listReal))
-                final_dict[band]['max'] = max2
-                avg2.append((sum(listReal) / num_stations))
-                final_dict[band]['avg'] = avg2
-                final_dict[band]['bytes_rd'] = listReal_bytes
-                final_dict[band]['speed'] = listReal_speed
-                final_dict[band]['url_times'] = listReal_urltimes
+                band_data = self._http_real_client_band_data(
+                    uc_avg_val, rx_bytes_val, rx_rate_val, url_times)
+                final_dict[band].update(band_data)
+                logger.info(
+                    "HTTP real-client results for %s: download times=%s bytes=%s speeds=%s",
+                    band, band_data['dl_time'], band_data['bytes_rd'], band_data['speed'])
             else:
                 if band == "5G":
                     list5G.extend(uc_avg_val)
