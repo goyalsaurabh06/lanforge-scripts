@@ -4463,6 +4463,30 @@ class MultiTraffic(Realm):
             self.webgui_test_done("thput")
         return True
 
+    def drop_unavailable_mcast_devices(self, args):
+        """Remove requested devices with no usable Wi-Fi port from args.device_list.
+
+        Uses the same port checks as test_l3.query_real_clients(). Returns False
+        when none of the requested devices are available.
+        """
+        requested = [dev.strip() for dev in args.device_list[0].split(',') if dev.strip()]
+        port_data = self.json_get("/port/all") or {}
+        available = set()
+        for interface in port_data.get("interfaces", []):
+            for port, data in interface.items():
+                if (not data.get("phantom") and not data.get("down")
+                        and data.get("parent dev") == "wiphy0" and data.get("alias") != "p2p0"):
+                    available.add(".".join(port.split(".")[:2]))
+        missing = [dev for dev in requested if dev not in available]
+        if missing:
+            logger.warning(f"Multicast: skipping unavailable device(s) {', '.join(missing)} (Wi-Fi port down or phantom)")
+        remaining = [dev for dev in requested if dev in available]
+        if not remaining:
+            logger.error("Multicast: none of the requested devices are available. Aborting test.")
+            return False
+        args.device_list = [",".join(remaining)]
+        return True
+
     def run_mc_test(self, args):
         endp_types = "lf_udp"
 
@@ -4500,6 +4524,11 @@ class MultiTraffic(Realm):
         endp_input_list = []
         graph_input_list = []
         if args.real:
+            # Without configuration, query_real_clients() exits when any requested device is down;
+            # skip those devices instead, like the other tests do.
+            if args.device_list and not args.config and not (args.group_name or args.file_name or args.profile_name):
+                if not self.drop_unavailable_mcast_devices(args):
+                    return False
             endp_input_list, graph_input_list, config_devices, group_device_map = query_real_clients(args)
         # Validate existing station list configuration if specified before starting test
         if not args.use_existing_station_list and args.existing_station_list:
@@ -5208,13 +5237,14 @@ class MultiTraffic(Realm):
         if args.dowebgui:
             self.mcast_obj_dict[ce][obj_name]["obj"].copy_reports_to_home_dir()
 
-        if test_passed:
-            self.mcast_obj_dict[ce][obj_name]["obj"].exit_success()
-        else:
-            self.mcast_obj_dict[ce][obj_name]["obj"].exit_fail()
+        # print_pass_fail() rather than exit_success()/exit_fail(): those call sys.exit(),
+        # which skipped the WebGUI hand-off below and surfaced as a SystemExit traceback.
+        self.mcast_obj_dict[ce][obj_name]["obj"].print_pass_fail()
+        if not test_passed:
+            logger.error("Multicast test failed: not all connections increased rx bytes")
         if self.dowebgui:
             self.webgui_test_done("mc")
-        return True
+        return test_passed
 
     def run_mc_test1(
         self,
@@ -5749,6 +5779,7 @@ class MultiTraffic(Realm):
         Configure and execute a Zoom automation test.
         This handles Zoom client configuration, meeting participation, and API stats collection.
         """
+        test_failed = False
         try:
             lanforge_ip = self.lanforge_ip
             if self.dowebgui:
@@ -5994,6 +6025,7 @@ class MultiTraffic(Realm):
                     self.zoom_test_obj.generate_report()
                 logging.info("Test Completed Sucessfully")
         except Exception as e:
+            test_failed = True
             logging.error(f"AN ERROR OCCURED WHILE RUNNING TEST {e}")
             traceback.print_exc()
         finally:
@@ -6028,7 +6060,7 @@ class MultiTraffic(Realm):
                 # self.zoom_test_obj.generic_endps_profile.cleanup()
                 time.sleep(10)
 
-        return True
+        return not test_failed
 
     def run_rb_test1(self, args):
         """
@@ -6269,6 +6301,7 @@ class MultiTraffic(Realm):
         Configure and execute a Microsoft Teams automation test.
         This handles Teams client configuration and interaction over devices.
         """
+        test_failed = False
         try:
             if self.dowebgui:
                 if not self.webgui_stop_check("teams"):
@@ -6349,6 +6382,7 @@ class MultiTraffic(Realm):
                 time.sleep(10)
                 teams.create_avg_data()
         except Exception as e:
+            test_failed = True
             logger.error(f"AN ERROR OCCURED WHILE RUNNING TEST {e}")
             traceback.print_exc()
 
@@ -6373,7 +6407,7 @@ class MultiTraffic(Realm):
                             self.store_obj_for_report(
                                 self.teams_obj_dict["series"][f"teams_test_{i + 1}"], teams, "Teams")
                             break
-        return True
+        return not test_failed
 
     # TODO This function can be useful in future to enable real application tests to run in parallel
     def browser_cleanup(self, rb_test=False, yt_test=False):
