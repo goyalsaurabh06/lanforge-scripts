@@ -703,7 +703,13 @@ class Throughput(Realm):
             self.ensure_monitoring_data_collected()
             iterations_before_test_stopped_by_user.append(0)
             self.stop_wifi_analysis()
+            # stop() is what builds background_ping.stats, so it has to run before the report below
+            if getattr(self, 'background_ping', None):
+                self.monitor_end_time = datetime.now()
+                self.background_ping.stop()
             self.generate_report(list(set(iterations_before_test_stopped_by_user)), incremental_capacity_list, data=all_dataframes, data1=to_run_cxs_len, report_path=self.result_dir)
+            if getattr(self, 'background_ping', None):
+                self.background_ping.cleanup()
             if self.dowebgui:
                 # copying to home directory i.e home/user_name
                 self.copy_reports_to_home_dir()
@@ -873,6 +879,11 @@ class Throughput(Realm):
                 navdata['total_cycles'] = total_cycles
             with open(nav_data, 'w') as x:
                 json.dump(navdata, x, indent=4)
+        self.stop_wifi_analysis()
+        # Build background ping statistics before generating the report.
+        if getattr(self, 'background_ping', None):
+            self.monitor_end_time = datetime.now()
+            self.background_ping.stop()
         # Test_status=Completed above only means "measurements done" - the webGUI still has to
         # upload the final heatmap screenshots. report_generated tells the webGUI when the report is actually on disk.
         report_generated = False
@@ -883,6 +894,8 @@ class Throughput(Realm):
                 self.copy_reports_to_home_dir()
             report_generated = True
         finally:
+            if getattr(self, 'background_ping', None):
+                self.background_ping.cleanup()
             if args.dowebgui:
                 with open(nav_data, 'r') as x:
                     navdata = json.load(x)
@@ -2959,6 +2972,14 @@ class Throughput(Realm):
     )
 
     @staticmethod
+    def average_rssi(rssi_samples):
+        """Averages the samples where the client reported a signal, skipping the 0 placeholders."""
+        connected_samples = [sample for sample in rssi_samples if sample]
+        if not connected_samples:
+            return 0
+        return int(round(sum(connected_samples) / len(connected_samples), 2) * -1)
+
+    @staticmethod
     def format_throughput(value):
         """Turns a Mbps number into readable text, switching to Gbps at 1000+ (e.g. 4530.88 -> "4.53 Gbps")."""
         try:
@@ -3435,7 +3456,7 @@ class Throughput(Realm):
             report.set_graph_image(graph_png)
             # need to move the graph image to the results directory
             report.move_graph_image()
-            report.set_csv_filename(graph_png)
+            report.set_csv_filename(graph.graph_image_name)
             report.move_csv_file()
             report.build_graph()
 
@@ -3860,7 +3881,7 @@ class Throughput(Realm):
                             # Append average upload and download drop from filtered dataframe
                             upload_drop.append(round(sum(upload_drop_col) / len(upload_drop_col), 2))
                             download_drop.append(round(sum(download_drop_col) / len(download_drop_col), 2))
-                            rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
+                            rssi_data.append(self.average_rssi(rssi_col))
                             avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
                             # Calculate and append upload and download throughput to lists
                             upload_list.append(str(round((int(self.cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
@@ -3879,7 +3900,7 @@ class Throughput(Realm):
                             # Append 0 for upload data
                             upload_data.append(0)
 
-                            rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
+                            rssi_data.append(self.average_rssi(rssi_col))
 
                             # Calculate and append upload and download throughput to lists
                             upload_list.append(str(round((int(self.cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
@@ -3900,7 +3921,7 @@ class Throughput(Realm):
                             upload_list.append(str(round((int(self.cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
                             download_list.append(str(round((int(self.cx_profile.side_b_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
 
-                            rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
+                            rssi_data.append(self.average_rssi(rssi_col))
 
                             # Append Average upload data from filtered dataframe
                             upload_data.append(round(sum(upload_col) / len(upload_col), 2))
@@ -3926,7 +3947,7 @@ class Throughput(Realm):
                             upload_drop.append(round(sum(upload_drop_col) / len(upload_drop_col), 2))
                             download_drop.append(round(sum(download_drop_col) / len(download_drop_col), 2))
                             # upload_data.append(filtered_df[[col for col in  filtered_df.columns if "Upload" in col][0]].values.tolist()[-1])
-                            rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
+                            rssi_data.append(self.average_rssi(rssi_col))
                             avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
 
                             # Calculate and append upload and download throughput to lists
@@ -3944,7 +3965,7 @@ class Throughput(Realm):
                             download_data.append(round(sum(download_col) / len(download_col), 2))
                             # Append 0 for upload data
                             upload_data.append(0)
-                            rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
+                            rssi_data.append(self.average_rssi(rssi_col))
                             avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
 
                             # Calculate and append upload and download throughput to lists
@@ -3962,7 +3983,7 @@ class Throughput(Realm):
                             # Calculate and append upload and download throughput to lists
                             upload_list.append(str(round(int(self.cx_profile.side_a_min_bps) / 1000000, 2)) + "Mbps")
                             download_list.append(str(round(int(self.cx_profile.side_b_min_bps) / 1000000, 2)) + "Mbps")
-                            rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
+                            rssi_data.append(self.average_rssi(rssi_col))
                             avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
 
                             # Append average upload data from filtered dataframe
@@ -4090,10 +4111,11 @@ class Throughput(Realm):
                 y_fig_size = len(devices_on_running) * .5 + 4
                 devices_on_running_trimmed = [n[:17] if len(n) > 17 else n for n in devices_on_running]
                 report.set_obj_html(
-                    _obj_title="RSSI Of The Clients Connected",
-                    _obj="The graph below illustrates the received signal strength (RSSI) of each Wi-Fi client "
-                         "connected during the test. The X-axis represents the signal strength in dBm, while the "
-                         "Y-axis lists the individual wireless client identifiers.")
+                    _obj_title="Average RSSI Of The Clients Connected",
+                    _obj="The graph below illustrates the average received signal strength (RSSI) of each Wi-Fi client "
+                         "connected during the test, averaged over every sample collected while the traffic was "
+                         "running and rounded to the nearest dBm. The X-axis represents the signal strength in dBm, "
+                         "while the Y-axis lists the individual wireless client identifiers.")
                 report.build_objective()
                 graph = lf_bar_graph_horizontal(_data_set=[rssi_data],
                                                 _xaxis_name="Signal(-dBm)",
@@ -4408,8 +4430,7 @@ class Throughput(Realm):
                         upload_data.append(round(sum(upload_col) / len(upload_col), 2))
                         upload_drop.append(round(sum(upload_drop_col) / len(upload_drop_col), 2))
                         download_drop.append(round(sum(download_drop_col) / len(download_drop_col), 2))
-                        rssi_data.append(int(round(sum(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()) /
-                                         len(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()), 2)) * -1)
+                        rssi_data.append(self.average_rssi(rssi_col))
                         avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
                         # Calculate and append upload and download throughput to lists
                         upload_list.append(str(round(int(self.cx_profile.side_a_min_bps) / 1000000, 2)))
@@ -4423,8 +4444,7 @@ class Throughput(Realm):
 
                         # Append 0 for upload data
                         upload_data.append(0)
-                        rssi_data.append(int(round(sum(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()) /
-                                         len(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()), 2)) * -1)
+                        rssi_data.append(self.average_rssi(rssi_col))
                         download_drop.append(round(sum(download_drop_col) / len(download_drop_col), 2))
                         avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
 
@@ -4438,8 +4458,7 @@ class Throughput(Realm):
                         # Calculate and append upload and download throughput to lists
                         upload_list.append(str(round(int(self.cx_profile.side_a_min_bps) / 1000000, 2)))
                         download_list.append(str(round(int(self.cx_profile.side_b_min_bps) / 1000000, 2)))
-                        rssi_data.append(int(round(sum(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()) /
-                                         len(filtered_df[[col for col in filtered_df.columns if "RSSI" in col][0]].values.tolist()), 2)) * -1)
+                        rssi_data.append(self.average_rssi(rssi_col))
                         upload_drop.append(round(sum(upload_drop_col) / len(upload_drop_col), 2))
                         avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
 
@@ -4590,10 +4609,11 @@ class Throughput(Realm):
                 report.move_graph_image()
                 report.build_graph()
                 report.set_obj_html(
-                    _obj_title="RSSI Of The Clients Connected",
-                    _obj="The graph below illustrates the received signal strength (RSSI) of each Wi-Fi client "
-                         "connected during the test. The X-axis represents the signal strength in dBm, while the "
-                         "Y-axis lists the individual wireless client identifiers.")
+                    _obj_title="Average RSSI Of The Clients Connected",
+                    _obj="The graph below illustrates the average received signal strength (RSSI) of each Wi-Fi client "
+                         "connected during the test, averaged over every sample collected while the traffic was "
+                         "running and rounded to the nearest dBm. The X-axis represents the signal strength in dBm, "
+                         "while the Y-axis lists the individual wireless client identifiers.")
                 report.build_objective()
                 graph = lf_bar_graph_horizontal(_data_set=[rssi_data],
                                                 _xaxis_name="Signal(-dBm)",
@@ -5057,7 +5077,7 @@ class Throughput(Realm):
                                     # Append average upload and download drop from filtered dataframe
                                     upload_drop.append(round(sum(upload_drop_col) / len(upload_drop_col), 2))
                                     download_drop.append(round(sum(download_drop_col) / len(download_drop_col), 2))
-                                    rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
+                                    rssi_data.append(self.average_rssi(rssi_col))
                                     avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
                                     # Calculate and append upload and download throughput to lists
                                     upload_list.append(str(round((int(self.cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
@@ -5076,7 +5096,7 @@ class Throughput(Realm):
                                     # Append 0 for upload data
                                     upload_data.append(0)
 
-                                    rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
+                                    rssi_data.append(self.average_rssi(rssi_col))
 
                                     # Calculate and append upload and download throughput to lists
                                     upload_list.append(str(round((int(self.cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
@@ -5097,7 +5117,7 @@ class Throughput(Realm):
                                     upload_list.append(str(round((int(self.cx_profile.side_a_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
                                     download_list.append(str(round((int(self.cx_profile.side_b_min_bps) / 1000000) / int(incremental_capacity_list[i]), 2)))
 
-                                    rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
+                                    rssi_data.append(self.average_rssi(rssi_col))
 
                                     # Append Average upload data from filtered dataframe
                                     upload_data.append(round(sum(upload_col) / len(upload_col), 2))
@@ -5123,7 +5143,7 @@ class Throughput(Realm):
                                     upload_drop.append(round(sum(upload_drop_col) / len(upload_drop_col), 2))
                                     download_drop.append(round(sum(download_drop_col) / len(download_drop_col), 2))
                                     # upload_data.append(filtered_df[[col for col in  filtered_df.columns if "Upload" in col][0]].values.tolist()[-1])
-                                    rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
+                                    rssi_data.append(self.average_rssi(rssi_col))
                                     avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
 
                                     # Calculate and append upload and download throughput to lists
@@ -5141,7 +5161,7 @@ class Throughput(Realm):
                                     download_data.append(round(sum(download_col) / len(download_col), 2))
                                     # Append 0 for upload data
                                     upload_data.append(0)
-                                    rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
+                                    rssi_data.append(self.average_rssi(rssi_col))
                                     avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
 
                                     # Calculate and append upload and download throughput to lists
@@ -5159,7 +5179,7 @@ class Throughput(Realm):
                                     # Calculate and append upload and download throughput to lists
                                     upload_list.append(str(round(int(self.cx_profile.side_a_min_bps) / 1000000, 2)) + "Mbps")
                                     download_list.append(str(round(int(self.cx_profile.side_b_min_bps) / 1000000, 2)) + "Mbps")
-                                    rssi_data.append(int(round(sum(rssi_col) / len(rssi_col), 2) * -1))
+                                    rssi_data.append(self.average_rssi(rssi_col))
                                     avg_rtt_data.append(filtered_df[[col for col in filtered_df.columns if "Average RTT " in col][0]].values.tolist()[-1])
 
                                     # Append average upload data from filtered dataframe
@@ -6427,6 +6447,14 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
             if args.wifi_analysis:
                 throughput.start_wifi_analysis(host=args.mgr, port=args.mgr_port,
                                                device_list=throughput.input_devices_list, ssid=args.ssid)
+            # The robot paths build their reports from inside perform_robo(), so the ping has to be
+            # started here to cover the whole movement; from_args() is a no-op without --bg_ping.
+            throughput.background_ping = lf_interop_bg_ping.from_args(
+                args,
+                host=args.mgr,
+                port=args.mgr_port,
+                device_list=throughput.input_devices_list,
+                default_target=args.upstream_port)
             throughput.perform_robo(args, clients_to_run)
             if throughput.background_ping:
                 throughput.background_ping.stop()
