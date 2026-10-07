@@ -32,6 +32,7 @@ pip_packages: list = [
     'scipy',
     'scp',
     'simple-geometry',
+    'tabulate',
     'websocket-client',
     'xlsxwriter',
     'pytesseract',
