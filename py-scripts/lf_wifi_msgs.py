@@ -831,6 +831,10 @@ class RealClientAnalysis(Realm):
         print(tabulate(remarks_df, headers='keys', tablefmt='fancy_grid'))
         return filtered_dev_list
 
+    def query_devices_1(self) -> None:
+        """Compatibility entry point for non-interactive device discovery."""
+        return self.populate_device_lookups()
+
     def populate_device_lookups(self) -> None:
         """Non-interactive device discovery: populates self.resource_id_list, self.windows_list,
         self.resource_id_to_abs and self.virtual_station_list from the devices already given in
