@@ -635,6 +635,9 @@ class BackgroundPing:
                 append_segment(status, start, end)
                 covered_until = max(covered_until, end)
 
+            if covered_until < duration:
+                append_segment('up', covered_until, duration)
+
             segments.extend(client_segments)
 
         if not clients or not segments:
@@ -892,7 +895,7 @@ class BackgroundPing:
 def add_arguments(parser):
     """Adds the shared background ping arguments to an interop script argument parser."""
     group = parser.add_argument_group('Background ping')
-    group.add_argument('--enable_bg_ping',
+    group.add_argument('--enable_bg_ping', '--bg_ping',
                        action='store_true',
                        help='Run a ping on the real clients in the background while the test runs and report its '
                             'statistics at the end of the report')
@@ -918,7 +921,7 @@ def from_args(args, host, port=8080, device_list=None, default_target=None):
     Returns None when the background ping was not requested or could not be started, so the
     calling script can keep the return value and call it unconditionally.
     """
-    if not getattr(args, 'enable_bg_ping', False):
+    if not (getattr(args, 'enable_bg_ping', False) or getattr(args, 'bg_ping', False)):
         return None
 
     target = getattr(args, 'bg_ping_target', None) or default_target
