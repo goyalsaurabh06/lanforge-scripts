@@ -199,6 +199,7 @@ from LANforge import LFUtils  # noqa: F401 E402
 realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
 from lf_report import lf_report  # noqa: E402
+import lf_interop_bg_ping  # noqa: E402
 from lf_graph import lf_bar_graph_horizontal, lf_bar_graph  # noqa: E402
 from lf_wifi_msgs import RealClientAnalysis  # noqa: E402
 # from lf_graph import lf_line_graph  # noqa: E402
@@ -2948,6 +2949,88 @@ class Throughput(Realm):
             report.build_table()
         except Exception as e:
             logger.warning("Wifi connectivity analysis could not be added to the report: %s", e)
+    def build_ping_key_findings(self):
+        """Turn the background ping's per-client packet loss/latency stats into plain-English
+        "Key Findings" sentences. Computed once per report, not once per iteration -- the
+        background ping covers the whole test duration rather than a single iteration.
+        """
+        background_ping = getattr(self, 'background_ping', None)
+        if not background_ping or not background_ping.stats:
+            return []
+
+        findings = []
+        rows = list(background_ping.stats.values())
+        total_clients = len(rows)
+
+        # 1. Connectivity -- did any client see packet loss on the background ping.
+        lossy_clients = [row for row in rows if row['sent'] and row['dropped'] > 0]
+        clean_clients = total_clients - len(lossy_clients)
+        if lossy_clients:
+            findings.append({
+                "type": "warning" if len(lossy_clients) > total_clients / 2 else "neutral",
+                "text": "During the test, {n} of {total} client{s} experienced packet loss on the background "
+                        "ping; the remaining {clean} maintained an uninterrupted connection throughout.".format(
+                            n=len(lossy_clients), total=total_clients, s="" if total_clients == 1 else "s",
+                            clean=clean_clients)
+            })
+        elif total_clients:
+            findings.append({
+                "type": "positive",
+                "text": "All {n} client{s} maintained an uninterrupted background-ping connection throughout "
+                        "the test, with no packet loss observed.".format(
+                            n=total_clients, s="" if total_clients == 1 else "s")
+            })
+
+        # 2. How much loss, and who was worst affected.
+        loss_values = [row['loss_percent'] for row in rows if row['sent']]
+        if loss_values:
+            avg_loss = sum(loss_values) / len(loss_values)
+            worst = max(rows, key=lambda row: row['loss_percent'])
+            if avg_loss < 2 and worst['loss_percent'] < 5:
+                findings.append({
+                    "type": "positive",
+                    "text": "Packet loss was minimal, averaging {avg:.2f}% across all clients, indicating "
+                            "reliable communication under load.".format(avg=avg_loss)
+                })
+            else:
+                findings.append({
+                    "type": "warning",
+                    "text": "Average packet loss across clients was {avg:.2f}%, with {name} the worst affected "
+                            "at {loss:.2f}%.".format(avg=avg_loss, name=worst['name'], loss=worst['loss_percent'])
+                })
+
+        # 3. Latency -- was it low and steady, or did some client drag the average up.
+        rtts = [row['avg_rtt'] for row in rows if row['avg_rtt']]
+        if rtts:
+            avg_rtt = sum(rtts) / len(rtts)
+            worst_rtt = max(rows, key=lambda row: row['avg_rtt'])
+            if avg_rtt < 20 and worst_rtt['avg_rtt'] < 50:
+                findings.append({
+                    "type": "positive",
+                    "text": "Latency remained low across all connected clients, averaging {avg:.1f} ms, "
+                            "indicating throughput results were not impacted by poor wireless "
+                            "conditions.".format(avg=avg_rtt)
+                })
+            else:
+                findings.append({
+                    "type": "neutral",
+                    "text": "Average ping latency across clients was {avg:.1f} ms, with {name} seeing the "
+                            "highest average round-trip time at {rtt:.1f} ms.".format(
+                                avg=avg_rtt, name=worst_rtt['name'], rtt=worst_rtt['avg_rtt'])
+                })
+
+        # 4. A client that never produced ping traffic is a setup problem worth calling out directly.
+        silent_clients = [row for row in rows if not row['sent'] and not row['recv']]
+        if silent_clients:
+            findings.append({
+                "type": "critical",
+                "text": "{n} client{s} produced no background-ping traffic at all ({names}) -- check that "
+                        "the ping command is runnable there.".format(
+                            n=len(silent_clients), s="" if len(silent_clients) == 1 else "s",
+                            names=", ".join(row['name'] for row in silent_clients))
+            })
+
+        return findings
 
     def generate_report(self, iterations_before_test_stopped_by_user, incremental_capacity_list, data=None, data1=None, report_path='', result_dir_name='Throughput_Test_report',
                         selected_real_clients_names=None, iot_summary=None):
@@ -3849,6 +3932,9 @@ class Throughput(Realm):
             self.build_iot_report_section(report, iot_summary)
         # wifi connectivity stats (connects/disconnects/scans/rejections) collected while the traffic was running
         self.add_wifi_analysis_to_report(report)
+        # ping statistics collected on the clients while the traffic was running
+        if getattr(self, 'background_ping', None):
+            self.background_ping.add_to_report(report)
         if self.device_issue_log:
             pd.DataFrame(self.device_issue_log).to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
         # report.build_custom()
@@ -4443,6 +4529,9 @@ class Throughput(Realm):
 
         # wifi connectivity stats (connects/disconnects/scans/rejections) collected while the traffic was running
         self.add_wifi_analysis_to_report(report)
+        # ping statistics collected on the clients while the traffic was running
+        if getattr(self, 'background_ping', None):
+            self.background_ping.add_to_report(report)
         if self.device_issue_log:
             pd.DataFrame(self.device_issue_log).to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
         # report.build_custom()
@@ -5264,6 +5353,8 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
                           help='Analyze real-client wifi-msgs (connects/disconnects/scans/association rejections) '
                                'for the duration of the test and include the results in the report')
 
+    lf_interop_bg_ping.add_arguments(parser)
+
     args = parser.parse_args()
 
     if args.help_summary:
@@ -5464,6 +5555,14 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
             logger.error("Incremental values given for selected devices are incorrect")
             return
 
+        # starting the ping on the selected clients, it keeps running until the traffic is stopped
+        throughput.background_ping = lf_interop_bg_ping.from_args(
+            args,
+            host=args.mgr,
+            port=args.mgr_port,
+            device_list=throughput.input_devices_list,
+            default_target=args.upstream_port)
+
         created_cxs = throughput.build()
         time.sleep(10)
         created_cxs = list(created_cxs.keys())
@@ -5474,6 +5573,9 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
                 throughput.start_wifi_analysis(host=args.mgr, port=args.mgr_port,
                                                device_list=throughput.input_devices_list, ssid=args.ssid)
             throughput.perform_robo(args, clients_to_run)
+            if throughput.background_ping:
+                throughput.background_ping.stop()
+                throughput.background_ping.cleanup()
             exit(1)
 
         if not throughput.precheck_all_created_cx_endpoints():
@@ -5567,6 +5669,8 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
     #     logger.info("connections upload {}".format(connections_upload))
     throughput.remove_missing_cx()
     throughput.stop()
+    if throughput.background_ping:
+        throughput.background_ping.stop()
     if args.postcleanup:
         throughput.cleanup()
     throughput.ensure_monitoring_data_collected()
@@ -5581,6 +5685,8 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
                 iot_summary = json.load(f)
     throughput.generate_report(list(set(iterations_before_test_stopped_by_user)), incremental_capacity_list, data=all_dataframes, data1=to_run_cxs_len, report_path=throughput.result_dir,
                                iot_summary=iot_summary)
+    if throughput.background_ping:
+        throughput.background_ping.cleanup()
     if throughput.dowebgui:
         # copying to home directory i.e home/user_name
         throughput.copy_reports_to_home_dir()
