@@ -3404,13 +3404,25 @@ class Throughput(Realm):
 
             channel_col = bssid_to_channel[col]
 
-            # Detect BSSID changes
-            mask = df[col] != df[col].shift()
-            filtered_df = df.loc[mask]
+            # A band steering event moves between two of the BSSIDs under test, so the previous and
+            # the current row both have to be one of them. That leaves out the very first row, a
+            # reconnect after a disconnect and a move to a BSSID outside the list.
+            bssid_series = df[col].astype(object)
+            previous_bssid = bssid_series.shift()
+            previous_channel = df[channel_col].astype(object).shift()
+            steered = bssid_series != previous_bssid
             if self.bssids:
-                filtered_df = df.loc[mask & df[col].isin(self.bssids)]
+                # LANforge reports the AP in whatever case the driver gives it, so compare normalised.
+                wanted = {bssid.strip().lower() for bssid in self.bssids}
+                normalised = bssid_series.map(lambda bssid: str(bssid).strip().lower())
+                steered &= normalised.shift().isin(wanted) & normalised.isin(wanted)
+            else:
+                steered &= previous_bssid.notna() & (previous_bssid != '-') & (bssid_series != '-')
+            filtered_df = df.loc[steered]
 
+            from_bssid_list = previous_bssid[steered].tolist()
             bssid_list = filtered_df[col].tolist()
+            from_channel_list = previous_channel[steered].tolist()
             channel_list = filtered_df[channel_col].tolist()
             timestamp_list = filtered_df['TIMESTAMP'].tolist()
             from_coordinate_list = filtered_df['From Coordinate'].tolist()
@@ -3420,8 +3432,9 @@ class Throughput(Realm):
             x_axis = list(bssid_counts.keys())      # BSSID values
             y_axis = [[float(i)] for i in list(bssid_counts.values())]
             if len(self.bssids) > 0:
+                steered_counts = Counter(str(bssid).strip().lower() for bssid in bssid_list)
                 x_axis = self.bssids
-                y_axis = [[float(bssid_counts.get(bssid, 0))] for bssid in self.bssids]
+                y_axis = [[float(steered_counts.get(bssid.strip().lower(), 0))] for bssid in self.bssids]
             device_name = col.replace('BSSID ', '')
             device_name = col.split()[-1]
             report.set_obj_html(
@@ -3466,8 +3479,10 @@ class Throughput(Realm):
             report.build_objective()
             table_df = {
                 "Timestamp": timestamp_list,
-                "BSSID": bssid_list,
-                "Channel": channel_list,
+                "From BSSID": from_bssid_list,
+                "To BSSID": bssid_list,
+                "From Channel": from_channel_list,
+                "To Channel": channel_list,
                 "From Coordinate": from_coordinate_list,
                 "To Coordinate": to_coordinate_list
             }
