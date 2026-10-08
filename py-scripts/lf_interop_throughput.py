@@ -296,7 +296,8 @@ class Throughput(Realm):
                  user_list=None, real_client_list=None, real_client_list1=None, hw_list=None, laptop_list=None, android_list=None, mac_list=None, windows_list=None, linux_list=None,
                  total_resources_list=None, working_resources_list=None, hostname_list=None, username_list=None, eid_list=None,
                  devices_available=None, input_devices_list=None, mac_id1_list=None, mac_id_list=None, overall_avg_rssi=None,
-                 coordinate_list=None, rotation_enabled=None, robo_ip=None, angle_list=None, do_bandsteering=False, total_cycles=1, bssids=None, duration_to_skip=None):
+                 coordinate_list=None, rotation_enabled=None, robo_ip=None, angle_list=None, do_bandsteering=False, do_roaming=False, total_cycles=1, bssids=None,
+                 duration_to_skip=None):
         super().__init__(lfclient_host=host,
                          lfclient_port=port)
         self.ssid_list = []
@@ -405,6 +406,7 @@ class Throughput(Realm):
         self.configured_devices_check = {}
         self.interopability_config = interopability_config
         self.do_bandsteering = do_bandsteering
+        self.do_roaming = do_roaming
         self.total_cycles = total_cycles
         self.bssids = bssids if bssids else []
         # Keep monitoring output stable when a client disconnects or temporarily disappears
@@ -3702,7 +3704,9 @@ class Throughput(Realm):
             if self.dowebgui is True and self.group_name:
                 shutil.move('overall_throughput.csv', report_path_date_time)
             elif self.do_bandsteering:
-                pass
+                # monitor() writes this to the working directory, so keep it with the report
+                if os.path.exists('throughput_data.csv'):
+                    shutil.move('throughput_data.csv', report_path_date_time)
             else:
                 shutil.move('throughput_data.csv', report_path_date_time)
             logger.info("path: {}".format(report_path))

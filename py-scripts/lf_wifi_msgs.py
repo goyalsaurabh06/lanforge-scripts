@@ -796,7 +796,9 @@ class RealClientAnalysis(Realm):
                 if not port_data['phantom'] and not port_data['down'] \
                         and port_data['parent dev'] == "wiphy0" and port_data['alias'] != 'p2p0':
                     for data in all_devices:
-                        res_id = "{}.{}".format(data["shelf"], data["resource"])
+                        # On a cluster an ADB device's "shelf" is the node managing it over ADB, not
+                        # the shelf of its own port, so prefer the eid when the device carries one.
+                        res_id = data.get("eid") or "{}.{}".format(data["shelf"], data["resource"])
                         if res_id + "." in port:
                             self.resource_id_list.append(res_id)
                             filtered_all_devices.append(data)
@@ -857,7 +859,9 @@ class RealClientAnalysis(Realm):
                 if not port_data['phantom'] and not port_data['down'] \
                         and port_data['parent dev'] == "wiphy0" and port_data['alias'] != 'p2p0':
                     for data in all_devices:
-                        res_id = "{}.{}".format(data["shelf"], data["resource"])
+                        # On a cluster an ADB device's "shelf" is the node managing it over ADB, not
+                        # the shelf of its own port, so prefer the eid when the device carries one.
+                        res_id = data.get("eid") or "{}.{}".format(data["shelf"], data["resource"])
                         if res_id + "." in port:
                             self.resource_id_list.append(res_id)
         self.get_virtual_stations()
