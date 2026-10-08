@@ -433,6 +433,7 @@ import time      # noqa: E402
 import traceback  # noqa: E402
 import copy     # noqa: E402
 import shutil   # noqa: E402
+import urllib.request  # noqa: E402
 from multiprocessing import Event, Lock, Manager, Value  # noqa: E402
 from types import SimpleNamespace  # noqa: E402
 
@@ -650,6 +651,48 @@ class MultiTraffic(Realm):
         self.start_tests(self.test_map, tests_to_run_series, tests_to_run_parallel, self.duration_dict, self.args, self.args_dict)
 
     def start_tests(self, test_map, tests_to_run_series, tests_to_run_parallel, duration_dict, args, args_dict):
+        """Collect device diagnostics throughout execution, including failed reports."""
+        selected = set(tests_to_run_series) | set(tests_to_run_parallel)
+        devices = set()
+        for test in selected:
+            value = getattr(args, test.replace('_test', '') + '_device_list', None)
+            if value:
+                devices.update(device.strip() for device in value.split(',') if device.strip())
+        if 'zoom_test' in selected and args.zoom_host:
+            devices.add(args.zoom_host.strip())
+        self.device_log_records = manager.list()
+        self.device_log_active = manager.dict()
+        secrets = [str(value) for key, value in vars(args).items()
+                   if value and any(word in key.lower() for word in ('passwd', 'password', 'secret', 'token'))]
+        handler = DeviceDiagnosticHandler(self.device_log_records, secrets)
+        logging.getLogger().addHandler(handler)
+        stop = multiprocessing.Event()
+        monitor = multiprocessing.Process(target=monitor_device_states,
+                                          args=(self.api_url, sorted(devices), self.device_log_active, self.device_log_records, stop))
+        fallback = os.path.abspath(os.path.join('base_class_logs', 'devices_' + datetime.datetime.now().strftime('%Y%m%d_%H%M%S_%f'), 'devicelogs.txt'))
+        try:
+            monitor.start()
+            self._start_tests_with_diagnostics(test_map, tests_to_run_series, tests_to_run_parallel, duration_dict, args, args_dict)
+        finally:
+            stop.set()
+            if monitor.pid is not None:
+                monitor.join(timeout=10)
+                if monitor.is_alive():
+                    monitor.terminate()
+                    monitor.join(timeout=2)
+            logging.getLogger().removeHandler(handler)
+            folder = getattr(self, 'report_path_date_time', None)
+            destination = os.path.join(os.path.abspath(folder), 'devicelogs.txt') if folder else fallback
+            os.makedirs(os.path.dirname(destination), exist_ok=True)
+            with open(destination, 'w', encoding='utf-8') as device_log:
+                device_log.write('Device API diagnostics (UTC). Samples every 5 seconds; brief outages may fall between samples.\n'
+                                 'Resource UP does not guarantee that its Wi-Fi port is usable. Missing metrics alone do not prove a connectivity failure.\n')
+                for record in sorted(list(self.device_log_records)):
+                    device_log.write(record + '\n')
+                device_log.write('Test results: ' + json.dumps(list(test_results_list), default=str) + '\n')
+            logger.info('Device diagnostics saved to %s', destination)
+
+    def _start_tests_with_diagnostics(self, test_map, tests_to_run_series, tests_to_run_parallel, duration_dict, args, args_dict):
         """
         Start and manage execution of configured traffic test suites.
 
@@ -813,7 +856,7 @@ class MultiTraffic(Realm):
                 for t in series_threads:
                     t.start()
                     t.join()
-                    record_missed_process_result(t)
+                    record_missed_process_result(t, self)
                     self.series_index += 1
 
                 # Then run parallel tests
@@ -829,7 +872,7 @@ class MultiTraffic(Realm):
                 self.parallel_index = 0
                 for t in parallel_threads:
                     t.join()
-                    record_missed_process_result(t)
+                    record_missed_process_result(t, self)
                     self.parallel_index += 1
 
             else:
@@ -839,7 +882,7 @@ class MultiTraffic(Realm):
 
                 for t in parallel_threads:
                     t.join()
-                    record_missed_process_result(t)
+                    record_missed_process_result(t, self)
 
                 if series_threads:
                     self.misc_clean_up(layer3=True, layer4=True, generic=True, port_5000=iszoom, port_5002=isyt, port_5003=isrb)
@@ -850,7 +893,7 @@ class MultiTraffic(Realm):
                 for t in series_threads:
                     t.start()
                     t.join()
-                    record_missed_process_result(t)
+                    record_missed_process_result(t, self)
         else:
             logger.error("Provide either --parallel_tests or --series_tests")
             exit(1)
@@ -14593,7 +14636,7 @@ or a combination of both, with configurable execution priority.
     multi_traffic_obj.start_tests(test_map, tests_to_run_series, tests_to_run_parallel, duration_dict, args, args_dict)
 
 
-def record_missed_process_result(process):
+def record_missed_process_result(process, multi_traffic_obj=None):
     """Record a Test Results Summary row for a real-app test process that
     terminated without going through run_test_safe's own bookkeeping.
 
@@ -14608,6 +14651,10 @@ def record_missed_process_result(process):
     if not isinstance(process, multiprocessing.Process):
         return
     label = getattr(process, "test_label", None)
+    if label and multi_traffic_obj is not None and hasattr(multi_traffic_obj, 'device_log_records'):
+        multi_traffic_obj.device_log_active.pop(label, None)
+        multi_traffic_obj.device_log_records.append(
+            f'{datetime.datetime.now(datetime.timezone.utc).isoformat()} PROCESS_EXIT {label} exitcode={process.exitcode}')
     if not label or process.exitcode in (0, None):
         return
     if any(entry.get("test_name") == label for entry in test_results_list):
@@ -14618,6 +14665,56 @@ def record_missed_process_result(process):
         "Duration": getattr(process, "test_duration", ""),
         "status": "NOT EXECUTED"
     })
+
+
+class DeviceDiagnosticHandler(logging.Handler):
+    """Capture warnings/errors across test workers without recording credentials."""
+
+    def __init__(self, records, secrets):
+        super().__init__(logging.WARNING)
+        self.records = records
+        self.secrets = secrets
+
+    def emit(self, record):
+        try:
+            message = self.format(record)
+            for secret in sorted(self.secrets, key=len, reverse=True):
+                message = message.replace(secret, '[REDACTED]')
+            timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            self.records.append(f'{timestamp} {record.levelname} pid={record.process} thread={record.threadName}: {message}')
+        except Exception:
+            self.handleError(record)
+
+
+def monitor_device_states(api_url, devices, active, records, stop):
+    """Poll read-only API state independently of threads and real-app child exits."""
+    fields = ('phantom', 'down', 'admin down', 'alias', 'parent dev', 'ip', 'ap', 'signal', 'rx-rate', 'tx-rate', 'hw version')
+    while True:
+        timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        context = ', '.join(sorted(active.keys())) or 'between tests / setup / cleanup'
+        for endpoint, key in (('/resource/all', 'resources'), ('/port/all', 'interfaces')):
+            try:
+                with urllib.request.urlopen(api_url + endpoint, timeout=3) as response:
+                    payload = json.load(response)
+                entries = payload.get(key)
+                if not isinstance(entries, (list, dict)):
+                    raise ValueError(f'API response has no {key} collection')
+                entries = entries if isinstance(entries, list) else [entries]
+                found = set()
+                for entry in entries:
+                    for eid, data in entry.items():
+                        device = '.'.join(eid.split('.')[:2])
+                        if device not in devices or not isinstance(data, dict):
+                            continue
+                        found.add(device)
+                        state = {field: data[field] for field in fields if field in data}
+                        records.append(f'{timestamp} API {endpoint} device={eid} tests=[{context}] {json.dumps(state, default=str, sort_keys=True)}')
+                for device in sorted(set(devices) - found):
+                    records.append(f'{timestamp} API {endpoint} device={device} tests=[{context}] MISSING_FROM_API')
+            except Exception as error:
+                records.append(f'{timestamp} API {endpoint} tests=[{context}] QUERY_FAILED: {type(error).__name__}: {error}')
+        if stop.wait(5):
+            break
 
 
 def run_test_safe(test_func, test_name, args, multi_traffic_obj, duration):
@@ -14639,6 +14736,18 @@ def run_test_safe(test_func, test_name, args, multi_traffic_obj, duration):
     def wrapper():
         """Executes the test function and captures its result or error state."""
         global error_logs  # noqa: F824
+
+        records = getattr(multi_traffic_obj, 'device_log_records', None)
+        active = getattr(multi_traffic_obj, 'device_log_active', None)
+        worker_handler = None
+        if records is not None:
+            active[test_name] = True
+            records.append(f'{datetime.datetime.now(datetime.timezone.utc).isoformat()} TEST_START {test_name}')
+            if not any(isinstance(handler, DeviceDiagnosticHandler) for handler in logging.getLogger().handlers):
+                secrets = [str(value) for key, value in vars(args).items()
+                           if value and any(word in key.lower() for word in ('passwd', 'password', 'secret', 'token'))]
+                worker_handler = DeviceDiagnosticHandler(records, secrets)
+                logging.getLogger().addHandler(worker_handler)
 
         try:
             result = test_func(args, multi_traffic_obj)
@@ -14671,6 +14780,13 @@ def run_test_safe(test_func, test_name, args, multi_traffic_obj, duration):
             full_error = error_msg + tb_str + "\n"
             error_logs += full_error
             test_results_list.append({"test_name": test_name, "Duration": duration, "status": status})
+
+        finally:
+            if records is not None:
+                records.append(f'{datetime.datetime.now(datetime.timezone.utc).isoformat()} TEST_END {test_name}')
+                active.pop(test_name, None)
+            if worker_handler is not None:
+                logging.getLogger().removeHandler(worker_handler)
 
     return wrapper
 
