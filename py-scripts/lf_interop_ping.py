@@ -55,6 +55,11 @@
     python3 lf_interop_ping.py --mgr 192.168.244.97 --real --target 192.168.1.3 --ping_interval 1 --ping_duration 1   --group_name grp3 --file_name g219 --profile_name Open5
      --device_csv_name device.csv --server_ip 192.168.204.60
 
+    EXAMPLE-11:
+    Command Line Interface to run ping test on existing virtual stations along with real clients
+    python3 lf_interop_ping.py --mgr 192.168.200.103 --real --virtual --use_existing_station_list --existing_station_list 1.1.sta0000,1.1.sta0001
+    --target 192.168.1.3 --ping_interval 1 --ping_duration 1 --use_default_config
+
     SCRIPT_CLASSIFICATION : Test
 
     SCRIPT_CATEGORIES: Performance, Functional, Report Generation
@@ -158,7 +163,8 @@ class Ping(Realm):
                  get_live_view: bool = None,
                  result_dir: str = None,
                  dowebgui: bool = False,
-                 test_name: str = None):
+                 test_name: str = None,
+                 use_existing_station_list: bool = False):
         super().__init__(lfclient_host=host,
                          lfclient_port=port)
         self.ssid_list = []
@@ -179,6 +185,14 @@ class Ping(Realm):
         self.real_sta_data_dict = {}
         self.enable_virtual = virtual
         self.enable_real = real
+        self.use_existing_station_list = use_existing_station_list
+        # subset of sta_list that are pre-existing stations, to be left alone by buildstation()/cleanup();
+        # any station in sta_list but not in this list is treated as newly created by the test
+        self.existing_sta_list = []
+        # stations actually created by buildstation() this run, set explicitly rather than inferred from
+        # sta_list so that cleanup() can never accidentally target a real or pre-existing station, even if
+        # sta_list later gets other EIDs merged into it (e.g. main() appends real_sta_list before the test runs)
+        self.created_sta_list = []
         self.duration = duration
         self.android = 0
         self.virtual = 0
@@ -285,13 +299,22 @@ class Ping(Realm):
                     self.generic_endps_profile.created_endp.append(endp_name)
                     self.generic_endps_profile.created_cx.append('CX_{}'.format(endp_name))
 
-        if (self.enable_virtual):
+        # pre-existing stations belong to the user, so they are left as-is; only their generic endpoints are cleaned up above.
+        # Once buildstation() has run, created_sta_list is the authoritative, explicit removal target — this is
+        # immune to self.sta_list later getting real_sta_list merged into it (see main()). Before buildstation()
+        # has run (the precleanup call), created_sta_list is still empty, so fall back to clearing any stale
+        # leftover ports that share the names this run is about to create (sta_list is virtual-only at that point).
+        if self.created_sta_list:
+            new_sta_list = self.created_sta_list
+        else:
+            new_sta_list = [station for station in self.sta_list if station not in self.existing_sta_list and station not in self.real_sta_list]
+        if (self.enable_virtual and new_sta_list):
             # removing virtual stations if existing
-            for station in self.sta_list:
+            for station in new_sta_list:
                 logger.info('Removing the station {} if exists'.format(station))
                 self.rm_port(station, check_exists=True)
 
-            if (not LFUtils.wait_until_ports_disappear(base_url=self.host, port_list=self.sta_list, debug=self.debug)):
+            if (not LFUtils.wait_until_ports_disappear(base_url=self.host, port_list=new_sta_list, debug=self.debug)):
                 logger.info('All stations are not removed or a timeout occured.')
                 logger.error('Aborting the test.')
                 exit(0)
@@ -339,19 +362,29 @@ class Ping(Realm):
         return d_list
 
     def buildstation(self):
-        logger.info('Creating Stations {}'.format(self.sta_list))
-        for station_index in range(len(self.sta_list)):
-            shelf, resource, port = self.sta_list[station_index].split('.')
+        # pre-existing stations (from --existing_station_list) are left untouched, and real stations
+        # (which may already be merged into sta_list, depending on caller) are never built here either;
+        # only the remaining, newly requested virtual stations are created
+        new_sta_list = [station for station in self.sta_list if station not in self.existing_sta_list and station not in self.real_sta_list]
+        if not new_sta_list:
+            return
+        # record exactly what this run is about to create, so cleanup() has an unambiguous
+        # removal target regardless of what else later gets merged into sta_list
+        self.created_sta_list = new_sta_list
+        logger.info('Creating Stations {}'.format(new_sta_list))
+        for station in new_sta_list:
+            shelf, resource, port = station.split('.')
             logger.info('{} {} {}'.format(shelf, resource, port))
             station_object = StationProfile(lfclient_url='http://{}:{}'.format(self.host, self.port), local_realm=self, ssid=self.ssid,
                                             ssid_pass=self.password, security=self.security, number_template_='00', up=True, resource=resource, shelf=shelf)
             station_object.use_security(
                 security_type=self.security, ssid=self.ssid, passwd=self.password)
 
-            station_object.create(radio=self.radio, sta_names_=[
-                self.sta_list[station_index]])
-        station_object.admin_up()
-        if self.wait_for_ip([self.sta_list[station_index]]):
+            station_object.create(radio=self.radio, sta_names_=[station])
+            # admin_up() operates on this station_object's own station_names, so it must be
+            # called per station rather than once after the loop
+            station_object.admin_up()
+        if self.wait_for_ip(new_sta_list):
             self._pass("All stations got IPs", print_=True)
         else:
             self._fail(
@@ -1142,16 +1175,41 @@ def validate_args(args):
     if args.virtual is False and args.real is False:
         logger.error('Atleast one of --real or --virtual is required')
         exit(1)
-    if args.virtual is True and args.radio is None:
+    if args.use_existing_station_list and not args.virtual:
+        logger.error('--use_existing_station_list requires --virtual')
+        exit(1)
+    if args.use_existing_station_list and not args.existing_station_list:
+        logger.error('--use_existing_station_list specified, but no stations provided. See --existing_station_list')
+        exit(1)
+    if args.existing_station_list and not args.use_existing_station_list:
+        logger.error('--existing_station_list specified, but --use_existing_station_list is not specified')
+        exit(1)
+    if args.use_existing_station_list:
+        for station in args.existing_station_list.split(','):
+            if len(station.split('.')) != 3:
+                logger.error('Existing station {} must be a full EID like 1.1.sta0000'.format(station))
+                exit(1)
+    if args.virtual is True and not args.use_existing_station_list and args.radio is None:
         logger.error('--radio required')
         exit(1)
-    if args.virtual is True and args.ssid is None:
+    # a bare radio name like 'wiphy2' is silently rejected by add_sta; catch it here instead of
+    # hanging in wait_until_ports_appear waiting for a station that was never created
+    if args.radio and len(args.radio.split('.')) != 3:
+        logger.error('--radio must be a full EID like 1.1.wiphy2')
+        exit(1)
+    if args.virtual is True and not args.use_existing_station_list and args.ssid is None:
+        logger.error('--ssid required for virtual stations')
+        exit(1)
+    # --radio alongside --use_existing_station_list means new stations are created in addition
+    # to the existing ones, so --ssid is required for those new stations
+    if args.use_existing_station_list and args.radio and args.ssid is None:
         logger.error('--ssid required for virtual stations')
         exit(1)
     if args.ssid and args.passwd and args.group_name and args.profile_name:
         logger.error('either --ssid,--password,--security or --profile_name,--group_name should be given')
         exit(1)
-    if args.use_default_config is False and args.group_name is None and args.file_name is None and args.profile_name is None:
+    # Wi-Fi configuration applies only to real devices
+    if args.real and args.use_default_config is False and args.group_name is None and args.file_name is None and args.profile_name is None:
         if args.ssid is None:
             logger.error('--ssid required for Wi-Fi configuration')
             exit(1)
@@ -1353,6 +1411,15 @@ effectively over the network and pinpoint potential issues affecting connectivit
                           action="store_true",
                           help='specify this flag if the test should run on real clients')
 
+    optional.add_argument('--use_existing_station_list',
+                          action='store_true',
+                          help='specify this flag to run the test on already existing virtual stations instead of creating new ones. '
+                               'The stations are not created or removed by the test')
+
+    optional.add_argument('--existing_station_list',
+                          type=str,
+                          help='full EIDs of the existing virtual stations separated by comma. Example: 1.1.sta0000,1.1.sta0001')
+
     optional.add_argument('--use_default_config',
                           action='store_true',
                           help='specify this flag if wanted to proceed with existing Wi-Fi configuration of the devices')
@@ -1470,18 +1537,27 @@ effectively over the network and pinpoint potential issues affecting connectivit
     # ping object creation
     ping = Ping(host=mgr_ip, port=mgr_port, ssid=ssid, security=security, password=password, radio=radio,
                 lanforge_password=mgr_password, target=target, interval=interval, sta_list=[], virtual=args.virtual, real=args.real, duration=duration, debug=debug, csv_name=args.device_csv_name,
-                expected_passfail_val=args.expected_passfail_value, wait_time=args.wait_time, group_name=group_name)
+                expected_passfail_val=args.expected_passfail_value, wait_time=args.wait_time, group_name=group_name,
+                use_existing_station_list=args.use_existing_station_list)
 
     # changing the target from port to IP
     ping.change_target_to_ip()
 
-    # creating virtual stations if --virtual flag is specified
-    if (args.virtual):
+    # using the existing virtual stations if --use_existing_station_list is specified
+    if (args.use_existing_station_list):
+        ping.existing_sta_list = args.existing_station_list.split(',')
+        ping.sta_list = list(ping.existing_sta_list)
+        logger.info('Using existing virtual stations: {}'.format(ping.sta_list))
 
+    # creating virtual stations if --virtual flag is specified and a radio is given; this adds to
+    # (rather than replaces) any existing stations selected above
+    if (args.virtual and radio):
         logger.info('Proceeding to create {} virtual stations on {}'.format(num_sta, radio))
         station_list = LFUtils.portNameSeries(
             prefix_='sta', start_id_=0, end_id_=num_sta - 1, padding_number_=100000, radio=radio)
-        ping.sta_list = station_list
+        # avoid naming collisions with any existing stations already selected above
+        station_list = [station for station in station_list if station not in ping.sta_list]
+        ping.sta_list += station_list
         if (debug):
             logger.info('Virtual Stations: {}'.format(station_list).replace(
                 '[', '').replace(']', '').replace('\'', ''))
@@ -1556,7 +1632,7 @@ effectively over the network and pinpoint potential issues affecting connectivit
     # station precleanup
     ping.cleanup()
 
-    # building station if virtual
+    # building station if virtual; buildstation() itself skips any pre-existing stations
     if (args.virtual):
         ping.buildstation()
 
