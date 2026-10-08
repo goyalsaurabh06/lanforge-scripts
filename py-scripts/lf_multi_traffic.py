@@ -14688,7 +14688,8 @@ class DeviceDiagnosticHandler(logging.Handler):
 
 def monitor_device_states(api_url, devices, active, records, stop):
     """Poll read-only API state independently of threads and real-app child exits."""
-    fields = ('phantom', 'down', 'admin down', 'alias', 'parent dev', 'ip', 'ap', 'signal', 'rx-rate', 'tx-rate', 'hw version')
+    fields = ('hostname', 'name', 'phantom', 'down', 'admin down', 'alias', 'parent dev', 'ip', 'ap', 'signal', 'rx-rate', 'tx-rate', 'hw version')
+    device_names = {}
     while True:
         timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
         context = ', '.join(sorted(active.keys())) or 'between tests / setup / cleanup'
@@ -14707,12 +14708,36 @@ def monitor_device_states(api_url, devices, active, records, stop):
                         if device not in devices or not isinstance(data, dict):
                             continue
                         found.add(device)
+                        if endpoint == '/resource/all':
+                            device_names[device] = data.get('hostname') or data.get('name') or device_names.get(device, 'UNKNOWN')
+                        name = device_names.get(device, 'UNKNOWN (resource API did not provide a name)')
                         state = {field: data[field] for field in fields if field in data}
-                        records.append(f'{timestamp} API {endpoint} device={eid} tests=[{context}] {json.dumps(state, default=str, sort_keys=True)}')
+                        reasons = []
+                        for flag, explanation in (
+                                ('phantom', 'API marks this resource/port phantom (unavailable to LANforge)'),
+                                ('down', 'API marks this port down'),
+                                ('admin down', 'API marks this port administratively disabled')):
+                            if str(data.get(flag, '')).lower() in ('true', '1', 'yes'):
+                                reasons.append(explanation)
+                        if reasons:
+                            status = 'UNAVAILABLE'
+                            reason = '; '.join(reasons) + '. Underlying disconnect cause is not provided by these flags.'
+                        elif 'phantom' in data or 'down' in data:
+                            status = 'NO_UNAVAILABLE_FLAG'
+                            reason = 'API does not mark this resource/port unavailable; this does not confirm application connectivity.'
+                        else:
+                            status = 'UNKNOWN'
+                            reason = 'API response does not include availability flags.'
+                        records.append(f'{timestamp} device_name={name!r} resource={device} port={eid if key == "interfaces" else "N/A"} '
+                                       f'tests=[{context}] status={status} reason={reason} API={endpoint} raw_state={json.dumps(state, default=str, sort_keys=True)}')
                 for device in sorted(set(devices) - found):
-                    records.append(f'{timestamp} API {endpoint} device={device} tests=[{context}] MISSING_FROM_API')
+                    records.append(f'{timestamp} device_name={device_names.get(device, "UNKNOWN")!r} resource={device} tests=[{context}] '
+                                   f'status=MISSING_FROM_API reason=Requested device has no entry in {key}; API did not provide the underlying cause. API={endpoint}')
             except Exception as error:
-                records.append(f'{timestamp} API {endpoint} tests=[{context}] QUERY_FAILED: {type(error).__name__}: {error}')
+                for device in devices:
+                    records.append(f'{timestamp} device_name={device_names.get(device, "UNKNOWN")!r} resource={device} tests=[{context}] '
+                                   f'status=QUERY_FAILED reason=Cannot determine device connectivity because the API request failed. '
+                                   f'API={endpoint} error={type(error).__name__}: {error}')
         if stop.wait(5):
             break
 
