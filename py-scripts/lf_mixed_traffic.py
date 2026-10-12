@@ -2053,8 +2053,8 @@ class Mixed_Traffic(Realm):
                         len(previous), len(current)))
                 elif blank and len(blank) != previous_blank:
                     # Only on change, so a slow build does not fill the log.
-                    logger.info("Waiting for SSID on {} of {} station(s)".format(
-                        len(blank), len(current)))
+                    logger.info("Waiting for SSID on {} of {} station(s): {}".format(
+                        len(blank), len(current), blank))
                 stable = 0
 
             previous = current
@@ -2062,7 +2062,7 @@ class Mixed_Traffic(Realm):
             if time.time() >= deadline:
                 if blank:
                     logger.warning("{} of {} station(s) still had no SSID after {}s; continuing "
-                                   "(band may read '-')".format(len(blank), len(current), timeout_sec))
+                                   "(band may read '-'): {}".format(len(blank), len(current), timeout_sec, blank))
                 else:
                     logger.warning("Scenario stations had not settled after {}s; continuing with "
                                    "{} station port(s)".format(timeout_sec, len(current)))
