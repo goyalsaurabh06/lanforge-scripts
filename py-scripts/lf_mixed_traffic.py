@@ -145,6 +145,7 @@ INCLUDE_IN_README: False
 """
 import argparse
 import asyncio
+import http.client
 import importlib
 import json
 import logging
@@ -2098,6 +2099,51 @@ class Mixed_Traffic(Realm):
                 return False
             time.sleep(poll_sec)
 
+    def wait_for_station_ips(self, station_list, timeout_sec=300, poll_sec=2):
+        """Wait until every station in station_list has an IPv4 address.
+
+        Realm.wait_for_ip() does one /port GET per station and loops with no
+        pause, so a scenario's worth of stations is a constant stream of requests
+        at the GUI while it is still busy bringing those stations up -- and it
+        does not survive the GUI dropping one of them ("Remote end closed
+        connection without response" ends the whole run). This reads /port/list
+        once per poll instead and treats a failed read as "not ready yet".
+
+        Returns True once all stations have an IP, False if timeout_sec passed first.
+        """
+        waiting_states = ("0.0.0.0", "NA", "", "DELETED", "AUTO")
+        deadline = time.time() + timeout_sec
+        previous_pending = None
+        while True:
+            pending = list(station_list)
+            read_ok = False
+            try:
+                response = super().json_get("/port/list?fields=alias,ip,port+type")
+                ips = {}
+                for entry in (response or {}).get('interfaces', []):
+                    for name, details in entry.items():
+                        if isinstance(details, dict):
+                            ips[name] = str(details.get('ip') or '')
+                pending = [sta for sta in station_list if ips.get(sta, '') in waiting_states]
+                read_ok = True
+            except (OSError, http.client.HTTPException) as e:
+                # URLError, ConnectionError and RemoteDisconnected all land here.
+                logger.warning("Could not read station IPs from LANforge ({}); retrying".format(e))
+
+            if not pending:
+                return True
+            if read_ok:
+                if len(pending) != previous_pending:
+                    # Only on change, so a slow DHCP server does not fill the log.
+                    logger.info("Waiting for IP on {} of {} station(s): {}".format(
+                        len(pending), len(station_list), pending))
+                previous_pending = len(pending)
+            if time.time() >= deadline:
+                logger.warning("{} of {} station(s) still had no IP after {}s: {}".format(
+                    len(pending), len(station_list), timeout_sec, pending))
+                return False
+            time.sleep(poll_sec)
+
     @staticmethod
     def band_for_port(interface_details):
         """Work out a station's band from its /port/list entry.
@@ -3914,8 +3960,7 @@ INCLUDE_IN_README: False
 
         logger.info("Waiting for scenario stations to get an IP (up to {})".format(
             args.station_ip_wait_time))
-        if Realm.wait_for_ip(self=mixed_obj, station_list=mixed_obj.station_list,
-                             timeout_sec=station_ip_wait_secs):
+        if mixed_obj.wait_for_station_ips(mixed_obj.station_list, timeout_sec=station_ip_wait_secs):
             mixed_obj._pass("All stations got IPs", print_=True)
             mixed_obj._pass("Station build finished", print_=True)
         else:
