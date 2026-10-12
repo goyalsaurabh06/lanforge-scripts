@@ -1843,6 +1843,7 @@ class Mixed_Traffic(Realm):
             'band_list': list()
         }
         real_device_ports = set(self.base_interop_profile.get_devices())
+        real_device_resources = self._real_device_resources()
 
         response = super().json_get(
             "/port/list?fields=_links,parent+dev,ssid,alias,device,port+type,key/phrase,security,channel")
@@ -1852,7 +1853,7 @@ class Mixed_Traffic(Realm):
                     if not isinstance(interface_details, dict):
                         logger.debug("Non-dictionary entry: {}".format(interface_name))
                         continue
-                    if interface_name in real_device_ports:
+                    if interface_name in real_device_ports or self._port_resource(interface_name) in real_device_resources:
                         logger.debug("Skipping real device port: {}".format(interface_name))
                         continue
                     alias = interface_details.get('alias')
@@ -1965,6 +1966,28 @@ class Mixed_Traffic(Realm):
                     }
         return ports
 
+    def _real_device_resources(self):
+        """Resource ids ('shelf.resource') that are real devices rather than LANforge systems.
+
+        The same signal RealDevice.get_devices() uses -- a real device's resource
+        does not run LANforge's "ct-kernel" -- but taken per resource, because
+        get_devices() only lists real ports that are currently up. A real device
+        that is down or not associated is missing from it, and would otherwise be
+        taken for one of the scenario's own stations.
+        """
+        resources = set()
+        response = super().json_get("/resource/all")
+        for entry in self.base_interop_profile._resource_list(response):
+            for resource_id, details in entry.items():
+                if isinstance(details, dict) and not details.get('ct-kernel', True):
+                    resources.add(resource_id)
+        return resources
+
+    @staticmethod
+    def _port_resource(port_name):
+        """'1.2.wlan0' -> '1.2'."""
+        return '.'.join(port_name.split('.')[:2])
+
     def _sta_port_states(self):
         """{port name: is it admin down?} for every WIFI-STA port."""
         return {name: fields['down'] for name, fields in self._sta_port_fields().items()}
@@ -2037,8 +2060,14 @@ class Mixed_Traffic(Realm):
         previous = None
         previous_blank = None
         stable = 0
+        # Real devices are not built by the scenario, and one that is not
+        # associated never gets an SSID, so waiting on it would run to the timeout.
+        real_device_resources = self._real_device_resources()
+        if real_device_resources:
+            logger.info("Not waiting on real device resource(s): {}".format(sorted(real_device_resources)))
         while True:
-            ports = self._sta_port_fields()
+            ports = {name: fields for name, fields in self._sta_port_fields().items()
+                     if self._port_resource(name) not in real_device_resources}
             current = sorted(ports)
             blank = [name for name in current if not ports[name]['ssid']]
 
