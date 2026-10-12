@@ -1907,11 +1907,17 @@ class Mixed_Traffic(Realm):
                                                                         local_lf_report_dir=self.report_path,
                                                                         port_reset_args=port_reset_args)
             self.port_reset_test_obj.setup()
+            logger.info("Port Reset test started at {}".format(datetime.datetime.now()))
             self.port_reset_test_obj.run()
+            logger.info("Port Reset test finished at {}, LANforge report location: {}".format(
+                datetime.datetime.now(), self.port_reset_test_obj.lf_report_dir))
             self.port_reset_test_status = True
             if conn:
                 conn.send([self.port_reset_test_obj, True])
-        except Exception as e:
+        except BaseException as e:
+            # BaseException: cv_test_manager calls exit(1) on some failures, which would
+            # otherwise end this process without a word about why Port Reset is missing.
+            logger.error("Port Reset test failed at {}: {!r}".format(datetime.datetime.now(), e))
             logging.exception(e)
             self.port_reset_test_status = False
             if conn:
@@ -2441,7 +2447,19 @@ class Mixed_Traffic(Realm):
             self.lf_report_mt.build_table()
 
             port_reset_lf_report_dir = getattr(self.port_reset_test_obj, 'lf_report_dir', None)
-            if self.port_reset and self.port_reset_test_status and port_reset_lf_report_dir:
+            port_reset_missing_reason = None
+            if self.port_reset and self.port_reset_args and not self.port_reset_test_status:
+                port_reset_missing_reason = "The Port Reset test did not complete; see the console log for the error."
+            elif self.port_reset and self.port_reset_args and not port_reset_lf_report_dir:
+                port_reset_missing_reason = "The Port Reset test ended without LANforge reporting a report location."
+            elif self.port_reset and self.port_reset_args and not self.pull_report:
+                port_reset_missing_reason = ("The Port Reset report was left on LANforge at {}; run with --pull_report "
+                                             "to include its stats here.".format(port_reset_lf_report_dir))
+            if port_reset_missing_reason:
+                logger.error("Port Reset stats are not in the report: {}".format(port_reset_missing_reason))
+                self.lf_report_mt.set_obj_html(_obj_title="Port Reset Test", _obj=port_reset_missing_reason)
+                self.lf_report_mt.build_objective()
+            elif self.port_reset and self.port_reset_test_status and port_reset_lf_report_dir:
                 # Port Reset stats image reporting in mixed traffic, shown before the individual test reports
                 port_reset_report_dir = os.path.join(self.report_path, os.path.basename(port_reset_lf_report_dir))
                 port_reset_kpi_image = None
@@ -2461,6 +2479,10 @@ class Mixed_Traffic(Realm):
                     self.lf_report_mt.build_graph()
                 else:
                     logger.warning("Port Reset KPI image not found in {}".format(port_reset_report_dir))
+                    self.lf_report_mt.set_obj_html(
+                        _obj_title="Port Reset Test",
+                        _obj="The Port Reset report was pulled, but no KPI chart was found in {}.".format(port_reset_report_dir))
+                    self.lf_report_mt.build_objective()
 
             if "1" in self.tests and self.ping_test_status:
                 # 1.Ping test reporting in mixed traffic
