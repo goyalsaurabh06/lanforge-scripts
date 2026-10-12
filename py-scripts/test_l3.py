@@ -2820,12 +2820,18 @@ class L3VariableTime(Realm):
                 "PASS: Requested-Rate: %s <-> %s  PDU: %s <-> %s   All tests passed" %
                 (ul, dl, ul_pdu, dl_pdu), print_pass)
 
-    def start(self, print_pass=False, coordinate=None, rotation=None) -> int:
+    def start(self, print_pass=False, coordinate=None, rotation=None, checkpoint_event=None, resume_event=None) -> int:
         """Run configured Layer-3 variable time test.
 
         Args:
             print_pass (bool, optional): Enable printing test pass upon completion.
                                          Defaults to False.
+            checkpoint_event (multiprocessing.Event, optional): if provided, set once CXs are
+                                         started, so callers (e.g. Port Reset orchestration) can
+                                         wait until traffic is up before proceeding.
+            resume_event (multiprocessing.Event, optional): if provided, waited on right after
+                                         signaling checkpoint_event, so callers can hold this test
+                                         at the checkpoint until they are ready for it to continue.
 
         Returns:
             int: 0 on success, non-zero on failure.
@@ -2932,6 +2938,10 @@ class L3VariableTime(Realm):
                     logger.info("Starting layer-3 traffic (if any configured)")
                     self.cx_profile.start_cx()
                     self.cx_profile.refresh_cx()
+                    if checkpoint_event is not None:
+                        checkpoint_event.set()
+                    if resume_event is not None:
+                        resume_event.wait()
                     passes = 0
                     expected_passes = 0
                     logger.info("Getting initial values.")
