@@ -2706,6 +2706,174 @@ class FtpTest(LFCliBase):
         except Exception as e:
             logger.warning("Wifi connectivity analysis could not be added to the report: %s", e)
 
+    def build_test_summary(self, platforms, url_data, overall_rating, direction="Download"):
+        """Builds the QA-format "Test Summary" bullets for the FTP report. The wording follows the
+        template agreed with the QA team; every number/phrase is derived from this test's own results.
+
+        Args:
+            platforms: platform name ("Android"/"Windows"/"Linux"/"Mac") per client, aligned with url_data.
+            url_data: successful transfer count per client.
+            overall_rating: "Excellent"/"Good"/"Average"/"Poor" (same as the Overall Test Verdict card).
+            direction: "Download" or "Upload".
+
+        Returns:
+            A list of plain strings, in the order they should be displayed.
+        """
+        summary = []
+        counts = [int(x) for x in url_data]
+        total = len(counts)
+        if not total:
+            return summary
+
+        action = (direction or "Download").lower()
+        action_pl = action + "s"
+
+        def plural(n, word):
+            return "{} {}{}".format(n, word, "" if n == 1 else "s")
+
+        # 1. Number of clients and the platforms involved.
+        platform_order = ["Android", "Windows", "Linux", "Mac"]
+        present = [p for p in platform_order if p in platforms]
+        if len(present) > 1:
+            plat_text = "{}, and {}".format(", ".join(present[:-1]), present[-1]) if len(present) > 2 \
+                else " and ".join(present)
+            summary.append("The test was conducted with {} across {} platforms.".format(
+                plural(total, "Wi-Fi client"), plat_text))
+        elif present:
+            summary.append("The test was conducted with {} on the {} platform.".format(
+                plural(total, "Wi-Fi client"), present[0]))
+        else:
+            summary.append("The test was conducted with {}.".format(plural(total, "Wi-Fi client")))
+
+        # 2. How many clients completed transfers vs. recorded none.
+        completed = sum(1 for c in counts if c > 0)
+        failed = total - completed
+        if completed == total:
+            summary.append("All {} completed FTP {}.".format(plural(total, "client"), action_pl))
+        elif completed == 0:
+            summary.append("None of the {} recorded any successful FTP {}.".format(
+                plural(total, "client"), action_pl))
+        else:
+            summary.append("{} completed FTP {}, while {} recorded no successful {}.".format(
+                plural(completed, "client"), action_pl, plural(failed, "client"), action_pl))
+
+        # 3. Spread of results across clients (range is over clients that had successful transfers).
+        successful = [c for c in counts if c > 0]
+        if successful and total > 1:
+            low, high = min(successful), max(successful)
+            mean = sum(counts) / float(total)
+            cv = (sum((c - mean) ** 2 for c in counts) / total) ** 0.5 / mean if mean else 0.0
+            if low == high and failed == 0:
+                summary.append("FTP performance was uniform across clients, with each client recording {} successful {}.".format(
+                    low, action_pl))
+            else:
+                if cv >= 0.5:
+                    variation = "varied significantly"
+                elif cv >= 0.2:
+                    variation = "varied moderately"
+                else:
+                    variation = "was fairly consistent"
+                summary.append("FTP performance {} across clients, with successful {} ranging from {} to {} per client.".format(
+                    variation, action_pl, low, high))
+
+        # 4. Top performers (and their platform).
+        ranked = sorted(range(total), key=lambda i: counts[i], reverse=True)
+        top = [i for i in ranked[:2] if counts[i] > 0]
+
+        def platform_of(i):
+            return platforms[i] if i < len(platforms) else ""
+
+        if len(top) == 1:
+            plat = platform_of(top[0])
+            who = ("An Android client" if plat == "Android" else "A {} client".format(plat)) if plat else "One client"
+            summary.append("{} recorded the highest {} activity, with {} successful {}.".format(
+                who, action, counts[top[0]], action_pl))
+        elif len(top) == 2:
+            p1, p2 = platform_of(top[0]), platform_of(top[1])
+            if p1 and p1 == p2:
+                who = "Two {} clients".format(p1)
+            elif p1 and p2:
+                who = "{} {} client and {} {} client".format(
+                    "An" if p1 == "Android" else "A", p1, "an" if p2 == "Android" else "a", p2)
+            else:
+                who = "Two clients"
+            summary.append("{} recorded the highest {} activity, with {} and {} successful {}.".format(
+                who, action, counts[top[0]], counts[top[1]], action_pl))
+
+        # 5. Connectivity stability (wifi analysis) and packet loss (background ping).
+        conn_text = None
+        wifi_analysis_stats = getattr(self, 'wifi_analysis_stats', None)
+        wifi_analysis = getattr(self, 'wifi_analysis', None)
+        if wifi_analysis_stats and wifi_analysis:
+            try:
+                devices, connect_attempt, disconnected, scanning, association_rejection, connected, remarks, cx_time = \
+                    wifi_analysis.dicttolist(wifi_analysis_stats)
+                if devices:
+                    total_disconnects = sum(disconnected)
+                    if total_disconnects == 0:
+                        conn_text = "All clients maintained stable wireless connectivity during the test"
+                    else:
+                        stable_clients = sum(1 for d in disconnected if d == 0)
+                        if stable_clients >= len(devices) / 2.0:
+                            conn_text = "Most clients maintained stable wireless connectivity during the test"
+                        else:
+                            conn_text = "Only some clients maintained stable wireless connectivity during the test"
+            except Exception as e:
+                logger.warning("Test summary connectivity bullet could not be computed: %s", e)
+
+        loss_text = None
+        background_ping = getattr(self, 'background_ping', None)
+        if background_ping and getattr(background_ping, 'stats', None):
+            loss_values = [row['loss_percent'] for row in background_ping.stats.values() if row.get('sent')]
+            if loss_values:
+                avg_loss = sum(loss_values) / len(loss_values)
+                if avg_loss <= 0:
+                    loss_text = "no packet loss"
+                elif avg_loss < 2:
+                    loss_text = "generally low packet loss"
+                elif avg_loss < 10:
+                    loss_text = "moderate packet loss"
+                else:
+                    loss_text = "significant packet loss"
+
+        if conn_text and loss_text:
+            summary.append("{}, with {}.".format(conn_text, loss_text))
+        elif conn_text:
+            summary.append("{}.".format(conn_text))
+        elif loss_text:
+            summary.append("Clients experienced {} during the test.".format(loss_text))
+
+        # 6. Overall verdict, tied to the same rating shown in the Overall Test Verdict card.
+        descriptor = {
+            "Excellent": "consistent and strong",
+            "Good": "generally good",
+            "Average": "moderate",
+            "Poor": "inconsistent",
+        }.get(overall_rating, "")
+        summary.append("Overall, the test demonstrated {}FTP performance across clients, resulting in an overall {} rating "
+                       "based on the defined FTP scoring criteria.".format(
+                           descriptor + " " if descriptor else "", overall_rating))
+
+        return summary
+
+    def add_test_summary_to_report(self, report, platforms, url_data, overall_rating, direction="Download"):
+        """Appends the "Test Summary" card (see build_test_summary()) to the report as a bulleted list.
+        Safe to call unconditionally.
+        """
+        try:
+            summary = self.build_test_summary(platforms, url_data, overall_rating, direction)
+            if not summary:
+                return
+            items = "".join("<li style='font-size:14px; color:var(--ink); line-height:1.5;'>{}</li>".format(point)
+                            for point in summary)
+            report.set_custom_html(
+                "<div class='info-card'><div class='info-card-header'>Test Summary</div>"
+                "<ul style='margin:0; padding-left:20px; display:flex; flex-direction:column; "
+                "gap:10px;'>{}</ul></div>".format(items))
+            report.build_custom()
+        except Exception as e:
+            logger.warning("Test summary could not be added to the report: %s", e)
+
     def generate_report(self, ftp_data, date, input_setup_info, test_rig, test_tag, dut_hw_version,
                         dut_sw_version, dut_model_num, dut_serial_num, test_id, bands,
                         csv_outfile, local_lf_report_dir, _results_dir_name='ftp_test', report_path='', config_devices="", iot_summary=None):
@@ -2966,6 +3134,14 @@ class FtpTest(LFCliBase):
                 title="Overall Test Verdict",
                 items=verdict_items
             )
+
+            # Test Summary (QA-format narrative bullets, generated from this test's results)
+            self.add_test_summary_to_report(
+                self.report,
+                platforms=device_type,
+                url_data=self.url_data,
+                overall_rating=overall_rating_label,
+                direction=dir_name)
 
             # Page 1: Test Results -> File Download Count per Wi-Fi Client
             self.report.set_obj_html(
@@ -3239,7 +3415,6 @@ class FtpTest(LFCliBase):
 
             config_items = {
                 "DUT Model": self.ap_name if self.ap_name else "Test DUT",
-                "DUT Firmware Version": "NA",
                 "SSID": self.ssid if self.ssid else "None",
                 "No of Devices": f"Total ({no_of_stations})" + total_devices,
                 "File size": self.file_size,
