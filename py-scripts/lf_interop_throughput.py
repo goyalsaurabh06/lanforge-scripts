@@ -4608,7 +4608,7 @@ class Throughput(Realm):
                  for name, platform in zip(all_devices_names, device_type)])
         report.build_footer()
         report.write_html()
-        report.write_pdf(_orientation="Landscape")
+        report.write_pdf(_page_size="A4", _orientation="Portrait")
         logger.info("Monitoring Duration: %s", self.format_monitoring_duration())
 
     def generate_report_robo(self, iterations_before_test_stopped_by_user, incremental_capacity_list, data=None, data1=None, report_path='', result_dir_name='Throughput_Test_report',
@@ -5218,7 +5218,7 @@ class Throughput(Realm):
         # report.build_custom()
         report.build_footer()
         report.write_html()
-        report.write_pdf(_orientation="Landscape")
+        report.write_pdf(_page_size="A4", _orientation="Portrait")
         logger.info("Monitoring Duration: %s", self.format_monitoring_duration())
 
     # Creates a separate DataFrame for each group of devices.
