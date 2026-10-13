@@ -41,6 +41,7 @@ import json
 import logging
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -779,12 +780,22 @@ def ensure_dependencies():
     return str(executable)
 
 
-def export_pdf(source, destination, page_size='A4', orientation='Portrait'):
+def export_pdf(source, destination, page_size='A4', orientation='Portrait', page_width=None, page_height=None):
     source, destination = Path(source).resolve(), Path(destination).resolve()
     if not source.is_file():
         raise FileNotFoundError(source)
     if orientation.lower() not in ('portrait', 'landscape'):
         raise ValueError('PDF orientation must be Portrait or Landscape')
+    custom_mm = None
+    if (page_width is None) != (page_height is None):
+        raise ValueError('Custom PDF size requires both page width and height')
+    if page_width is not None:
+        dimensions = (page_width, page_height)
+        if any(not re.fullmatch(r'[0-9]+(?:\.[0-9]+)?mm', value) for value in dimensions):
+            raise ValueError('Custom PDF dimensions must be positive values in mm')
+        custom_mm = tuple(float(value[:-2]) for value in dimensions)
+        if min(custom_mm) <= 0:
+            raise ValueError('Custom PDF dimensions must be positive values in mm')
     executable = ensure_dependencies()
     sync_playwright = importlib.import_module('playwright.sync_api').sync_playwright
     descriptor, temporary = tempfile.mkstemp(suffix='.pdf', dir=destination.parent)
@@ -811,6 +822,8 @@ def export_pdf(source, destination, page_size='A4', orientation='Portrait'):
                 page.add_style_tag(content=_PDF_PRINT_CSS)
                 paper_mm = {'A4': (210, 297), 'A3': (297, 420), 'Letter': (215.9, 279.4),
                             'Legal': (215.9, 355.6)}.get(page_size)
+                if custom_mm:
+                    paper_mm = custom_mm if orientation.lower() == 'portrait' else custom_mm[::-1]
                 if paper_mm:
                     width = paper_mm[1 if orientation.lower() == 'landscape' else 0] - 20
                     page.add_style_tag(content='@media print { .report-shell { width: ' + str(width) + 'mm; } }')
@@ -982,13 +995,8 @@ def export_pdf(source, destination, page_size='A4', orientation='Portrait'):
                         '-webkit-print-color-adjust:exact;">'
                         f'<img src="{banner_uri}" style="display:block;width:100%;height:{height_mm:.2f}mm;" />'
                         '</div>')
-                    # Capture the same geometry without the colored background for later pages.
-                    plain_style = page.add_style_tag(content='@media print { #BannerBack { background: transparent !important; box-shadow:none !important; } #BannerBack .HeaderStyle h1, #BannerBack .HeaderStyle h2, #BannerBack .HeaderStyle h4 { color:#10243f !important; } }')
-                    plain_png = banner.screenshot(type='png', animations='disabled', omit_background=True)
-                    plain_uri = 'data:image/png;base64,' + base64.b64encode(plain_png).decode('ascii')
-                    later_header = header_template.replace(banner_uri, plain_uri)
-                    plain_style.evaluate('(element) => element.remove()')
-                    # The repeated header also appears on page one; avoid a duplicate banner.
+                    # Later pages use the empty header template; only page one gets the banner.
+                    # Hide the body banner to avoid drawing it twice on page one.
                     page.add_style_tag(content='@media print { #BannerBack { display:none !important; } }')
                 # Replace the end-of-document footer only in this PDF browser page.
                 page.add_style_tag(content='@media print { .FooterStyle { display:none !important; } }')
@@ -1001,6 +1009,9 @@ def export_pdf(source, destination, page_size='A4', orientation='Portrait'):
                                          '© 2026 Candela Technologies – All Rights Reserved'
                                          '<span style="position:absolute;right:0;top:0;">'
                                          '<span class="pageNumber"></span> / <span class="totalPages"></span></span></div>')
+                if custom_mm:
+                    pdf_options.pop('format')
+                    pdf_options.update(width=f'{custom_mm[0]}mm', height=f'{custom_mm[1]}mm', landscape=False)
                 # Identical content/margins in both passes preserve pagination and numbering.
                 pdf_module = importlib.import_module('pypdf')
                 PdfReader, PdfWriter = pdf_module.PdfReader, pdf_module.PdfWriter
@@ -1036,8 +1047,10 @@ def _run_pdf_worker():
     parser.add_argument('destination')
     parser.add_argument('--page-size', default='A4')
     parser.add_argument('--orientation', default='Portrait')
+    parser.add_argument('--page-width')
+    parser.add_argument('--page-height')
     args = parser.parse_args()
-    export_pdf(args.source, args.destination, args.page_size, args.orientation)
+    export_pdf(args.source, args.destination, args.page_size, args.orientation, args.page_width, args.page_height)
 
 
 class lf_report:
@@ -1613,10 +1626,14 @@ class lf_report:
         backend = os.environ.get("LF_REPORT_PDF_BACKEND", "chromium").lower()
         if backend == "chromium":
             worker = os.path.abspath(__file__)
+            dimension_args = []
+            for key in ("page-width", "page-height"):
+                if key in options:
+                    dimension_args.extend(["--" + key, options[key]])
             result = subprocess.run(
                 [sys.executable, worker, "--pdf-worker", os.path.abspath(input_html), os.path.abspath(output_pdf),
                  "--page-size", options.get("page-size", "A4"),
-                 "--orientation", options.get("orientation", "Portrait")],
+                 "--orientation", options.get("orientation", "Portrait")] + dimension_args,
                 capture_output=True, text=True, timeout=2400)
             if result.returncode:
                 raise RuntimeError("Chromium PDF export failed; HTML is preserved. Install "
@@ -1641,7 +1658,7 @@ class lf_report:
             logger.warning('wkhtmltopdf crashed with exit code -11; retrying PDF generation once')
             pdfkit.from_file(input_html, output_pdf, **kwargs)
 
-    def write_pdf(self, _page_size='A4', _orientation='Portrait'):
+    def write_pdf(self, _page_size='A4', _orientation='Portrait', _page_width=None, _page_height=None):
         """Converts the written HTML report to a PDF (via wkhtmltopdf) in the report folder."""
         if not self.output_pdf:
             logger.info("write_pdf: no pdf file name, skipping pdf output")
@@ -1649,6 +1666,11 @@ class lf_report:
         options = {"enable-local-file-access": None,
                    'orientation': _orientation,
                    'page-size': _page_size}
+        if (_page_width is None) != (_page_height is None):
+            raise ValueError('Custom PDF size requires both page width and height')
+        if _page_width is not None:
+            options.pop('page-size')
+            options.update({'page-width': _page_width, 'page-height': _page_height})
         self.write_output_pdf = str(self.path_date_time) + '/' + str(self.output_pdf)
         if os_name == "Windows" and os.environ.get("LF_REPORT_PDF_BACKEND", "chromium").lower() == "wkhtmltopdf":
             path_to_wkhtmltopdf = r'C:\Program Files\wkhtmltopdf\bin\wkhtmltopdf.exe'
