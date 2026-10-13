@@ -2073,7 +2073,8 @@ class ThroughputQOS(Realm):
         }
         priority_df = pd.DataFrame(priority_validation_data)
         report.set_table_dataframe(priority_df)
-        report.build_table(escape=False)
+        report.dataframe_html = priority_df.to_html(index=False, justify='center', classes='data-table', escape=False)
+        report.html += "<div class='table-wrap'>" + report.dataframe_html + "</div>"
 
         # Device names/types for the Device Summary Card (built further down)
         all_devices_names = []
@@ -2607,7 +2608,11 @@ class ThroughputQOS(Realm):
                                 report.build_objective()
                                 dataframe1 = pd.DataFrame(dataframe)
                                 report.set_table_dataframe(dataframe1)
-                                report.build_table()
+                                if self.expected_passfail_val or self.csv_name:
+                                    report.dataframe_html = dataframe1.to_html(index=False, justify='center', classes='data-table', escape=False)
+                                    report.html += "<div class='table-wrap'>" + report.dataframe_html + "</div>"
+                                else:
+                                    report.build_table()
                     else:
                         vo_dataframe = self.build_direction_dataframe(
                             self.real_client_list, self.mac_id_list, self.ssid_list, vo_tos_list,
@@ -2618,7 +2623,11 @@ class ThroughputQOS(Realm):
                             vo_dataframe[" Status "] = pass_fail_list
                         dataframe4 = pd.DataFrame(vo_dataframe)
                         report.set_table_dataframe(dataframe4)
-                        report.build_table()
+                        if self.expected_passfail_val or self.csv_name:
+                            report.dataframe_html = dataframe4.to_html(index=False, justify='center', classes='data-table', escape=False)
+                            report.html += "<div class='table-wrap'>" + report.dataframe_html + "</div>"
+                        else:
+                            report.build_table()
                 logger.info("Graph and table for VO tos are built")
                 if "VI" in self.tos:
                     if self.direction == "Bi-direction":
@@ -2755,7 +2764,11 @@ class ThroughputQOS(Realm):
                                 report.build_objective()
                                 dataframe1 = pd.DataFrame(dataframe)
                                 report.set_table_dataframe(dataframe1)
-                                report.build_table()
+                                if self.expected_passfail_val or self.csv_name:
+                                    report.dataframe_html = dataframe1.to_html(index=False, justify='center', classes='data-table', escape=False)
+                                    report.html += "<div class='table-wrap'>" + report.dataframe_html + "</div>"
+                                else:
+                                    report.build_table()
                     else:
                         vi_dataframe = self.build_direction_dataframe(
                             self.real_client_list, self.mac_id_list, self.ssid_list, vi_tos_list,
@@ -2766,7 +2779,11 @@ class ThroughputQOS(Realm):
                             vi_dataframe[" Status "] = pass_fail_list
                         dataframe3 = pd.DataFrame(vi_dataframe)
                         report.set_table_dataframe(dataframe3)
-                        report.build_table()
+                        if self.expected_passfail_val or self.csv_name:
+                            report.dataframe_html = dataframe3.to_html(index=False, justify='center', classes='data-table', escape=False)
+                            report.html += "<div class='table-wrap'>" + report.dataframe_html + "</div>"
+                        else:
+                            report.build_table()
                 logger.info("Graph and table for VI tos are built")
                 if "BE" in self.tos:
                     if self.direction == "Bi-direction":
@@ -2902,7 +2919,11 @@ class ThroughputQOS(Realm):
                                 report.build_objective()
                                 dataframe1 = pd.DataFrame(dataframe)
                                 report.set_table_dataframe(dataframe1)
-                                report.build_table()
+                                if self.expected_passfail_val or self.csv_name:
+                                    report.dataframe_html = dataframe1.to_html(index=False, justify='center', classes='data-table', escape=False)
+                                    report.html += "<div class='table-wrap'>" + report.dataframe_html + "</div>"
+                                else:
+                                    report.build_table()
                     else:
                         be_dataframe = self.build_direction_dataframe(
                             self.real_client_list, self.mac_id_list, self.ssid_list, be_tos_list,
@@ -2913,7 +2934,11 @@ class ThroughputQOS(Realm):
                             be_dataframe[" Status "] = pass_fail_list
                         dataframe2 = pd.DataFrame(be_dataframe)
                         report.set_table_dataframe(dataframe2)
-                        report.build_table()
+                        if self.expected_passfail_val or self.csv_name:
+                            report.dataframe_html = dataframe2.to_html(index=False, justify='center', classes='data-table', escape=False)
+                            report.html += "<div class='table-wrap'>" + report.dataframe_html + "</div>"
+                        else:
+                            report.build_table()
                 logger.info("Graph and table for BE tos are built")
                 if "BK" in self.tos:
                     if self.direction == "Bi-direction":
@@ -3051,7 +3076,11 @@ class ThroughputQOS(Realm):
                                 print("dataframe", dataframe)
                                 dataframe1 = pd.DataFrame(dataframe)
                                 report.set_table_dataframe(dataframe1)
-                                report.build_table()
+                                if self.expected_passfail_val or self.csv_name:
+                                    report.dataframe_html = dataframe1.to_html(index=False, justify='center', classes='data-table', escape=False)
+                                    report.html += "<div class='table-wrap'>" + report.dataframe_html + "</div>"
+                                else:
+                                    report.build_table()
                     else:
                         bk_dataframe = self.build_direction_dataframe(
                             self.real_client_list, self.mac_id_list, self.ssid_list, bk_tos_list,
@@ -3062,7 +3091,11 @@ class ThroughputQOS(Realm):
                             bk_dataframe[" Status "] = pass_fail_list
                         dataframe1 = pd.DataFrame(bk_dataframe)
                         report.set_table_dataframe(dataframe1)
-                        report.build_table()
+                        if self.expected_passfail_val or self.csv_name:
+                            report.dataframe_html = dataframe1.to_html(index=False, justify='center', classes='data-table', escape=False)
+                            report.html += "<div class='table-wrap'>" + report.dataframe_html + "</div>"
+                        else:
+                            report.build_table()
                 logger.info("Graph and table for BK tos are built")
             if self.dowebgui and self.get_live_view and not multicast_exists:
                 if not self.robot_test:
