@@ -3376,34 +3376,9 @@ class FtpTest(LFCliBase):
                 self.report.set_table_dataframe(ping_df)
                 self.report.build_table()
 
-            # --- Page 4: Scoring Parameters & Test Configuration ---
+            # --- Page 4: Test Configuration ---
             self.report.set_custom_html('<div style="page-break-before: always;"></div>')
             self.report.build_custom()
-
-            # Scoring Parameters and Weightage Table
-            self.report.set_obj_html(_obj_title="Scoring Parameters and Weightage", _obj="")
-            self.report.build_objective()
-            scoring_weights_df = pd.DataFrame({
-                "Metric": ["Download Score", "Time Stability Score", "Reliability Score", "Final Score", "Final %"],
-                "Calculation": [
-                    "(Client Downloads / Max Downloads) × 5",
-                    "Based on deviation from average time",
-                    "5 – (Failed URLs × 0.1)",
-                    "(Download × 0.7) + (Time × 0.2) + (Reliability × 0.1)",
-                    "(Final Score / 5) × 100"
-                ],
-                "Range": ["0–5", "0–5", "0–5", "0–5", "0–100%"],
-                "Weight": ["70%", "20%", "10%", "100%", ""]
-            })
-            self.report.set_table_dataframe(scoring_weights_df)
-            self.report.build_table()
-
-            rating_bands_df = pd.DataFrame({
-                "Score %": ["≥ 85", "70 – 84", "50 – 69", "< 50"],
-                "Rating": ["Excellent", "Good", "Average", "Poor"]
-            })
-            self.report.set_table_dataframe(rating_bands_df)
-            self.report.rating_build_table("Rating", {label: color for _, label, color in lf_report.SCORE_RATING_BANDS})
 
             # Test Configuration (info card / boxes format, matching throughput report)
             formatted_duration = duration
