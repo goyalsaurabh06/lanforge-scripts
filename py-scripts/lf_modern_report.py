@@ -86,13 +86,18 @@ _PDF_PRINT_CSS = """
   thead { display: table-header-group; }
   tfoot { display: table-footer-group; }
   tr, .info-item, .finding { break-inside: avoid; }
-  th, td { overflow-wrap: anywhere; padding: 5px 6px !important; }
+  th, td { padding: 5px 6px !important; }
+  table.data-table th, table.data-table td,
+  table.device-table th, table.device-table td {
+    white-space: nowrap !important;
+    overflow-wrap: normal !important;
+    word-break: normal !important;
+  }
   table.data-table th { position: static; }
   th.sortable::after { display: none; }
   table.data-table, table.device-table { font-size: 10pt; }
   table.pdf-table-compact th, table.pdf-table-compact td {
-    padding: 4px 3px !important; white-space: normal !important;
-    overflow-wrap: anywhere;
+    padding: 4px 3px !important;
   }
   table.pdf-table-small, table.pdf-table-small th, table.pdf-table-small td {
     font-size: 9pt !important;
@@ -847,6 +852,9 @@ def export_pdf(source, destination, page_size='A4', orientation='Portrait', page
                     });
                     // Use rendered width, not column count, to decide whether to split.
                     for (const table of document.querySelectorAll('table.data-table, table.device-table')) {
+                        // Keep complete values (including MAC addresses) on one line.
+                        // Explicit HTML breaks must not bypass the no-wrap print rules.
+                        table.querySelectorAll('th br, td br').forEach(br => br.replaceWith(document.createTextNode(' ')));
                         const shell = table.closest('.report-shell');
                         const container = table.parentElement;
                         const available = Math.min(container.clientWidth,
