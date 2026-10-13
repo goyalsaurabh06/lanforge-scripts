@@ -655,9 +655,7 @@ class MultiTraffic(Realm):
         selected = set(tests_to_run_series) | set(tests_to_run_parallel)
         devices = set()
         for test in selected:
-            value = getattr(args, test.replace('_test', '') + '_device_list', None)
-            if value:
-                devices.update(device.strip() for device in value.split(',') if device.strip())
+            devices.update(split_device_list(getattr(args, test.replace('_test', '') + '_device_list', None)))
         if 'zoom_test' in selected and args.zoom_host:
             devices.add(args.zoom_host.strip())
         self.device_log_records = manager.list()
@@ -771,7 +769,7 @@ class MultiTraffic(Realm):
                                 self.teams_obj_dict["series"][obj_name] = manager.dict({"obj": None, "data": None})
                                 logging.debug("Adding teams_test object to parallel execution")
                             series_label = f"{label} [Series {idx + 1}]"
-                            series_proc = multiprocessing.Process(target=run_test_safe(func, series_label, args, self, duration_dict[test_name]))
+                            series_proc = multiprocessing.Process(target=run_test_safe(func, series_label, args, self, duration_dict[test_name], test_name))
                             # Real-app automations sometimes call os._exit() directly on a hard
                             # failure, which bypasses run_test_safe's own try/except and never
                             # appends a row to test_results_list. Tag the process so a missed
@@ -781,7 +779,7 @@ class MultiTraffic(Realm):
                             series_threads.append(series_proc)
                         else:
                             series_threads.append(threading.Thread(
-                                target=run_test_safe(func, f"{label} [Series {idx + 1}]", args, self, duration_dict[test_name])
+                                target=run_test_safe(func, f"{label} [Series {idx + 1}]", args, self, duration_dict[test_name], test_name)
                             ))
                     else:
                         logging.warning(f"Unknown test '{test_name}' in --series_tests")
@@ -819,7 +817,7 @@ class MultiTraffic(Realm):
 
                             parallel_label = f"{label} [Parallel {idx + 1}]"
                             parallel_proc = multiprocessing.Process(
-                                target=run_test_safe(func, parallel_label, args, self, duration_dict[test_name])
+                                target=run_test_safe(func, parallel_label, args, self, duration_dict[test_name], test_name)
                             )
                             # See the matching comment in the series branch above: this lets a
                             # hard os._exit() in the child still be reflected in the summary.
@@ -828,7 +826,7 @@ class MultiTraffic(Realm):
                             parallel_threads.append(parallel_proc)
                         else:
                             parallel_threads.append(threading.Thread(
-                                target=run_test_safe(func, f"{label} [Parallel {idx + 1}]", args, self, duration_dict[test_name])
+                                target=run_test_safe(func, f"{label} [Parallel {idx + 1}]", args, self, duration_dict[test_name], test_name)
                             ))
                     else:
                         logging.warning(f"Unknown test '{test_name}' in --parallel_tests")
@@ -14695,7 +14693,9 @@ def monitor_device_states(api_url, devices, active, records, stop):
         context = ', '.join(sorted(active.keys())) or 'between tests / setup / cleanup'
         for endpoint, key in (('/resource/all', 'resources'), ('/port/all', 'interfaces')):
             try:
-                with urllib.request.urlopen(api_url + endpoint, timeout=3) as response:
+                # LANforge returns HTTP 500 unless the request asks for JSON.
+                request = urllib.request.Request(api_url + endpoint, headers={'Accept': 'application/json'})
+                with urllib.request.urlopen(request, timeout=3) as response:
                     payload = json.load(response)
                 entries = payload.get(key)
                 if not isinstance(entries, (list, dict)):
@@ -14742,7 +14742,51 @@ def monitor_device_states(api_url, devices, active, records, stop):
             break
 
 
-def run_test_safe(test_func, test_name, args, multi_traffic_obj, duration):
+def split_device_list(value):
+    """Return device ids from a comma-separated string or a list of them.
+
+    Options declared with action='append' (e.g. --mcast_device_list) arrive as a list.
+    """
+    if not value:
+        return []
+    if isinstance(value, (list, tuple)):
+        value = ','.join(str(item) for item in value)
+    return [device.strip() for device in str(value).split(',') if device.strip()]
+
+
+def record_device_availability(args, test_key, test_name, multi_traffic_obj):
+    """Note in devicelogs.txt which requested devices have no usable Wi-Fi port as a test starts.
+
+    Tests skip such devices, mostly without a warning, so this is the only record of who sat out.
+    """
+    records = getattr(multi_traffic_obj, 'device_log_records', None)
+    if not test_key or records is None:
+        return
+    requested = split_device_list(getattr(args, test_key.replace('_test', '') + '_device_list', None))
+    if test_key == 'zoom_test' and getattr(args, 'zoom_host', None) and args.zoom_host.strip() not in requested:
+        requested.insert(0, args.zoom_host.strip())
+    if not requested:
+        return
+    timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    try:
+        port_data = multi_traffic_obj.json_get("/port/all") or {}
+    except Exception as e:
+        records.append(f'{timestamp} DEVICE_CHECK {test_name} requested={",".join(requested)} status=QUERY_FAILED error={e}')
+        return
+    available = set()
+    for interface in port_data.get("interfaces", []):
+        for port, data in interface.items():
+            if (not data.get("phantom") and not data.get("down") and data.get("parent dev")
+                    and data.get("ip") not in (None, "", "0.0.0.0")):
+                available.add('.'.join(port.split('.')[:2]))
+    missing = [device for device in requested if device not in available]
+    records.append(f'{timestamp} DEVICE_CHECK {test_name} requested={",".join(requested)} '
+                   f'unavailable={",".join(missing) or "none"} (Wi-Fi port down, phantom or no IP at test start)')
+    if missing:
+        logger.warning(f"{test_name}: device(s) {', '.join(missing)} have no usable Wi-Fi port and will be skipped")
+
+
+def run_test_safe(test_func, test_name, args, multi_traffic_obj, duration, test_key=None):
     """
     Creates a safe wrapper around a test function to capture execution status and exceptions.
 
@@ -14775,6 +14819,10 @@ def run_test_safe(test_func, test_name, args, multi_traffic_obj, duration):
                 logging.getLogger().addHandler(worker_handler)
 
         try:
+            try:
+                record_device_availability(args, test_key, test_name, multi_traffic_obj)
+            except Exception:
+                logger.exception(f"Device availability check failed for {test_name}; running the test anyway")
             result = test_func(args, multi_traffic_obj)
             if not result:
                 status = "NOT EXECUTED"
