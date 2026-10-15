@@ -89,7 +89,6 @@ _PDF_PRINT_CSS = """
   th, td { overflow-wrap: anywhere; padding: 5px 6px !important; }
   table.data-table th { position: static; }
   th.sortable::after { display: none; }
-  table.data-table, table.device-table { font-size: 10pt; }
   table.pdf-table-compact th, table.pdf-table-compact td {
     padding: 4px 3px !important; white-space: normal !important;
     overflow-wrap: anywhere;
@@ -104,10 +103,65 @@ _PDF_PRINT_CSS = """
   .chart.pdf-compact-chart { height: var(--pdf-chart-height, 95mm) !important; }
   .chart-card:has(.chart), .chart-card:has(img), .device-summary-row { break-inside: avoid; }
   .chart-card img { max-width: 100%; max-height: 165mm; object-fit: contain; }
-  .info-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-  .info-item { padding: 8px; }
   #BannerBack { padding: 16px 20px; break-inside: avoid; }
   .FooterStyle { margin: 10px 0; padding: 8px; }
+  html body, .report-shell p, .report-shell li { font-size: 8pt !important; }
+  .report-shell p { font-size: 11pt !important; }
+  .report-shell .info-card > ul > li { font-size: 11pt !important; }
+  .report-shell .info-item-label { margin-bottom: 6px; }
+  .report-shell .info-grid {
+    display: flex !important;
+    flex-wrap: wrap;
+    gap: 14px;
+    align-items: stretch;
+  }
+  .report-shell .info-item {
+    flex: 0 1 auto;
+    width: auto;
+    min-width: 36mm;
+    max-width: 100%;
+    padding: 12px 18px !important;
+    box-sizing: border-box;
+  }
+  .report-shell h1 { font-size: 22pt !important; }
+  .report-shell h2 { font-size: 16pt !important; }
+  .report-shell h3, .report-shell .info-card-header { font-size: 14pt !important; }
+  .report-shell h4 { font-size: 10pt !important; }
+  .report-shell .info-label, .report-shell .stat-label { font-size: 7pt !important; }
+  .report-shell .info-value { font-size: 8pt !important; }
+  .report-shell table, .report-shell table th, .report-shell table td {
+    font-size: 8pt !important;
+  }
+  /* The PDF worker measures content before assigning these classes. */
+  .report-shell { --pdf-content-table-sizing: 1; }
+  .report-shell .pdf-content-wrap {
+    width: var(--pdf-table-width) !important;
+    max-width: 100% !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+  .report-shell table.pdf-content-table {
+    width: 100% !important;
+    max-width: 100% !important;
+    table-layout: auto !important;
+  }
+  .report-shell table.pdf-content-table :is(th, td) {
+    font-size: 10pt !important;
+    padding: 8px 12px !important;
+  }
+  .report-shell table.pdf-content-table td { white-space: nowrap !important; }
+  .report-shell table td.network-identifier {
+    white-space: nowrap !important;
+    overflow-wrap: normal !important;
+    word-break: normal !important;
+  }
+  /* Wrap column titles between words, keeping each word intact. */
+  .report-shell table th {
+    white-space: normal !important;
+    overflow-wrap: normal !important;
+    word-break: normal !important;
+    hyphens: none !important;
+  }
 }
 """
 
@@ -851,6 +905,33 @@ def export_pdf(source, destination, page_size='A4', orientation='Portrait', page
                         const container = table.parentElement;
                         const available = Math.min(container.clientWidth,
                             shell ? shell.clientWidth : document.documentElement.clientWidth);
+                        if (shell && getComputedStyle(shell).getPropertyValue('--pdf-content-table-sizing').trim() === '1') {
+                            // Measure the existing table; avoid copying every row and cell.
+                            const originalStyle = table.style.cssText;
+                            let natural;
+                            table.classList.add('pdf-content-table', 'pdf-table-measure');
+                            try {
+                                table.style.setProperty('width', 'max-content', 'important');
+                                table.style.setProperty('max-width', 'none', 'important');
+                                natural = Math.ceil(table.getBoundingClientRect().width);
+                                if (natural > available) {
+                                    // Allow headings to wrap at spaces while keeping data values intact.
+                                    table.style.setProperty('width', 'min-content', 'important');
+                                    natural = Math.ceil(table.getBoundingClientRect().width);
+                                }
+                            } finally {
+                                table.style.cssText = originalStyle;
+                                table.classList.remove('pdf-table-measure');
+                            }
+                            if (natural <= available) {
+                                container.classList.add('pdf-content-wrap');
+                                const compactWidth = available * 0.60;
+                                const targetWidth = natural <= compactWidth ? compactWidth : available;
+                                container.style.setProperty('--pdf-table-width', targetWidth + 'px');
+                            } else {
+                                table.classList.remove('pdf-content-table');
+                            }
+                        }
                         const fits = candidate => candidate.getBoundingClientRect().width <= available + 1 &&
                             candidate.scrollWidth <= available + 1;
                         if (fits(table)) continue;
@@ -1943,9 +2024,34 @@ class lf_report:
             elif cell_value == "Failed":
                 return highlight_fail
 
+    @staticmethod
+    def _keep_identifiers_on_one_line(table_html, dataframe):
+        """Keep network identifiers intact in print/PDF without changing screen layout."""
+        columns = {
+            index for index, name in enumerate(dataframe.columns)
+            if re.search(r'\b(?:ssid|bssid|mac)\b', str(name), re.IGNORECASE)
+        }
+        if not columns:
+            return table_html
+
+        def format_row(match):
+            index = -1
+
+            def format_cell(cell):
+                nonlocal index
+                index += 1
+                if index in columns:
+                    return cell.group(0)[:-1] + ' class="network-identifier">'
+                return cell.group(0)
+
+            return re.sub(r'<td\b[^>]*>', format_cell, match.group(0))
+
+        return re.sub(r'<tr\b[^>]*>.*?</tr>', format_row, table_html, flags=re.DOTALL)
+
     def build_table(self):
         """Adds the current table (set by set_table_dataframe) to the report."""
         self.dataframe_html = self.dataframe.to_html(index=False, justify='center', classes='data-table')
+        self.dataframe_html = self._keep_identifiers_on_one_line(self.dataframe_html, self.dataframe)
         self.html += "<div class='table-wrap'>" + self.dataframe_html + "</div>"
 
     def pass_failed_build_table(self):
@@ -1963,6 +2069,7 @@ class lf_report:
 
         badge_df = self.dataframe.applymap(_badge)
         self.dataframe_html = badge_df.to_html(index=False, justify='center', classes='data-table', escape=False)
+        self.dataframe_html = self._keep_identifiers_on_one_line(self.dataframe_html, badge_df)
         self.html += "<div class='table-wrap'>" + self.dataframe_html + "</div>"
 
     def rating_build_table(self, rating_column, rating_colors):
@@ -1986,6 +2093,7 @@ class lf_report:
         badge_df = self.dataframe.copy()
         badge_df[rating_column] = badge_df[rating_column].apply(_badge)
         self.dataframe_html = badge_df.to_html(index=False, justify='center', classes='data-table', escape=False)
+        self.dataframe_html = self._keep_identifiers_on_one_line(self.dataframe_html, badge_df)
         self.html += "<div class='table-wrap'>" + self.dataframe_html + "</div>"
 
     @staticmethod
@@ -2016,6 +2124,7 @@ class lf_report:
             table_html = dataframe.to_html(index=False, justify='center', classes='data-table', escape=False)
         else:
             table_html = dataframe.to_html(index=False, justify='center', classes='data-table')
+        table_html = lf_report._keep_identifiers_on_one_line(table_html, dataframe)
         return "<div class='table-wrap'>" + table_html + "</div>"
 
     def save_csv(self, file_name, save_to_csv_data):
