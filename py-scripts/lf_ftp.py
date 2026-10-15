@@ -143,7 +143,7 @@ import matplotlib.patches as mpatches
 import pandas as pd
 import logging
 import shutil
-from lf_graph import lf_bar_graph_horizontal, lf_bar_graph
+from lf_modern_report import lf_report, lf_bar_graph, lf_bar_graph_horizontal
 from typing import List, Optional
 import asyncio
 import csv
@@ -166,12 +166,12 @@ realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
 # Importing DeviceConfig to apply device configurations for ADB devices and laptops
 DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
-lf_report = importlib.import_module("py-scripts.lf_report")
-lf_graph = importlib.import_module("py-scripts.lf_graph")
+lf_modern_report = importlib.import_module("py-scripts.lf_modern_report")
+lf_graph = lf_modern_report
 lf_kpi_csv = importlib.import_module("py-scripts.lf_kpi_csv")
+lf_interop_bg_ping = importlib.import_module("py-scripts.lf_interop_bg_ping")
 logger = logging.getLogger(__name__)
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
-lf_interop_bg_ping = importlib.import_module("py-scripts.lf_interop_bg_ping")
 
 try:
     from lf_wifi_msgs import RealClientAnalysis
@@ -182,6 +182,7 @@ except ImportError:
     except Exception:
         RealClientAnalysis = None
 
+
 iot_scripts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../local/interop-webGUI/IoT/scripts/"))
 if os.path.exists(iot_scripts_path):
     sys.path.insert(0, iot_scripts_path)
@@ -189,6 +190,42 @@ if os.path.exists(iot_scripts_path):
 
 
 class FtpTest(LFCliBase):
+    def build_ftp_client_scores(self, url_data, uc_avg, total_err):
+        """Computes Download Score (0-5), Time Stability Score (0-5), Reliability Score (0-5),
+        Final Score (%) and Rating according to QA specification."""
+        max_dl = max([int(x) for x in url_data]) if url_data else 0
+        active_times = [float(t) for d, t in zip(url_data, uc_avg) if int(d) > 0 and float(t) > 0]
+        mean_time = sum(active_times) / len(active_times) if active_times else 0.0
+
+        dl_scores, time_scores, rel_scores, final_pcts, ratings = [], [], [], [], []
+        for dl, t, err in zip(url_data, uc_avg, total_err):
+            dl_val = int(dl)
+            t_val = float(t)
+            err_val = int(err)
+
+            # Download Score (0-5, 70% weight)
+            dl_s = round((dl_val / max_dl * 5.0), 2) if max_dl > 0 and dl_val > 0 else 0.0
+            # Reliability Score (0-5, 10% weight)
+            rel_s = max(0.0, min(5.0, round(5.0 - (err_val * 0.1), 1))) if dl_val > 0 else 5.0
+            # Time Stability Score (0-5, 20% weight) based on deviation from average time
+            if dl_val > 0 and mean_time > 0:
+                dev = abs(t_val - mean_time) / mean_time
+                time_s = max(1.0, min(5.0, round(5.0 - (dev * 2.5), 1)))
+            else:
+                time_s = 0.0
+
+            final_s = (dl_s * 0.70) + (time_s * 0.20) + (rel_s * 0.10)
+            final_pct = int(round((final_s / 5.0) * 100))
+            label, _ = lf_report.classify_score_rating(final_pct)
+
+            dl_scores.append(dl_s)
+            time_scores.append(time_s)
+            rel_scores.append(rel_s)
+            final_pcts.append(final_pct)
+            ratings.append(label)
+
+        return dl_scores, time_scores, rel_scores, final_pcts, ratings
+
     def __init__(self, lfclient_host="localhost", lfclient_port=8080, sta_prefix="sta", start_id=0, num_sta=0, radio="",
                  dut_ssid=None, dut_security=None, dut_passwd=None, file_size=None, band=None, twog_radio=None,
                  file_name=None,
@@ -1527,11 +1564,58 @@ class FtpTest(LFCliBase):
             urls_downloaded.append(self.url_data[i] - self.total_err[i])
         self.url_data = list(urls_downloaded)
 
+    def get_signal_and_channel_data(self, station_names):
+        """Retrieves signal strength, channel, mode, and link speed data for the specified stations
+        (identical to lf_interop_throughput.py)."""
+        signal_list, channel_list, mode_list, link_speed_list, rx_rate_list, bssid_list = [], [], [], [], [], []
+        interfaces_dict = dict()
+        try:
+            port_data = self.local_realm.json_get('/ports/all/')['interfaces']
+        except Exception:
+            port_data = []
+
+        for port in port_data:
+            interfaces_dict.update(port)
+
+        for sta in station_names:
+            if sta in interfaces_dict:
+                data = interfaces_dict[sta]
+                sig = data.get('signal', '-')
+                if "dBm" in str(sig):
+                    signal_list.append(str(sig).split(" ")[0])
+                else:
+                    signal_list.append(str(sig))
+                channel_value = str(data.get('channel', ''))
+                if channel_value in ('', '0', '-1'):
+                    channel_list.append('NA')
+                else:
+                    channel_list.append(str(data.get('channel', '-')))
+                mode_list.append(str(data.get('mode', '-')))
+                link_speed_list.append(str(data.get('tx-rate', '-')))
+                rx_rate_list.append(str(data.get('rx-rate', '-')))
+                bssid_list.append(str(data.get('ap', '-')))
+            else:
+                signal_list.append('-')
+                channel_list.append('-')
+                mode_list.append('-')
+                link_speed_list.append('-')
+                rx_rate_list.append('-')
+                bssid_list.append('-')
+
+        return signal_list, channel_list, mode_list, link_speed_list, rx_rate_list, bssid_list
+
     def get_port_data(self):
         """
         Retrieves signal strength, rx rate, link speed(tx-rate), mode, ssid data for the specified devices from port.
 
         """
+        self.rssi_list = []
+        self.tx_rate = []
+        self.port_rx_rate = []
+        self.channel_list = []
+        self.mode_list = []
+        self.ssid_list = []
+        self.bssid_list = []
         station_names = self.input_devices_list
         interfaces_dict = dict()
         try:
@@ -1549,20 +1633,21 @@ class FtpTest(LFCliBase):
                     logger.info("Signal data for device '{}' is available again.".format(sta))
                     self.missing_device_logged.discard(sta)
                 data = interfaces_dict[sta]
-                if "dBm" in data['signal']:
-                    self.rssi_list.append(data['signal'].split(" ")[0])
+                sig = data.get('signal', '-')
+                if "dBm" in str(sig):
+                    self.rssi_list.append(str(sig).split(" ")[0])
                 else:
-                    self.rssi_list.append(data['signal'])
-                self.tx_rate.append(data['tx-rate'])
-                self.port_rx_rate.append(data['rx-rate'])
+                    self.rssi_list.append(str(sig))
+                self.tx_rate.append(str(data.get('tx-rate', '-')))
+                self.port_rx_rate.append(str(data.get('rx-rate', '-')))
                 channel_value = str(data.get('channel', ''))
                 if channel_value in ('', '0', '-1'):
                     self.channel_list.append('NA')
                 else:
-                    self.channel_list.append(data['channel'])
-                self.mode_list.append(data['mode'])
-                self.ssid_list.append(data['ssid'])
-                self.bssid_list.append(data['ap'])
+                    self.channel_list.append(str(data.get('channel', '-')))
+                self.mode_list.append(str(data.get('mode', '-')))
+                self.ssid_list.append(str(data.get('ssid', '-')))
+                self.bssid_list.append(str(data.get('ap', '-')))
             else:
                 if sta not in self.missing_device_logged:
                     logger.warning(
@@ -1579,6 +1664,67 @@ class FtpTest(LFCliBase):
                 self.ssid_list.append('-')
                 self.bssid_list.append('-')
 
+    def get_rssi_data(self, client_list):
+        """Calculates average RSSI for each client from monitored samples (identical to lf_interop_throughput),
+        falling back to live port signal data."""
+        rssi_result = []
+        live_signals = []
+        if hasattr(self, 'input_devices_list') and self.input_devices_list:
+            try:
+                live_signals, _, _, _, _, _ = self.get_signal_and_channel_data(self.input_devices_list)
+            except Exception as e:
+                logger.warning("Could not get live signal data: %s", e)
+
+        for idx, _client in enumerate(client_list):
+            port = self.input_devices_list[idx] if hasattr(self, 'input_devices_list') and idx < len(self.input_devices_list) else None
+            rssi_val = None
+
+            # 1. Calculate average RSSI from monitored samples during the test duration (same as throughput test)
+            if port and hasattr(self, 'individual_device_data') and port in self.individual_device_data:
+                df = self.individual_device_data[port]
+                if isinstance(df, pd.DataFrame) and not df.empty and 'RSSI' in df.columns:
+                    valid_nums = []
+                    for v in df['RSSI'].dropna().tolist():
+                        v_str = str(v).strip().replace('dBm', '').replace('dbm', '').strip()
+                        if v_str and v_str not in ('-', 'NA', 'None'):
+                            try:
+                                num = float(v_str)
+                                if num != 0:
+                                    valid_nums.append(num)
+                            except ValueError:
+                                pass
+                    if valid_nums:
+                        avg_num = round(sum(valid_nums) / len(valid_nums))
+                        rssi_val = f"-{abs(int(avg_num))}"
+
+            # 2. If no valid samples in historical monitor data, check live port signal
+            if not rssi_val and live_signals and idx < len(live_signals):
+                live_sig = str(live_signals[idx]).strip().replace('dBm', '').replace('dbm', '').strip()
+                if live_sig and live_sig not in ('-', 'NA', 'None'):
+                    try:
+                        num = float(live_sig)
+                        if num != 0:
+                            rssi_val = f"-{abs(int(num))}"
+                    except ValueError:
+                        pass
+
+            # 3. If still not available, check self.rssi_list
+            if not rssi_val and hasattr(self, 'rssi_list') and idx < len(self.rssi_list):
+                raw_sig = str(self.rssi_list[idx]).strip().replace('dBm', '').replace('dbm', '').strip()
+                if raw_sig and raw_sig not in ('-', 'NA', 'None'):
+                    try:
+                        num = float(raw_sig)
+                        if num != 0:
+                            rssi_val = f"-{abs(int(num))}"
+                    except ValueError:
+                        pass
+
+            if not rssi_val:
+                rssi_val = "-"
+            rssi_result.append(rssi_val)
+
+        return rssi_result
+
     # Updates the status in the running.json file while running a test from the Web UI
     def updating_webui_runningjson(self, obj):
         data = {}
@@ -1594,41 +1740,31 @@ class FtpTest(LFCliBase):
     def my_monitor(self):
         dataset = []
         self.channel_list, self.mode_list, self.ssid_list, self.uc_avg, self.uc_max, self.url_data, self.uc_min, self.bytes_rd = [], [], [], [], [], [], [], []
-        # Iterate station_list/input_devices_list in order so channel/mode/ssid/mac
-        # stay index-aligned with them, instead of following /port/all's own order.
-        url = "/port/all"
-        response_port = self.json_get(url)
-        if response_port is None:
-            logger.error(
-                "Failed to fetch port data. Received empty response.\n"
-                f"Requested URL: '{url}'\n"
-                f"Response: {response_port}")
-            response_port = {}
-        interfaces_dict = dict()
-        for interface in response_port.get('interfaces', []):
-            interfaces_dict.update(interface)
         if self.clients_type == "Virtual":
-            self.mac_id_list = []
-            for port in self.station_list:
-                port_data = interfaces_dict.get(port, {})
-                channel_value = str(port_data.get('channel', ''))
-                if channel_value in ('', '0', '-1'):
-                    self.channel_list.append('NA')
-                else:
-                    self.channel_list.append(channel_value)
-                self.mode_list.append(str(port_data.get('mode', '-')))
-                self.mac_id_list.append(str(port_data.get('mac', '-')))
-                self.ssid_list.append(str(port_data.get('ssid', '-')))
+            response_port = self.json_get("/port/all")
+            for interface in response_port['interfaces']:
+                for port, port_data in interface.items():
+                    if port in self.station_list:
+                        channel_value = str(port_data.get('channel', ''))
+                        if channel_value in ('', '0', '-1'):
+                            self.channel_list.append('NA')
+                        else:
+                            self.channel_list.append(channel_value)
+                        self.mode_list.append(str(port_data['mode']))
+                        self.mac_id_list.append(str(port_data['mac']))
+                        self.ssid_list.append(str(port_data['ssid']))
         elif self.clients_type == "Real":
-            for port in self.input_devices_list:
-                port_data = interfaces_dict.get(port, {})
-                channel_value = str(port_data.get('channel', ''))
-                if channel_value in ('', '0', '-1'):
-                    self.channel_list.append('NA')
-                else:
-                    self.channel_list.append(channel_value)
-                self.mode_list.append(str(port_data.get('mode', '-')))
-                self.ssid_list.append(str(port_data.get('ssid', '-')))
+            response_port = self.json_get("/port/all")
+            for interface in response_port['interfaces']:
+                for port, port_data in interface.items():
+                    if port in self.input_devices_list:
+                        channel_value = str(port_data.get('channel', ''))
+                        if channel_value in ('', '0', '-1'):
+                            self.channel_list.append('NA')
+                        else:
+                            self.channel_list.append(channel_value)
+                        self.mode_list.append(str(port_data['mode']))
+                        self.ssid_list.append(str(port_data['ssid']))
 
         # data in json format
         # data = self.json_get("layer4/list?fields=bytes-rd")
@@ -1708,6 +1844,18 @@ class FtpTest(LFCliBase):
             exit()
 
     def my_monitor_for_real_devices(self):
+        self.channel_list, self.mode_list, self.ssid_list = [], [], []
+        response_port = self.json_get("/port/all")
+        for interface in response_port['interfaces']:
+            for port, port_data in interface.items():
+                if port in self.input_devices_list:
+                    channel_value = str(port_data.get('channel', ''))
+                    if channel_value in ('', '0', '-1'):
+                        self.channel_list.append('NA')
+                    else:
+                        self.channel_list.append(channel_value)
+                    self.mode_list.append(str(port_data['mode']))
+                    self.ssid_list.append(str(port_data['ssid']))
         if self.dowebgui:
             client_id_list = []
             for port in self.input_devices_list:
@@ -2570,6 +2718,174 @@ class FtpTest(LFCliBase):
         except Exception as e:
             logger.warning("Wifi connectivity analysis could not be added to the report: %s", e)
 
+    def build_test_summary(self, platforms, url_data, overall_rating, direction="Download"):
+        """Builds the QA-format "Test Summary" bullets for the FTP report. The wording follows the
+        template agreed with the QA team; every number/phrase is derived from this test's own results.
+
+        Args:
+            platforms: platform name ("Android"/"Windows"/"Linux"/"Mac") per client, aligned with url_data.
+            url_data: successful transfer count per client.
+            overall_rating: "Excellent"/"Good"/"Average"/"Poor" (same as the Overall Test Verdict card).
+            direction: "Download" or "Upload".
+
+        Returns:
+            A list of plain strings, in the order they should be displayed.
+        """
+        summary = []
+        counts = [int(x) for x in url_data]
+        total = len(counts)
+        if not total:
+            return summary
+
+        action = (direction or "Download").lower()
+        action_pl = action + "s"
+
+        def plural(n, word):
+            return "{} {}{}".format(n, word, "" if n == 1 else "s")
+
+        # 1. Number of clients and the platforms involved.
+        platform_order = ["Android", "Windows", "Linux", "Mac"]
+        present = [p for p in platform_order if p in platforms]
+        if len(present) > 1:
+            plat_text = "{}, and {}".format(", ".join(present[:-1]), present[-1]) if len(present) > 2 \
+                else " and ".join(present)
+            summary.append("The test was conducted with {} across {} platforms.".format(
+                plural(total, "Wi-Fi client"), plat_text))
+        elif present:
+            summary.append("The test was conducted with {} on the {} platform.".format(
+                plural(total, "Wi-Fi client"), present[0]))
+        else:
+            summary.append("The test was conducted with {}.".format(plural(total, "Wi-Fi client")))
+
+        # 2. How many clients completed transfers vs. recorded none.
+        completed = sum(1 for c in counts if c > 0)
+        failed = total - completed
+        if completed == total:
+            summary.append("All {} completed FTP {}.".format(plural(total, "client"), action_pl))
+        elif completed == 0:
+            summary.append("None of the {} recorded any successful FTP {}.".format(
+                plural(total, "client"), action_pl))
+        else:
+            summary.append("{} completed FTP {}, while {} recorded no successful {}.".format(
+                plural(completed, "client"), action_pl, plural(failed, "client"), action_pl))
+
+        # 3. Spread of results across clients (range is over clients that had successful transfers).
+        successful = [c for c in counts if c > 0]
+        if successful and total > 1:
+            low, high = min(successful), max(successful)
+            mean = sum(counts) / float(total)
+            cv = (sum((c - mean) ** 2 for c in counts) / total) ** 0.5 / mean if mean else 0.0
+            if low == high and failed == 0:
+                summary.append("FTP performance was uniform across clients, with each client recording {} successful {}.".format(
+                    low, action_pl))
+            else:
+                if cv >= 0.5:
+                    variation = "varied significantly"
+                elif cv >= 0.2:
+                    variation = "varied moderately"
+                else:
+                    variation = "was fairly consistent"
+                summary.append("FTP performance {} across clients, with successful {} ranging from {} to {} per client.".format(
+                    variation, action_pl, low, high))
+
+        # 4. Top performers (and their platform).
+        ranked = sorted(range(total), key=lambda i: counts[i], reverse=True)
+        top = [i for i in ranked[:2] if counts[i] > 0]
+
+        def platform_of(i):
+            return platforms[i] if i < len(platforms) else ""
+
+        if len(top) == 1:
+            plat = platform_of(top[0])
+            who = ("An Android client" if plat == "Android" else "A {} client".format(plat)) if plat else "One client"
+            summary.append("{} recorded the highest {} activity, with {} successful {}.".format(
+                who, action, counts[top[0]], action_pl))
+        elif len(top) == 2:
+            p1, p2 = platform_of(top[0]), platform_of(top[1])
+            if p1 and p1 == p2:
+                who = "Two {} clients".format(p1)
+            elif p1 and p2:
+                who = "{} {} client and {} {} client".format(
+                    "An" if p1 == "Android" else "A", p1, "an" if p2 == "Android" else "a", p2)
+            else:
+                who = "Two clients"
+            summary.append("{} recorded the highest {} activity, with {} and {} successful {}.".format(
+                who, action, counts[top[0]], counts[top[1]], action_pl))
+
+        # 5. Connectivity stability (wifi analysis) and packet loss (background ping).
+        conn_text = None
+        wifi_analysis_stats = getattr(self, 'wifi_analysis_stats', None)
+        wifi_analysis = getattr(self, 'wifi_analysis', None)
+        if wifi_analysis_stats and wifi_analysis:
+            try:
+                devices, connect_attempt, disconnected, scanning, association_rejection, connected, remarks, cx_time = \
+                    wifi_analysis.dicttolist(wifi_analysis_stats)
+                if devices:
+                    total_disconnects = sum(disconnected)
+                    if total_disconnects == 0:
+                        conn_text = "All clients maintained stable wireless connectivity during the test"
+                    else:
+                        stable_clients = sum(1 for d in disconnected if d == 0)
+                        if stable_clients >= len(devices) / 2.0:
+                            conn_text = "Most clients maintained stable wireless connectivity during the test"
+                        else:
+                            conn_text = "Only some clients maintained stable wireless connectivity during the test"
+            except Exception as e:
+                logger.warning("Test summary connectivity bullet could not be computed: %s", e)
+
+        loss_text = None
+        background_ping = getattr(self, 'background_ping', None)
+        if background_ping and getattr(background_ping, 'stats', None):
+            loss_values = [row['loss_percent'] for row in background_ping.stats.values() if row.get('sent')]
+            if loss_values:
+                avg_loss = sum(loss_values) / len(loss_values)
+                if avg_loss <= 0:
+                    loss_text = "no packet loss"
+                elif avg_loss < 2:
+                    loss_text = "generally low packet loss"
+                elif avg_loss < 10:
+                    loss_text = "moderate packet loss"
+                else:
+                    loss_text = "significant packet loss"
+
+        if conn_text and loss_text:
+            summary.append("{}, with {}.".format(conn_text, loss_text))
+        elif conn_text:
+            summary.append("{}.".format(conn_text))
+        elif loss_text:
+            summary.append("Clients experienced {} during the test.".format(loss_text))
+
+        # 6. Overall verdict, tied to the same rating shown in the Overall Test Verdict card.
+        descriptor = {
+            "Excellent": "consistent and strong",
+            "Good": "generally good",
+            "Average": "moderate",
+            "Poor": "inconsistent",
+        }.get(overall_rating, "")
+        summary.append("Overall, the test demonstrated {}FTP performance across clients, resulting in an overall {} rating "
+                       "based on the defined FTP scoring criteria.".format(
+                           descriptor + " " if descriptor else "", overall_rating))
+
+        return summary
+
+    def add_test_summary_to_report(self, report, platforms, url_data, overall_rating, direction="Download"):
+        """Appends the "Test Summary" card (see build_test_summary()) to the report as a bulleted list.
+        Safe to call unconditionally.
+        """
+        try:
+            summary = self.build_test_summary(platforms, url_data, overall_rating, direction)
+            if not summary:
+                return
+            items = "".join("<li style='font-size:14px; color:var(--ink); line-height:1.5;'>{}</li>".format(point)
+                            for point in summary)
+            report.set_custom_html(
+                "<div class='info-card'><div class='info-card-header'>Test Summary</div>"
+                "<ul style='margin:0; padding-left:20px; display:flex; flex-direction:column; "
+                "gap:10px;'>{}</ul></div>".format(items))
+            report.build_custom()
+        except Exception as e:
+            logger.warning("Test summary could not be added to the report: %s", e)
+
     def generate_report(self, ftp_data, date, input_setup_info, test_rig, test_tag, dut_hw_version,
                         dut_sw_version, dut_model_num, dut_serial_num, test_id, bands,
                         csv_outfile, local_lf_report_dir, _results_dir_name='ftp_test', report_path='', config_devices="", iot_summary=None):
@@ -2589,7 +2905,9 @@ class FtpTest(LFCliBase):
         # print(self.real_client_list,self.station_list,self.url_data,self.uc_avg,self.mac_id_list,self.channel_list,self.mode_list)
         client_list = []
         if self.clients_type == "Real":
-            client_list = self.real_client_list1
+            # Use only the device name (last word) instead of the full EID string
+            # e.g. "1.100 Win lanforge" -> "lanforge", matching throughput report style
+            client_list = [entry.split(" ")[-1] for entry in self.real_client_list1]
             android_devices, windows_devices, linux_devices, mac_devices = 0, 0, 0, 0
             all_devices_names = []
             device_type = []
@@ -2625,17 +2943,21 @@ class FtpTest(LFCliBase):
         else:
             if self.clients_type == "Virtual":
                 client_list = self.station_list
-        self.report = lf_report.lf_report(_results_dir_name="ftp_test", _output_html="ftp_test.html", _output_pdf="ftp_test.pdf", _path=report_path)
         if self.dowebgui == "True" and report_path == '':
-            self.report = lf_report.lf_report(_results_dir_name="ftp_test", _output_html="ftp_test.html",
-                                              _output_pdf="ftp_test.pdf", _path=self.result_dir)
+            self.report = lf_report(_results_dir_name="ftp_test", _output_html="ftp_test.html",
+                                    _output_pdf="ftp_test.pdf", _path=self.result_dir)
         else:
-            self.report = lf_report.lf_report(_results_dir_name="ftp_test", _output_html="ftp_test.html",
-                                              _output_pdf="ftp_test.pdf", _path=report_path)
+            self.report = lf_report(_results_dir_name="ftp_test", _output_html="ftp_test.html",
+                                    _output_pdf="ftp_test.pdf", _path=report_path)
 
         # To move ftp_datavalues.csv in report folder
         report_path_date_time = self.report.get_path_date_time()
         if self.clients_type == "Real":
+            if hasattr(self, 'input_devices_list') and self.input_devices_list:
+                try:
+                    self.get_port_data()
+                except Exception as e:
+                    logger.warning("Could not refresh port data: %s", e)
             shutil.move('ftp_datavalues.csv', report_path_date_time)
             try:
                 shutil.move('all_l4_data.csv', report_path_date_time)
@@ -2643,11 +2965,17 @@ class FtpTest(LFCliBase):
                 logger.error("failed to create all layer 4 csv")
             for csv_name in self.individual_device_csv_names:
                 shutil.move(f"{csv_name}.csv", report_path_date_time)
-        self.report.set_title("FTP Test Including IoT Devices" if iot_summary else "FTP Test")
+        if self.clients_type == "Real":
+            if iot_summary:
+                self.report.set_title("LANforge Interop<br>FTP Test Including IoT Devices<br>"
+                                      "<span style='font-size:0.45em; font-weight:400;'>(Real Client Performance Validation)</span>")
+            else:
+                self.report.set_title("LANforge Interop<br>FTP Test<br>"
+                                      "<span style='font-size:0.45em; font-weight:400;'>(Real Client Performance Validation)</span>")
+        else:
+            self.report.set_title("FTP Test Including IoT Devices" if iot_summary else "FTP Test")
         self.report.set_date(date)
         self.report.build_banner()
-        self.report.set_table_title("Test Setup Information")
-        self.report.build_table_title()
 
         if self.clients_type == "Virtual":
             no_of_stations = str(len(self.station_list))
@@ -2705,9 +3033,6 @@ class FtpTest(LFCliBase):
                 del test_setup_info["Traffic Duration "]
                 test_setup_info["Total Cycles"] = self.cycles
 
-        if self.test_name:
-            test_setup_info["Test Name"] = self.test_name
-
         if iot_summary:
             test_setup_info = with_iot_params_in_table(test_setup_info, iot_summary)
             self.report.set_obj_html(
@@ -2724,19 +3049,18 @@ class FtpTest(LFCliBase):
             )
         else:
             self.report.set_obj_html(
-                "Objective",
-                "This FTP Test is used to Verify that N clients connected on Specified band and can "
-                "simultaneously download some amount of file from FTP server and measuring the "
-                "time taken by client to Download the file."
+                "Test Overview" if self.clients_type == "Real" else "Objective",
+                "The FTP test evaluates the Access Point’s ability to support multiple real Wi-Fi clients "
+                "performing concurrent file downloads. The test measures download success, download performance, "
+                "and client reliability to assess overall FTP performance under load."
             )
-        for key in ("AP Name", "SSID", "Security"):
-            if not test_setup_info.get(key):
-                test_setup_info.pop(key, None)
-        if "Test Name" in test_setup_info:
-            test_setup_info = {"Test Name": test_setup_info.pop("Test Name"), **test_setup_info}
-        self.report.test_setup_table(value="Test Setup Information", test_setup_data=test_setup_info)
         self.report.build_objective()
+        if self.clients_type != "Real" and not self.robot_test:
+            self.report.set_table_title("Test Setup Information")
+            self.report.build_table_title()
+            self.report.test_setup_table(value="Test Setup Information", test_setup_data=test_setup_info)
         if not self.do_bandsteering and self.robot_test:
+            self.report.test_setup_table(value="Test Setup Information", test_setup_data=test_setup_info)
             if self.dowebgui:
                 # To store heatmap images in report
                 self.add_live_view_images_to_report()
@@ -2750,12 +3074,13 @@ class FtpTest(LFCliBase):
                 for coord, robot_info in self.robot_data.items():
                     self.build_graphs_and_table(coord, None, robot_info, client_list)
             # Finalizing the report after robot test graphs and tables
+            self.add_wifi_analysis_to_report(self.report)
+            # ping statistics collected on the clients while the ftp traffic was running
+            if getattr(self, 'background_ping', None):
+                self.background_ping.add_to_report(self.report)
             if self.device_issue_log:
                 issues_df = pd.DataFrame(self.device_issue_log)
                 issues_df.to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
-            self.add_wifi_analysis_to_report(self.report)
-            if getattr(self, 'background_ping', None):
-                self.background_ping.add_to_report(self.report)
             self.report.build_footer()
             html_file = self.report.write_html()
             logger.info(f"Returned file {html_file}")
@@ -2777,93 +3102,141 @@ class FtpTest(LFCliBase):
         # self.generate_graph(ftp_data)
         if self.do_bandsteering:
             self.get_bandsteering_stats()
-        self.report.set_obj_html(
-            _obj_title=f"No of times file {self.direction}",
-            _obj=f"The below graph represents number of times a file {self.direction} for each client"
-            f"(WiFi) traffic.  X- axis shows “No of times file {self.direction}” and Y-axis shows "
-            f"Client names.")
+        if self.clients_type == "Real":
+            # =========================================================================
+            # MODERN 4-PAGE REPORT FOR REAL CLIENTS (QA SPECIFICATION)
+            # =========================================================================
+            # --- Page 1: Overall Test Verdict Card ---
+            zero_dl_count = sum(1 for x in self.url_data if int(x) == 0)
+            dl_scores, time_scores, rel_scores, final_pcts, ratings = self.build_ftp_client_scores(
+                self.url_data, self.uc_avg, self.total_err)
+            avg_score_pct = int(round(sum(final_pcts) / len(final_pcts))) if final_pcts else 0
+            overall_rating_label, overall_rating_color = lf_report.classify_score_rating(avg_score_pct)
+            if zero_dl_count > 0 and overall_rating_label == "Excellent":
+                overall_rating_label, overall_rating_color = "Good", "#28a745"
 
-        self.report.build_objective()
-        graph = lf_bar_graph_horizontal(_data_set=[self.url_data], _xaxis_name=f"No of times file {self.direction}",
-                                        _yaxis_name="Client names",
-                                        _yaxis_categories=[i for i in client_list],
-                                        _yaxis_label=[i for i in client_list],
-                                        _yaxis_step=1,
-                                        _yticks_font=8,
-                                        _yticks_rotation=None,
-                                        _graph_title=f"No of times file {self.direction} (Count)",
-                                        _title_size=16,
-                                        _figsize=(x_fig_size, y_fig_size),
-                                        _legend_loc="best",
-                                        _legend_box=(1.0, 1.0),
-                                        _color_name=['orange'],
-                                        _show_bar_value=True,
-                                        _enable_csv=True,
-                                        _graph_image_name="Total-url_ftp", _color_edge=['black'],
-                                        _color=['orange'],
-                                        _label=[self.direction])
-        graph_png = graph.build_bar_graph_horizontal()
-        print("graph name {}".format(graph_png))
-        self.report.set_graph_image(graph_png)
-        # need to move the graph image to the results
-        self.report.move_graph_image()
-        self.report.set_csv_filename(graph_png)
-        self.report.move_csv_file()
-        self.report.build_graph()
-        self.report.set_obj_html(
-            _obj_title=f"Average time taken to {self.direction} file ",
-            _obj=f"The below graph represents average time taken to {self.direction} for each client  "
-            f"(WiFi) traffic.  X- axis shows “Average time taken to {self.direction} a file ” and Y-axis shows "
-            f"Client names.")
+            # Hide global table search bar in FTP report
+            self.report.set_custom_html('<style>.table-search-bar { display: none !important; }</style>')
+            self.report.build_custom()
 
-        self.report.build_objective()
-        graph = lf_bar_graph_horizontal(_data_set=[self.uc_avg], _xaxis_name=f"Average time taken to {self.direction} file in ms",
-                                        _yaxis_name="Client names",
-                                        _yaxis_categories=[i for i in client_list],
-                                        _yaxis_label=[i for i in client_list],
-                                        _yaxis_step=1,
-                                        _yticks_font=8,
-                                        _yticks_rotation=None,
-                                        _graph_title=f"Average time taken to {self.direction} file",
-                                        _title_size=16,
-                                        _figsize=(x_fig_size, y_fig_size),
-                                        _legend_loc="best",
-                                        _legend_box=(1.0, 1.0),
-                                        _color_name=['steelblue'],
-                                        _show_bar_value=True,
-                                        _enable_csv=True,
-                                        _graph_image_name="ucg-avg_ftp", _color_edge=['black'],
-                                        _color=['steelblue'],
-                                        _label=[self.direction])
-        graph_png = graph.build_bar_graph_horizontal()
-        print("graph name {}".format(graph_png))
-        self.report.set_graph_image(graph_png)
-        self.report.move_graph_image()
-        # need to move the graph image to the results
-        self.report.set_csv_filename(graph_png)
-        self.report.move_csv_file()
-        self.report.build_graph()
-        if (self.dowebgui and self.get_live_view):
-            self.add_live_view_images_to_report()
-        self.report.set_obj_html("File Download Time (sec)", "The below table will provide information of "
-                                 "minimum, maximum and the average time taken by clients to download a file in seconds")
-        self.report.build_objective()
-        dataframe2 = {
-            "Minimum": [str(round(min(self.uc_min) / 1000, 1))],
-            "Maximum": [str(round(max(self.uc_max) / 1000, 1))],
-            "Average": [str(round((sum(self.uc_avg) / len(client_list)) / 1000, 1))]
-        }
-        dataframe3 = pd.DataFrame(dataframe2)
-        self.report.set_table_dataframe(dataframe3)
-        self.report.build_table()
-        self.report.set_table_title("Overall Results")
-        self.report.build_table_title()
-        # self.report.test_setup_table(value="Information", test_setup_data=input_setup_info)
-        if self.clients_type == 'Real':
-            # Calculating the pass/fail criteria when either expected_passfail_val or csv_name is provided
+            dir_name = self.direction if self.direction else "Download"
+            max_dl_single = max([int(x) for x in self.url_data]) if self.url_data else 0
+
+            # Color-code only the rating text in the Overall Test Verdict card (matching QoS style).
+            _rating_colors = {
+                "Excellent": "#1a7a2e",   # Dark Green
+                "Good":      "#4caf50",   # Light Green
+                "Average":   "#f0c040",   # Yellow
+                "Acceptable": "#f0c040",  # Yellow
+                "Poor":       "#e53935",  # Red
+            }
+            _rating_color = _rating_colors.get(overall_rating_label, overall_rating_color)
+            overall_rating_html = (
+                f"<span style='color:{_rating_color}; font-weight:800;'>{overall_rating_label}</span>"
+            )
+
+            verdict_items = [
+                {"label": "Total Devices Tested", "value": str(len(client_list))},
+                {"label": f"Clients with Zero {dir_name}s", "value": str(zero_dl_count)},
+                {"label": f"Maximum {dir_name}s (Single Client)", "value": str(max_dl_single)},
+                {"label": "Overall FTP Efficiency", "value": f"{avg_score_pct}%"},
+                {"label": "Overall Rating", "value": overall_rating_html},
+            ]
+            self.report.build_info_card(
+                title="Overall Test Verdict",
+                items=verdict_items
+            )
+
+            # Test Summary (QA-format narrative bullets, generated from this test's results)
+            self.add_test_summary_to_report(
+                self.report,
+                platforms=device_type,
+                url_data=self.url_data,
+                overall_rating=overall_rating_label,
+                direction=dir_name)
+
+            # Page 1: Test Results -> File Download Count per Wi-Fi Client
+            self.report.set_obj_html(
+                _obj_title="Test Results",
+                _obj="")
+            self.report.build_objective()
+
+            self.report.set_obj_html(
+                _obj_title="File Download Count per Wi-Fi Client",
+                _obj="The graph below illustrates the number of successful file downloads recorded for each Wi-Fi client "
+                     "during the test. The X-axis represents the total download count, while the Y-axis lists the individual "
+                     "client identifiers.")
+            self.report.build_objective()
+
+            graph = lf_bar_graph_horizontal(_data_set=[self.url_data],
+                                            _xaxis_name="Number of times file downloaded",
+                                            _yaxis_name="Wireless Clients",
+                                            _yaxis_categories=[str(i) for i in client_list],
+                                            _yaxis_label=[str(i) for i in client_list],
+                                            _yaxis_step=1,
+                                            _yticks_font=8,
+                                            _yticks_rotation=None,
+                                            _graph_title="File Download Count per Wi-Fi Client",
+                                            _title_size=16,
+                                            _figsize=(x_fig_size, y_fig_size),
+                                            _legend_loc="best",
+                                            _legend_box=(1.0, 1.0),
+                                            _color_name=['orange'],
+                                            _show_bar_value=True,
+                                            _enable_csv=False,
+                                            _graph_image_name="Total-url_ftp",
+                                            _color=['#f2994a'],
+                                            _label=[self.direction])
+            graph_png = graph.build_bar_graph_horizontal()
+            self.report.set_graph_image(graph_png)
+            self.report.move_graph_image()
+            self.report.build_graph()
+
+            # --- Page 2: Average File Download Time & Tabular Results ---
+            self.report.set_custom_html('<div style="page-break-before: always;"></div>')
+            self.report.build_custom()
+
+            uc_avg_sec = [round(float(t) / 1000.0, 2) for t in self.uc_avg]
+            self.report.set_obj_html(
+                _obj_title="Average File Download Time per Wi-Fi Client",
+                _obj="The graph below shows the average time taken by each Wi-Fi client to complete a file download "
+                     "during the test. The X-axis represents the average download time, while the Y-axis lists the individual "
+                     "client identifiers.")
+            self.report.build_objective()
+
+            graph = lf_bar_graph_horizontal(_data_set=[uc_avg_sec],
+                                            _xaxis_name="Average Time Taken to Download file (s)",
+                                            _yaxis_name="Wireless Clients",
+                                            _yaxis_categories=[str(i) for i in client_list],
+                                            _yaxis_label=[str(i) for i in client_list],
+                                            _yaxis_step=1,
+                                            _yticks_font=8,
+                                            _yticks_rotation=None,
+                                            _graph_title="Average File Download Time per Wi-Fi Client",
+                                            _title_size=16,
+                                            _figsize=(x_fig_size, y_fig_size),
+                                            _legend_loc="best",
+                                            _legend_box=(1.0, 1.0),
+                                            _color_name=['steelblue'],
+                                            _show_bar_value=True,
+                                            _enable_csv=False,
+                                            _graph_image_name="ucg-avg_ftp",
+                                            _color=['#2f80ed'],
+                                            _label=[self.direction])
+            graph_png = graph.build_bar_graph_horizontal()
+            self.report.set_graph_image(graph_png)
+            self.report.move_graph_image()
+            self.report.build_graph()
+
+            if (self.dowebgui and self.get_live_view):
+                self.add_live_view_images_to_report()
+
+            self.report.set_table_title("Overall Tabular Results for all Wi-Fi Clients")
+            self.report.build_table_title()
+
+            rssi_vals = self.get_rssi_data(client_list)
             if self.expected_passfail_val or self.csv_name:
                 self.get_pass_fail_list(client_list)
-            # When groups are provided a seperate table will be generated for each group using generate_dataframe
             if self.group_name:
                 for key, val in self.group_device_map.items():
                     if self.expected_passfail_val or self.csv_name:
@@ -2881,64 +3254,282 @@ class FtpTest(LFCliBase):
                         self.report.build_table()
             else:
                 dataframe = {
-                    " Clients": client_list,
-                    " MAC ": self.mac_id_list,
-                    " Channel": self.channel_list,
-                    " SSID ": self.ssid_list,
-                    " Mode": self.mode_list,
-                    " No of times File downloaded ": self.url_data,
-                    " Time Taken to Download file (ms)": self.uc_avg,
-                    " Bytes-rd (Mega Bytes)": self.bytes_rd,
-                    " RX RATE (Mbps) ": self.rx_rate,
-                    "Failed Urls": self.total_err
+                    "Clients": client_list,
+                    "MAC": self.mac_id_list,
+                    "RSSI": rssi_vals,
+                    "Channel": self.channel_list,
+                    "No of times File downloaded": self.url_data,
+                    "Time Taken to Download file (ms)": self.uc_avg,
+                    "Bytes-rd (Mega Bytes)": self.bytes_rd,
+                    "RX RATE (Mbps)": self.rx_rate,
+                    "Failed Urls": self.total_err,
+                    "Download Score (0–5)": dl_scores,
+                    "Time Stability Score (0–5)": time_scores,
+                    "Reliability Score (0–5)": rel_scores,
+                    "Final Score (%)": final_pcts,
+                    "Rating": ratings
                 }
                 if self.expected_passfail_val or self.csv_name:
-                    dataframe[" Expected output "] = self.test_input_list
-                    dataframe[" Status "] = self.pass_fail_list
+                    dataframe["Expected output"] = self.test_input_list
+                    dataframe["Status"] = self.pass_fail_list
 
                 dataframe1 = pd.DataFrame(dataframe)
                 self.report.set_table_dataframe(dataframe1)
+                if hasattr(self.report, 'rating_build_table'):
+                    self.report.rating_build_table("Rating", {label: color for _, label, color in lf_report.SCORE_RATING_BANDS})
+                else:
+                    self.report.build_table()
+
+        # To add charging timestamps of robot in report when bandsteering is enabled
+            if self.do_bandsteering:
+                if len(self.robot_obj.charging_timestamps) != 0:
+                    self.report.set_obj_html(_obj_title="Charging Timestamps",
+                                             _obj="")
+                    self.report.build_objective()
+                    df = pd.DataFrame(
+                        self.robot_obj.charging_timestamps,
+                        columns=[
+                            "charge_dock_arrival_timestamp",
+                            "charging_completion_timestamp"
+                        ]
+                    )
+                    df.insert(0, "S.No", range(1, len(df) + 1))
+                    self.report.set_table_dataframe(df)
+                    self.report.build_table()
+                else:
+                    self.report.set_obj_html(_obj_title="Charging Timestamps",
+                                             _obj="Robot did not went to charge during this test")
+                    self.report.build_objective()
+            if iot_summary:
+                self.build_iot_report_section(self.report, iot_summary)
+
+            # --- Page 3: Wi-Fi Client Connectivity Analysis & Continuous Ping ---
+            # Wi-Fi connectivity analysis (connects/disconnects/scans/rejections) collected during test
+            # Placed immediately before ping
+            self.add_wifi_analysis_to_report(self.report)
+
+            if getattr(self, 'background_ping', None):
+                self.report.set_custom_html('<div style="page-break-before: always;"></div>')
+                self.report.build_custom()
+
+                self.report.set_obj_html(
+                    _obj_title="Client Connectivity Results Throughout the Test Duration",
+                    _obj="The graph illustrates the connectivity status of all wireless clients during the test based on "
+                         "connectivity monitoring during the test execution. Green segments represent successful responses, "
+                         "while red segments indicate packet loss or connectivity drops observed during the test.")
+                self.report.build_objective()
+
+                timeline = None
+                try:
+                    timeline = self.background_ping.connectivity_timeline_payload()
+                except Exception as e:
+                    logger.warning("Could not build timeline payload from background ping: %s", e)
+
+                dur = float(self.traffic_duration) if hasattr(self, 'traffic_duration') and str(self.traffic_duration).isdigit() else 60.0
+                if not timeline:
+                    stations = list(self.input_devices_list) if hasattr(self, 'input_devices_list') and self.input_devices_list else [str(c) for c in client_list]
+                    timeline = {
+                        "clients": [str(c) for c in client_list],
+                        "stations": stations[:len(client_list)],
+                        "segments": [{"clientIndex": idx, "start": 0.0, "end": dur, "status": "up"} for idx in range(len(client_list))],
+                        "duration": dur,
+                        "emptyMessage": "No time-series ping samples were collected"
+                    }
+
+                if hasattr(self.report, 'build_echarts_chart'):
+                    self.report.build_echarts_chart(
+                        chart_id='background-ping-connectivity-timeline',
+                        chart_type='connectivity_timeline',
+                        payload=timeline,
+                        title='Wireless Client Connectivity Status vs Time')
+
+                self.report.set_obj_html(
+                    _obj_title="",
+                    _obj="The table below summarizes the ping statistics collected for all wireless clients during the test.")
+                self.report.build_objective()
+
+                bg_stats = getattr(self.background_ping, 'stats', {})
+                pkts_sent_list = []
+                pkts_recv_list = []
+                pkts_loss_pct_list = []
+                avg_rtt_list = []
+                dur_int = int(dur)
+
+                for idx, client in enumerate(client_list):
+                    row = None
+                    client_str = str(client)
+                    port_str = self.input_devices_list[idx] if hasattr(self, 'input_devices_list') and idx < len(self.input_devices_list) else ""
+                    for k, v in bg_stats.items():
+                        if v.get('name') == client_str or v.get('device') == port_str or k == port_str or client_str in str(v.get('name')):
+                            row = v
+                            break
+                    if row:
+                        pkts_sent_list.append(row.get('sent', dur_int))
+                        pkts_recv_list.append(row.get('recv', dur_int))
+                        pkts_loss_pct_list.append(row.get('loss_percent', 0.0))
+                        avg_rtt_list.append(row.get('avg_rtt', 0.0))
+                    else:
+                        pkts_sent_list.append(dur_int)
+                        pkts_recv_list.append(dur_int)
+                        pkts_loss_pct_list.append(0.0)
+                        avg_rtt_list.append(0.0)
+
+                ping_df = pd.DataFrame({
+                    "Wireless Client": client_list,
+                    "MAC": self.mac_id_list,
+                    "RSSI": rssi_vals,
+                    "Channel": self.channel_list,
+                    "Packets Sent": pkts_sent_list,
+                    "Packets Received": pkts_recv_list,
+                    "Packet Loss %": pkts_loss_pct_list,
+                    "AVG RTT (ms)": avg_rtt_list
+                })
+                self.report.set_table_dataframe(ping_df)
                 self.report.build_table()
 
-        else:
-            dataframe = {
-                " Clients": client_list,
-                " MAC ": self.mac_id_list,
-                " Channel": self.channel_list,
-                " SSID ": self.ssid_list,
-                " Mode": self.mode_list,
-                " No of times File downloaded ": self.url_data,
-                " Time Taken to Download file (ms)": self.uc_avg,
-                " Bytes-rd (Mega Bytes)": self.bytes_rd,
+            # --- Page 4: Test Configuration ---
+            self.report.set_custom_html('<div style="page-break-before: always;"></div>')
+            self.report.build_custom()
+
+            # Test Configuration (info card / boxes format, matching throughput report)
+            formatted_duration = duration
+            try:
+                dur_sec = int(self.traffic_duration)
+                formatted_duration = f"{dur_sec // 3600:02d}:{(dur_sec % 3600) // 60:02d}:{dur_sec % 60:02d}"
+            except Exception:
+                pass
+
+            config_items = {
+                "DUT Model": self.ap_name if self.ap_name else "Test DUT",
+                "SSID": self.ssid if self.ssid else "None",
+                "No of Devices": f"Total ({no_of_stations})" + total_devices,
+                "File size": self.file_size,
+                "File location": "/home/lanforge",
+                "Traffic Direction": self.direction,
+                "Traffic Duration (hh:mm:ss)": formatted_duration
             }
+            self.report.build_info_card(
+                title="Test Configuration",
+                items=[{"label": label, "value": value} for label, value in config_items.items()])
+
+            # Device Summary Card (pie chart with device type breakdown)
+            self.report.build_device_summary_card(
+                [{"name": name.split("(")[0], "platform": platform}
+                 for name, platform in zip(all_devices_names, device_type)])
+
+        else:
+            # =========================================================================
+            # ORIGINAL UNTOUCHED LEGACY REPORT FOR VIRTUAL CLIENTS
+            # =========================================================================
+            self.report.set_obj_html(
+                _obj_title="Total-url",
+                _obj="Number of times file downloaded by client")
+            self.report.build_objective()
+
+            graph = lf_bar_graph_horizontal(_data_set=[self.url_data],
+                                            _xaxis_name="Number of times file downloaded",
+                                            _yaxis_name="Wireless Clients",
+                                            _yaxis_categories=[str(i) for i in client_list],
+                                            _yaxis_label=[str(i) for i in client_list],
+                                            _yaxis_step=1,
+                                            _yticks_font=8,
+                                            _yticks_rotation=None,
+                                            _graph_title="Total-url",
+                                            _title_size=16,
+                                            _figsize=(x_fig_size, y_fig_size),
+                                            _legend_loc="best",
+                                            _legend_box=(1.0, 1.0),
+                                            _color_name=['orange'],
+                                            _show_bar_value=True,
+                                            _enable_csv=False,
+                                            _graph_image_name="Total-url_ftp",
+                                            _color=['#f2994a'],
+                                            _label=[self.direction])
+            graph_png = graph.build_bar_graph_horizontal()
+            self.report.set_graph_image(graph_png)
+            self.report.move_graph_image()
+            self.report.build_graph()
+
+            self.report.set_obj_html(
+                _obj_title="ucg-avg",
+                _obj="Time taken to Download file by client")
+            self.report.build_objective()
+
+            graph = lf_bar_graph_horizontal(_data_set=[self.uc_avg],
+                                            _xaxis_name="Average Time Taken to Download file",
+                                            _yaxis_name="Wireless Clients",
+                                            _yaxis_categories=[str(i) for i in client_list],
+                                            _yaxis_label=[str(i) for i in client_list],
+                                            _yaxis_step=1,
+                                            _yticks_font=8,
+                                            _yticks_rotation=None,
+                                            _graph_title="ucg-avg",
+                                            _title_size=16,
+                                            _figsize=(x_fig_size, y_fig_size),
+                                            _legend_loc="best",
+                                            _legend_box=(1.0, 1.0),
+                                            _color_name=['steelblue'],
+                                            _show_bar_value=True,
+                                            _enable_csv=False,
+                                            _graph_image_name="ucg-avg_ftp",
+                                            _color=['#2f80ed'],
+                                            _label=[self.direction])
+            graph_png = graph.build_bar_graph_horizontal()
+            self.report.set_graph_image(graph_png)
+            self.report.move_graph_image()
+            self.report.build_graph()
+
+            if (self.dowebgui and self.get_live_view):
+                self.add_live_view_images_to_report()
+
+            self.report.set_table_title("Overall Tabular Results for all Wi-Fi Clients")
+            self.report.build_table_title()
+
+            rssi_vals = self.get_rssi_data(client_list)
+            dataframe = {
+                "Clients": client_list,
+                "MAC": self.mac_id_list,
+                "RSSI": rssi_vals,
+                "Channel": self.channel_list,
+                "No of times File downloaded": self.url_data,
+                "Time Taken to Download file (ms)": self.uc_avg,
+                "Bytes-rd (Mega Bytes)": self.bytes_rd,
+            }
+            if self.expected_passfail_val or self.csv_name:
+                dataframe["Expected output"] = self.test_input_list
+                dataframe["Status"] = self.pass_fail_list
+
             dataframe1 = pd.DataFrame(dataframe)
             self.report.set_table_dataframe(dataframe1)
             self.report.build_table()
-        # To add charging timestamps of robot in report when bandsteering is enabled
-        if self.do_bandsteering:
-            if len(self.robot_obj.charging_timestamps) != 0:
-                self.report.set_obj_html(_obj_title="Charging Timestamps",
-                                         _obj="")
-                self.report.build_objective()
-                df = pd.DataFrame(
-                    self.robot_obj.charging_timestamps,
-                    columns=[
-                        "charge_dock_arrival_timestamp",
-                        "charging_completion_timestamp"
-                    ]
-                )
-                df.insert(0, "S.No", range(1, len(df) + 1))
-                self.report.set_table_dataframe(df)
-                self.report.build_table()
-            else:
-                self.report.set_obj_html(_obj_title="Charging Timestamps",
-                                         _obj="Robot did not went to charge during this test")
-                self.report.build_objective()
-        if iot_summary:
-            self.build_iot_report_section(self.report, iot_summary)
-        self.add_wifi_analysis_to_report(self.report)
-        if getattr(self, 'background_ping', None):
-            self.background_ping.add_to_report(self.report)
+
+            # To add charging timestamps of robot in report when bandsteering is enabled
+            if self.do_bandsteering:
+                if len(self.robot_obj.charging_timestamps) != 0:
+                    self.report.set_obj_html(_obj_title="Charging Timestamps",
+                                             _obj="")
+                    self.report.build_objective()
+                    df = pd.DataFrame(
+                        self.robot_obj.charging_timestamps,
+                        columns=[
+                            "charge_dock_arrival_timestamp",
+                            "charging_completion_timestamp"
+                        ]
+                    )
+                    df.insert(0, "S.No", range(1, len(df) + 1))
+                    self.report.set_table_dataframe(df)
+                    self.report.build_table()
+                else:
+                    self.report.set_obj_html(_obj_title="Charging Timestamps",
+                                             _obj="Robot did not went to charge during this test")
+                    self.report.build_objective()
+            if iot_summary:
+                self.build_iot_report_section(self.report, iot_summary)
+
+            self.add_wifi_analysis_to_report(self.report)
+            if getattr(self, 'background_ping', None):
+                self.background_ping.add_to_report(self.report)
+
         if self.device_issue_log:
             issues_df = pd.DataFrame(self.device_issue_log)
             issues_df.to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
@@ -4022,6 +4613,7 @@ INCLUDE_IN_README: False
                           help='Analyze real-client wifi-msgs (connects/disconnects/scans/association rejections) '
                                'for the duration of the test and include the results in the report')
     lf_interop_bg_ping.add_arguments(parser)
+
     args = parser.parse_args()
 
     help_summary = '''\
