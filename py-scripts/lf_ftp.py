@@ -7,94 +7,98 @@ lf_ftp.py will verify that N clients are connected on a specified band and can s
 some amount of file data from the FTP server while measuring the time taken by clients to download/upload the file.
 
 EXAMPLE-1:
+Command Line Interface to run FTP download scenario for Real clients with wifi analysis
+python3 lf_ftp.py --mgr 192.168.220.125 --upstream_port eth2 --clients_type Real --directions Download --bands 5G --file_sizes 10MB --traffic_duration 2m --wifi_analysis
+
+EXAMPLE-2:
 Command Line Interface to run download scenario for Real clients
 python3 lf_ftp.py --ssid Netgear-5g --passwd sharedsecret --file_sizes 10MB --mgr 192.168.200.165 --traffic_duration 1m
 --security wpa2 --directions Download --clients_type Real --ap_name Netgear --bands 5G --upstream_port eth1
 
-EXAMPLE-2:
+EXAMPLE-3:
 Command Line Interface to run upload scenario on 6GHz band for Virtual clients
 python3 lf_ftp.py --ssid Netgear-6g --passwd sharedsecret --file_sizes 10MB --mgr 192.168.200.165 --traffic_duration 1m
 --security wpa3 --fiveg_radio wiphy2 --directions Upload --clients_type Virtual --ap_name Netgear --bands 6G --num_stations 2
 --upstream_port eth1
 
-EXAMPLE-3:
+EXAMPLE-4:
 Command Line Interface to run download scenario on 5GHz band for Virtual clients
 python3 lf_ftp.py --ssid Netgear-5g --passwd sharedsecret --file_sizes 10MB --mgr 192.168.200.165 --traffic_duration 1m
 --security wpa2 --fiveg_radio wiphy2 --directions Download --clients_type Virtual --ap_name Netgear --bands 5G --num_stations 2
 --upstream_port eth1
 
-EXAMPLE-4:
+EXAMPLE-5:
 Command Line Interface to run upload scenario for Real clients
 python3 lf_ftp.py --ssid Netgear-2g --passwd sharedsecret --file_sizes 10MB --mgr 192.168.200.165 --traffic_duration 1m
 --security wpa2 --directions Download --clients_type Real --ap_name Netgear --bands 2.4G --upstream_port eth1
 
-EXAMPLE-5:
+EXAMPLE-6:
 Command Line Interface to run upload scenario on 2.4GHz band for Virtual clients
 python3 lf_ftp.py --ssid Netgear-2g --passwd sharedsecret --file_sizes 10MB --mgr 192.168.200.165 --traffic_duration 1m
 --security wpa2 --twog_radio wiphy1 --directions Upload --clients_type Virtual --ap_name Netgear --bands 2.4G --num_stations 2
 --upstream_port eth1
 
-EXAMPLE-6:
+EXAMPLE-7:
 Command Line Interface to run download scenario for Real clients with device list
 python3 lf_ftp.py --ssid Netgear-2g --passwd sharedsecret --file_sizes 10MB --mgr 192.168.214.219 --traffic_duration 1m --security wpa2
 --directions Download --clients_type Real --ap_name Netgear --bands 2.4G --upstream_port eth1 --device_list 1.12,1.22
 
-EXAMPLE-7:
+EXAMPLE-8:
 Command Line Interface to run download scenario by setting the same expected Pass/Fail value for all devices
 python3 lf_ftp.py --file_sizes 1MB --mgr 192.168.213.218 --traffic_duration 1m  --directions Download --clients_type Real  --bands 5G
  --upstream_port eth1 --expected_passfail_value 4
 
-EXAMPLE-8:
+EXAMPLE-9:
 Command Line Interface to run download scenario by setting device specific Pass/Fail values in the csv file
 python3 lf_ftp.py --file_sizes 1MB --mgr 192.168.204.74 --traffic_duration 1m  --directions Download --clients_type Real  --bands 5G
  --upstream_port eth1 --device_csv_name device.csv
 
-EXAMPLE-9:
+EXAMPLE-10:
 Command Line Interface to run download scenario by Configuring Real Devices with SSID, Password, and Security
 python3 lf_ftp.py --file_sizes 1MB --mgr 192.168.213.218 --traffic_duration 1m  --directions Download --clients_type Real  --bands 5G
  --upstream_port eth1 --ssid NETGEAR_5G --passwd Password@123 --security wpa2 --config
 
-EXAMPLE-10:
+EXAMPLE-11:
 Command Line Interface to run download scenario by setting the same expected Pass/Fail value for all devices with configuration
 python3 lf_ftp.py --file_sizes 1MB --mgr 192.168.213.218 --traffic_duration 1m  --directions Download --clients_type Real  --bands 5G
  --upstream_port eth1 --ssid NETGEAR_2G --passwd Password@123 --security wpa2 --expected_passfail_value 4 --config
 
-EXAMPLE-11:
+EXAMPLE-12:
 Command Line Interface to run download scenario by setting device specific Pass/Fail values in the csv file without configuration
 python3 lf_ftp.py --file_sizes 1MB --mgr 192.168.213.218 --traffic_duration 1m  --directions Download --clients_type Real  --bands 5G
  --upstream_port eth1 --ssid NETGEAR_2G --passwd Password@123 --security wpa2 --device_csv_name device.csv
 
-EXAMPLE-12:
+EXAMPLE-13:
 Command Line Interface to run download scenario by Configuring Devices in Groups with Specific Profiles
 python3 lf_ftp.py --file_sizes 1MB --mgr 192.168.213.218  --traffic_duration 1m  --directions Download --clients_type Real  --bands 5G
  --upstream_port eth1 --file_name g219 --group_name grp1 --profile_name Open3
 
-EXAMPLE-13:
+EXAMPLE-14:
 Command Line Interface to run download scenario by Configuring Devices in Groups with Specific Profiles and expected Pass/Fail values
 python3 lf_ftp.py --file_sizes 1MB --mgr 192.168.213.218 --traffic_duration 1m  --directions Download --clients_type Real  --bands 5G
  --upstream_port eth1 --file_name g219 --group_name grp1 --profile_name Open3 --expected_passfail_value 3 --wait_time 30
 
-EXAMPLE-14:
+EXAMPLE-15:
 Command Line Interface to run the Test along with IOT without device list
 python3 lf_ftp.py --ssid Netgear-5g --passwd sharedsecret --file_sizes 10MB --mgr 192.168.207.78 --traffic_duration 1m --security wpa2
  --directions Download --clients_type Real --ap_name Netgear --bands 5G --upstream_port eth1 --iot_test --iot_testname "IotTest"
 
-EXAMPLE-15:
+EXAMPLE-16:
 Command Line Interface to run the Test along with IOT with device list
 python3 lf_ftp.py --ssid Netgear-5g --passwd sharedsecret --file_sizes 10MB --mgr 192.168.207.78 --traffic_duration 1m --security wpa2
  --directions Download --clients_type Real --ap_name Netgear --bands 5G --upstream_port eth1 --iot_test --iot_testname "IotTest" --iot_device_list "switch.smart_plug_1_socket_1"
 
-EXAMPLE-16:
+EXAMPLE-17:
 Command Line Interface to run download scenario for Real clients with only coordinates
 python3 lf_ftp.py --ssid Netgear-5g --passwd sharedsecret --file_sizes 10MB --mgr 192.168.207.78 --traffic_duration 1m
 --security wpa2 --directions Download --clients_type Real --ap_name Netgear --bands 5G --upstream_port eth1 --robot_test --robot_ip 192.168.204.101 --coordinate 3,4
 
-EXAMPLE-17:
+EXAMPLE-18:
 Command Line Interface to run download scenario for Real clients with coordinates and rotations
 python3 lf_ftp.py --ssid Netgear-5g --passwd sharedsecret --file_sizes 10MB --mgr 192.168.207.78 --traffic_duration 1m
 --security wpa2 --directions Download --clients_type Real --ap_name Netgear --bands 5G --upstream_port eth1 --robot_test --robot_ip 192.168.204.101 --coordinate 3,4 --rotation 30,45
 
-EXAMPLE-18:
+EXAMPLE-19:
 Command Line Interface to run bandsteering using robo with coordinates and cycles download scenario for Real clients
 python3 lf_ftp.py --ssid Netgear-5g --passwd sharedsecret --file_sizes 10MB --mgr 192.168.207.78 --traffic_duration 1m
 --security wpa2 --directions Download --clients_type Real --ap_name Netgear --bands 5G --upstream_port eth1 --robot_test --robot_ip 192.168.204.101
@@ -167,6 +171,15 @@ lf_graph = importlib.import_module("py-scripts.lf_graph")
 lf_kpi_csv = importlib.import_module("py-scripts.lf_kpi_csv")
 logger = logging.getLogger(__name__)
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
+
+try:
+    from lf_wifi_msgs import RealClientAnalysis
+except ImportError:
+    try:
+        lf_wifi_msgs = importlib.import_module("py-scripts.lf_wifi_msgs")
+        RealClientAnalysis = lf_wifi_msgs.RealClientAnalysis
+    except Exception:
+        RealClientAnalysis = None
 
 iot_scripts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../local/interop-webGUI/IoT/scripts/"))
 if os.path.exists(iot_scripts_path):
@@ -348,6 +361,9 @@ class FtpTest(LFCliBase):
         self.duration_to_skip = duration_to_skip
         self.do_bandsteering = do_bandsteering
         self.cycles = cycles
+        self.wifi_analysis = None
+        self.wifi_analysis_stats = {}
+        self.wifi_analysis_start_time = None
         logger.info("Test is Initialized")
 
     def query_realclients(self):
@@ -2447,6 +2463,112 @@ class FtpTest(LFCliBase):
             self.report.set_table_dataframe(table_df)
             self.report.build_table()
 
+    def resolve_wifi_analysis_device_names(self, devices):
+        """Map each wifi-analysis device (a LANforge port name) to its display name."""
+        port_to_name = {}
+        if hasattr(self, 'input_devices_list') and hasattr(self, 'real_client_list'):
+            for port_name, entry in zip(self.input_devices_list, self.real_client_list):
+                parts = entry.split(" ")
+                if parts and parts[-1]:
+                    port_to_name[port_name] = parts[-1]
+
+        return [port_to_name.get(port_name, port_name) for port_name in devices]
+
+    def start_wifi_analysis(self, host, port, device_list, ssid):
+        """Start a RealClientAnalysis window covering the devices under test."""
+        self.wifi_analysis = None
+        self.wifi_analysis_stats = {}
+        if not device_list or RealClientAnalysis is None:
+            return
+        try:
+            self.wifi_analysis = RealClientAnalysis(host=host, port=port, device_list=list(device_list),
+                                                    ssid=ssid or "", debug=self.debug)
+            self.wifi_analysis_start_time = int(time.time() * 1000)
+            logger.info("Wi-Fi connectivity analysis started for devices: %s", device_list)
+        except Exception as e:
+            logger.warning("Wifi connectivity analysis could not be started: %s", e)
+            self.wifi_analysis = None
+
+    def stop_wifi_analysis(self):
+        """Analyze '/wifi-msgs' since start_wifi_analysis() into self.wifi_analysis_stats."""
+        if not getattr(self, 'wifi_analysis', None):
+            return
+        try:
+            if hasattr(self.wifi_analysis, 'populate_device_lookups'):
+                self.wifi_analysis.populate_device_lookups()
+            elif hasattr(self.wifi_analysis, 'query_devices_1'):
+                self.wifi_analysis.query_devices_1()
+            local_dict = self.wifi_analysis.create_local_dict()
+            if not local_dict:
+                logger.warning("None of the wifi connectivity analysis devices resolved to a device LANforge knows about")
+                return
+            self.wifi_analysis_stats = self.wifi_analysis.get_client_connectivity_stats_from_timestamp(
+                self.wifi_analysis_start_time, None, local_dict)
+            logger.info("Wi-Fi connectivity analysis completed: %s", self.wifi_analysis_stats)
+        except Exception as e:
+            logger.warning("Wifi connectivity analysis results could not be collected: %s", e)
+
+    def add_wifi_analysis_to_report(self, report):
+        """Append the wifi connectivity event summary graph and stats table to the report."""
+        if not getattr(self, 'wifi_analysis_stats', None) or not getattr(self, 'wifi_analysis', None):
+            return
+        try:
+            devices, connect_attempt, disconnected, scanning, association_rejection, connected, remarks, cx_time = \
+                self.wifi_analysis.dicttolist(self.wifi_analysis_stats)
+            devices = self.resolve_wifi_analysis_device_names(devices)
+
+            categories = ["Disconnected", "Scans", "Association Attempts", "Association Rejected", "Connected"]
+            totals = [sum(disconnected), sum(scanning), sum(connect_attempt), sum(association_rejection), sum(connected)]
+            colors = ['#e67e22', '#1e824c', '#2980b9', '#8e44ad', '#27ae60']
+
+            report.set_custom_html('<div style="page-break-before: always;"></div>')
+            report.build_custom()
+
+            report.set_obj_html(
+                _obj_title="Client Connectivity Event Summary",
+                _obj="This graph summarizes connection-related events observed during the FTP test. "
+                     "These metrics provide insight into client stability and wireless connectivity performance.")
+            report.build_objective()
+
+            graph = lf_bar_graph(_data_set=[totals],
+                                 _xaxis_name="",
+                                 _yaxis_name="Count",
+                                 _xaxis_categories=categories,
+                                 _graph_image_name="wifi_connectivity_status",
+                                 _label=["Client Connectivity Status"],
+                                 _graph_title="Client Connectivity Status",
+                                 _title_size=16,
+                                 _color_edge='black',
+                                 _bar_width=0.5,
+                                 _figsize=(10, 6),
+                                 _legend_loc="best",
+                                 _dpi=96,
+                                 _show_bar_value=True,
+                                 _enable_csv=True,
+                                 _color=colors,
+                                 _color_name=colors)
+            graph_png = graph.build_bar_graph()
+            report.set_graph_image(graph_png)
+            report.move_graph_image()
+            report.set_csv_filename(graph.graph_image_name)
+            report.move_csv_file()
+            report.build_graph()
+
+            dataframe = pd.DataFrame({
+                "Device": devices,
+                "Association Attempts": connect_attempt,
+                "Disconnected": disconnected,
+                "Scanning": scanning,
+                "Association Rejection": association_rejection,
+                "Connected": connected,
+            })
+            report.set_table_title("Wifi Connectivity Analysis")
+            report.build_table_title()
+            report.set_table_dataframe(dataframe)
+            report.build_table()
+        except Exception as e:
+            logger.warning("Wifi connectivity analysis could not be added to the report: %s", e)
+
     def generate_report(self, ftp_data, date, input_setup_info, test_rig, test_tag, dut_hw_version,
                         dut_sw_version, dut_model_num, dut_serial_num, test_id, bands,
                         csv_outfile, local_lf_report_dir, _results_dir_name='ftp_test', report_path='', config_devices="", iot_summary=None):
@@ -2630,6 +2752,7 @@ class FtpTest(LFCliBase):
             if self.device_issue_log:
                 issues_df = pd.DataFrame(self.device_issue_log)
                 issues_df.to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
+            self.add_wifi_analysis_to_report(self.report)
             self.report.build_footer()
             html_file = self.report.write_html()
             logger.info(f"Returned file {html_file}")
@@ -2810,6 +2933,7 @@ class FtpTest(LFCliBase):
                 self.report.build_objective()
         if iot_summary:
             self.build_iot_report_section(self.report, iot_summary)
+        self.add_wifi_analysis_to_report(self.report)
         if self.device_issue_log:
             issues_df = pd.DataFrame(self.device_issue_log)
             issues_df.to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
@@ -3883,6 +4007,11 @@ INCLUDE_IN_README: False
                           type=str,
                           default='',
                           help='Comma-separated list of device counts to incrementally test (e.g., "1,3,5")')
+    optional.add_argument('--wifi_analysis', '--wifi-analysis',
+                          dest='wifi_analysis',
+                          action='store_true',
+                          help='Analyze real-client wifi-msgs (connects/disconnects/scans/association rejections) '
+                               'for the duration of the test and include the results in the report')
     args = parser.parse_args()
 
     help_summary = '''\
@@ -3978,6 +4107,10 @@ some amount of file data from the FTP server while measuring the time taken by c
         args.traffic_duration = int(args.traffic_duration[0:-1]) * 60 * 60
     elif args.traffic_duration.endswith(''):
         args.traffic_duration = int(args.traffic_duration)
+
+    wifi_analysis_obj = None
+    wifi_analysis_start_time = None
+    wifi_analysis_requested = getattr(args, 'wifi_analysis', False)
 
     # For all combinations ftp_data of directions, file size and client counts, run the test
     for band in args.bands:
@@ -4081,6 +4214,15 @@ some amount of file data from the FTP server while measuring the time taken by c
                 if obj.clients_type == 'Real':
                     obj.monitor_cx()
                     logger.info(f'Test started on the devices : {obj.input_devices_list}')
+                    if wifi_analysis_requested:
+                        wifi_analysis_requested = False
+                        obj.start_wifi_analysis(host=args.mgr, port=args.mgr_port,
+                                                device_list=obj.input_devices_list, ssid=args.ssid)
+                        wifi_analysis_obj = obj.wifi_analysis
+                        wifi_analysis_start_time = obj.wifi_analysis_start_time
+                    elif wifi_analysis_obj:
+                        obj.wifi_analysis = wifi_analysis_obj
+                        obj.wifi_analysis_start_time = wifi_analysis_start_time
                 # First time stamp
                 time1 = datetime.now()
                 logger.info("Traffic started running at %s", time1)
@@ -4119,6 +4261,11 @@ some amount of file data from the FTP server while measuring the time taken by c
 
     # total time for test duration
     # test_duration = str(time_stamp2 - time_stamp1)[:-7]
+
+    if wifi_analysis_obj:
+        obj.wifi_analysis = wifi_analysis_obj
+        obj.wifi_analysis_start_time = wifi_analysis_start_time
+        obj.stop_wifi_analysis()
 
     date = str(datetime.now()).split(",")[0].replace(" ", "-").split(".")[0]
 
