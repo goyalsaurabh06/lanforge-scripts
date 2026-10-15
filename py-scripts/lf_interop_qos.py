@@ -136,6 +136,7 @@ realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
 from lf_report import lf_report  # noqa: E402
 from lf_graph import lf_bar_graph, lf_bar_graph_horizontal  # noqa: E402
+import lf_interop_bg_ping  # noqa: E402
 
 logger = logging.getLogger(__name__)
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
@@ -1329,6 +1330,11 @@ class ThroughputQOS(Realm):
             dropb_connections.update({keys[i]: avg_drop_b_per[i]})
         self.connections_download, self.connections_upload, self.drop_a_per, self.drop_b_per = connections_download, connections_upload, drop_a_per, drop_b_per
         # accumulate real monitoring time so the report shows actual duration, not just configured
+        # Save the exact test traffic window so background_ping can clip its
+        # ping latency/loss charts to the active traffic period instead of the
+        # full wall-clock run.
+        self.monitor_window_start_dt = start_time
+        self.monitor_window_end_dt = datetime.now()
         self.actual_monitoring_duration_seconds += (datetime.now() - start_time).total_seconds()
         return connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, dropa_connections, dropb_connections
 
@@ -1546,6 +1552,27 @@ class ThroughputQOS(Realm):
             else:
                 ssid_list.append('-')
         return ssid_list
+
+    def get_channel_and_rssi_list(self, station_names):
+        """Live channel/RSSI snapshot per device port (mirrors get_ssid_list's /ports/all/
+        lookup), for the "Channel"/"RSSI (dBm)" columns in the background-ping table."""
+        channel_list = []
+        rssi_list = []
+        port_data = self.json_get('/ports/all/')['interfaces']
+        interfaces_dict = dict()
+        for port in port_data:
+            interfaces_dict.update(port)
+        for sta in station_names:
+            data = interfaces_dict.get(sta)
+            if data:
+                sig = data.get('signal', '-')
+                rssi_list.append(str(sig).split(" ")[0] if "dBm" in str(sig) else str(sig))
+                channel_value = str(data.get('channel', ''))
+                channel_list.append('NA' if channel_value in ('', '0', '-1') else channel_value)
+            else:
+                rssi_list.append('-')
+                channel_list.append('-')
+        return channel_list, rssi_list
 
     def resolve_wifi_analysis_device_names(self, devices):
         """Map each wifi-analysis device (a LANforge port name) to its display name."""
@@ -1844,6 +1871,14 @@ class ThroughputQOS(Realm):
 
         if iot_summary:
             self.build_iot_report_section(report, iot_summary)
+        # Wi-Fi connectivity analysis (connects/disconnects/scans/rejections) collected during test
+        self.add_wifi_analysis_to_report(report)
+        # ping statistics collected on the clients while the qos traffic was running
+        if getattr(self, 'background_ping', None):
+            channel_list, rssi_list = self.get_channel_and_rssi_list(self.input_devices_list)
+            device_info = {port: {'mac': mac, 'channel': ch, 'rssi': rssi}
+                           for port, mac, ch, rssi in zip(self.input_devices_list, self.mac_id_list, channel_list, rssi_list)}
+            self.background_ping.add_to_report(report, device_info=device_info)
         # recorded device issues in csv
         if self.device_issue_log:
             issues_df = pd.DataFrame(self.device_issue_log)
@@ -2951,6 +2986,15 @@ class ThroughputQOS(Realm):
             "contact": "support@candelatech.com"
         }
         report.test_setup_table(test_setup_data=input_setup_info, value="Information")
+        # Wi-Fi connectivity analysis (connects/disconnects/scans/rejections) collected during test
+        self.add_wifi_analysis_to_report(report)
+        # ping statistics collected on the clients while the qos traffic was running
+        if getattr(self, 'background_ping', None):
+            channel_list, rssi_list = self.get_channel_and_rssi_list(self.input_devices_list)
+            device_info = {port: {'mac': mac, 'channel': ch, 'rssi': rssi}
+                           for port, mac, ch, rssi in zip(self.input_devices_list, self.mac_id_list, channel_list, rssi_list)}
+            self.background_ping.add_to_report(report, device_info=device_info)
+
         # any recorded device issues in the report folder
         if self.device_issue_log:
             issues_df = pd.DataFrame(self.device_issue_log)
@@ -3871,6 +3915,17 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
                           default='',
                           help='Comma-separated list of device counts to incrementally test (e.g., "1,3,5")')
 
+    optional.add_argument('--wifi_analysis', '--wifi-analysis',
+                          dest='wifi_analysis',
+                          action='store_true',
+                          help='Analyze real-client wifi-msgs (connects/disconnects/scans/association rejections) '
+                               'for the duration of the test and include the results in the report')
+    optional.add_argument('--bgping', '--bg_ping',
+                          dest='enable_bg_ping',
+                          action='store_true',
+                          help='Run background ping on real clients during test (alias for --enable_bg_ping)')
+    lf_interop_bg_ping.add_arguments(parser)
+
     args = parser.parse_args()
 
     # help summary
@@ -4052,6 +4107,14 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
                 )
                 df1.to_csv('{}/overall_throughput.csv'.format(throughput_qos.result_dir), index=False)
                 raise ValueError("Aborting the test....")
+        if getattr(args, 'bg_ping', False) or getattr(args, 'bgping', False):
+            setattr(args, 'enable_bg_ping', True)
+        throughput_qos.background_ping = lf_interop_bg_ping.from_args(
+            args,
+            host=args.mgr,
+            port=args.mgr_port,
+            device_list=throughput_qos.input_devices_list,
+            default_target=args.upstream_port)
         if getattr(args, 'wifi_analysis', False):
             throughput_qos.start_wifi_analysis(host=args.mgr, port=args.mgr_port,
                                                device_list=throughput_qos.input_devices_list, ssid=args.ssid)
@@ -4059,12 +4122,21 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
         throughput_qos.monitor_cx()
         if args.robot_test:
             throughput_qos.perform_robo()
+            if throughput_qos.background_ping:
+                throughput_qos.background_ping.stop()
+                throughput_qos.background_ping.cleanup()
             throughput_qos.stop_wifi_analysis()
             exit(1)
         throughput_qos.start(False, False)
         time.sleep(10)
         connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b = throughput_qos.monitor()
         throughput_qos.stop()
+        if throughput_qos.background_ping:
+            # Clip the bg ping graph to the exact test-traffic window (start → stop of monitor()).
+            bg_start = getattr(throughput_qos, 'monitor_window_start_dt', None)
+            bg_end = getattr(throughput_qos, 'monitor_window_end_dt', None)
+            throughput_qos.background_ping.set_monitor_window(bg_start, bg_end)
+            throughput_qos.background_ping.stop()
         throughput_qos.stop_wifi_analysis()
         time.sleep(5)
         test_results['test_results'].append(throughput_qos.evaluate_qos(connections_download, connections_upload, drop_a_per, drop_b_per))
@@ -4116,6 +4188,8 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
             avg_drop_b=avg_drop_b, iot_summary=iot_summary)
 
     # Update webgui running json with latest entry and test status completed
+    if getattr(throughput_qos, 'background_ping', None):
+        throughput_qos.background_ping.cleanup()
     if throughput_qos.dowebgui == "True":
         # copying to home directory i.e home/user_name
         throughput_qos.copy_reports_to_home_dir()
