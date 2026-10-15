@@ -158,8 +158,9 @@ base_RealDevice = base.RealDevice
 DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
 
 # Importing modules dynamically
-lf_report = importlib.import_module("py-scripts.lf_report")
-lf_graph = importlib.import_module("py-scripts.lf_graph")
+lf_report = importlib.import_module("py-scripts.lf_modern_report")
+lf_graph = importlib.import_module("py-scripts.lf_modern_report")
+lf_interop_bg_ping = importlib.import_module("py-scripts.lf_interop_bg_ping")
 lf_base_interop_profile = importlib.import_module("py-scripts.lf_base_interop_profile")
 robo_base_class = importlib.import_module("py-scripts.lf_base_robo")
 
@@ -1033,6 +1034,8 @@ class Youtube(Realm):
     def finalize_test_run(self, args, iot_summary=None):
         """Stop clients, generate the report, then clean up the test."""
         self.stop()
+        if getattr(self, 'background_ping', None):
+            self.background_ping.stop()
         # Stop collection before WebUI completion triggers the final live image.
         if args.do_webUI:
             self.stop_webui_test()
@@ -1058,6 +1061,8 @@ class Youtube(Realm):
                     self.generic_endps_profile.cleanup()
                 except Exception:
                     logger.exception("Unable to clean up all YouTube endpoints")
+                if getattr(self, 'background_ping', None):
+                    self.background_ping.cleanup()
 
     def get_youtube_lf_wifi_stats(self):
         """
@@ -1660,6 +1665,33 @@ class Youtube(Realm):
             for column, values in frame_data.items()
         }
 
+    def _add_connectivity_report(self, report):
+        """Include the ping timeline and statistics."""
+        ping = getattr(self, "background_ping", None)
+        if not ping or not ping.stats:
+            report.set_obj_html(
+                _obj_title="Client Connectivity Status Throughout the Test Duration",
+                _obj="No background-ping results are available. Enable --bg_ping and verify that ping starts "
+                     "successfully on the clients to collect the connectivity timeline and ping statistics.")
+            report.build_objective()
+            return
+        device_info = {}
+        for index, hostname in enumerate(self.real_sta_hostname):
+            station = self.hostname_to_station_map.get(hostname)
+            if station is None:
+                continue
+            metadata = ping.device_data.get(station, {})
+            device_info[station] = {
+                "mac": self.mac_list[index] if index < len(self.mac_list) else metadata.get("mac", ""),
+                "rssi": re.sub(r"\s*dBm\s*$", "", str(self.rssi_list[index]), flags=re.IGNORECASE)
+                if index < len(self.rssi_list) else "Unavailable",
+                "channel": metadata.get("channel", "Unavailable"),
+            }
+        ping.add_to_report(report, device_info=device_info, timeline_labels={
+            "xAxisName": "Time (in Seconds)", "yAxisName": "Wireless Clients",
+            "connectedLabel": "Connected",
+        })
+
     def create_report(self, data=None, ui_report_dir=None, iot_summary=None):
         data = data or self.stats_api_response
         ui_report_dir = ui_report_dir or self.ui_report_dir
@@ -1878,6 +1910,8 @@ class Youtube(Realm):
             test_results_df = pd.DataFrame(test_results)
             self.report.set_table_dataframe(test_results_df)
             self.report.build_table()
+
+        self._add_connectivity_report(self.report)
 
         for file_path in self.devices_list:
             self.move_files(file_path, self.report_path_date_time)
@@ -2912,6 +2946,8 @@ class Youtube(Realm):
                 if file_name.endswith('.csv'):
                     self.move_files(file_name, self.report_path_date_time)
 
+        self._add_connectivity_report(self.report)
+
         original_dir = os.getcwd()
         os.chdir(self.report_path_date_time)
 
@@ -3360,6 +3396,8 @@ NOTES:
         robo.add_argument('--bssids', type=str, help='Comma-separated list of BSSIDs for bandsteering test')
         robo.add_argument('--cycles', type=int, default=1, help='Number of cycles to perform bandsteering')
 
+        lf_interop_bg_ping.add_arguments(parser)
+
         args = parser.parse_args()
 
         if args.help_summary:
@@ -3632,6 +3670,14 @@ NOTES:
 
             logging.info("Waiting 10 seconds before starting YouTube streaming")
             youtube.wait_stop_aware(10, "before YouTube streaming started")
+
+            # starting the ping on the selected clients, it keeps running until the streaming is stopped
+            youtube.background_ping = lf_interop_bg_ping.from_args(
+                args,
+                host=args.mgr,
+                port=8080,
+                device_list=youtube.real_sta_list,
+                default_target=args.upstream_port)
 
             youtube.start_time = datetime.now()
             if args.do_robo:
