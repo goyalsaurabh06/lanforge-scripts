@@ -4608,8 +4608,8 @@ class Throughput(Realm):
                  for name, platform in zip(all_devices_names, device_type)])
         report.build_footer()
         report.write_html()
-        # Keep A3 landscape width and add vertical room for charts and tables.
-        report.write_pdf(_page_width="420mm", _page_height="420mm")
+        # Wider landscape pages, retaining vertical room for charts and tables.
+        report.write_pdf(_page_width="560mm", _page_height="420mm")
         logger.info("Monitoring Duration: %s", self.format_monitoring_duration())
 
     def generate_report_robo(self, iterations_before_test_stopped_by_user, incremental_capacity_list, data=None, data1=None, report_path='', result_dir_name='Throughput_Test_report',
@@ -5219,8 +5219,8 @@ class Throughput(Realm):
         # report.build_custom()
         report.build_footer()
         report.write_html()
-        # Keep A3 landscape width and add vertical room for charts and tables.
-        report.write_pdf(_page_width="420mm", _page_height="420mm")
+        # Wider landscape pages, retaining vertical room for charts and tables.
+        report.write_pdf(_page_width="560mm", _page_height="420mm")
         logger.info("Monitoring Duration: %s", self.format_monitoring_duration())
 
     # Creates a separate DataFrame for each group of devices.
