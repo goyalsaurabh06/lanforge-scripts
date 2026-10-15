@@ -134,8 +134,7 @@ if 'py-json' not in sys.path:
 from LANforge import LFUtils  # noqa: F401
 realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
-from lf_report import lf_report  # noqa: E402
-from lf_graph import lf_bar_graph, lf_bar_graph_horizontal  # noqa: E402
+from lf_modern_report import lf_report, lf_bar_graph, lf_bar_graph_horizontal  # noqa: E402
 import lf_interop_bg_ping  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -151,7 +150,6 @@ except ImportError:
         RealClientAnalysis = lf_wifi_msgs.RealClientAnalysis
     except Exception:
         RealClientAnalysis = None
-
 
 iot_scripts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../local/interop-webGUI/IoT/scripts/"))
 if os.path.exists(iot_scripts_path):
@@ -493,6 +491,10 @@ class ThroughputQOS(Realm):
         for interface in response_port['interfaces']:
             for port, port_data in interface.items():
                 if (not port_data['phantom'] and not port_data['down'] and port_data['parent dev'] == "wiphy0" and port_data['alias'] != 'p2p0'):
+                    port_ip = port_data.get('ip', '')
+                    if not port_ip or port_ip == '0.0.0.0':
+                        logger.info('Skipping port %s, the client has no IP address', port)
+                        continue
                     for id in self.eid_list:
                         if (id + '.' in port):
                             original_port_list.append(port)
@@ -648,13 +650,6 @@ class ThroughputQOS(Realm):
             "Issue": issue,
             "API Response": api_response if api_response is not None else '',
         })
-
-    @staticmethod
-    def _parse_float(value):
-        """Converts value to float, returning 0.0 when it is blank or non-numeric."""
-        if (isinstance(value, str) and not value.replace('.', '', 1).isdigit()) or value is None:
-            return 0.0
-        return float(value)
 
     def format_monitoring_duration(self):
         """Formats the actual time spent monitoring as "Xm Ys"."""
@@ -812,22 +807,24 @@ class ThroughputQOS(Realm):
             raise ValueError("Monitor needs a list of Layer 3 connections")
         # monitor columns
         start_time = datetime.now()
+        # Save the exact test traffic window so background_ping can clip its
+        # graph/duration to this window rather than its own wider start-to-stop lifetime.
+        self.monitor_window_start_dt = start_time
+        end_time = start_time + timedelta(seconds=int(self.test_duration))
+        self.monitor_window_end_dt = end_time
         if self.do_bandsteering:
             # Bandsteering invokes monitor() repeatedly as a per-tick callback within one
             # continuous session, so only set this once for the whole session.
             if self.monitor_start_time is None:
                 self.monitor_start_time = start_time
         else:
-            # Every other robot_test flow (plain coordinate loop, rotation loop) calls
-            # monitor() once per coordinate/rotation, with CXs freshly restarted just before
-            # each call - restart the grace period each time instead of only on the very
-            # first coordinate.
+            # Every other flow calls monitor() once per coordinate/rotation with CXs
+            # freshly restarted — restart the grace period each time.
             self.monitor_start_time = start_time
-        test_start_time = datetime.now().strftime("%Y %d %H:%M:%S")
+        test_start_time = start_time.strftime("%Y %d %H:%M:%S")
         if not self.do_bandsteering:
             print("Test started at: ", test_start_time)
             print("Monitoring cx and endpoints")
-        end_time = start_time + timedelta(seconds=int(self.test_duration))
         if not self.robot_test:
             self.overall = []
             self.df_for_webui = []
@@ -988,19 +985,15 @@ class ThroughputQOS(Realm):
                             tos_sides_seen.setdefault(traffic_tos, set()).add(endp)
 
                             if endp == 'A':
-                                rx_rate_a = self._parse_float(cx_data['rx rate (last)'])
-                                self.real_time_data[cx_name][traffic_tos]['bps rx a'].append(rx_rate_a / 1000000)
-                                t_response[cx_name][0] = rx_rate_a
-                                rx_drop_a = self._parse_float(cx_data['rx drop %'])
-                                self.real_time_data[cx_name][traffic_tos]['rx drop % a'].append(rx_drop_a)
-                                t_response[cx_name][2] = rx_drop_a
+                                self.real_time_data[cx_name][traffic_tos]['bps rx a'].append(cx_data['rx rate (last)'] / 1000000)
+                                t_response[cx_name][0] = cx_data['rx rate (last)']
+                                self.real_time_data[cx_name][traffic_tos]['rx drop % a'].append(cx_data['rx drop %'])
+                                t_response[cx_name][2] = cx_data['rx drop %']
                             elif endp == 'B':
-                                rx_rate_b = self._parse_float(cx_data['rx rate (last)'])
-                                self.real_time_data[cx_name][traffic_tos]['bps rx b'].append(rx_rate_b / 1000000)
-                                t_response[cx_name][1] = rx_rate_b
-                                rx_drop_b = self._parse_float(cx_data['rx drop %'])
-                                self.real_time_data[cx_name][traffic_tos]['rx drop % b'].append(rx_drop_b)
-                                t_response[cx_name][3] = rx_drop_b
+                                self.real_time_data[cx_name][traffic_tos]['bps rx b'].append(cx_data['rx rate (last)'] / 1000000)
+                                t_response[cx_name][1] = cx_data['rx rate (last)']
+                                self.real_time_data[cx_name][traffic_tos]['rx drop % b'].append(cx_data['rx drop %'])
+                                t_response[cx_name][3] = cx_data['rx drop %']
                     # fill 0 for whichever side didn't report, so every list for this tos stays the same length
                     for traffic_tos, sides in tos_sides_seen.items():
                         tos_data = self.real_time_data[cx][traffic_tos]
@@ -1305,14 +1298,22 @@ class ThroughputQOS(Realm):
             df1 = pd.DataFrame(self.df_for_webui)
             df1.to_csv('{}/overall_throughput_{}.csv'.format(runtime_dir, curr_coordinate), index=False)
 
+        # # rx_rate list is calculated
+        for index, _key in enumerate(throughput):
+            upload[index].append(throughput[index][1])
+            download[index].append(throughput[index][0])
+            drop_a[index].append(throughput[index][2])
+            drop_b[index].append(throughput[index][3])
         # Rounding of the results upto 2 decimals. A list is empty if the loop ended before any
         # data was collected (e.g. all devices stopped) - treat that as 0, not divide-by-zero.
+        upload_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") if i else 0.0 for i in upload]
+        download_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") if i else 0.0 for i in download]
+        drop_a_per = [float(round(sum(i) / len(i), 2)) if i else 0.0 for i in drop_a]
+        drop_b_per = [float(round(sum(i) / len(i), 2)) if i else 0.0 for i in drop_b]
         avg_upload_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") if i else 0.0 for i in avg_upload]
         avg_download_throughput = [float(f"{(sum(i) / 1000000) / len(i): .2f}") if i else 0.0 for i in avg_download]
         avg_drop_a_per = [float(round(sum(i) / len(i), 2)) if i else 0.0 for i in avg_drop_a]
         avg_drop_b_per = [float(round(sum(i) / len(i), 2)) if i else 0.0 for i in avg_drop_b]
-        upload_throughput, download_throughput = avg_upload_throughput, avg_download_throughput
-        drop_a_per, drop_b_per = avg_drop_a_per, avg_drop_b_per
         keys = list(connections_upload.keys())
         keys = list(connections_download.keys())
         # Updated the calculated values to the respective connections in dictionary
@@ -1330,11 +1331,6 @@ class ThroughputQOS(Realm):
             dropb_connections.update({keys[i]: avg_drop_b_per[i]})
         self.connections_download, self.connections_upload, self.drop_a_per, self.drop_b_per = connections_download, connections_upload, drop_a_per, drop_b_per
         # accumulate real monitoring time so the report shows actual duration, not just configured
-        # Save the exact test traffic window so background_ping can clip its
-        # ping latency/loss charts to the active traffic period instead of the
-        # full wall-clock run.
-        self.monitor_window_start_dt = start_time
-        self.monitor_window_end_dt = datetime.now()
         self.actual_monitoring_duration_seconds += (datetime.now() - start_time).total_seconds()
         return connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, dropa_connections, dropb_connections
 
@@ -1482,11 +1478,11 @@ class ThroughputQOS(Realm):
             upload_throughput_df[2].append(res['test_results'][0][1][rate_up]['videoQOS'])
             upload_throughput_df[3].append(res['test_results'][0][1][rate_up]['voiceQOS'])
             table_df.update({"No of Stations": []})
-            table_df.update({"Observed average throughput for load {}".format(rate_up + "-upload"): []})
+            table_df.update({"Throughput for Load {}".format(rate_up + "-upload"): []})
             graph_df.update({rate_up: upload_throughput_df})
 
             table_df.update({"No of Stations": str(len(self.input_devices_list))})
-            table_df["Observed average throughput for load {}".format(rate_up + "-upload")].append(upload_throughput[0])
+            table_df["Throughput for Load {}".format(rate_up + "-upload")].append(upload_throughput[0])
             res_copy = copy.copy(res)
             res_copy.update({"throughput_table_df": table_df})
             res_copy.update({"graph_df": graph_df})
@@ -1504,11 +1500,11 @@ class ThroughputQOS(Realm):
             download_throughput_df[2].append(res['test_results'][0][0][rate_down]['videoQOS'])
             download_throughput_df[3].append(res['test_results'][0][0][rate_down]['voiceQOS'])
             table_df.update({"No of Stations": []})
-            table_df.update({"Observed average throughput for load {}".format(rate_down + "-download"): []})
+            table_df.update({"Throughput for Load {}".format(rate_down + "-download"): []})
             graph_df.update({rate_down + "download": download_throughput_df})
             # print("...........graph_df",graph_df)
             table_df.update({"No of Stations": str(len(self.input_devices_list))})
-            table_df["Observed average throughput for load {}".format(rate_down + "-download")].append(download_throughput[0])
+            table_df["Throughput for Load {}".format(rate_down + "-download")].append(download_throughput[0])
             res_copy = copy.copy(res)
             res_copy.update({"throughput_table_df": table_df})
             res_copy.update({"graph_df": graph_df})
@@ -1630,6 +1626,7 @@ class ThroughputQOS(Realm):
 
             categories = ["Disconnected", "Scans", "Association Attempts", "Association Rejected", "Connected"]
             totals = [sum(disconnected), sum(scanning), sum(connect_attempt), sum(association_rejection), sum(connected)]
+            # Red=Disconnected, Yellow=Scans, Orange=Association Attempts, Grey=Rejected, Green=Connected.
             colors = ['#e74c3c', '#f1c40f', '#e67e22', '#95a5a6', '#27ae60']
 
             report.set_custom_html('<div style="page-break-before: always;"></div>')
@@ -1640,6 +1637,7 @@ class ThroughputQOS(Realm):
                 _obj="This graph summarizes connection-related events observed during the QoS test. "
                      "These metrics provide insight into client stability and wireless connectivity performance.")
             report.build_objective()
+            # One named+colored series per category (stacked, so still full bar width) instead of one combined series, so each category gets its own legend entry.
             data_set = [[value if i == series_index else 0 for i, value in enumerate(totals)]
                         for series_index in range(len(categories))]
             graph = lf_bar_graph(_data_set=data_set,
@@ -1682,6 +1680,158 @@ class ThroughputQOS(Realm):
         except Exception as e:
             logger.warning("Wifi connectivity analysis could not be added to the report: %s", e)
 
+    def build_test_summary(self, priority_order, overall_rating, vo_val, vi_val, be_val, bk_val, rssi_values=None):
+        """Builds a handful of plain-English narrative sentences giving an executive-level
+        overview of the whole QoS test -- traffic-class prioritization, achieved bandwidth,
+        connectivity/reconnection, packet loss, and signal quality -- each derived from this
+        test's actual measurements, plus an overall verdict. Mirrors
+        lf_interop_throughput.Throughput.build_test_summary()'s approach for the bullets that
+        aren't QoS-specific (connectivity, packet loss, signal quality).
+
+        Args:
+            priority_order: traffic classes ordered by achieved throughput, highest first
+                (e.g. ['VO', 'VI', 'BE', 'BK']), as computed in generate_report().
+            overall_rating: "Good"/"Acceptable"/"Poor", the same heuristic used for the
+                Overall Test Verdict card.
+            vo_val/vi_val/be_val/bk_val: achieved throughput (Mbps) per traffic class.
+            rssi_values: this test's client RSSI readings (same style as
+                get_channel_and_rssi_list()'s rssi_list -- signed dBm as str/float, '-' for unknown).
+
+        Returns:
+            A list of plain strings, most important first.
+        """
+        summary = []
+
+        # 1. Traffic-class priority ordering vs. the expected VO > VI > BE > BK.
+        if priority_order == ['VO', 'VI', 'BE', 'BK']:
+            summary.append(
+                "QoS prioritization was successfully validated: traffic classes were served in the "
+                "expected order (Voice > Video > Best Effort > Background).")
+        elif priority_order[:2] == ['VO', 'VI'] or priority_order[:2] == ['VI', 'VO']:
+            summary.append(
+                "QoS prioritization was partially validated: Voice and Video traffic led the observed "
+                "order ({order}), though Best Effort/Background were not fully deprioritized as "
+                "expected.".format(order=" > ".join(priority_order)))
+        else:
+            summary.append(
+                "QoS prioritization was not maintained: the observed throughput order was {order}, "
+                "which does not match the expected Voice > Video > Best Effort > Background "
+                "priority.".format(order=" > ".join(priority_order)))
+
+        # 2. Which class actually received the most bandwidth.
+        class_vals = {"Voice (VO)": vo_val, "Video (VI)": vi_val, "Best Effort (BE)": be_val, "Background (BK)": bk_val}
+        top_class = max(class_vals, key=class_vals.get)
+        if top_class in ("Voice (VO)", "Video (VI)"):
+            summary.append(
+                "{cls} traffic received the highest bandwidth ({val} Mbps), aligning with expected QoS "
+                "standards.".format(cls=top_class, val=class_vals[top_class]))
+        else:
+            summary.append(
+                "{cls} traffic received the highest bandwidth ({val} Mbps), which does not align with "
+                "expected QoS standards -- Voice/Video traffic should typically lead.".format(
+                    cls=top_class, val=class_vals[top_class]))
+
+        # 3. Connectivity / reconnection, from the wifi connectivity analysis.
+        wifi_analysis_stats = getattr(self, 'wifi_analysis_stats', None)
+        wifi_analysis = getattr(self, 'wifi_analysis', None)
+        if wifi_analysis_stats and wifi_analysis:
+            try:
+                devices, connect_attempt, disconnected, scanning, association_rejection, connected, remarks, cx_time = \
+                    wifi_analysis.dicttolist(wifi_analysis_stats)
+                total_devices = len(devices)
+                total_disconnects = sum(disconnected)
+                never_connected = sum(1 for c in connected if c == 0)
+                plural = "" if total_devices == 1 else "s"
+                if total_devices:
+                    if not total_disconnects:
+                        summary.append(
+                            "All {total} client{s} maintained a stable wireless connection throughout the "
+                            "test, with no disconnections observed.".format(total=total_devices, s=plural))
+                    elif not never_connected:
+                        summary.append(
+                            "During the test, clients experienced {n} connect/disconnect event(s); however, "
+                            "all {total} client{s} were able to reconnect successfully by the end of the "
+                            "test.".format(n=total_disconnects, total=total_devices, s=plural))
+                    else:
+                        summary.append(
+                            "During the test, clients experienced {n} connect/disconnect event(s); {never} "
+                            "of {total} client{s} did not reconnect by the end of the test.".format(
+                                n=total_disconnects, never=never_connected, total=total_devices, s=plural))
+            except Exception as e:
+                logger.warning("Test summary connectivity bullet could not be computed: %s", e)
+
+        # 4. Packet loss, from the background ping.
+        background_ping = getattr(self, 'background_ping', None)
+        if background_ping and background_ping.stats:
+            rows = list(background_ping.stats.values())
+            loss_values = [row['loss_percent'] for row in rows if row['sent']]
+            if loss_values:
+                avg_loss = sum(loss_values) / len(loss_values)
+                if avg_loss <= 0:
+                    summary.append(
+                        "No packet loss was observed on the background ping for any client, indicating "
+                        "fully reliable communication under load.")
+                elif avg_loss < 2:
+                    summary.append(
+                        "Packet loss was minimal, averaging {avg:.1f}% across all clients, indicating "
+                        "reliable communication under load.".format(avg=avg_loss))
+                elif avg_loss < 10:
+                    summary.append(
+                        "Packet loss was moderate, averaging {avg:.1f}% across all clients.".format(avg=avg_loss))
+                else:
+                    summary.append(
+                        "Packet loss was significant, averaging {avg:.1f}% across all clients, indicating "
+                        "unreliable communication under load.".format(avg=avg_loss))
+
+        # 5. Signal quality, from RSSI (same Excellent/Good/Fair/Poor cutoffs as the
+        # per-device RSSI table: weak means worse than -65 dBm).
+        readings = []
+        for v in (rssi_values or []):
+            try:
+                readings.append(abs(float(v)))
+            except (TypeError, ValueError):
+                continue
+        if readings:
+            weak = sum(1 for v in readings if v > 65)
+            if not weak:
+                summary.append(
+                    "Signal strength and link quality were consistent, with no clients showing weak "
+                    "signal (RSSI worse than -65 dBm) during the test.")
+            else:
+                summary.append(
+                    "{weak} of {total} client(s) showed weak signal (RSSI worse than -65 dBm) during "
+                    "the test, which may have impacted their throughput results.".format(
+                        weak=weak, total=len(readings)))
+
+        # 6. Overall verdict.
+        if overall_rating == "Good":
+            summary.append("Overall, the AP demonstrated stable QoS performance.")
+        elif overall_rating == "Acceptable":
+            summary.append("Overall, the AP demonstrated acceptable QoS performance.")
+        else:
+            summary.append("Overall, the AP showed some instability or degraded QoS performance during the test.")
+
+        return summary
+
+    def add_test_summary_to_report(self, report, priority_order, overall_rating, vo_val, vi_val, be_val, bk_val, rssi_values=None):
+        """Appends the "Test Summary" card (see build_test_summary()) to the report as a plain
+        bulleted list. Safe to call unconditionally.
+        """
+        try:
+            summary = self.build_test_summary(priority_order, overall_rating, vo_val, vi_val, be_val, bk_val,
+                                              rssi_values=rssi_values)
+            if not summary:
+                return
+            items = "".join("<li style='font-size:14px; color:var(--ink); line-height:1.5;'>{}</li>".format(point)
+                            for point in summary)
+            report.set_custom_html(
+                "<div class='info-card'><div class='info-card-header'>Test Summary</div>"
+                "<ul style='margin:0; padding-left:20px; display:flex; flex-direction:column; "
+                "gap:10px;'>{}</ul></div>".format(items))
+            report.build_custom()
+        except Exception as e:
+            logger.warning("Test summary could not be added to the report: %s", e)
+
     def generate_report(self, data, input_setup_info, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, report_path='', result_dir_name='Qos_Test_report',
                         selected_real_clients_names=None, config_devices="", iot_summary=None):
         # getting ssid list for devices, on which the test ran
@@ -1696,14 +1846,19 @@ class ThroughputQOS(Realm):
         report_path_date_time = report.get_path_date_time()
         print("path: {}".format(report_path))
         print("path_date_time: {}".format(report_path_date_time))
-        report.set_title("Interop QOS")
+        if iot_summary:
+            report.set_title("LANforge Interop<br>QoS Test Including IoT Devices<br>"
+                             "<span style='font-size:0.45em; font-weight:400;'>(Real Client Performance Validation)</span>")
+        else:
+            report.set_title("LANforge Interop<br>QoS Test<br>"
+                             "<span style='font-size:0.45em; font-weight:400;'>(Real Client Performance Validation)</span>")
         report.build_banner()
         # objective title and description
         if iot_summary:
             report.set_obj_html(
-                _obj_title="Objective",
+                _obj_title="Test Overview",
                 _obj=(
-                    "The Candela QoS (Quality of Service) Test Including IoT Devices is designed to evaluate an Access Point’s "
+                    "The Candela QoS (Quality of Service) Test Including IoT Devices is designed to evaluate an Access Point's "
                     "performance and stability under specific QoS settings while handling both Real clients (Android, Windows, "
                     "Linux, iOS) and IoT devices (controlled via Home Assistant). "
                     "For Real clients, the test measures maximum achievable throughput across different traffic types (voice, "
@@ -1716,58 +1871,177 @@ class ThroughputQOS(Realm):
                 )
             )
         else:
-            report.set_obj_html(_obj_title="Objective",
-                                _obj="The objective of the QoS (Quality of Service) traffic throughput test is to measure the maximum"
-                                " achievable throughput of a network under specific QoS settings and conditions.By conducting"
-                                " this test, we aim to assess the capacity of network to handle high volumes of traffic while"
-                                " maintaining acceptable performance levels,ensuring that the network meets the required QoS"
-                                " standards and can adequately support the expected user demands.")
+            report.set_obj_html(_obj_title="Test Overview",
+                                _obj="The Candela QoS test is designed to measure an Access Point's ability to prioritize different types of "
+                                "traffic across real clients such as Android, Linux, Windows, MacBook and iOS devices. The test "
+                                "generates simultaneous traffic for multiple QoS classes including Voice (VO), Video (VI), Best Effort "
+                                "(BE), and Background (BK), and evaluates how effectively the AP enforces traffic prioritization "
+                                "under load.")
         report.build_objective()
-        # Initialize counts and lists for device types
-        android_devices, windows_devices, linux_devices, ios_devices, ios_mob_devices = 0, 0, 0, 0, 0
+
+        # Hide global table search bar for cleaner report
+        report.set_custom_html('<style>.table-search-bar { display: none !important; }</style>')
+        report.build_custom()
+
+        # Determine VO, VI, BE, BK values
+        # data_set is always [BK_list, BE_list, VI_list, VO_list] regardless of
+        # direction (see generate_graph_data_set/set_report_data).
+        bk_val = data_set[0][0]
+        be_val = data_set[1][0]
+        vi_val = data_set[2][0]
+        vo_val = data_set[3][0]
+
+        total_aggregate = vo_val + vi_val + be_val + bk_val
+
+        # Figure out priority order
+        priority_dict = {'VO': vo_val, 'VI': vi_val, 'BE': be_val, 'BK': bk_val}
+        sorted_priority = sorted(priority_dict.items(), key=lambda item: item[1], reverse=True)
+        priority_order = [item[0] for item in sorted_priority if item[1] > 0]
+        if len(priority_order) == 0:
+            priority_order = ['VO', 'VI', 'BE', 'BK']  # fallback if all 0
+
+        # Heuristic for overall rating
+        overall_rating = "Good"
+        if priority_order == ['VO', 'VI', 'BE', 'BK']:
+            overall_rating = "Good"
+        elif priority_order[:2] == ['VO', 'VI'] or priority_order[:2] == ['VI', 'VO']:
+            overall_rating = "Acceptable"
+        else:
+            overall_rating = "Poor"
+
+        # Color-code only the rating text in the Overall Test Verdict card.
+        _rating_colors = {
+            "Excellent": "#1a7a2e",   # Dark Green
+            "Good":      "#4caf50",   # Light Green
+            "Acceptable": "#f0c040",  # Yellow
+            "Poor":       "#e53935",  # Red
+        }
+        _rating_color = _rating_colors.get(overall_rating, "#555555")
+        overall_rating_html = (
+            "<span style='color:{color}; font-weight:800;'>{rating}</span>".format(
+                color=_rating_color, rating=overall_rating)
+        )
+
+        # --- Overall Test Verdict Info Card ---
+        # Achieved Load gets its own box per TOS class instead of one cramped
+        # "X Mbps (VO) / Y Mbps (VI) / ..." string, so each value is readable at a glance.
+        verdict_data = {
+            "Total Devices Tested": str(self.num_stations),
+            "Intended Load": f"{load} per TOS per client" if "Upload" not in load else f"{load} per TOS",
+            "Achieved Load (VO)": f"{vo_val} Mbps",
+            "Achieved Load (VI)": f"{vi_val} Mbps",
+            "Achieved Load (BE)": f"{be_val} Mbps",
+            "Achieved Load (BK)": f"{bk_val} Mbps",
+            "Total Aggregate Throughput": f"{total_aggregate:.2f} Mbps",
+            "Priority Order Observed": " > ".join(priority_order),
+            "Overall Rating": overall_rating_html
+        }
+        report.build_info_card(
+            title="Overall Test Verdict",
+            items=[{"label": label, "value": value} for label, value in verdict_data.items()]
+        )
+
+        # Computed once here and reused below (for the background-ping device table)
+        # instead of querying '/ports/all/' twice for the same live snapshot.
+        channel_list, rssi_list = self.get_channel_and_rssi_list(self.input_devices_list)
+        self.add_test_summary_to_report(report, priority_order=priority_order, overall_rating=overall_rating,
+                                        vo_val=vo_val, vi_val=vi_val, be_val=be_val, bk_val=bk_val,
+                                        rssi_values=rssi_list)
+
+        # --- Test Results - QoS Throughput Distribution ---
+        report.set_obj_html(
+            _obj_title="Test Results",
+            _obj="<b>QoS Throughput Distribution</b><br>The graph below illustrates the throughput "
+                 "distribution across different QoS traffic classes. The X axis represents the traffic "
+                 "classes (VO, VI, BE, BK), while the Y-axis indicates the achieved throughput in Mbps."
+        )
+        report.build_objective()
+
+        # One category per traffic class (not one category holding 4 series) so the
+        # bars spread across the full chart width instead of clustering in the middle.
+        overall_throughput_data = [
+            [vo_val, vi_val, be_val, bk_val]
+        ]
+
+        graph = lf_bar_graph(_data_set=overall_throughput_data,
+                             _xaxis_name="Traffic Class",
+                             _yaxis_name="Throughput Attained (Mbps)",
+                             _xaxis_categories=["VO", "VI", "BE", "BK"],
+                             _xaxis_label=["VO", "VI", "BE", "BK"],
+                             _graph_image_name="qos_throughput_dist",
+                             _label=["Throughput (Mbps)"],
+                             _xaxis_step=1,
+                             _graph_title="",
+                             _title_size=16,
+                             _color=['#1f6f58', '#2f80ed', '#f1b24a', '#1d9a8a'],
+                             _color_edge='black',
+                             _bar_width=0.15,
+                             _figsize=(10, 6),
+                             _legend_loc="best",
+                             _legend_box=(1.0, 1.0),
+                             _dpi=96,
+                             _show_bar_value=True,
+                             _enable_csv=True,
+                             _color_name=['#1f6f58', '#2f80ed', '#f1b24a', '#1d9a8a'])
+        graph_png = graph.build_bar_graph()
+        report.set_graph_image(graph_png)
+        report.move_graph_image()
+        report.set_csv_filename(graph.graph_image_name)
+        report.move_csv_file()
+        report.build_graph()
+
+        # --- Priority Validation Table ---
+        report.set_table_title("Priority Validation Table")
+        report.build_table_title()
+
+        def get_full_name(abbr):
+            mapping = {'VO': 'Voice (VO)', 'VI': 'Video (VI)', 'BE': 'Best Effort (BE)', 'BK': 'Background (BK)'}
+            return mapping.get(abbr, abbr)
+
+        pass_tag = "<span style='color:#1a7a2e; font-weight:700;'>Pass</span>"
+        fail_tag = "<span style='color:#e53935; font-weight:700;'>Fail</span>"
+
+        priority_validation_data = {
+            "Priority Level": ["Highest", "High", "Normal", "Low"],
+            "Expected Order": ["Voice (VO)", "Video (VI)", "Best Effort (BE)", "Background (BK)"],
+            "Observed Order": [f"{get_full_name(p)} ({priority_dict.get(p, 0.0)} Mbps)" for p in (priority_order + ['', '', '', ''])[:4]],
+            "Status": [
+                pass_tag if len(priority_order) > 0 and priority_order[0] == 'VO' else fail_tag,
+                pass_tag if len(priority_order) > 1 and priority_order[1] == 'VI' else fail_tag,
+                pass_tag if len(priority_order) > 2 and priority_order[2] == 'BE' else fail_tag,
+                pass_tag if len(priority_order) > 3 and priority_order[3] == 'BK' else fail_tag
+            ]
+        }
+        priority_df = pd.DataFrame(priority_validation_data)
+        report.set_table_dataframe(priority_df)
+        report.dataframe_html = priority_df.to_html(index=False, justify='center', classes='data-table', escape=False)
+        report.html += "<div class='table-wrap'>" + report.dataframe_html + "</div>"
+
+        # Device names/types for the Device Summary Card (built further down)
         all_devices_names = []
         device_type = []
-        total_devices = ""
         for i in self.real_client_list:
             split_device_name = i.split(" ")
             if 'android' in split_device_name:
                 all_devices_names.append(split_device_name[2] + ("(Android)"))
                 device_type.append("Android")
-                android_devices += 1
             elif 'Win' in split_device_name:
                 all_devices_names.append(split_device_name[2] + ("(Windows)"))
                 device_type.append("Windows")
-                windows_devices += 1
             elif 'Lin' in split_device_name:
                 all_devices_names.append(split_device_name[2] + ("(Linux)"))
                 device_type.append("Linux")
-                linux_devices += 1
             elif 'Mac' in split_device_name:
                 all_devices_names.append(split_device_name[2] + ("(Mac)"))
                 device_type.append("Mac")
-                ios_devices += 1
             elif 'iOS' in split_device_name:
                 all_devices_names.append(split_device_name[2] + ("(iOS)"))
                 device_type.append("iOS")
-                ios_mob_devices += 1
 
-        # Build total_devices string based on counts
-        if android_devices > 0:
-            total_devices += f" Android({android_devices})"
-        if windows_devices > 0:
-            total_devices += f" Windows({windows_devices})"
-        if linux_devices > 0:
-            total_devices += f" Linux({linux_devices})"
-        if ios_devices > 0:
-            total_devices += f" Mac({ios_devices})"
-        if ios_mob_devices > 0:
-            total_devices += f" iOS({ios_mob_devices})"
-
-        # Test setup information table for devices in device list
         if config_devices == "":
+            # Station counts/breakdown are already shown in the Device Summary
+            # Card built further down, so they're left out of this table.
             test_setup_info = {
-                "Device List": ", ".join(all_devices_names),
-                "Number of Stations": "Total" + f"({self.num_stations})" + total_devices,
                 "AP Model": self.ap_name,
                 "SSID": self.ssid,
                 "Traffic Duration in minutes": round(int(self.test_duration) / 60, 2),
@@ -1777,7 +2051,6 @@ class ThroughputQOS(Realm):
                 "TOS": self.tos,
                 "Per TOS Load in Mbps": load
             }
-        # Test setup information table for devices in groups
         else:
             group_names = ', '.join(config_devices.keys())
             profile_names = ', '.join(config_devices.values())
@@ -1792,7 +2065,7 @@ class ThroughputQOS(Realm):
                 "TOS": self.tos,
                 "Per TOS Load in Mbps": load
             }
-        print(res["throughput_table_df"])
+
         if self.do_bandsteering:
             del test_setup_info["Traffic Duration in minutes"]
             test_setup_info["Robot IP"] = self.robot_ip
@@ -1801,52 +2074,13 @@ class ThroughputQOS(Realm):
 
         if iot_summary:
             test_setup_info = with_iot_params_in_table(test_setup_info, iot_summary)
-        report.test_setup_table(test_setup_data=test_setup_info, value="Test Configuration")
-        report.set_table_title(
-            f"Overall observed average {self.direction.lower()} throughput for all TOS i.e BK | BE | Video (VI) | Voice (VO)")
-        report.build_table_title()
-        df_throughput = pd.DataFrame(res["throughput_table_df"])
-        report.set_table_dataframe(df_throughput)
-        report.build_table()
-        for _key in res["graph_df"]:
-            report.set_obj_html(
-                _obj_title=f"Overall observed average {self.direction.lower()} throughput for {len(self.input_devices_list)} clients with different TOS.",
-                _obj=f"The below graph represents overall observed average {self.direction.lower()} throughput (averaged over the test duration) for all "
-                "connected stations running BK, BE, VO, VI traffic with different "
-                f"intended loads{load} per tos")
-        report.build_objective()
-        graph = lf_bar_graph(_data_set=data_set,
-                             _xaxis_name="Load per Type of Service",
-                             _yaxis_name="Throughput (Mbps)",
-                             _xaxis_categories=["BK,BE,VI,VO"],
-                             _xaxis_label=['1 Mbps', '2 Mbps', '3 Mbps', '4 Mbps', '5 Mbps'],
-                             _graph_image_name=f"tos_download_{_key}Hz",
-                             _label=["BK", "BE", "VI", "VO"],
-                             _xaxis_step=1,
-                             _graph_title=f"Overall observed average {self.direction.lower()} throughput – BK,BE,VO,VI traffic streams",
-                             _title_size=16,
-                             _color=['orange', 'lightcoral', 'steelblue', 'lightgrey'],
-                             _color_edge='black',
-                             _bar_width=0.15,
-                             _figsize=(18, 6),
-                             _legend_loc="best",
-                             _legend_box=(1.0, 1.0),
-                             _dpi=96,
-                             _show_bar_value=True,
-                             _enable_csv=True,
-                             _color_name=['orange', 'lightcoral', 'steelblue', 'lightgrey'])
-        graph_png = graph.build_bar_graph()
-        print("graph name {}".format(graph_png))
-        report.set_graph_image(graph_png)
-        # need to move the graph image to the results directory
-        report.move_graph_image()
-        report.set_csv_filename(graph_png)
-        report.move_csv_file()
-        report.build_graph()
+
+        # Store test_setup_info in self so we can render it at the very bottom
+        self._test_setup_info = test_setup_info
         if self.do_bandsteering:
             self.get_bandsteering_stats(report=report, data=self.band_steering_df)
         self.generate_individual_graph(res, report, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b)
-        report.test_setup_table(test_setup_data=input_setup_info, value="Information")
+
         # To add charging timestamps of robot in report when bandsteering is enabled
         if self.do_bandsteering:
             if len(self.robot.charging_timestamps) != 0:
@@ -1874,8 +2108,8 @@ class ThroughputQOS(Realm):
         # Wi-Fi connectivity analysis (connects/disconnects/scans/rejections) collected during test
         self.add_wifi_analysis_to_report(report)
         # ping statistics collected on the clients while the qos traffic was running
+        # (channel_list/rssi_list were already fetched above, for the Test Summary card)
         if getattr(self, 'background_ping', None):
-            channel_list, rssi_list = self.get_channel_and_rssi_list(self.input_devices_list)
             device_info = {port: {'mac': mac, 'channel': ch, 'rssi': rssi}
                            for port, mac, ch, rssi in zip(self.input_devices_list, self.mac_id_list, channel_list, rssi_list)}
             self.background_ping.add_to_report(report, device_info=device_info)
@@ -1883,10 +2117,46 @@ class ThroughputQOS(Realm):
         if self.device_issue_log:
             issues_df = pd.DataFrame(self.device_issue_log)
             issues_df.to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
+
+        report.build_info_card(
+            title="Test Configuration",
+            items=[{"label": label, "value": str(value)} for label, value in self._test_setup_info.items()]
+        )
+
+        # Device Summary Card (pie chart with device type breakdown), matching FTP report style
+        report.build_device_summary_card(
+            [{"name": name.split("(")[0], "platform": platform}
+             for name, platform in zip(all_devices_names, device_type)])
+
         report.build_footer()
         report.write_html()
         report.write_pdf()
         logger.info("Monitoring Duration: {}".format(self.format_monitoring_duration()))
+
+    # Builds a per-TOS table dict, including only the UL or DL columns that were actually tested
+    # (Bi-direction includes both; Upload/Download only includes its own side).
+    def build_direction_dataframe(self, clients, macids, ssids, tos_list, uploads, downloads,
+                                  avg_uploads, avg_downloads, drop_b, drop_a):
+        dataframe = {
+            # e.g. "1.100 android GalaxyTabA9" -> "GalaxyTabA9", matching the FTP report style
+            "Client Name": [str(c).split(" ")[-1] for c in clients],
+            "MAC Address": macids,
+            "SSID": ssids,
+            "Traffic": tos_list,
+        }
+        if self.direction in ("Upload", "Bi-direction"):
+            dataframe["Offered UL Rate (Mbps)"] = uploads
+        if self.direction in ("Download", "Bi-direction"):
+            dataframe["Offered DL Rate (Mbps)"] = downloads
+        if self.direction in ("Upload", "Bi-direction"):
+            dataframe["Average UL Throughput Attained (Mbps)"] = avg_uploads
+        if self.direction in ("Download", "Bi-direction"):
+            dataframe["Average DL Throughput Attained (Mbps)"] = avg_downloads
+        if self.direction in ("Upload", "Bi-direction"):
+            dataframe["UL Drop (%)"] = drop_b
+        if self.direction in ("Download", "Bi-direction"):
+            dataframe["DL Drop (%)"] = drop_a
+        return dataframe
 
     # Generates a separate table in the report for each group, including its respective devices.
     def generate_dataframe(self, groupdevlist, clients_list, mac, ssid, tos, upload, download, individual_upload,
@@ -1955,27 +2225,9 @@ class ThroughputQOS(Realm):
                                     input_list.append(test_input[i])
                                     status.append(pass_fail_list[i])
         if len(clients) != 0:
-            bk_dataframe = {
-                " Client Name ": clients,
-                " MAC ": macids,
-                " SSID ": ssids,
-                " Type of traffic ": tos_a,
-                " Offered upload rate(Mbps) ": uploads,
-                " Offered download rate(Mbps) ": downloads,
-                " Observed average upload rate(Mbps) ": individual_uploads,
-                " Observed average download rate(Mbps)": individual_downloads,
-
-            }
-            if self.direction == "Bi-direction":
-                bk_dataframe[" Observed average upload drop (%)"] = individual_b_drop
-                bk_dataframe[" Observed average download drop (%)"] = individual_a_drop
-            else:
-                if self.direction == "Upload":
-                    bk_dataframe[" Observed average upload drop (%)"] = individual_b_drop
-                    bk_dataframe[" Observed average download drop (%)"] = [0.0] * len(individual_b_drop)
-                elif self.direction == "Download":
-                    bk_dataframe[" Observed average upload drop (%)"] = [0.0] * len(individual_a_drop)
-                    bk_dataframe[" Observed average download drop (%)"] = individual_a_drop
+            bk_dataframe = self.build_direction_dataframe(
+                clients, macids, ssids, tos_a, uploads, downloads,
+                individual_uploads, individual_downloads, individual_b_drop, individual_a_drop)
 
             if self.expected_passfail_val or self.csv_name:
                 bk_dataframe[" Expected " + self.direction + " rate(Mbps)"] = input_list
@@ -2037,6 +2289,8 @@ class ThroughputQOS(Realm):
         # Required when generate_individual_graph() called explicitly from mixed traffic
         if totalfloors is not None:
             self.total_floors = totalfloors
+        # e.g. "1.100 android GalaxyTabA9" -> "GalaxyTabA9", matching the FTP report style
+        display_client_names = [str(c).split(" ")[-1] for c in self.real_client_list1]
         load = ""
         upload_list, download_list, individual_upload_list, individual_download_list = [], [], [], []
         individual_set, colors, labels = [], [], []
@@ -2150,7 +2404,7 @@ class ThroughputQOS(Realm):
                 tos = key.split('_')[-1].split('-')[0]
                 drop_res['drop_a'][tos].append(val)
         x_fig_size = 15
-        y_fig_size = len(self.real_client_list1) * .5 + 4
+        y_fig_size = max(5, len(self.real_client_list1) * .5 + 4)
         if len(res.keys()) > 0:
             if "throughput_table_df" in res:
                 res.pop("throughput_table_df")
@@ -2159,57 +2413,553 @@ class ThroughputQOS(Realm):
                 # If a CSV filename is provided, retrieve the expected values for each device from the CSV file
                 if not self.expected_passfail_val and self.csv_name:
                     test_input_list = self.get_csv_expected_val()
+                if "VO" in self.tos:
+                    if self.direction == "Bi-direction":
+                        individual_download_list = avg_res['Download']['VO']
+                        individual_upload_list = avg_res['Upload']['VO']
+                        individual_drop_a_list = drop_res['drop_a']['VO']
+                        individual_drop_b_list = drop_res['drop_b']['VO']
+
+                        report.set_obj_html(
+                            _obj_title="Per Client Average Throughput \u2013 Voice (VO)",
+                            _obj="The graph below illustrates the average throughput achieved by each client for Voice (VO) traffic. "
+                            "The X-axis represents individual client identifiers, while the Y-axis indicates throughput in Mbps.")
+                        report.build_objective()
+                        dl_data = list1[1][0]
+                        ul_data = list1[1][1]
+                        graph = lf_bar_graph_horizontal(_data_set=[dl_data, ul_data], _xaxis_name="Average Throughput Attained",
+                                                        _yaxis_name="Wireless Clients",
+                                                        _yaxis_categories=[i for i in display_client_names],
+                                                        _yaxis_label=[i for i in display_client_names],
+                                                        _label=["Download", "Upload"],
+                                                        _yaxis_step=1,
+                                                        _yticks_font=8,
+                                                        _yticks_rotation=None,
+                                                        _yaxis_value_location=0.125,
+                                                        _graph_title="Per Client Average Throughput \u2013 Voice (VO)",
+                                                        _title_size=16,
+                                                        _figsize=(x_fig_size, y_fig_size),
+                                                        _legend_loc="best",
+                                                        _legend_box=(1.0, 1.0),
+                                                        _color_name=['#1f6f58', 'lightgrey'],
+                                                        _show_bar_value=True,
+                                                        _enable_csv=True,
+                                                        _graph_image_name="voice_Bi-direction{}".format(graph_no),
+                                                        _color_edge=['black'],
+                                                        _color=['#1f6f58', 'lightgrey'])
+                        graph_png = graph.build_bar_graph_horizontal()
+                        report.set_graph_image(graph_png)
+                        report.move_graph_image()
+                        report.set_csv_filename(graph.graph_image_name)
+                        report.move_csv_file()
+                        report.build_graph()
+                    else:
+                        individual_set = [data_set[load]['VO']]
+                        colors = ['#1f6f58']
+                        labels = [self.direction]
+                        if self.direction == "Upload":
+                            individual_upload_list = avg_res['Upload']['VO']
+                            individual_drop_b_list = drop_res['drop_b']['VO']
+                        elif self.direction == "Download":
+                            individual_download_list = avg_res['Download']['VO']
+                            individual_drop_a_list = drop_res['drop_a']['VO']
+                        report.set_obj_html(
+                            _obj_title="Per Client Average Throughput \u2013 Voice (VO)",
+                            _obj="The graph below illustrates the average throughput achieved by each client for Voice (VO) traffic. "
+                            "The X-axis represents individual client identifiers, while the Y-axis indicates throughput in Mbps.")
+                        report.build_objective()
+                        graph = lf_bar_graph_horizontal(_data_set=individual_set, _xaxis_name="Average Throughput Attained",
+                                                        _yaxis_name="Wireless Clients",
+                                                        _yaxis_categories=[i for i in display_client_names],
+                                                        _yaxis_label=[i for i in display_client_names],
+                                                        _label=labels,
+                                                        _yaxis_step=1,
+                                                        _yticks_font=8,
+                                                        _yticks_rotation=None,
+                                                        _graph_title="Per Client Average Throughput \u2013 Voice (VO)",
+                                                        _title_size=16,
+                                                        _figsize=(x_fig_size, y_fig_size),
+                                                        _legend_loc="best",
+                                                        _legend_box=(1.0, 1.0),
+                                                        _show_bar_value=True,
+                                                        _color_name=colors,
+                                                        _enable_csv=True,
+                                                        _graph_image_name="voice_{}{}".format(self.direction, graph_no),
+                                                        _color_edge=['black'],
+                                                        _color=colors)
+                        graph_png = graph.build_bar_graph_horizontal()
+                        report.set_graph_image(graph_png)
+                        report.move_graph_image()
+                        report.set_csv_filename(graph.graph_image_name)
+                        report.move_csv_file()
+                        report.build_graph()
+                    if (self.dowebgui and self.get_live_view) or multicast_exists:
+                        if not self.robot_test:
+                            for image_path in tos_images['VO']:
+                                report.set_custom_html('<div style="page-break-before: always;"></div>')
+                                report.build_custom()
+                                report.set_custom_html(f'<img src="file://{image_path}" style="width: 1200px; height: 800px;"></img>')
+                                report.build_custom()
+                    individual_avgupload_list = []
+                    individual_avgdownload_list = []
+                    for i in range(len(individual_upload_list)):
+                        individual_avgupload_list.append(str(str(individual_upload_list[i]) + ' ' + 'Mbps'))
+                    for j in range(len(individual_download_list)):
+                        individual_avgdownload_list.append(str(str(individual_download_list[j]) + ' ' + 'Mbps'))
+                    if self.expected_passfail_val:
+                        pass_fail_list = []
+                        test_input_list = [self.expected_passfail_val for val in range(len(self.real_client_list))]
+                    # Calculating the pass/fail criteria when either expected_passfail_val or csv_name is provided
+                    if self.expected_passfail_val or self.csv_name:
+                        pass_fail_list = self.get_pass_fail_list(test_input_list, individual_avgupload_list, individual_avgdownload_list)
+                    if self.group_name:
+                        for key, val in self.group_device_map.items():
+                            if self.expected_passfail_val or self.csv_name:
+                                dataframe = self.generate_dataframe(
+                                    val,
+                                    self.real_client_list,
+                                    self.mac_id_list,
+                                    self.ssid_list,
+                                    vo_tos_list,
+                                    upload_list,
+                                    download_list,
+                                    individual_avgupload_list,
+                                    individual_avgdownload_list,
+                                    test_input_list,
+                                    individual_drop_b_list,
+                                    individual_drop_a_list,
+                                    pass_fail_list)
+                            else:
+                                dataframe = self.generate_dataframe(
+                                    val,
+                                    self.real_client_list,
+                                    self.mac_id_list,
+                                    self.ssid_list,
+                                    vo_tos_list,
+                                    upload_list,
+                                    download_list,
+                                    individual_avgupload_list,
+                                    individual_avgdownload_list,
+                                    [],
+                                    individual_drop_b_list,
+                                    individual_drop_a_list,
+                                    [])
+                            if dataframe:
+                                report.set_obj_html("", "Group: {}".format(key))
+                                report.build_objective()
+                                dataframe1 = pd.DataFrame(dataframe)
+                                report.set_table_dataframe(dataframe1)
+                                if self.expected_passfail_val or self.csv_name:
+                                    report.dataframe_html = dataframe1.to_html(index=False, justify='center', classes='data-table', escape=False)
+                                    report.html += "<div class='table-wrap'>" + report.dataframe_html + "</div>"
+                                else:
+                                    report.build_table()
+                    else:
+                        vo_dataframe = self.build_direction_dataframe(
+                            self.real_client_list, self.mac_id_list, self.ssid_list, vo_tos_list,
+                            upload_list, download_list, individual_avgupload_list, individual_avgdownload_list,
+                            individual_drop_b_list, individual_drop_a_list)
+                        if self.expected_passfail_val or self.csv_name:
+                            vo_dataframe[" Expected " + self.direction + " rate(Mbps)"] = test_input_list
+                            vo_dataframe[" Status "] = pass_fail_list
+                        dataframe4 = pd.DataFrame(vo_dataframe)
+                        report.set_table_dataframe(dataframe4)
+                        if self.expected_passfail_val or self.csv_name:
+                            report.dataframe_html = dataframe4.to_html(index=False, justify='center', classes='data-table', escape=False)
+                            report.html += "<div class='table-wrap'>" + report.dataframe_html + "</div>"
+                        else:
+                            report.build_table()
+                logger.info("Graph and table for VO tos are built")
+                if "VI" in self.tos:
+                    if self.direction == "Bi-direction":
+                        individual_download_list = avg_res['Download']['VI']
+                        individual_upload_list = avg_res['Upload']['VI']
+                        individual_drop_a_list = drop_res['drop_a']['VI']
+                        individual_drop_b_list = drop_res['drop_b']['VI']
+
+                        report.set_obj_html(
+                            _obj_title="Per Client Average Throughput \u2013 Video (VI)",
+                            _obj="The graph below illustrates the average throughput achieved by each client for Video (VI) traffic. "
+                            "The X-axis represents individual client identifiers, while the Y-axis indicates throughput in Mbps.")
+                        report.build_objective()
+                        dl_data = list1[0][0]
+                        ul_data = list1[0][1]
+                        graph = lf_bar_graph_horizontal(_data_set=[dl_data, ul_data], _xaxis_name="Average Throughput Attained",
+                                                        _yaxis_name="Wireless Clients",
+                                                        _yaxis_categories=[i for i in display_client_names],
+                                                        _yaxis_label=[i for i in display_client_names],
+                                                        _label=["Download", "Upload"],
+                                                        _yaxis_step=1,
+                                                        _yticks_font=8,
+                                                        _yticks_rotation=None,
+                                                        _yaxis_value_location=0.125,
+                                                        _graph_title="Per Client Average Throughput \u2013 Video (VI)",
+                                                        _title_size=16,
+                                                        _figsize=(x_fig_size, y_fig_size),
+                                                        _legend_loc="best",
+                                                        _legend_box=(1.0, 1.0),
+                                                        _color_name=['#2f80ed', 'lightskyblue'],
+                                                        _show_bar_value=True,
+                                                        _enable_csv=True,
+                                                        _graph_image_name="video_Bi-direction{}".format(graph_no),
+                                                        _color_edge=['black'],
+                                                        _color=['#2f80ed', 'lightskyblue'])
+                        graph_png = graph.build_bar_graph_horizontal()
+                        report.set_graph_image(graph_png)
+                        report.move_graph_image()
+                        report.set_csv_filename(graph.graph_image_name)
+                        report.move_csv_file()
+                        report.build_graph()
+                    else:
+                        individual_set = [data_set[load]['VI']]
+                        colors = ['#2f80ed']
+                        labels = [self.direction]
+                        if self.direction == "Upload":
+                            individual_upload_list = avg_res['Upload']['VI']
+                            individual_drop_b_list = drop_res['drop_b']['VI']
+                        elif self.direction == "Download":
+                            individual_download_list = avg_res['Download']['VI']
+                            individual_drop_a_list = drop_res['drop_a']['VI']
+                        report.set_obj_html(
+                            _obj_title="Per Client Average Throughput \u2013 Video (VI)",
+                            _obj="The graph below illustrates the average throughput achieved by each client for Video (VI) traffic. "
+                            "The X-axis represents individual client identifiers, while the Y-axis indicates throughput in Mbps.")
+                        report.build_objective()
+                        graph = lf_bar_graph_horizontal(_data_set=individual_set, _xaxis_name="Average Throughput Attained",
+                                                        _yaxis_name="Wireless Clients",
+                                                        _yaxis_categories=[i for i in display_client_names],
+                                                        _yaxis_label=[i for i in display_client_names],
+                                                        _label=labels,
+                                                        _yaxis_step=1,
+                                                        _yticks_font=8,
+                                                        _yticks_rotation=None,
+                                                        _graph_title="Per Client Average Throughput \u2013 Video (VI)",
+                                                        _title_size=16,
+                                                        _figsize=(x_fig_size, y_fig_size),
+                                                        _legend_loc="best",
+                                                        _legend_box=(1.0, 1.0),
+                                                        _show_bar_value=True,
+                                                        _color_name=colors,
+                                                        _enable_csv=True,
+                                                        _graph_image_name="video_{}{}".format(self.direction, graph_no),
+                                                        _color_edge=['black'],
+                                                        _color=colors)
+                        graph_png = graph.build_bar_graph_horizontal()
+                        report.set_graph_image(graph_png)
+                        report.move_graph_image()
+                        report.set_csv_filename(graph.graph_image_name)
+                        report.move_csv_file()
+                        report.build_graph()
+                    if (self.dowebgui and self.get_live_view) or multicast_exists:
+                        if not self.robot_test:
+                            for image_path in tos_images['VI']:
+                                report.set_custom_html('<div style="page-break-before: always;"></div>')
+                                report.build_custom()
+                                report.set_custom_html(f'<img src="file://{image_path}" style="width: 1200px; height: 800px;"></img>')
+                                report.build_custom()
+                    individual_avgupload_list = []
+                    individual_avgdownload_list = []
+                    for i in range(len(individual_upload_list)):
+                        individual_avgupload_list.append(str(str(individual_upload_list[i]) + ' ' + 'Mbps'))
+                    for j in range(len(individual_download_list)):
+                        individual_avgdownload_list.append(str(str(individual_download_list[j]) + ' ' + 'Mbps'))
+                    if self.expected_passfail_val:
+                        test_input_list = [self.expected_passfail_val for val in range(len(self.real_client_list))]
+                    # Calculating the pass/fail criteria when either expected_passfail_val or csv_name is provided
+                    if self.expected_passfail_val or self.csv_name:
+                        pass_fail_list = self.get_pass_fail_list(test_input_list, individual_avgupload_list, individual_avgdownload_list)
+                    if self.group_name:
+                        for key, val in self.group_device_map.items():
+                            if self.expected_passfail_val or self.csv_name:
+                                dataframe = self.generate_dataframe(
+                                    val,
+                                    self.real_client_list,
+                                    self.mac_id_list,
+                                    self.ssid_list,
+                                    vi_tos_list,
+                                    upload_list,
+                                    download_list,
+                                    individual_avgupload_list,
+                                    individual_avgdownload_list,
+                                    test_input_list,
+                                    individual_drop_b_list,
+                                    individual_drop_a_list,
+                                    pass_fail_list)
+                            else:
+                                dataframe = self.generate_dataframe(
+                                    val,
+                                    self.real_client_list,
+                                    self.mac_id_list,
+                                    self.ssid_list,
+                                    vi_tos_list,
+                                    upload_list,
+                                    download_list,
+                                    individual_avgupload_list,
+                                    individual_avgdownload_list,
+                                    [],
+                                    individual_drop_b_list,
+                                    individual_drop_a_list,
+                                    [])
+                            if dataframe:
+                                report.set_obj_html("", "Group: {}".format(key))
+                                report.build_objective()
+                                dataframe1 = pd.DataFrame(dataframe)
+                                report.set_table_dataframe(dataframe1)
+                                if self.expected_passfail_val or self.csv_name:
+                                    report.dataframe_html = dataframe1.to_html(index=False, justify='center', classes='data-table', escape=False)
+                                    report.html += "<div class='table-wrap'>" + report.dataframe_html + "</div>"
+                                else:
+                                    report.build_table()
+                    else:
+                        vi_dataframe = self.build_direction_dataframe(
+                            self.real_client_list, self.mac_id_list, self.ssid_list, vi_tos_list,
+                            upload_list, download_list, individual_avgupload_list, individual_avgdownload_list,
+                            individual_drop_b_list, individual_drop_a_list)
+                        if self.expected_passfail_val or self.csv_name:
+                            vi_dataframe[" Expected " + self.direction + " rate(Mbps)"] = test_input_list
+                            vi_dataframe[" Status "] = pass_fail_list
+                        dataframe3 = pd.DataFrame(vi_dataframe)
+                        report.set_table_dataframe(dataframe3)
+                        if self.expected_passfail_val or self.csv_name:
+                            report.dataframe_html = dataframe3.to_html(index=False, justify='center', classes='data-table', escape=False)
+                            report.html += "<div class='table-wrap'>" + report.dataframe_html + "</div>"
+                        else:
+                            report.build_table()
+                logger.info("Graph and table for VI tos are built")
+                if "BE" in self.tos:
+                    if self.direction == "Bi-direction":
+                        individual_download_list = avg_res['Download']['BE']
+                        individual_upload_list = avg_res['Upload']['BE']
+                        individual_drop_a_list = drop_res['drop_a']['BE']
+                        individual_drop_b_list = drop_res['drop_b']['BE']
+
+                        report.set_obj_html(
+                            _obj_title="Per Client Average Throughput \u2013 Best Effort (BE)",
+                            _obj="The graph below illustrates the average throughput achieved by each client for Best Effort (BE) traffic. "
+                            "The X-axis represents individual client identifiers, while the Y-axis indicates throughput in Mbps.")
+                        report.build_objective()
+                        dl_data = list1[3][0]
+                        ul_data = list1[3][1]
+                        graph = lf_bar_graph_horizontal(_data_set=[dl_data, ul_data], _xaxis_name="Average Throughput Attained",
+                                                        _yaxis_name="Wireless Clients",
+                                                        _yaxis_categories=[i for i in display_client_names],
+                                                        _yaxis_label=[i for i in display_client_names],
+                                                        _label=["Download", "Upload"],
+                                                        _yaxis_step=1,
+                                                        _yticks_font=8,
+                                                        _yticks_rotation=None,
+                                                        _yaxis_value_location=0.125,
+                                                        _graph_title="Per Client Average Throughput \u2013 Best Effort (BE)",
+                                                        _title_size=16,
+                                                        _figsize=(x_fig_size, y_fig_size),
+                                                        _legend_loc="best",
+                                                        _legend_box=(1.0, 1.0),
+                                                        _color_name=['#f1b24a', 'mistyrose'],
+                                                        _show_bar_value=True,
+                                                        _enable_csv=True,
+                                                        _graph_image_name="be_Bi-direction{}".format(graph_no),
+                                                        _color_edge=['black'],
+                                                        _color=['#f1b24a', 'mistyrose'])
+                        graph_png = graph.build_bar_graph_horizontal()
+                        report.set_graph_image(graph_png)
+                        report.move_graph_image()
+                        report.set_csv_filename(graph.graph_image_name)
+                        report.move_csv_file()
+                        report.build_graph()
+                    else:
+                        individual_set = [data_set[load]['BE']]
+                        colors = ['#f1b24a']
+                        labels = [self.direction]
+                        if self.direction == "Upload":
+                            individual_upload_list = avg_res['Upload']['BE']
+                            individual_drop_b_list = drop_res['drop_b']['BE']
+                        elif self.direction == "Download":
+                            individual_download_list = avg_res['Download']['BE']
+                            individual_drop_a_list = drop_res['drop_a']['BE']
+                        report.set_obj_html(
+                            _obj_title="Per Client Average Throughput \u2013 Best Effort (BE)",
+                            _obj="The graph below illustrates the average throughput achieved by each client for Best Effort (BE) traffic. "
+                            "The X-axis represents individual client identifiers, while the Y-axis indicates throughput in Mbps.")
+                        report.build_objective()
+                        graph = lf_bar_graph_horizontal(_data_set=individual_set, _xaxis_name="Average Throughput Attained",
+                                                        _yaxis_name="Wireless Clients",
+                                                        _yaxis_categories=[i for i in display_client_names],
+                                                        _yaxis_label=[i for i in display_client_names],
+                                                        _label=labels,
+                                                        _yaxis_step=1,
+                                                        _yticks_font=8,
+                                                        _yticks_rotation=None,
+                                                        _graph_title="Per Client Average Throughput \u2013 Best Effort (BE)",
+                                                        _title_size=16,
+                                                        _figsize=(x_fig_size, y_fig_size),
+                                                        _legend_loc="best",
+                                                        _legend_box=(1.0, 1.0),
+                                                        _color_name=colors,
+                                                        _show_bar_value=True,
+                                                        _enable_csv=True,
+                                                        _graph_image_name="be_{}{}".format(self.direction, graph_no), _color_edge=['black'],
+                                                        _color=colors)
+                        graph_png = graph.build_bar_graph_horizontal()
+                        report.set_graph_image(graph_png)
+                        report.move_graph_image()
+                        report.set_csv_filename(graph.graph_image_name)
+                        report.move_csv_file()
+                        report.build_graph()
+                    if (self.dowebgui and self.get_live_view) or multicast_exists:
+                        if not self.robot_test:
+                            for image_path in tos_images['BE']:
+                                report.set_custom_html('<div style="page-break-before: always;"></div>')
+                                report.build_custom()
+                                report.set_custom_html(f'<img src="file://{image_path}" style="width: 1200px; height: 800px;"></img>')
+                                report.build_custom()
+                    individual_avgupload_list = []
+                    individual_avgdownload_list = []
+                    for i in range(len(individual_upload_list)):
+                        individual_avgupload_list.append(str(str(individual_upload_list[i]) + ' ' + 'Mbps'))
+                    for j in range(len(individual_download_list)):
+                        individual_avgdownload_list.append(str(str(individual_download_list[j]) + ' ' + 'Mbps'))
+                    if self.expected_passfail_val:
+                        test_input_list = [self.expected_passfail_val for val in range(len(self.real_client_list))]
+                    # Calculating the pass/fail criteria when either expected_passfail_val or csv_name is provided
+                    if self.expected_passfail_val or self.csv_name:
+                        pass_fail_list = self.get_pass_fail_list(test_input_list, individual_avgupload_list, individual_avgdownload_list)
+                    if self.group_name:
+                        for key, val in self.group_device_map.items():
+                            if self.expected_passfail_val or self.csv_name:
+                                dataframe = self.generate_dataframe(
+                                    val,
+                                    self.real_client_list,
+                                    self.mac_id_list,
+                                    self.ssid_list,
+                                    be_tos_list,
+                                    upload_list,
+                                    download_list,
+                                    individual_avgupload_list,
+                                    individual_avgdownload_list,
+                                    test_input_list,
+                                    individual_drop_b_list,
+                                    individual_drop_a_list,
+                                    pass_fail_list)
+                            else:
+                                dataframe = self.generate_dataframe(
+                                    val,
+                                    self.real_client_list,
+                                    self.mac_id_list,
+                                    self.ssid_list,
+                                    be_tos_list,
+                                    upload_list,
+                                    download_list,
+                                    individual_avgupload_list,
+                                    individual_avgdownload_list,
+                                    [],
+                                    individual_drop_b_list,
+                                    individual_drop_a_list,
+                                    [])
+                            if dataframe:
+                                report.set_obj_html("", "Group: {}".format(key))
+                                report.build_objective()
+                                dataframe1 = pd.DataFrame(dataframe)
+                                report.set_table_dataframe(dataframe1)
+                                if self.expected_passfail_val or self.csv_name:
+                                    report.dataframe_html = dataframe1.to_html(index=False, justify='center', classes='data-table', escape=False)
+                                    report.html += "<div class='table-wrap'>" + report.dataframe_html + "</div>"
+                                else:
+                                    report.build_table()
+                    else:
+                        be_dataframe = self.build_direction_dataframe(
+                            self.real_client_list, self.mac_id_list, self.ssid_list, be_tos_list,
+                            upload_list, download_list, individual_avgupload_list, individual_avgdownload_list,
+                            individual_drop_b_list, individual_drop_a_list)
+                        if self.expected_passfail_val or self.csv_name:
+                            be_dataframe[" Expected " + self.direction + " rate(Mbps)"] = test_input_list
+                            be_dataframe[" Status "] = pass_fail_list
+                        dataframe2 = pd.DataFrame(be_dataframe)
+                        report.set_table_dataframe(dataframe2)
+                        if self.expected_passfail_val or self.csv_name:
+                            report.dataframe_html = dataframe2.to_html(index=False, justify='center', classes='data-table', escape=False)
+                            report.html += "<div class='table-wrap'>" + report.dataframe_html + "</div>"
+                        else:
+                            report.build_table()
+                logger.info("Graph and table for BE tos are built")
                 if "BK" in self.tos:
                     if self.direction == "Bi-direction":
-                        individual_set = list1[2]
                         individual_download_list = avg_res['Download']['BK']
                         individual_upload_list = avg_res['Upload']['BK']
                         individual_drop_a_list = drop_res['drop_a']['BK']
                         individual_drop_b_list = drop_res['drop_b']['BK']
-                        colors = ['orange', 'wheat']
-                        labels = ["Download", "Upload"]
+
+                        report.set_obj_html(
+                            _obj_title="Per Client Average Throughput \u2013 Background (BK)",
+                            _obj="The graph below illustrates the average throughput achieved by each client for Background (BK) traffic. "
+                            "The X-axis represents individual client identifiers, while the Y-axis indicates throughput in Mbps.")
+                        report.build_objective()
+                        dl_data = list1[2][0]
+                        ul_data = list1[2][1]
+                        graph = lf_bar_graph_horizontal(_data_set=[dl_data, ul_data], _xaxis_name="Average Throughput Attained",
+                                                        _yaxis_name="Wireless Clients",
+                                                        _yaxis_categories=[i for i in display_client_names],
+                                                        _yaxis_label=[i for i in display_client_names],
+                                                        _label=["Download", "Upload"],
+                                                        _yaxis_step=1,
+                                                        _yticks_font=8,
+                                                        _yticks_rotation=None,
+                                                        _yaxis_value_location=0.125,
+                                                        _graph_title="Per Client Average Throughput \u2013 Background (BK)",
+                                                        _title_size=16,
+                                                        _figsize=(x_fig_size, y_fig_size),
+                                                        _legend_loc="best",
+                                                        _legend_box=(1.0, 1.0),
+                                                        _color_name=['#1d9a8a', 'wheat'],
+                                                        _show_bar_value=True,
+                                                        _enable_csv=True,
+                                                        _graph_image_name="bk_Bi-direction{}".format(graph_no),
+                                                        _color_edge=['black'],
+                                                        _color=['#1d9a8a', 'wheat'])
+                        graph_png = graph.build_bar_graph_horizontal()
+                        report.set_graph_image(graph_png)
+                        report.move_graph_image()
+                        report.set_csv_filename(graph.graph_image_name)
+                        report.move_csv_file()
+                        report.build_graph()
                     else:
                         individual_set = [data_set[load]['BK']]
-                        colors = ['orange']
-                        labels = ['BK']
+                        colors = ['#1d9a8a']
+                        labels = [self.direction]
                         if self.direction == "Upload":
                             individual_upload_list = avg_res['Upload']['BK']
                             individual_drop_b_list = drop_res['drop_b']['BK']
                         elif self.direction == "Download":
                             individual_download_list = avg_res['Download']['BK']
                             individual_drop_a_list = drop_res['drop_a']['BK']
-                    report.set_obj_html(
-                        _obj_title=f"Individual observed average {self.direction.lower()} throughput with intended load {load}/station for traffic BK.",
-                        _obj=f"The below graph represents individual observed average throughput (averaged over the test duration) for {len(self.input_devices_list)} clients running BK "
-                        f"traffic. X-axis shows “Throughput in Mbps” and Y-axis shows “Client names”.")
-                    report.build_objective()
-                    # print(upload_list, download_list, individual_download_list, individual_upload_list)
-                    graph = lf_bar_graph_horizontal(_data_set=individual_set, _xaxis_name="Throughput in Mbps",
-                                                    _yaxis_name="Client names",
-                                                    _yaxis_categories=[i for i in self.real_client_list1],
-                                                    _yaxis_label=[i for i in self.real_client_list1],
-                                                    _label=labels,
-                                                    _yaxis_step=1,
-                                                    _yticks_font=8,
-                                                    _yticks_rotation=None,
-                                                    _graph_title=f"Individual observed average {self.direction.lower()} throughput for BK traffic",
-                                                    _title_size=16,
-                                                    _figsize=(x_fig_size, y_fig_size),
-                                                    _legend_loc="best",
-                                                    _legend_box=(1.0, 1.0),
-                                                    _color_name=colors,
-                                                    _show_bar_value=True,
-                                                    _enable_csv=True,
-                                                    _graph_image_name="bk_{}{}".format(self.direction, graph_no), _color_edge=['black'],
-                                                    _color=colors)
-                    graph_png = graph.build_bar_graph_horizontal()
-                    print("graph name {}".format(graph_png))
-                    report.set_graph_image(graph_png)
-                    # need to move the graph image to the results
-                    report.move_graph_image()
-                    report.set_csv_filename(graph_png)
-                    report.move_csv_file()
-                    report.build_graph()
+                        report.set_obj_html(
+                            _obj_title="Per Client Average Throughput \u2013 Background (BK)",
+                            _obj="The graph below illustrates the average throughput achieved by each client for Background (BK) traffic. "
+                            "The X-axis represents individual client identifiers, while the Y-axis indicates throughput in Mbps.")
+                        report.build_objective()
+                        graph = lf_bar_graph_horizontal(_data_set=individual_set, _xaxis_name="Average Throughput Attained",
+                                                        _yaxis_name="Wireless Clients",
+                                                        _yaxis_categories=[i for i in display_client_names],
+                                                        _yaxis_label=[i for i in display_client_names],
+                                                        _label=labels,
+                                                        _yaxis_step=1,
+                                                        _yticks_font=8,
+                                                        _yticks_rotation=None,
+                                                        _graph_title="Per Client Average Throughput \u2013 Background (BK)",
+                                                        _title_size=16,
+                                                        _figsize=(x_fig_size, y_fig_size),
+                                                        _legend_loc="best",
+                                                        _legend_box=(1.0, 1.0),
+                                                        _color_name=colors,
+                                                        _show_bar_value=True,
+                                                        _enable_csv=True,
+                                                        _graph_image_name="bk_{}{}".format(self.direction, graph_no), _color_edge=['black'],
+                                                        _color=colors)
+                        graph_png = graph.build_bar_graph_horizontal()
+                        report.set_graph_image(graph_png)
+                        report.move_graph_image()
+                        report.set_csv_filename(graph.graph_image_name)
+                        report.move_csv_file()
+                        report.build_graph()
                     if (self.dowebgui and self.get_live_view) or multicast_exists:
                         if not self.robot_test:
                             for image_path in tos_images['BK']:
@@ -2267,412 +3017,27 @@ class ThroughputQOS(Realm):
                                 print("dataframe", dataframe)
                                 dataframe1 = pd.DataFrame(dataframe)
                                 report.set_table_dataframe(dataframe1)
-                                report.build_table()
+                                if self.expected_passfail_val or self.csv_name:
+                                    report.dataframe_html = dataframe1.to_html(index=False, justify='center', classes='data-table', escape=False)
+                                    report.html += "<div class='table-wrap'>" + report.dataframe_html + "</div>"
+                                else:
+                                    report.build_table()
                     else:
-                        bk_dataframe = {
-                            " Client Name ": self.real_client_list,
-                            " MAC ": self.mac_id_list,
-                            " SSID ": self.ssid_list,
-                            " Type of traffic ": bk_tos_list,
-                            " Offered upload rate ": upload_list,
-                            " Offered download rate ": download_list,
-                            " Observed average upload rate ": individual_avgupload_list,
-                            " Observed average download rate": individual_avgdownload_list,
-                        }
-                        bk_dataframe[" Observed average upload drop (%)"] = individual_drop_b_list
-                        bk_dataframe[" Observed average download drop (%)"] = individual_drop_a_list
+                        bk_dataframe = self.build_direction_dataframe(
+                            self.real_client_list, self.mac_id_list, self.ssid_list, bk_tos_list,
+                            upload_list, download_list, individual_avgupload_list, individual_avgdownload_list,
+                            individual_drop_b_list, individual_drop_a_list)
                         if self.expected_passfail_val or self.csv_name:
                             bk_dataframe[" Expected " + self.direction + " rate(Mbps)"] = test_input_list
                             bk_dataframe[" Status "] = pass_fail_list
                         dataframe1 = pd.DataFrame(bk_dataframe)
                         report.set_table_dataframe(dataframe1)
-                        report.build_table()
+                        if self.expected_passfail_val or self.csv_name:
+                            report.dataframe_html = dataframe1.to_html(index=False, justify='center', classes='data-table', escape=False)
+                            report.html += "<div class='table-wrap'>" + report.dataframe_html + "</div>"
+                        else:
+                            report.build_table()
                 logger.info("Graph and table for BK tos are built")
-                if "BE" in self.tos:
-                    if self.direction == "Bi-direction":
-                        individual_set = list1[3]
-                        individual_download_list = avg_res['Download']['BE']
-                        individual_upload_list = avg_res['Upload']['BE']
-                        individual_drop_a_list = drop_res['drop_a']['BE']
-                        individual_drop_b_list = drop_res['drop_b']['BE']
-                        colors = ['lightcoral', 'mistyrose']
-                        labels = ['Download', 'Upload']
-                    else:
-                        individual_set = [data_set[load]['BE']]
-                        colors = ['violet']
-                        labels = ['BE']
-                        if self.direction == "Upload":
-                            individual_upload_list = avg_res['Upload']['BE']
-                            individual_drop_b_list = drop_res['drop_b']['BE']
-                        elif self.direction == "Download":
-                            individual_download_list = avg_res['Download']['BE']
-                            individual_drop_a_list = drop_res['drop_a']['BE']
-                    report.set_obj_html(
-                        _obj_title=f"Individual observed average {self.direction.lower()} throughput with intended load {load}/station for traffic BE.",
-                        _obj=f"The below graph represents individual observed average throughput (averaged over the test duration) for {len(self.input_devices_list)} clients running BE "
-                        f"traffic. X-axis shows “Throughput in Mbps” and Y-axis shows "
-                        f"“Client names”.")
-                    # print("individual set",individual_set)
-                    report.build_objective()
-                    graph = lf_bar_graph_horizontal(_data_set=individual_set, _yaxis_name="Client names",
-                                                    _xaxis_name="Throughput in Mbps",
-                                                    _yaxis_categories=[i for i in self.real_client_list1],
-                                                    _yaxis_label=[i for i in self.real_client_list1],
-                                                    _label=labels,
-                                                    _yaxis_step=1,
-                                                    _yticks_font=8,
-                                                    _yticks_rotation=None,
-                                                    _graph_title=f"Individual observed average {self.direction.lower()} throughput for BE traffic",
-                                                    _title_size=16,
-                                                    _figsize=(x_fig_size, y_fig_size),
-                                                    _legend_loc="best",
-                                                    _legend_box=(1.0, 1.0),
-                                                    _color_name=colors,
-                                                    _show_bar_value=True,
-                                                    _enable_csv=True,
-                                                    _graph_image_name="be_{}{}".format(self.direction, graph_no), _color_edge=['black'],
-                                                    _color=colors)
-                    graph_png = graph.build_bar_graph_horizontal()
-                    print("graph name {}".format(graph_png))
-                    report.set_graph_image(graph_png)
-                    # need to move the graph image to the results
-                    report.move_graph_image()
-                    report.set_csv_filename(graph_png)
-                    report.move_csv_file()
-                    report.build_graph()
-                    if (self.dowebgui and self.get_live_view) or multicast_exists:
-                        if not self.robot_test:
-                            for image_path in tos_images['BE']:
-                                report.set_custom_html('<div style="page-break-before: always;"></div>')
-                                report.build_custom()
-                                report.set_custom_html(f'<img src="file://{image_path}" style="width: 1200px; height: 800px;"></img>')
-                                report.build_custom()
-                    individual_avgupload_list = []
-                    individual_avgdownload_list = []
-                    for i in range(len(individual_upload_list)):
-                        individual_avgupload_list.append(str(str(individual_upload_list[i]) + ' ' + 'Mbps'))
-                    for j in range(len(individual_download_list)):
-                        individual_avgdownload_list.append(str(str(individual_download_list[j]) + ' ' + 'Mbps'))
-                    if self.expected_passfail_val:
-                        test_input_list = [self.expected_passfail_val for val in range(len(self.real_client_list))]
-                    # Calculating the pass/fail criteria when either expected_passfail_val or csv_name is provided
-                    if self.expected_passfail_val or self.csv_name:
-                        pass_fail_list = self.get_pass_fail_list(test_input_list, individual_avgupload_list, individual_avgdownload_list)
-                    if self.group_name:
-                        for key, val in self.group_device_map.items():
-                            if self.expected_passfail_val or self.csv_name:
-                                dataframe = self.generate_dataframe(
-                                    val,
-                                    self.real_client_list,
-                                    self.mac_id_list,
-                                    self.ssid_list,
-                                    be_tos_list,
-                                    upload_list,
-                                    download_list,
-                                    individual_avgupload_list,
-                                    individual_avgdownload_list,
-                                    test_input_list,
-                                    individual_drop_b_list,
-                                    individual_drop_a_list,
-                                    pass_fail_list)
-                            else:
-                                dataframe = self.generate_dataframe(
-                                    val,
-                                    self.real_client_list,
-                                    self.mac_id_list,
-                                    self.ssid_list,
-                                    be_tos_list,
-                                    upload_list,
-                                    download_list,
-                                    individual_avgupload_list,
-                                    individual_avgdownload_list,
-                                    [],
-                                    individual_drop_b_list,
-                                    individual_drop_a_list,
-                                    [])
-                            if dataframe:
-                                report.set_obj_html("", "Group: {}".format(key))
-                                report.build_objective()
-                                dataframe1 = pd.DataFrame(dataframe)
-                                report.set_table_dataframe(dataframe1)
-                                report.build_table()
-                    else:
-                        be_dataframe = {
-                            " Client Name ": self.real_client_list,
-                            " MAC ": self.mac_id_list,
-                            " SSID ": self.ssid_list,
-                            " Type of traffic ": be_tos_list,
-                            " Offered upload rate ": upload_list,
-                            " Offered download rate ": download_list,
-                            " Observed average upload rate ": individual_avgupload_list,
-                            " Observed average download rate": individual_avgdownload_list,
-                        }
-                        be_dataframe[" Observed average upload drop (%)"] = individual_drop_b_list
-                        be_dataframe[" Observed average download drop (%)"] = individual_drop_a_list
-                        if self.expected_passfail_val or self.csv_name:
-                            be_dataframe[" Expected " + self.direction + " rate(Mbps)"] = test_input_list
-                            be_dataframe[" Status "] = pass_fail_list
-                        dataframe2 = pd.DataFrame(be_dataframe)
-                        report.set_table_dataframe(dataframe2)
-                        report.build_table()
-                logger.info("Graph and table for BE tos are built")
-                if "VI" in self.tos:
-                    if self.direction == "Bi-direction":
-                        individual_set = list1[0]
-                        individual_download_list = avg_res['Download']['VI']
-                        individual_upload_list = avg_res['Upload']['VI']
-                        individual_drop_a_list = drop_res['drop_a']['VI']
-                        individual_drop_b_list = drop_res['drop_b']['VI']
-                        colors = ['steelblue', 'lightskyblue']
-                        labels = ['Download', 'Upload']
-                    else:
-                        individual_set = [data_set[load]['VI']]
-                        colors = ['steelblue']
-                        labels = ['VI']
-                        if self.direction == "Upload":
-                            individual_upload_list = avg_res['Upload']['VI']
-                            individual_drop_b_list = drop_res['drop_b']['VI']
-                        elif self.direction == "Download":
-                            individual_download_list = avg_res['Download']['VI']
-                            individual_drop_a_list = drop_res['drop_a']['VI']
-                    report.set_obj_html(
-                        _obj_title=f"Individual observed average {self.direction.lower()} throughput with intended load {load}/station for traffic VI.",
-                        _obj=f"The below graph represents individual observed average throughput (averaged over the test duration) for {len(self.input_devices_list)} clients running VI "
-                        f"traffic. X-axis shows “Throughput in Mbps” and Y-axis shows "
-                        f"“Client names”.")
-                    report.build_objective()
-                    graph = lf_bar_graph_horizontal(_data_set=individual_set, _yaxis_name="Client names",
-                                                    _xaxis_name="Throughput in Mbps",
-                                                    _yaxis_categories=[i for i in self.real_client_list1],
-                                                    _yaxis_label=[i for i in self.real_client_list1],
-                                                    _label=labels,
-                                                    _yaxis_step=1,
-                                                    _yticks_font=8,
-                                                    _yticks_rotation=None,
-                                                    _graph_title=f"Individual observed average {self.direction.lower()} throughput for VI traffic",
-                                                    _title_size=16,
-                                                    _figsize=(x_fig_size, y_fig_size),
-                                                    _legend_loc="best",
-                                                    _legend_box=(1.0, 1.0),
-                                                    _show_bar_value=True,
-                                                    _color_name=colors,
-                                                    _enable_csv=True,
-                                                    _graph_image_name="video_{}{}".format(self.direction, graph_no),
-                                                    _color_edge=['black'],
-                                                    _color=colors)
-                    graph_png = graph.build_bar_graph_horizontal()
-                    print("graph name {}".format(graph_png))
-                    report.set_graph_image(graph_png)
-                    # need to move the graph image to the results
-                    report.move_graph_image()
-                    report.set_csv_filename(graph_png)
-                    report.move_csv_file()
-                    report.build_graph()
-                    if (self.dowebgui and self.get_live_view) or multicast_exists:
-                        if not self.robot_test:
-                            for image_path in tos_images['VI']:
-                                report.set_custom_html('<div style="page-break-before: always;"></div>')
-                                report.build_custom()
-                                report.set_custom_html(f'<img src="file://{image_path}" style="width: 1200px; height: 800px;"></img>')
-                                report.build_custom()
-                    individual_avgupload_list = []
-                    individual_avgdownload_list = []
-                    for i in range(len(individual_upload_list)):
-                        individual_avgupload_list.append(str(str(individual_upload_list[i]) + ' ' + 'Mbps'))
-                    for j in range(len(individual_download_list)):
-                        individual_avgdownload_list.append(str(str(individual_download_list[j]) + ' ' + 'Mbps'))
-                    if self.expected_passfail_val:
-                        test_input_list = [self.expected_passfail_val for val in range(len(self.real_client_list))]
-                    # Calculating the pass/fail criteria when either expected_passfail_val or csv_name is provided
-                    if self.expected_passfail_val or self.csv_name:
-                        pass_fail_list = self.get_pass_fail_list(test_input_list, individual_avgupload_list, individual_avgdownload_list)
-                    if self.group_name:
-                        for key, val in self.group_device_map.items():
-                            if self.expected_passfail_val or self.csv_name:
-                                dataframe = self.generate_dataframe(
-                                    val,
-                                    self.real_client_list,
-                                    self.mac_id_list,
-                                    self.ssid_list,
-                                    vi_tos_list,
-                                    upload_list,
-                                    download_list,
-                                    individual_avgupload_list,
-                                    individual_avgdownload_list,
-                                    test_input_list,
-                                    individual_drop_b_list,
-                                    individual_drop_a_list,
-                                    pass_fail_list)
-                            else:
-                                dataframe = self.generate_dataframe(
-                                    val,
-                                    self.real_client_list,
-                                    self.mac_id_list,
-                                    self.ssid_list,
-                                    vi_tos_list,
-                                    upload_list,
-                                    download_list,
-                                    individual_avgupload_list,
-                                    individual_avgdownload_list,
-                                    [],
-                                    individual_drop_b_list,
-                                    individual_drop_a_list,
-                                    [])
-                            if dataframe:
-                                report.set_obj_html("", "Group: {}".format(key))
-                                report.build_objective()
-                                dataframe1 = pd.DataFrame(dataframe)
-                                report.set_table_dataframe(dataframe1)
-                                report.build_table()
-                    else:
-                        vi_dataframe = {
-                            " Client Name ": self.real_client_list,
-                            " MAC ": self.mac_id_list,
-                            " SSID ": self.ssid_list,
-                            " Type of traffic ": vi_tos_list,
-                            " Offered upload rate ": upload_list,
-                            " Offered download rate ": download_list,
-                            " Observed average upload rate ": individual_avgupload_list,
-                            " Observed average download rate": individual_avgdownload_list,
-                        }
-                        vi_dataframe[" Observed average upload drop (%)"] = individual_drop_b_list
-                        vi_dataframe[" Observed average download drop (%)"] = individual_drop_a_list
-                        if self.expected_passfail_val or self.csv_name:
-                            vi_dataframe[" Expected " + self.direction + " rate(Mbps)"] = test_input_list
-                            vi_dataframe[" Status "] = pass_fail_list
-                        dataframe3 = pd.DataFrame(vi_dataframe)
-                        report.set_table_dataframe(dataframe3)
-                        report.build_table()
-                logger.info("Graph and table for VI tos are built")
-                if "VO" in self.tos:
-                    if self.direction == "Bi-direction":
-                        individual_set = list1[1]
-                        individual_download_list = avg_res['Download']['VO']
-                        individual_upload_list = avg_res['Upload']['VO']
-                        individual_drop_a_list = drop_res['drop_a']['VO']
-                        individual_drop_b_list = drop_res['drop_b']['VO']
-                        colors = ['grey', 'lightgrey']
-                        labels = ['Download', 'Upload']
-                    else:
-                        individual_set = [data_set[load]['VO']]
-                        colors = ['grey']
-                        labels = ['VO']
-                        if self.direction == "Upload":
-                            individual_upload_list = avg_res['Upload']['VO']
-                            individual_drop_b_list = drop_res['drop_b']['VO']
-                        elif self.direction == "Download":
-                            individual_download_list = avg_res['Download']['VO']
-                            individual_drop_a_list = drop_res['drop_a']['VO']
-                    report.set_obj_html(
-                        _obj_title=f"Individual observed average {self.direction.lower()} throughput with intended load {load}/station for traffic VO.",
-                        _obj=f"The below graph represents individual observed average throughput (averaged over the test duration) for {len(self.input_devices_list)} clients running VO "
-                        f"traffic. X-axis shows “Throughput in Mbps” and Y-axis shows "
-                        f"“Client names”.")
-                    report.build_objective()
-                    graph = lf_bar_graph_horizontal(_data_set=individual_set, _yaxis_name="Client names",
-                                                    _xaxis_name="Throughput in Mbps",
-                                                    _yaxis_categories=[i for i in self.real_client_list1],
-                                                    _yaxis_label=[i for i in self.real_client_list1],
-                                                    _label=labels,
-                                                    _yaxis_step=1,
-                                                    _yticks_font=8,
-                                                    _graph_title=f"Individual observed average {self.direction.lower()} throughput for VO traffic",
-                                                    _title_size=16,
-                                                    _figsize=(x_fig_size, y_fig_size),
-                                                    _yticks_rotation=None,
-                                                    _legend_loc="best",
-                                                    _legend_box=(1.0, 1.0),
-                                                    _show_bar_value=True,
-                                                    _color_name=colors,
-                                                    _enable_csv=True,
-                                                    _graph_image_name="voice_{}{}".format(self.direction, graph_no),
-                                                    _color_edge=['black'],
-                                                    _color=colors)
-                    graph_png = graph.build_bar_graph_horizontal()
-                    print("graph name {}".format(graph_png))
-                    report.set_graph_image(graph_png)
-                    # need to move the graph image to the results
-                    report.move_graph_image()
-                    report.set_csv_filename(graph_png)
-                    report.move_csv_file()
-                    report.build_graph()
-                    if (self.dowebgui and self.get_live_view) or multicast_exists:
-                        if not self.robot_test:
-                            for image_path in tos_images['VO']:
-                                report.set_custom_html('<div style="page-break-before: always;"></div>')
-                                report.build_custom()
-                                report.set_custom_html(f'<img src="file://{image_path}" style="width: 1200px; height: 800px;"></img>')
-                                report.build_custom()
-                    individual_avgupload_list = []
-                    individual_avgdownload_list = []
-                    for i in range(len(individual_upload_list)):
-                        individual_avgupload_list.append(str(str(individual_upload_list[i]) + ' ' + 'Mbps'))
-                    for j in range(len(individual_download_list)):
-                        individual_avgdownload_list.append(str(str(individual_download_list[j]) + ' ' + 'Mbps'))
-                    if self.expected_passfail_val:
-                        pass_fail_list = []
-                        test_input_list = [self.expected_passfail_val for val in range(len(self.real_client_list))]
-                    # Calculating the pass/fail criteria when either expected_passfail_val or csv_name is provided
-                    if self.expected_passfail_val or self.csv_name:
-                        pass_fail_list = self.get_pass_fail_list(test_input_list, individual_avgupload_list, individual_avgdownload_list)
-                    if self.group_name:
-                        for key, val in self.group_device_map.items():
-                            if self.expected_passfail_val or self.csv_name:
-                                dataframe = self.generate_dataframe(
-                                    val,
-                                    self.real_client_list,
-                                    self.mac_id_list,
-                                    self.ssid_list,
-                                    vo_tos_list,
-                                    upload_list,
-                                    download_list,
-                                    individual_avgupload_list,
-                                    individual_avgdownload_list,
-                                    test_input_list,
-                                    individual_drop_b_list,
-                                    individual_drop_a_list,
-                                    pass_fail_list)
-                            else:
-                                dataframe = self.generate_dataframe(
-                                    val,
-                                    self.real_client_list,
-                                    self.mac_id_list,
-                                    self.ssid_list,
-                                    vo_tos_list,
-                                    upload_list,
-                                    download_list,
-                                    individual_avgupload_list,
-                                    individual_avgdownload_list,
-                                    [],
-                                    individual_drop_b_list,
-                                    individual_drop_a_list,
-                                    [])
-                            if dataframe:
-                                report.set_obj_html("", "Group: {}".format(key))
-                                report.build_objective()
-                                dataframe1 = pd.DataFrame(dataframe)
-                                report.set_table_dataframe(dataframe1)
-                                report.build_table()
-                    else:
-                        vo_dataframe = {
-                            " Client Name ": self.real_client_list,
-                            " MAC ": self.mac_id_list,
-                            " SSID ": self.ssid_list,
-                            " Type of traffic ": vo_tos_list,
-                            " Offered upload rate ": upload_list,
-                            " Offered download rate ": download_list,
-                            " Observed average upload rate ": individual_avgupload_list,
-                            " Observed average download rate": individual_avgdownload_list
-                        }
-                        vo_dataframe[" Observed average upload drop (%)"] = individual_drop_b_list
-                        vo_dataframe[" Observed average download drop (%)"] = individual_drop_a_list
-                        if self.expected_passfail_val or self.csv_name:
-                            vo_dataframe[" Expected " + self.direction + " rate(Mbps)"] = test_input_list
-                            vo_dataframe[" Status "] = pass_fail_list
-                        dataframe4 = pd.DataFrame(vo_dataframe)
-                        report.set_table_dataframe(dataframe4)
-                        report.build_table()
-                logger.info("Graph and table for VO tos are built")
             if self.dowebgui and self.get_live_view and not multicast_exists:
                 if not self.robot_test:
                     for _floor, rssi_image_path in rssi_images.items():
@@ -2700,22 +3065,24 @@ class ThroughputQOS(Realm):
 
     def get_pass_fail_list(self, test_input_list, individual_avgupload_list, individual_avgdownload_list):
         pass_fail_list = []
+        pass_tag = "<span style='color:#1a7a2e; font-weight:700;'>PASS</span>"
+        fail_tag = "<span style='color:#e53935; font-weight:700;'>FAIL</span>"
         for i in range(len(test_input_list)):
             if self.csv_direction.split('_')[2] == 'BiDi':
                 if float(test_input_list[i]) <= float(individual_avgupload_list[i].split(' ')[0]) + float(individual_avgdownload_list[i].split(' ')[0]):
-                    pass_fail_list.append('PASS')
+                    pass_fail_list.append(pass_tag)
                 else:
-                    pass_fail_list.append('FAIL')
+                    pass_fail_list.append(fail_tag)
             elif self.csv_direction.split('_')[2] == 'UL':
                 if float(test_input_list[i]) <= float(individual_avgupload_list[i].split(' ')[0]):
-                    pass_fail_list.append('PASS')
+                    pass_fail_list.append(pass_tag)
                 else:
-                    pass_fail_list.append('FAIL')
+                    pass_fail_list.append(fail_tag)
             else:
                 if float(test_input_list[i]) <= float(individual_avgdownload_list[i].split(' ')[0]):
-                    pass_fail_list.append('PASS')
+                    pass_fail_list.append(pass_tag)
                 else:
-                    pass_fail_list.append('FAIL')
+                    pass_fail_list.append(fail_tag)
         return pass_fail_list
 
     def get_csv_expected_val(self):
@@ -2769,26 +3136,25 @@ class ThroughputQOS(Realm):
         res = self.set_report_data(data)
         data_set, load, res = self.generate_graph_data_set(data)
         report.set_table_title(
-            f"Overall observed average {self.direction.lower()} throughput for all TOS i.e BK | BE | Video (VI) | Voice (VO)")
+            f"Overall {self.direction} Throughput for all TOS i.e BK | BE | Video (VI) | Voice (VO)")
         report.build_table_title()
         df_throughput = pd.DataFrame(res["throughput_table_df"])
         report.set_table_dataframe(df_throughput)
         report.build_table()
         for _key in res["graph_df"]:
             report.set_obj_html(
-                _obj_title=f"Overall observed average {self.direction.lower()} throughput for {len(self.input_devices_list)} clients with different TOS.",
-                _obj=f"The below graph represents overall observed average {self.direction.lower()} throughput (averaged over the test duration) for all "
+                _obj_title=f"Overall {self.direction} throughput for {len(self.input_devices_list)} clients with different TOS.",
+                _obj=f"The below graph represents overall {self.direction} throughput for all "
                 "connected stations running BK, BE, VO, VI traffic with different "
                 f"intended loads{load} per tos")
         report.build_objective()
         if self.rotation_enabled:
             graph_image_name = f"tos_{_key}_coord{self.coordinate_list[coordinate]}_angle{self.rotation_list[angle]}Hz"
-            graph_title = (f"Overall observed average {self.direction.lower()} throughput – BK,BE,VO,VI traffic streams at "
-                           f"Coordinate: {self.coordinate_list[coordinate]} | Rotation Angle: {self.rotation_list[angle]}°")
+            graph_title = f"Overall {self.direction} throughput – BK,BE,VO,VI traffic streams at Coordinate: {self.coordinate_list[coordinate]} | Rotation Angle: {self.rotation_list[angle]}°"
             graph_no = "_{}_{}".format(self.coordinate_list[coordinate], self.rotation_list[angle])
         else:
             graph_image_name = f"tos_{_key}_coord{self.coordinate_list[coordinate]}Hz"
-            graph_title = f"Overall observed average {self.direction.lower()} throughput – BK,BE,VO,VI traffic streams at Coordinate: {self.coordinate_list[coordinate]}"
+            graph_title = f"Overall {self.direction} throughput – BK,BE,VO,VI traffic streams at Coordinate: {self.coordinate_list[coordinate]}"
             graph_no = "_{}".format(self.coordinate_list[coordinate])
         graph = lf_bar_graph(_data_set=data_set,
                              _xaxis_name="Load per Type of Service",
@@ -2800,7 +3166,8 @@ class ThroughputQOS(Realm):
                              _xaxis_step=1,
                              _graph_title=graph_title,
                              _title_size=16,
-                             _color=['orange', 'lightcoral', 'steelblue', 'lightgrey'],
+                             # Same BK/BE/VI/VO convention used elsewhere in this report: orange/red/blue/green.
+                             _color=['#1d9a8a', '#f1b24a', '#2f80ed', '#1f6f58'],
                              _color_edge='black',
                              _bar_width=0.15,
                              _figsize=(18, 6),
@@ -2809,13 +3176,13 @@ class ThroughputQOS(Realm):
                              _dpi=96,
                              _show_bar_value=True,
                              _enable_csv=True,
-                             _color_name=['orange', 'lightcoral', 'steelblue', 'lightgrey'])
+                             _color_name=['#1d9a8a', '#f1b24a', '#2f80ed', '#1f6f58'])
         graph_png = graph.build_bar_graph()
         print("graph name {}".format(graph_png))
         report.set_graph_image(graph_png)
         # need to move the graph image to the results directory
         report.move_graph_image()
-        report.set_csv_filename(graph_png)
+        report.set_csv_filename(graph.graph_image_name)
         report.move_csv_file()
         report.build_graph()
         self.generate_individual_graph(res, report, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, graph_no=graph_no)
@@ -2982,10 +3349,6 @@ class ThroughputQOS(Realm):
                 avg_drop_a = self.qos_data[self.coordinate_list[coordinate]]["avg_drop_a"]
                 avg_drop_b = self.qos_data[self.coordinate_list[coordinate]]["avg_drop_b"]
                 self.generate_individual_coordinate(report, data, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, coordinate, None)
-        input_setup_info = {
-            "contact": "support@candelatech.com"
-        }
-        report.test_setup_table(test_setup_data=input_setup_info, value="Information")
         # Wi-Fi connectivity analysis (connects/disconnects/scans/rejections) collected during test
         self.add_wifi_analysis_to_report(report)
         # ping statistics collected on the clients while the qos traffic was running
@@ -3122,7 +3485,7 @@ class ThroughputQOS(Realm):
             graph_png = graph.build_bar_graph()
             report.set_graph_image(graph_png)
             report.move_graph_image()
-            report.set_csv_filename(graph_png)
+            report.set_csv_filename(graph.graph_image_name)
             report.move_csv_file()
             report.build_graph()
 
@@ -3924,6 +4287,7 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
                           dest='enable_bg_ping',
                           action='store_true',
                           help='Run background ping on real clients during test (alias for --enable_bg_ping)')
+
     lf_interop_bg_ping.add_arguments(parser)
 
     args = parser.parse_args()
@@ -4108,7 +4472,8 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
                 df1.to_csv('{}/overall_throughput.csv'.format(throughput_qos.result_dir), index=False)
                 raise ValueError("Aborting the test....")
         if getattr(args, 'bg_ping', False) or getattr(args, 'bgping', False):
-            setattr(args, 'enable_bg_ping', True)
+            args.enable_bg_ping = True
+        # starting the ping on the selected clients, it keeps running until the qos traffic is stopped
         throughput_qos.background_ping = lf_interop_bg_ping.from_args(
             args,
             host=args.mgr,
@@ -4187,9 +4552,10 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
             avg_drop_a=avg_drop_a,
             avg_drop_b=avg_drop_b, iot_summary=iot_summary)
 
-    # Update webgui running json with latest entry and test status completed
     if getattr(throughput_qos, 'background_ping', None):
         throughput_qos.background_ping.cleanup()
+
+    # Update webgui running json with latest entry and test status completed
     if throughput_qos.dowebgui == "True":
         # copying to home directory i.e home/user_name
         throughput_qos.copy_reports_to_home_dir()
