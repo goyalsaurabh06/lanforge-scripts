@@ -2469,7 +2469,7 @@ class Youtube(Realm):
         # Closing
         self.report.build_footer()
         self.report.write_html()
-        self.report.write_pdf()
+        self.report.write_pdf(_page_width="420mm", _page_height="420mm")
 
     def json_get_with_retry(self, url, wait_time=40, poll_interval=5):
         """
@@ -3359,7 +3359,7 @@ class Youtube(Realm):
         self.report.build_custom()
         self.report.build_footer()
         self.report.write_html()
-        self.report.write_pdf()
+        self.report.write_pdf(_page_width="420mm", _page_height="420mm")
 
     def add_buffer_health_graphs_to_report(self, hostname):
         all_csv_files = glob.glob("*.csv")
