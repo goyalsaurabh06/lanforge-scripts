@@ -142,6 +142,16 @@ lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 # Importing DeviceConfig to apply device configurations for ADB devices and laptops
 DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
 
+try:
+    from lf_wifi_msgs import RealClientAnalysis
+except ImportError:
+    try:
+        lf_wifi_msgs = importlib.import_module("py-scripts.lf_wifi_msgs")
+        RealClientAnalysis = lf_wifi_msgs.RealClientAnalysis
+    except Exception:
+        RealClientAnalysis = None
+
+
 iot_scripts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../local/interop-webGUI/IoT/scripts/"))
 if os.path.exists(iot_scripts_path):
     sys.path.insert(0, iot_scripts_path)
@@ -285,6 +295,9 @@ class ThroughputQOS(Realm):
         self.user_list = user_list if user_list else []
         self.mac_id_list = mac_id_list if mac_id_list else []
         self.mac_id1_list = mac_id1_list if mac_id1_list else []
+        self.wifi_analysis = None
+        self.wifi_analysis_stats = {}
+        self.wifi_analysis_start_time = None
         self.dowebgui = dowebgui
         self.ip = ip
         self.device_found = False
@@ -1533,6 +1546,114 @@ class ThroughputQOS(Realm):
             else:
                 ssid_list.append('-')
         return ssid_list
+
+    def resolve_wifi_analysis_device_names(self, devices):
+        """Map each wifi-analysis device (a LANforge port name) to its display name."""
+        port_to_name = {}
+        if hasattr(self, 'input_devices_list') and hasattr(self, 'real_client_list'):
+            for port_name, entry in zip(self.input_devices_list, self.real_client_list):
+                parts = entry.split(" ")
+                if parts and parts[-1]:
+                    port_to_name[port_name] = parts[-1]
+
+        return [port_to_name.get(port_name, port_name) for port_name in devices]
+
+    def start_wifi_analysis(self, host, port, device_list, ssid):
+        """Start a RealClientAnalysis window covering the devices under test."""
+        self.wifi_analysis = None
+        self.wifi_analysis_stats = {}
+        if not device_list or RealClientAnalysis is None:
+            return
+        try:
+            self.wifi_analysis = RealClientAnalysis(host=host, port=port, device_list=list(device_list),
+                                                    ssid=ssid or "", debug=self.debug)
+            self.wifi_analysis_start_time = int(time.time() * 1000)
+            logger.info("Wi-Fi connectivity analysis started for devices: %s", device_list)
+        except Exception as e:
+            logger.warning("Wifi connectivity analysis could not be started: %s", e)
+            self.wifi_analysis = None
+
+    def stop_wifi_analysis(self):
+        """Analyze '/wifi-msgs' since start_wifi_analysis() into self.wifi_analysis_stats."""
+        if not getattr(self, 'wifi_analysis', None):
+            return
+        try:
+            if hasattr(self.wifi_analysis, 'populate_device_lookups'):
+                self.wifi_analysis.populate_device_lookups()
+            elif hasattr(self.wifi_analysis, 'query_devices_1'):
+                self.wifi_analysis.query_devices_1()
+            local_dict = self.wifi_analysis.create_local_dict()
+            if not local_dict:
+                logger.warning("None of the wifi connectivity analysis devices resolved to a device LANforge knows about")
+                return
+            self.wifi_analysis_stats = self.wifi_analysis.get_client_connectivity_stats_from_timestamp(
+                self.wifi_analysis_start_time, None, local_dict)
+            logger.info("Wi-Fi connectivity analysis completed: %s", self.wifi_analysis_stats)
+        except Exception as e:
+            logger.warning("Wifi connectivity analysis results could not be collected: %s", e)
+
+    def add_wifi_analysis_to_report(self, report):
+        """Append the wifi connectivity event summary graph and stats table to the report."""
+        if not getattr(self, 'wifi_analysis_stats', None) or not getattr(self, 'wifi_analysis', None):
+            return
+        try:
+            devices, connect_attempt, disconnected, scanning, association_rejection, connected, remarks, cx_time = \
+                self.wifi_analysis.dicttolist(self.wifi_analysis_stats)
+            devices = self.resolve_wifi_analysis_device_names(devices)
+
+            categories = ["Disconnected", "Scans", "Association Attempts", "Association Rejected", "Connected"]
+            totals = [sum(disconnected), sum(scanning), sum(connect_attempt), sum(association_rejection), sum(connected)]
+            colors = ['#e74c3c', '#f1c40f', '#e67e22', '#95a5a6', '#27ae60']
+
+            report.set_custom_html('<div style="page-break-before: always;"></div>')
+            report.build_custom()
+
+            report.set_obj_html(
+                _obj_title="Client Connectivity Event Summary",
+                _obj="This graph summarizes connection-related events observed during the QoS test. "
+                     "These metrics provide insight into client stability and wireless connectivity performance.")
+            report.build_objective()
+            data_set = [[value if i == series_index else 0 for i, value in enumerate(totals)]
+                        for series_index in range(len(categories))]
+            graph = lf_bar_graph(_data_set=data_set,
+                                 _xaxis_name="",
+                                 _yaxis_name="Count",
+                                 _xaxis_categories=categories,
+                                 _graph_image_name="wifi_connectivity_status",
+                                 _label=categories,
+                                 _graph_title="Client Connectivity Status",
+                                 _title_size=16,
+                                 _color_edge='black',
+                                 _bar_width=0.5,
+                                 _figsize=(10, 6),
+                                 _legend_loc="best",
+                                 _dpi=96,
+                                 _show_bar_value=True,
+                                 _enable_csv=True,
+                                 _stacked=True,
+                                 _color=colors,
+                                 _color_name=colors)
+            graph_png = graph.build_bar_graph()
+            report.set_graph_image(graph_png)
+            report.move_graph_image()
+            report.set_csv_filename(graph.graph_image_name)
+            report.move_csv_file()
+            report.build_graph()
+
+            dataframe = pd.DataFrame({
+                "Device": devices,
+                "Association Attempts": connect_attempt,
+                "Disconnected": disconnected,
+                "Scanning": scanning,
+                "Association Rejection": association_rejection,
+                "Connected": connected,
+            })
+            report.set_table_title("Wifi Connectivity Analysis")
+            report.build_table_title()
+            report.set_table_dataframe(dataframe)
+            report.build_table()
+        except Exception as e:
+            logger.warning("Wifi connectivity analysis could not be added to the report: %s", e)
 
     def generate_report(self, data, input_setup_info, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, report_path='', result_dir_name='Qos_Test_report',
                         selected_real_clients_names=None, config_devices="", iot_summary=None):
@@ -3931,15 +4052,20 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
                 )
                 df1.to_csv('{}/overall_throughput.csv'.format(throughput_qos.result_dir), index=False)
                 raise ValueError("Aborting the test....")
+        if getattr(args, 'wifi_analysis', False):
+            throughput_qos.start_wifi_analysis(host=args.mgr, port=args.mgr_port,
+                                               device_list=throughput_qos.input_devices_list, ssid=args.ssid)
         throughput_qos.build()
         throughput_qos.monitor_cx()
         if args.robot_test:
             throughput_qos.perform_robo()
+            throughput_qos.stop_wifi_analysis()
             exit(1)
         throughput_qos.start(False, False)
         time.sleep(10)
         connections_download, connections_upload, drop_a_per, drop_b_per, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b = throughput_qos.monitor()
         throughput_qos.stop()
+        throughput_qos.stop_wifi_analysis()
         time.sleep(5)
         test_results['test_results'].append(throughput_qos.evaluate_qos(connections_download, connections_upload, drop_a_per, drop_b_per))
         data.update(test_results)
