@@ -7,8 +7,8 @@ lf_ftp.py will verify that N clients are connected on a specified band and can s
 some amount of file data from the FTP server while measuring the time taken by clients to download/upload the file.
 
 EXAMPLE-1:
-Command Line Interface to run FTP download scenario for Real clients with wifi analysis
-python3 lf_ftp.py --mgr 192.168.220.125 --upstream_port eth2 --clients_type Real --directions Download --bands 5G --file_sizes 10MB --traffic_duration 2m --wifi_analysis
+Command Line Interface to run FTP download scenario for Real clients with background ping and wifi analysis
+python3 lf_ftp.py --mgr 192.168.220.125 --upstream_port eth2 --clients_type Real --directions Download --bands 5G --file_sizes 10MB --traffic_duration 2m --bgping --wifi_analysis
 
 EXAMPLE-2:
 Command Line Interface to run download scenario for Real clients
@@ -171,6 +171,7 @@ lf_graph = importlib.import_module("py-scripts.lf_graph")
 lf_kpi_csv = importlib.import_module("py-scripts.lf_kpi_csv")
 logger = logging.getLogger(__name__)
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
+lf_interop_bg_ping = importlib.import_module("py-scripts.lf_interop_bg_ping")
 
 try:
     from lf_wifi_msgs import RealClientAnalysis
@@ -2753,6 +2754,8 @@ class FtpTest(LFCliBase):
                 issues_df = pd.DataFrame(self.device_issue_log)
                 issues_df.to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
             self.add_wifi_analysis_to_report(self.report)
+            if getattr(self, 'background_ping', None):
+                self.background_ping.add_to_report(self.report)
             self.report.build_footer()
             html_file = self.report.write_html()
             logger.info(f"Returned file {html_file}")
@@ -2934,6 +2937,8 @@ class FtpTest(LFCliBase):
         if iot_summary:
             self.build_iot_report_section(self.report, iot_summary)
         self.add_wifi_analysis_to_report(self.report)
+        if getattr(self, 'background_ping', None):
+            self.background_ping.add_to_report(self.report)
         if self.device_issue_log:
             issues_df = pd.DataFrame(self.device_issue_log)
             issues_df.to_csv(os.path.join(report_path_date_time, "clients_issue.csv"), index=False)
@@ -4007,11 +4012,16 @@ INCLUDE_IN_README: False
                           type=str,
                           default='',
                           help='Comma-separated list of device counts to incrementally test (e.g., "1,3,5")')
+    optional.add_argument('--bgping', '--bg_ping',
+                          dest='enable_bg_ping',
+                          action='store_true',
+                          help='Run background ping on real clients during test (alias for --enable_bg_ping)')
     optional.add_argument('--wifi_analysis', '--wifi-analysis',
                           dest='wifi_analysis',
                           action='store_true',
                           help='Analyze real-client wifi-msgs (connects/disconnects/scans/association rejections) '
                                'for the duration of the test and include the results in the report')
+    lf_interop_bg_ping.add_arguments(parser)
     args = parser.parse_args()
 
     help_summary = '''\
@@ -4108,6 +4118,9 @@ some amount of file data from the FTP server while measuring the time taken by c
     elif args.traffic_duration.endswith(''):
         args.traffic_duration = int(args.traffic_duration)
 
+    # The ping runs across every band, file size and direction combination of the test
+    background_ping = None
+    background_ping_requested = getattr(args, 'enable_bg_ping', False) or getattr(args, 'bg_ping', False)
     wifi_analysis_obj = None
     wifi_analysis_start_time = None
     wifi_analysis_requested = getattr(args, 'wifi_analysis', False)
@@ -4214,6 +4227,21 @@ some amount of file data from the FTP server while measuring the time taken by c
                 if obj.clients_type == 'Real':
                     obj.monitor_cx()
                     logger.info(f'Test started on the devices : {obj.input_devices_list}')
+                    # starting the ping on the selected clients, it keeps running until the ftp traffic is done
+                    if background_ping_requested:
+                        background_ping_requested = False
+                        if getattr(args, 'bg_ping', False) or getattr(args, 'bgping', False):
+                            args.enable_bg_ping = True
+                        background_ping = lf_interop_bg_ping.from_args(
+                            args,
+                            host=args.mgr,
+                            port=args.mgr_port,
+                            device_list=obj.input_devices_list,
+                            default_target=args.upstream_port)
+                        obj.background_ping = background_ping
+                    elif background_ping:
+                        obj.background_ping = background_ping
+
                     if wifi_analysis_requested:
                         wifi_analysis_requested = False
                         obj.start_wifi_analysis(host=args.mgr, port=args.mgr_port,
@@ -4261,6 +4289,10 @@ some amount of file data from the FTP server while measuring the time taken by c
 
     # total time for test duration
     # test_duration = str(time_stamp2 - time_stamp1)[:-7]
+
+    if background_ping:
+        background_ping.stop()
+        obj.background_ping = background_ping
 
     if wifi_analysis_obj:
         obj.wifi_analysis = wifi_analysis_obj
@@ -4318,6 +4350,9 @@ some amount of file data from the FTP server while measuring the time taken by c
                             dut_sw_version=args.dut_sw_version, dut_model_num=args.dut_model_num,
                             dut_serial_num=args.dut_serial_num, test_id=args.test_id,
                             bands=args.bands, csv_outfile=args.csv_outfile, local_lf_report_dir=args.local_lf_report_dir, iot_summary=iot_summary)
+
+    if background_ping:
+        background_ping.cleanup()
 
     if args.dowebgui:
         obj.copy_reports_to_home_dir()
