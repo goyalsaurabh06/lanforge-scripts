@@ -743,6 +743,7 @@ lf_graph = importlib.import_module("py-scripts.lf_graph")
 lf_kpi_csv = importlib.import_module("py-scripts.lf_kpi_csv")
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 lf_modern_report = importlib.import_module("py-scripts.lf_modern_report")
+lf_wifi_msgs = importlib.import_module("py-scripts.lf_wifi_msgs")
 LFUtils = importlib.import_module("py-json.LANforge.LFUtils")
 realm = importlib.import_module("py-json.realm")
 LFCliBase = realm.LFCliBase
@@ -6866,8 +6867,90 @@ class L3VariableTime(Realm):
             self.report.build_table()
 
 
+    def start_wifi_analysis(self, host, port, device_list, ssid):
+        """Start a RealClientAnalysis window covering the devices under test."""
+        self.wifi_analysis = None
+        self.wifi_analysis_stats = {}
+        if not device_list:
+            return
+        try:
+            self.wifi_analysis = lf_wifi_msgs.RealClientAnalysis(
+                host=host, port=port, device_list=list(device_list), ssid=ssid or "", debug=self.debug)
+            self.wifi_analysis_start_time = int(time.time() * 1000)
+        except Exception as e:
+            logger.warning("Wifi connectivity analysis could not be started: %s", e)
+            self.wifi_analysis = None
 
+    def stop_wifi_analysis(self):
+        """Analyze '/wifi-msgs' since start_wifi_analysis() into self.wifi_analysis_stats."""
+        if not getattr(self, 'wifi_analysis', None):
+            return
+        try:
+            self.wifi_analysis.query_devices_1()
+            local_dict = self.wifi_analysis.create_local_dict()
+            if not local_dict:
+                logger.warning("No wifi connectivity analysis devices were found")
+                return
+            self.wifi_analysis_stats = self.wifi_analysis.get_client_connectivity_stats_from_timestamp(
+                self.wifi_analysis_start_time, None, local_dict)
+        except Exception as e:
+            logger.warning("Wifi connectivity analysis results could not be collected: %s", e)
 
+    def add_wifi_analysis_to_report(self, report):
+        """Add the Client Connectivity Event Summary graph and table to the report."""
+        if not getattr(self, 'wifi_analysis_stats', None):
+            return
+        try:
+            devices, connect_attempt, disconnected, scanning, association_rejection, connected, remarks, cx_time = \
+                self.wifi_analysis.dicttolist(self.wifi_analysis_stats)
+
+            categories = ["Disconnected", "Scans", "Association Attempts", "Association Rejected", "Connected"]
+            totals = [sum(disconnected), sum(scanning), sum(connect_attempt), sum(association_rejection), sum(connected)]
+            colors = ['#e74c3c', '#f1c40f', '#e67e22', '#95a5a6', '#27ae60']
+
+            report.set_obj_html(_obj_title="Client Connectivity Event Summary",
+                                _obj="This graph summarizes connection-related events observed during the "
+                                     "multicast test. These metrics provide insight into client stability "
+                                     "and wireless connectivity performance.")
+            report.build_objective()
+            data_set = [[value if i == series_index else 0 for i, value in enumerate(totals)]
+                       for series_index in range(len(categories))]
+            graph = lf_modern_report.lf_bar_graph(_data_set=data_set,
+                                                  _xaxis_name="",
+                                                  _yaxis_name="Count",
+                                                  _xaxis_categories=categories,
+                                                  _graph_image_name="multicast_wifi_connectivity_status",
+                                                  _label=categories,
+                                                  _graph_title="Client Connectivity Status",
+                                                  _title_size=16,
+                                                  _bar_width=0.5,
+                                                  _figsize=(10, 6),
+                                                  _show_bar_value=True,
+                                                  _enable_csv=True,
+                                                  _stacked=True,
+                                                  _color=colors,
+                                                  _color_name=colors)
+            graph_png = graph.build_bar_graph()
+            report.set_graph_image(graph_png)
+            report.move_graph_image()
+            report.set_csv_filename(graph.graph_image_name)
+            report.move_csv_file()
+            report.build_graph()
+
+            dataframe = pd.DataFrame({
+                "Device": devices,
+                "Association Attempts": connect_attempt,
+                "Disconnected": disconnected,
+                "Scanning": scanning,
+                "Association Rejection": association_rejection,
+                "Connected": connected,
+            })
+            report.set_table_title("Wifi Connectivity Analysis")
+            report.build_table_title()
+            report.set_table_dataframe(dataframe)
+            report.build_table()
+        except Exception as e:
+            logger.warning("Wifi connectivity analysis could not be added to the report: %s", e)
 
     @staticmethod
     def _parse_mbps(value):
@@ -7211,6 +7294,9 @@ class L3VariableTime(Realm):
         else:
             report.set_custom_html("<p><i>No multicast client data was available to report.</i></p>")
             report.build_custom()
+
+        # 7. Client Connectivity Event Summary
+        self.add_wifi_analysis_to_report(report)
 
         # 9. Test Configuration
         report_test_duration = self.actual_test_duration_display if self.need_endps_stopped else self.test_duration
@@ -9903,6 +9989,11 @@ INCLUDE_IN_README: False
     test_l3_parser.add_argument("--config", action="store_true", help="Specify for configuring the devices")
     test_l3_parser.add_argument("--wait_time", type=int, help='Specify the maximum time to wait for Configuration', default=60)
     test_l3_parser.add_argument("--real", action="store_true", help='For testing on real devies')
+    test_l3_parser.add_argument('--wifi_analysis',
+                                action='store_true',
+                                help='Analyze real-client wifi-msgs (connects/disconnects/scans/association rejections) '
+                                     'for the duration of the test and include the results in the modernized '
+                                     'multicast report')
     test_l3_parser.add_argument('--get_live_view', help="If true will heatmap will be generated from testhouse automation WebGui ", action='store_true')
     test_l3_parser.add_argument('--total_floors', help="Total floors from testhouse automation WebGui ", default="0")
     test_l3_parser.add_argument('--robot_test', help='To trigger robot test', action='store_true')
@@ -11485,6 +11576,12 @@ Examples:
     endp_type_list = args.endp_type.split(',') if args.endp_type else []
     is_multicast_mode = bool(endp_type_list) and all(etype in ["mc_udp", "mc_udp6"] for etype in endp_type_list)
 
+    # Wi-Fi analysis covers connection setup for multicast tests.
+    if is_multicast_mode:
+        if args.wifi_analysis:
+            ip_var_test.start_wifi_analysis(host=args.lfmgr, port=args.lfmgr_port,
+                                            device_list=ip_var_test.station_names_list, ssid=args.ssid)
+
     # Run test
     logger.info("Starting test")
     # Check if this is a robot-based test AND involves multicast traffic types
@@ -11515,6 +11612,10 @@ Examples:
         else:
             logger.info("Test complete, stopping traffic")
             ip_var_test.stop()
+
+    # Collect Wi-Fi analysis after traffic has stopped.
+    if is_multicast_mode and args.wifi_analysis:
+        ip_var_test.stop_wifi_analysis()
 
     # Set DUT information for reporting
     ip_var_test.set_dut_info(
