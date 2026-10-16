@@ -4283,10 +4283,6 @@ LICENSE:    Free to distribute and modify. LANforge systems must be licensed.
                           action='store_true',
                           help='Analyze real-client wifi-msgs (connects/disconnects/scans/association rejections) '
                                'for the duration of the test and include the results in the report')
-    optional.add_argument('--bgping', '--bg_ping',
-                          dest='enable_bg_ping',
-                          action='store_true',
-                          help='Run background ping on real clients during test (alias for --enable_bg_ping)')
 
     lf_interop_bg_ping.add_arguments(parser)
 
