@@ -744,6 +744,7 @@ lf_kpi_csv = importlib.import_module("py-scripts.lf_kpi_csv")
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 lf_modern_report = importlib.import_module("py-scripts.lf_modern_report")
 lf_wifi_msgs = importlib.import_module("py-scripts.lf_wifi_msgs")
+lf_interop_bg_ping = importlib.import_module("py-scripts.lf_interop_bg_ping")
 LFUtils = importlib.import_module("py-json.LANforge.LFUtils")
 realm = importlib.import_module("py-json.realm")
 LFCliBase = realm.LFCliBase
@@ -982,6 +983,11 @@ class L3VariableTime(Realm):
         self.multicast_profile.name_prefix = "MLT-"
         self.station_profiles = []
         self.args = args
+        self.background_ping = None
+        self.background_ping_args = None
+        self.background_ping_start_attempted = False
+        self.background_ping_monitor_start = None
+        self.background_ping_monitor_end = None
         self.outfile = outfile
         self.client_issue_csv_name = os.path.join(os.path.dirname(self.outfile),
                                                   "client_issue.csv")
@@ -2995,6 +3001,8 @@ class L3VariableTime(Realm):
                                 host=self.lfclient_host, port=self.lfclient_port, serno='all', idx='all', val=atten_val, _debug_on=self.debug)
                             atten_mod_test.build()
 
+                    # Ports have been brought up and checked for IPs; connection setup is complete.
+                    self.start_background_ping()
                     logger.info(
                         "Starting multicast traffic (if any configured)")
                     self.multicast_profile.start_mc(debug_=self.debug)
@@ -3019,8 +3027,17 @@ class L3VariableTime(Realm):
 
         return 0
 
-
     def monitor(self, ul, dl, ul_pdu_str, dl_pdu_str, atten_val, coordinate, rotation):
+        """Track the actual monitoring window, including early returns and failures."""
+        if self.background_ping and self.background_ping_monitor_start is None:
+            self.background_ping_monitor_start = datetime.datetime.now()
+        try:
+            return self._monitor(ul, dl, ul_pdu_str, dl_pdu_str, atten_val, coordinate, rotation)
+        finally:
+            if self.background_ping:
+                self.background_ping_monitor_end = datetime.datetime.now()
+
+    def _monitor(self, ul, dl, ul_pdu_str, dl_pdu_str, atten_val, coordinate, rotation):
         """
         Monitor network performance metrics during test execution.
 
@@ -6866,6 +6883,14 @@ class L3VariableTime(Realm):
             self.report.set_table_dataframe(table_df)
             self.report.build_table()
 
+    def start_background_ping(self):
+        """Start one optional ping session after client readiness checks, before traffic."""
+        if self.background_ping_args is None or self.background_ping_start_attempted:
+            return
+        self.background_ping_start_attempted = True
+        self.background_ping = lf_interop_bg_ping.from_args(
+            self.background_ping_args, host=self.lfmgr, port=self.lfmgr_port,
+            device_list=self.station_names_list, default_target=self.upstream_port)
 
     def start_wifi_analysis(self, host, port, device_list, ssid):
         """Start a RealClientAnalysis window covering the devices under test."""
@@ -7090,6 +7115,20 @@ class L3VariableTime(Realm):
                            "ranging from {low} Mbps to {high} Mbps per stream.".format(
                                low=self._format_mbps(low), high=self._format_mbps(high)))
 
+        # 4. Connectivity / packet loss, from the background ping.
+        background_ping = getattr(self, 'background_ping', None)
+        if background_ping and background_ping.stats:
+            loss_values = [row['loss_percent'] for row in background_ping.stats.values() if row['sent']]
+            if loss_values:
+                threshold = 2
+                clients_over = sum(1 for value in loss_values if value >= threshold)
+                if not clients_over:
+                    summary.append("Most clients maintained stable wireless connectivity during the test, with "
+                                   "packet loss below {t}% for all clients.".format(t=threshold))
+                else:
+                    summary.append("{n} of {total} clients experienced packet loss of {t}% or higher during the "
+                                   "test.".format(n=clients_over, total=len(loss_values), t=threshold))
+
         # 5. Overall verdict, using the same stream average as the Overall Test Verdict card.
         avg_percent = self._multicast_load_achievement(
             [row['intended_dl_mbps'] for row in client_rows],
@@ -7297,6 +7336,14 @@ class L3VariableTime(Realm):
 
         # 7. Client Connectivity Event Summary
         self.add_wifi_analysis_to_report(report)
+
+        # 8. Connectivity-vs-time graph + ping stats table
+        if getattr(self, 'background_ping', None):
+            self.background_ping.add_to_report(report, device_info={
+                row['port_name']: {"mac": row['mac'], "channel": row['channel'],
+                                   "rssi": '' if not row['rssi'] else '-' + str(row['rssi'])}
+                for row in client_rows
+            })
 
         # 9. Test Configuration
         report_test_duration = self.actual_test_duration_display if self.need_endps_stopped else self.test_duration
@@ -10107,6 +10154,9 @@ INCLUDE_IN_README: False
                           default=None,
                           help='Toolbox action: Set specified stations/ports admin DOWN (comma-separated list, e.g. "sta0000,sta0001" or default: all stations with "sta" prefix).')
 
+    # Background ping (used alongside --wifi_analysis to build the modernized multicast report)
+    lf_interop_bg_ping.add_arguments(parser)
+
     return parser.parse_args()
 
 
@@ -11576,74 +11626,95 @@ Examples:
     endp_type_list = args.endp_type.split(',') if args.endp_type else []
     is_multicast_mode = bool(endp_type_list) and all(etype in ["mc_udp", "mc_udp6"] for etype in endp_type_list)
 
-    # Wi-Fi analysis covers connection setup for multicast tests.
+    # Defer ping until start() has brought ports up and waited for their IPs.
+    # Wi-Fi analysis still covers connection setup. Both are multicast-only.
     if is_multicast_mode:
         if args.wifi_analysis:
             ip_var_test.start_wifi_analysis(host=args.lfmgr, port=args.lfmgr_port,
                                             device_list=ip_var_test.station_names_list, ssid=args.ssid)
+        ip_var_test.background_ping_args = args
 
-    # Run test
-    logger.info("Starting test")
-    # Check if this is a robot-based test AND involves multicast traffic types
-    if (args.robot_test and any(etype in args.endp_type for etype in ["mc_udp", "mc_udp6"])):
-        # If band steering is enabled
-        if ip_var_test.do_bandsteering:
-            ip_var_test.perform_bandsteering()
+    try:
+        # Run test
+        logger.info("Starting test")
+        # Check if this is a robot-based test AND involves multicast traffic types
+        if (args.robot_test and any(etype in args.endp_type for etype in ["mc_udp", "mc_udp6"])):
+            # If band steering is enabled
+            if ip_var_test.do_bandsteering:
+                ip_var_test.perform_bandsteering()
+            else:
+                # Otherwise, run standard multicast robot test
+                logger.info("Multicast robot test detected")
+                ip_var_test.perform_robo()
         else:
-            # Otherwise, run standard multicast robot test
-            logger.info("Multicast robot test detected")
-            ip_var_test.perform_robo()
-    else:
-        ip_var_test.start(False)
+            ip_var_test.start(False)
 
-    if args.wait > 0:
-        logger.info(f"Pausing {args.wait} seconds for manual inspection before test conclusion and "
-                    "possible traffic stop/post-test cleanup")
-        time.sleep(args.wait)
+        # Stop ping before the optional manual wait and station shutdown.
+        if ip_var_test.background_ping:
+            ip_var_test.background_ping.set_monitor_window(
+                ip_var_test.background_ping_monitor_start, ip_var_test.background_ping_monitor_end)
+            ip_var_test.background_ping.stop()
 
-    # Admin down the stations
-    if args.no_stop_traffic:
-        logger.info("Test complete, '--no_stop_traffic' specified, traffic continues to run")
-    else:
-        if args.quiesce_cx:
-            logger.info("Test complete, quiescing traffic")
-            ip_var_test.quiesce_cx()
-            time.sleep(3)
+        if args.wait > 0:
+            logger.info(f"Pausing {args.wait} seconds for manual inspection before test conclusion and "
+                        "possible traffic stop/post-test cleanup")
+            time.sleep(args.wait)
+
+        # Admin down the stations
+        if args.no_stop_traffic:
+            logger.info("Test complete, '--no_stop_traffic' specified, traffic continues to run")
         else:
-            logger.info("Test complete, stopping traffic")
-            ip_var_test.stop()
+            if args.quiesce_cx:
+                logger.info("Test complete, quiescing traffic")
+                ip_var_test.quiesce_cx()
+                time.sleep(3)
+            else:
+                logger.info("Test complete, stopping traffic")
+                ip_var_test.stop()
 
-    # Collect Wi-Fi analysis after traffic has stopped.
-    if is_multicast_mode and args.wifi_analysis:
-        ip_var_test.stop_wifi_analysis()
+        # Collect Wi-Fi analysis after traffic has stopped.
+        if is_multicast_mode and args.wifi_analysis:
+            ip_var_test.stop_wifi_analysis()
 
-    # Set DUT information for reporting
-    ip_var_test.set_dut_info(
-        dut_model_num=args.dut_model_num,
-        dut_hw_version=args.dut_hw_version,
-        dut_sw_version=args.dut_sw_version,
-        dut_serial_num=args.dut_serial_num)
-    ip_var_test.set_report_obj(report=report)
-    if args.dowebgui:
-        ip_var_test.webgui_finalize()
-    iot_summary = None
-    if args.iot_test and args.iot_testname:
-        base = os.path.join("results", args.iot_testname)
-        p = os.path.join(base, "iot_summary.json")
-        if os.path.exists(p):
-            with open(p) as f:
-                iot_summary = json.load(f)
-    # Generate and write out test report. Multicast mode gets the modernized report; throughput
-    # and unicast modes keep using the existing generic report.
-    logger.info("Generating test report")
-    if is_multicast_mode:
-        ip_var_test.generate_multicast_report(iot_summary=iot_summary)
-    elif args.real:
-        ip_var_test.generate_report(config_devices, group_device_map, iot_summary=iot_summary)
-        ip_var_test.write_report()
-    else:
-        ip_var_test.generate_report(iot_summary=iot_summary)
-        ip_var_test.write_report()
+        # Set DUT information for reporting
+        ip_var_test.set_dut_info(
+            dut_model_num=args.dut_model_num,
+            dut_hw_version=args.dut_hw_version,
+            dut_sw_version=args.dut_sw_version,
+            dut_serial_num=args.dut_serial_num)
+        ip_var_test.set_report_obj(report=report)
+        if args.dowebgui:
+            ip_var_test.webgui_finalize()
+        iot_summary = None
+        if args.iot_test and args.iot_testname:
+            base = os.path.join("results", args.iot_testname)
+            p = os.path.join(base, "iot_summary.json")
+            if os.path.exists(p):
+                with open(p) as f:
+                    iot_summary = json.load(f)
+        # Generate and write out test report. Multicast mode gets the modernized report; throughput
+        # and unicast modes keep using the existing generic report.
+        logger.info("Generating test report")
+        if is_multicast_mode:
+            ip_var_test.generate_multicast_report(iot_summary=iot_summary)
+        elif args.real:
+            ip_var_test.generate_report(config_devices, group_device_map, iot_summary=iot_summary)
+            ip_var_test.write_report()
+        else:
+            ip_var_test.generate_report(iot_summary=iot_summary)
+            ip_var_test.write_report()
+
+    finally:
+        if ip_var_test.background_ping:
+            try:
+                if ip_var_test.background_ping.started:
+                    ip_var_test.background_ping.set_monitor_window(
+                        ip_var_test.background_ping_monitor_start, ip_var_test.background_ping_monitor_end)
+                    ip_var_test.background_ping.stop()
+            except Exception:
+                logger.warning("Background ping could not be stopped during finalization", exc_info=True)
+            finally:
+                ip_var_test.background_ping.cleanup()
 
     # TODO move to after reporting
     if not ip_var_test.passes():
