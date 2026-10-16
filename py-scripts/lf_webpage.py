@@ -1804,17 +1804,33 @@ class HttpDownload(Realm):
                 _obj="This graph summarizes connection-related events observed during the HTTP test. "
                      "These metrics provide insight into client stability and wireless connectivity performance.")
             report.build_objective()
-            fig, ax = plt.subplots(figsize=(10, 6))
+            title = "Client Connectivity Status"
+            # Static PNG, shown only in the PDF
+            png_name = "wifi_connectivity_status.png"
+            fig, ax = plt.subplots(figsize=(12, 3.4))
             bars = ax.bar(categories, totals, color=colors, width=0.5, edgecolor='black')
             ax.bar_label(bars, fontweight='bold')
+            ax.set_ylim(0, max(totals) * 1.15 if max(totals) > 0 else 1)
             ax.set_ylabel("Count")
-            ax.set_title("Client Connectivity Status", fontsize=16)
-            ax.legend(bars, categories, loc="best")
-            fig.savefig("wifi_connectivity_status.png", dpi=96, bbox_inches='tight')
+            ax.set_title(title, fontsize=16)
+            fig.savefig(os.path.join(report.get_path_date_time(), png_name), dpi=96, bbox_inches='tight')
             plt.close(fig)
-            report.set_graph_image("wifi_connectivity_status.png")
-            report.move_graph_image()
-            report.build_graph()
+
+            # Interactive chart for the HTML report. One series per category so each gets its own colour and legend entry.
+            series = [{'name': category, 'data': [total if position == index else 0 for position, total in enumerate(totals)], 'color': color}
+                      for index, (category, color) in enumerate(zip(categories, colors))]
+            report.set_custom_html('<div class="hideFromPrint">')
+            report.build_custom()
+            report.build_echarts_chart(
+                chart_id='wifi_connectivity_status',
+                chart_type='bar',
+                payload={'categories': categories, 'series': series, 'stacked': True},
+                title=title,
+                y_name='Count')
+            report.set_custom_html('</div>')
+            report.build_custom()
+            report.set_custom_html('<div class="hideFromScreen chart-card"><img src="{}" alt="{}" /></div>'.format(png_name, title))
+            report.build_custom()
 
             dataframe = pd.DataFrame({
                 "Device": devices,
