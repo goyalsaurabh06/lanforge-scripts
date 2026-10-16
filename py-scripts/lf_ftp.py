@@ -8,7 +8,7 @@ some amount of file data from the FTP server while measuring the time taken by c
 
 EXAMPLE-1:
 Command Line Interface to run FTP download scenario for Real clients with background ping and wifi analysis
-python3 lf_ftp.py --mgr 192.168.220.125 --upstream_port eth2 --clients_type Real --directions Download --bands 5G --file_sizes 10MB --traffic_duration 2m --bgping --wifi_analysis
+python3 lf_ftp.py --mgr 192.168.220.125 --upstream_port eth2 --clients_type Real --directions Download --bands 5G --file_sizes 10MB --traffic_duration 2m --enable_bg_ping --wifi_analysis
 
 EXAMPLE-2:
 Command Line Interface to run download scenario for Real clients
@@ -4603,10 +4603,6 @@ INCLUDE_IN_README: False
                           type=str,
                           default='',
                           help='Comma-separated list of device counts to incrementally test (e.g., "1,3,5")')
-    optional.add_argument('--bgping', '--bg_ping',
-                          dest='enable_bg_ping',
-                          action='store_true',
-                          help='Run background ping on real clients during test (alias for --enable_bg_ping)')
     optional.add_argument('--wifi_analysis', '--wifi-analysis',
                           dest='wifi_analysis',
                           action='store_true',
