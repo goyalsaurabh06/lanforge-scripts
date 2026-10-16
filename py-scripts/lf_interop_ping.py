@@ -904,7 +904,7 @@ class Ping(Realm):
         if not self.wifi_analysis:
             return
         try:
-            self.wifi_analysis.query_devices_1()
+            self.wifi_analysis.populate_device_lookups()
             local_dict = self.wifi_analysis.create_local_dict()
             if not local_dict:
                 logger.warning("None of the wifi connectivity analysis devices resolved to a device LANforge knows about")
