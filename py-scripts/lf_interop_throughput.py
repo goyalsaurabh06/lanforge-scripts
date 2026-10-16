@@ -3192,7 +3192,7 @@ class Throughput(Realm):
         """Builds a handful of plain-English narrative sentences giving an executive-level
         overview of the whole test -- connectivity/reconnection, packet loss, signal quality, and
         an overall verdict -- each fusing several metrics into one sentence, rather than the many
-        granular one-metric-per-item entries in the Key Findings card.
+        granular one-metric-per-item entries in the itemized findings card (SHOW_KEY_FINDINGS).
 
         Meant to be computed once per report (like build_ping_key_findings()), not once per
         iteration.
@@ -3236,7 +3236,7 @@ class Throughput(Realm):
                             "of {total} client{s} did not reconnect by the end of the test.".format(
                                 n=total_disconnects, never=never_connected, total=total_devices, s=plural))
             except Exception as e:
-                logger.warning("Test summary connectivity bullet could not be computed: %s", e)
+                logger.warning("Key findings connectivity bullet could not be computed: %s", e)
 
         # 2. Packet loss, from the background ping.
         background_ping = getattr(self, 'background_ping', None)
@@ -3287,8 +3287,8 @@ class Throughput(Realm):
         return summary
 
     def add_test_summary_to_report(self, report, rssi_values=None):
-        """Appends the "Test Summary" card (see build_test_summary()) to the report as a plain
-        bulleted list -- no severity icons, unlike the Key Findings card -- since it's meant to
+        """Appends the "Key Findings" card (see build_test_summary()) to the report as a plain
+        bulleted list -- no severity icons, unlike the itemized findings card (SHOW_KEY_FINDINGS) -- since it's meant to
         read as a short executive summary rather than an itemized list of individual metrics.
 
         Safe to call unconditionally, nothing is added when there is nothing to summarize.
@@ -3300,12 +3300,12 @@ class Throughput(Realm):
             items = "".join("<li style='font-size:14px; color:var(--ink); line-height:1.5;'>{}</li>".format(point)
                             for point in summary)
             report.set_custom_html(
-                "<div class='info-card'><div class='info-card-header'>Test Summary</div>"
+                "<div class='info-card'><div class='info-card-header'>Key Findings</div>"
                 "<ul style='margin:0; padding-left:20px; display:flex; flex-direction:column; "
                 "gap:10px;'>{}</ul></div>".format(items))
             report.build_custom()
         except Exception as e:
-            logger.warning("Test summary could not be added to the report: %s", e)
+            logger.warning("Key findings could not be added to the report: %s", e)
 
     def get_bandsteering_stats(self, report=None, df=None, data1=None):
         """

@@ -2346,7 +2346,7 @@ class Youtube(Realm):
             {"label": "Overall Rating", "value": rating_html},
         ])
         findings = self._test_summary_findings(metrics)
-        self.report.set_obj_html(_obj_title="Test Summary", _obj="<ul>" + "".join(
+        self.report.set_obj_html(_obj_title="Key Findings", _obj="<ul>" + "".join(
             f"<li>{escape(finding)}</li>" for finding in findings) + "</ul>")
         self._build_text_card(self.report)
 
