@@ -742,6 +742,7 @@ lf_report = importlib.import_module("py-scripts.lf_report")
 lf_graph = importlib.import_module("py-scripts.lf_graph")
 lf_kpi_csv = importlib.import_module("py-scripts.lf_kpi_csv")
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
+lf_modern_report = importlib.import_module("py-scripts.lf_modern_report")
 LFUtils = importlib.import_module("py-json.LANforge.LFUtils")
 realm = importlib.import_module("py-json.realm")
 LFCliBase = realm.LFCliBase
@@ -767,6 +768,10 @@ class L3VariableTime(Realm):
     query data for relevant LANforge ports and traffic pairs during
     the test, and generate reports upon completion.
     """
+
+    # Score -> (rating label, badge color), used in the multicast report.
+    SCORE_RATING_BANDS = [(90, "Excellent", "#1e7e34"), (80, "Good", "#28a745"),
+                         (70, "Average", "#f1c40f"), (0, "Poor", "#e74c3c")]
 
     def __init__(self,
                  endp_types,
@@ -3012,6 +3017,7 @@ class L3VariableTime(Realm):
                                                           ul_pdu_str, dl_pdu_str, ul_pdu, dl_pdu, atten_val, passes, expected_passes)
 
         return 0
+
 
     def monitor(self, ul, dl, ul_pdu_str, dl_pdu_str, atten_val, coordinate, rotation):
         """
@@ -6859,6 +6865,381 @@ class L3VariableTime(Realm):
             self.report.set_table_dataframe(table_df)
             self.report.build_table()
 
+
+
+
+
+    @staticmethod
+    def _parse_mbps(value):
+        """Converts a rate value to a float Mbps, whether it already is one ("9.5") or carries a
+        unit ("9.5Mbps")."""
+        try:
+            return float(str(value).strip().replace("Mbps", "").replace("mbps", "").strip())
+        except (TypeError, ValueError):
+            return 0.0
+
+    @staticmethod
+    def _bps_to_mbps(value):
+        """Convert bps to Mbps without rounding before throughput scoring."""
+        try:
+            return float(value) / 1_000_000
+        except (TypeError, ValueError):
+            return 0.0
+
+    @staticmethod
+    def _format_mbps(value):
+        """Display Mbps to whole-bps precision, without unnecessary trailing zeros."""
+        return "{:.6f}".format(value).rstrip('0').rstrip('.')
+
+    @classmethod
+    def _throughput_ratio_to_score(cls, achieved_mbps, offered_mbps):
+        """Score out of 100: how much of the offered/intended load was achieved."""
+        achieved_mbps = cls._parse_mbps(achieved_mbps)
+        offered_mbps = cls._parse_mbps(offered_mbps)
+        if offered_mbps <= 0:
+            return 100.0 if achieved_mbps > 0 else 0.0
+        return max(0.0, min(100.0, round(achieved_mbps / offered_mbps * 100, 2)))
+
+    @classmethod
+    def _classify_score_rating(cls, score):
+        """Turns a 0-100 score into a (label, color) rating using SCORE_RATING_BANDS."""
+        for threshold, label, color in cls.SCORE_RATING_BANDS:
+            if score >= threshold:
+                return label, color
+        return cls.SCORE_RATING_BANDS[-1][1], cls.SCORE_RATING_BANDS[-1][2]
+
+    def build_multicast_client_scores(self, intended_dl_list, achieved_dl_list):
+        """Per-client DL score and rating (no upload side for multicast traffic)."""
+        dl_scores = [self._throughput_ratio_to_score(achieved, intended)
+                    for achieved, intended in zip(achieved_dl_list, intended_dl_list)]
+        ratings, rating_colors = [], []
+        for score in dl_scores:
+            label, color = self._classify_score_rating(score)
+            ratings.append(label)
+            rating_colors.append(color)
+        return dl_scores, ratings, rating_colors
+
+    @staticmethod
+    def _unique_multicast_clients(client_rows):
+        """Return one client per port EID, regardless of its traffic classes."""
+        clients = {}
+        for row in client_rows:
+            clients.setdefault(row['port_name'], row)
+        return list(clients.values())
+
+    def _multicast_load_achievement(self, intended_dl_list, achieved_dl_list):
+        """Use the same average of capped stream scores for every overall verdict."""
+        scores, _, _ = self.build_multicast_client_scores(intended_dl_list, achieved_dl_list)
+        return round(sum(scores) / len(scores), 2) if scores else 0.0
+
+    def build_multicast_test_verdict(self, report, intended_dl_list, achieved_dl_list, devices):
+        """Adds the "Overall Test Verdict" card (DL-only)."""
+        intended_dl = sum(self._parse_mbps(rate) for rate in intended_dl_list)
+        achieved_dl = sum(self._parse_mbps(rate) for rate in achieved_dl_list)
+        dl_percent = self._multicast_load_achievement(intended_dl_list, achieved_dl_list)
+        rating, rating_color = self._classify_score_rating(dl_percent)
+        rating_html = "<span style='color:{}; font-weight:800;'>{}</span>".format(rating_color, rating)
+        report.build_info_card(
+            title="Overall Test Verdict",
+            items=[
+                {"label": "Total Devices Tested", "value": len(self._unique_multicast_clients(devices))},
+                {"label": "Intended Load (DL)", "value": "{} Mbps".format(self._format_mbps(intended_dl))},
+                {"label": "Achieved Load (DL)", "value": "{} Mbps".format(self._format_mbps(achieved_dl))},
+                {"label": "Load Achievement (DL)", "value": "{}%".format(dl_percent)},
+                {"label": "Overall Rating", "value": rating_html},
+            ])
+        report.set_custom_html(
+            "<p style='font-size:12px; color:#5f6f82;'>Note: Overall Load Achievement is the average of "
+            "each client stream's attained throughput as a percentage of its intended load, capped at 100% per stream. "
+            "The overall rating uses this same average. "
+            "Traffic classes are evaluated separately; each client port is counted once.</p>")
+        report.build_custom()
+
+    def build_multicast_test_summary(self, client_rows):
+        """Builds a plain-English test summary as a list of strings, in the same style as the
+        reference multicast report: client platforms, how many hit the load target, the
+        attained-throughput range, packet loss, and an overall verdict."""
+        summary = []
+        if not client_rows:
+            return summary
+        unique_clients = self._unique_multicast_clients(client_rows)
+        num_clients = len(unique_clients)
+        num_streams = len(client_rows)
+
+        # 1. Which platforms were under test.
+        platforms = []
+        for row in unique_clients:
+            if row['device_type'] not in platforms:
+                platforms.append(row['device_type'])
+        if len(platforms) == 1:
+            platform_text = platforms[0]
+        elif len(platforms) == 2:
+            platform_text = " and ".join(platforms)
+        else:
+            platform_text = ", ".join(platforms[:-1]) + ", and " + platforms[-1]
+        summary.append("The test was conducted with {n} Wi-Fi client{s} across {platforms} "
+                       "platform{ps}.".format(n=num_clients, s="" if num_clients == 1 else "s",
+                                               platforms=platform_text, ps="" if len(platforms) == 1 else "s"))
+
+        # 2. Evaluate each stream separately so a weak traffic class stays visible.
+        on_target = sum(1 for row in client_rows
+                        if self._throughput_ratio_to_score(row['achieved_dl_mbps'], row['intended_dl_mbps']) > 95)
+        below_target = num_streams - on_target
+        if below_target:
+            summary.append("{on} client stream{os} achieved more than 95% of the intended multicast load, while {below} "
+                           "client stream{bs} recorded significantly reduced throughput.".format(
+                               on=on_target, os="" if on_target == 1 else "s",
+                               below=below_target, bs="" if below_target == 1 else "s"))
+        else:
+            summary.append("All {n} client stream{s} achieved more than 95% of the intended multicast "
+                           "load.".format(n=num_streams, s="" if num_streams == 1 else "s"))
+
+        # 3. Spread of attained throughput across client streams / traffic classes.
+        achieved_values = [row['achieved_dl_mbps'] for row in client_rows]
+        low, high = min(achieved_values), max(achieved_values)
+        avg = sum(achieved_values) / num_streams
+        if avg and (high - low) > avg * 0.5:
+            summary.append("Multicast performance varied significantly across client streams, with attained throughput "
+                           "ranging from {low} Mbps to {high} Mbps per stream.".format(
+                               low=self._format_mbps(low), high=self._format_mbps(high)))
+        else:
+            summary.append("Multicast performance was consistent across client streams, with attained throughput "
+                           "ranging from {low} Mbps to {high} Mbps per stream.".format(
+                               low=self._format_mbps(low), high=self._format_mbps(high)))
+
+        # 5. Overall verdict, using the same stream average as the Overall Test Verdict card.
+        avg_percent = self._multicast_load_achievement(
+            [row['intended_dl_mbps'] for row in client_rows],
+            [row['achieved_dl_mbps'] for row in client_rows])
+        rating, _ = self._classify_score_rating(avg_percent)
+        summary.append("Overall, the AP demonstrated {rating} multicast performance.".format(rating=rating.lower()))
+
+        return summary
+
+    def add_multicast_test_summary_to_report(self, report, client_rows):
+        """Adds the Test Summary card to the report, as a bulleted list."""
+        summary = self.build_multicast_test_summary(client_rows)
+        if not summary:
+            return
+        try:
+            items = "".join("<li style='font-size:14px;'>{}</li>".format(point) for point in summary)
+            report.set_custom_html(
+                "<div class='info-card'><div class='info-card-header'>Key Findings</div>"
+                "<ul style='margin:0; padding-left:20px;'>{}</ul></div>".format(items))
+            report.build_custom()
+        except Exception as e:
+            logger.warning("Multicast test summary could not be added to the report: %s", e)
+
+    def _multicast_client_rows(self):
+        """One row per multicast receiver endpoint / traffic class, from self.client_dict_A plus
+        RSSI from l3_endp_port_data(). Device type/name come from the resource alias string."""
+        rows = []
+        tos_list = ['BK', 'BE', 'VI', 'VO']
+        for tos in tos_list:
+            if (self.real or self.dowebgui) and tos not in self.tos:
+                continue
+            tos_data = self.client_dict_A.get(tos, {})
+            client_names = tos_data.get('clients_A') or []
+            if not client_names:
+                continue
+
+            rssi_by_client_name = {}
+            try:
+                port_data_for_tos = self.l3_endp_port_data(tos).get(tos, {})
+                for client_name, signal in zip(port_data_for_tos.get('clients_A', []),
+                                               port_data_for_tos.get('port_signal_A', [])):
+                    rssi_by_client_name[client_name] = signal
+            except Exception as e:
+                logger.warning("RSSI lookup for TOS %s could not be completed: %s", tos, e)
+
+            resource_aliases = tos_data.get('resource_alias_A', [])
+            macs = tos_data.get('mac_A', [])
+            channels = tos_data.get('channel_A', [])
+            port_names = tos_data.get('port_A', [])
+            offered_download_rates = tos_data.get('offered_download_rate_A', [])
+            achieved_download_rates = tos_data.get('dl_A', [])
+            drop_percents = tos_data.get('download_rx_drop_percent_A', [])
+
+            for client_index, client_name in enumerate(client_names):
+                alias = resource_aliases[client_index] if client_index < len(resource_aliases) else 'NA'
+                eid, _, alias_remainder = alias.partition('_')
+                device_name, _, device_type = alias_remainder.rpartition('_')
+                if not device_name:
+                    device_name = alias_remainder or alias
+                device_type = {'Win': 'Windows', 'Apple': 'Mac'}.get(device_type, device_type)
+
+                raw_signal = rssi_by_client_name.get(client_name, 'NA')
+                raw_channel = channels[client_index] if client_index < len(channels) else 'NA'
+                signal_val, channel_val = self.normalize_signal_channel({'signal': raw_signal, 'channel': raw_channel})
+                try:
+                    # keep magnitude, '-' is added at display time
+                    rssi = abs(float(signal_val))
+                except (TypeError, ValueError):
+                    rssi = None
+
+                rows.append({
+                    'port_name': port_names[client_index] if client_index < len(port_names) else client_name,
+                    'tos': tos,
+                    'device_type': device_type or 'Unknown',
+                    'device_name': device_name,
+                    'mac': macs[client_index] if client_index < len(macs) else 'NA',
+                    'channel': channel_val,
+                    'rssi': rssi,
+                    'intended_dl_mbps': self._bps_to_mbps(offered_download_rates[client_index])
+                    if client_index < len(offered_download_rates) else 0.0,
+                    'achieved_dl_mbps': self._bps_to_mbps(achieved_download_rates[client_index])
+                    if client_index < len(achieved_download_rates) else 0.0,
+                    'drop_percent': drop_percents[client_index] if client_index < len(drop_percents) else 0.0,
+                })
+        return rows
+
+    def generate_multicast_report(self, iot_summary=None):
+        """Generates the modernized multicast PDF/HTML report. Separate from generate_report();
+        iot_summary is accepted for signature parity but not used yet."""
+        self.evaluate_qos()
+        if self.dowebgui or self.real:
+            self.filter_mlt_data()
+
+        # Reuse the folder self.report already created, instead of making a new one.
+        report = lf_modern_report.lf_report(_output_pdf=self.report.output_pdf, _output_html=self.report.output_html,
+                                            _path=self.report.path, _date=self.report.date,
+                                            _results_dir_name=self.report.results_dir_name)
+        report_path_date_time = report.get_path_date_time()
+
+        report.set_title("LANforge Interop<br>Multicast Test")
+        report.build_banner()
+
+        # 1. Test Overview
+        report.set_obj_html(
+            _obj_title="Test Overview",
+            _obj="The Candela multicast test is designed to measure an Access Point's ability to deliver "
+                 "Layer-3 multicast traffic to multiple Real clients like Android, Linux, Windows, and iOS "
+                 "at the same time. Multicast streams for the selected traffic classes are sourced from the upstream port and "
+                 "delivered to every connected client, and the test measures the per-client and overall "
+                 "multicast throughput achieved against the intended load. The expected behavior is for "
+                 "the AP to deliver the full multicast stream to every client regardless of client type or "
+                 "band. An AP that handles multicast well will show consistent throughput across all "
+                 "clients with minimal packet loss.")
+        report.build_objective()
+
+        client_rows = self._multicast_client_rows()
+        unique_clients = self._unique_multicast_clients(client_rows)
+        device_names = ["{} ({})".format(row['device_name'], row['device_type']) for row in unique_clients]
+        intended_dl_list = [row['intended_dl_mbps'] for row in client_rows]
+        achieved_dl_list = [row['achieved_dl_mbps'] for row in client_rows]
+
+        # 2. Overall Test Verdict
+        self.build_multicast_test_verdict(report, intended_dl_list, achieved_dl_list, client_rows)
+
+        # 3. Test Summary
+        self.add_multicast_test_summary_to_report(report, client_rows)
+
+        if client_rows:
+            # Keep the class suffix visible even when a device name is shortened.
+            stream_labels = ["{} [{}]".format(row['device_name'][:17], row['tos']) for row in client_rows]
+            devices_trimmed = [name[:17] if len(name) > 17 else name for name in device_names]
+            x_fig_size = 15
+            y_fig_size = len(client_rows) * .5 + 4
+
+            # 4. Per Client Average Throughput
+            report.set_obj_html(
+                _obj_title="Per Client Average Throughput",
+                _obj="The graph below illustrates the intended load and the observed average download "
+                     "throughput achieved by each Wi-Fi client and traffic class during the test. The X-axis represents the "
+                     "average throughput attained, while the Y-axis lists the individual wireless client "
+                     "identifiers.")
+            report.build_objective()
+            graph = lf_modern_report.lf_bar_graph_horizontal(_data_set=[intended_dl_list, achieved_dl_list],
+                                                              _xaxis_name="Avg Throughput(Mbps)",
+                                                              _yaxis_name="Devices",
+                                                              _graph_image_name="multicast_per_client_throughput",
+                                                              _label=['Intended Load (DL)', 'Attained Throughput (DL)'],
+                                                              _yaxis_categories=stream_labels,
+                                                              _legend_loc="best",
+                                                              _legend_box=(1.0, 1.0),
+                                                              _show_bar_value=True,
+                                                              _figsize=(x_fig_size, y_fig_size))
+            graph_png = graph.build_bar_graph_horizontal()
+            report.set_graph_image(graph_png)
+            report.move_graph_image()
+            report.build_graph()
+
+            # 5. RSSI Of The Clients Connected
+            report.set_obj_html(
+                _obj_title="RSSI Of The Clients Connected",
+                _obj="The graph below shows the signal strength (RSSI) reported by each connected Wi-Fi "
+                     "client during the test. The X-axis represents the signal level in -dBm (lower values "
+                     "indicate a stronger signal), while the Y-axis lists the individual client identifiers.")
+            report.build_objective()
+            rssi_for_graph = [row['rssi'] if row['rssi'] is not None else 0 for row in unique_clients]
+            graph = lf_modern_report.lf_bar_graph_horizontal(_data_set=[rssi_for_graph],
+                                                              _xaxis_name="Signal(-dBm)",
+                                                              _yaxis_name="Devices",
+                                                              _graph_image_name="multicast_signal_strength",
+                                                              _label=['RSSI'],
+                                                              _yaxis_categories=devices_trimmed,
+                                                              _legend_loc="best",
+                                                              _legend_box=(1.0, 1.0),
+                                                              _show_bar_value=True,
+                                                              _figsize=(x_fig_size, len(unique_clients) * .5 + 4))
+            graph_png = graph.build_bar_graph_horizontal()
+            report.set_graph_image(graph_png)
+            report.move_graph_image()
+            report.build_graph()
+
+            # 6. Overall Tabular Results for all Wi-Fi Clients
+            report.set_obj_html(
+                _obj_title="Overall Tabular Results for all Wi-Fi Clients", _obj="")
+            report.build_objective()
+            dl_scores, ratings, _ = self.build_multicast_client_scores(intended_dl_list, achieved_dl_list)
+            table_data = {
+                "Device Type": [row['device_type'] for row in client_rows],
+                "Device Name": [row['device_name'] for row in client_rows],
+                "Traffic Class": [row['tos'] for row in client_rows],
+                "MAC": [row['mac'] for row in client_rows],
+                "Channel": [row['channel'] for row in client_rows],
+                "RSSI": ['' if not row['rssi'] else '-' + str(row['rssi']) for row in client_rows],
+                "Intended Load DL (Mbps)": [self._format_mbps(rate) for rate in intended_dl_list],
+                "Attained Throughput DL (Mbps)": [self._format_mbps(rate) for rate in achieved_dl_list],
+                "Drop % (DL)": [row['drop_percent'] for row in client_rows],
+                "DL Score": dl_scores,
+                "Rating": ratings,
+            }
+            dataframe = pd.DataFrame(table_data)
+            report.set_table_dataframe(dataframe)
+            report.rating_build_table("Rating", {label: color for _, label, color in self.SCORE_RATING_BANDS})
+        else:
+            report.set_custom_html("<p><i>No multicast client data was available to report.</i></p>")
+            report.build_custom()
+
+        # 9. Test Configuration
+        report_test_duration = self.actual_test_duration_display if self.need_endps_stopped else self.test_duration
+        configuration_items = [
+                {"label": "Upstream", "value": self.upstream_port},
+                {"label": "Type of Service", "value": ", ".join(self.tos)},
+                {"label": "Download Rate (Mbps)", "value": "{} Mbps".format(self._format_mbps(intended_dl_list[0]))
+                 if intended_dl_list else "NA"},
+                {"label": "Test Duration", "value": report_test_duration},
+                {"label": "Polling Interval", "value": self.polling_interval},
+                {"label": "Total No. of Devices", "value": self.station_count},
+        ]
+        for label, value in [
+                ("SSID", getattr(self.args, "ssid", None)),
+                ("DUT Name", self.dut_model_num),
+                ("DUT Hardware Version", self.dut_hw_version),
+                ("DUT Software Version", self.dut_sw_version),
+                ("DUT Serial Number", self.dut_serial_num)]:
+            if value is not None and str(value).strip() not in ("", "Not Set"):
+                configuration_items.append({"label": label, "value": value})
+        report.build_info_card(title="Test Configuration", items=configuration_items)
+        report.build_device_summary_card(
+            [{"name": row['device_name'], "platform": row['device_type']} for row in unique_clients])
+
+        report.build_footer()
+        report.write_html_with_timestamp()
+        report.write_pdf_with_timestamp(_orientation="Landscape")
+        logger.info("Multicast report generated at: %s", report_path_date_time)
+
     def generate_report(self, config_devices=None, group_device_map=None, iot_summary=None):
         if iot_summary:
             self.report.set_obj_html(
@@ -9635,7 +10016,6 @@ INCLUDE_IN_README: False
                           default=None,
                           help='Toolbox action: Set specified stations/ports admin DOWN (comma-separated list, e.g. "sta0000,sta0001" or default: all stations with "sta" prefix).')
 
-
     return parser.parse_args()
 
 
@@ -11100,6 +11480,11 @@ Examples:
         logger.critical(ip_var_test.get_fail_message())
         exit(1)
 
+    # True only when every requested endp_type is multicast; a mixed run like "lf_udp,mc_udp"
+    # still needs the regular generate_report() for its unicast traffic.
+    endp_type_list = args.endp_type.split(',') if args.endp_type else []
+    is_multicast_mode = bool(endp_type_list) and all(etype in ["mc_udp", "mc_udp6"] for etype in endp_type_list)
+
     # Run test
     logger.info("Starting test")
     # Check if this is a robot-based test AND involves multicast traffic types
@@ -11147,13 +11532,17 @@ Examples:
         if os.path.exists(p):
             with open(p) as f:
                 iot_summary = json.load(f)
-    # Generate and write out test report
+    # Generate and write out test report. Multicast mode gets the modernized report; throughput
+    # and unicast modes keep using the existing generic report.
     logger.info("Generating test report")
-    if args.real:
+    if is_multicast_mode:
+        ip_var_test.generate_multicast_report(iot_summary=iot_summary)
+    elif args.real:
         ip_var_test.generate_report(config_devices, group_device_map, iot_summary=iot_summary)
+        ip_var_test.write_report()
     else:
         ip_var_test.generate_report(iot_summary=iot_summary)
-    ip_var_test.write_report()
+        ip_var_test.write_report()
 
     # TODO move to after reporting
     if not ip_var_test.passes():
