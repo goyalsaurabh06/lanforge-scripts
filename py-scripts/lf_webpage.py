@@ -1433,7 +1433,7 @@ class HttpDownload(Realm):
                                         _color=['steelblue'],
                                         _label=bands)
         graph_png = graph.build_bar_graph_horizontal()
-        print("graph name {}".format(graph_png))
+        print("graph name {}".format(graph_image_name))
         return graph_png
 
     def graph_2(self, dataset2, lis, bands, graph_name="Total-url_http"):
@@ -1652,7 +1652,7 @@ class HttpDownload(Realm):
             graph_png = graph.build_bar_graph()
             report.set_graph_image(graph_png)
             report.move_graph_image()
-            report.set_csv_filename(graph_png)
+            report.set_csv_filename("{}.csv".format(graph.graph_image_name))
             report.move_csv_file()
             report.build_graph()
 
@@ -1765,7 +1765,7 @@ class HttpDownload(Realm):
         if not self.wifi_analysis:
             return
         try:
-            self.wifi_analysis.query_devices_1()
+            self.wifi_analysis.populate_device_lookups()
             local_dict = self.wifi_analysis.create_local_dict()
             if not local_dict:
                 logger.warning("None of the wifi connectivity analysis devices resolved to a device LANforge knows about")
@@ -2109,10 +2109,12 @@ class HttpDownload(Realm):
                                 ". X- axis shows “No of times file downloads and Y-axis shows "
                                 "Client names.")
             report.build_objective()
-            graph2 = self.graph_2(dataset2, lis=lis, bands=bands)
-            print("graph name {}".format(graph2))
+            graph2_name = "Total-url_http"
+            graph2 = self.graph_2(dataset2, lis=lis, bands=bands, graph_name=graph2_name)
+            print("graph name {}".format(graph2_name))
             report.set_graph_image(graph2)
-            report.set_csv_filename(graph2)
+            # graph2 is interactive chart markup, not a file name; the chart saved its csv under the graph name
+            report.set_csv_filename("{}.csv".format(graph2_name))
             report.move_csv_file()
             report.move_graph_image()
             report.build_graph()
@@ -2120,9 +2122,10 @@ class HttpDownload(Realm):
                                 ".  X- axis shows “Average time taken to download a file ” and Y-axis shows "
                                 "Client names.")
             report.build_objective()
-            graph = self.generate_graph(dataset=dataset, lis=lis, bands=bands)
+            graph_name = "ucg-avg_http"
+            graph = self.generate_graph(dataset=dataset, lis=lis, bands=bands, graph_image_name=graph_name)
             report.set_graph_image(graph)
-            report.set_csv_filename(graph)
+            report.set_csv_filename("{}.csv".format(graph_name))
             report.move_csv_file()
             report.move_graph_image()
             report.build_graph()
@@ -2958,9 +2961,10 @@ class HttpDownload(Realm):
         if self.rotation_enabled:
             robot_data = robot_data.get(rotation, {})
 
-        graph2 = self.graph_2(robot_data['url_data'], lis=lis, bands=bands, graph_name=f"Total-url_http_{coord}{rotation_suffix}")
+        graph2_name = f"Total-url_http_{coord}{rotation_suffix}"
+        graph2 = self.graph_2(robot_data['url_data'], lis=lis, bands=bands, graph_name=graph2_name)
         report.set_graph_image(graph2)
-        report.set_csv_filename(graph2)
+        report.set_csv_filename(f"{graph2_name}.csv")
         report.move_csv_file()
         report.move_graph_image()
         report.build_graph()
@@ -2969,9 +2973,10 @@ class HttpDownload(Realm):
                             ".  X- axis shows “Average time taken to download a file ” and Y-axis shows "
                             "Client names.")
         report.build_objective()
-        graph = self.generate_graph(dataset=robot_data['uc_avg'], lis=lis, bands=bands, graph_image_name=f"ucg-avg_http_{coord}{rotation_suffix}")
+        graph_name = f"ucg-avg_http_{coord}{rotation_suffix}"
+        graph = self.generate_graph(dataset=robot_data['uc_avg'], lis=lis, bands=bands, graph_image_name=graph_name)
         report.set_graph_image(graph)
-        report.set_csv_filename(graph)
+        report.set_csv_filename(f"{graph_name}.csv")
         report.move_csv_file()
         report.move_graph_image()
         report.build_graph()
