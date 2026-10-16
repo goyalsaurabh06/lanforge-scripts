@@ -186,6 +186,8 @@ import asyncio
 import csv
 import re
 import threading
+from html import escape
+from PIL import Image, ImageChops
 from collections import OrderedDict
 from lf_base_robo import RobotClass
 from collections import Counter
@@ -3356,6 +3358,41 @@ class Throughput(Realm):
             title="Overall Test Verdict",
             items=[{"label": label, "value": value}
                    for label, value in self.filter_direction_fields(verdict_fields).items()])
+        return rating
+
+    def build_incremental_test_summary(self, report, iterations, roaming_df=None):
+        """Summarize all measured capacity steps using their monitoring sample counts.
+
+        Loads are average aggregate Mbps over the observed steps, not the sum
+        of rates from separate iterations. Each tested client is counted once.
+        """
+        if not iterations:
+            return
+        total_samples = sum(step['samples'] for step in iterations)
+        if not total_samples:
+            return
+
+        def average_load(field):
+            return sum(sum(self._parse_mbps(value) for value in step[field]) * step['samples']
+                       for step in iterations) / total_samples
+
+        devices = list(dict.fromkeys(device for step in iterations for device in step['devices']))
+        rssi_totals = {}
+        for step in iterations:
+            for device, rssi in zip(step['devices'], step['rssi']):
+                if rssi:
+                    total, samples = rssi_totals.get(device, (0.0, 0))
+                    rssi_totals[device] = (total + abs(rssi) * step['samples'], samples + step['samples'])
+        overall_rating = self.build_overall_test_verdict(
+            report,
+            download_data=[average_load('download_data')],
+            upload_data=[average_load('upload_data')],
+            download_list=[average_load('download_list')],
+            upload_list=[average_load('upload_list')],
+            devices=devices)
+        self.add_test_summary_to_report(
+            report, rssi_values=[total / samples for total, samples in rssi_totals.values()],
+            roaming_df=roaming_df, overall_rating=overall_rating)
 
     def _count_roaming_events(self, df):
         """Counts roaming events across every BSSID column in df -- a transition only counts when
@@ -3383,7 +3420,7 @@ class Throughput(Realm):
 
         return total, nodes_seen
 
-    def build_test_summary(self, rssi_values=None, roaming_df=None):
+    def build_test_summary(self, rssi_values=None, roaming_df=None, overall_rating=None):
         """Builds a handful of plain-English narrative sentences giving an executive-level
         overview of the whole test -- connectivity/reconnection, roaming, packet loss, signal
         quality, and an overall verdict -- each fusing several metrics into one sentence, rather
@@ -3398,12 +3435,13 @@ class Throughput(Realm):
             roaming_df: when self.do_roaming, the dataframe used by get_roaming_stats() -- used
                 here only to count roaming events for the summary sentence below.
 
+            overall_rating: rating returned by build_overall_test_verdict().
+
         Returns:
-            A list of plain strings, most important first. Empty list when none of the underlying
-            analyses (wifi connectivity, background ping, RSSI) produced any data.
+            A list of plain strings, most important first. Empty when neither analysis
+            data nor an overall rating is available.
         """
         summary = []
-        has_issue = False
 
         # 1. Connectivity / reconnection, from the wifi connectivity analysis.
         wifi_analysis_stats = getattr(self, 'wifi_analysis_stats', None)
@@ -3427,7 +3465,6 @@ class Throughput(Realm):
                             "all {total} client{s} were able to reconnect successfully by the end of the "
                             "test.".format(n=total_disconnects, total=total_devices, s=plural))
                     else:
-                        has_issue = True
                         summary.append(
                             "During the test, clients experienced {n} connect/disconnect event(s); {never} "
                             "of {total} client{s} did not reconnect by the end of the test.".format(
@@ -3445,7 +3482,6 @@ class Throughput(Realm):
                         "Clients successfully roamed {n} time(s) between {nodes} while maintaining active "
                         "traffic sessions throughout the test.".format(n=total_roams, nodes=node_names))
                 else:
-                    has_issue = True
                     summary.append("No roaming events were observed between access point nodes during the test.")
             except Exception as e:
                 logger.warning("Test summary roaming bullet could not be computed: %s", e)
@@ -3469,7 +3505,6 @@ class Throughput(Realm):
                     summary.append(
                         "Packet loss was moderate, averaging {avg:.1f}% across all clients.".format(avg=avg_loss))
                 else:
-                    has_issue = True
                     summary.append(
                         "Packet loss was significant, averaging {avg:.1f}% across all clients, indicating "
                         "unreliable communication under load.".format(avg=avg_loss))
@@ -3484,21 +3519,20 @@ class Throughput(Realm):
                     "Signal quality remained strong for all connected clients, ensuring throughput results "
                     "were not impacted by poor wireless conditions.")
             else:
-                has_issue = True
                 summary.append(
                     "{weak} of {total} client(s) experienced weak signal (Fair or Poor RSSI) during the "
                     "test, which may have impacted their throughput results.".format(weak=weak, total=len(buckets)))
 
-        # 5. Overall verdict, once there's at least something to summarize.
-        if summary:
-            if has_issue:
-                summary.append("Overall, the AP showed some instability or degraded performance during the test.")
-            else:
-                summary.append("Overall, the AP demonstrated good performance and stable operation.")
+        # Use the exact rating displayed in Overall Test Verdict, which scores
+        # achieved throughput against intended load, independently of signal/ping.
+        if overall_rating is not None:
+            summary.append(
+                "Overall, the AP achieved an overall rating of {} based on the achieved throughput "
+                "relative to the intended load.".format(overall_rating))
 
         return summary
 
-    def add_test_summary_to_report(self, report, rssi_values=None, roaming_df=None):
+    def add_test_summary_to_report(self, report, rssi_values=None, roaming_df=None, overall_rating=None):
         """Appends the "Key Findings" card (see build_test_summary()) to the report as a plain
         bulleted list -- no severity icons, unlike the (separate, currently hidden) Key Findings
         card built by build_findings_card() -- since it's meant to read as a short executive
@@ -3506,7 +3540,8 @@ class Throughput(Realm):
 
         Safe to call unconditionally, nothing is added when there is nothing to summarize.
         """
-        summary = self.build_test_summary(rssi_values=rssi_values, roaming_df=roaming_df)
+        summary = self.build_test_summary(rssi_values=rssi_values, roaming_df=roaming_df,
+                                          overall_rating=overall_rating)
         if not summary:
             return
         try:
@@ -4166,6 +4201,9 @@ class Throughput(Realm):
             # order -- test_setup_info/all_devices_names/device_type stay computed here since
             # this is where the data needed to build them is available.
 
+            overall_summary_position = len(report.html)
+            measured_iterations = []
+
             # Loop through iterations and build graphs, tables for each iteration
             for i in range(len(iterations_before_test_stopped_by_user)):
                 # rssi_signal_data=[]
@@ -4335,6 +4373,15 @@ class Throughput(Realm):
                                 packet_size_in_table.append(self.cx_profile.side_a_min_pdu)
                             direction_in_table.append(self.direction)
 
+                measured_iterations.append({
+                    'samples': len(data_iter),
+                    'devices': list(devices_on_running),
+                    'download_data': list(download_data),
+                    'upload_data': list(upload_data),
+                    'download_list': list(download_list),
+                    'upload_list': list(upload_list),
+                    'rssi': list(rssi_data),
+                })
                 data_set_in_graph = []
 
                 # Depending on the test direction, retrieve corresponding throughput data,
@@ -4406,19 +4453,7 @@ class Throughput(Realm):
                     devices=devices_on_running,
                     incremental_capacity=incremental_capacity_list[i])
                 if i == 0:
-                    # The background ping and wifi connectivity analysis cover the whole test, not
-                    # just this iteration, so their findings/summary are only shown once rather
-                    # than repeated on every iteration.
-                    self.build_overall_test_verdict(
-                        report,
-                        download_data=download_data[0:int(incremental_capacity_list[i])],
-                        upload_data=upload_data[0:int(incremental_capacity_list[i])],
-                        download_list=download_list,
-                        upload_list=upload_list,
-                        devices=devices_on_running)
                     key_findings = key_findings + self.build_ping_key_findings()
-                    self.add_test_summary_to_report(report, rssi_values=rssi_data[0:int(incremental_capacity_list[i])],
-                                                    roaming_df=data if self.do_roaming else None)
                 if self.SHOW_KEY_FINDINGS:
                     report.build_findings_card("Key Findings", key_findings)
 
@@ -4592,7 +4627,7 @@ class Throughput(Realm):
                         " Observed Average download rate (Mbps) ": [str(n) for n in download_data[0:int(incremental_capacity_list[i])]],
                         " Offered upload rate (Mbps) ": upload_list[0:int(incremental_capacity_list[i])],
                         " Observed Average upload rate (Mbps) ": [str(n) for n in upload_data[0:int(incremental_capacity_list[i])]],
-                        " RSSI (dBm) ": ['' if n == 0 else '-' + str(n) for n in rssi_data[0:int(incremental_capacity_list[i])]],
+                        " Average RSSI (dBm) ": ['' if n == 0 else '-' + str(n) for n in rssi_data[0:int(incremental_capacity_list[i])]],
                         # " Link Speed ":self.link_speed_list[0:int(incremental_capacity_list[i])],
                         " Average RTT (ms)": avg_rtt_data[0:int(incremental_capacity_list[i])],
                         " Packet Size(Bytes) ": [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
@@ -4891,7 +4926,14 @@ class Throughput(Realm):
                     # just this device, so their findings/summary are only shown once rather than
                     # repeated for every device.
                     key_findings = key_findings + self.build_ping_key_findings()
-                    self.add_test_summary_to_report(report, rssi_values=rssi_data[0:int(incremental_capacity_list[i])])
+                    overall_score = self._throughput_ratio_to_score(
+                        sum(self._parse_mbps(n) for n in download_data[0:int(incremental_capacity_list[i])])
+                        + sum(self._parse_mbps(n) for n in upload_data[0:int(incremental_capacity_list[i])]),
+                        sum(self._parse_mbps(n) for n in download_list)
+                        + sum(self._parse_mbps(n) for n in upload_list))
+                    overall_rating, _ = lf_report.classify_score_rating(overall_score)
+                    self.add_test_summary_to_report(report, rssi_values=rssi_data[0:int(incremental_capacity_list[i])],
+                                                    overall_rating=overall_rating)
                 if self.SHOW_KEY_FINDINGS:
                     report.build_findings_card("Key Findings", key_findings)
 
@@ -5022,7 +5064,7 @@ class Throughput(Realm):
                 bk_dataframe[" Offered upload rate (Mbps)"] = upload_list[-1]
                 bk_dataframe[" Observed Average upload rate (Mbps)"] = [str(upload_data[-1])]
                 bk_dataframe[" Average RTT (ms) "] = avg_rtt_data[-1]
-                bk_dataframe[" RSSI (dBm)"] = ['' if rssi_data[-1] == 0 else '-' + str(rssi_data[-1])]
+                bk_dataframe[" Average RSSI (dBm)"] = ['' if rssi_data[-1] == 0 else '-' + str(rssi_data[-1])]
                 if self.direction == "Bi-direction":
                     bk_dataframe[" Average Tx Drop % "] = upload_drop
                     bk_dataframe[" Average Rx Drop % "] = download_drop
@@ -5053,6 +5095,13 @@ class Throughput(Realm):
 
             if self.dowebgui and self.get_live_view and self.do_interopability:
                 self.add_live_view_images_to_report(report)
+        if not self.do_interopability and measured_iterations:
+            summary_start = len(report.html)
+            self.build_incremental_test_summary(
+                report, measured_iterations, roaming_df=data if self.do_roaming else None)
+            summary_html = report.html[summary_start:]
+            report.html = (report.html[:overall_summary_position] + summary_html
+                           + report.html[overall_summary_position:summary_start])
         if iot_summary:
             self.build_iot_report_section(report, iot_summary)
         # wifi connectivity stats (connects/disconnects/scans/rejections) collected while the traffic was running --
@@ -5704,7 +5753,7 @@ class Throughput(Realm):
                                 " Observed Average download rate (Mbps) ": [str(n) for n in download_data[0:int(incremental_capacity_list[i])]],
                                 " Offered upload rate (Mbps) ": upload_list[0:int(incremental_capacity_list[i])],
                                 " Observed Average upload rate (Mbps) ": [str(n) for n in upload_data[0:int(incremental_capacity_list[i])]],
-                                " RSSI (dBm) ": ['' if n == 0 else '-' + str(n) for n in rssi_data[0:int(incremental_capacity_list[i])]],
+                                " Average RSSI (dBm) ": ['' if n == 0 else '-' + str(n) for n in rssi_data[0:int(incremental_capacity_list[i])]],
                                 # " Link Speed ":self.link_speed_list[0:int(incremental_capacity_list[i])],
                                 " Average RTT (ms)": avg_rtt_data[0:int(incremental_capacity_list[i])],
                                 " Packet Size(Bytes) ": [str(n) for n in packet_size_in_table[0:int(incremental_capacity_list[i])]],
@@ -5862,7 +5911,7 @@ class Throughput(Realm):
                     " Observed download rate ": obsdownload,
                     " Offered upload rate ": offupload,
                     " Observed upload rate ": obsupload,
-                    " RSSI ": rssi,
+                    " Average RSSI ": rssi,
                     " Link Speed ": linkspeed,
                     " Packet Size(Bytes) ": packetsize,
                     " RTT ": avgrtt
@@ -5899,7 +5948,7 @@ class Throughput(Realm):
                     " Observed download rate ": obsdownload,
                     " Offered upload rate ": offupload,
                     " Observed upload rate ": obsupload,
-                    " RSSI ": rssi,
+                    " Average RSSI ": rssi,
                     " Link Speed ": linkspeed,
                     " RTT ": avgrtt
                 }
@@ -6062,11 +6111,36 @@ class Throughput(Realm):
 
     def add_live_view_images_to_report(self, report):
         """
-        This function looks for live view images for each floor
-        in the 'live_view_images' folder within `self.result_dir`.
-        It waits up to **60 seconds** for each image. If an image is found,
-        it's added to the `report` on a new page; otherwise, it's skipped.
+        Wait up to 60 seconds per floor for Web-GUI heatmaps.
+
+        Copy captures into the report so downloaded and HTTP-served reports
+        can load them, and constrain their size for landscape PDF pages.
+        Missing captures produce a placeholder for the Web-GUI's late upload repair.
         """
+        # Keep this report's banner in document flow instead of using the
+        # library's reserved PDF header. The banner CSS is inlined in the HTML.
+        report.html = report.html.replace('BannerBack', 'ThroughputBanner')
+        report.set_custom_html('''
+            <style>
+            @media print {
+              #ThroughputBanner { padding:16px 20px; break-inside:avoid; }
+              .heatmap-page {
+                display:flex; flex-direction:column; box-sizing:border-box;
+                height:178mm; padding:6px 0; margin:0;
+                page-break-before:always; page-break-after:always;
+                page-break-inside:avoid; break-inside:avoid;
+              }
+              .heatmap-page > div { flex:0 0 auto; }
+              .heatmap-page img {
+                flex:1 1 0; min-height:0; display:block; margin:0 auto;
+                width:100% !important; height:0 !important;
+                max-height:none !important; max-width:100%; object-fit:contain;
+                object-position:center;
+              }
+            }
+            </style>
+        ''')
+        report.build_custom()
         for floor in range(0, int(self.total_floors)):
             throughput_image_path = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_throughput_{floor + 1}.png")
             rssi_image_path = os.path.join(self.result_dir, "live_view_images", f"{self.test_name}_rssi_{floor + 1}.png")
@@ -6080,9 +6154,53 @@ class Throughput(Realm):
                 time.sleep(1)
             for label, image_path in (("Throughput", throughput_image_path), ("RSSI", rssi_image_path)):
                 if os.path.exists(image_path):
-                    report.set_custom_html('<div style="page-break-before: always;"></div>')
-                    report.build_custom()
-                    report.set_custom_html(f'<img src="file://{image_path}"></img>')
+                    filename = os.path.basename(image_path)
+                    destination = os.path.join(report.get_path_date_time(), filename)
+                    if os.path.abspath(image_path) != os.path.abspath(destination):
+                        shutil.copy2(image_path, destination)
+                    # Web-GUI screenshots can contain a wide blank canvas beside
+                    # the plan. Center the visible content, not that empty canvas.
+                    with Image.open(image_path) as capture:
+                        rgba = capture.convert('RGBA')
+                        background = Image.new('RGBA', rgba.size, 'white')
+                        background.alpha_composite(rgba)
+                        rgb = background.convert('RGB')
+                        difference = ImageChops.difference(rgb, Image.new('RGB', rgb.size, 'white'))
+                        bounds = difference.convert('L').point(lambda value: 255 if value > 12 else 0).getbbox()
+                        if bounds:
+                            left, top, right, bottom = bounds
+                            padding = 16
+                            bounds = (max(0, left - padding), max(0, top - padding),
+                                      min(rgb.width, right + padding), min(rgb.height, bottom + padding))
+                            rgb.crop(bounds).save(destination)
+                    title = f"{label} Heatmap"
+                    if label == "Throughput":
+                        heading = "Per Client Average Throughput"
+                        description = (
+                            "The heatmap below illustrates the average throughput achieved by each wireless client at its "
+                            "respective location during the test. Each client is overlaid on the Test House floor plan, with the "
+                            "displayed value representing its average throughput (in Mbps) over the test duration.</p><p>"
+                            "The color scale indicates the throughput achieved by each client, ranging from lower throughput "
+                            "(red/orange) to higher throughput (green). This visualization provides a spatial view of throughput "
+                            "distribution across the test area, helping identify how client location and wireless conditions "
+                            "influence performance under concurrent traffic.")
+                    else:
+                        heading = "Average RSSI Distribution"
+                        description = (
+                            "The RSSI heatmaps below illustrate the wireless coverage measured across the Test House before "
+                            "the throughput test was executed.</p><p>"
+                            "The heatmaps verify that client locations maintained adequate signal strength throughout the test "
+                            "area, ensuring that the throughput and connectivity results primarily reflect Access Point "
+                            "performance rather than wireless coverage limitations.")
+                    report.set_custom_html(
+                        '<div class="chart-card heatmap-page" style="page-break-before:always; '
+                        'page-break-after:always; break-inside:avoid;">'
+                        f'<div style="text-align:left;"><h3 style="margin:0 0 6px;">{heading}</h3>'
+                        f'<p>{description}</p></div>'
+                        f'<img src="{escape(filename, quote=True)}" alt="{title}" '
+                        'style="display:block; margin:0 auto; max-width:100%; max-height:150mm; '
+                        'width:auto; height:auto; object-fit:contain; object-position:center;">'
+                        '</div>')
                 else:
                     report.set_custom_html(
                         f'<p><i>{label} heatmap (Floor {floor + 1}) is not available - the capture may '
