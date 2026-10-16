@@ -304,8 +304,8 @@ class Throughput(Realm):
                  user_list=None, real_client_list=None, real_client_list1=None, hw_list=None, laptop_list=None, android_list=None, mac_list=None, windows_list=None, linux_list=None,
                  total_resources_list=None, working_resources_list=None, hostname_list=None, username_list=None, eid_list=None,
                  devices_available=None, input_devices_list=None, mac_id1_list=None, mac_id_list=None, overall_avg_rssi=None,
-                 coordinate_list=None, rotation_enabled=None, robo_ip=None, angle_list=None, do_bandsteering=False, do_roaming=False, total_cycles=1, bssids=None,
-                 roaming_bssids=None, duration_to_skip=None):
+                 coordinate_list=None, rotation_enabled=None, robo_ip=None, angle_list=None, do_bandsteering=False, total_cycles=1, bssids=None, duration_to_skip=None,
+                 do_roaming=False, roaming_bssids=None):
         super().__init__(lfclient_host=host,
                          lfclient_port=port)
         self.ssid_list = []
@@ -4046,7 +4046,8 @@ class Throughput(Realm):
                 shutil.move('throughput_data.csv', report_path_date_time)
             logger.info("path: {}".format(report_path))
             logger.info("path_date_time: {}".format(report_path_date_time))
-            report.set_title("LANforge Interop<br>Throughput Test<br>"
+            report_heading = "Testhouse Automation" if self.get_live_view else "LANforge Interop"
+            report.set_title(f"{report_heading}<br>Throughput Test<br>"
                              "<span style='font-size:0.45em; font-weight:400;'>(Real Client Performance Validation)</span>")
             report.build_banner()
 
@@ -4201,7 +4202,10 @@ class Throughput(Realm):
             # order -- test_setup_info/all_devices_names/device_type stay computed here since
             # this is where the data needed to build them is available.
 
-            overall_summary_position = len(report.html)
+            # Heatmap rendering can rewrite earlier HTML (including the banner),
+            # so locate the summary with a marker rather than a character offset.
+            overall_summary_marker = '<!-- throughput-overall-summary -->'
+            report.html += overall_summary_marker
             measured_iterations = []
 
             # Loop through iterations and build graphs, tables for each iteration
@@ -5100,8 +5104,8 @@ class Throughput(Realm):
             self.build_incremental_test_summary(
                 report, measured_iterations, roaming_df=data if self.do_roaming else None)
             summary_html = report.html[summary_start:]
-            report.html = (report.html[:overall_summary_position] + summary_html
-                           + report.html[overall_summary_position:summary_start])
+            report.html = report.html[:summary_start].replace(
+                overall_summary_marker, summary_html, 1)
         if iot_summary:
             self.build_iot_report_section(report, iot_summary)
         # wifi connectivity stats (connects/disconnects/scans/rejections) collected while the traffic was running --
