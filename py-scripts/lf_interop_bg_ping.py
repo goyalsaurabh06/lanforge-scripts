@@ -577,8 +577,8 @@ class BackgroundPing:
         })
 
     def connectivity_timeline_payload(self):
-        """Converts self.sequence_rtts into green/red time spans, one span per contiguous run of successful/lost replies, each sequence number occupying one ping interval."""
-        if not self.sequence_rtts or not self.start_time:
+        """Build connectivity rows for every client, retaining no-data rows without up/drop bars."""
+        if not self.start_time:
             return None
 
         if self.monitor_window_start is not None and self.monitor_window_end is not None:
@@ -596,14 +596,22 @@ class BackgroundPing:
 
         for device in self.ping.real_sta_list:
             seq_rtts = self.sequence_rtts.get(device) or {}
-            if not seq_rtts:
-                continue
-
             device_data = self.device_data.get(device, {})
             label = device_data.get('user', '') or device_data.get('hostname', '') or device
             client_index = len(clients)
             clients.append(label)
             stations.append(device)
+
+            if not seq_rtts:
+                # Retain the category even when every client has no data. The
+                # chart only paints up/drop spans, leaving this row blank.
+                segments.append({
+                    'clientIndex': client_index,
+                    'start': 0.0,
+                    'end': round(duration, 3),
+                    'status': 'no_data',
+                })
+                continue
 
             client_segments = []
 
@@ -870,7 +878,8 @@ class BackgroundPing:
                     _obj=('The graph illustrates the connectivity status of all wireless clients during the '
                           'test based on connectivity monitoring during the test execution. Green segments '
                           'represent successful responses, while red segments indicate packet loss or '
-                          'connectivity drops observed during the test.'))
+                          'connectivity drops observed during the test. Clients with no recorded ping '
+                          'samples are shown without a status bar.'))
                 report.build_objective()
                 report.build_echarts_chart(
                     chart_id='background-ping-connectivity-timeline',
