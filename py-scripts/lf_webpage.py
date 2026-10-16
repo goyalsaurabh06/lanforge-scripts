@@ -1935,7 +1935,7 @@ class HttpDownload(Realm):
         """['A', 'B', 'C'] -> 'A, B and C'"""
         return items[0] if len(items) == 1 else "{} and {}".format(", ".join(items[:-1]), items[-1])
 
-    def add_test_summary_to_report(self, report, client_names, downloads, overall_rating):
+    def add_key_findings_to_report(self, report, client_names, downloads, overall_rating):
         """Adds a short plain-English summary of the test results to the report."""
         total = len(client_names)
         platforms = sorted({self._device_type_and_name(d)[0] for d in self.devices_list} - {"-"})
@@ -2327,7 +2327,7 @@ class HttpDownload(Realm):
         logger.info("Monitoring Duration: %s", self.format_monitoring_duration())
 
     def add_real_client_sections(self, report, duration, test_setup_info, avg_time_ms, bytes_rd_mb, downloads, rx_rate, iot_summary=None):
-        """Builds the modern real client report: verdict, test summary, result graphs, per client
+        """Builds the modern real client report: verdict, key findings, result graphs, per client
         scoring table, connectivity results, scoring parameters and test configuration."""
         client_labels = list(self.devices_list)
         device_types = [self._device_type_and_name(d)[0] for d in client_labels]
@@ -2361,7 +2361,7 @@ class HttpDownload(Realm):
                  "value": "<span style='color:{}; font-weight:800;'>{}</span>".format(overall_color, overall_rating)},
             ])
 
-        self.add_test_summary_to_report(report, client_names, [int(x) for x in downloads], overall_rating)
+        self.add_key_findings_to_report(report, client_names, [int(x) for x in downloads], overall_rating)
 
         report.set_custom_html('<div style="page-break-before: always;"></div>')
         report.build_custom()

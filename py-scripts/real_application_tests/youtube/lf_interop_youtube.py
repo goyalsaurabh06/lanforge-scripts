@@ -123,7 +123,7 @@ import shutil
 import glob
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 import traceback
 import platform
 import signal
@@ -317,6 +317,12 @@ class Youtube(Realm):
         self.lanforge_os_type = list()
         self.android = 0
         self.android_log_received = Event()
+        self.connectivity_lock = Lock()
+        self.connectivity_args = None
+        self.connectivity_accept_stats = False
+        self.connectivity_started = False
+        self.connectivity_end_time = None
+        self.background_ping = None
         self.wifi_interface_list = []
         self.devices_list = []
         self.max_buffer = {}
@@ -985,6 +991,7 @@ class Youtube(Realm):
             self.android_log_received.clear()
 
         # Start the connections of generic endpoints
+        self.connectivity_accept_stats = True
         self.generic_endps_profile.start_cx()
         # Set the start time to the current datetime
         self.start_time = datetime.now()
@@ -1036,10 +1043,8 @@ class Youtube(Realm):
     def finalize_test_run(self, args, iot_summary=None):
         """Stop clients, generate the report, then clean up the test."""
         self.stop()
+        self.stop_connectivity_monitoring()
         self.stop_wifi_analysis()
-        # the background ping has to be stopped before the report is built so its statistics are final
-        if getattr(self, 'background_ping', None):
-            self.background_ping.stop()
         # Stop collection before WebUI completion triggers the final live image.
         if args.do_webUI:
             self.stop_webui_test()
@@ -1197,6 +1202,8 @@ class Youtube(Realm):
                         continue
                     device_name = key
                     stats = value
+                    if stats and not data.get("stop", False):
+                        self.start_connectivity_on_playback_stats()
                     buffer_val = stats.get("BufferHealth")
                     if buffer_val not in [None, "", "NA"]:
                         try:
@@ -1882,7 +1889,7 @@ class Youtube(Realm):
                 labels.get(column, column) for column in item["missing"]))
         return observations
 
-    def _test_summary_findings(self, metrics):
+    def _test_summary_findings(self, metrics, overall_rating):
         """Describe this run in the reference's five-point order, without changing scores.
 
         Summary-only thresholds: low buffer <10 s (the scorer's full-credit
@@ -1971,17 +1978,11 @@ class Youtube(Realm):
         else:
             signal = "Signal strength could not be assessed because no valid RSSI measurements were available."
 
-        complete = (bool(names) and len(scored) == len(names) and len(losses) == len(names)
-                    and len(signals) == len(names) and not missing_buffer_samples)
-        if not complete:
-            overall = ("Overall, missing streaming, scoring, connectivity, or signal measurements limit the "
-                       "assessment of AP streaming performance under the configured test conditions.")
-        elif good == len(names) and all(value < 1 for value in drops) and not low_buffer_clients and all(loss <= 2 for loss in losses):
-            overall = ("Overall, the measured clients achieved Good or Excellent streaming ratings with healthy "
-                       "sampled buffer reserve, dropped frames below 1%, and packet loss at or below 2%, "
-                       "supporting a favorable streaming assessment under the configured test conditions.")
+        if overall_rating in ("Excellent", "Good", "Average", "Poor"):
+            overall = (f"Overall, the AP demonstrated {overall_rating.lower()} "
+                       "YouTube streaming performance.")
         else:
-            overall = "Overall, the measurements show performance limitations under the configured test conditions."
+            overall = "Overall, insufficient scoring data was available to rate the AP's YouTube streaming performance."
         return [ratings, buffer_text, connectivity, signal, overall]
 
     def _build_dropped_frames_percentage_graph(self, report, metrics):
@@ -2041,6 +2042,31 @@ class Youtube(Realm):
         }
         return [station_to_hostname.get(device, device) for device in devices]
 
+    def start_connectivity_on_playback_stats(self):
+        """Start collection once, on the first live playback stats POST."""
+        with self.connectivity_lock:
+            args = self.connectivity_args
+            if args is None or not self.connectivity_accept_stats or self.connectivity_started:
+                return
+            self.connectivity_started = True
+            logger.info("First YouTube playback stats received; starting connectivity monitoring")
+            self.background_ping = lf_interop_bg_ping.from_args(
+                args, host=args.mgr, port=8080,
+                device_list=self.real_sta_list, default_target=args.upstream_port)
+            if args.wifi_analysis:
+                self.start_wifi_analysis(
+                    host=args.mgr, port=8080, device_list=self.real_sta_list, ssid=self.ssid)
+
+    def stop_connectivity_monitoring(self):
+        """Freeze the Wi-Fi window and stop ping before report/cleanup work."""
+        with self.connectivity_lock:
+            self.connectivity_accept_stats = False
+            if self.connectivity_end_time is not None:
+                return
+            self.connectivity_end_time = int(time.time() * 1000)
+            if self.background_ping:
+                self.background_ping.stop()
+
     def start_wifi_analysis(self, host, port, device_list, ssid):
         """Start a RealClientAnalysis window covering the devices under test."""
         self.wifi_analysis = None
@@ -2059,7 +2085,7 @@ class Youtube(Realm):
         """Analyze '/wifi-msgs' since start_wifi_analysis() into self.wifi_analysis_stats."""
         if not getattr(self, 'wifi_analysis', None):
             return
-        end_time = int(time.time() * 1000)
+        end_time = self.connectivity_end_time or int(time.time() * 1000)
         try:
             self.wifi_analysis.populate_device_lookups()
             local_dict = self.wifi_analysis.create_local_dict()
@@ -2345,8 +2371,8 @@ class Youtube(Realm):
             {"label": "Average YouTube Streaming Score (Scored Devices)", "value": average_text},
             {"label": "Overall Rating", "value": rating_html},
         ])
-        findings = self._test_summary_findings(metrics)
-        self.report.set_obj_html(_obj_title="Test Summary", _obj="<ul>" + "".join(
+        findings = self._test_summary_findings(metrics, overall_rating)
+        self.report.set_obj_html(_obj_title="Key Findings", _obj="<ul>" + "".join(
             f"<li>{escape(finding)}</li>" for finding in findings) + "</ul>")
         self._build_text_card(self.report)
 
@@ -4144,18 +4170,8 @@ NOTES:
             logging.info("Waiting 10 seconds before starting YouTube streaming")
             youtube.wait_stop_aware(10, "before YouTube streaming started")
 
-            # starting the ping on the selected clients, it keeps running until the streaming is stopped
-            youtube.background_ping = lf_interop_bg_ping.from_args(
-                args,
-                host=args.mgr,
-                port=8080,
-                device_list=youtube.real_sta_list,
-                default_target=args.upstream_port)
-
-            if args.wifi_analysis:
-                youtube.start_wifi_analysis(
-                    host=args.mgr, port=8080,
-                    device_list=youtube.real_sta_list, ssid=youtube.ssid)
+            # Collection starts only when a client posts its first live playback stats.
+            youtube.connectivity_args = args
 
             youtube.start_time = datetime.now()
             if args.do_robo:
@@ -4179,6 +4195,8 @@ NOTES:
                     "YouTube streaming finished at %s",
                     datetime.now().astimezone().isoformat(timespec="seconds"),
                 )
+
+            youtube.stop_connectivity_monitoring()
 
             if args.iot_test and args.iot_testname:
                 base = os.path.join("results", args.iot_testname)

@@ -1758,7 +1758,7 @@ class ThroughputQOS(Realm):
                             "of {total} client{s} did not reconnect by the end of the test.".format(
                                 n=total_disconnects, never=never_connected, total=total_devices, s=plural))
             except Exception as e:
-                logger.warning("Test summary connectivity bullet could not be computed: %s", e)
+                logger.warning("Key findings connectivity bullet could not be computed: %s", e)
 
         # 4. Packet loss, from the background ping.
         background_ping = getattr(self, 'background_ping', None)
@@ -1814,7 +1814,7 @@ class ThroughputQOS(Realm):
         return summary
 
     def add_test_summary_to_report(self, report, priority_order, overall_rating, vo_val, vi_val, be_val, bk_val, rssi_values=None):
-        """Appends the "Test Summary" card (see build_test_summary()) to the report as a plain
+        """Appends the "Key Findings" card (see build_test_summary()) to the report as a plain
         bulleted list. Safe to call unconditionally.
         """
         try:
@@ -1825,12 +1825,12 @@ class ThroughputQOS(Realm):
             items = "".join("<li style='font-size:14px; color:var(--ink); line-height:1.5;'>{}</li>".format(point)
                             for point in summary)
             report.set_custom_html(
-                "<div class='info-card'><div class='info-card-header'>Test Summary</div>"
+                "<div class='info-card'><div class='info-card-header'>Key Findings</div>"
                 "<ul style='margin:0; padding-left:20px; display:flex; flex-direction:column; "
                 "gap:10px;'>{}</ul></div>".format(items))
             report.build_custom()
         except Exception as e:
-            logger.warning("Test summary could not be added to the report: %s", e)
+            logger.warning("Key findings could not be added to the report: %s", e)
 
     def generate_report(self, data, input_setup_info, connections_download_avg, connections_upload_avg, avg_drop_a, avg_drop_b, report_path='', result_dir_name='Qos_Test_report',
                         selected_real_clients_names=None, config_devices="", iot_summary=None):
@@ -2108,7 +2108,7 @@ class ThroughputQOS(Realm):
         # Wi-Fi connectivity analysis (connects/disconnects/scans/rejections) collected during test
         self.add_wifi_analysis_to_report(report)
         # ping statistics collected on the clients while the qos traffic was running
-        # (channel_list/rssi_list were already fetched above, for the Test Summary card)
+        # (channel_list/rssi_list were already fetched above, for the Key Findings card)
         if getattr(self, 'background_ping', None):
             device_info = {port: {'mac': mac, 'channel': ch, 'rssi': rssi}
                            for port, mac, ch, rssi in zip(self.input_devices_list, self.mac_id_list, channel_list, rssi_list)}

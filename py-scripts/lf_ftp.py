@@ -2831,7 +2831,7 @@ class FtpTest(LFCliBase):
                         else:
                             conn_text = "Only some clients maintained stable wireless connectivity during the test"
             except Exception as e:
-                logger.warning("Test summary connectivity bullet could not be computed: %s", e)
+                logger.warning("Key findings connectivity bullet could not be computed: %s", e)
 
         loss_text = None
         background_ping = getattr(self, 'background_ping', None)
@@ -2869,7 +2869,7 @@ class FtpTest(LFCliBase):
         return summary
 
     def add_test_summary_to_report(self, report, platforms, url_data, overall_rating, direction="Download"):
-        """Appends the "Test Summary" card (see build_test_summary()) to the report as a bulleted list.
+        """Appends the "Key Findings" card (see build_test_summary()) to the report as a bulleted list.
         Safe to call unconditionally.
         """
         try:
@@ -2879,12 +2879,12 @@ class FtpTest(LFCliBase):
             items = "".join("<li style='font-size:14px; color:var(--ink); line-height:1.5;'>{}</li>".format(point)
                             for point in summary)
             report.set_custom_html(
-                "<div class='info-card'><div class='info-card-header'>Test Summary</div>"
+                "<div class='info-card'><div class='info-card-header'>Key Findings</div>"
                 "<ul style='margin:0; padding-left:20px; display:flex; flex-direction:column; "
                 "gap:10px;'>{}</ul></div>".format(items))
             report.build_custom()
         except Exception as e:
-            logger.warning("Test summary could not be added to the report: %s", e)
+            logger.warning("Key findings could not be added to the report: %s", e)
 
     def generate_report(self, ftp_data, date, input_setup_info, test_rig, test_tag, dut_hw_version,
                         dut_sw_version, dut_model_num, dut_serial_num, test_id, bands,
@@ -3147,7 +3147,7 @@ class FtpTest(LFCliBase):
                 items=verdict_items
             )
 
-            # Test Summary (QA-format narrative bullets, generated from this test's results)
+            # Key Findings (QA-format narrative bullets, generated from this test's results)
             self.add_test_summary_to_report(
                 self.report,
                 platforms=device_type,
