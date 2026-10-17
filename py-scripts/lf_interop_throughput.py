@@ -182,6 +182,7 @@ import importlib
 import logging
 import json
 import shutil
+import base64
 import asyncio
 import csv
 import re
@@ -5325,7 +5326,11 @@ class Throughput(Realm):
                     report.set_custom_html(f"<h2>{label} Heatmap{heading_suffix}: </h2>")
                     report.build_custom()
                     if os.path.exists(image_path):
-                        report.set_custom_html(f'<img src="file://{image_path}" style="width:1500px; height:900px;"></img>')
+                        with open(image_path, 'rb') as image_file:
+                            image_data = base64.b64encode(image_file.read()).decode('ascii')
+                        report.set_custom_html(
+                            f'<img src="data:image/png;base64,{image_data}" '
+                            'style="width:1500px; height:900px;">')
                     elif have_data:
                         report.set_custom_html(
                             f'<p><i>{label} heatmap{heading_suffix} is not available - the capture may '
@@ -6117,8 +6122,8 @@ class Throughput(Realm):
         """
         Wait up to 60 seconds per floor for Web-GUI heatmaps.
 
-        Copy captures into the report so downloaded and HTTP-served reports
-        can load them, and constrain their size for landscape PDF pages.
+        Embed captures as base64 PNG data URLs so downloaded and HTTP-served
+        HTML reports keep their live images. Constrain their size for landscape PDF pages.
         Missing captures produce a placeholder for the Web-GUI's late upload repair.
         """
         # Keep this report's banner in document flow instead of using the
@@ -6177,6 +6182,9 @@ class Throughput(Realm):
                             bounds = (max(0, left - padding), max(0, top - padding),
                                       min(rgb.width, right + padding), min(rgb.height, bottom + padding))
                             rgb.crop(bounds).save(destination)
+                    # Embed the cropped capture so the HTML can travel without image files.
+                    with open(destination, 'rb') as image_file:
+                        image_data = base64.b64encode(image_file.read()).decode('ascii')
                     title = f"{label} Heatmap"
                     if label == "Throughput":
                         heading = "Per Client Average Throughput"
@@ -6201,7 +6209,7 @@ class Throughput(Realm):
                         'page-break-after:always; break-inside:avoid;">'
                         f'<div style="text-align:left;"><h3 style="margin:0 0 6px;">{heading}</h3>'
                         f'<p>{description}</p></div>'
-                        f'<img src="{escape(filename, quote=True)}" alt="{title}" '
+                        f'<img src="data:image/png;base64,{image_data}" alt="{title}" '
                         'style="display:block; margin:0 auto; max-width:100%; max-height:150mm; '
                         'width:auto; height:auto; object-fit:contain; object-position:center;">'
                         '</div>')
