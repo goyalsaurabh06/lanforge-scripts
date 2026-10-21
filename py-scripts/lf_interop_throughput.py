@@ -83,6 +83,11 @@
         python3 lf_interop_throughput.py --mgr 192.168.207.78 --mgr_port 8080 --upstream_port eth1 --test_duration 1m --download 1000000 --traffic_type lf_udp
         --robot_ip 192.168.204.144 --coordinate 3,4 --do_bandsteering --total_cycles 2 --bssids 94:A6:7E:74:26:33,94:A6:7E:74:26:22
 
+        EXAMPLE-17:
+        Command Line Interface to run download scenario with a background ping on the real clients
+        python3 lf_interop_throughput.py --mgr 192.168.207.75 --mgr_port 8080 --upstream_port eth1 --test_duration 1m --download 1000000 --traffic_type lf_tcp
+        --device_list 1.20,1.59,1.65 --enable_bg_ping --bg_ping_target 1.1.eth1
+
     TO PERFORM INTEROPABILITY TEST:
 
         EXAMPLE-1:
@@ -198,7 +203,7 @@ from LANforge import LFUtils  # noqa: F401 E402
 realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
 # from lf_report import lf_report  # noqa: E402
-import lf_interop_bg_ping  # noqa: E402
+import lf_interop_ping  # noqa: E402
 from lf_wifi_msgs import RealClientAnalysis  # noqa: E402
 # from lf_graph import lf_bar_graph_horizontal, lf_bar_graph  # noqa: E402
 # from lf_graph import lf_line_graph  # noqa: E402
@@ -3240,8 +3245,8 @@ class Throughput(Realm):
 
         # 2. Packet loss, from the background ping.
         background_ping = getattr(self, 'background_ping', None)
-        if background_ping and background_ping.stats:
-            rows = list(background_ping.stats.values())
+        if background_ping and background_ping.bg_stats:
+            rows = list(background_ping.bg_stats.values())
             loss_values = [row['loss_percent'] for row in rows if row['sent']]
             if loss_values:
                 avg_loss = sum(loss_values) / len(loss_values)
@@ -3561,11 +3566,11 @@ class Throughput(Realm):
         background ping covers the whole test duration rather than a single iteration.
         """
         background_ping = getattr(self, 'background_ping', None)
-        if not background_ping or not background_ping.stats:
+        if not background_ping or not background_ping.bg_stats:
             return []
 
         findings = []
-        rows = list(background_ping.stats.values())
+        rows = list(background_ping.bg_stats.values())
         total_clients = len(rows)
 
         # 1. Connectivity -- did any client see packet loss on the background ping.
@@ -4703,7 +4708,7 @@ class Throughput(Realm):
         if getattr(self, 'background_ping', None):
             # Anchors the connectivity graph to the real monitoring window, not background_ping's own wider lifetime.
             self.background_ping.set_monitor_window(self.monitor_start_time, self.monitor_end_time)
-            self.background_ping.add_to_report(report, device_info={
+            self.background_ping.add_background_ping_to_report(report, device_info={
                 port_name: {"mac": mac, "channel": channel, "rssi": rssi}
                 for port_name, mac, channel, rssi in zip(
                     self.input_devices_list, self.mac_id_list, self.channel_list, self.signal_list)
@@ -5385,7 +5390,7 @@ class Throughput(Realm):
         if getattr(self, 'background_ping', None):
             # Anchors the connectivity graph to the real monitoring window, not background_ping's own wider lifetime.
             self.background_ping.set_monitor_window(self.monitor_start_time, self.monitor_end_time)
-            self.background_ping.add_to_report(report, device_info={
+            self.background_ping.add_background_ping_to_report(report, device_info={
                 port_name: {"mac": mac, "channel": channel, "rssi": rssi}
                 for port_name, mac, channel, rssi in zip(
                     self.input_devices_list, self.mac_id_list, self.channel_list, self.signal_list)
@@ -6053,6 +6058,11 @@ EXAMPLE-9:
 Command Line Interface to run the test with incremental_capacity by raising incremental flag
 python3 lf_interop_throughput.py --mgr 192.168.214.219 --mgr_port 8080  --upstream_port eth1 --test_duration 1m --download 1000000 --traffic_type lf_udp --incremental
 
+EXAMPLE-10:
+Command Line Interface to run download scenario with a background ping on the real clients
+python3 lf_interop_throughput.py --mgr 192.168.207.75 --mgr_port 8080 --upstream_port eth1 --test_duration 1m --download 1000000 --traffic_type lf_tcp
+--device_list 1.20,1.59,1.65 --enable_bg_ping --bg_ping_target 1.1.eth1
+
 TO PERFORM INTEROPABILITY TEST:
 
 EXAMPLE-1:
@@ -6213,7 +6223,7 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
                           help='Analyze real-client wifi-msgs (connects/disconnects/scans/association rejections) '
                                'for the duration of the test and include the results in the report')
 
-    lf_interop_bg_ping.add_arguments(parser)
+    lf_interop_ping.add_bg_ping_arguments(parser)
 
     args = parser.parse_args()
 
@@ -6429,7 +6439,7 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
                                                device_list=throughput.input_devices_list, ssid=args.ssid)
             throughput.perform_robo(args, clients_to_run)
             if throughput.background_ping:
-                throughput.background_ping.stop()
+                throughput.background_ping.stop_background_ping()
                 throughput.background_ping.cleanup()
             exit(1)
 
@@ -6438,7 +6448,7 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
             return
 
         # Starting the ping here, right as monitoring begins, keeps its duration aligned with the test; it keeps running across every iteration below.
-        throughput.background_ping = lf_interop_bg_ping.from_args(
+        throughput.background_ping = lf_interop_ping.bg_ping_from_args(
             args,
             host=args.mgr,
             port=args.mgr_port,
@@ -6544,7 +6554,7 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
     throughput.remove_missing_cx()
     throughput.stop()
     if throughput.background_ping:
-        throughput.background_ping.stop()
+        throughput.background_ping.stop_background_ping()
     if args.postcleanup:
         throughput.cleanup()
     throughput.ensure_monitoring_data_collected()
