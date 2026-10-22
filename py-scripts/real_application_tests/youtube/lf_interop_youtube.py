@@ -326,7 +326,7 @@ class Youtube(Realm):
             "NetworkActivityKB", "LiveLatency(sec)", "bandwidth (kbps)"
         ]
         if do_robo and not do_bandsteering:
-            self.csv_headers.append("Angle")
+            self.csv_headers.extend(["Angle", "Cycle"])
         if do_bandsteering:
             self.csv_headers.extend([
                 "BSSID", "Channel", "X", "Y", "From_Coord", "To_Coord"
@@ -340,7 +340,10 @@ class Youtube(Realm):
         self.current_angle = current_angle
         self.rotations_enabled = rotations_enabled
         self.pause = False
-        self.cycles = cycles
+        self.cycles = max(1, int(cycles or 1))
+        self.current_cycle = 1
+        # (coordinate, cycle) for every point the robot reached
+        self.coordinate_visits = []
         if self.do_robo:
             self.robo_obj = robo_base_class.RobotClass(
                 robo_ip=self.robo_ip,
@@ -1216,7 +1219,10 @@ class Youtube(Realm):
                         self.stats_api_response[device_name]["current_angle"] = self.current_angle
                         self.stats_api_response[device_name]["current_cord"] = self.current_cord
                         self.stats_api_response[device_name]["rotations_enabled"] = self.rotations_enabled
+                        self.stats_api_response[device_name]["current_cycle"] = self.current_cycle
+                        self.stats_api_response[device_name]["total_cycles"] = self.cycles
                         stats["Angle"] = self.current_angle
+                        stats["Cycle"] = self.current_cycle
 
                     if self.do_robo and self.do_bandsteering:
                         lf_wifi_map = self.get_youtube_lf_wifi_stats()
@@ -1765,6 +1771,9 @@ class Youtube(Realm):
         if iot_summary:
             test_setup_info['Test Name'] = 'YouTube Streaming Test with IoT Devices'
             test_setup_info = with_iot_params_in_table(test_setup_info, iot_summary)
+        if self.do_robo and self.do_bandsteering:
+            test_setup_info['Coordinates'] = ", ".join(self.coordinates_list)
+            test_setup_info['Total Cycles'] = self.cycles
 
         self.report.test_setup_table(
             test_setup_data=test_setup_info, value='Test Parameters')
@@ -2622,21 +2631,33 @@ class Youtube(Realm):
             base_dir = os.path.dirname(os.path.dirname(self.ui_report_dir))
             nav_data = os.path.join(base_dir, 'nav_data.json')  # To generate nav_data.json in webgui folder
             self.robo_obj.nav_data_path = nav_data
-        for coordinate in self.coordinates_list:
+        self.robo_obj.total_cycles = self.cycles
+        points_per_cycle = len(self.coordinates_list)
+        for visit_index, coordinate in enumerate(self.coordinates_list * self.cycles):
             if self.stop_signal:
                 break
+            self.current_cycle = visit_index // points_per_cycle + 1
+            self.robo_obj.current_cycle = self.current_cycle
+            if visit_index % points_per_cycle == 0:
+                logging.info("Starting cycle %d of %d", self.current_cycle, self.cycles)
             self.robo_obj.wait_for_battery()
-            matched, aborted = self.robo_obj.move_to_coordinate(coord=coordinate)
+            matched, aborted = self.robo_obj.move_to_coordinate(
+                coord=coordinate,
+                monitor_function=self.check_robo_stop,
+            )
             if self.stop_signal:
                 raise WebUIStopRequested
             if not matched:
                 continue
             self.current_cord = coordinate
+            self.coordinate_visits.append((coordinate, self.current_cycle))
             if self.rotations_enabled:
                 for angle in self.angles_list:
                     if self.stop_signal:
                         break
-                    self.robo_obj.wait_for_battery()
+                    pause, _ = self.robo_obj.wait_for_battery()
+                    if pause and not self.return_to_point_after_charging(coordinate):
+                        break
                     self.robo_obj.rotate_angle(angle_degree=angle)
                     self.current_angle = angle
                     self.start_generic()
@@ -2648,16 +2669,22 @@ class Youtube(Realm):
                         angle,
                         datetime.now().astimezone().isoformat(timespec="seconds"),
                     )
+                    point_lost = False
                     while (datetime.now() < end_time or not self.check_gen_cx()) and not self.stop_signal:
                         pause, _ = self.robo_obj.wait_for_battery()
                         if pause:
                             self.delete_existing_csvs_for_current_point()
                             self.generic_endps_profile.stop_cx()
+                            if not self.return_to_point_after_charging(coordinate, angle):
+                                point_lost = True
+                                break
                             self.start_generic()
                             end_time = datetime.now() + timedelta(minutes=self.duration)
 
                         self.monitor_endpoint_status_changes()
                         time.sleep(5)
+                    if point_lost:
+                        break
 
                     if self.stop_signal:
                         logging.info(
@@ -2688,6 +2715,8 @@ class Youtube(Realm):
                     if pause:
                         self.delete_existing_csvs_for_current_point()
                         self.generic_endps_profile.stop_cx()
+                        if not self.return_to_point_after_charging(coordinate):
+                            break
                         self.start_generic()
                         end_time = datetime.now() + timedelta(minutes=self.duration)
 
@@ -2706,6 +2735,24 @@ class Youtube(Realm):
                     coordinate,
                     datetime.now().astimezone().isoformat(timespec="seconds"),
                 )
+
+    def return_to_point_after_charging(self, coordinate, angle=None):
+        """Drive back to the point (and angle) being measured after a charging pause.
+
+        Returns:
+            bool: True if the robot is back in place, False if it could not reach the point.
+        """
+        logging.info("Returning to coordinate %s after charging", coordinate)
+        matched, _ = self.robo_obj.move_to_coordinate(
+            coord=coordinate,
+            monitor_function=self.check_robo_stop,
+        )
+        if not matched:
+            logging.info("Could not return to coordinate %s after charging; skipping the rest of it", coordinate)
+            return False
+        if angle is not None:
+            self.robo_obj.rotate_angle(angle_degree=angle)
+        return True
 
     def perform_robo_bandsteering_test(self):
         logging.info(
@@ -2788,26 +2835,29 @@ class Youtube(Realm):
         logging.info("Band-Steering Test stopped")
 
     def remove_angle_data_from_csv(self, csv_file_path):
+        """Remove the current cycle's rows (and current angle's, with rotations) from a point's CSV."""
+        if not os.path.exists(csv_file_path):
+            logging.info(f"CSV not found: {csv_file_path}")
+            return
+
+        try:
+            df = pd.read_csv(csv_file_path)
+        except Exception as e:
+            logging.info(f"Unable to read CSV {csv_file_path}: {e}")
+            return
+
+        if self.rotations_enabled and "Angle" not in df.columns:
+            logging.info(f"No Angle column in CSV: {csv_file_path}")
+            return
+
+        to_remove = pd.Series(True, index=df.index)
         if self.rotations_enabled:
-            if not os.path.exists(csv_file_path):
-                logging.info(f"CSV not found: {csv_file_path}")
-                return
+            to_remove &= pd.to_numeric(df["Angle"], errors="coerce") == float(self.current_angle)
+        if "Cycle" in df.columns:
+            to_remove &= pd.to_numeric(df["Cycle"], errors="coerce") == self.current_cycle
+        df[~to_remove].to_csv(csv_file_path, index=False)
 
-            try:
-                df = pd.read_csv(csv_file_path)
-            except Exception as e:
-                logging.info(f"Unable to read CSV {csv_file_path}: {e}")
-                return
-
-            if "Angle" not in df.columns:
-                logging.info(f"No Angle column in CSV: {csv_file_path}")
-                return
-
-            df["Angle"] = pd.to_numeric(df["Angle"], errors="coerce")
-            df_filtered = df[df["Angle"] != float(self.current_angle)]
-            df_filtered.to_csv(csv_file_path, index=False)
-
-            logging.info(f"Removed all rows for angle {self.current_angle} from {csv_file_path}.")
+        logging.info(f"Removed rows for angle {self.current_angle}, cycle {self.current_cycle} from {csv_file_path}.")
 
     def delete_existing_csvs_for_current_point(self):
         """
@@ -2820,23 +2870,16 @@ class Youtube(Realm):
         """
         for device_name, _ in self.stats_api_response.items():
             if self.do_webUI:
-                csv_file_path = os.path.join(self.ui_report_dir, f"{self.current_cord}_{device_name}_youtube_stats_report.csv")
-                if self.rotations_enabled:
-                    self.remove_angle_data_from_csv(csv_file_path)
-                else:
-                    if os.path.isfile(csv_file_path):
-                        os.remove(csv_file_path)
-                        logging.info(f"Deleted existing CSV file: {csv_file_path}")
-
+                csv_dir = self.ui_report_dir
             else:
-                current_path = os.path.dirname(os.path.abspath(__file__))
-                csv_file_path = os.path.join(current_path, f"{self.current_cord}_{device_name}_youtube_stats_report.csv")
-                if self.rotations_enabled:
-                    self.remove_angle_data_from_csv(csv_file_path)
-                else:
-                    if os.path.isfile(csv_file_path):
-                        os.remove(csv_file_path)
-                        logging.info(f"Deleted existing CSV file: {csv_file_path}")
+                csv_dir = os.path.dirname(os.path.abspath(__file__))
+            csv_file_path = os.path.join(csv_dir, f"{self.current_cord}_{device_name}_youtube_stats_report.csv")
+            # with rotations or cycles the file also holds other visits' rows, so only this visit's rows go
+            if self.rotations_enabled or self.cycles > 1:
+                self.remove_angle_data_from_csv(csv_file_path)
+            elif os.path.isfile(csv_file_path):
+                os.remove(csv_file_path)
+                logging.info(f"Deleted existing CSV file: {csv_file_path}")
 
     def create_robo_report(self):
         if self.do_webUI:
@@ -2899,6 +2942,8 @@ class Youtube(Realm):
 
             }
 
+        if self.do_robo:
+            test_setup_info['Total Cycles'] = self.cycles
         self.report.test_setup_table(
             test_setup_data=test_setup_info, value='Test Parameters')
 
@@ -2916,11 +2961,16 @@ class Youtube(Realm):
         os.chdir(self.report_path_date_time)
 
         for coordinate in self.coordinates_list:
-            if self.rotations_enabled:
-                for angle in self.angles_list:
-                    self.add_frames_graphs_to_report(coordinate, angle)
+            if self.cycles > 1:
+                cycles = sorted({cycle for coord, cycle in self.coordinate_visits if coord == coordinate})
             else:
-                self.add_frames_graphs_to_report(coordinate, "NA")
+                cycles = [None]
+            for cycle in cycles:
+                if self.rotations_enabled:
+                    for angle in self.angles_list:
+                        self.add_frames_graphs_to_report(coordinate, angle, cycle)
+                else:
+                    self.add_frames_graphs_to_report(coordinate, "NA", cycle)
 
         for hostname in self.real_sta_hostname:
             self.add_buffer_health_graphs_to_report(hostname)
@@ -2961,6 +3011,9 @@ class Youtube(Realm):
             logging.error(f"Error converting timestamps for hostname {hostname} while creating buffer health graph: {e}")
             return
 
+        if "Cycle" in combined_data.columns:
+            # files are read point by point; put cycle 1 of every point before cycle 2
+            combined_data = combined_data.sort_values("Cycle", kind="stable")
         combined_data = combined_data.drop_duplicates(subset='TimeStamp', keep='first')
 
         timestamps = combined_data['TimeStamp'].apply(lambda time_value: time_value.strftime('%H:%M:%S'))
@@ -2994,10 +3047,10 @@ class Youtube(Realm):
         self.report.set_graph_image(output_file)
         self.report.build_graph()
 
-    def add_frames_graphs_to_report(self, current_cord, current_angle):
+    def add_frames_graphs_to_report(self, current_cord, current_angle, cycle=None):
         """
             Reads all CSV files in the current directory that start with '<current_cord>_',
-            filters rows up to current_angle, and collects stats:
+            filters rows to current_angle (and to cycle, when given), and collects stats:
             - Instance Name
             - Reset-aware Total Frames
             - Reset-aware Dropped Frames
@@ -3039,6 +3092,8 @@ class Youtube(Realm):
                     df_filtered = df
                 else:
                     df_filtered = df[df["Angle"] == float(current_angle)]
+                if cycle is not None and "Cycle" in df_filtered.columns:
+                    df_filtered = df_filtered[pd.to_numeric(df_filtered["Cycle"], errors="coerce") == cycle]
 
                 if df_filtered.empty:
                     logging.info(f"No data <= {current_angle}° in {csv_file}.")
@@ -3067,17 +3122,18 @@ class Youtube(Realm):
             except Exception as e:
                 logging.info(f"Error reading {csv_file}: {e}")
 
-        if current_angle == "NA":
-            self.report.set_graph_title(f"Total Frames vs Dropped Frames at coordinate: {current_cord}")
-        else:
-            self.report.set_graph_title(f"Total Frames vs Dropped Frames at coordinate: {current_cord} and angle: {current_angle}°")
-        self.report.build_graph_title()
         if not result_dict:
             if self.rotations_enabled:
                 logging.info(f"No valid data found for coordinate: {current_cord} and angle: {current_angle}. Skipping Frames graph generation.")
             else:
                 logging.info(f"No valid data found for coordinate: {current_cord}. Skipping Frames graph generation.")
             return
+        cycle_text = f" - Cycle {cycle}" if cycle is not None else ""
+        if current_angle == "NA":
+            self.report.set_graph_title(f"Total Frames vs Dropped Frames at coordinate: {current_cord}{cycle_text}")
+        else:
+            self.report.set_graph_title(f"Total Frames vs Dropped Frames at coordinate: {current_cord} and angle: {current_angle}°{cycle_text}")
+        self.report.build_graph_title()
         x_fig_size = 25
         y_fig_size = len(result_dict) * .5 + 4
 
@@ -3093,7 +3149,7 @@ class Youtube(Realm):
                                         _xaxis_name="No of Frames",
                                         _yaxis_name="Devices",
                                         _yaxis_categories=hostnames,
-                                        _graph_image_name=f"Dropped Frames vs Total Frames_{current_cord}_{current_angle}",
+                                        _graph_image_name=f"Dropped Frames vs Total Frames_{current_cord}_{current_angle}" + (f"_cycle{cycle}" if cycle is not None else ""),
                                         _label=["dropped Frames", "Total Frames"],
                                         _color=None,
                                         _color_edge='red',
@@ -3109,9 +3165,9 @@ class Youtube(Realm):
         self.report.set_graph_image(graph_image)
         self.report.build_graph()
         if self.rotations_enabled:
-            self.report.set_table_title(f'Test Results for coordinate: {current_cord} and angle: {current_angle}°')
+            self.report.set_table_title(f'Test Results for coordinate: {current_cord} and angle: {current_angle}°{cycle_text}')
         else:
-            self.report.set_table_title(f'Test Results for coordinate: {current_cord}')
+            self.report.set_table_title(f'Test Results for coordinate: {current_cord}{cycle_text}')
         self.report.build_table_title()
 
         test_results = {
@@ -3140,22 +3196,53 @@ class Youtube(Realm):
         It waits up to 60 seconds for each image. If an image is found,
         it's added to the report on a new page; otherwise, it's skipped.
         """
-        url_image_path = os.path.join(self.ui_report_dir, "live_view_images", f"yt_{self.test_name}_1.png")
-        timeout = 120  # seconds
-        start_time = time.time()
+        image_dir = os.path.join(self.ui_report_dir, "live_view_images")
+        if self.cycles <= 1:
+            url_image_path = os.path.join(image_dir, f"yt_{self.test_name}_1.png")
+            timeout = 120  # seconds
+            start_time = time.time()
 
-        while not os.path.exists(url_image_path):
-            if time.time() - start_time > timeout:
-                logging.info(f"Live view Images not found in the respective folder {url_image_path} within 120 seconds. Skipping live view image addition to the report.")
-                break
+            while not os.path.exists(url_image_path):
+                if time.time() - start_time > timeout:
+                    logging.info(f"Live view Images not found in the respective folder {url_image_path} within 120 seconds. Skipping live view image addition to the report.")
+                    break
+                time.sleep(1)
+            if os.path.exists(url_image_path):
+                html_content = (
+                    '<div style="page-break-before: always;"></div>'
+                    f'<img src="file://{url_image_path}" style="width:1200px; height:800px;"></img>'
+                )
+
+                self.report.set_custom_html(html_content)
+            return
+
+        # One heatmap per cycle, captured by the webGUI as yt_<test>_1_cycle<N>.png
+        if not self.coordinate_visits:
+            logging.info("Robot reached no point; skipping live view heatmaps.")
+            return
+        last_cycle = max(cycle for _, cycle in self.coordinate_visits)
+        image_paths = {
+            cycle: os.path.join(image_dir, f"yt_{self.test_name}_1_cycle{cycle}.png")
+            for cycle in range(1, last_cycle + 1)
+        }
+
+        # Wait for the last cycle's image (captured last), then give the rest a short grace period.
+        deadline = time.time() + 60
+        while not os.path.exists(image_paths[last_cycle]) and time.time() < deadline:
             time.sleep(1)
-        if os.path.exists(url_image_path):
-            html_content = (
-                '<div style="page-break-before: always;"></div>'
-                f'<img src="file://{url_image_path}" style="width:1200px; height:800px;"></img>'
-            )
+        deadline = time.time() + 20
+        while not all(os.path.exists(path) for path in image_paths.values()) and time.time() < deadline:
+            time.sleep(1)
 
-            self.report.set_custom_html(html_content)
+        html_content = ""
+        for cycle, path in image_paths.items():
+            html_content += f'<div style="page-break-before: always;"></div><h3>Live View - Cycle {cycle}</h3>'
+            if os.path.exists(path):
+                html_content += f'<img src="file://{path}" style="width:1200px; height:800px;"></img>'
+            else:
+                logging.info(f"Live view heatmap for cycle {cycle} not found: {path}")
+                html_content += f'<p>Live view heatmap for cycle {cycle} was not captured.</p>'
+        self.report.set_custom_html(html_content)
 
     def stop_webui_test(self):
         try:
@@ -3358,7 +3445,7 @@ NOTES:
         robo.add_argument('--do_robo', help='Specify this flag to perform the test with robo', action='store_true')
         robo.add_argument('--do_bandsteering', help='Specify this flag to perform Bandsteering Scenario', action='store_true')
         robo.add_argument('--bssids', type=str, help='Comma-separated list of BSSIDs for bandsteering test')
-        robo.add_argument('--cycles', type=int, default=1, help='Number of cycles to perform bandsteering')
+        robo.add_argument('--cycles', type=int, default=1, help='Number of times the robot repeats the coordinate list (robot and bandsteering tests)')
 
         args = parser.parse_args()
 
