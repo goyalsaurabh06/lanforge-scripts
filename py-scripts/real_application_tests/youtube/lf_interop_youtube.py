@@ -342,7 +342,7 @@ class Youtube(Realm):
         self.pause = False
         self.cycles = max(1, int(cycles or 1))
         self.current_cycle = 1
-        # (coordinate, cycle) for every point the robot reached
+        # points reached, as (coordinate, cycle)
         self.coordinate_visits = []
         if self.do_robo:
             self.robo_obj = robo_base_class.RobotClass(
@@ -1041,6 +1041,7 @@ class Youtube(Realm):
             self.stop_webui_test()
         logger.info("Waiting 10 seconds for client cleanup and log uploads")
         time.sleep(10)
+        report_generated = False
         try:
             if args.do_robo and not args.do_bandsteering:
                 self.create_robo_report()
@@ -1050,6 +1051,7 @@ class Youtube(Realm):
                     self.ui_report_dir if args.do_webUI else "",
                     iot_summary=iot_summary,
                 )
+            report_generated = True
             logger.info("YouTube report generated: %s", self.report_path_date_time)
         finally:
             try:
@@ -1061,6 +1063,9 @@ class Youtube(Realm):
                     self.generic_endps_profile.cleanup()
                 except Exception:
                     logger.exception("Unable to clean up all YouTube endpoints")
+            # the webGUI waits for this before releasing the devices
+            if args.do_webUI:
+                self.mark_report_generated(report_generated)
 
     def get_youtube_lf_wifi_stats(self):
         """
@@ -2638,9 +2643,12 @@ class Youtube(Realm):
                 break
             self.current_cycle = visit_index // points_per_cycle + 1
             self.robo_obj.current_cycle = self.current_cycle
-            if visit_index % points_per_cycle == 0:
+            if self.cycles > 1 and visit_index % points_per_cycle == 0:
                 logging.info("Starting cycle %d of %d", self.current_cycle, self.cycles)
-            self.robo_obj.wait_for_battery()
+            _, battery_stopped = self.robo_obj.wait_for_battery()
+            if battery_stopped:
+                logging.error("Robot battery check stopped the test (battery unreadable or test stopped)")
+                return
             matched, aborted = self.robo_obj.move_to_coordinate(
                 coord=coordinate,
                 monitor_function=self.check_robo_stop,
@@ -2651,11 +2659,16 @@ class Youtube(Realm):
                 continue
             self.current_cord = coordinate
             self.coordinate_visits.append((coordinate, self.current_cycle))
+            cycle_text = f" (cycle {self.current_cycle} of {self.cycles})" if self.cycles > 1 else ""
+            logging.info("Reached coordinate %s%s", coordinate, cycle_text)
             if self.rotations_enabled:
                 for angle in self.angles_list:
                     if self.stop_signal:
                         break
-                    pause, _ = self.robo_obj.wait_for_battery()
+                    pause, battery_stopped = self.robo_obj.wait_for_battery()
+                    if battery_stopped:
+                        logging.error("Robot battery check stopped the test (battery unreadable or test stopped)")
+                        return
                     if pause and not self.return_to_point_after_charging(coordinate):
                         break
                     self.robo_obj.rotate_angle(angle_degree=angle)
@@ -2670,8 +2683,16 @@ class Youtube(Realm):
                         datetime.now().astimezone().isoformat(timespec="seconds"),
                     )
                     point_lost = False
+                    # check the battery every 5 minutes while measuring
+                    monitor_charge_time = datetime.now()
                     while (datetime.now() < end_time or not self.check_gen_cx()) and not self.stop_signal:
-                        pause, _ = self.robo_obj.wait_for_battery()
+                        pause = False
+                        if (datetime.now() - monitor_charge_time).total_seconds() >= 300:
+                            pause, battery_stopped = self.robo_obj.wait_for_battery()
+                            monitor_charge_time = datetime.now()
+                            if battery_stopped:
+                                logging.error("Robot battery check stopped the test (battery unreadable or test stopped)")
+                                return
                         if pause:
                             self.delete_existing_csvs_for_current_point()
                             self.generic_endps_profile.stop_cx()
@@ -2710,8 +2731,16 @@ class Youtube(Realm):
                     datetime.now().astimezone().isoformat(timespec="seconds"),
                 )
 
+                # check the battery every 5 minutes while measuring
+                monitor_charge_time = datetime.now()
                 while (datetime.now() < end_time or not self.check_gen_cx()) and not self.stop_signal:
-                    pause, _ = self.robo_obj.wait_for_battery()
+                    pause = False
+                    if (datetime.now() - monitor_charge_time).total_seconds() >= 300:
+                        pause, battery_stopped = self.robo_obj.wait_for_battery()
+                        monitor_charge_time = datetime.now()
+                        if battery_stopped:
+                            logging.error("Robot battery check stopped the test (battery unreadable or test stopped)")
+                            return
                     if pause:
                         self.delete_existing_csvs_for_current_point()
                         self.generic_endps_profile.stop_cx()
@@ -2737,7 +2766,7 @@ class Youtube(Realm):
                 )
 
     def return_to_point_after_charging(self, coordinate, angle=None):
-        """Drive back to the point (and angle) being measured after a charging pause.
+        """Go back to the point (and angle) after charging.
 
         Returns:
             bool: True if the robot is back in place, False if it could not reach the point.
@@ -2835,7 +2864,7 @@ class Youtube(Realm):
         logging.info("Band-Steering Test stopped")
 
     def remove_angle_data_from_csv(self, csv_file_path):
-        """Remove the current cycle's rows (and current angle's, with rotations) from a point's CSV."""
+        """Remove this visit's rows (current cycle and angle) from a point's CSV."""
         if not os.path.exists(csv_file_path):
             logging.info(f"CSV not found: {csv_file_path}")
             return
@@ -2874,7 +2903,7 @@ class Youtube(Realm):
             else:
                 csv_dir = os.path.dirname(os.path.abspath(__file__))
             csv_file_path = os.path.join(csv_dir, f"{self.current_cord}_{device_name}_youtube_stats_report.csv")
-            # with rotations or cycles the file also holds other visits' rows, so only this visit's rows go
+            # the file has other visits' rows too; remove only this visit's
             if self.rotations_enabled or self.cycles > 1:
                 self.remove_angle_data_from_csv(csv_file_path)
             elif os.path.isfile(csv_file_path):
@@ -2943,6 +2972,10 @@ class Youtube(Realm):
             }
 
         if self.do_robo:
+            test_setup_info['Robot IP'] = self.robo_ip
+            test_setup_info['Coordinates'] = ", ".join(self.coordinates_list)
+            if self.rotations_enabled:
+                test_setup_info['Rotations'] = ", ".join(str(angle) for angle in self.angles_list)
             test_setup_info['Total Cycles'] = self.cycles
         self.report.test_setup_table(
             test_setup_data=test_setup_info, value='Test Parameters')
@@ -3012,7 +3045,7 @@ class Youtube(Realm):
             return
 
         if "Cycle" in combined_data.columns:
-            # files are read point by point; put cycle 1 of every point before cycle 2
+            # keep cycles in time order
             combined_data = combined_data.sort_values("Cycle", kind="stable")
         combined_data = combined_data.drop_duplicates(subset='TimeStamp', keep='first')
 
@@ -3192,11 +3225,19 @@ class Youtube(Realm):
     def add_live_view_images_to_report(self):
         """
         This function looks for live view images for each floor
-        in the 'live_view_images' folder within `self.ui_report_dir`.
-        It waits up to 60 seconds for each image. If an image is found,
-        it's added to the report on a new page; otherwise, it's skipped.
+        in the 'live_view_images' folder within `self.ui_report_dir`
+        (one image per cycle for multi-cycle robot runs).
+        It waits up to 120 seconds (60 seconds for the last cycle's image, plus 20 for the rest). If an image is found,
+        it's added to the report on a new page; otherwise, a note is added in its place.
         """
         image_dir = os.path.join(self.ui_report_dir, "live_view_images")
+        if not self.coordinate_visits:
+            logging.info("Robot reached no point; skipping live view heatmaps.")
+            self.report.set_custom_html(
+                '<h3>Live View</h3>'
+                '<p><i>Live view heatmap is not available - the test did not complete any coordinate measurements.</i></p>')
+            return
+
         if self.cycles <= 1:
             url_image_path = os.path.join(image_dir, f"yt_{self.test_name}_1.png")
             timeout = 120  # seconds
@@ -3214,19 +3255,21 @@ class Youtube(Realm):
                 )
 
                 self.report.set_custom_html(html_content)
+            else:
+                self.report.set_custom_html(
+                    '<h3>Live View</h3>'
+                    '<p><i>Live view heatmap is not available - the capture may have failed or the browser '
+                    'was closed before it was uploaded.</i></p>')
             return
 
-        # One heatmap per cycle, captured by the webGUI as yt_<test>_1_cycle<N>.png
-        if not self.coordinate_visits:
-            logging.info("Robot reached no point; skipping live view heatmaps.")
-            return
+        # one heatmap per cycle: yt_<test>_1_cycle<N>.png
         last_cycle = max(cycle for _, cycle in self.coordinate_visits)
         image_paths = {
             cycle: os.path.join(image_dir, f"yt_{self.test_name}_1_cycle{cycle}.png")
             for cycle in range(1, last_cycle + 1)
         }
 
-        # Wait for the last cycle's image (captured last), then give the rest a short grace period.
+        # wait for the last image, then a short grace period for the rest
         deadline = time.time() + 60
         while not os.path.exists(image_paths[last_cycle]) and time.time() < deadline:
             time.sleep(1)
@@ -3236,13 +3279,27 @@ class Youtube(Realm):
 
         html_content = ""
         for cycle, path in image_paths.items():
-            html_content += f'<div style="page-break-before: always;"></div><h3>Live View - Cycle {cycle}</h3>'
             if os.path.exists(path):
-                html_content += f'<img src="file://{path}" style="width:1200px; height:800px;"></img>'
+                html_content += (f'<div style="page-break-before: always;"></div><h3>Live View - Cycle {cycle}</h3>'
+                                 f'<img src="file://{path}" style="width:1200px; height:800px;"></img>')
             else:
                 logging.info(f"Live view heatmap for cycle {cycle} not found: {path}")
-                html_content += f'<p>Live view heatmap for cycle {cycle} was not captured.</p>'
+                html_content += (f'<h3>Live View - Cycle {cycle}</h3>'
+                                 f'<p><i>Live view heatmap - Cycle {cycle} is not available - the capture may have failed '
+                                 'or the browser was closed before it was uploaded.</i></p>')
         self.report.set_custom_html(html_content)
+
+    def mark_report_generated(self, generated):
+        """Save the report status in running_status.json for the webGUI."""
+        try:
+            file = f"{self.ui_report_dir}/running_status.json"
+            with open(file, 'r') as file_handle:
+                data = json.load(file_handle)
+            data['report_generated'] = generated
+            with open(file, 'w') as file_handle:
+                json.dump(data, file_handle, indent=4)
+        except Exception as e:
+            logging.error(f"Unable to record report status: {e}", exc_info=True)
 
     def stop_webui_test(self):
         try:
