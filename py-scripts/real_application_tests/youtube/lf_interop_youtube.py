@@ -3161,11 +3161,13 @@ class Youtube(Realm):
             else:
                 logging.info(f"No valid data found for coordinate: {current_cord}. Skipping Frames graph generation.")
             return
-        cycle_text = f" - Cycle {cycle}" if cycle is not None else ""
-        if current_angle == "NA":
-            self.report.set_graph_title(f"Total Frames vs Dropped Frames at coordinate: {current_cord}{cycle_text}")
-        else:
-            self.report.set_graph_title(f"Total Frames vs Dropped Frames at coordinate: {current_cord} and angle: {current_angle}°{cycle_text}")
+        # e.g. "Point 1 | Angle 45° | Cycle 1"
+        title_text = f"Point {current_cord}"
+        if current_angle != "NA":
+            title_text += f" | Angle {float(current_angle):g}°"
+        if cycle is not None:
+            title_text += f" | Cycle {cycle}"
+        self.report.set_graph_title(f"Total vs Dropped Frames | {title_text}")
         self.report.build_graph_title()
         x_fig_size = 25
         y_fig_size = len(result_dict) * .5 + 4
@@ -3197,10 +3199,7 @@ class Youtube(Realm):
         graph_image = graph.build_bar_graph_horizontal()
         self.report.set_graph_image(graph_image)
         self.report.build_graph()
-        if self.rotations_enabled:
-            self.report.set_table_title(f'Test Results for coordinate: {current_cord} and angle: {current_angle}°{cycle_text}')
-        else:
-            self.report.set_table_title(f'Test Results for coordinate: {current_cord}{cycle_text}')
+        self.report.set_table_title(f"Test Results | {title_text}")
         self.report.build_table_title()
 
         test_results = {
