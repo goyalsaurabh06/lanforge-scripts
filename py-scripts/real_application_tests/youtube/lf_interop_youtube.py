@@ -354,7 +354,7 @@ class Youtube(Realm):
                 angle_list=angles_list
             )
             if self.do_webUI:
-                # same as throughput: the robot stops moving/charging when the webUI marks the test stopped
+                # the robot stops moving/charging when the webUI marks the test stopped
                 self.robo_obj.runtime_dir = self.ui_report_dir
                 self.robo_obj.ip = self.host
                 self.robo_obj.testname = self.test_name
@@ -1229,7 +1229,9 @@ class Youtube(Realm):
                         self.stats_api_response[device_name] = {}
                     self.stats_api_response[device_name] = {
                         **stats,
-                        "stop": stop
+                        "stop": stop,
+                        # lets the webGUI ignore stats left over from another test's script
+                        "test_name": self.test_name,
                     }
 
                     if self.do_robo:
@@ -2816,7 +2818,7 @@ class Youtube(Realm):
             monitor_function=self.check_robo_stop,
         )
         if aborted:
-            # like throughput: an abort on the way back ends the run
+            # an abort on the way back ends the run
             logging.info("Robot move aborted after charging; ending the robot run")
             self.stop_signal = True
             return False
@@ -2834,25 +2836,13 @@ class Youtube(Realm):
             datetime.now().astimezone().isoformat(timespec="seconds"),
         )
 
-        if self.do_webUI:
-            base_dir = os.path.dirname(os.path.dirname(self.ui_report_dir))
-            self.robo_obj.nav_data_path = os.path.join(base_dir, 'nav_data.json')
         self.robo_obj.total_cycles = self.cycles
         self.robo_obj.coordinate_list = self.coordinates_list
         coordinate_list_with_robo = self.robo_obj.get_coordinates_list()
         self.wait_stop_aware(5, "before band-steering coordinate traversal")
-        bandsteering_cycle = 0
         for coordinate in coordinate_list_with_robo:
             if self.stop_signal:
                 break
-            # like throughput: a new cycle starts at the first coordinate
-            if self.coordinates_list and coordinate == self.coordinates_list[0]:
-                bandsteering_cycle += 1
-                if bandsteering_cycle > self.cycles:
-                    logging.info("Completed all %d cycles", self.cycles)
-                else:
-                    logging.info("current cycle %d", bandsteering_cycle)
-                    self.robo_obj.current_cycle = bandsteering_cycle
             logging.info(f"Moving robot to coordinate: {coordinate}")
             if self.to_coordinate == "":
                 self.to_coordinate = coordinate
@@ -2861,12 +2851,9 @@ class Youtube(Realm):
                 self.from_coordinate = self.to_coordinate
                 self.to_coordinate = coordinate
 
-            battery_result = self.robo_obj.wait_for_battery(
+            self.robo_obj.wait_for_battery(
                 monitor_function=self.check_robo_stop
             )
-            if battery_result[1]:
-                logging.error("Robot battery check stopped the test (battery unreadable or test stopped)")
-                break
 
             matched, abort = self.robo_obj.move_to_coordinate(
                 coord=coordinate,
@@ -3309,7 +3296,7 @@ class Youtube(Realm):
                 '<p><i>Live view heatmap is not available - the test did not complete any coordinate measurements.</i></p>')
             return
 
-        # like throughput: wait for the webGUI capture only if some point finished measuring
+        # wait for the webGUI capture only if some point finished measuring
         have_data = bool(self.coordinates_finished)
         reason = ("the capture may have failed or the browser was closed before it was uploaded" if have_data
                   else "the test did not complete any coordinate measurements")
@@ -3704,7 +3691,7 @@ NOTES:
                 linux_dir=args.linux_dir,
                 mac_dir=args.mac_dir)
             if args.do_robo:
-                # how long the robot may be stuck before a point is skipped (minutes, like throughput)
+                # how long the robot may be stuck before a point is skipped (minutes)
                 youtube.robo_obj.time_to_reach = int(float(args.robot_wait_duration or 1) * 60)
             youtube.handle_flask_server()
             args.upstream_port = youtube.change_port_to_ip(args.upstream_port)
