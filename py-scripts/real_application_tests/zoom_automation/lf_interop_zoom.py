@@ -271,17 +271,21 @@ class ZoomAutomation(Realm):
         self.client_secret = None
         self.api_stats_collection = api_stats_collection
         self.do_webui = do_webui
-        self.cycles = cycles
+        self.cycles = max(1, int(cycles or 1)) if self.do_robo else cycles
+        self.current_cycle = 1
+        self.cycle_tag = ""
+        self.coordinate_visits = []
         self.from_cord = None
         self.to_cord = None
         self.bssids = bssids or []
         logger.info("Zoom Automation Initialized with the following parameters:")
-        if self.do_bs:
+        if self.do_robo or self.do_bs:
             self.robo_obj.coordinate_list = self.coordinates_list
             self.robo_obj.total_cycles = self.cycles
             logger.info(
                 f"User mentioned coordinates list: {self.robo_obj.coordinate_list}"
             )
+            logger.info(f"Initial cycle: {self.current_cycle} of {self.cycles}")
         self.successful_coords = []  # robot reached the coordinate
         self.failed_coords = []  # robot never got there
         self.failed_angles = {}  # {coordinate: [angles]} it could not rotate to
@@ -572,6 +576,8 @@ class ZoomAutomation(Realm):
 
                         if self.do_robo or self.do_bs:
                             stats["current_cord"] = self.current_cord
+                            if self.do_robo and self.cycles > 1:
+                                stats["current_cycle"] = self.current_cycle
                             if self.rotations_enabled:
                                 stats["rotations_enabled"] = self.rotations_enabled
                                 stats["current_angle"] = self.current_angle
@@ -580,9 +586,9 @@ class ZoomAutomation(Realm):
 
                         if self.do_robo:
                             if self.rotations_enabled:
-                                csv_name = f"{hostname}_{self.current_cord}_{self.current_angle}.csv"
+                                csv_name = f"{hostname}_{self.current_cord}_{self.current_angle}{self.cycle_tag}.csv"
                             else:
-                                csv_name = f"{hostname}_{self.current_cord}.csv"
+                                csv_name = f"{hostname}_{self.current_cord}{self.cycle_tag}.csv"
                         else:
                             csv_name = f"{hostname}.csv"
 
@@ -611,11 +617,11 @@ class ZoomAutomation(Realm):
                         if self.rotations_enabled:
                             csv_file = os.path.join(
                                 self.path,
-                                f"{hostname}_{self.current_cord}_{self.current_angle}.csv",
+                                f"{hostname}_{self.current_cord}_{self.current_angle}{self.cycle_tag}.csv",
                             )
                         else:
                             csv_file = os.path.join(
-                                self.path, f"{hostname}_{self.current_cord}.csv"
+                                self.path, f"{hostname}_{self.current_cord}{self.cycle_tag}.csv"
                             )
                     else:
                         csv_file = os.path.join(self.path, f"{hostname}.csv")
@@ -789,9 +795,9 @@ class ZoomAutomation(Realm):
                 hostname = os.path.basename(hostname.strip())
                 if self.do_robo:
                     if self.rotations_enabled:
-                        log_name = f"{hostname}_{self.current_cord}_{self.current_angle}.log"
+                        log_name = f"{hostname}_{self.current_cord}_{self.current_angle}{self.cycle_tag}.log"
                     else:
-                        log_name = f"{hostname}_{self.current_cord}.log"
+                        log_name = f"{hostname}_{self.current_cord}{self.cycle_tag}.log"
                 else:
                     log_name = f"{hostname}.log"
                 save_path = os.path.join(log_dir, log_name)
@@ -1314,9 +1320,9 @@ class ZoomAutomation(Realm):
 
     def delete_current_csv_files(self):
         filename_pattern = (
-            f"*_{self.current_cord}_{self.current_angle}.csv"
+            f"*_{self.current_cord}_{self.current_angle}{self.cycle_tag}.csv"
             if self.rotations_enabled
-            else f"*_{self.current_cord}.csv"
+            else f"*_{self.current_cord}{self.cycle_tag}.csv"
         )
         csv_files_pattern = os.path.join(self.path, filename_pattern)
         csv_files = glob.glob(csv_files_pattern)
@@ -2042,7 +2048,7 @@ class ZoomAutomation(Realm):
 
         if self.do_robo:
             json_name = (
-                f"{meeting_id}_{self.current_cord}_{self.current_angle}_qos.json"
+                f"{meeting_id}_{self.current_cord}_{self.current_angle}{self.cycle_tag}_qos.json"
             )
         else:
             json_name = f"{meeting_id}_qos.json"
@@ -2089,6 +2095,8 @@ class ZoomAutomation(Realm):
 
                     if self.do_robo or self.do_bs:
                         stats["current_cord"] = self.current_cord
+                        if self.do_robo and self.cycles > 1:
+                            stats["current_cycle"] = self.current_cycle
                         if self.rotations_enabled:
                             stats["rotations_enabled"] = self.rotations_enabled
                             stats["current_angle"] = self.current_angle
@@ -2097,9 +2105,9 @@ class ZoomAutomation(Realm):
 
                     if self.do_robo:
                         if self.rotations_enabled:
-                            csv_name = f"{final_filename}_{self.current_cord}_{self.current_angle}.csv"
+                            csv_name = f"{final_filename}_{self.current_cord}_{self.current_angle}{self.cycle_tag}.csv"
                         else:
-                            csv_name = f"{final_filename}_{self.current_cord}.csv"
+                            csv_name = f"{final_filename}_{self.current_cord}{self.cycle_tag}.csv"
                     else:
                         csv_name = f"{final_filename}.csv"
 
@@ -2254,11 +2262,11 @@ class ZoomAutomation(Realm):
         if self.do_robo:
             self.save_json(
                 self._get_summary_zoom_stats(),
-                f"{self.remote_login_url}_{self.current_cord}_{self.current_angle}_qos.json",
+                f"{self.remote_login_url}_{self.current_cord}_{self.current_angle}{self.cycle_tag}_qos.json",
             )
             self.save_json(
                 self._get_raw_zoom_stats(),
-                f"{self.remote_login_url}_{self.current_cord}_{self.current_angle}_raw_qos.json",
+                f"{self.remote_login_url}_{self.current_cord}_{self.current_angle}{self.cycle_tag}_raw_qos.json",
             )
         else:
             self.save_json(
@@ -3386,9 +3394,58 @@ class ZoomAutomation(Realm):
                 exc_info=True,
             )
 
-    def add_live_view_images_to_report(self):
-        """Wait for the Floor 1 video and audio heatmaps, then add them."""
+    def add_live_view_images_to_report(self, cycle=None):
+        """Add the live heatmaps, or the averaged maps for one Robot cycle."""
+        if not self.do_webui:
+            return
         live_view_dir = os.path.join(self.path, "live_view_images")
+        if cycle is not None:
+            floor_count = 1
+            running_json = os.path.join(
+                self.path, "..", "..", "Running_instances",
+                f"{self.mgr_ip}_{self.testname}_running.json",
+            )
+            try:
+                with open(running_json) as source:
+                    floors = json.load(source).get("test_values", {}).get(
+                        "stored_scenario_json_data", {}
+                    ).get("floors", {})
+                    floor_count = max(1, len(floors))
+            except (OSError, ValueError, AttributeError):
+                logger.warning("Floor configuration unavailable; using Floor 1 for cycle heatmaps")
+
+            images = [
+                (media, floor, os.path.join(
+                    live_view_dir, f"zoom_{media}_{self.testname}_floor{floor}_cycle{cycle}.png"
+                ))
+                for floor in range(1, floor_count + 1)
+                for media in ("video", "audio")
+                if getattr(self, media)
+            ]
+            # All cycles share one bounded wait, including a partial/aborted last cycle.
+            if not hasattr(self, "_cycle_heatmap_deadline"):
+                self._cycle_heatmap_deadline = time.monotonic() + 90
+            have_stats = bool(glob.glob(os.path.join(
+                self.path, "zoom_api_responses", f"*_cycle{cycle}_qos.json"
+            )))
+            while have_stats and not all(os.path.exists(path) for _, _, path in images):
+                if time.monotonic() >= self._cycle_heatmap_deadline:
+                    logger.warning(f"Timed out waiting for Cycle {cycle} heatmaps")
+                    break
+                time.sleep(1)
+            for media, floor, path in images:
+                heading = f"Average {media.title()} Bitrate Sent Heatmap - Cycle {cycle} - Floor {floor}"
+                content = (
+                    '<div style="page-break-before: always;"></div>'
+                    f'<h3 style="text-align:center;">{heading}</h3>'
+                )
+                if os.path.exists(path):
+                    content += f'<img src="file://{path}" style="width:1200px; height:800px;">'
+                else:
+                    content += '<p>Heatmap unavailable: no measurements or the WebUI capture was not received.</p>'
+                self.report.set_custom_html(content)
+                self.report.build_custom()
+            return
 
         video_img_name = f"zoom_video_{self.testname}_floor1.png"
         audio_img_name = f"zoom_audio_{self.testname}_floor1.png"
@@ -3420,19 +3477,20 @@ class ZoomAutomation(Realm):
         if os.path.exists(video_path):
             html_content += (
                 '<div style="page-break-before: always;"></div>'
-                '<h3 style="text-align:center;">Video Heatmap</h3>'
+                '<h3 style="text-align:center;">Average Video Bitrate Sent Heatmap</h3>'
                 f'<div style="text-align:center;"><img src="file://{video_path}" style="width:1200px; height:800px;"></img></div>'
             )
 
         if os.path.exists(audio_path):
             html_content += (
                 '<div style="page-break-before: always;"></div>'
-                '<h3 style="text-align:center;">Audio Heatmap</h3>'
+                '<h3 style="text-align:center;">Average Audio Bitrate Sent Heatmap</h3>'
                 f'<div style="text-align:center;"><img src="file://{audio_path}" style="width:1200px; height:800px;"></img></div>'
             )
 
         if html_content:
             self.report.set_custom_html(html_content)
+            self.report.build_custom()
 
     def generate_report_from_api(self):
         self.report = lf_report(
@@ -4151,8 +4209,9 @@ class ZoomAutomation(Realm):
         )
         self.report.build_text_simple()
 
-        self.report.set_table_title("Test Parameters:")
-        self.report.build_table_title()
+        if not (self.do_webui and self.do_robo):
+            self.report.set_table_title("Test Parameters:")
+            self.report.build_table_title()
 
         testtype = (
             "AUDIO & VIDEO"
@@ -4185,15 +4244,25 @@ class ZoomAutomation(Realm):
             param_data["Configuration"] = gp_map
             param_data["Configured Devices"] = self.hostname_os_combination
 
-        self.report.set_table_dataframe(pd.DataFrame([param_data]))
-        self.report.build_table()
+        if self.do_robo and self.cycles > 1:
+            param_data["Total Cycles"] = self.cycles
+
+        if self.do_webui and self.do_robo:
+            param_data["Test Name"] = self.testname
+            param_data["ROBOT IP"] = self.robo_ip
+            param_data["Selected Coordinates"] = ", ".join(map(str, self.coordinates_list))
+            if self.rotations_enabled:
+                param_data["Selected Angles"] = ", ".join(map(str, self.angles_list))
+            self.report.test_setup_table(test_setup_data=param_data, value="Test Configuration")
+        else:
+            self.report.set_table_dataframe(pd.DataFrame([param_data]))
+            self.report.build_table()
 
         self._generate_robo_per_location_report()
 
-        if self.do_webui:
+        if self.do_webui and self.cycles <= 1:
             self.add_live_view_images_to_report()
 
-        self.report.build_custom()
         self.report.write_html()
         self.report.write_pdf(_page_size="Legal", _orientation="Landscape")
         self._move_report_files(report_path_date_time)
@@ -4205,7 +4274,16 @@ class ZoomAutomation(Realm):
         """
         coords = self.coordinates_list if self.coordinates_list else ["0,0,0"]
 
-        for coord in coords:
+        visits = self.coordinate_visits if self.cycles > 1 else [(coord, 1) for coord in coords]
+        previous_cycle = None
+        for coord, cycle in visits:
+            if self.cycles > 1 and cycle != previous_cycle:
+                self.report.set_table_title(f"Cycle {cycle} Results")
+                self.report.build_table_title()
+                if self.do_webui:
+                    self.add_live_view_images_to_report(cycle=cycle)
+                previous_cycle = cycle
+            cycle_tag = f"_cycle{cycle}" if self.cycles > 1 else ""
             if self.rotations_enabled and self.angles_list:
                 angles_loop = self.angles_list
             else:
@@ -4216,10 +4294,25 @@ class ZoomAutomation(Realm):
                     heading = f"Audio and Video graphs at coordinate {coord} and angle {angle}"
                 else:
                     heading = f"Audio and Video graphs at coordinate {coord}"
-                self.report.set_table_title(heading)
-                self.report.build_table_title()
+                if self.cycles > 1:
+                    heading += f" - Cycle {cycle}"
+                if self.do_webui:
+                    point_title = f"Point {coord}"
+                    if self.cycles > 1:
+                        point_title += f" – Cycle {cycle}"
+                    if self.rotations_enabled:
+                        point_title += f" – Angle {angle}"
+                    self.report.set_obj_html(
+                        _obj_title=("<h3 style='text-decoration: underline;'>"
+                                    f"Zoom Test Details – Robot Position: {point_title}</h3>"),
+                        _obj=" ",
+                    )
+                    self.report.build_objective()
+                else:
+                    self.report.set_table_title(heading)
+                    self.report.build_table_title()
 
-                json_pattern = f"*_{coord}_{angle}_qos.json"
+                json_pattern = f"*_{coord}_{angle}{cycle_tag}_qos.json"
                 file_path = os.path.join(self.path, "zoom_api_responses", json_pattern)
                 found_files = glob.glob(file_path)
                 device_data = {}
@@ -4239,7 +4332,7 @@ class ZoomAutomation(Realm):
                     continue
 
                 if self.audio:
-                    suffix = f"_{coord}_{angle}"
+                    suffix = f"_{coord}_{angle}{cycle_tag}"
                     self._build_metric_graph(
                         "Audio", "Bitrate", "Kbps", device_data,
                         "audio_input_bitrate_avg", "audio_output_bitrate_avg", suffix,
@@ -4259,7 +4352,7 @@ class ZoomAutomation(Realm):
                     self._build_results_table(device_data, "audio")
 
                 if self.video:
-                    suffix = f"_{coord}_{angle}"
+                    suffix = f"_{coord}_{angle}{cycle_tag}"
                     self._build_metric_graph(
                         "Video", "Bitrate", "Kbps", device_data,
                         "video_input_bitrate_avg", "video_output_bitrate_avg", suffix,
@@ -4351,19 +4444,21 @@ class ZoomAutomation(Realm):
     def _move_report_files(self, report_path_date_time):
         """Move CSVs and robo JSONs into the report folder."""
         if self.do_robo:
-            for coord in self.coordinates_list:
+            visits = self.coordinate_visits if self.cycles > 1 else [(coord, 1) for coord in self.coordinates_list]
+            for coord, cycle in visits:
+                cycle_tag = f"_cycle{cycle}" if self.cycles > 1 else ""
                 if self.rotations_enabled:
                     for angle in self.angles_list:
                         for client in self.real_sta_hostname:
                             csv_path = os.path.join(
                                 self.path,
-                                f"{client}_{coord}_{angle}.csv",
+                                f"{client}_{coord}_{angle}{cycle_tag}.csv",
                             )
                             if os.path.exists(csv_path):
                                 self.move_files(csv_path, report_path_date_time)
                 else:
                     for client in self.real_sta_hostname:
-                        csv_path = os.path.join(self.path, f"{client}_{coord}.csv")
+                        csv_path = os.path.join(self.path, f"{client}_{coord}{cycle_tag}.csv")
                         if os.path.exists(csv_path):
                             self.move_files(csv_path, report_path_date_time)
 
@@ -4407,12 +4502,19 @@ class ZoomAutomation(Realm):
         logger.info(
             f"Robo test coordinates to be visited ({len(self.coordinates_list)} total): {self.coordinates_list}"
         )
-        for coordinate in self.coordinates_list:
+        points_per_cycle = len(self.coordinates_list)
+        for visit_index, coordinate in enumerate(self.coordinates_list * self.cycles):
+            self.current_cycle = visit_index // points_per_cycle + 1
+            self.robo_obj.current_cycle = self.current_cycle
+            self.cycle_tag = f"_cycle{self.current_cycle}" if self.cycles > 1 else ""
+            if visit_index % points_per_cycle == 0:
+                logger.info(f"Starting cycle {self.current_cycle} of {self.cycles}")
             self.robo_obj.wait_for_battery()
             matched, aborted = self.robo_obj.move_to_coordinate(coord=coordinate)
             if matched:
                 self.current_cord = coordinate
                 self.successful_coords.append(coordinate)
+                self.coordinate_visits.append((coordinate, self.current_cycle))
             else:
                 self.failed_coords.append(coordinate)
             if aborted:
@@ -4755,7 +4857,7 @@ def main():
             action="store_true",
         )
         roaming_group.add_argument(
-            "--cycles", type=int, default=1, help="Number of cycles to run the test"
+            "--cycles", type=int, default=1, help="Number of times to repeat the robot coordinate list"
         )
         roaming_group.add_argument(
             "--wait_at_point",
