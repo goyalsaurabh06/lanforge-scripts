@@ -3520,7 +3520,7 @@ class ZoomAutomation(Realm):
                         "PASSWORD": self.signin_passwd,
                         "HOST": self.real_sta_list[0],
                         "TEST TYPE": testtype,
-                        "Iterations": self.cycles,
+                        "Cycles": self.cycles,
                     }
                 ]
             )
@@ -3545,7 +3545,7 @@ class ZoomAutomation(Realm):
                 if self.continuous_robo:
                     test_params_list[0].update(
                         {
-                            "Iterations": self.cycles,
+                            "Cycles": self.cycles,
                         }
                     )
             test_parameters = pd.DataFrame(test_params_list)
@@ -3555,7 +3555,7 @@ class ZoomAutomation(Realm):
             )
         if self.continuous_robo:
             test_parameters["Test Duration"] = "Until route completes"
-            test_parameters["Iterations"] = self.cycles
+            test_parameters["Cycles"] = self.cycles
         self.report.set_table_dataframe(test_parameters)
         self.report.build_table()
 
@@ -3654,7 +3654,7 @@ class ZoomAutomation(Realm):
             )
             self.report.build_text_simple()
 
-            self.report.set_graph_title("a. Audio Bitrate (Recevied/Sent)")
+            self.report.set_graph_title("a. Audio Bitrate (Received/Sent)")
             self.report.build_graph_title()
             x_data_set = [
                 [
@@ -3682,7 +3682,7 @@ class ZoomAutomation(Realm):
                 _color_name=["blue", "orange"],
                 _show_bar_value=True,
                 _figsize=(x_fig_size, y_fig_size),
-                _graph_title="Audio Bitrate(Recevied/Sent)",
+                _graph_title="Audio Bitrate(Received/Sent)",
                 _graph_image_name="Audio Bitrate(Recevied and Sent)",
                 _label=["Avg Recv", "Avg Sent"],
             )
@@ -3691,7 +3691,7 @@ class ZoomAutomation(Realm):
             self.report.move_graph_image()
             self.report.build_graph()
 
-            self.report.set_graph_title("b. Audio Latency (Recevied/Sent)")
+            self.report.set_graph_title("b. Audio Latency (Received/Sent)")
             self.report.build_graph_title()
             x_data_set = [
                 [
@@ -3727,7 +3727,7 @@ class ZoomAutomation(Realm):
             self.report.move_graph_image()
             self.report.build_graph()
 
-            self.report.set_graph_title("c. Audio Jitter (Recevied/Sent)")
+            self.report.set_graph_title("c. Audio Jitter (Received/Sent)")
             self.report.build_graph_title()
             x_data_set = [
                 [
@@ -3763,7 +3763,7 @@ class ZoomAutomation(Realm):
             self.report.move_graph_image()
             self.report.build_graph()
 
-            self.report.set_graph_title("d. Audio Packet Loss (Recevied/Sent)")
+            self.report.set_graph_title("d. Audio Packet Loss (Received/Sent)")
             self.report.build_graph_title()
             x_data_set = [
                 [
@@ -3790,7 +3790,7 @@ class ZoomAutomation(Realm):
                 _color_name=["blue", "orange"],
                 _show_bar_value=True,
                 _figsize=(x_fig_size, y_fig_size),
-                _graph_title="Audio Packet Loss(Recevied/Sent)",
+                _graph_title="Audio Packet Loss(Received/Sent)",
                 _graph_image_name="Audio Packet Loss(Recevied and Sent)",
                 _label=["Avg Recv", "Avg Sent"],
             )
@@ -3804,7 +3804,7 @@ class ZoomAutomation(Realm):
             audio_test_details = pd.DataFrame(
                 {
                     "Device Name": [client for client in self.real_sta_hostname],
-                    "Avg Bitrate (kbps) [Recevied/Sent]": [
+                    "Avg Bitrate (kbps) [Received/Sent]": [
                         "{}/{}".format(
                             (
                                 device_data.get(client, {}).get(
@@ -3821,7 +3821,7 @@ class ZoomAutomation(Realm):
                         )
                         for index, client in enumerate(self.real_sta_hostname)
                     ],
-                    "Avg Latency (ms) [Recevied/Sent]": [
+                    "Avg Latency (ms) [Received/Sent]": [
                         "{}/{}".format(
                             (
                                 device_data.get(client, {}).get(
@@ -3838,7 +3838,7 @@ class ZoomAutomation(Realm):
                         )
                         for index, client in enumerate(self.real_sta_hostname)
                     ],
-                    "Avg Jitter (ms) [Recevied/Sent]": [
+                    "Avg Jitter (ms) [Received/Sent]": [
                         "{}/{}".format(
                             (
                                 device_data.get(client, {}).get(
@@ -3855,7 +3855,7 @@ class ZoomAutomation(Realm):
                         )
                         for index, client in enumerate(self.real_sta_hostname)
                     ],
-                    "Avg Pkt Loss (%) [Recevied/Sent]": [
+                    "Avg Pkt Loss (%) [Received/Sent]": [
                         "{}/{}".format(
                             (
                                 device_data.get(client, {}).get(
@@ -3890,7 +3890,7 @@ class ZoomAutomation(Realm):
             )
             self.report.build_text_simple()
 
-            self.report.set_graph_title("a. Video Bitrate (Recevied/Sent)")
+            self.report.set_graph_title("a. Video Bitrate (Received/Sent)")
             self.report.build_graph_title()
             x_data_set = [
                 [
@@ -3917,7 +3917,7 @@ class ZoomAutomation(Realm):
                 _color_name=["blue", "orange"],
                 _show_bar_value=True,
                 _figsize=(x_fig_size, y_fig_size),
-                _graph_title="Video Bitrate(Recevied/Sent)",
+                _graph_title="Video Bitrate(Received/Sent)",
                 _graph_image_name="Video Bitrate(Recevied and Sent)",
                 _label=["Avg Recv", "Avg Sent"],
             )
@@ -3926,7 +3926,7 @@ class ZoomAutomation(Realm):
             self.report.move_graph_image()
             self.report.build_graph()
 
-            self.report.set_graph_title("b. Video Latency (Recevied/Sent)")
+            self.report.set_graph_title("b. Video Latency (Received/Sent)")
             self.report.build_graph_title()
             x_data_set = [
                 [
@@ -3953,7 +3953,7 @@ class ZoomAutomation(Realm):
                 _color_name=["blue", "orange"],
                 _show_bar_value=True,
                 _figsize=(x_fig_size, y_fig_size),
-                _graph_title="Video Latency(Recevied/Sent)",
+                _graph_title="Video Latency(Received/Sent)",
                 _graph_image_name="Video Latency(Recevied and Sent)",
                 _label=["Avg Recv", "Avg Sent"],
             )
@@ -3962,7 +3962,7 @@ class ZoomAutomation(Realm):
             self.report.move_graph_image()
             self.report.build_graph()
 
-            self.report.set_graph_title("c. Video Jitter (Recevied/Sent)")
+            self.report.set_graph_title("c. Video Jitter (Received/Sent)")
             self.report.build_graph_title()
             x_data_set = [
                 [
@@ -3989,7 +3989,7 @@ class ZoomAutomation(Realm):
                 _color_name=["blue", "orange"],
                 _show_bar_value=True,
                 _figsize=(x_fig_size, y_fig_size),
-                _graph_title="Video Jitter(Recevied/Sent)",
+                _graph_title="Video Jitter(Received/Sent)",
                 _graph_image_name="Video Jitter(Recevied and sent)",
                 _label=["Avg Recv", "Avg Sent"],
             )
@@ -3998,7 +3998,7 @@ class ZoomAutomation(Realm):
             self.report.move_graph_image()
             self.report.build_graph()
 
-            self.report.set_graph_title("d. Video Packet Loss (Recevied/Sent)")
+            self.report.set_graph_title("d. Video Packet Loss (Received/Sent)")
             self.report.build_graph_title()
             x_data_set = [
                 [
@@ -4025,7 +4025,7 @@ class ZoomAutomation(Realm):
                 _color_name=["blue", "orange"],
                 _show_bar_value=True,
                 _figsize=(x_fig_size, y_fig_size),
-                _graph_title="Video Packet Loss(Recevied/Sent)",
+                _graph_title="Video Packet Loss(Received/Sent)",
                 _graph_image_name="Video Packet Loss(Recevied and Sent)",
                 _label=["Avg Recv", "Avg Sent"],
             )
@@ -4039,7 +4039,7 @@ class ZoomAutomation(Realm):
             video_test_details = pd.DataFrame(
                 {
                     "Device Name": [client for client in self.real_sta_hostname],
-                    "Avg Bitrate (kbps) [Recevied/Sent]": [
+                    "Avg Bitrate (kbps) [Received/Sent]": [
                         "{}/{}".format(
                             (
                                 device_data.get(client, {}).get(
@@ -4056,7 +4056,7 @@ class ZoomAutomation(Realm):
                         )
                         for index, client in enumerate(self.real_sta_hostname)
                     ],
-                    "Avg Latency (ms) [Recevied/Sent]": [
+                    "Avg Latency (ms) [Received/Sent]": [
                         "{}/{}".format(
                             (
                                 device_data.get(client, {}).get(
@@ -4090,7 +4090,7 @@ class ZoomAutomation(Realm):
                         )
                         for index, client in enumerate(self.real_sta_hostname)
                     ],
-                    "Avg Pkt Loss (%) [Recevied/Sent]": [
+                    "Avg Pkt Loss (%) [Received/Sent]": [
                         "{}/{}".format(
                             (
                                 device_data.get(client, {}).get(
