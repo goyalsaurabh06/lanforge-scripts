@@ -41,6 +41,7 @@ import json
 import logging
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -48,7 +49,6 @@ import tempfile
 import time
 import traceback
 from contextlib import contextmanager
-from io import BytesIO
 from pathlib import Path
 
 try:
@@ -76,8 +76,7 @@ if os.name == 'nt':
 else:
     import fcntl
 
-# The PDF worker sets up its dependencies before loading browser/PDF modules.
-# It does not need the normal report's pandas, pdfkit, or matplotlib imports.
+# The PDF worker does not need the report-building libraries.
 _IS_PDF_WORKER = __name__ == '__main__' and '--pdf-worker' in sys.argv[1:]
 if not _IS_PDF_WORKER:
     import pandas as pd
@@ -107,7 +106,6 @@ _PDF_PRINT_CSS = """
   th, td { overflow-wrap: anywhere; padding: 5px 6px !important; }
   table.data-table th { position: static; }
   th.sortable::after { display: none; }
-  table.data-table, table.device-table { font-size: 10pt; }
   table.pdf-table-compact th, table.pdf-table-compact td {
     padding: 4px 3px !important; white-space: normal !important;
     overflow-wrap: anywhere;
@@ -122,10 +120,44 @@ _PDF_PRINT_CSS = """
   .chart.pdf-compact-chart { height: var(--pdf-chart-height, 95mm) !important; }
   .chart-card:has(.chart), .chart-card:has(img), .device-summary-row { break-inside: avoid; }
   .chart-card img { max-width: 100%; max-height: 165mm; object-fit: contain; }
-  .info-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-  .info-item { padding: 8px; }
   #BannerBack { padding: 16px 20px; break-inside: avoid; }
-  .FooterStyle { margin: 10px 0; padding: 8px; }
+  .FooterStyle { margin: 10px 0; padding: 8px; break-inside: avoid; }
+  html body, .report-shell p, .report-shell li { font-size: 8pt !important; }
+  .report-shell p { font-size: 11pt !important; }
+  .report-shell .info-card > ul > li { font-size: 11pt !important; }
+  .report-shell .info-item-label { margin-bottom: 6px; }
+  .report-shell .info-grid {
+    display: flex !important;
+    flex-wrap: wrap;
+    gap: 14px;
+    align-items: stretch;
+  }
+  .report-shell .info-item {
+    flex: 0 1 auto;
+    width: auto;
+    min-width: 36mm;
+    max-width: 100%;
+    padding: 12px 18px !important;
+    box-sizing: border-box;
+  }
+  .report-shell h1 { font-size: 22pt !important; }
+  .report-shell h2 { font-size: 16pt !important; }
+  .report-shell h3, .report-shell .info-card-header { font-size: 14pt !important; }
+  .report-shell h4 { font-size: 10pt !important; }
+  .report-shell .info-label, .report-shell .stat-label { font-size: 7pt !important; }
+  .report-shell .info-value { font-size: 8pt !important; }
+  .report-shell table, .report-shell table th, .report-shell table td { font-size: 8pt !important; }
+  .report-shell table td.network-identifier {
+    white-space: nowrap !important;
+    overflow-wrap: normal !important;
+    word-break: normal !important;
+  }
+  .report-shell table th {
+    white-space: normal !important;
+    overflow-wrap: normal !important;
+    word-break: normal !important;
+    hyphens: none !important;
+  }
 }
 """
 
@@ -722,17 +754,7 @@ _TABLE_SEARCH_JS = """
 
 @contextmanager
 def installation_lock(path, timeout=900):
-    """Holds an OS-level file lock while PDF dependencies are installed, so two processes
-    don't try to install them at the same time. The lock is released on process exit,
-    including crashes.
-
-    Args:
-        path (str): lock file path.
-        timeout (int): seconds to wait for the lock before giving up.
-
-    Returns:
-        None
-    """
+    """Prevent concurrent PDF dependency installations."""
     with open(path, 'a+b') as handle:
         handle.seek(0)
         if not handle.read(1):
@@ -762,14 +784,7 @@ def installation_lock(path, timeout=900):
 
 
 def run_install(arguments):
-    """Runs a pip/playwright install command in a subprocess and raises if it fails.
-
-    Args:
-        arguments (list): command and args to run after "python -m", e.g. ["pip", "install", "foo"].
-
-    Returns:
-        None
-    """
+    """Run a PDF dependency installer through the current Python interpreter."""
     print('Setting up PDF dependencies: ' + ' '.join(arguments), file=sys.stderr, flush=True)
     try:
         result = subprocess.run([sys.executable, '-m', *arguments], capture_output=True,
@@ -789,7 +804,6 @@ def ensure_dependencies():
                     if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
                     and node.target.id == 'pip_packages')
     requirement = next(package for package in packages if package.startswith('playwright=='))
-    pdf_requirement = next(package for package in packages if package.startswith('pypdf=='))
     configured = os.environ.get('PLAYWRIGHT_BROWSERS_PATH')
     if configured == '0':
         raise RuntimeError('Use a persistent directory for PLAYWRIGHT_BROWSERS_PATH, not 0')
@@ -799,16 +813,15 @@ def ensure_dependencies():
     browser_dir.mkdir(parents=True, exist_ok=True)
     auto_install = os.environ.get('LF_REPORT_PDF_AUTO_INSTALL', '1') != '0'
     with installation_lock(browser_dir / '.install.lock'):
-        for dependency in (requirement, pdf_requirement):
-            package, expected = dependency.split('==')
-            try:
-                installed = metadata.version(package)
-            except metadata.PackageNotFoundError:
-                installed = None
-            if installed != expected:
-                if not auto_install:
-                    raise RuntimeError(f'PDF requires {dependency}; automatic installation is disabled')
-                run_install(['pip', 'install', '--disable-pip-version-check', dependency])
+        package, expected = requirement.split('==')
+        try:
+            installed = metadata.version(package)
+        except metadata.PackageNotFoundError:
+            installed = None
+        if installed != expected:
+            if not auto_install:
+                raise RuntimeError(f'PDF requires {requirement}; automatic installation is disabled')
+            run_install(['pip', 'install', '--disable-pip-version-check', requirement])
         sync_playwright = importlib.import_module('playwright.sync_api').sync_playwright
         with sync_playwright() as playwright:
             override = os.environ.get('LF_REPORT_CHROMIUM_EXECUTABLE')
@@ -824,23 +837,24 @@ def ensure_dependencies():
     return str(executable)
 
 
-def export_pdf(source, destination, page_size='A4', orientation='Portrait'):
-    """Renders a saved report HTML file to a PDF file using a headless Chromium browser.
-
-    Args:
-        source (str): path to the report HTML file to convert.
-        destination (str): path to write the PDF to.
-        page_size (str): paper size, e.g. "A4", "A3", "Letter", "Legal".
-        orientation (str): "Portrait" or "Landscape".
-
-    Returns:
-        None
-    """
+def export_pdf(source, destination, page_size='A4', orientation='Portrait', page_width=None, page_height=None):
+    """Render a saved HTML report with headless Chromium."""
     source, destination = Path(source).resolve(), Path(destination).resolve()
     if not source.is_file():
         raise FileNotFoundError(source)
     if orientation.lower() not in ('portrait', 'landscape'):
         raise ValueError('PDF orientation must be Portrait or Landscape')
+    if (page_width is None) != (page_height is None):
+        raise ValueError('Custom PDF size requires both page width and height')
+    custom_mm = None
+    if page_width is not None:
+        dimensions = (page_width, page_height)
+        if any(not isinstance(value, str) or not re.fullmatch(r'[0-9]+(?:\.[0-9]+)?mm', value)
+               for value in dimensions):
+            raise ValueError('Custom PDF dimensions must be positive values in mm')
+        custom_mm = tuple(float(value[:-2]) for value in dimensions)
+        if min(custom_mm) <= 0:
+            raise ValueError('Custom PDF dimensions must be positive values in mm')
     executable = ensure_dependencies()
     sync_playwright = importlib.import_module('playwright.sync_api').sync_playwright
     descriptor, temporary = tempfile.mkstemp(suffix='.pdf', dir=destination.parent)
@@ -867,8 +881,11 @@ def export_pdf(source, destination, page_size='A4', orientation='Portrait'):
                 page.add_style_tag(content=_PDF_PRINT_CSS)
                 paper_mm = {'A4': (210, 297), 'A3': (297, 420), 'Letter': (215.9, 279.4),
                             'Legal': (215.9, 355.6)}.get(page_size)
+                if custom_mm:
+                    paper_mm = custom_mm if orientation.lower() == 'portrait' else custom_mm[::-1]
                 if paper_mm:
-                    width = paper_mm[1 if orientation.lower() == 'landscape' else 0] - 20
+                    width = (paper_mm[0] if custom_mm else
+                             paper_mm[1 if orientation.lower() == 'landscape' else 0]) - 20
                     page.add_style_tag(content='@media print { .report-shell { width: ' + str(width) + 'mm; } }')
                 compact_height = '80mm' if orientation.lower() == 'landscape' else '95mm'
                 page.add_style_tag(content='@media print { :root { --pdf-chart-height: ' + compact_height + '; } }')
@@ -1015,67 +1032,15 @@ def export_pdf(source, destination, page_size='A4', orientation='Portrait'):
                 }''')
                 if errors:
                     raise RuntimeError('Report JavaScript errors: ' + '; '.join(errors))
-                # Capture the actual report banner so repeated pages retain the same
-                # title, date, logo, colors, and layout, including caller customizations.
-                # Chromium's header document cannot inherit the report stylesheet.
-                banner = page.locator('#BannerBack').first
-                header_template = '<span></span>'
-                later_header = header_template
-                top_margin_mm = 12
-                if banner.count() and banner.is_visible():
-                    bounds = banner.bounding_box()
-                    banner_png = banner.screenshot(type='png', animations='disabled')
-                    banner_uri = 'data:image/png;base64,' + base64.b64encode(banner_png).decode('ascii')
-                    height_mm = bounds['height'] * 25.4 / 96
-                    # Reserve the rendered banner height plus breathing room above/below.
-                    top_margin_mm = height_mm + 12
-                    if paper_mm:
-                        page_height = paper_mm[0 if orientation.lower() == 'landscape' else 1]
-                        if top_margin_mm + 40 > page_height:
-                            raise RuntimeError('Report banner is too tall to repeat on this PDF page size')
-                    header_template = (
-                        '<div style="width:100%;margin:0 10mm;padding:0;'
-                        '-webkit-print-color-adjust:exact;">'
-                        f'<img src="{banner_uri}" style="display:block;width:100%;height:{height_mm:.2f}mm;" />'
-                        '</div>')
-                    # Capture the same geometry without the colored background for later pages.
-                    plain_style = page.add_style_tag(content=(
-                        '@media print { #BannerBack { background: transparent !important; box-shadow:none !important; } '
-                        '#BannerBack .HeaderStyle h1, #BannerBack .HeaderStyle h2, #BannerBack .HeaderStyle h4 { color:#10243f !important; } }'))
-                    plain_png = banner.screenshot(type='png', animations='disabled', omit_background=True)
-                    plain_uri = 'data:image/png;base64,' + base64.b64encode(plain_png).decode('ascii')
-                    later_header = header_template.replace(banner_uri, plain_uri)
-                    plain_style.evaluate('(element) => element.remove()')
-                    # The repeated header also appears on page one; avoid a duplicate banner.
-                    page.add_style_tag(content='@media print { #BannerBack { display:none !important; } }')
-                # Replace the end-of-document footer only in this PDF browser page.
-                page.add_style_tag(content='@media print { .FooterStyle { display:none !important; } }')
+                # Flow content avoids empty header/footer bands on intermediate pages.
                 pdf_options = dict(format=page_size, landscape=orientation.lower() == 'landscape',
                                    print_background=True,
-                                   margin={'top': f'{top_margin_mm:.2f}mm', 'bottom': '16mm', 'left': '10mm', 'right': '10mm'},
-                                   display_header_footer=True,
-                                   footer_template='<div style="font-family:Arial,sans-serif;font-size:9px;'
-                                                   'color:#5f6f82;position:relative;text-align:center;width:100%;margin:0 10mm;">'
-                                                   '© 2026 Candela Technologies – All Rights Reserved'
-                                                   '<span style="position:absolute;right:0;top:0;">'
-                                                   '<span class="pageNumber"></span> / <span class="totalPages"></span></span></div>')
-                # Identical content/margins in both passes preserve pagination and numbering.
-                pdf_module = importlib.import_module('pypdf')
-                PdfReader, PdfWriter = pdf_module.PdfReader, pdf_module.PdfWriter
-                later_pdf = page.pdf(header_template=later_header, **pdf_options)
-                reader = PdfReader(BytesIO(later_pdf))
-                if header_template != later_header:
-                    first_pdf = page.pdf(header_template=header_template, page_ranges='1', **pdf_options)
-                    first_reader = PdfReader(BytesIO(first_pdf))
-                    writer = PdfWriter()
-                    writer.add_page(first_reader.pages[0])
-                    for pdf_page in reader.pages[1:]:
-                        writer.add_page(pdf_page)
-                    with open(temporary, 'wb') as output:
-                        writer.write(output)
-                    writer.close()
-                else:
-                    Path(temporary).write_bytes(later_pdf)
+                                   margin={'top': '10mm', 'bottom': '10mm', 'left': '10mm', 'right': '10mm'},
+                                   display_header_footer=False)
+                if custom_mm:
+                    pdf_options.pop('format')
+                    pdf_options.update(width=f'{paper_mm[0]}mm', height=f'{paper_mm[1]}mm', landscape=False)
+                Path(temporary).write_bytes(page.pdf(**pdf_options))
             finally:
                 browser.close()
         if Path(temporary).stat().st_size < 100 or Path(temporary).read_bytes()[:5] != b'%PDF-':
@@ -1094,8 +1059,10 @@ def _run_pdf_worker():
     parser.add_argument('destination')
     parser.add_argument('--page-size', default='A4')
     parser.add_argument('--orientation', default='Portrait')
+    parser.add_argument('--page-width')
+    parser.add_argument('--page-height')
     args = parser.parse_args()
-    export_pdf(args.source, args.destination, args.page_size, args.orientation)
+    export_pdf(args.source, args.destination, args.page_size, args.orientation, args.page_width, args.page_height)
 
 
 class lf_report:
@@ -1663,29 +1630,20 @@ class lf_report:
             logger.warning("write_html failed")
         return self.write_output_html
 
-    # https://wkhtmltopdf.org/usage/wkhtmltopdf.txt
-    # page_size A4, A3, Letter, Legal
-    # orientation Portrait , Landscape
     @staticmethod
     def _write_pdf_file(input_html, output_pdf, options, configuration=None):
-        """Exports in a worker process, keeping browser lifecycle out of callers.
-
-        Args:
-            input_html (str): path to the report HTML file.
-            output_pdf (str): path to write the PDF to.
-            options (dict): page options (page size, orientation, ...).
-            configuration: optional pdfkit configuration, e.g. a custom wkhtmltopdf binary path.
-
-        Returns:
-            None
-        """
+        """Export HTML through Chromium or the legacy wkhtmltopdf backend."""
         backend = os.environ.get("LF_REPORT_PDF_BACKEND", "chromium").lower()
         if backend == "chromium":
             worker = os.path.abspath(__file__)
+            dimension_args = []
+            for key in ("page-width", "page-height"):
+                if key in options:
+                    dimension_args.extend(["--" + key, options[key]])
             result = subprocess.run(
                 [sys.executable, worker, "--pdf-worker", os.path.abspath(input_html), os.path.abspath(output_pdf),
                  "--page-size", options.get("page-size", "A4"),
-                 "--orientation", options.get("orientation", "Portrait")],
+                 "--orientation", options.get("orientation", "Portrait")] + dimension_args,
                 capture_output=True, text=True, timeout=2400)
             if result.returncode:
                 raise RuntimeError("Chromium PDF export failed; HTML is preserved. Install "
@@ -1710,22 +1668,24 @@ class lf_report:
             logger.warning('wkhtmltopdf crashed with exit code -11; retrying PDF generation once')
             pdfkit.from_file(input_html, output_pdf, **kwargs)
 
-    def write_pdf(self, _page_size='A4', _orientation='Portrait'):
-        """Converts the written HTML report to a PDF (via wkhtmltopdf) in the report folder.
+    @staticmethod
+    def _pdf_options(page_size, orientation, page_width, page_height):
+        """Build options shared by both PDF output methods."""
+        if (page_width is None) != (page_height is None):
+            raise ValueError('Custom PDF size requires both page width and height')
+        options = {'enable-local-file-access': None, 'orientation': orientation}
+        if page_width is None:
+            options['page-size'] = page_size
+        else:
+            options.update({'page-width': page_width, 'page-height': page_height})
+        return options
 
-        Args:
-            _page_size (str): paper size, e.g. "A4", "A3", "Letter", "Legal".
-            _orientation (str): "Portrait" or "Landscape".
-
-        Returns:
-            None
-        """
+    def write_pdf(self, _page_size='A4', _orientation='Portrait', _page_width=None, _page_height=None):
+        """Write the report PDF to the report folder."""
         if not self.output_pdf:
             logger.info("write_pdf: no pdf file name, skipping pdf output")
             return
-        options = {"enable-local-file-access": None,
-                   'orientation': _orientation,
-                   'page-size': _page_size}
+        options = self._pdf_options(_page_size, _orientation, _page_width, _page_height)
         self.write_output_pdf = str(self.path_date_time) + '/' + str(self.output_pdf)
         if os_name == "Windows" and os.environ.get("LF_REPORT_PDF_BACKEND", "chromium").lower() == "wkhtmltopdf":
             path_to_wkhtmltopdf = r'C:\Program Files\wkhtmltopdf\bin\wkhtmltopdf.exe'
@@ -1734,22 +1694,12 @@ class lf_report:
         else:
             self._write_pdf_file(self.write_output_html, self.write_output_pdf, options)
 
-    def write_pdf_with_timestamp(self, _page_size='A4', _orientation='Portrait'):
-        """Converts the HTML report to a PDF with the date added to the file name.
-
-        Args:
-            _page_size (str): paper size, e.g. "A4", "A3", "Letter", "Legal".
-            _orientation (str): "Portrait" or "Landscape".
-
-        Returns:
-            None
-        """
+    def write_pdf_with_timestamp(self, _page_size='A4', _orientation='Portrait', _page_width=None, _page_height=None):
+        """Write the report PDF with the date in its file name."""
         if not self.output_pdf:
             logger.info("write_pdf_with_timestamp: no pdf file name, skipping pdf output")
             return
-        options = {"enable-local-file-access": None,
-                   'orientation': _orientation,
-                   'page-size': _page_size}
+        options = self._pdf_options(_page_size, _orientation, _page_width, _page_height)
         self.write_output_pdf = "{}/{}-{}".format(self.path_date_time, self.date, self.output_pdf)
         self._write_pdf_file(self.write_output_html, self.write_output_pdf, options)
 
@@ -2021,9 +1971,34 @@ class lf_report:
         self.date_time = str(datetime.datetime.now().strftime("%Y-%m-%d-%H-h-%m-m-%S-s")).replace(':', '-')
         return self.date_time
 
+    @staticmethod
+    def _keep_identifiers_on_one_line(table_html, dataframe):
+        """Mark SSID, BSSID, and MAC cells so print CSS keeps their values intact."""
+        identifier_columns = {
+            index for index, name in enumerate(dataframe.columns)
+            if re.search(r'\b(?:ssid|bssid|mac)\b', str(name), re.IGNORECASE)
+        }
+        if not identifier_columns:
+            return table_html
+
+        def mark_row(match):
+            cell_index = -1
+
+            def mark_cell(cell):
+                nonlocal cell_index
+                cell_index += 1
+                if cell_index in identifier_columns:
+                    return cell.group(0)[:-1] + ' class="network-identifier">'
+                return cell.group(0)
+
+            return re.sub(r'<td\b[^>]*>', mark_cell, match.group(0))
+
+        return re.sub(r'<tr\b[^>]*>.*?</tr>', mark_row, table_html, flags=re.DOTALL)
+
     def build_table(self):
         """Adds the current table (set by set_table_dataframe) to the report."""
         self.dataframe_html = self.dataframe.to_html(index=False, justify='center', classes='data-table')
+        self.dataframe_html = self._keep_identifiers_on_one_line(self.dataframe_html, self.dataframe)
         self.html += "<div class='table-wrap'>" + self.dataframe_html + "</div>"
 
     def pass_failed_build_table(self):
@@ -2048,6 +2023,7 @@ class lf_report:
 
         badge_df = self.dataframe.applymap(_badge)
         self.dataframe_html = badge_df.to_html(index=False, justify='center', classes='data-table', escape=False)
+        self.dataframe_html = self._keep_identifiers_on_one_line(self.dataframe_html, badge_df)
         self.html += "<div class='table-wrap'>" + self.dataframe_html + "</div>"
 
     def rating_build_table(self, rating_column, rating_colors):
@@ -2081,6 +2057,7 @@ class lf_report:
         badge_df = self.dataframe.copy()
         badge_df[rating_column] = badge_df[rating_column].apply(_badge)
         self.dataframe_html = badge_df.to_html(index=False, justify='center', classes='data-table', escape=False)
+        self.dataframe_html = self._keep_identifiers_on_one_line(self.dataframe_html, badge_df)
         self.html += "<div class='table-wrap'>" + self.dataframe_html + "</div>"
 
     def save_csv(self, file_name, save_to_csv_data):
