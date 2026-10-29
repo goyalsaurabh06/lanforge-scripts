@@ -220,11 +220,31 @@ class UpdateDependencies:
 
         print("\nInstall complete.")
         print(f"Successfully installed : {self.packages_installed}\n")
-        if not self.packages_failed:
-            return
-        print(f"Failed to install: {self.packages_failed}\n"
-              + "(Some scripts may not need these packages) "
-              + "To see errors try: pip3 install $package", flush=True)
+        if self.packages_failed:
+            print(f"Failed to install: {self.packages_failed}\n"
+                  + "(Some scripts may not need these packages) "
+                  + "To see errors try: pip3 install $package", flush=True)
+
+        if any(package.startswith('playwright') for package in self.packages_installed):
+            self.install_playwright_browser()
+
+    def install_playwright_browser(self):
+        """Downloads the Chromium browser playwright needs for lf_modern_report.py's
+        PDF export (the playwright pip package alone doesn't include it). Installed
+        into the same directory lf_modern_report.py looks for it in, unless the
+        caller already set PLAYWRIGHT_BROWSERS_PATH to somewhere else.
+        """
+        browsers_path = os.environ.get('PLAYWRIGHT_BROWSERS_PATH') or str(
+            pathlib.Path.home() / '.cache' / 'lanforge' / 'report-browsers')
+        os.environ['PLAYWRIGHT_BROWSERS_PATH'] = browsers_path
+        print(f"Installing Chromium for PDF report export (into {browsers_path})...", flush=True)
+        res = call(f"{self.py} -m playwright install chromium", shell=True)
+        if res == 0:
+            print("✔ Chromium installed\n", flush=True)  # noqa: F541
+        else:
+            print("✘ Chromium installation failed; PDF report export will not work "
+                  "until this is resolved. Try: python3 -m playwright install chromium\n",
+                  flush=True)  # noqa: F541
 
 
 def main():
