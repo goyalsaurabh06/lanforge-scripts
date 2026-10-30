@@ -202,8 +202,8 @@ import lf_interop_bg_ping  # noqa: E402
 from lf_wifi_msgs import RealClientAnalysis  # noqa: E402
 # from lf_graph import lf_bar_graph_horizontal, lf_bar_graph  # noqa: E402
 # from lf_graph import lf_line_graph  # noqa: E402
-from lf_modern_report import lf_report  # noqa: E402
-from lf_modern_graph import lf_bar_graph, lf_bar_graph_horizontal, lf_line_graph, lf_pie_graph  # noqa: E402
+from modern_report import (lf_report, lf_bar_graph, lf_bar_graph_horizontal,
+                           lf_line_graph, lf_pie_graph)  # noqa: E402
 
 from datetime import datetime, timedelta  # noqa: E402
 

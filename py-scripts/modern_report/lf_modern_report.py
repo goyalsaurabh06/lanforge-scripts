@@ -4,11 +4,10 @@ NAME: lf_modern_report.py
 
 PURPOSE:
 
-- Drop-in replacement for lf_report.py: same `lf_report` class API, so
-  existing scripts only need to change `from lf_report import lf_report`
-  to `from lf_modern_report import lf_report`.
-- Generates HTML reports with a modern stylesheet (artifacts/modern-report.css)
-  and a self-hosted Apache ECharts runtime (artifacts/echarts.min.js) for
+- Drop-in replacement for lf_report.py: same `lf_report` class API, available
+  from the `modern_report` package.
+- Generates HTML reports with a modern stylesheet (modern_report/artifacts/modern-report.css)
+  and a self-hosted Apache ECharts runtime (modern_report/artifacts/echarts.min.js) for
   interactive charts (see build_echarts_chart).
 - Existing matplotlib-PNG charts (from lf_graph.py or elsewhere) still work
   unchanged, just shown inside a modern chart-card container.
@@ -20,7 +19,7 @@ PURPOSE:
   instead of duplicating it.
 
 EXAMPLE:
-    from lf_modern_report import lf_report
+    from modern_report import lf_report
 
     report = lf_report(_title="My Test Report")
     report.build_banner()
@@ -60,12 +59,17 @@ if not _IS_PDF_WORKER:
     import pdfkit
 
 if not _IS_PDF_WORKER:
-    sys.path.append(os.path.join(os.path.abspath(__file__ + "../../../")))
+    # Support both package imports and direct execution of this implementation.
+    _py_scripts_dir = Path(__file__).resolve().parent.parent
+    _repo_root = _py_scripts_dir.parent
+    for _import_root in (_py_scripts_dir, _repo_root):
+        if str(_import_root) not in sys.path:
+            sys.path.append(str(_import_root))
 
     logger = logging.getLogger(__name__)
     lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
     lf_csv = importlib.import_module("py-scripts.lf_csv").lf_csv
-    lf_pie_graph = importlib.import_module("py-scripts.lf_modern_graph").lf_pie_graph
+    lf_pie_graph = importlib.import_module("modern_report.lf_modern_graph").lf_pie_graph
     os_name = platform.system()
 
 __all__ = ["lf_report"]

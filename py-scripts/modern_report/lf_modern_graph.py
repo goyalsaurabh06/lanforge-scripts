@@ -21,7 +21,7 @@ used with, and lf_graph.py for the repo's original matplotlib chart classes
 these mirror.
 
 EXAMPLE:
-    from lf_modern_graph import lf_pie_graph
+    from modern_report import lf_pie_graph
 
     pie = lf_pie_graph(_data_set=[70, 30], _label=["Online", "Offline"], _graph_title="Status")
     report.set_graph_image(pie.build_pie_graph())
@@ -38,8 +38,13 @@ import json
 import logging
 import os
 import sys
+from pathlib import Path
 
-sys.path.append(os.path.join(os.path.abspath(__file__ + "../../../")))
+_py_scripts_dir = Path(__file__).resolve().parent.parent
+_repo_root = _py_scripts_dir.parent
+for _import_root in (_py_scripts_dir, _repo_root):
+    if str(_import_root) not in sys.path:
+        sys.path.append(str(_import_root))
 
 logger = logging.getLogger(__name__)
 lf_csv = importlib.import_module("py-scripts.lf_csv").lf_csv
