@@ -58,7 +58,6 @@ _IS_PDF_WORKER = __name__ == '__main__' and '--pdf-worker' in sys.argv[1:]
 if not _IS_PDF_WORKER:
     import pandas as pd
     import pdfkit
-    from matplotlib import pyplot as plt
 
 if not _IS_PDF_WORKER:
     sys.path.append(os.path.join(os.path.abspath(__file__ + "../../../")))
@@ -649,7 +648,18 @@ _TABLE_SEARCH_JS = """
 </script>
 """
 
-def ensure_dependencies():
+def _configure_playwright_browser_path():
+    """Set and return the persistent directory used for Playwright browsers."""
+    configured = os.environ.get('PLAYWRIGHT_BROWSERS_PATH')
+    if configured == '0':
+        raise RuntimeError('Use a persistent directory for PLAYWRIGHT_BROWSERS_PATH, not 0')
+    browser_dir = Path(configured).expanduser().resolve() if configured else (
+        Path.home() / '.cache' / 'lanforge' / 'report-browsers')
+    os.environ['PLAYWRIGHT_BROWSERS_PATH'] = str(browser_dir)
+    return browser_dir
+
+
+def ensure_dependencies(playwright=None):
     """Locates the Chromium browser playwright needs for PDF export. Installed by
     update_dependencies.py's install_playwright_browser() (the playwright pip
     package alone doesn't include the browser binary) -- this only locates it,
@@ -661,16 +671,14 @@ def ensure_dependencies():
     Example:
         chromium_path = ensure_dependencies()
     """
-    configured = os.environ.get('PLAYWRIGHT_BROWSERS_PATH')
-    if configured == '0':
-        raise RuntimeError('Use a persistent directory for PLAYWRIGHT_BROWSERS_PATH, not 0')
-    browser_dir = Path(configured).expanduser().resolve() if configured else (
-        Path.home() / '.cache' / 'lanforge' / 'report-browsers')
-    os.environ['PLAYWRIGHT_BROWSERS_PATH'] = str(browser_dir)
-    sync_playwright = importlib.import_module('playwright.sync_api').sync_playwright
-    with sync_playwright() as playwright:
-        override = os.environ.get('LF_REPORT_CHROMIUM_EXECUTABLE')
-        executable = Path(override).expanduser().resolve() if override else Path(playwright.chromium.executable_path)
+    _configure_playwright_browser_path()
+    if playwright is None:
+        sync_playwright = importlib.import_module('playwright.sync_api').sync_playwright
+        with sync_playwright() as started_playwright:
+            return ensure_dependencies(started_playwright)
+
+    override = os.environ.get('LF_REPORT_CHROMIUM_EXECUTABLE')
+    executable = Path(override).expanduser().resolve() if override else Path(playwright.chromium.executable_path)
     if not executable.is_file():
         raise RuntimeError(
             f'Chromium not found at {executable}. Run update_dependencies.py to install PDF export '
@@ -707,12 +715,13 @@ def export_pdf(source, destination, page_size='A4', orientation='Portrait', page
         custom_mm = tuple(float(value[:-2]) for value in dimensions)
         if min(custom_mm) <= 0:
             raise ValueError('Custom PDF dimensions must be positive values in mm')
-    executable = ensure_dependencies()
+    _configure_playwright_browser_path()
     sync_playwright = importlib.import_module('playwright.sync_api').sync_playwright
     descriptor, temporary = tempfile.mkstemp(suffix='.pdf', dir=destination.parent)
     os.close(descriptor)
     try:
         with sync_playwright() as playwright:
+            executable = ensure_dependencies(playwright)
             try:
                 browser = playwright.chromium.launch(executable_path=executable)
             except Exception as exc:
