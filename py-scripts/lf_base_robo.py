@@ -5,6 +5,7 @@ import json
 import math
 import logging
 from datetime import datetime
+from lf_robo_android_tasks import AndroidTasks, TaskAPIError, lift_display
 
 
 class RobotClass:
@@ -13,16 +14,30 @@ class RobotClass:
 
     """
 
-    def __init__(self, robo_ip=None, angle_list=None):
+    def __init__(self, robo_ip=None, angle_list=None, token=None, floor_route=None, android_ip=None):
         """
         Initialize robot parameters and fetch waypoint data.
 
         Args:
-            robo_ip (str, optional): IP address of the robot.
+            robo_ip (str, optional): IP address of the robot itself. Always the robot's own
+                address, regardless of token/android_ip - move_to_coordinate, wait_for_battery,
+                rotate_angle, etc. all talk to the robot directly on this address.
             angle_list (list, optional): List of angles for rotation.
+            token (str, optional): Android API token. When given (with android_ip),
+                move_to_destination() becomes available for map-aware, elevator-crossing movement.
+            floor_route (dict, optional): Maps a synthetic coordinate label (e.g. "Floor1:A")
+                to (map_alias, point), for move_to() to dispatch on. Empty for the old
+                single-floor callers, who can just keep calling move_to_coordinate() directly.
+            android_ip (str, optional): host:port of the Android task API gateway - a separate
+                address from the robot's own (robo_ip), since the gateway doesn't expose
+                robo_ip's native endpoints (battery, nav_status, ...) at all. Only used to reach
+                move_to_destination(); everything else keeps using robo_ip.
         """
 
         self.robo_ip = robo_ip
+        self.token = token
+        self.floor_route = floor_route or {}
+        self.android_api = AndroidTasks('http://' + android_ip, token) if (android_ip and token) else None
         self.waypoint_list = []
         self.target_x = None
         self.target_y = None
@@ -335,6 +350,162 @@ class RobotClass:
             return matched, abort, all_dataframes
         return matched, abort
 
+    def write_nav_status(self, **changes):
+        """Merge changes into self.nav_data_path - the same single, per-process file
+        move_to_coordinate() already writes (status/Canbee_location/current_cycle/...), read by
+        the webgui's existing /gatherRobotdata/. Adds the floor-crossing fields Run Scenario's
+        Live View already knows how to render (sourceMap/stage/stageLabel/lastConfirmed/taskId),
+        instead of a second, separate status file. No-op if nav_data_path wasn't given (e.g. a
+        plain CLI run with no --dowebgui); any failure here is swallowed - must never affect
+        the actual move.
+        """
+        if not self.nav_data_path:
+            return
+        try:
+            if not os.path.exists(self.nav_data_path):
+                with open(self.nav_data_path, "w") as f:
+                    json.dump({}, f)
+            with open(self.nav_data_path, 'r') as f:
+                navdata = json.load(f)
+            navdata.update(changes)
+            with open(self.nav_data_path, 'w') as f:
+                json.dump(navdata, f, indent=4)
+        except (OSError, ValueError):
+            pass
+
+    def move_to_destination(self, map_alias, coord, monitor_function=None):
+        """
+        Move the robot to a point on a specific map, crossing floors via the elevator if needed.
+
+        Uses the newer, token-authenticated Android task API instead of the old /cmd/nav_name
+        API, so the robot's own firmware decides whether this destination needs the lift.
+        Only usable when this RobotClass was built with a token (self.android_api is set) —
+        every other method (move_to_coordinate, wait_for_battery, rotate_angle, ...) is
+        unaffected and keeps using the old single-floor API regardless of this.
+
+        Args:
+            map_alias (str): the robot's own alias for the map this point lives on.
+            coord (str): the point's name on that map.
+            monitor_function (function, optional): Function to call during movement.
+
+        Returns:
+            tuple: (matched (bool), abort (bool)), or (matched, abort, all_dataframes) if
+            self.do_bandsteering.
+        """
+        abort = False
+        matched = False
+        all_dataframes = {}
+        request_id = 'lf-{}-{}'.format(int(time.time() * 1000), coord)
+        task_id = None
+        retries = 0
+        logging.info("Moving to point '{}' on map '{}'".format(coord, map_alias))
+        # Which floor the robot is leaving from, for the Live View to know whether this
+        # destination crosses floors - best-effort, same as multifloor_driver.py's own read.
+        source_map = None
+        try:
+            source_map = self.android_api.status().get('currentMapAlias')
+        except TaskAPIError:
+            pass
+        self.write_nav_status(requestId=request_id, sourceMap=source_map, destinationMap=map_alias,
+                              destinationPoint=coord, state='running', stage='starting',
+                              stageLabel='Starting', message=None)
+        # One INFO line per stage change (entering/inside/exiting the lift, etc.), so the webui's
+        # Live View can just show this script's own log output instead of keeping a second,
+        # separate log of the same information in the browser.
+        last_logged_stage = None
+        while True:
+            if self.runtime_dir is not None and self.check_test_status():
+                abort = True
+                if task_id:
+                    try:
+                        self.android_api.cancel(task_id)
+                    except TaskAPIError:
+                        pass
+                break
+            try:
+                if task_id is None:
+                    task = self.android_api.submit(request_id, map_alias, coord)
+                    task_id = task.get('taskId')
+                    if not isinstance(task_id, str):
+                        logging.info("[ERROR] Task response has no taskId")
+                        abort = True
+                        break
+                else:
+                    task = self.android_api.task(task_id)
+                if monitor_function:
+                    self.to_coordinate = coord
+                    all_dataframes = monitor_function()
+                retries = 0
+            except TaskAPIError as e:
+                logging.info("[ERROR] Failed to get task status: {}".format(e))
+                time.sleep(5)
+                retries += 1
+                if retries == 15:
+                    abort = True
+                    break
+                continue
+
+            state = task.get('state')
+            stage = task.get('stage', state)
+            logging.debug("Destination '%s' stage: %s", coord, stage)
+            if stage != last_logged_stage:
+                last_logged_stage = stage
+                logging.info("Point '%s': %s", coord, lift_display(stage))
+            self.write_nav_status(state='running', stage=stage, stageLabel=lift_display(stage), taskId=task_id)
+            if state == 'completed':
+                matched = True
+                self.from_coordinate = coord
+                logging.info("Point '%s': Arrived", coord)
+                self.write_nav_status(state='completed', stage='waiting_at_destination',
+                                      stageLabel='Arrived', lastConfirmed={'mapAlias': map_alias, 'point': coord})
+                break
+            if state in ('failed', 'cancelled', 'interrupted'):
+                logging.info("Destination '{}' ended without arriving: {}".format(coord, task.get('error')))
+                abort = True
+                self.write_nav_status(state=state, stage=state, message=task.get('error'))
+                break
+            time.sleep(2)
+
+        # Store the coordinate in navdatajson only from webui — same convention move_to_coordinate uses.
+        if self.nav_data_path:
+            if not os.path.exists(self.nav_data_path):
+                with open(self.nav_data_path, "w") as file:
+                    json.dump({}, file)
+            with open(self.nav_data_path, 'r') as x:
+                navdata = json.load(x)
+            if abort:
+                navdata['status'] = "Stopped"
+                navdata['Canbee_location'] = ''
+                navdata['Canbee_angle'] = ''
+                navdata['Test_status'] = 'Running'
+            else:
+                navdata['status'] = "Running"
+                # Bare point name - coord here is a "mapalias:point" label (floor_route key), but
+                # everything that reads Canbee_location (point markers, gathercoordinatedata, ...)
+                # only ever knows the bare point name, same reasoning as Throughput.bare_point().
+                navdata['Canbee_location'] = self.floor_route[coord][1] if coord in self.floor_route else coord
+                navdata['Canbee_angle'] = ''
+                navdata['Test_status'] = 'Running'
+            navdata['current_cycle'] = self.current_cycle
+            navdata['total_cycles'] = int(self.total_cycles) if self.total_cycles else 1
+            with open(self.nav_data_path, 'w') as x:
+                json.dump(navdata, x, indent=4)
+        if self.do_bandsteering:
+            return matched, abort, all_dataframes
+        return matched, abort
+
+    def move_to(self, coord, monitor_function=None):
+        """
+        Move to `coord`, dispatching to move_to_destination() when it's a --floor label
+        (present in self.floor_route) and move_to_coordinate() otherwise. Any caller that
+        drives a route built from --floor/--coordinate should call this instead of either
+        move method directly, so it works regardless of which one the robot was given.
+        """
+        if coord in self.floor_route:
+            map_alias, point = self.floor_route[coord]
+            return self.move_to_destination(map_alias, point, monitor_function=monitor_function)
+        return self.move_to_coordinate(coord, monitor_function=monitor_function)
+
     def update_nav_data_for_all_cxs_stopped(self):
         """
         Tells the WebUI the robot test has stopped by updating the csv.
@@ -491,7 +662,7 @@ class RobotClass:
 
         # Find the matched coordinate
         for idx, coordinate in enumerate(self.coordinate_list):
-            matched, abort = self.move_to_coordinate(coordinate)
+            matched, abort = self.move_to(coordinate)
 
             if matched:
                 matched_index = idx
