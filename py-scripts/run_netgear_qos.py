@@ -17,7 +17,7 @@ VRF_SCRIPT = ROOT / 'vrf_exec.bash'
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--push_config', action='store_true', help='Configure AP before QoS test')
-    parser.add_argument('--mgr', required=True, help='LANforge manager IP')
+    parser.add_argument('--mgr', help='LANforge manager IP', default="localhost")
     parser.add_argument('--mgr_port', type=int, default=8080)
     parser.add_argument('--upstream', default='eth2', help='VRF interface and QoS upstream port')
     parser.add_argument('--ssid', required=True)
