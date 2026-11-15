@@ -314,7 +314,8 @@ class Throughput(Realm):
                  user_list=None, real_client_list=None, real_client_list1=None, hw_list=None, laptop_list=None, android_list=None, mac_list=None, windows_list=None, linux_list=None,
                  total_resources_list=None, working_resources_list=None, hostname_list=None, username_list=None, eid_list=None,
                  devices_available=None, input_devices_list=None, mac_id1_list=None, mac_id_list=None, overall_avg_rssi=None,
-                 coordinate_list=None, rotation_enabled=None, robo_ip=None, angle_list=None, do_bandsteering=False, total_cycles=1, bssids=None, duration_to_skip=None, measurement_mode="per_point"):
+                 coordinate_list=None, rotation_enabled=None, robo_ip=None, angle_list=None, do_bandsteering=False, total_cycles=1, bssids=None, duration_to_skip=None, measurement_mode="per_point",
+                 token=None, floor_route=None, android_ip=None):
         super().__init__(lfclient_host=host,
                          lfclient_port=port)
         self.ssid_list = []
@@ -451,7 +452,8 @@ class Throughput(Realm):
         self.robo_ip = robo_ip
         self.angle_list = angle_list if angle_list else [0]
         if self.robo_ip:
-            self.robot = RobotClass(robo_ip=self.robo_ip, angle_list=self.angle_list)
+            self.robot = RobotClass(robo_ip=self.robo_ip, angle_list=self.angle_list, token=token, floor_route=floor_route,
+                                    android_ip=android_ip)
             self.rotation_enabled = rotation_enabled
             self.coordinate_list = coordinate_list if coordinate_list else [0]
             self.current_coordinate = None
@@ -573,9 +575,22 @@ class Throughput(Realm):
         if self.dowebgui:
             runtime_csv = 'overall_throughput.csv' if self.group_name else 'throughput_data.csv'
             if self.robo_ip and self.current_coordinate is not None:
-                runtime_csv = '{}_{}'.format(self.current_coordinate, runtime_csv)
+                runtime_csv = '{}_{}'.format(self.bare_point(self.current_coordinate), runtime_csv)
             dataframe.to_csv(os.path.join(self.result_dir, runtime_csv), index=False)
         return dataframe
+
+    def bare_point(self, coord):
+        """The point's own name, with no "mapalias:" prefix. A --floor run's coord/
+        current_coordinate is a "mapalias:point" label (e.g. "2:25") so move_to() can look
+        up which floor to drive to - but every filename and stored/reported key the webgui
+        polls by point name (gathercoordinatedata, coordinate_json.json, ...) only ever
+        knows the bare point name, since point names are already unique across floors.
+        Never use this for self.robot.move_to(...) itself - that needs the full label.
+        """
+        if coord is None:
+            return coord
+        route = getattr(self.robot, 'floor_route', None) or {}
+        return route[coord][1] if coord in route else coord
 
     def perform_robo(self, args, clients_to_run):
         """
@@ -592,7 +607,7 @@ class Throughput(Realm):
         Returns:
             None
         """
-        if args.dowebgui and args.coordinate is not None:
+        if args.dowebgui and (args.coordinate is not None or args.floor):
             base_dir = os.path.dirname(os.path.dirname(args.result_dir))
             nav_data = os.path.join(base_dir, 'nav_data.json')  # To generate nav_data.json in webgui folder
             with open(nav_data, "w") as file:
@@ -672,7 +687,7 @@ class Throughput(Realm):
                 if self.stop_test or stopped:
                     break
 
-                matched, abort, all_dataframes = self.robot.move_to_coordinate(
+                matched, abort, all_dataframes = self.robot.move_to(
                     coord,
                     monitor_function=lambda: self.monitor(
                         0,
@@ -741,12 +756,15 @@ class Throughput(Realm):
                 break
 
             # move the robot to specified coordinate and tracking the current coordinate and set of coordinates completed
-            matched, abort = self.robot.move_to_coordinate(coord)
+            matched, abort = self.robot.move_to(coord)
             if matched:
                 self.current_coordinate = coord
-                if coord not in self.coordinates_completed:
-                    self.coordinates_completed.append(coord)
-                self.coordinate_visits.append((coord, self.current_cycle))
+                # Bare point name from here on - coordinates_completed/coordinate_visits only ever
+                # feed filenames and report text, never self.robot.move_to(), so they should match
+                # the bare names every file/report reader (webgui polling, report generation) expects.
+                if self.bare_point(coord) not in self.coordinates_completed:
+                    self.coordinates_completed.append(self.bare_point(coord))
+                self.coordinate_visits.append((self.bare_point(coord), self.current_cycle))
                 if total_cycles > 1:
                     logger.info("Reached the point {} (cycle {} of {})".format(coord, self.current_cycle, total_cycles))
                 else:
@@ -781,8 +799,8 @@ class Throughput(Realm):
             # before CX setup. Its last row still reads status 'Stopped' from the prior visit, so without this
             # the webGUI charts that stale data and marks this visit finished before it has run.
             if total_cycles > 1 and self.dowebgui and not self.group_name and self.result_dir:
-                individual_df.to_csv('{}/{}_throughput_data.csv'.format(self.result_dir, coord), index=False)
-                individual_df.to_csv('{}_throughput_data.csv'.format(coord), index=False)
+                individual_df.to_csv('{}/{}_throughput_data.csv'.format(self.result_dir, self.bare_point(coord)), index=False)
+                individual_df.to_csv('{}_throughput_data.csv'.format(self.bare_point(coord)), index=False)
 
             overall_start_time = datetime.now()
             overall_end_time = overall_start_time + timedelta(seconds=int(args.test_duration) * len(incremental_capacity_list))
@@ -851,15 +869,15 @@ class Throughput(Realm):
             # Stop the whole robot run on a user stop or an unrecoverable CX loss.
             if test_stopped_by_user:
                 break
-            if coord not in self.coordinates_finished:
-                self.coordinates_finished.append(coord)
+            if self.bare_point(coord) not in self.coordinates_finished:
+                self.coordinates_finished.append(self.bare_point(coord))
 
             # Beyond the first cycle, a later revisit to this same coordinate overwrites {coord}_throughput_data.csv
             # before generate_report_robo reads it, so preserve this visit's data under a cycle-tagged name.
             if total_cycles > 1:
-                visit_csv = '{}_throughput_data.csv'.format(self.current_coordinate)
+                visit_csv = '{}_throughput_data.csv'.format(self.bare_point(self.current_coordinate))
                 if os.path.exists(visit_csv):
-                    shutil.copyfile(visit_csv, 'coordinate_{}_cycle_{}_throughput_data.csv'.format(self.current_coordinate, self.current_cycle))
+                    shutil.copyfile(visit_csv, 'coordinate_{}_cycle_{}_throughput_data.csv'.format(self.bare_point(self.current_coordinate), self.current_cycle))
             self.stop()
         if args.postcleanup:
             self.cleanup()
@@ -2117,7 +2135,7 @@ class Throughput(Realm):
             if pause_angle:
                 # If rotation was paused due to battery low condition,
                 # move the robot back to the current coordinate before continuing
-                reached = self.robot.move_to_coordinate(self.current_coordinate)
+                reached = self.robot.move_to(self.current_coordinate)
                 if not reached:
                     test_stopped_by_user = True
                     break
@@ -2175,7 +2193,7 @@ class Throughput(Realm):
                         break
 
                     if pause:
-                        reached, abort = self.robot.move_to_coordinate(self.current_coordinate)
+                        reached, abort = self.robot.move_to(self.current_coordinate)
                         if not reached:
                             test_stopped_by_user = True
                             break
@@ -2278,9 +2296,9 @@ class Throughput(Realm):
                     if (current_time - previous_time).total_seconds() >= time_break:
                         individual_df_for_webui.loc[len(individual_df_for_webui)] = individual_df_data
                         if self.group_name is None:
-                            individual_df_for_webui.to_csv('{}/{}_throughput_data.csv'.format(runtime_dir, self.current_coordinate), index=False)
+                            individual_df_for_webui.to_csv('{}/{}_throughput_data.csv'.format(runtime_dir, self.bare_point(self.current_coordinate)), index=False)
                         else:
-                            individual_df_for_webui.to_csv('{}/{}_overall_throughput.csv'.format(runtime_dir, self.current_coordinate), index=False)
+                            individual_df_for_webui.to_csv('{}/{}_overall_throughput.csv'.format(runtime_dir, self.bare_point(self.current_coordinate)), index=False)
                         previous_time = current_time
 
                     # Append data to individual_df and save to CSV
@@ -2409,7 +2427,7 @@ class Throughput(Realm):
                                                    'Running'])
 
                     individual_df.loc[len(individual_df)] = individual_df_data
-                    individual_df.to_csv('{}_throughput_data.csv'.format(self.current_coordinate), index=False)
+                    individual_df.to_csv('{}_throughput_data.csv'.format(self.bare_point(self.current_coordinate)), index=False)
 
                 if self.stop_test:
                     test_stopped_by_user = True
@@ -2516,13 +2534,13 @@ class Throughput(Realm):
         # Save individual_df to CSV based on web GUI status
         if self.dowebgui:
             if self.group_name:
-                individual_df_for_webui.to_csv('{}/{}_overall_throughput.csv'.format(runtime_dir, self.current_coordinate), index=False)
+                individual_df_for_webui.to_csv('{}/{}_overall_throughput.csv'.format(runtime_dir, self.bare_point(self.current_coordinate)), index=False)
                 individual_df.to_csv('{}_overall_throughput.csv', index=False)
             else:
-                individual_df_for_webui.to_csv('{}/{}_throughput_data.csv'.format(runtime_dir, self.current_coordinate), index=False)
-                individual_df.to_csv('{}_throughput_data.csv'.format(self.current_coordinate), index=False)
+                individual_df_for_webui.to_csv('{}/{}_throughput_data.csv'.format(runtime_dir, self.bare_point(self.current_coordinate)), index=False)
+                individual_df.to_csv('{}_throughput_data.csv'.format(self.bare_point(self.current_coordinate)), index=False)
         else:
-            individual_df.to_csv('{}_throughput_data.csv'.format(self.current_coordinate), index=False)
+            individual_df.to_csv('{}_throughput_data.csv'.format(self.bare_point(self.current_coordinate)), index=False)
 
         # Update the running Web GUI JSON with list of coordinates completed.
         # If the webGUI already removed it (STOP), there's nothing to update.
@@ -2532,8 +2550,8 @@ class Throughput(Realm):
                           'r') as file:
                     data = json.load(file)
                     coordinate_list = data['current_coordinate']
-                    if self.current_coordinate not in coordinate_list:
-                        coordinate_list.append(self.current_coordinate)
+                    if self.bare_point(self.current_coordinate) not in coordinate_list:
+                        coordinate_list.append(self.bare_point(self.current_coordinate))
                     data['current_coordinate'] = coordinate_list
                 with open(runtime_dir + "/../../Running_instances/{}_{}_running.json".format(self.ip, self.test_name), 'w') as file:
                     json.dump(data, file, indent=4)
@@ -4585,24 +4603,72 @@ class Throughput(Realm):
                     throughput_image_path = os.path.join(images_dir, f"{self.test_name}_throughput.png")
                     rssi_image_path = os.path.join(images_dir, f"{self.test_name}_rssi.png")
 
+                    # A multi-floor run's webgui also captures one throughput+RSSI pair per floor
+                    # (<test_name>_throughput_floor_<N>.png / _rssi_floor_<N>.png), alongside the
+                    # single whole-house pair above - see the per-floor capture block in
+                    # performingCoordinateTest's FINALIZE section in testing_page.html. Discovered by
+                    # filename pattern rather than an expected count/names, since this script has no
+                    # way to know how many floors the webgui ended up building panels for.
+                    # The webgui only ever captures these when points are spread across more than one
+                    # floor (a single-floor run would just duplicate the whole-house pair above, worse)
+                    # - matched here the same way, from distinct map aliases in floor_route, so a
+                    # single-floor --floor run doesn't sit through the full grace wait below for files
+                    # that are never coming.
+                    floor_route = getattr(self.robot, 'floor_route', None) if self.robot else None
+                    distinct_floor_aliases = {alias for alias, _point in (floor_route or {}).values()}
+                    is_floor_run = len(distinct_floor_aliases) > 1
+                    # Every floor contributes one throughput + one RSSI image. The webgui captures
+                    # them one floor at a time (each needs its own html2canvas render + upload), so
+                    # the first floor's pair can already be sitting on disk while later floors are
+                    # still being captured - waiting for just "any" per-floor file to appear (as this
+                    # used to) meant the report got built around that one floor and the rest were
+                    # silently dropped because they arrived afterward. Wait for the full expected
+                    # count instead.
+                    expected_floor_files = len(distinct_floor_aliases) * 2
+
+                    def floor_heatmap_files():
+                        if not os.path.isdir(images_dir):
+                            return []
+                        pattern = re.compile(r'^{}_(?:throughput|rssi)_floor_(\d+)\.png$'.format(re.escape(self.test_name)))
+                        return [f for f in os.listdir(images_dir) if pattern.match(f)]
+
                     timeout = 60  # seconds
-                    grace = 20
+                    grace = 30  # extra time for a multi-floor run's later floors to finish landing
                     if have_data:
                         start_time = time.time()
-                        while not (os.path.exists(throughput_image_path) or os.path.exists(rssi_image_path)):
-                            if time.time() - start_time > timeout:
-                                print("Timeout: heatmap images not found within {}s.".format(timeout))
-                                break
-                            time.sleep(1)
-                        if os.path.exists(throughput_image_path) or os.path.exists(rssi_image_path):
-                            grace_end = time.time() + grace
-                            while not (os.path.exists(throughput_image_path) and os.path.exists(rssi_image_path)) and time.time() < grace_end:
+                        if is_floor_run:
+                            while len(floor_heatmap_files()) < expected_floor_files:
+                                if time.time() - start_time > timeout + grace:
+                                    print("Timeout: only {} of {} per-floor heatmap images arrived within {}s.".format(
+                                        len(floor_heatmap_files()), expected_floor_files, timeout + grace))
+                                    break
                                 time.sleep(1)
+                        else:
+                            while not (os.path.exists(throughput_image_path) or os.path.exists(rssi_image_path)):
+                                if time.time() - start_time > timeout:
+                                    print("Timeout: heatmap images not found within {}s.".format(timeout))
+                                    break
+                                time.sleep(1)
+                            if os.path.exists(throughput_image_path) or os.path.exists(rssi_image_path):
+                                grace_end = time.time() + grace
+                                while not (os.path.exists(throughput_image_path) and os.path.exists(rssi_image_path)) and time.time() < grace_end:
+                                    time.sleep(1)
                     else:
                         print("No coordinate finished - skipping heatmap wait, nothing was ever captured")
 
-                    embed_heatmap_or_placeholder("Average Throughput", throughput_image_path)
-                    embed_heatmap_or_placeholder("Average RSSI", rssi_image_path)
+                    if not is_floor_run:
+                        embed_heatmap_or_placeholder("Average Throughput", throughput_image_path)
+                        embed_heatmap_or_placeholder("Average RSSI", rssi_image_path)
+                    else:
+                        pattern = re.compile(r'^{}_(?:throughput|rssi)_floor_(\d+)\.png$'.format(re.escape(self.test_name)))
+                        floor_indices = sorted({pattern.match(f).group(1) for f in floor_heatmap_files()}, key=int)
+                        if not floor_indices:
+                            print("No per-floor heatmap images were captured - skipping per-floor section")
+                        for idx in floor_indices:
+                            floor_throughput_path = os.path.join(images_dir, f"{self.test_name}_throughput_floor_{idx}.png")
+                            floor_rssi_path = os.path.join(images_dir, f"{self.test_name}_rssi_floor_{idx}.png")
+                            embed_heatmap_or_placeholder("Throughput", floor_throughput_path, f" - Floor {idx}")
+                            embed_heatmap_or_placeholder("RSSI", floor_rssi_path, f" - Floor {idx}")
             # Loop through each point actually visited: one entry per coordinate
             # per cycle, so a multi-cycle run reports every visit rather than only
             # the last. A single-cycle run has one (coord, 1) entry per coordinate.
@@ -5837,6 +5903,17 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
     # Arguments related to robo
     optional.add_argument('--robot_ip', help='hostname for where Robot server is running')
     optional.add_argument('--coordinate', help="Points at which the robot pauses")
+    optional.add_argument('--token',
+                          help="Robot's Android API token. Pass this (instead of --coordinate) along "
+                               "with one or more --floor to drive a multi-floor/elevator-capable robot.")
+    optional.add_argument('--android_ip',
+                          help="host:port of the robot's Android task API gateway - a separate "
+                               "address from --robot_ip (the robot's own address, still used for "
+                               "battery/status). Required together with --token.")
+    optional.add_argument('--floor', action='append',
+                          help="A floor's map alias and the points to pause at on it, e.g. "
+                               "--floor \"mapalias=Floor1 point=A,B,C\". Repeat --floor once per floor, in the "
+                               "order they should be visited; requires --token. Replaces --coordinate.")
     optional.add_argument('--rotation', help="The set of angles to rotate at a particular point")
     optional.add_argument('--bssids', type=str, help='Comma separated list of BSSIDs to be used for the test', default="")
     optional.add_argument('--wifi_analysis',
@@ -5955,6 +6032,37 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
         iot_device_list = args.iot_device_list
         iot_testname = args.iot_testname
         iot_increment = args.iot_increment
+
+    # --floor "mapalias=Floor1 point=A,B,C" (repeatable) -> ordered synthetic coordinate_list
+    # ("Floor1:A", "Floor1:B", ...) plus a floor_route dict mapping each label back to the
+    # (map_alias, point) the robot's task API needs. Leaves the plain --coordinate flow untouched.
+    floor_coordinate_list = []
+    floor_route = {}
+    if args.token and not args.robot_ip:
+        logger.error("--token requires --robot_ip")
+        return
+    if args.token and not args.android_ip:
+        logger.error("--token requires --android_ip (the gateway's host:port; --robot_ip stays the robot's own address)")
+        return
+    if args.floor:
+        if not args.token:
+            logger.error("--floor requires --token (the robot's Android API token)")
+            return
+        for floor_arg in args.floor:
+            floor_fields = dict(pair.split('=', 1) for pair in floor_arg.split())
+            map_alias = floor_fields.get('mapalias')
+            points = floor_fields.get('point', '')
+            if not map_alias or not points:
+                logger.error("Malformed --floor '{}': expected \"mapalias=<alias> point=<p1,p2,...>\"".format(floor_arg))
+                return
+            for point in points.split(','):
+                point = point.strip()
+                if not point:
+                    continue
+                label = '{}:{}'.format(map_alias, point)
+                floor_coordinate_list.append(label)
+                floor_route[label] = (map_alias, point)
+
     for index in range(len(loads_data)):
         throughput = Throughput(host=args.mgr,
                                 ip=args.mgr,
@@ -6014,13 +6122,16 @@ Copyright (C) 2020-2026 Candela Technologies Inc.
                                 interopability_config=args.interopability_config,
                                 robo_ip=args.robot_ip,
                                 rotation_enabled=True if args.rotation else False,
-                                coordinate_list=args.coordinate.split(",") if args.coordinate else [],
+                                coordinate_list=floor_coordinate_list if args.floor else (args.coordinate.split(",") if args.coordinate else []),
                                 angle_list=args.rotation.split(",") if args.rotation else [],
                                 do_bandsteering=args.do_bandsteering,
                                 measurement_mode=args.measurement_mode,
                                 total_cycles=args.total_cycles,
                                 bssids=args.bssids.split(",") if args.bssids else [],
-                                duration_to_skip=args.duration_to_skip
+                                duration_to_skip=args.duration_to_skip,
+                                token=args.token,
+                                floor_route=floor_route,
+                                android_ip=args.android_ip
                                 )
 
         if gave_incremental:
