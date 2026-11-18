@@ -1110,6 +1110,17 @@ class Youtube(Realm):
 
         return lf_stats_map
 
+    def __getstate__(self):
+        """lf_multi_traffic.py copies this object to its main process (multiprocessing pickles it).
+        A threading Event can't be pickled, so leave it out; __setstate__ makes a fresh one."""
+        state = self.__dict__.copy()
+        state.pop("android_log_received", None)
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.android_log_received = Event()
+
     def start_flask_server(self):
         """
         Starts a Flask server with API endpoints for YouTube statistics.

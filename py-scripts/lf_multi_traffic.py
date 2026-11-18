@@ -409,6 +409,7 @@
 """
 import os
 import sys
+import base64
 
 
 base_path = os.getcwd()
@@ -507,6 +508,14 @@ test_results_df = pd.DataFrame(columns=['test_name', 'status'])
 manager = Manager()
 test_results_list = manager.list()
 
+# Test name -> its column in the webGUI's overall_status.csv
+WEBGUI_STATUS_COLUMNS = {"ping_test": "ping", "qos_test": "qos", "ftp_test": "ftp", "http_test": "http",
+                         "mcast_test": "mc", "vs_test": "vs", "thput_test": "thput", "yt_test": "yt",
+                         "rb_test": "rb", "zoom_test": "zoom", "teams_test": "teams"}
+# Suite live-view maps the combined report adds itself: test -> (label, image name prefix, metrics)
+SUITE_LIVE_VIEWS = {"yt_test": ("YouTube", "suite_youtube_test", ("frames",)),
+                    "zoom_test": ("Zoom", "suite_zoom_test", ("latency", "jitter"))}
+
 
 class MultiTraffic(Realm):
     """
@@ -551,6 +560,8 @@ class MultiTraffic(Realm):
         self.overall_status = {}
         self.obj_dict = {}
         self.test_stopped = False
+        self.webgui_stopped = False   # set once Stop is pressed in the webGUI
+        self.suite_run = self.suite_live_view = False   # set in start_tests
         self.no_cleanup = no_cleanup
         self.duration_dict = {}
         # Dictionaries to store objects and data for different test types,
@@ -674,6 +685,10 @@ class MultiTraffic(Realm):
         Returns:
             None
         """
+        self.args = args   # main() builds this object without args
+        # Test Suite run from the webGUI (--input_json): series only; this process records each test's state
+        self.suite_run = bool(getattr(args, "input_json", None))
+        self.suite_live_view = self.suite_run and args.get_live_view
         iszoom = 'zoom_test' in tests_to_run_parallel or 'zoom_test' in tests_to_run_series
         isrb = 'rb_test' in tests_to_run_parallel or 'rb_test' in tests_to_run_series
         isyt = 'yt_test' in tests_to_run_parallel or 'yt_test' in tests_to_run_series
@@ -682,17 +697,12 @@ class MultiTraffic(Realm):
         self.misc_clean_up(layer3=True, layer4=True, generic=True, port_5000=iszoom, port_5002=isyt, port_5003=isrb)
         if args.series_tests or args.parallel_tests:
             series_threads = []
+            series_keys = []   # test names, in the same order as series_threads
             parallel_threads = []
             # Process series tests
             if args.series_tests:
                 ordered_series_tests = args.series_tests.split(',')
-                if args.dowebgui:
-                    gen_order = ["ping_test", "qos_test", "ftp_test", "http_test", "mcast_test", "vs_test", "thput_test", "yt_test", "rb_test", "zoom_test", "teams_test"]
-                    temp_ord_list = []
-                    for test_name in gen_order:
-                        if test_name in ordered_series_tests:
-                            temp_ord_list.append(test_name)
-                    ordered_series_tests = temp_ord_list.copy()
+                # Runs in the given order (no longer re-sorted into a fixed order for the webGUI)
                 for idx, test_name in enumerate(ordered_series_tests):
                     test_name = test_name.strip().lower()
                     if test_name in test_map:
@@ -731,6 +741,7 @@ class MultiTraffic(Realm):
                             series_threads.append(threading.Thread(
                                 target=run_test_safe(func, f"{label} [Series {idx + 1}]", args, self, duration_dict[test_name])
                             ))
+                        series_keys.append(test_name)   # its name, for the status writes
                     else:
                         logging.warning(f"Unknown test '{test_name}' in --series_tests")
 
@@ -784,7 +795,8 @@ class MultiTraffic(Realm):
                     "mc": "notstarted", "vs": "notstarted", "thput": "notstarted", "rb": "notstarted",
                     "zoom": "notstarted", "yt": "notstarted", "teams": "notstarted",
                     "time": datetime.datetime.now().strftime("%Y %d %H:%M:%S"),
-                    "status": "running", "current_mode": "tbd", "current_test_name": "tbd"
+                    "status": "running", "current_mode": "tbd", "current_test_name": "tbd",
+                    "report": "pending"   # combined report: pending -> ready / failed
                 }
                 self.overall_csv.append(self.overall_status.copy())
                 df1 = pd.DataFrame(self.overall_csv)
@@ -795,10 +807,7 @@ class MultiTraffic(Realm):
             """
             if args.order_priority == 'series':
                 self.current_exec = "series"
-                for t in series_threads:
-                    t.start()
-                    t.join()
-                    self.series_index += 1
+                self.run_series_tests(series_threads, series_keys)   # one by one, with webGUI status and Stop
 
                 # Then run parallel tests
                 if parallel_threads:
@@ -829,9 +838,7 @@ class MultiTraffic(Realm):
                     time.sleep(5)
 
                 self.current_exec = "series"
-                for t in series_threads:
-                    t.start()
-                    t.join()
+                self.run_series_tests(series_threads, series_keys)   # one by one, with webGUI status and Stop
         else:
             logger.error("Provide either --parallel_tests or --series_tests")
             exit(1)
@@ -844,12 +851,26 @@ class MultiTraffic(Realm):
         log_file = save_logs()
         logging.info(f"Logs saved to: {log_file}")
 
+        if self.suite_live_view:
+            # Now let Throughput's section of the combined report wait for and add its live-view maps
+            for entry in self.thput_obj_dict["series"].values():
+                if entry["obj"] is not None:
+                    entry["obj"].get_live_view = True
         test_results_df = pd.DataFrame(list(test_results_list))
-        self.generate_overall_report(test_results_df=test_results_df, args_dict=args_dict)
+        # Under the webGUI a report error is recorded as report "failed" instead of ending the script
+        try:
+            self.generate_overall_report(test_results_df=test_results_df, args_dict=args_dict)
+            report_state = "ready"
+        except Exception:
+            if not self.dowebgui:
+                raise
+            logger.exception("Overall report generation failed")
+            report_state = "failed"
 
         if self.dowebgui:
             try:
-                self.overall_status["status"] = "completed"
+                self.overall_status["status"] = "stopped" if self.webgui_stopped else "completed"   # stopped if the user pressed Stop
+                self.overall_status["report"] = report_state
                 self.overall_status["time"] = datetime.datetime.now().strftime("%Y %d %H:%M:%S")
                 self.overall_csv.append(self.overall_status.copy())
                 df1 = pd.DataFrame(self.overall_csv)
@@ -858,6 +879,120 @@ class MultiTraffic(Realm):
                 logging.error(f"Error while writing status file for webui: {e}")
 
         logging.info(f"\nTest Results Summary:\n{test_results_df}")
+
+    def run_series_tests(self, series_threads, series_keys):
+        """
+        Run the series tests one after another, in order.
+
+        With --dowebgui this process writes each test's state (started, then done/failed/stopped) to
+        overall_status.csv, because a real-app test runs in a child process and its own writes are lost.
+        After a Stop, the remaining tests are skipped.
+        """
+        for t, test_key in zip(series_threads, series_keys):
+            # After a Stop, skip the remaining tests
+            if self.dowebgui and (self.webgui_stopped or self.is_stop_requested()):
+                self.webgui_stopped = True
+                logger.info("Test stopped by the user, skipping the remaining series tests")
+                break
+            results_before = len(test_results_list)   # to find this test's result afterwards
+            if self.dowebgui:
+                self.set_test_state(test_key, "started")
+            t.start()
+            if self.dowebgui:
+                # Wait for the test in 1 s steps, passing a Stop on to it
+                stop_delivered = False
+                next_stop_attempt = 0
+                while t.is_alive():
+                    t.join(timeout=1)
+                    if t.is_alive() and (self.webgui_stopped or self.is_stop_requested()):
+                        self.webgui_stopped = True
+                        # Retry if Stop arrived before the real-app Flask server was ready.
+                        if not stop_delivered and time.monotonic() >= next_stop_attempt:
+                            stop_delivered = self.stop_running_test(test_key)
+                            next_stop_attempt = time.monotonic() + 5
+            else:
+                t.join()
+            if self.dowebgui:
+                # Its final state: stopped by the user, done (all executed) or failed
+                results = list(test_results_list)[results_before:]
+                if self.webgui_stopped or self.is_stop_requested():
+                    self.webgui_stopped = True
+                    state = "stopped"
+                elif results and all(result["status"] == "EXECUTED" for result in results):
+                    state = "done"
+                else:
+                    state = "failed"
+                self.set_test_state(test_key, state)
+                if self.suite_live_view and test_key != "thput_test":
+                    self.wait_for_live_view_images(test_key)   # before the next test changes the live view
+
+    def stop_running_test(self, test_key):
+        """Ask the running YouTube/Zoom test to stop through its Flask stop endpoint; True once it answered."""
+        from urllib.error import URLError
+        from urllib.request import urlopen
+        endpoints = {"yt_test": "http://127.0.0.1:5002/stop_yt",
+                     "zoom_test": "http://127.0.0.1:5000/stop_zoom"}
+        if test_key not in endpoints:
+            return True  # other tests check the running JSON themselves
+        try:
+            with urlopen(endpoints[test_key], timeout=2) as response:
+                return response.status == 200
+        except (URLError, OSError):
+            logger.warning("Could not signal Stop to %s yet; will retry", test_key)
+            return False
+
+    def live_view_image_paths(self, test_key):
+        """Paths of the floor-map images the web UI saves for a YouTube/Zoom test."""
+        _, prefix, metrics = SUITE_LIVE_VIEWS[test_key]
+        return [os.path.join(self.result_dir, "live_view_images", f"{prefix}_{metric}_{floor}.png")
+                for metric in metrics for floor in range(1, self.args.total_floors + 1)]
+
+    def wait_for_live_view_images(self, test_key, timeout=60):
+        """Wait (at most `timeout` seconds) for the web UI to save this test's floor-map images."""
+        deadline = time.monotonic() + timeout
+        while not all(os.path.isfile(path) for path in self.live_view_image_paths(test_key)):
+            if time.monotonic() > deadline:
+                logger.warning("Live-view capture timed out for %s", test_key)
+                return
+            time.sleep(1)
+
+    def add_live_view_images(self):
+        """Add the YouTube/Zoom floor-map images to the combined report (Throughput adds its own in its section)."""
+
+        for test_key in self.series_tests:
+            if test_key not in SUITE_LIVE_VIEWS:
+                continue
+            label = SUITE_LIVE_VIEWS[test_key][0]
+            paths = [path for path in self.live_view_image_paths(test_key) if os.path.isfile(path)]
+            self.overall_report.set_custom_html(f"<h2>{label} Live View</h2>" if paths else f"<p>{label} Live View was not captured.</p>")
+            self.overall_report.build_custom()
+            for path in paths:
+                with open(path, "rb") as image_file:
+                    encoded = base64.b64encode(image_file.read()).decode("ascii")
+                self.overall_report.set_custom_html(
+                    f'<div style="page-break-before:always;"><img src="data:image/png;base64,{encoded}" '
+                    f'alt="{os.path.basename(path)}" style="max-width:100%;height:auto;"></div>')
+                self.overall_report.build_custom()
+
+    def is_stop_requested(self):
+        """True once Stop was pressed in the web UI (the run's running JSON is no longer "Running")."""
+        running_json = self.result_dir + "/../../Running_instances/{}_{}_running.json".format(self.lanforge_ip, self.test_name)
+        try:
+            with open(running_json, 'r') as file:
+                return json.load(file).get("status") != "Running"
+        except (OSError, ValueError, AttributeError):
+            return False
+
+    def set_test_state(self, test_key, state):
+        """Record one test's state (started/done/failed/stopped) in overall_status.csv."""
+        column = WEBGUI_STATUS_COLUMNS[test_key]
+        self.overall_status[column] = state
+        self.overall_status["time"] = datetime.datetime.now().strftime("%Y %d %H:%M:%S")
+        self.overall_csv.append(self.overall_status.copy())
+        try:
+            pd.DataFrame(self.overall_csv).to_csv('{}/overall_status.csv'.format(self.result_dir), index=False)
+        except Exception as e:
+            logger.error(f"Error while writing status file for webui: {e}")
 
     def webgui_stop_check(self, test_name):
         """
@@ -877,6 +1012,8 @@ class MultiTraffic(Realm):
                 if data["status"] != "Running":
                     logging.info('Test is stopped by the user')
                     self.test_stopped = True
+            if self.suite_run:
+                return not self.test_stopped   # Suite: run_series_tests writes the test states
             if not self.test_stopped:
                 self.overall_status[test_name] = "started"
                 self.overall_status["time"] = datetime.datetime.now().strftime("%Y %d %H:%M:%S")
@@ -900,6 +1037,8 @@ class MultiTraffic(Realm):
         Args:
             test_name (str): The name of the test that just finished.
         """
+        if self.suite_run:
+            return   # Suite: run_series_tests writes the test states
         try:
             self.overall_status[test_name] = "stopped"
             self.overall_status["time"] = datetime.datetime.now().strftime("%Y %d %H:%M:%S")
@@ -5504,9 +5643,9 @@ class MultiTraffic(Realm):
 
                     end_time = datetime.datetime.now() + datetime.timedelta(minutes=duration)
 
-                    while datetime.datetime.now() < end_time or not self.yt_test_obj.check_gen_cx():
-                        # self.yt_test_obj.get_data_from_api()
-                        time.sleep(5)
+                    # Stop from the webGUI arrives as stop_signal (run_series_tests calls /stop_yt)
+                    while not self.yt_test_obj.stop_signal and (datetime.datetime.now() < end_time or not self.yt_test_obj.check_gen_cx()):
+                        time.sleep(1)
                     self.yt_test_obj.generic_endps_profile.stop_cx()
                     logging.info("Duration ended")
 
@@ -5534,9 +5673,9 @@ class MultiTraffic(Realm):
                 # Perform post-test cleanup if not skipped
                 # if not no_post_cleanup:
                 #     self.yt_test_obj.generic_endps_profile.cleanup()
-        except Exception as e:
-            logging.error(f"Error occured {e}")
-            # traceback.print_exc()
+        except Exception:
+            logger.exception("YouTube test failed")
+            return False   # so the test is reported as failed
         finally:
             if not ('--help' in sys.argv or '-h' in sys.argv):
                 # traceback.print_exc()
@@ -5859,6 +5998,7 @@ class MultiTraffic(Realm):
         except Exception as e:
             logging.error(f"AN ERROR OCCURED WHILE RUNNING TEST {e}")
             traceback.print_exc()
+            return False   # so the test is reported as failed
         finally:
             if not ('--help' in sys.argv or '-h' in sys.argv):
 
@@ -6329,6 +6469,14 @@ class MultiTraffic(Realm):
                     while obj_name in self.http_obj_dict[ce]:
                         if ce == "parallel":
                             obj_no = ''
+                        # No results (e.g. stopped early): leave this test out of the report instead of crashing
+                        if self.http_obj_dict[ce][obj_name]["data"] is None:
+                            logger.warning(f"{obj_name} has no results, so it is left out of the overall report")
+                            if ce == "series":
+                                obj_no += 1
+                                obj_name = f"http_test_{obj_no}"
+                                continue
+                            break
                         http_data = self.http_obj_dict[ce][obj_name]["data"]
 
                         self.overall_report.set_obj_html(_obj_title=f'HTTP Test {obj_no}', _obj="")
@@ -6549,6 +6697,14 @@ class MultiTraffic(Realm):
                     while obj_name in self.ftp_obj_dict[ce]:
                         if ce == "parallel":
                             obj_no = ''
+                        # No results (e.g. stopped early): leave this test out of the report instead of crashing
+                        if self.ftp_obj_dict[ce][obj_name]["data"] is None:
+                            logger.warning(f"{obj_name} has no results, so it is left out of the overall report")
+                            if ce == "series":
+                                obj_no += 1
+                                obj_name = f"ftp_test_{obj_no}"
+                                continue
+                            break
                         params = self.ftp_obj_dict[ce][obj_name]["data"].copy()
                         input_setup_info = params["input_setup_info"].copy() if isinstance(params["input_setup_info"], (list, dict, set)) else params["input_setup_info"]
                         csv_outfile = params["csv_outfile"].copy() if isinstance(params["csv_outfile"], (list, dict, set)) else params["csv_outfile"]
@@ -6867,6 +7023,14 @@ class MultiTraffic(Realm):
                     while obj_name in self.thput_obj_dict[ce]:
                         if ce == "parallel":
                             obj_no = ''
+                        # No results (e.g. stopped early): leave this test out of the report instead of crashing
+                        if self.thput_obj_dict[ce][obj_name]["data"] is None:
+                            logger.warning(f"{obj_name} has no results, so it is left out of the overall report")
+                            if ce == "series":
+                                obj_no += 1
+                                obj_name = f"thput_test_{obj_no}"
+                                continue
+                            break
                         self.overall_report.set_obj_html(_obj_title=f'THROUGHPUT Test {obj_no}', _obj="")
                         self.overall_report.build_objective()
                         # obj_name = f"thput_test_{obj_no}"
@@ -7198,7 +7362,7 @@ class MultiTraffic(Realm):
                                     _obj_title=f"{real_time_data}",
                                     _obj=" ")
                                 self.overall_report.build_objective()
-                                graph_png = curr_thpt_obj.build_line_graph(
+                                graph_png = build_throughput_line_graph(  # Throughput no longer has build_line_graph()
                                     data_set=data_set_in_graph,
                                     xaxis_name="Time",
                                     yaxis_name="Throughput (Mbps)",
@@ -7798,7 +7962,7 @@ class MultiTraffic(Realm):
                                             else:
                                                 xaxis_categories = data['TIMESTAMP'][data['Iteration'] == i + 1].values.tolist()
                                                 graph_image_name = "line_graph{}_{}".format(coordinate, i)
-                                            graph_png = curr_thpt_obj.build_line_graph(
+                                            graph_png = build_throughput_line_graph(  # Throughput no longer has build_line_graph()
                                                 data_set=data_set_in_graph,
                                                 xaxis_name="Time",
                                                 yaxis_name="Throughput (Mbps)",
@@ -8144,7 +8308,7 @@ class MultiTraffic(Realm):
                                     _obj_title=f"{real_time_data}",
                                     _obj=" ")
                                 self.overall_report.build_objective()
-                                graph_png = curr_thpt_obj.build_line_graph(
+                                graph_png = build_throughput_line_graph(  # Throughput no longer has build_line_graph()
                                     data_set=data_set_in_graph,
                                     xaxis_name="Time",
                                     yaxis_name="Throughput (Mbps)",
@@ -8284,6 +8448,14 @@ class MultiTraffic(Realm):
                     while obj_name in self.ping_obj_dict[ce]:
                         if ce == "parallel":
                             obj_no = ''
+                        # No results (e.g. stopped early): leave this test out of the report instead of crashing
+                        if self.ping_obj_dict[ce][obj_name]["data"] is None:
+                            logger.warning(f"{obj_name} has no results, so it is left out of the overall report")
+                            if ce == "series":
+                                obj_no += 1
+                                obj_name = f"ping_test_{obj_no}"
+                                continue
+                            break
                         params = self.ping_obj_dict[ce][obj_name]["data"].copy()
                         result_json = params["result_json"]
                         report_path = params["report_path"]
@@ -9115,6 +9287,14 @@ class MultiTraffic(Realm):
                         if ce == "parallel":
                             obj_no = ''
                         logging.debug("mcast_obj_dict: %s", self.mcast_obj_dict)
+                        # No results (e.g. stopped early): leave this test out of the report instead of crashing
+                        if self.mcast_obj_dict[ce][obj_name]["data"] is None:
+                            logger.warning(f"{obj_name} has no results, so it is left out of the overall report")
+                            if ce == "series":
+                                obj_no += 1
+                                obj_name = f"mcast_test_{obj_no}"
+                                continue
+                            break
                         params = self.mcast_obj_dict[ce][obj_name]["data"].copy()
                         config_devices = params["config_devices"].copy() if isinstance(params["config_devices"], (list, dict, set)) else params["config_devices"]
                         group_device_map = params["group_device_map"].copy() if isinstance(params["group_device_map"], (list, dict, set)) else params["group_device_map"]
@@ -9776,6 +9956,14 @@ class MultiTraffic(Realm):
                         curr_vs_obj = copy.copy(self.vs_obj_dict[ce][obj_name]["obj"])
                         if not self.robot_test or (self.robot_test and self.do_bandsteering):
                             if not self.do_bandsteering:
+                                # No results (e.g. stopped early): leave this test out of the report instead of crashing
+                                if self.vs_obj_dict[ce][obj_name]["data"] is None:
+                                    logger.warning(f"{obj_name} has no results, so it is left out of the overall report")
+                                    if ce == "series":
+                                        obj_no += 1
+                                        obj_name = f"vs_test_{obj_no}"
+                                        continue
+                                    break
                                 params = self.vs_obj_dict[ce][obj_name]["data"].copy()
                                 iterations_before_test_stopped_by_user = (
                                     params["iterations_before_test_stopped_by_user"].copy()
@@ -11102,7 +11290,7 @@ class MultiTraffic(Realm):
                                 logging.info(f"Buffer health graph path: {output_file}, exists: {os.path.exists(output_file)}")
                                 self.overall_report.set_graph_image(output_file)
                                 self.overall_report.build_graph()
-                            if self.dowebgui:
+                            if self.dowebgui and not self.suite_live_view:   # the Suite adds these maps at the end of the report
                                 url_image_path = os.path.join(self.yt_obj_dict[ce][obj_name]['obj'].ui_report_dir, "live_view_images", f"yt_{self.yt_obj_dict[ce][obj_name]['obj'].test_name}_1.png")
                                 timeout = 60  # seconds
                                 start_time = time.time()
@@ -12267,7 +12455,7 @@ class MultiTraffic(Realm):
                                     self.overall_report.set_custom_html("<hr>")
                                     self.overall_report.build_custom()
 
-                            if curr_zoom_obj.do_webui:
+                            if curr_zoom_obj.do_webui and not self.suite_live_view:   # the Suite adds these maps at the end of the report
                                 curr_zoom_obj.add_live_view_images_to_report()
 
                             # --- Finalize Report ---
@@ -12437,6 +12625,9 @@ class MultiTraffic(Realm):
         self.overall_report.set_title("MULTI TRAFFIC TEST")
         self.overall_report.set_date(datetime.datetime.now())
         self.overall_report.build_banner()
+        # Fit images that tests embed as chart-card (sized by report_v2's CSS, missing here) to the PDF page
+        self.overall_report.set_custom_html("<style>.chart-card img { max-width: 100%; height: auto; }</style>")
+        self.overall_report.build_custom()
         try:
             series_df, parallel_df = self.generate_test_exc_df(test_results_df, args_dict)
         except Exception:
@@ -12475,6 +12666,8 @@ class MultiTraffic(Realm):
                 self.overall_report.set_custom_html(series_df.to_html(index=False, justify='center'))
                 self.overall_report.build_custom()
                 self.render_each_test(ce="series")
+        if self.suite_live_view:
+            self.add_live_view_images()   # YouTube/Zoom live-view maps
         self.overall_report.build_footer()
         html_file = self.overall_report.write_html()
         logging.info(f"Generated HTML report file: {html_file}")
@@ -12860,6 +13053,38 @@ def validate_args(args):
                 logger.info(f"Arg validation check done for {test}")
 
 
+def build_throughput_line_graph(data_set, xaxis_name, yaxis_name, xaxis_categories, label, graph_image_name):
+    """Save a throughput-over-time line graph and return its file name (was Throughput.build_line_graph())."""
+    plt.figure(figsize=(15, 7))
+
+    color = ['forestgreen', 'c', 'r', 'g', 'b', 'p']
+    marker = ['s', 'o', 'v']
+    xaxis_categories = xaxis_categories[:-1]
+    data_set = [data[:-1] for data in data_set]
+    for i, data in enumerate(data_set):
+        plt.plot(xaxis_categories, data, color=color[i % len(color)], label=label[i], marker=marker[i % len(marker)])
+
+    plt.xlabel(xaxis_name, fontweight='bold', fontsize=15)
+    plt.ylabel(yaxis_name, fontweight='bold', fontsize=15)
+
+    data_size = len(xaxis_categories)
+    if data_size <= 60:
+        tick_positions = list(range(data_size))
+    else:
+        interval = data_size / 59
+        tick_positions = [round(i * interval) for i in range(60)]
+        tick_positions = sorted(set(min(data_size - 1, max(0, pos)) for pos in tick_positions))
+    tick_labels = [xaxis_categories[i] for i in tick_positions]
+    plt.xticks(ticks=tick_positions, labels=tick_labels, rotation=90)
+
+    plt.grid(True, linestyle=':')
+    plt.legend(loc="best", ncol=1)
+    plt.tight_layout()
+    plt.savefig(f"{graph_image_name}.png", dpi=96, bbox_inches="tight")
+    plt.close()
+    return f"{graph_image_name}.png"
+
+
 def normalise_time(value):
     if value is None:
         return value
@@ -12896,6 +13121,48 @@ def normalise_time(value):
         return int(num / 60)   # will become 0 for values < 60s
     else:
         return value  # unknown suffix → unchanged
+
+
+def load_input_json(path, parser):
+    """
+    Read the --input_json file and return its values as argument defaults.
+
+    "common" keys are argument names; each series_tests entry's inputs get the test's prefix
+    ("thput_test" + "test_duration" -> --thput_test_duration). Unknown or invalid inputs are errors.
+    """
+    with open(path, 'r') as f:
+        data = json.load(f)
+    actions = {action.dest: action for action in parser._actions}
+    values = {}
+
+    def add(dest, value, where):
+        if dest not in actions or dest in ('help', 'input_json', 'series_tests'):
+            parser.error(f"--input_json: unknown input '{dest}' in {where}")
+        choices = actions[dest].choices
+        if choices is not None and value not in choices:
+            parser.error(f"--input_json: '{dest}' in {where} must be one of {list(choices)}, got {value!r}")
+        values[dest] = value
+
+    unknown_sections = set(data) - {'common', 'series_tests'}
+    if unknown_sections:
+        parser.error(f"--input_json: unknown section(s) {sorted(unknown_sections)}")
+    for key, value in data.get('common', {}).items():
+        add(key, value, 'common')
+
+    test_names = []
+    for entry in data.get('series_tests', []):
+        test = entry.get('test')
+        if test not in WEBGUI_STATUS_COLUMNS:
+            parser.error(f"--input_json: unknown test {test!r}, expected one of {list(WEBGUI_STATUS_COLUMNS)}")
+        if test in test_names:
+            parser.error(f"--input_json: test '{test}' is listed more than once")
+        test_names.append(test)
+        prefix = test[:-len('_test')]
+        for key, value in entry.get('inputs', {}).items():
+            add(f"{prefix}_{key}", value, test)
+    if test_names:
+        values['series_tests'] = ','.join(test_names)
+    return values
 
 
 def parse_args(return_parser=False):
@@ -13342,7 +13609,15 @@ def parse_args(return_parser=False):
                         help='Which tests to run first: series or parallel')
     parser.add_argument('--test_name', help='Name of the Test')
     parser.add_argument('--dowebgui', help="If true will execute script for webgui", default=False, type=bool)
+    parser.add_argument('--get_live_view', action='store_true', help='Include Testhouse live-view captures in the report')
+    parser.add_argument('--total_floors', type=int, default=0, help='Number of Testhouse floors to capture')
     parser.add_argument('--result_dir', help="Specify the result dir to store the runtime logs <Do not use in CLI, --used by webui>", default='')
+    parser.add_argument('--input_json', default=None,
+                        help='JSON file with all inputs, used by the webui. Format:\n'
+                             '{"common": {"mgr": "...", "upstream_port": "..."},\n'
+                             ' "series_tests": [{"test": "thput_test", "inputs": {"duration": "1m"}}, ...]}\n'
+                             'Each test\'s inputs omit its prefix ("test_duration" -> --thput_test_duration).\n'
+                             'Tests run in list order. Options given on the CLI override the file.')
     parser.add_argument('--no_cleanup', help='Do not cleanup before exit', action='store_true')
     parser.add_argument('--help_summary', action="store_true", help='Show summary of what this script does')
     parser.add_argument('--run_specific_scenario', action='store_true', help='Specify the scenario to run just by giving CLI as function call')
@@ -13615,6 +13890,7 @@ def parse_args(return_parser=False):
     parser.add_argument('--thput_group_name', type=str, help='Specify the groups name that contains a list of devices. Example: group1,group2')
     parser.add_argument('--thput_profile_name', type=str, help='Specify the profile name to apply configurations to the devices.')
     parser.add_argument('--thput_load_type', help="Determine the type of load: < wc_intended_load | wc_per_client_load >", default="wc_per_client_load")
+    parser.add_argument('--thput_incremental_capacity', default=None, help='Client counts per iteration, e.g. 1,2,4 (default: all devices at once)')
     parser.add_argument('--thput_packet_size', help='Determine the size of the packet in which Packet Size Should be Greater than 16B or less than 64KB(65507)', default="-1")
 
     # thput configuration with --config
@@ -13921,6 +14197,10 @@ def parse_args(return_parser=False):
 
     if return_parser:
         return parser
+    # --input_json values become the defaults; options given on the command line still override them
+    known_args, _ = parser.parse_known_args()
+    if known_args.input_json:
+        parser.set_defaults(**load_input_json(known_args.input_json, parser))
     args = parser.parse_args()
     if args.help:
         print(parser.description)
@@ -14578,6 +14858,7 @@ def run_thput_test(args, multi_traffic_obj: MultiTraffic):
         upload=args.thput_upload,
         traffic_type=args.thput_traffic_type,
         device_list=args.thput_device_list,
+        incremental_capacity=args.thput_incremental_capacity,   # new --thput_incremental_capacity
         do_interopability=args.thput_do_interopability,
         default_config=args.thput_default_config,
         expected_passfail_value=args.thput_expected_passfail_value,
@@ -14612,6 +14893,8 @@ def run_thput_test(args, multi_traffic_obj: MultiTraffic):
         dowebgui=args.dowebgui,
         test_name=args.test_name,
         result_dir=args.result_dir,
+        get_live_view=args.get_live_view and not args.input_json,   # Suite: maps are added to the combined report later
+        total_floors=args.total_floors,
         do_bandsteering=args.do_bandsteering,
         total_cycles=args.cycles,
         duration_to_skip=args.duration_to_skip,
