@@ -7031,8 +7031,9 @@ class MultiTraffic(Realm):
                                 obj_name = f"thput_test_{obj_no}"
                                 continue
                             break
-                        self.overall_report.set_obj_html(_obj_title=f'THROUGHPUT Test {obj_no}', _obj="")
-                        self.overall_report.build_objective()
+                        if not self.suite_run:
+                            self.overall_report.set_obj_html(_obj_title=f'THROUGHPUT Test {obj_no}', _obj="")
+                            self.overall_report.build_objective()
                         # obj_name = f"thput_test_{obj_no}"
                         params = self.thput_obj_dict[ce][obj_name]["data"].copy()
                         iterations_before_test_stopped_by_user = params["iterations_before_test_stopped_by_user"].copy() if isinstance(
@@ -7158,6 +7159,9 @@ class MultiTraffic(Realm):
                                     "Packet Size": packet_size_text
                                 }
                             self.overall_report.test_setup_table(test_setup_data=test_setup_info, value="Test Configuration")
+                            if self.suite_run:
+                                self.overall_report.set_obj_html(_obj_title="THROUGHPUT Test", _obj="")
+                                self.overall_report.build_objective()
 
                             # Loop through iterations and build graphs, tables for each iteration
                             for i in range(len(iterations_before_test_stopped_by_user)):
@@ -7657,6 +7661,9 @@ class MultiTraffic(Realm):
                                     test_setup_info["Selected Angles"] = ",".join(curr_thpt_obj.angle_list)
 
                                 self.overall_report.test_setup_table(test_setup_data=test_setup_info, value="Test Configuration")
+                                if self.suite_run:
+                                    self.overall_report.set_obj_html(_obj_title="THROUGHPUT Test", _obj="")
+                                    self.overall_report.build_objective()
 
                                 # Add live view images in case of robot testing from webui
                                 if curr_thpt_obj.dowebgui:
@@ -8167,6 +8174,9 @@ class MultiTraffic(Realm):
                                 # "Packet Size" : str(curr_thpt_obj.cx_profile.side_a_min_pdu) + " Bytes"
                             }
                             self.overall_report.test_setup_table(test_setup_data=test_setup_info, value="Test Configuration")
+                            if self.suite_run:
+                                self.overall_report.set_obj_html(_obj_title="THROUGHPUT Test", _obj="")
+                                self.overall_report.build_objective()
 
                             if (curr_thpt_obj.interopability_config):
 
@@ -11073,7 +11083,7 @@ class MultiTraffic(Realm):
                                 "Video URL": curr_yt_obj.url,
 
                             }
-                        self.overall_report.set_obj_html(_obj_title=f'Youtube Streaming Test {obj_no}', _obj="")
+                        self.overall_report.set_obj_html(_obj_title='Youtube Streaming Test' if self.suite_run else f'Youtube Streaming Test {obj_no}', _obj="")
                         self.overall_report.build_objective()
                         self.overall_report.test_setup_table(
                             test_setup_data=test_setup_info, value='Test Parameters')
@@ -11495,7 +11505,7 @@ class MultiTraffic(Realm):
                     while obj_name in self.zoom_obj_dict[ce]:
                         if ce == "parallel":
                             obj_no = ''
-                        self.overall_report.set_obj_html(_obj_title=f'ZOOM Test {obj_no}', _obj="")
+                        self.overall_report.set_obj_html(_obj_title='ZOOM Test' if self.suite_run else f'ZOOM Test {obj_no}', _obj="")
                         self.overall_report.build_objective()
                         self.overall_report.set_table_title("Test Parameters:")
                         self.overall_report.build_table_title()
