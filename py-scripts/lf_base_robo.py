@@ -5,6 +5,10 @@ import json
 import math
 import logging
 from datetime import datetime
+from contextvars import ContextVar
+
+
+capture_hooks = ContextVar('robot_capture_hooks', default=None)
 
 
 class RobotClass:
@@ -23,6 +27,7 @@ class RobotClass:
         """
 
         self.robo_ip = robo_ip
+        self.capture_session = capture_hooks.get()
         self.waypoint_list = []
         self.target_x = None
         self.target_y = None
@@ -93,11 +98,32 @@ class RobotClass:
 
             if 'status' in run_status.keys() and run_status["status"] != "Running":
                 logging.info("Test is stopped by the user")
+                hooks = self.capture_session or capture_hooks.get()
+                if hooks is not None:
+                    hooks.pause()
                 return True
 
         return False
 
     def wait_for_battery(self, stop=None, monitor_function=None):
+        """Pause an optional capture during charging and resume when ready."""
+        hooks = self.capture_session or capture_hooks.get()
+        if hooks is None:
+            return self._wait_for_battery(stop=stop, monitor_function=monitor_function)
+
+        def pause_test():
+            hooks.pause()
+            if stop is not None:
+                stop()
+
+        result = self._wait_for_battery(stop=pause_test, monitor_function=monitor_function)
+        if result[1]:
+            hooks.pause()
+        elif result[0]:
+            hooks.resume()
+        return result
+
+    def _wait_for_battery(self, stop=None, monitor_function=None):
         """Monitor robot battery status and pause execution if battery is low.
 
         Sends robot to charging station and resumes once fully charged.
@@ -488,19 +514,21 @@ class RobotClass:
         """
         skipped_list = []
         matched_index = None
+        # Expose the reached starting point without adding a duplicate movement.
+        self.initial_coordinate = None
 
         # Find the matched coordinate
         for idx, coordinate in enumerate(self.coordinate_list):
             matched, abort = self.move_to_coordinate(coordinate)
 
+            if abort:
+                return []
             if matched:
                 matched_index = idx
+                self.initial_coordinate = coordinate
                 break
 
             skipped_list.append(coordinate)
-
-            if abort:
-                return []
 
         if matched_index is None:
             logging.info("It couldn't reach any point, so ending the test.")

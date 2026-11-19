@@ -49,6 +49,7 @@ import importlib
 import os
 import pandas as pd
 import threading
+import time
 from lf_report import lf_report
 from lf_graph import lf_bar_graph
 from collections import Counter
@@ -259,7 +260,59 @@ class BandSteeringTest(RobotClass):
             with open(file_path, "w") as f:
                 f.write("Sequence No.,Timestamp,MAC,Channel,BSSID,Signal,Robot x,Robot y,From Coordinate,To Coordinate\n")
 
-    def perform_robot_movement(self):
+    def perform_roam_robot(self, args):
+        """Run robot movement with AP-to-AP captures and optional roaming analysis."""
+        from remote_sniffer import RoamingCapture, prepare_roaming_interfaces
+        if self.capture_session is not None:
+            raise ValueError('A capture session is already attached to this robot')
+        self.ap_coordinates = set(point.strip() for point in args.ap_coordinates.split(',') if point.strip())
+        if len(self.ap_coordinates) < 2 or not self.ap_coordinates.issubset(set(self.coordinates_list)):
+            raise ValueError('Provide at least two AP coordinates included in --coordinates')
+        if args.wait_at_point < 0:
+            raise ValueError('--wait_at_point must be nonnegative')
+        capture = RoamingCapture(
+            args.resource_ip, args.result_dir or '.',
+            prepare_roaming_interfaces(args, args.mgr_ip, args.port),
+            username=args.sniff_user, password=args.sniff_password, key_filename=args.sniff_key,
+            remote_base=args.sniff_remote_dir, test_prefix='standalone-roaming')
+        self.capture_session = capture
+        self.roaming_wait = args.wait_at_point
+        try:
+            self.perform_robot_movement(roaming=capture)
+            if args.roaming_analysis and capture.remote_folder:
+                capture.sniffer.connect()
+                capture.sniffer.run_command_and_fetch_folder(
+                    capture.remote_folder, self.report_folder_path,
+                    args.roaming_mgmt_ms, None, 'no_data',
+                    analysis_script=args.roaming_script, alias_file=args.roaming_alias_file,
+                    report_image=args.roaming_report_image)
+        finally:
+            self.capture_session = None
+            capture.close()
+
+    def capture_at_ap(self, capture, coordinates, index, coordinate):
+        """Finish the incoming capture at an AP and capture travel toward the next AP."""
+        if coordinate not in self.ap_coordinates:
+            return
+        if capture.route and capture.route[0] == coordinate:
+            return
+        deadline = time.monotonic() + self.roaming_wait
+        while time.monotonic() < deadline:
+            if self.stop_event.is_set() or (self.dowebgui and self.check_test_status()):
+                self.stop_event.set()
+                capture.stop_segment()
+                return
+            self.monitor_ap_bssid()
+            time.sleep(min(1, max(0, deadline - time.monotonic())))
+        capture.stop_segment()
+        if self.stop_event.is_set():
+            return
+        next_ap = next((point for point in coordinates[index + 1:]
+                        if point in self.ap_coordinates and point != coordinate), None)
+        if next_ap is not None:
+            capture.start_segment(coordinate, next_ap)
+
+    def perform_robot_movement(self, roaming=None):
         """
          Performs the robot movement through the specified coordinates and monitors the AP BSSID for each device during the movement.
 
@@ -267,16 +320,31 @@ class BandSteeringTest(RobotClass):
         try:
             # Create a folder for storing test results/logs
             self.create_testname_folder()
+            if roaming is not None:
+                roaming.output_path = self.report_folder_path
+                self.runtime_dir = self.result_dir if self.dowebgui else None
+                self.ip = self.mgr_ip
+                self.testname = self.test_name
             # Initialize roam count
             self.roam_count = 0
             # Flag to check if user stopped the test manually
             self.coordinate_list = self.coordinates_list
             # Get coordinates based on number of cycles
             coordinate_list_with_robo = self.get_coordinates_list()
+            if (roaming is not None and coordinate_list_with_robo
+                    and self.initial_coordinate is not None
+                    and not self.stop_event.is_set()):
+                # The initial positioning move is outside the loop below. Start
+                # its outgoing capture before moving to the next coordinate.
+                self.capture_at_ap(roaming,
+                                   [self.initial_coordinate] + coordinate_list_with_robo,
+                                   0, self.initial_coordinate)
             curr_cycle = 1
             logger.info("Starting cycle %s", curr_cycle)
             # Loop through each coordinate
-            for coordinate in coordinate_list_with_robo:
+            for coordinate_index, coordinate in enumerate(coordinate_list_with_robo):
+                if roaming is not None and self.stop_event.is_set():
+                    break
                 # Wait/check battery before moving
                 pause, stopped, all_df = self.wait_for_battery(monitor_function=self.monitor_ap_bssid)
                 if stopped:
@@ -290,6 +358,8 @@ class BandSteeringTest(RobotClass):
                 # Skip the current coordinate if it fails to reach the current coordinate
                 if not matched:
                     continue
+                if roaming is not None:
+                    self.capture_at_ap(roaming, coordinate_list_with_robo, coordinate_index, coordinate)
                 if coordinate == self.coordinates_list[0]:
                     curr_cycle += 1
                     # Check if all cycles are completed
@@ -306,7 +376,11 @@ class BandSteeringTest(RobotClass):
             logger.info("Test interrupted by user")
         finally:
             # Always generate report at the end
-            self.generate_report()
+            try:
+                if roaming is not None:
+                    roaming.close()
+            finally:
+                self.generate_report()
             logger.info("Test completed")
 
     def check_devices_status(self):
@@ -539,7 +613,46 @@ def main():
     parser.add_argument('--result_dir', help='Specify the result dir to store the runtime logs', default='')
     parser.add_argument('--bssids', type=str, help='Comma-separated BSSIDs to filter, only these will be considered for steering checks.', default="")
 
+    roaming = parser.add_argument_group('Roaming capture')
+    roaming.add_argument('--do_roaming', action='store_true', help='Capture AP-to-AP robot movement')
+    roaming.add_argument('--resource_ip', help='SSH capture host')
+    roaming.add_argument('--ap_coordinates', default='', help='Comma-separated AP coordinates')
+    roaming.add_argument('--wait_at_point', type=int, default=30)
+    for band in ('2g', '5g', '6g'):
+        roaming.add_argument('--moni' + band, help=f'Existing {band} monitor interface')
+        roaming.add_argument('--sniff_radio_' + band, help=f'{band} radio EID for monitor creation')
+        roaming.add_argument('--sniff_channel_' + band, type=int, help=f'{band} capture channel')
+    roaming.add_argument('--sniff_user', default='lanforge')
+    roaming.add_argument('--sniff_password', default='lanforge')
+    roaming.add_argument('--sniff_key', default=None)
+    roaming.add_argument('--sniff_remote_dir', default='/home/lanforge')
+    roaming.add_argument('--roaming_analysis', action='store_true')
+    roaming.add_argument('--roaming_script', default='roaming_development/wifi_roaming_cli.py')
+    roaming.add_argument('--roaming_alias_file', default='roaming_development/ap_client_aliases.json')
+    roaming.add_argument('--roaming_report_image', default='roaming_development/floor_plan.jpeg')
+    roaming.add_argument('--roaming_mgmt_ms', type=int, default=500)
+    roaming.add_argument('--roaming_data_ms', type=int, default=500)
+    roaming.add_argument('--roaming_test_type', default='Roaming', help='Traffic-test label passed to the analyzer')
     args = parser.parse_args(remaining_args)
+    if args.do_roaming:
+        ap_points = {point.strip() for point in args.ap_coordinates.split(',') if point.strip()}
+        coordinates = set(args.coordinates.split(','))
+        has_capture_band = False
+        for band in ('2g', '5g', '6g'):
+            monitor = getattr(args, 'moni' + band)
+            radio = getattr(args, 'sniff_radio_' + band)
+            channel = getattr(args, 'sniff_channel_' + band)
+            if bool(radio) != (channel is not None):
+                parser.error(f'Provide both --sniff_radio_{band} and --sniff_channel_{band}')
+            if channel is not None and channel <= 0:
+                parser.error(f'--sniff_channel_{band} must be positive')
+            has_capture_band = has_capture_band or bool(monitor or radio)
+        if not args.resource_ip or not has_capture_band:
+            parser.error('--do_roaming requires --resource_ip and at least one monitor or radio/channel pair')
+        if len(ap_points) < 2 or not ap_points.issubset(coordinates) or args.wait_at_point < 0:
+            parser.error('Provide at least two AP coordinates in --coordinates and a nonnegative --wait_at_point')
+    if args.roaming_analysis and not args.do_roaming:
+        parser.error('--roaming_analysis requires --do_roaming')
 
     bandsteering_obj = BandSteeringTest(
         robo_ip=args.robot_ip,
@@ -557,7 +670,10 @@ def main():
     )
     # Check the status of the devices before starting the test, and then perform the robot movement while monitoring the AP BSSID for each device.
     bandsteering_obj.check_devices_status()
-    bandsteering_obj.perform_robot_movement()
+    if args.do_roaming:
+        bandsteering_obj.perform_roam_robot(args)
+    else:
+        bandsteering_obj.perform_robot_movement()
 
 
 if __name__ == "__main__":

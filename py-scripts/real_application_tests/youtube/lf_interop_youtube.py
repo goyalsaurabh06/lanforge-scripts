@@ -236,7 +236,10 @@ class Youtube(Realm):
                  scoring=False,
                  windows_dir=WINDOWS_REAL_APP_DIR,
                  linux_dir=LINUX_REAL_APP_DIR,
-                 mac_dir=MACOS_REAL_APP_DIR
+                 mac_dir=MACOS_REAL_APP_DIR,
+                 do_roaming=False, ap_coordinates=None, wait_at_point=30,
+                 resource_ip=None, sniff_interfaces=None, sniff_user='lanforge',
+                 sniff_password=None, sniff_key=None, sniff_remote_dir='/home/lanforge'
                  ):
         """
         Initialize the YouTube streaming test parameters.
@@ -293,7 +296,7 @@ class Youtube(Realm):
         self.do_bandsteering = do_bandsteering
         # measurement mode: 'per_point' plays at each point, 'continuous' keeps the video playing while the robot moves.
         # Band steering always moves continuously; do_bandsteering only adds the BSSID tracking report.
-        self.is_continuous_run = do_bandsteering or (do_robo and measurement_mode == "continuous")
+        self.is_continuous_run = do_roaming or do_bandsteering or (do_robo and measurement_mode == "continuous")
         self.bssids = bssids or []
         self.ap_name = ap_name
         self.ssid = ssid
@@ -341,7 +344,8 @@ class Youtube(Realm):
                 "BSSID", "Channel", "X", "Y", "From_Coord", "To_Coord"
             ])
 
-        self.do_robo = do_robo
+        self.do_roaming = do_roaming
+        self.do_robo = do_robo or do_roaming
         self.robo_ip = robo_ip
         self.coordinates_list = coordinates_list or []
         self.angles_list = angles_list or []
@@ -356,8 +360,47 @@ class Youtube(Realm):
                 angle_list=angles_list
             )
 
+        self.sniff_mgr = None
+        if do_roaming:
+            if self.robo_obj.capture_session is not None:
+                raise ValueError('Standalone roaming cannot share a multitraffic capture session')
+            self.ap_coordinates = set(ap_coordinates or [])
+            self.wait_at_point = int(wait_at_point)
+            if len(self.ap_coordinates) < 2 or not self.ap_coordinates.issubset(set(self.coordinates_list)):
+                missing = sorted(self.ap_coordinates - set(self.coordinates_list))
+                raise ValueError(
+                    'Provide at least two distinct AP coordinates included in --coordinates. '
+                    f'Route={self.coordinates_list!r}; capture points={sorted(self.ap_coordinates)!r}; '
+                    f'capture points missing from route={missing!r}')
+            if self.wait_at_point < 0 or not resource_ip or not sniff_interfaces or not any(sniff_interfaces.values()):
+                raise ValueError('Roaming requires a capture host, monitor interfaces and a nonnegative wait')
+            from remote_sniffer import RoamingCapture
+            output_path = ui_report_dir or os.path.join(os.path.dirname(__file__), 'youtube_roaming_results')
+            self.sniff_mgr = RoamingCapture(resource_ip, output_path, sniff_interfaces,
+                                            username=sniff_user, password=sniff_password,
+                                            key_filename=sniff_key, remote_base=sniff_remote_dir,
+                                            test_prefix='youtube-roaming')
+            self.robo_obj.capture_session = self.sniff_mgr
+
+    def capture_at_ap(self, coordinates, index, coordinate):
+        """Finish the incoming AP capture and start the next AP-to-AP segment."""
+        if self.sniff_mgr is None or coordinate not in self.ap_coordinates:
+            return
+        if self.sniff_mgr.route and self.sniff_mgr.route[0] == coordinate:
+            return
+        self.wait_stop_aware(self.wait_at_point, 'at AP capture boundary')
+        self.sniff_mgr.stop_segment()
+        if self.stop_signal:
+            return
+        next_ap = next((point for point in coordinates[index + 1:]
+                        if point in self.ap_coordinates and point != coordinate), None)
+        if next_ap is not None:
+            self.sniff_mgr.start_segment(coordinate, next_ap)
+
     def stop(self):
         self.stop_signal = True
+        if self.sniff_mgr is not None:
+            self.sniff_mgr.stop_segment()
 
     def cleanup(self):
         """
@@ -2746,9 +2789,15 @@ class Youtube(Realm):
         self.robo_obj.coordinate_list = self.coordinates_list
         coordinate_list_with_robo = self.robo_obj.get_coordinates_list()
         self.wait_stop_aware(5, "before coordinate traversal")
+        if (self.do_roaming and coordinate_list_with_robo
+                and self.robo_obj.initial_coordinate is not None
+                and not self.stop_signal):
+            self.capture_at_ap(
+                [self.robo_obj.initial_coordinate] + coordinate_list_with_robo,
+                0, self.robo_obj.initial_coordinate)
         curr_cycle = 1
         logger.info("Starting cycle {} of {}".format(curr_cycle, self.cycles))
-        for coordinate in coordinate_list_with_robo:
+        for coordinate_index, coordinate in enumerate(coordinate_list_with_robo):
             if self.stop_signal:
                 break
             logging.info(f"Moving robot to coordinate: {coordinate}")
@@ -2759,9 +2808,12 @@ class Youtube(Realm):
                 self.from_coordinate = self.to_coordinate
                 self.to_coordinate = coordinate
 
-            self.robo_obj.wait_for_battery(
+            battery_result = self.robo_obj.wait_for_battery(
                 monitor_function=self.check_robo_stop
             )
+            if self.do_roaming and battery_result[1]:
+                self.stop()
+                break
 
             matched, abort = self.robo_obj.move_to_coordinate(
                 coord=coordinate,
@@ -2786,6 +2838,8 @@ class Youtube(Realm):
 
             # Monitor endpoints during the existing dwell so band-steering
             # follows the same stop and reporting behavior as other modes.
+            if self.do_roaming:
+                self.capture_at_ap(coordinate_list_with_robo, coordinate_index, coordinate)
             coordinate_dwell_deadline = time.monotonic() + 10
             while time.monotonic() < coordinate_dwell_deadline:
                 self.monitor_endpoint_status_changes()
@@ -2830,6 +2884,8 @@ class Youtube(Realm):
         self.stop_bandsteering_test()
 
     def stop_bandsteering_test(self):
+        if self.sniff_mgr is not None:
+            self.sniff_mgr.stop_segment()
         if self.do_bandsteering:
             logging.info("Stopping Band-Steering YouTube Test")
         else:
@@ -3420,7 +3476,32 @@ NOTES:
                                "(--duration is not used)")
         robo.add_argument('--cycles', type=int, default=1, help='Number of times the robot goes through the points in a continuous or bandsteering run')
 
+        robo.add_argument('--do_roaming', action='store_true', help='Capture AP-to-AP roaming during continuous playback')
+        robo.add_argument('--ap_coordinates', default='', help='Comma-separated AP coordinates')
+        robo.add_argument('--wait_at_point', type=int, default=30)
+        robo.add_argument('--resource_ip', default='10.17.1.43', help='SSH capture host')
+        for band in ('2g', '5g', '6g'):
+            robo.add_argument('--sniff_radio_' + band, default=None)
+            robo.add_argument('--sniff_channel_' + band, default=None)
+        for band in ('2g', '5g', '6g'):
+            robo.add_argument('--moni' + band, help=f'Existing {band} monitor interface')
+        robo.add_argument('--sniff_user', default='lanforge')
+        robo.add_argument('--sniff_password', default='lanforge')
+        robo.add_argument('--sniff_key', default=None)
+        robo.add_argument('--sniff_remote_dir', default='/home/lanforge')
+        robo.add_argument('--roaming_analysis', action='store_true')
+        robo.add_argument('--roaming_script', default='roaming_development/wifi_roaming_cli.py')
+        robo.add_argument('--roaming_alias_file', default='roaming_development/ap_client_aliases.json')
+        robo.add_argument('--roaming_report_image', default='roaming_development/floor_plan.jpeg')
+        robo.add_argument('--management_roam_time', '--roaming_mgmt_ms', dest='roaming_mgmt_ms', type=int, default=500)
+        robo.add_argument('--data_roam_time', '--roaming_data_ms', dest='roaming_data_ms', type=int, default=500)
         args = parser.parse_args()
+        if args.do_roaming:
+            args.do_robo = True
+            args.measurement_mode = 'continuous'
+            args.roaming_analysis = True
+        if args.roaming_analysis and not args.do_roaming:
+            parser.error('--roaming_analysis requires --do_roaming')
 
         if args.help_summary:
             logging.info(help_summary)
@@ -3438,7 +3519,7 @@ NOTES:
 
         rotations_enabled = False
         if args.do_robo:
-            args.coordinates = args.coordinates.split(',') if args.coordinates else []
+            args.coordinates = [point.strip() for point in (args.coordinates or '').split(',') if point.strip()]
             args.rotations = [float(angle) for angle in args.rotations.split(',')] if args.rotations else []
             if args.rotations:
                 rotations_enabled = True
@@ -3521,6 +3602,10 @@ NOTES:
 
             # Create a YouTube object with the specified parameters
 
+            sniff_interfaces = None
+            if args.do_roaming:
+                from remote_sniffer import prepare_roaming_interfaces
+                sniff_interfaces = prepare_roaming_interfaces(args, args.mgr, args.mgr_port)
             youtube = Youtube(
                 host=mgr_ip,
                 port=mgr_port,
@@ -3547,6 +3632,12 @@ NOTES:
                 do_robo=args.do_robo,
                 cycles=args.cycles,
                 do_bandsteering=args.do_bandsteering,
+                do_roaming=args.do_roaming,
+                ap_coordinates=[point.strip() for point in args.ap_coordinates.split(',') if point.strip()],
+                wait_at_point=args.wait_at_point, resource_ip=args.resource_ip,
+                sniff_interfaces=sniff_interfaces,
+                sniff_user=args.sniff_user, sniff_password=args.sniff_password,
+                sniff_key=args.sniff_key, sniff_remote_dir=args.sniff_remote_dir,
                 measurement_mode=args.measurement_mode,
                 bssids=bssids,
                 rotations_enabled=rotations_enabled,
@@ -3746,7 +3837,29 @@ NOTES:
             and youtube is not None
             and not ('--help' in sys.argv or '-h' in sys.argv)
         ):
+            if youtube.sniff_mgr is not None:
+                youtube.stop_signal = True
+                try:
+                    youtube.sniff_mgr.close()
+                except Exception:
+                    logger.exception('Failed to finalize roaming capture')
             youtube.finalize_test_run(args, iot_summary=iot_summary)
+            if youtube.sniff_mgr is not None and args.roaming_analysis and youtube.sniff_mgr.remote_folder:
+                capture = youtube.sniff_mgr
+                try:
+                    capture.sniffer.connect()
+                    capture.sniffer.run_command_and_fetch_folder(
+                        capture.remote_folder, youtube.report_path_date_time or capture.output_path,
+                        args.roaming_mgmt_ms, args.roaming_data_ms, 'Youtube Streaming',
+                        analysis_script=args.roaming_script, alias_file=args.roaming_alias_file,
+                        report_image=args.roaming_report_image)
+                except Exception:
+                    logger.exception('Failed to run roaming analysis')
+                finally:
+                    try:
+                        capture.sniffer.close()
+                    except Exception:
+                        logger.exception('Failed to close roaming SSH connection')
             logging.info(
                 "YouTube test and report generation completed at %s",
                 datetime.now().astimezone().isoformat(timespec="seconds"),

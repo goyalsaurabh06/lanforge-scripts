@@ -171,6 +171,12 @@ class ZoomAutomation(Realm):
         mac_dir=MACOS_ZOOM_DIR,
         bs_graph=False,
         measurement_mode="per_point",
+        ap_coordinates=None,
+        sniff_interfaces=None,
+        sniff_user='lanforge',
+        sniff_password=None,
+        sniff_key=None,
+        sniff_remote_dir='/home/lanforge',
     ):
 
         super().__init__(lfclient_host=lanforge_ip)
@@ -254,10 +260,11 @@ class ZoomAutomation(Realm):
         self.zoom_stats_data = {"raw_qos": [], "summary": {}}
         self.env_file = env_file
 
-        self.do_robo = do_robo
+        self.do_roam = do_roam
+        self.do_robo = do_robo or do_roam
         self.do_bs = do_bs
-        self.measurement_mode = "continuous" if do_bs else measurement_mode
-        self.continuous_robo = do_bs or (do_robo and self.measurement_mode == "continuous")
+        self.measurement_mode = "continuous" if do_bs or do_roam else measurement_mode
+        self.continuous_robo = do_roam or do_bs or (do_robo and self.measurement_mode == "continuous")
         self.per_point_robo = do_robo and not self.continuous_robo
         self.bs_graph = bs_graph
         if self.do_robo or self.do_bs:
@@ -297,6 +304,39 @@ class ZoomAutomation(Realm):
         self.is_csv_available = False
         self.wait_at_point = int(wait_at_point)
         self.resource_ip = resource_ip
+        self.sniff_mgr = None
+        if self.do_roam:
+            if self.robo_obj.capture_session is not None:
+                raise ValueError('Standalone roaming cannot share a multitraffic capture session')
+            self.ap_coordinates = set(ap_coordinates or [])
+            if len(self.ap_coordinates) < 2 or not self.ap_coordinates.issubset(set(self.coordinates_list)):
+                raise ValueError('Provide at least two AP coordinates included in --coordinates')
+            if not resource_ip or not sniff_interfaces or not any(sniff_interfaces.values()):
+                raise ValueError('Roaming requires a capture host and at least one existing monitor interface')
+            if self.wait_at_point < 0:
+                raise ValueError('--wait_at_point must be nonnegative')
+            from remote_sniffer import RoamingCapture
+            self.sniff_mgr = RoamingCapture(
+                resource_ip, self.path, sniff_interfaces, username=sniff_user,
+                password=sniff_password, key_filename=sniff_key, remote_base=sniff_remote_dir)
+            self.robo_obj.capture_session = self.sniff_mgr
+
+    def capture_at_ap(self, index, coordinate):
+        """Finish the incoming AP capture and start the next AP-to-AP segment."""
+        if self.sniff_mgr is None or coordinate not in self.ap_coordinates:
+            return
+        if self.sniff_mgr.route and self.sniff_mgr.route[0] == coordinate:
+            return
+        deadline = time.monotonic() + self.wait_at_point
+        while time.monotonic() < deadline and not self.stop_signal:
+            time.sleep(min(1, max(0, deadline - time.monotonic())))
+        self.sniff_mgr.stop_segment()
+        if self.stop_signal:
+            return
+        next_ap = next((point for point in self.bs_coord_result[index + 1:]
+                        if point in self.ap_coordinates and point != coordinate), None)
+        if next_ap is not None:
+            self.sniff_mgr.start_segment(coordinate, next_ap)
 
     def stop_previous_flask_server(self):
         """Kill any process listening on port 5000 (Linux/Darwin only)."""
@@ -1562,7 +1602,7 @@ class ZoomAutomation(Realm):
             self.bs_coord_result = self.robo_obj.get_coordinates_list()
             logger.info(f"Total Coordinates to be Visited: {self.bs_coord_result}")
             if self.bs_coord_result:
-                self.from_cord = self.coordinates_list[0]
+                self.from_cord = self.robo_obj.initial_coordinate
                 self.successful_coords.append(self.from_cord)
                 self.current_cord = self.from_cord
         self.set_start_time()
@@ -1607,6 +1647,13 @@ class ZoomAutomation(Realm):
                     self.stop_signal = True
                     return
 
+                if (self.do_roam and self.robo_obj.initial_coordinate is not None
+                        and not self.stop_signal):
+                    # Initial positioning is outside the loop. Index -1 makes
+                    # capture_at_ap search the entire remaining route.
+                    self.sniff_mgr.output_path = self.path
+                    self.capture_at_ap(-1, self.robo_obj.initial_coordinate)
+
                 for _idx, coordinate in enumerate(self.bs_coord_result):
                     logger.info(f"Moving robot to coordinate: {coordinate}")
                     if self.stop_signal:
@@ -1615,7 +1662,9 @@ class ZoomAutomation(Realm):
                     self.to_cord = coordinate
 
                     # Battery safety
-                    self.robo_obj.wait_for_battery()
+                    _, stopped = self.robo_obj.wait_for_battery()
+                    if stopped:
+                        break
 
                     matched, aborted = self.robo_obj.move_to_coordinate(
                         coord=coordinate
@@ -1623,6 +1672,9 @@ class ZoomAutomation(Realm):
                     if matched:
                         self.current_cord = coordinate
                         self.successful_coords.append(coordinate)
+                        if self.do_roam:
+                            self.sniff_mgr.output_path = self.path
+                            self.capture_at_ap(_idx, coordinate)
                     else:
                         self.failed_coords.append(coordinate)
                     if aborted:
@@ -1641,6 +1693,8 @@ class ZoomAutomation(Realm):
 
             finally:
                 self.stop_signal = True
+                if self.sniff_mgr is not None:
+                    self.sniff_mgr.close()
                 count = 0
                 if self.download_csv:
                     while not self.is_csv_available:
@@ -4797,22 +4851,22 @@ def main():
             "--res_lf_ip", help="Resource manager IP address", default="10.17.1.208"
         )
         roaming_group.add_argument(
-            "--sniff_radio_2g", help="Sniffer Radio", default="1.2.wiphy0"
+            "--sniff_radio_2g", help="Sniffer Radio", default=None
         )
         roaming_group.add_argument(
-            "--sniff_radio_5g", help="Sniffer Radio", default="1.2.wiphy1"
+            "--sniff_radio_5g", help="Sniffer Radio", default=None
         )
         roaming_group.add_argument(
-            "--sniff_radio_6g", help="Sniffer Radio", default="1.2.wiphy2"
+            "--sniff_radio_6g", help="Sniffer Radio", default=None
         )
         roaming_group.add_argument(
-            "--sniff_channel_2g", help="Channel", type=str, default="11"
+            "--sniff_channel_2g", help="Channel", type=str, default=None
         )
         roaming_group.add_argument(
-            "--sniff_channel_5g", help="Channel", type=str, default="44"
+            "--sniff_channel_5g", help="Channel", type=str, default=None
         )
         roaming_group.add_argument(
-            "--sniff_channel_6g", help="Channel", type=str, default="239"
+            "--sniff_channel_6g", help="Channel", type=str, default=None
         )
         roaming_group.add_argument(
             "--ap_coordinates",
@@ -4820,7 +4874,23 @@ def main():
             default="",
         )
 
+        for band in ('2g', '5g', '6g'):
+            roaming_group.add_argument('--moni' + band, help=f'Existing {band} monitor interface on the capture host')
+        roaming_group.add_argument('--sniff_user', default='lanforge')
+        roaming_group.add_argument('--sniff_password', default='lanforge')
+        roaming_group.add_argument('--sniff_key', default=None)
+        roaming_group.add_argument('--sniff_remote_dir', default='/home/lanforge')
+        roaming_group.add_argument('--roaming_analysis', action='store_true')
+        roaming_group.add_argument('--roaming_script', default='roaming_development/wifi_roaming_cli.py')
+        roaming_group.add_argument('--roaming_alias_file', default='roaming_development/ap_client_aliases.json')
+        roaming_group.add_argument('--roaming_report_image', default='roaming_development/floor_plan.jpeg')
+        roaming_group.add_argument('--mgmt_roam_time', '--roaming_mgmt_ms', dest='roaming_mgmt_ms', type=int, default=500)
+        roaming_group.add_argument('--data_roam_time', '--roaming_data_ms', dest='roaming_data_ms', type=int, default=500)
         args = parser.parse_args()
+        if args.do_roam:
+            args.roaming_analysis = True
+        if args.roaming_analysis and not args.do_roam:
+            parser.error('--roaming_analysis requires --do_roam')
 
         if args.log_level:
             logging.getLogger().setLevel(args.log_level.upper())
@@ -4915,6 +4985,10 @@ def main():
             if args.bssids:
                 bssids = args.bssids.split(",") if args.bssids else []
 
+        sniff_interfaces = None
+        if args.do_roam:
+            from remote_sniffer import prepare_roaming_interfaces
+            sniff_interfaces = prepare_roaming_interfaces(args, args.lanforge_ip)
         zoom_automation = ZoomAutomation(
             audio=args.audio,
             video=args.video,
@@ -4943,6 +5017,14 @@ def main():
             cycles=args.cycles,
             bssids=bssids,
             do_roam=args.do_roam,
+            wait_at_point=args.wait_at_point,
+            resource_ip=args.res_lf_ip,
+            ap_coordinates=[point.strip() for point in args.ap_coordinates.split(',') if point.strip()],
+            sniff_interfaces=sniff_interfaces,
+            sniff_user=args.sniff_user,
+            sniff_password=args.sniff_password,
+            sniff_key=args.sniff_key,
+            sniff_remote_dir=args.sniff_remote_dir,
             window_dir=args.window_dir,
             linux_dir=args.linux_dir,
             mac_dir=args.mac_dir,
@@ -5159,7 +5241,7 @@ def main():
         zoom_automation.get_ports_data()
         zoom_automation.get_interop_data()
 
-        if args.do_robo:
+        if args.do_robo and not args.do_roam:
             zoom_automation.run_robo_test()
         else:
             zoom_automation.run()
@@ -5173,6 +5255,24 @@ def main():
     finally:  # covers --help; an if not a return, which would swallow SystemExit
         if zoom_automation is not None:
             zoom_automation.stop_signal = True
+            if zoom_automation.sniff_mgr is not None:
+                capture = zoom_automation.sniff_mgr
+                try:
+                    capture.close()
+                    if args.roaming_analysis and capture.remote_folder:
+                        capture.sniffer.connect()
+                        capture.sniffer.run_command_and_fetch_folder(
+                            capture.remote_folder, zoom_automation.path,
+                            args.roaming_mgmt_ms, args.roaming_data_ms, 'Zoom Call',
+                            analysis_script=args.roaming_script, alias_file=args.roaming_alias_file,
+                            report_image=args.roaming_report_image)
+                except Exception:
+                    logger.exception('Failed to finalize roaming capture or analysis')
+                finally:
+                    try:
+                        capture.sniffer.close()
+                    except Exception:
+                        logger.exception('Failed to close roaming SSH connection')
             logger.info("Waiting for Browser Cleanup in Laptops")
             time.sleep(10)
 
