@@ -894,37 +894,44 @@ class MultiTraffic(Realm):
                 self.webgui_stopped = True
                 logger.info("Test stopped by the user, skipping the remaining series tests")
                 break
-            results_before = len(test_results_list)   # to find this test's result afterwards
-            if self.dowebgui:
-                self.set_test_state(test_key, "started")
-            t.start()
-            if self.dowebgui:
-                # Wait for the test in 1 s steps, passing a Stop on to it
-                stop_delivered = False
-                next_stop_attempt = 0
-                while t.is_alive():
-                    t.join(timeout=1)
-                    if t.is_alive() and (self.webgui_stopped or self.is_stop_requested()):
-                        self.webgui_stopped = True
-                        # Retry if Stop arrived before the real-app Flask server was ready.
-                        if not stop_delivered and time.monotonic() >= next_stop_attempt:
-                            stop_delivered = self.stop_running_test(test_key)
-                            next_stop_attempt = time.monotonic() + 5
-            else:
-                t.join()
-            if self.dowebgui:
-                # Its final state: stopped by the user, done (all executed) or failed
-                results = list(test_results_list)[results_before:]
-                if self.webgui_stopped or self.is_stop_requested():
-                    self.webgui_stopped = True
-                    state = "stopped"
-                elif results and all(result["status"] == "EXECUTED" for result in results):
-                    state = "done"
+            try:
+                results_before = len(test_results_list)   # to find this test's result afterwards
+                if self.dowebgui:
+                    self.set_test_state(test_key, "started")
+                t.start()
+                if self.dowebgui:
+                    # Wait for the test in 1 s steps, passing a Stop on to it
+                    stop_delivered = False
+                    next_stop_attempt = 0
+                    while t.is_alive():
+                        t.join(timeout=1)
+                        if t.is_alive() and (self.webgui_stopped or self.is_stop_requested()):
+                            self.webgui_stopped = True
+                            # Retry if Stop arrived before the real-app Flask server was ready.
+                            if not stop_delivered and time.monotonic() >= next_stop_attempt:
+                                stop_delivered = self.stop_running_test(test_key)
+                                next_stop_attempt = time.monotonic() + 5
                 else:
-                    state = "failed"
-                self.set_test_state(test_key, state)
-                if self.suite_live_view and test_key != "thput_test":
-                    self.wait_for_live_view_images(test_key)   # before the next test changes the live view
+                    t.join()
+                if self.dowebgui:
+                    # Its final state: stopped by the user, done (all executed) or failed
+                    results = list(test_results_list)[results_before:]
+                    if self.webgui_stopped or self.is_stop_requested():
+                        self.webgui_stopped = True
+                        state = "stopped"
+                    elif results and all(result["status"] == "EXECUTED" for result in results):
+                        state = "done"
+                    else:
+                        state = "failed"
+                    self.set_test_state(test_key, state)
+                    if self.suite_live_view and test_key != "thput_test":
+                        self.wait_for_live_view_images(test_key)   # before the next test changes the live view
+            except Exception:
+                if not self.suite_run:
+                    raise
+                # This test could not be started or followed: record it as failed and go on to the next one
+                logger.exception(f"{test_key} could not run")
+                self.set_test_state(test_key, "failed")
 
     def stop_running_test(self, test_key):
         """Ask the running YouTube/Zoom test to stop through its Flask stop endpoint; True once it answered."""
@@ -993,6 +1000,37 @@ class MultiTraffic(Realm):
             pd.DataFrame(self.overall_csv).to_csv('{}/overall_status.csv'.format(self.result_dir), index=False)
         except Exception as e:
             logger.error(f"Error while writing status file for webui: {e}")
+
+    def end_suite_run(self):
+        """
+        Last step of a Test Suite run, also after an error.
+
+        Makes sure overall_status.csv ends with a final status, so the webGUI never keeps waiting:
+        if the run did not write one, tests still "started" become "failed" and the run is "stopped"
+        (Stop was pressed) or "failed". Then exits the process right away, so a thread or child
+        process that is still alive cannot keep this run open.
+        """
+        exit_code = 0
+        try:
+            if self.overall_status.get("status") not in ("completed", "stopped"):
+                exit_code = 1
+                for column in WEBGUI_STATUS_COLUMNS.values():
+                    if self.overall_status.get(column) == "started":
+                        self.overall_status[column] = "failed"
+                self.overall_status["status"] = "stopped" if self.webgui_stopped else "failed"
+                if self.overall_status.get("report") == "pending":
+                    self.overall_status["report"] = "failed"
+                self.overall_status["time"] = datetime.datetime.now().strftime("%Y %d %H:%M:%S")
+                self.overall_csv.append(self.overall_status.copy())
+                pd.DataFrame(self.overall_csv).to_csv('{}/overall_status.csv'.format(self.result_dir), index=False)
+        except Exception:
+            exit_code = 1
+            logger.exception("Could not write the final Test Suite status")
+        finally:
+            logging.shutdown()
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os._exit(exit_code)
 
     def webgui_stop_check(self, test_name):
         """
@@ -7031,9 +7069,8 @@ class MultiTraffic(Realm):
                                 obj_name = f"thput_test_{obj_no}"
                                 continue
                             break
-                        if not self.suite_run:
-                            self.overall_report.set_obj_html(_obj_title=f'THROUGHPUT Test {obj_no}', _obj="")
-                            self.overall_report.build_objective()
+                        self.overall_report.set_obj_html(_obj_title='THROUGHPUT Test' if self.suite_run else f'THROUGHPUT Test {obj_no}', _obj="")
+                        self.overall_report.build_objective()
                         # obj_name = f"thput_test_{obj_no}"
                         params = self.thput_obj_dict[ce][obj_name]["data"].copy()
                         iterations_before_test_stopped_by_user = params["iterations_before_test_stopped_by_user"].copy() if isinstance(
@@ -7159,9 +7196,6 @@ class MultiTraffic(Realm):
                                     "Packet Size": packet_size_text
                                 }
                             self.overall_report.test_setup_table(test_setup_data=test_setup_info, value="Test Configuration")
-                            if self.suite_run:
-                                self.overall_report.set_obj_html(_obj_title="THROUGHPUT Test", _obj="")
-                                self.overall_report.build_objective()
 
                             # Loop through iterations and build graphs, tables for each iteration
                             for i in range(len(iterations_before_test_stopped_by_user)):
@@ -7661,9 +7695,6 @@ class MultiTraffic(Realm):
                                     test_setup_info["Selected Angles"] = ",".join(curr_thpt_obj.angle_list)
 
                                 self.overall_report.test_setup_table(test_setup_data=test_setup_info, value="Test Configuration")
-                                if self.suite_run:
-                                    self.overall_report.set_obj_html(_obj_title="THROUGHPUT Test", _obj="")
-                                    self.overall_report.build_objective()
 
                                 # Add live view images in case of robot testing from webui
                                 if curr_thpt_obj.dowebgui:
@@ -8174,9 +8205,6 @@ class MultiTraffic(Realm):
                                 # "Packet Size" : str(curr_thpt_obj.cx_profile.side_a_min_pdu) + " Bytes"
                             }
                             self.overall_report.test_setup_table(test_setup_data=test_setup_info, value="Test Configuration")
-                            if self.suite_run:
-                                self.overall_report.set_obj_html(_obj_title="THROUGHPUT Test", _obj="")
-                                self.overall_report.build_objective()
 
                             if (curr_thpt_obj.interopability_config):
 
@@ -14444,7 +14472,15 @@ or a combination of both, with configurable execution priority.
     tests_to_run_series, tests_to_run_parallel, duration_dict = validate_arguments(args, test_map, args_dict)
     multi_traffic_obj.duration_dict = duration_dict.copy()
     # args.current = "series"
-    multi_traffic_obj.start_tests(test_map, tests_to_run_series, tests_to_run_parallel, duration_dict, args, args_dict)
+    try:
+        multi_traffic_obj.start_tests(test_map, tests_to_run_series, tests_to_run_parallel, duration_dict, args, args_dict)
+    except BaseException:
+        if not multi_traffic_obj.suite_run:
+            raise
+        logger.exception("Test Suite run ended with an error")
+    finally:
+        if multi_traffic_obj.suite_run:
+            multi_traffic_obj.end_suite_run()
 
 
 def run_test_safe(test_func, test_name, args, multi_traffic_obj, duration):
