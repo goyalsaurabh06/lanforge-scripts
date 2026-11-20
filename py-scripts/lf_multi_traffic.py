@@ -514,7 +514,7 @@ WEBGUI_STATUS_COLUMNS = {"ping_test": "ping", "qos_test": "qos", "ftp_test": "ft
                          "rb_test": "rb", "zoom_test": "zoom", "teams_test": "teams"}
 # Suite live-view maps the combined report adds itself: test -> (label, image name prefix, metrics)
 SUITE_LIVE_VIEWS = {"yt_test": ("YouTube", "suite_youtube_test", ("frames",)),
-                    "zoom_test": ("Zoom", "suite_zoom_test", ("latency", "jitter"))}
+                    "zoom_test": ("Zoom", "suite_zoom_test", ("video", "audio"))}
 
 
 class MultiTraffic(Realm):
@@ -11652,6 +11652,11 @@ class MultiTraffic(Realm):
                                     "video_latency_r": [],
                                     "video_pktloss_s": [],
                                     "video_pktloss_r": [],
+                                    # Zoom API stats only: the device's average bitrate (kbps), from its latest row
+                                    "audio_bitrate_s": 0.0,
+                                    "audio_bitrate_r": 0.0,
+                                    "video_bitrate_s": 0.0,
+                                    "video_bitrate_r": 0.0,
                                 }
                                 try:
                                     if not self.do_bandsteering:
@@ -11675,6 +11680,10 @@ class MultiTraffic(Realm):
                                             is_api_format = "audio_input_jitter_avg" in fieldnames
                                             for row in csv_reader:
                                                 if is_api_format:
+                                                    per_client_data["audio_bitrate_s"] = float(row.get("audio_output_bitrate_avg") or 0)
+                                                    per_client_data["audio_bitrate_r"] = float(row.get("audio_input_bitrate_avg") or 0)
+                                                    per_client_data["video_bitrate_s"] = float(row.get("video_output_bitrate_avg") or 0)
+                                                    per_client_data["video_bitrate_r"] = float(row.get("video_input_bitrate_avg") or 0)
                                                     ai_jit = float(row["audio_input_jitter_avg"] or 0)
                                                     ao_jit = float(row["audio_output_jitter_avg"] or 0)
                                                     ai_lat = float(row["audio_input_latency_avg"] or 0)
@@ -11917,6 +11926,35 @@ class MultiTraffic(Realm):
                             self.overall_report.build_table()
 
                             if curr_zoom_obj.audio:
+                                if self.suite_run:
+                                    self.overall_report.set_graph_title("Audio Bitrate (Received/Sent)")
+                                    self.overall_report.build_graph_title()
+                                    x_data_set = [[data["audio_bitrate_r"] for data in final_dataset], [data["audio_bitrate_s"] for data in final_dataset]]
+                                    y_data_set = client_array
+
+                                    x_fig_size = 18
+                                    y_fig_size = len(client_array) * 1 + 4
+                                    bar_graph_horizontal = lf_bar_graph_horizontal(
+                                        _data_set=x_data_set,
+                                        _xaxis_name="Bitrate (Kbps)",
+                                        _yaxis_name="Devices",
+                                        _yaxis_label=y_data_set,
+                                        _yaxis_categories=y_data_set,
+                                        _yaxis_step=1,
+                                        _yticks_font=8,
+                                        _bar_height=.20,
+                                        _color_name=["blue", "orange"],
+                                        _show_bar_value=True,
+                                        _figsize=(x_fig_size, y_fig_size),
+                                        _graph_title="Audio Bitrate(Received/Sent)",
+                                        _graph_image_name=f"Audio Bitrate(Received and Sent){obj_no}",
+                                        _label=["Avg Recv", "Avg Sent"]
+                                    )
+                                    graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
+                                    self.overall_report.set_graph_image(graph_image)
+                                    self.overall_report.move_graph_image()
+                                    self.overall_report.build_graph()
+
                                 self.overall_report.set_graph_title("Audio Latency (Sent/Received)")
                                 self.overall_report.build_graph_title()
                                 x_data_set = [max_audio_latency_s.copy(), min_audio_latency_s.copy(), max_audio_latency_r.copy(), min_audio_latency_r.copy()]
@@ -12039,6 +12077,35 @@ class MultiTraffic(Realm):
                                                                                                            justify='center', render_links=True, escape=False)  # have the index be able to be passed in.
                                 self.overall_report.html += self.overall_report.dataframe_html
                             if curr_zoom_obj.video:
+                                if self.suite_run:
+                                    self.overall_report.set_graph_title("Video Bitrate (Received/Sent)")
+                                    self.overall_report.build_graph_title()
+                                    x_data_set = [[data["video_bitrate_r"] for data in final_dataset], [data["video_bitrate_s"] for data in final_dataset]]
+                                    y_data_set = client_array
+
+                                    x_fig_size = 18
+                                    y_fig_size = len(client_array) * 1 + 4
+                                    bar_graph_horizontal = lf_bar_graph_horizontal(
+                                        _data_set=x_data_set,
+                                        _xaxis_name="Bitrate (Kbps)",
+                                        _yaxis_name="Devices",
+                                        _yaxis_label=y_data_set,
+                                        _yaxis_categories=y_data_set,
+                                        _yaxis_step=1,
+                                        _yticks_font=8,
+                                        _bar_height=.20,
+                                        _color_name=["blue", "orange"],
+                                        _show_bar_value=True,
+                                        _figsize=(x_fig_size, y_fig_size),
+                                        _graph_title="Video Bitrate(Received/Sent)",
+                                        _graph_image_name=f"Video Bitrate(Received and Sent){obj_no}",
+                                        _label=["Avg Recv", "Avg Sent"]
+                                    )
+                                    graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
+                                    self.overall_report.set_graph_image(graph_image)
+                                    self.overall_report.move_graph_image()
+                                    self.overall_report.build_graph()
+
                                 self.overall_report.set_graph_title("Video Latency (Sent/Received)")
                                 self.overall_report.build_graph_title()
                                 x_data_set = [max_video_latency_s.copy(), min_video_latency_s.copy(), max_video_latency_r.copy(), min_video_latency_r.copy()]
