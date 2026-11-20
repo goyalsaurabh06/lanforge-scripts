@@ -470,6 +470,7 @@ lf_kpi_csv = importlib.import_module("py-scripts.lf_kpi_csv")
 lf_logger_config = importlib.import_module("py-scripts.lf_logger_config")
 lf_report = importlib.import_module("py-scripts.lf_report")
 lf_report_pdf = importlib.import_module("py-scripts.lf_report")
+from report_v2.lf_report_v2 import lf_report as lf_report_v2  # noqa: E402
 
 througput_test = importlib.import_module("py-scripts.lf_interop_throughput")
 video_streaming_test = importlib.import_module("py-scripts.lf_interop_video_streaming")
@@ -859,7 +860,10 @@ class MultiTraffic(Realm):
         test_results_df = pd.DataFrame(list(test_results_list))
         # Under the webGUI a report error is recorded as report "failed" instead of ending the script
         try:
-            self.generate_overall_report(test_results_df=test_results_df, args_dict=args_dict)
+            if self.suite_run:
+                self.generate_suite_report()
+            else:
+                self.generate_overall_report(test_results_df=test_results_df, args_dict=args_dict)
             report_state = "ready"
         except Exception:
             if not self.dowebgui:
@@ -963,10 +967,13 @@ class MultiTraffic(Realm):
                 return
             time.sleep(1)
 
-    def add_live_view_images(self):
-        """Add the YouTube/Zoom floor-map images to the combined report (Throughput adds its own in its section)."""
+    def add_live_view_images(self, test_keys=None):
+        """
+        Add the YouTube/Zoom floor-map images to the combined report (Throughput adds its own in its section).
+        test_keys: the tests to add them for; all series tests when not given.
+        """
 
-        for test_key in self.series_tests:
+        for test_key in (self.series_tests if test_keys is None else test_keys):
             if test_key not in SUITE_LIVE_VIEWS:
                 continue
             label = SUITE_LIVE_VIEWS[test_key][0]
@@ -12714,6 +12721,80 @@ class MultiTraffic(Realm):
                 series_df["s/no"] = range(1, len(series_df) + 1)
                 series_df = series_df[["s/no", "test_name", "Duration", "status"]]
         return series_df, parallel_df
+
+    def generate_suite_report(self):
+        """
+        Combined report of a Test Suite run (--input_json) in the modern report format: an overview, each test's
+        result in run order, then each test's sections as in its own report, with its live-view maps. Written to
+        the same folder and file names as generate_overall_report(), which the webGUI opens.
+        """
+        report = lf_report_v2(_results_dir_name="lf_multi_traffic_Test_Overall_report", _output_html="lf_multi_traffic_overall.html",
+                              _output_pdf="lf_multi_traffic_overall.pdf", _path=self.result_dir)
+        self.overall_report = report   # add_live_view_images() adds the maps to it
+        self.report_path_date_time = report.path_date_time
+        report.set_title("LANforge Interop<br>Test Suite")
+        report.build_banner()
+        report.set_obj_html(_obj_title="Test Overview",
+                            _obj="The Test Suite runs the selected tests one after another on the same devices and puts their "
+                                 "results in this one report.")
+        report.build_objective()
+
+        test_names = {"thput_test": "Throughput", "yt_test": "YouTube", "zoom_test": "Zoom"}
+        # How each test's run ended (from the run status), not a pass/fail of its results
+        run_status = {"done": "Completed", "failed": "Failed", "started": "Failed", "stopped": "Stopped by user", "notstarted": "Not run"}
+        report.set_table_title("Test Execution Summary")
+        report.build_table_title()
+        report.set_table_dataframe(pd.DataFrame({
+            "No.": range(1, len(self.series_tests) + 1),
+            "Test": [test_names.get(test_key, test_key) for test_key in self.series_tests],
+            "Configured Duration": [self.duration_dict.get(test_key, "") for test_key in self.series_tests],
+            "Run Status": [run_status.get(self.overall_status.get(WEBGUI_STATUS_COLUMNS[test_key]), "Not run") for test_key in self.series_tests],
+        }))
+        report.build_table()
+
+        for number, test_key in enumerate(self.series_tests, start=1):
+            report.set_table_title(f"{number}. {test_names.get(test_key, test_key)} Test")
+            report.build_table_title()
+            try:
+                added = self.add_suite_test_sections(report, test_key)
+            except Exception:
+                logger.exception(f"Could not add {test_key} to the Test Suite report")
+                added = False
+            if not added:
+                report.set_obj_html(_obj_title="", _obj="No results were collected for this test.")
+                report.build_objective()
+            if self.suite_live_view and test_key != "thput_test":
+                self.add_live_view_images([test_key])
+
+        report.build_footer()
+        report.write_html()
+        report.write_pdf(_page_width="420mm", _page_height="420mm")
+
+    def add_suite_test_sections(self, report, test_key):
+        """
+        Add one test's sections to the Test Suite report, using the test's own report code. False when the
+        test has no results.
+        """
+        if test_key == "thput_test":
+            entry = next((entry for entry in self.thput_obj_dict["series"].values()
+                          if entry["obj"] is not None and entry["data"] is not None), None)
+            if entry is None:
+                return False
+            thput, params = entry["obj"], entry["data"]
+            test_setup_info, device_names, device_types = thput.add_report_sections(
+                report, params["iterations_before_test_stopped_by_user"], params["incremental_capacity_list"],
+                data=params["data"], data1=params["data1"])
+            thput.add_report_closing_sections(report, report.path_date_time, test_setup_info, device_names, device_types)
+            return True
+        if test_key == "yt_test":
+            # Copy of the YouTube test object, taken after its own report was written (its CSVs are in that folder)
+            youtube = next((entry["obj"] for entry in self.yt_obj_dict["series"].values() if entry["obj"] is not None), None)
+            if youtube is None:
+                return False
+            youtube.report = report
+            youtube.add_report_sections()
+            return True
+        return False
 
     def generate_overall_report(self, test_results_df='', args_dict=None):
         '''

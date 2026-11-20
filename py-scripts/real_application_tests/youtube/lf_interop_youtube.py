@@ -128,6 +128,7 @@ import shutil
 import glob
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
+import pickle
 from threading import Event, Lock, Thread
 import traceback
 import platform
@@ -1076,14 +1077,21 @@ class Youtube(Realm):
 
     def __getstate__(self):
         """lf_multi_traffic.py copies this object to its main process (multiprocessing pickles it).
-        A threading Event can't be pickled, so leave it out; __setstate__ makes a fresh one."""
-        state = self.__dict__.copy()
-        state.pop("android_log_received", None)
+        Attributes that can't be pickled (locks, events, live monitoring objects with threads) become None;
+        __setstate__ makes fresh locks. Collected results (stats, CSV paths, report paths) are kept."""
+        state = {}
+        for key, value in self.__dict__.items():
+            try:
+                pickle.dumps(value)
+                state[key] = value
+            except Exception:
+                state[key] = None
         return state
 
     def __setstate__(self, state):
         self.__dict__.update(state)
         self.android_log_received = Event()
+        self.playback_stats_lock = Lock()
 
     def start_flask_server(self):
         """
@@ -2436,6 +2444,19 @@ class Youtube(Realm):
             'LANforge Interop<br>YouTube Streaming Test<br>'
             '<span style="font-size:0.55em;">(Real Client Performance Validation)</span>')
         self.report.build_banner()
+        self.add_report_sections(iot_summary=iot_summary)
+
+        # Closing
+        self.report.build_footer()
+        self.report.write_html()
+        self.report.write_pdf(_page_width="420mm", _page_height="420mm")
+
+    def add_report_sections(self, iot_summary=None):
+        """
+        Add the YouTube test sections to self.report: overview, verdict, findings, charts, per-client tables,
+        buffer health and configuration. create_report() calls it between the banner and the footer; a combined
+        report can set self.report to its own report object and call it to add the same sections.
+        """
         self._add_youtube_report_style(self.report)
         # objective and description
         if iot_summary:
@@ -2758,11 +2779,6 @@ class Youtube(Realm):
 
         # Keep configuration last, matching the approved report sequence.
         self._build_configuration_card(self.report, test_setup_info)
-
-        # Closing
-        self.report.build_footer()
-        self.report.write_html()
-        self.report.write_pdf(_page_width="420mm", _page_height="420mm")
 
     def json_get_with_retry(self, url, wait_time=40, poll_interval=5):
         """
