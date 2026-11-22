@@ -984,8 +984,9 @@ class MultiTraffic(Realm):
                 with open(path, "rb") as image_file:
                     encoded = base64.b64encode(image_file.read()).decode("ascii")
                 self.overall_report.set_custom_html(
-                    f'<div style="page-break-before:always;"><img src="data:image/png;base64,{encoded}" '
-                    f'alt="{os.path.basename(path)}" style="max-width:100%;height:auto;"></div>')
+                    # Same markup as Throughput's live-view maps, so the report sizes all maps alike
+                    f'<div style="page-break-before: always;"></div><div class=\'chart-card\'>'
+                    f'<img src="data:image/png;base64,{encoded}" alt="{os.path.basename(path)}" /></div>')
                 self.overall_report.build_custom()
 
     def is_stop_requested(self):
@@ -12734,6 +12735,9 @@ class MultiTraffic(Realm):
         self.report_path_date_time = report.path_date_time
         report.set_title("LANforge Interop<br>Test Suite")
         report.build_banner()
+        # In the PDF, show the live-view floor maps (the only images in chart cards here) at full page width like the charts
+        report.set_custom_html("<style>@media print { .chart-card img { max-height: none; } }</style>")
+        report.build_custom()
         report.set_obj_html(_obj_title="Test Overview",
                             _obj="The Test Suite runs the selected tests one after another on the same devices and puts their "
                                  "results in this one report.")
