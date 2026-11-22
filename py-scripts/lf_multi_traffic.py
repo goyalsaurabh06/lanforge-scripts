@@ -423,6 +423,7 @@ import argparse  # noqa: E402
 import asyncio   # noqa: E402
 import csv       # noqa: E402
 import datetime  # noqa: E402
+import html  # noqa: E402
 import glob      # noqa: E402
 import importlib  # noqa: E402
 import json      # noqa: E402
@@ -514,8 +515,42 @@ WEBGUI_STATUS_COLUMNS = {"ping_test": "ping", "qos_test": "qos", "ftp_test": "ft
                          "mcast_test": "mc", "vs_test": "vs", "thput_test": "thput", "yt_test": "yt",
                          "rb_test": "rb", "zoom_test": "zoom", "teams_test": "teams"}
 # Suite live-view maps the combined report adds itself: test -> (label, image name prefix, metrics)
-SUITE_LIVE_VIEWS = {"yt_test": ("YouTube", "suite_youtube_test", ("frames",)),
+SUITE_LIVE_VIEWS = {"yt_test": ("YouTube", "suite_youtube_test", ("buffer", "dropped")),
                     "zoom_test": ("Zoom", "suite_zoom_test", ("video", "audio"))}
+# The Test Suite report's floor maps: (test, map) -> (heading, explanation). Throughput's images are named after the
+# test (<test_name>_throughput_N.png, <test_name>_rssi_N.png), the others after SUITE_LIVE_VIEWS.
+SUITE_MAP_SECTIONS = {
+    ("thput_test", "rssi"): (
+        "Test House RSSI Coverage",
+        "The map below shows the average signal strength (RSSI) each client measured at its location in the Test House "
+        "during the throughput test. It shows whether every client location had adequate signal strength, so that the "
+        "results in this report reflect Access Point performance rather than coverage limitations. The color scale runs "
+        "from weak signal (red) to strong signal (green)."),
+    ("thput_test", "throughput"): (
+        "Throughput Heatmap",
+        "The heatmap below shows the average throughput each wireless client achieved at its location in the Test House. "
+        "The displayed value is the client's average throughput over the test duration, and the color scale runs from "
+        "lower throughput (red/orange) to higher throughput (green)."),
+    ("yt_test", "buffer"): (
+        "Average Buffer Health Heatmap",
+        "The heatmap below shows the average buffer health measured by each wireless client at its location in the Test "
+        "House. The displayed value is the average number of seconds of video buffered ahead of playback over the test "
+        "duration. The color scale runs from an empty buffer (red, 0 s) to a healthy buffer (green, 50 s and above). "
+        "Clients that supplied no streaming data show No data."),
+    ("yt_test", "dropped"): (
+        "Dropped Frames Heatmap",
+        "The heatmap below shows the percentage of video frames dropped by each wireless client at its location in the "
+        "Test House, measured over the test duration. The color scale runs from no dropped frames (green, 0%) to heavy "
+        "frame loss (red, 20% and above). Clients that supplied no streaming data show No data."),
+    ("zoom_test", "video"): (
+        "Video Bitrate Heatmap",
+        "The heatmap below shows the average video bitrate each wireless client sent from its location in the Test House. "
+        "The color scale runs from low bitrate (red) to high bitrate (green)."),
+    ("zoom_test", "audio"): (
+        "Audio Bitrate Heatmap",
+        "The heatmap below shows the average audio bitrate each wireless client sent from its location in the Test House. "
+        "The color scale runs from low bitrate (red) to high bitrate (green)."),
+}
 
 
 class MultiTraffic(Realm):
@@ -562,6 +597,7 @@ class MultiTraffic(Realm):
         self.obj_dict = {}
         self.test_stopped = False
         self.webgui_stopped = False   # set once Stop is pressed in the webGUI
+        self.suite_ping = None   # Test Suite run: background ping on all its devices for the whole run
         self.suite_run = self.suite_live_view = False   # set in start_tests
         self.no_cleanup = no_cleanup
         self.duration_dict = {}
@@ -852,11 +888,6 @@ class MultiTraffic(Realm):
         log_file = save_logs()
         logging.info(f"Logs saved to: {log_file}")
 
-        if self.suite_live_view:
-            # Now let Throughput's section of the combined report wait for and add its live-view maps
-            for entry in self.thput_obj_dict["series"].values():
-                if entry["obj"] is not None:
-                    entry["obj"].get_live_view = True
         test_results_df = pd.DataFrame(list(test_results_list))
         # Under the webGUI a report error is recorded as report "failed" instead of ending the script
         try:
@@ -892,6 +923,35 @@ class MultiTraffic(Realm):
         overall_status.csv, because a real-app test runs in a child process and its own writes are lost.
         After a Stop, the remaining tests are skipped.
         """
+        if self.suite_run and self.args.enable_bg_ping:
+            self.suite_ping = self.start_suite_ping()
+        try:
+            self.run_series_test_list(series_threads, series_keys)
+        finally:
+            if self.suite_ping is not None:
+                self.suite_ping.stop_background_ping()
+
+    def start_suite_ping(self):
+        """
+        Start the background ping on every device of the Test Suite run (all tests' device lists). Returns the
+        Ping object, or None when it could not start (the report then says no ping results were collected).
+        """
+        resources = {device for test_key in self.series_tests
+                     for device in str(getattr(self.args, f"{test_key[:-len('_test')]}_device_list", "") or "").split(",") if device}
+        try:
+            devices = RealDevice(manager_ip=self.lanforge_ip, selected_bands=[])
+            devices.get_devices()
+            # The ping takes LANforge port names (e.g. 1.50.wlan0); the Suite has resources (1.50)
+            ports = [port for port in devices.devices_data if any(port.startswith(resource + ".") for resource in resources)]
+            ping = Ping(host=self.lanforge_ip, port=self.port, target=self.args.bg_ping_target or self.args.upstream_port,
+                        interval=self.args.bg_ping_interval, sta_list=[], real=True, virtual=False, duration=0)
+            return ping if ping.start_background_ping(ports) else None
+        except Exception:
+            logger.exception("The Test Suite background ping could not be started")
+            return None
+
+    def run_series_test_list(self, series_threads, series_keys):
+        """Run the series tests one after another (see run_series_tests)."""
         for t, test_key in zip(series_threads, series_keys):
             # After a Stop, skip the remaining tests
             if self.dowebgui and (self.webgui_stopped or self.is_stop_requested()):
@@ -967,27 +1027,31 @@ class MultiTraffic(Realm):
                 return
             time.sleep(1)
 
-    def add_live_view_images(self, test_keys=None):
+    def add_suite_map(self, report, test_key, metric):
         """
-        Add the YouTube/Zoom floor-map images to the combined report (Throughput adds its own in its section).
-        test_keys: the tests to add them for; all series tests when not given.
+        Add one floor map of the Test Suite report (heading, explanation, one image per floor) from the images the
+        web UI saved in live_view_images. Waits up to 60 seconds for images that are not saved yet.
         """
-
-        for test_key in (self.series_tests if test_keys is None else test_keys):
-            if test_key not in SUITE_LIVE_VIEWS:
-                continue
-            label = SUITE_LIVE_VIEWS[test_key][0]
-            paths = [path for path in self.live_view_image_paths(test_key) if os.path.isfile(path)]
-            self.overall_report.set_custom_html(f"<h2>{label} Live View</h2>" if paths else f"<p>{label} Live View was not captured.</p>")
-            self.overall_report.build_custom()
-            for path in paths:
-                with open(path, "rb") as image_file:
-                    encoded = base64.b64encode(image_file.read()).decode("ascii")
-                self.overall_report.set_custom_html(
-                    # Same markup as Throughput's live-view maps, so the report sizes all maps alike
-                    f'<div style="page-break-before: always;"></div><div class=\'chart-card\'>'
-                    f'<img src="data:image/png;base64,{encoded}" alt="{os.path.basename(path)}" /></div>')
-                self.overall_report.build_custom()
+        heading, text = SUITE_MAP_SECTIONS[(test_key, metric)]
+        prefix = self.test_name if test_key == "thput_test" else SUITE_LIVE_VIEWS[test_key][1]
+        paths = [os.path.join(self.result_dir, "live_view_images", f"{prefix}_{metric}_{floor}.png")
+                 for floor in range(1, int(self.args.total_floors) + 1)]
+        deadline = time.monotonic() + 60
+        while not all(os.path.isfile(path) for path in paths) and time.monotonic() < deadline:
+            time.sleep(1)
+        report.set_custom_html('<div style="page-break-before: always;"></div>')
+        report.build_custom()
+        report.set_obj_html(_obj_title=heading, _obj=text)
+        report.build_objective()
+        found = [path for path in paths if os.path.isfile(path)]
+        if not found:
+            report.set_obj_html(_obj_title="", _obj="This map was not captured (Live View was not open when the test ended).")
+            report.build_objective()
+        for path in found:
+            with open(path, "rb") as image_file:
+                encoded = base64.b64encode(image_file.read()).decode("ascii")
+            report.set_custom_html(f"<div class='chart-card'><img src=\"data:image/png;base64,{encoded}\" alt=\"{os.path.basename(path)}\" /></div>")
+            report.build_custom()
 
     def is_stop_requested(self):
         """True once Stop was pressed in the web UI (the run's running JSON is no longer "Running")."""
@@ -12725,80 +12789,310 @@ class MultiTraffic(Realm):
 
     def generate_suite_report(self):
         """
-        Combined report of a Test Suite run (--input_json) in the modern report format: an overview, each test's
-        result in run order, then each test's sections as in its own report, with its live-view maps. Written to
-        the same folder and file names as generate_overall_report(), which the webGUI opens.
+        Combined report of a Test Suite run (--input_json) in the modern report format: the Test Suite section
+        (overview, overall verdict and score, summary, setup, execution summary), then each test's section as
+        in its own report, with its live-view maps. Written to the same folder and file names as
+        generate_overall_report(), which the webGUI opens.
         """
         report = lf_report_v2(_results_dir_name="lf_multi_traffic_Test_Overall_report", _output_html="lf_multi_traffic_overall.html",
                               _output_pdf="lf_multi_traffic_overall.pdf", _path=self.result_dir)
-        self.overall_report = report   # add_live_view_images() adds the maps to it
+        self.overall_report = report
         self.report_path_date_time = report.path_date_time
-        report.set_title("LANforge Interop<br>Test Suite")
+        report.set_title("TDRA Test Suite Report<br>Mixed Traffic<br>"
+                         "<span style='font-size:0.55em;'>(Real Client Performance Validation)</span>")
         report.build_banner()
         # In the PDF, show the live-view floor maps (the only images in chart cards here) at full page width like the charts
         report.set_custom_html("<style>@media print { .chart-card img { max-height: none; } }</style>")
         report.build_custom()
-        report.set_obj_html(_obj_title="Test Overview",
-                            _obj="The Test Suite runs the selected tests one after another on the same devices and puts their "
-                                 "results in this one report.")
+
+        # The test sections are built first: they work out each test's verdict, which the Test Suite section
+        # summarizes. The Test Suite section is then placed in front of them.
+        before_tests = len(report.html)
+        test_names = {"thput_test": "Throughput", "yt_test": "YouTube", "zoom_test": "Zoom"}
+        test_objects = {}
+        for number, test_key in enumerate(self.series_tests, start=1):
+            report.set_table_title(f"{number}. {test_names.get(test_key, test_key)} Test")
+            report.build_table_title()
+            try:
+                test_objects[test_key] = self.add_suite_test_sections(report, test_key)
+            except Exception:
+                logger.exception(f"Could not add {test_key} to the Test Suite report")
+                test_objects[test_key] = None
+            if test_objects[test_key] is None:
+                report.set_obj_html(_obj_title="", _obj="No results were collected for this test.")
+                report.build_objective()
+            if self.suite_live_view:
+                # The test's floor maps, one after another at the end of its section
+                for metric in {"thput_test": ("throughput", "rssi"), "yt_test": ("buffer", "dropped"), "zoom_test": ("video", "audio")}.get(test_key, ()):
+                    self.add_suite_map(report, test_key, metric)
+        tests_html = report.html[before_tests:]
+        report.html = report.html[:before_tests]
+        self.add_suite_section(report, test_objects, test_names)
+        report.html += tests_html
+        self.add_suite_connectivity(report)
+        # Devices tables: show every row instead of pages of 10 (the PDF prints only the shown page), without the pager
+        report.set_custom_html(
+            "<style>.device-footer { display: none !important; }</style>"
+            "<script>document.querySelectorAll('.device-footer .rows-per-page select').forEach(function (select) {"
+            " select.value = 'all'; select.dispatchEvent(new Event('change')); });</script>")
+        report.build_custom()
+
+        report.build_footer()
+        report.write_html()
+        report.write_pdf(_page_width="420mm", _page_height="420mm")
+
+    def add_suite_section(self, report, test_objects, test_names):
+        """
+        The Test Suite section: overview, overall verdict with the Test Suite score (the average of the tests'
+        own scores), a summary of each test's result, setup information and how each test's run ended. Uses
+        only numbers the test sections show (their verdict_summary).
+        """
+        report.set_obj_html(
+            _obj_title="Test Overview",
+            _obj="The objective of this test suite is to measure the performance and stability of the access point when real "
+                 "client devices, including Android, iOS, Windows, Linux and macOS, are placed across the Test House and "
+                 "exercised with more than one traffic workload. The suite runs the selected traffic tests one after another "
+                 "and evaluates each workload against its own scoring model. When Live View is used, every client is shown "
+                 "on the Test House floor plan, so performance can be read against client location and wireless coverage. "
+                 "The expected behavior is that the AP delivers the offered load fairly to every client and sustains smooth "
+                 "video playback, without disconnections, across the whole test area.")
         report.build_objective()
 
-        test_names = {"thput_test": "Throughput", "yt_test": "YouTube", "zoom_test": "Zoom"}
+        run_status = {test_key: self.overall_status.get(WEBGUI_STATUS_COLUMNS[test_key], "notstarted") for test_key in self.series_tests}
+        summaries = {test_key: getattr(obj, "verdict_summary", None) for test_key, obj in test_objects.items() if obj is not None}
+        # The score is the average of the tests' own scores. A test without a score (no data, not run, failed) is
+        # left out; the score then says which tests it covers and the suite is rated "Incomplete data".
+        scored = [test_key for test_key in self.series_tests if (summaries.get(test_key) or {}).get("score") is not None]
+        unscored = [test_key for test_key in self.series_tests if test_key not in scored]
+        suite_score = round(sum(summaries[test_key]["score"] for test_key in scored) / len(scored), 2) if scored else None
+        if suite_score is None:
+            score_text, rating = "Unavailable", "Not rated (no test produced a score)"
+        elif unscored:
+            score_text = (f"{suite_score:.2f} % ({', '.join(test_names.get(test_key, test_key) for test_key in scored)} only; "
+                          f"{', '.join(test_names.get(test_key, test_key) for test_key in unscored)} not scored)")
+            rating = "Incomplete data"
+        else:
+            score_text, rating = f"{suite_score:.2f} %", lf_report_v2.classify_score_rating(suite_score)[0]
+        devices = set()
+        for test_key in self.series_tests:
+            devices.update(device for device in str(getattr(self.args, f"{test_key[:-len('_test')]}_device_list", "") or "").split(",") if device)
+        traffic_tests = []
+        for test_key in self.series_tests:
+            obj = test_objects.get(test_key)
+            if test_key == "thput_test" and obj is not None:
+                traffic_tests.append(f"Throughput ({str(obj.traffic_type).replace('lf_', '').upper()} {obj.direction})")
+            else:
+                traffic_tests.append({"yt_test": "YouTube Streaming", "zoom_test": "Zoom"}.get(test_key, test_names.get(test_key, test_key)))
+        report.set_table_title("Overall Test Verdict")
+        report.build_table_title()
+        report.set_table_dataframe(pd.DataFrame({
+            "Metric": ["Total Clients", "Execution Mode", "Traffic Tests", "Test Suite Score", "Overall Rating"],
+            "Result": [len(devices), "Sequential", ", ".join(traffic_tests),
+                       score_text, rating],
+        }))
+        # The rating is shown as a coloured badge, as in the tests' own result tables
+        report.rating_build_table("Result", {label: color for _, label, color in lf_report_v2.SCORE_RATING_BANDS})
+
+        report.set_obj_html(_obj_title="Test Summary", _obj="<ul>" + "".join(
+            f"<li>{html.escape(point)}</li>" for point in self.suite_summary_points(run_status, summaries, suite_score, unscored, test_names)) + "</ul>")
+        report.build_objective()
+
+        ssids = sorted({str(ssid) for obj in test_objects.values() if obj is not None
+                        for ssid in (getattr(obj, "ssid_list", None) or []) if str(ssid).strip() not in ("", "-", "NA")})
+        configured = [self.suite_configured_seconds(test_key) for test_key in self.series_tests]
+
+        def hms(seconds):
+            seconds = int(seconds)
+            return f"{seconds // 3600:02}:{seconds % 3600 // 60:02}:{seconds % 60:02}"
+        report.set_table_title("Test Setup Information")
+        report.build_table_title()
+        report.set_table_dataframe(pd.DataFrame({
+            "Component": ["SSID (seen on the clients)", "Test Duration (HH:MM:SS)"],
+            # Test Duration: the tests' configured durations added up
+            "Details": [", ".join(ssids) if ssids else "Unavailable", hms(sum(configured)) if None not in configured else "Unavailable"],
+        }))
+        report.build_table()
+
         # How each test's run ended (from the run status), not a pass/fail of its results
-        run_status = {"done": "Completed", "failed": "Failed", "started": "Failed", "stopped": "Stopped by user", "notstarted": "Not run"}
+        status_text = {"done": "Completed", "failed": "Failed", "started": "Failed", "stopped": "Stopped by user", "notstarted": "Not run"}
         report.set_table_title("Test Execution Summary")
         report.build_table_title()
         report.set_table_dataframe(pd.DataFrame({
             "No.": range(1, len(self.series_tests) + 1),
             "Test": [test_names.get(test_key, test_key) for test_key in self.series_tests],
             "Configured Duration": [self.duration_dict.get(test_key, "") for test_key in self.series_tests],
-            "Run Status": [run_status.get(self.overall_status.get(WEBGUI_STATUS_COLUMNS[test_key]), "Not run") for test_key in self.series_tests],
+            "Run Status": [status_text.get(run_status[test_key], "Not run") for test_key in self.series_tests],
         }))
         report.build_table()
 
-        for number, test_key in enumerate(self.series_tests, start=1):
-            report.set_table_title(f"{number}. {test_names.get(test_key, test_key)} Test")
-            report.build_table_title()
-            try:
-                added = self.add_suite_test_sections(report, test_key)
-            except Exception:
-                logger.exception(f"Could not add {test_key} to the Test Suite report")
-                added = False
-            if not added:
-                report.set_obj_html(_obj_title="", _obj="No results were collected for this test.")
-                report.build_objective()
-            if self.suite_live_view and test_key != "thput_test":
-                self.add_live_view_images([test_key])
+    def add_suite_connectivity(self, report):
+        """
+        The end of the Test Suite report: each client's connectivity over the whole run (graph) and its ping
+        statistics (table), from the Test Suite background ping.
+        """
+        if not self.args.enable_bg_ping:
+            return
+        ping = self.suite_ping
+        if ping is not None and ping.bg_stats:
+            # Throughput's connectivity graph, drawn from this ping (it only reads background_ping)
+            througput_test.Throughput.add_background_ping_timeline_to_report(SimpleNamespace(background_ping=ping), report)
+            ping.add_background_ping_to_report(report)
+        else:
+            report.set_obj_html(_obj_title="Client Connectivity Status Throughout the Test Duration",
+                                _obj="No background ping results were collected for this run.")
+            report.build_objective()
 
-        report.build_footer()
-        report.write_html()
-        report.write_pdf(_page_width="420mm", _page_height="420mm")
+    def suite_configured_seconds(self, test_key):
+        """
+        A test's configured run time in seconds, from its duration input (s / m / h suffix; a plain number is
+        minutes for Zoom, Ping and Teams, seconds otherwise). Throughput runs it once per increment step.
+        None when the input can't be read.
+        """
+        prefix = test_key[:-len("_test")]
+        raw = str(getattr(self.args, "thput_test_duration" if test_key == "thput_test" else f"{prefix}_duration", "") or "").strip().lower()
+        unit = {"s": 1, "m": 60, "h": 3600}.get(raw[-1:])
+        try:
+            seconds = float(raw[:-1]) * unit if unit else float(raw) * (60 if test_key in ("zoom_test", "ping_test", "teams_test") else 1)
+        except ValueError:
+            return None
+        if test_key == "thput_test":
+            entry = next((entry for entry in self.thput_obj_dict["series"].values() if entry["data"] is not None), None)
+            steps = len(entry["data"].get("incremental_capacity_list") or []) if entry else 0
+            seconds *= max(steps, 1)
+        return seconds
+
+    def suite_summary_points(self, run_status, summaries, suite_score, unscored, test_names):
+        """The Test Summary bullets: what each test's own verdict says, in plain sentences."""
+        points = []
+        completed = sum(1 for state in run_status.values() if state == "done")
+        if suite_score is None:
+            score_point = "; no test produced a score, so the Test Suite is not rated."
+        elif unscored:
+            score_point = (f"; the Test Suite score of {suite_score:.2f}% covers only the scored tests, because "
+                           f"{', '.join(test_names.get(test_key, test_key) for test_key in unscored)} could not be scored, "
+                           f"so the Test Suite is rated Incomplete data.")
+        else:
+            score_point = f"; the Test Suite score is {suite_score:.2f}%, the average of the tests' own scores."
+        points.append(f"{completed} of {len(run_status)} tests ran to completion" + score_point)
+        for test_key, state in run_status.items():
+            name = test_names.get(test_key, test_key)
+            summary = summaries.get(test_key)
+            if state == "stopped":
+                points.append(f"{name} was stopped by the user, so its results cover only part of the configured duration.")
+            elif state in ("failed", "started", "notstarted"):
+                points.append(f"{name} did not complete ({'not run' if state == 'notstarted' else 'failed'}).")
+            if not summary:
+                continue
+            if test_key == "thput_test" and summary.get("score") is not None:
+                achieved_pct = summary["achieved_mbps"] / summary["intended_mbps"] * 100 if summary["intended_mbps"] else 0
+                # Lowest and highest per-client average rate: how evenly the load was shared
+                low, high, count = summary.get("client_min_mbps"), summary.get("client_max_mbps"), summary["devices"]
+                if low is None:
+                    client_range = ""
+                elif count == 1:
+                    client_range = f"; the client averaged {low} Mbps"
+                elif low == high:
+                    client_range = f"; every client averaged {low} Mbps"
+                else:
+                    client_range = f"; per-client averages ranged {low}–{high} Mbps"
+                points.append(f"Throughput achieved {achieved_pct:.2f}% of the configured load ({summary['achieved_mbps']} of "
+                              f"{summary['intended_mbps']} Mbps across {count} client{'' if count == 1 else 's'}){client_range}, "
+                              f"rated {summary['rating']}.")
+            elif test_key == "yt_test":
+                if summary.get("score") is not None:
+                    points.append(f"YouTube Streaming was rated {summary['rating']} (average score {summary['score']:.2f}%): "
+                                  f"{summary['with_data']} of {summary['devices']} clients supplied streaming data, {summary['scored']} "
+                                  f"could be scored and {summary['good_or_better']} rated Good or Excellent.")
+                else:
+                    points.append(f"YouTube Streaming could not be scored: {summary['with_data']} of {summary['devices']} clients "
+                                  f"supplied streaming data.")
+        # Connectivity over the whole run, from the Test Suite background ping
+        ping = self.suite_ping
+        if ping is not None and ping.bg_stats:
+            rows = list(ping.bg_stats.values())
+            lossy = [row for row in rows if row["sent"] and row["loss_percent"] > 0]
+            silent = [row["name"] for row in rows if not row["sent"]]
+            if lossy:
+                worst = max(lossy, key=lambda row: row["loss_percent"])
+                points.append(f"Background ping over the whole run: {len(lossy)} of {len(rows)} clients lost pings; the highest "
+                              f"loss was {worst['loss_percent']}% on {worst['name']}.")
+            elif len(silent) < len(rows):
+                pinged = len(rows) - len(silent)
+                points.append("Background ping over the whole run: no ping loss on the client." if pinged == 1 else
+                              f"Background ping over the whole run: no ping loss on any of the {pinged} clients that sent pings.")
+            if silent:
+                points.append(f"Background ping sent no pings from {', '.join(silent)}, so their connectivity is unknown.")
+        return points
+
+    def add_youtube_rating_scale(self, report, youtube):
+        """
+        The score-to-rating scale YouTube uses for each client, read from its own rating function (every score from
+        100 down to 0) so the table always matches the ratings in its section.
+        """
+        bands = []   # [rating, lowest score, highest score], best first
+        for score in range(100, -1, -1):
+            rating = youtube._score_rating(score)
+            if bands and bands[-1][0] == rating:
+                bands[-1][1] = score
+            else:
+                bands.append([rating, score, score])
+        report.set_table_title("Score-to-rating scale used for each client")
+        report.build_table_title()
+        report.set_table_dataframe(pd.DataFrame({
+            # "&lt;": this table is written without HTML escaping (for the rating badges), so a bare "<" would be dropped
+            "Score": [f"&lt; {bands[-2][1]}" if index == len(bands) - 1 and low == 0 else f"{low} – {high}"
+                      for index, (_, low, high) in enumerate(bands)],
+            "Rating": [rating for rating, _, _ in bands],
+        }))
+        report.rating_build_table("Rating", {label: color for _, label, color in lf_report_v2.SCORE_RATING_BANDS})
 
     def add_suite_test_sections(self, report, test_key):
         """
-        Add one test's sections to the Test Suite report, using the test's own report code. False when the
-        test has no results.
+        Add one test's sections to the Test Suite report, using the test's own report code. Returns the test
+        object (its verdict_summary is then set), or None when the test has no results.
         """
         if test_key == "thput_test":
             entry = next((entry for entry in self.thput_obj_dict["series"].values()
                           if entry["obj"] is not None and entry["data"] is not None), None)
             if entry is None:
-                return False
+                return None
             thput, params = entry["obj"], entry["data"]
             test_setup_info, device_names, device_types = thput.add_report_sections(
                 report, params["iterations_before_test_stopped_by_user"], params["incremental_capacity_list"],
                 data=params["data"], data1=params["data1"])
             thput.add_report_closing_sections(report, report.path_date_time, test_setup_info, device_names, device_types)
-            return True
+            return thput
         if test_key == "yt_test":
             # Copy of the YouTube test object, taken after its own report was written (its CSVs are in that folder)
             youtube = next((entry["obj"] for entry in self.yt_obj_dict["series"].values() if entry["obj"] is not None), None)
             if youtube is None:
-                return False
+                return None
             youtube.report = report
-            youtube.add_report_sections()
-            return True
-        return False
+            ping = self.suite_ping
+            if ping is not None and ping.bg_stats:
+                # YouTube's observations and findings use the Test Suite ping, limited to YouTube's playback time
+                youtube.background_ping = SimpleNamespace(**{name: getattr(ping, name) for name in (
+                    "bg_stats", "bg_packet_results", "bg_start_time", "bg_stop_time", "interval", "real_sta_list", "target")})
+                youtube.windowed_ping_stats = None   # computed again from this ping (the copy holds its own, empty, result)
+            # The whole-run connectivity graph and ping table at the end of this report replace YouTube's own section
+            youtube._add_connectivity_report = lambda report: None
+            working_dir = os.getcwd()   # the YouTube sections change into its report folder to read the CSVs
+            section_start = len(report.html)
+            try:
+                youtube.add_report_sections()
+            finally:
+                os.chdir(working_dir)
+            # The score-to-rating scale goes right after YouTube's per-client ratings table, before its Per-client
+            # Observations; it stays after the section if that heading is not found
+            scale_start = len(report.html)
+            self.add_youtube_rating_scale(report, youtube)
+            scale_html = report.html[scale_start:]
+            observations = report.html.find("<h3 align='left'>Per-client Observations</h3>", section_start, scale_start)
+            title_block = report.html.rfind("<!-- Table Title-->", section_start, observations) if observations != -1 else -1
+            if title_block != -1:
+                report.html = report.html[:title_block] + scale_html + report.html[title_block:scale_start]
+            return youtube
+        return None
 
     def generate_overall_report(self, test_results_df='', args_dict=None):
         '''
@@ -12856,8 +13150,6 @@ class MultiTraffic(Realm):
                 self.overall_report.set_custom_html(series_df.to_html(index=False, justify='center'))
                 self.overall_report.build_custom()
                 self.render_each_test(ce="series")
-        if self.suite_live_view:
-            self.add_live_view_images()   # YouTube/Zoom live-view maps
         self.overall_report.build_footer()
         html_file = self.overall_report.write_html()
         logging.info(f"Generated HTML report file: {html_file}")
@@ -13801,6 +14093,11 @@ def parse_args(return_parser=False):
     parser.add_argument('--dowebgui', help="If true will execute script for webgui", default=False, type=bool)
     parser.add_argument('--get_live_view', action='store_true', help='Include Testhouse live-view captures in the report')
     parser.add_argument('--total_floors', type=int, default=0, help='Number of Testhouse floors to capture')
+    parser.add_argument('--enable_bg_ping', action='store_true',
+                        help='Test Suite (--input_json): ping from all its devices for the whole run; the report shows each '
+                             "client's connectivity over time and its ping statistics")
+    parser.add_argument('--bg_ping_target', default=None, help='IP, domain name or LANforge port to ping; defaults to the upstream port')
+    parser.add_argument('--bg_ping_interval', type=float, default=1, help='Background ping interval in seconds; defaults to 1')
     parser.add_argument('--result_dir', help="Specify the result dir to store the runtime logs <Do not use in CLI, --used by webui>", default='')
     parser.add_argument('--input_json', default=None,
                         help='JSON file with all inputs, used by the webui. Format:\n'

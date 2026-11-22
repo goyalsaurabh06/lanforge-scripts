@@ -2560,6 +2560,10 @@ class Youtube(Realm):
             {"label": "Overall Rating", "value": rating_html},
         ])
         findings = self._test_summary_findings(metrics, overall_rating)
+        # The verdict's numbers, for a combined report's summary (lf_multi_traffic.py Test Suite report)
+        self.verdict_summary = {"score": average_score, "rating": overall_rating, "devices": len(self.real_sta_hostname),
+                                "with_data": len(measured), "scored": len(scored),
+                                "good_or_better": sum(1 for _, item in scored if item["rating"] in ("Excellent", "Good"))}
         self.report.set_obj_html(_obj_title="Key Findings", _obj="<ul>" + "".join(
             f"<li>{escape(finding)}</li>" for finding in findings) + "</ul>")
         self.report.build_objective()

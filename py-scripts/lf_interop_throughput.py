@@ -2885,6 +2885,14 @@ class Throughput(Realm):
         overall_score = self._throughput_ratio_to_score(achieved_dl + achieved_ul, intended_dl + intended_ul)
         rating, rating_color = lf_report.classify_score_rating(overall_score)
         self.overall_rating = rating if (intended_dl + intended_ul) else None
+        # The verdict's numbers, for a combined report's summary (lf_multi_traffic.py Test Suite report)
+        client_rates = [(self._parse_mbps(dl) if self.direction != "Upload" else 0.0) + (self._parse_mbps(ul) if self.direction != "Download" else 0.0)
+                        for dl, ul in zip(download_data, upload_data)]
+        self.verdict_summary = {"score": overall_score if (intended_dl + intended_ul) else None, "rating": self.overall_rating,
+                                "devices": len(devices), "intended_mbps": round(intended_dl + intended_ul, 2),
+                                "achieved_mbps": round(achieved_dl + achieved_ul, 2),
+                                "client_min_mbps": round(min(client_rates), 2) if client_rates else None,
+                                "client_max_mbps": round(max(client_rates), 2) if client_rates else None}
         rating_html = "<span style='color:{color}; font-weight:800;'>{rating}</span>".format(
             color=rating_color, rating=rating)
         verdict_fields = {
@@ -3864,8 +3872,10 @@ class Throughput(Realm):
             else:
                 incremental_capacity_data = ','.join(map(str, incremental_capacity_list))
         elif (len(self.incremental_capacity) > 1):
-            self.incremental_capacity = self.incremental_capacity.split(',')
-            incremental_capacity_data = ', '.join(self.incremental_capacity)
+            # Already a list when the sections were built before (e.g. for a combined report)
+            if isinstance(self.incremental_capacity, str):
+                self.incremental_capacity = self.incremental_capacity.split(',')
+            incremental_capacity_data = ', '.join(map(str, self.incremental_capacity))
         else:
             incremental_capacity_data = "None"
 
