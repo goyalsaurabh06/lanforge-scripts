@@ -13068,6 +13068,14 @@ class MultiTraffic(Realm):
             if youtube is None:
                 return None
             youtube.report = report
+            # YouTube's own report moved its stats files into its report folder; read them from there, so both
+            # reports use the same complete data (the old paths are gone, or hold samples posted after the move)
+            moved_dir = getattr(youtube, "report_path_date_time", None)
+            if moved_dir:
+                youtube.devices_list = [
+                    os.path.join(moved_dir, os.path.basename(path))
+                    if path.endswith("_youtube_stats_report.csv") and os.path.isfile(os.path.join(moved_dir, os.path.basename(path)))
+                    else path for path in youtube.devices_list]
             ping = self.suite_ping
             if ping is not None and ping.bg_stats:
                 # YouTube's observations and findings use the Test Suite ping, limited to YouTube's playback time
