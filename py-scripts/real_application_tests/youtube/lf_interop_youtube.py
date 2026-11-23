@@ -1605,14 +1605,20 @@ class Youtube(Realm):
 
             skip_table = not mask.any()
 
-            if skip_table:
-                bssid_counts = {bssid: 0 for bssid in self.bssids}
-            else:
-                bssid_counts = Counter(bssid_list)
+            bssid_counts = Counter(bssid_list)
+            report_bssids = self.bssids or list(bssid_counts)
+
+            if not report_bssids:
+                report.set_obj_html(
+                    _obj_title=f"Band Steering Results for {device_name}",
+                    _obj="No BSSID data available for this client; BSSID graph omitted."
+                )
+                report.build_objective()
+                continue
 
             final_bssid_counts = {
                 bssid: bssid_counts.get(bssid, 0)
-                for bssid in self.bssids
+                for bssid in report_bssids
             }
 
             x_axis = list(final_bssid_counts.keys())
