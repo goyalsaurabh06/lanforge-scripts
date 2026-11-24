@@ -57,11 +57,13 @@ NOTES:
 
 import argparse
 import asyncio
+import base64
 import csv
 import glob
 import importlib
 import json
 import logging
+import math
 import os
 import platform
 import re
@@ -75,6 +77,7 @@ import time
 import traceback
 from collections import Counter
 from datetime import datetime, timedelta
+from html import escape
 
 import pandas as pd
 import pytz
@@ -93,15 +96,8 @@ LFCliBase = lfcli_base.LFCliBase
 LFUtils = importlib.import_module("py-json.LANforge.LFUtils")
 realm = importlib.import_module("py-json.realm")
 Realm = realm.Realm
-lf_report = importlib.import_module("py-scripts.lf_report")
-lf_report = lf_report.lf_report
-lf_graph = importlib.import_module("py-scripts.lf_graph")
-lf_bar_graph = lf_graph.lf_bar_graph
-lf_scatter_graph = lf_graph.lf_scatter_graph
-lf_bar_graph_horizontal = lf_graph.lf_bar_graph_horizontal
-lf_line_graph = lf_graph.lf_line_graph
-lf_stacked_graph = lf_graph.lf_stacked_graph
-lf_horizontal_stacked_graph = lf_graph.lf_horizontal_stacked_graph
+from report_v2.lf_report_v2 import lf_report  # noqa: E402
+from report_v2.lf_graph_v2 import lf_bar_graph, lf_bar_graph_horizontal  # noqa: E402
 DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
 lf_base_interop_profile = importlib.import_module("py-scripts.lf_base_interop_profile")
 RealDevice = lf_base_interop_profile.RealDevice
@@ -2363,6 +2359,13 @@ class ZoomAutomation(Realm):
                 else:
                     summary[device][metric_key] = parsed_value
 
+            # Resolution columns, when the dashboard export has them
+            for metric_key, csv_column in (("video_input_resolution", "Video (Receiving) Resolution"),
+                                           ("video_output_resolution", "Video (Sending) Resolution")):
+                raw_value = row.get(csv_column)
+                if raw_value is not None and not pd.isna(raw_value) and str(raw_value).strip() not in ("-", ""):
+                    summary[device][metric_key] = str(raw_value).strip()
+
             if (
                 csv_host_name
                 and self._clean_zoom_participant_name(device)
@@ -2414,6 +2417,7 @@ class ZoomAutomation(Realm):
                     host_device_key = device
 
             temp_values = {m: {f: [] for f in fields} for m in metrics}
+            resolutions = {"video_input": [], "video_output": []}
 
             for sample in participant.get("user_qos", []):
                 for m in metrics:
@@ -2422,6 +2426,9 @@ class ZoomAutomation(Realm):
                         val = self.parse_value(data.get(f))
                         if val is not None:
                             temp_values[m][f].append(val)
+                    resolution = data.get("resolution")
+                    if m in resolutions and resolution and str(resolution).strip() not in ("-", ""):
+                        resolutions[m].append(str(resolution).strip())
 
             for m in metrics:
                 for f in fields:
@@ -2430,6 +2437,10 @@ class ZoomAutomation(Realm):
                         summary[device][f"{m}_{f}_avg"] = round(
                             sum(vals) / len(vals), 2
                         )
+            # Most common resolution seen during the call, e.g. "640*360"
+            for m, values in resolutions.items():
+                if values:
+                    summary[device][f"{m}_resolution"] = Counter(values).most_common(1)[0][0]
 
         if summary and host_device_key not in summary:
             host_device_key = next(iter(summary))
@@ -2512,78 +2523,18 @@ class ZoomAutomation(Realm):
 
         return True
 
+    @staticmethod
+    def _build_link_table(report):
+        """Adds the current table to the report, keeping HTML links (e.g. the per-client CSV links) clickable."""
+        table_html = report.dataframe.to_html(index=False, justify="center", classes="data-table",
+                                              render_links=True, escape=False)
+        report.set_custom_html("<div class='table-wrap'>" + table_html + "</div>")
+        report.build_custom()
+
     def generate_report(self):
         self.stop_wifi_analysis()
-        report = lf_report(_output_pdf='zoom_call_report.pdf',
-                           _output_html='zoom_call_report.html',
-                           _results_dir_name="zoom_call_report",
-                           _path=self.path)
-        report_path_date_time = report.get_path_date_time()
-        self.report = report
-        self.report_path_date_time = report_path_date_time
-
-        report.set_title("Zoom Call Automated Report")
-        report.build_banner()
-
-        report.set_table_title("Objective:")
-        report.build_table_title()
-        report.set_text("The objective is to conduct automated Zoom call tests across multiple laptops to gather statistics on sent audio, video, and received audio, video performance." +
-                        "The test will collect these statistics and store them in a CSV file. Additionally, automated graphs will be generated using the collected data.")
-        report.build_text_simple()
-
-        report.set_table_title("Test Parameters:")
-        report.build_table_title()
-        testtype = ""
-        if self.audio and self.video:
-            testtype = "AUDIO & VIDEO"
-        elif self.audio:
-            testtype = "AUDIO"
-        elif self.video:
-            testtype = "VIDEO"
-
-        if self.config:
-            test_parameters = pd.DataFrame([{
-                "Configured Devices": self.hostname_os_combination,
-                'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac})',
-                'Test Duration(min)': self.duration,
-                'EMAIL ID': self.signin_email,
-                "PASSWORD": self.signin_passwd,
-                "HOST": self.real_sta_list[0],
-                "TEST TYPE": testtype,
-                "SSID": self.ssid,
-                "Security": self.security
-
-            }])
-        elif len(self.selected_groups) > 0 and len(self.selected_profiles) > 0:
-            gp_pairs = zip(self.selected_groups, self.selected_profiles)
-
-            gp_map = ", ".join(f"{group} -> {profile}" for group, profile in gp_pairs)
-
-            test_parameters = pd.DataFrame([{
-                "Configuration": gp_map,
-                "Configured Devices": self.hostname_os_combination,
-                'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac})',
-                'Test Duration(min)': self.duration,
-                'EMAIL ID': self.signin_email,
-                "PASSWORD": self.signin_passwd,
-                "HOST": self.real_sta_list[0],
-                "TEST TYPE": testtype,
-
-            }])
-        else:
-
-            test_parameters = pd.DataFrame([{
-                "Configured Devices": self.hostname_os_combination,
-                'No of Clients': f'W({self.windows}),L({self.linux}),M({self.mac})',
-                'Test Duration(min)': self.duration,
-                'EMAIL ID': self.signin_email,
-                "PASSWORD": self.signin_passwd,
-                "HOST": self.real_sta_list[0],
-                "TEST TYPE": testtype,
-
-            }])
-        report.set_table_dataframe(test_parameters)
-        report.build_table()
+        report = self._start_modern_report()
+        report_path_date_time = self.report_path_date_time
 
         client_array = []
         accepted_clients = []
@@ -2811,7 +2762,7 @@ class ZoomAutomation(Realm):
 
                 final_dataset.append(per_client_data.copy())
 
-        report.set_table_title("Test Devices:")
+        report.set_table_title("Test Devices")
         report.build_table_title()
 
         device_details = pd.DataFrame({
@@ -2827,8 +2778,12 @@ class ZoomAutomation(Realm):
         report.build_table()
 
         if self.audio:
-            report.set_graph_title("Audio Latency (Sent/Received)")
-            report.build_graph_title()
+            report.set_obj_html(
+                _obj_title="Audio Latency (Sent/Received)",
+                _obj="The graph below illustrates the maximum and minimum sent and received audio latency observed for each "
+                     "wireless device during the test. The X-axis represents the latency in milliseconds, while the Y-axis lists the "
+                     "individual wireless client devices.")
+            report.build_objective()
             x_data_set = [max_audio_latency_s.copy(), min_audio_latency_s.copy(), max_audio_latency_r.copy(), min_audio_latency_r.copy()]
             y_data_set = client_array
 
@@ -2847,7 +2802,7 @@ class ZoomAutomation(Realm):
                 _show_bar_value=True,
                 _figsize=(x_fig_size, y_fig_size),
                 _graph_title="Audio Latency(sent/received)",
-                _graph_image_name="Audio Latency(sent and received)",
+                _graph_image_name="audio_latency_sent_received",
                 _label=["Max Sent", "Min Sent", "Max Recv", "Min Recv"]
             )
             graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
@@ -2855,8 +2810,12 @@ class ZoomAutomation(Realm):
             report.move_graph_image()
             report.build_graph()
 
-            report.set_graph_title("Audio Jitter (Sent/Received)")
-            report.build_graph_title()
+            report.set_obj_html(
+                _obj_title="Audio Jitter (Sent/Received)",
+                _obj="The graph below illustrates the maximum and minimum sent and received audio jitter observed for each "
+                     "wireless device during the test. The X-axis represents the jitter in milliseconds, while the Y-axis lists the "
+                     "individual wireless client devices.")
+            report.build_objective()
             x_data_set = [max_audio_jitter_s.copy(), min_audio_jitter_s.copy(), max_audio_jitter_r.copy(), min_audio_jitter_r.copy()]
             y_data_set = client_array
 
@@ -2875,7 +2834,7 @@ class ZoomAutomation(Realm):
                 _show_bar_value=True,
                 _figsize=(x_fig_size, y_fig_size),
                 _graph_title="Audio Jitter(sent/received)",
-                _graph_image_name="Audio Jitter(sent and received)",
+                _graph_image_name="audio_jitter_sent_received",
                 _label=["Max Sent", "Min Sent", "Max Recv", "Min Recv"]
             )
             graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
@@ -2883,8 +2842,12 @@ class ZoomAutomation(Realm):
             report.move_graph_image()
             report.build_graph()
 
-            report.set_graph_title("Audio Packet Loss (Sent/Received)")
-            report.build_graph_title()
+            report.set_obj_html(
+                _obj_title="Audio Packet Loss (Sent/Received)",
+                _obj="The graph below illustrates the maximum and minimum sent and received audio packet loss observed for each "
+                     "wireless device during the test. The X-axis represents the packet loss percentage, while the Y-axis lists the "
+                     "individual wireless client devices.")
+            report.build_objective()
             x_data_set = [max_audio_pktloss_s.copy(), min_audio_pktloss_s.copy(), max_audio_pktloss_r.copy(), min_audio_pktloss_r.copy()]
             y_data_set = client_array
 
@@ -2903,7 +2866,7 @@ class ZoomAutomation(Realm):
                 _show_bar_value=True,
                 _figsize=(x_fig_size, y_fig_size),
                 _graph_title="Audio Packet Loss(sent/received)",
-                _graph_image_name="Audio Packet Loss(sent and received)",
+                _graph_image_name="audio_packet_loss_sent_received",
                 _label=["Max Sent", "Min Sent", "Max Recv", "Min Recv"]
             )
             graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
@@ -2946,22 +2909,25 @@ class ZoomAutomation(Realm):
                     group_specific_audio_test_results = self.get_test_results_data(audio_test_results_dict, group)
                     if not group_specific_audio_test_results['Device Name']:
                         continue
-                    report.set_table_title(f"{group} Test Audio Results:")
+                    report.set_table_title(f"{group} Test Audio Results")
                     report.build_table_title()
                     test_results_df = pd.DataFrame(group_specific_audio_test_results)
                     report.set_table_dataframe(test_results_df)
-                    report.html += report.dataframe.to_html(index=False, justify='center', render_links=True, escape=False)
+                    self._build_link_table(report)
 
             else:
-                report.set_table_title("Test Audio Results:")
+                report.set_table_title("Test Audio Results")
                 report.build_table_title()
                 audio_test_details = pd.DataFrame(audio_test_results_dict)
                 report.set_table_dataframe(audio_test_details)
-                report.html += report.dataframe.to_html(index=False,
-                                                        justify='center', render_links=True, escape=False)  # have the index be able to be passed in.
+                self._build_link_table(report)
         if self.video:
-            report.set_graph_title("Video Latency (Sent/Received)")
-            report.build_graph_title()
+            report.set_obj_html(
+                _obj_title="Video Latency (Sent/Received)",
+                _obj="The graph below illustrates the maximum and minimum sent and received video latency observed for each "
+                     "wireless device during the test. The X-axis represents the latency in milliseconds, while the Y-axis lists the "
+                     "individual wireless client devices.")
+            report.build_objective()
             x_data_set = [max_video_latency_s.copy(), min_video_latency_s.copy(), max_video_latency_r.copy(), min_video_latency_r.copy()]
             y_data_set = client_array
             x_fig_size = 18
@@ -2979,7 +2945,7 @@ class ZoomAutomation(Realm):
                 _show_bar_value=True,
                 _figsize=(x_fig_size, y_fig_size),
                 _graph_title="Video Latency(sent/received)",
-                _graph_image_name="Video Latency(sent and received)",
+                _graph_image_name="video_latency_sent_received",
                 _label=["Max Sent", "Min Sent", "Max Recv", "Min Recv"]
             )
             graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
@@ -2987,8 +2953,12 @@ class ZoomAutomation(Realm):
             report.move_graph_image()
             report.build_graph()
 
-            report.set_graph_title("Video Jitter (Sent/Received)")
-            report.build_graph_title()
+            report.set_obj_html(
+                _obj_title="Video Jitter (Sent/Received)",
+                _obj="The graph below illustrates the maximum and minimum sent and received video jitter observed for each "
+                     "wireless device during the test. The X-axis represents the jitter in milliseconds, while the Y-axis lists the "
+                     "individual wireless client devices.")
+            report.build_objective()
             x_data_set = [max_video_jitter_s.copy(), min_video_jitter_s.copy(), max_video_jitter_r.copy(), min_video_jitter_r.copy()]
             y_data_set = client_array
             x_fig_size = 18
@@ -3006,7 +2976,7 @@ class ZoomAutomation(Realm):
                 _show_bar_value=True,
                 _figsize=(x_fig_size, y_fig_size),
                 _graph_title="Video Jitter(sent/received)",
-                _graph_image_name="Video Jitter(sent and received)",
+                _graph_image_name="video_jitter_sent_received",
                 _label=["Max Sent", "Min Sent", "Max Recv", "Min Recv"]
             )
             graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
@@ -3014,8 +2984,12 @@ class ZoomAutomation(Realm):
             report.move_graph_image()
             report.build_graph()
 
-            report.set_graph_title("Video Packet Loss (Sent/Received)")
-            report.build_graph_title()
+            report.set_obj_html(
+                _obj_title="Video Packet Loss (Sent/Received)",
+                _obj="The graph below illustrates the maximum and minimum sent and received video packet loss observed for each "
+                     "wireless device during the test. The X-axis represents the packet loss percentage, while the Y-axis lists the "
+                     "individual wireless client devices.")
+            report.build_objective()
             x_data_set = [max_video_pktloss_s.copy(), min_video_pktloss_s.copy(), max_video_pktloss_r.copy(), min_video_pktloss_r.copy()]
             y_data_set = client_array
             x_fig_size = 18
@@ -3033,7 +3007,7 @@ class ZoomAutomation(Realm):
                 _show_bar_value=True,
                 _figsize=(x_fig_size, y_fig_size),
                 _graph_title="Video Packet Loss(sent/received)",
-                _graph_image_name="Video Packet Loss(sent and received)",
+                _graph_image_name="video_packet_loss_sent_received",
                 _label=["Max Sent", "Min Sent", "Max Recv", "Min Recv"]
             )
             graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
@@ -3076,26 +3050,22 @@ class ZoomAutomation(Realm):
                     group_specific_video_test_results = self.get_test_results_data(video_test_results_dict, group)
                     if not group_specific_video_test_results['Device Name']:
                         continue
-                    report.set_table_title(f"{group} Test Video Results:")
+                    report.set_table_title(f"{group} Test Video Results")
                     report.build_table_title()
                     test_results_df = pd.DataFrame(group_specific_video_test_results)
                     report.set_table_dataframe(test_results_df)
-                    report.html += report.dataframe.to_html(index=False, justify='center', render_links=True, escape=False)
+                    self._build_link_table(report)
 
             else:
-                report.set_table_title("Test Video Results:")
+                report.set_table_title("Test Video Results")
                 report.build_table_title()
                 video_test_details = pd.DataFrame(video_test_results_dict)
                 report.set_table_dataframe(video_test_details)
-                report.html += report.dataframe.to_html(index=False,
-                                                        justify='center', render_links=True, escape=False)  # have the index be able to be passed in.
+                self._build_link_table(report)
         # Wi-Fi connectivity stats
         self.add_wifi_analysis_to_report(report)
-        report.set_custom_html("<br/><hr/>")
-        report.build_custom()
-
-        report.write_html()
-        report.write_pdf(_page_size='Legal', _orientation='Landscape')
+        # Configuration at the end
+        self._finish_modern_report(report)
         for client in accepted_clients:
             file_to_move_path = os.path.join(self.path, f'{client}.csv')
             self.move_files(file_to_move_path, report_path_date_time)
@@ -3282,21 +3252,23 @@ class ZoomAutomation(Realm):
 
             categories = ["Disconnected", "Scans", "Association Attempts", "Association Rejected", "Connected"]
             totals = [sum(disconnected), sum(scanning), sum(connect_attempt), sum(association_rejection), sum(connected)]
-            colors = ['#e67e22', '#1e824c', '#2980b9', '#8e44ad', '#27ae60']
+            # Colors per connection event
+            colors = ['#e74c3c', '#f1c40f', '#e67e22', '#95a5a6', '#27ae60']
 
             report.set_obj_html(
                 _obj_title="Client Connectivity Event Summary",
                 _obj="This graph summarizes connection-related events observed during the Zoom call test. "
                      "These metrics provide insight into client stability and wireless connectivity performance.")
             report.build_objective()
-            # One series across 5 categories so the bars spread across the chart's full width,
-            # each under its own x-axis label, instead of clustering together in the middle.
-            graph = lf_bar_graph(_data_set=[totals],
+            # One series per event for the legend
+            data_set = [[value if index == series_index else 0 for index, value in enumerate(totals)]
+                        for series_index in range(len(categories))]
+            graph = lf_bar_graph(_data_set=data_set,
                                  _xaxis_name="",
                                  _yaxis_name="Count",
                                  _xaxis_categories=categories,
                                  _graph_image_name="wifi_connectivity_status",
-                                 _label=["Client Connectivity Status"],
+                                 _label=categories,
                                  _graph_title="Client Connectivity Status",
                                  _title_size=16,
                                  _color_edge='black',
@@ -3306,12 +3278,13 @@ class ZoomAutomation(Realm):
                                  _dpi=96,
                                  _show_bar_value=True,
                                  _enable_csv=True,
+                                 _stacked=True,
                                  _color=colors,
                                  _color_name=colors)
             graph_png = graph.build_bar_graph()
             report.set_graph_image(graph_png)
             report.move_graph_image()
-            report.set_csv_filename(graph.graph_image_name)
+            report.set_csv_filename(f"{graph.graph_image_name}.csv")
             report.move_csv_file()
             report.build_graph()
 
@@ -3473,7 +3446,7 @@ class ZoomAutomation(Realm):
                 graph_png = graph.build_bar_graph()
                 report.set_graph_image(graph_png)
                 report.move_graph_image()
-                report.set_csv_filename(graph_png)
+                report.set_csv_filename(f"{graph.graph_image_name}.csv")
                 report.move_csv_file()
                 report.build_graph()
 
@@ -3563,701 +3536,666 @@ class ZoomAutomation(Realm):
 
         html_content = ""
 
-        if os.path.exists(video_path):
-            html_content += (
-                '<div style="page-break-before: always;"></div>'
-                '<h3 style="text-align:center;">Video Heatmap</h3>'
-                f'<div style="text-align:center;"><img src="file://{video_path}" style="width:1200px; height:800px;"></img></div>'
-            )
-
-        if os.path.exists(audio_path):
-            html_content += (
-                '<div style="page-break-before: always;"></div>'
-                '<h3 style="text-align:center;">Audio Heatmap</h3>'
-                f'<div style="text-align:center;"><img src="file://{audio_path}" style="width:1200px; height:800px;"></img></div>'
-            )
+        for label, image_path in (("Video", video_path), ("Audio", audio_path)):
+            if os.path.exists(image_path):
+                with open(image_path, "rb") as image_file:
+                    image_base64 = base64.b64encode(image_file.read()).decode("ascii")
+                html_content += (
+                    '<div style="page-break-before: always;"></div>'
+                    f'<h3 style="text-align:center;">{label} Heatmap</h3>'
+                    f"<div class='chart-card'><img src='data:image/png;base64,{image_base64}' alt='' /></div>"
+                )
 
         if html_content:
             self.report.set_custom_html(html_content)
+            self.report.build_custom()
 
-    def generate_report_from_api(self):
-        self.stop_wifi_analysis()
+    # Overall MOS rating bands on the 1-5 scale: (threshold, label, color)
+    MOS_RATING_BANDS = [(4.0, "Excellent", "#1e7e34"), (3.5, "Good", "#28a745"),
+                        (3.0, "Fair", "#f1c40f"), (0, "Poor", "#e74c3c")]
+    AUDIO_MOS_WEIGHT = 0.6
+    VIDEO_MOS_WEIGHT = 0.4
+    # Received-media targets from the "Scoring Parameters and Range" table
+    AUDIO_LATENCY_TARGET_MS = 150
+    VIDEO_LATENCY_TARGET_MS = 200
+    JITTER_TARGET_MS = 30
+    PACKET_LOSS_TARGET_PCT = 1
+    WEAK_RSSI_DBM = -65
+    OS_LABELS = {"windows": "Windows", "macos": "macOS", "linux": "Linux", "android": "Android"}
+    # Audio, Video and Overall series colors
+    MEDIA_COLORS = ["#1f5f8b", "#ed7d31", "#4ea72e"]
+
+    @staticmethod
+    def _number(value):
+        """Returns value as a float, or None when it is missing or not a number.
+
+        Example:
+            latency = ZoomAutomation._number(stats.get("audio_input_latency_avg"))
+        """
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or pd.isna(value):
+            return None
+        return float(value)
+
+    @staticmethod
+    def _mos_value(value):
+        """Reads a MOS such as 4.41 or the dashboard's "Good(4.41)" as a number.
+
+        Returns:
+            float: the MOS, or None when it cannot be read.
+
+        Example:
+            mos = ZoomAutomation._mos_value("Good(4.41)")  # 4.41
+        """
+        if value is None or isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            return None if pd.isna(value) else float(value)
+        match = re.search(r"\d+(?:\.\d+)?", str(value))
+        return float(match.group(0)) if match else None
+
+    @classmethod
+    def classify_mos_rating(cls, mos):
+        """Maps an Overall MOS (1-5) to a rating label and color.
+
+        Returns:
+            tuple: (label, color); ("NA", None) when there is no MOS.
+
+        Example:
+            label, color = self.classify_mos_rating(4.22)  # ("Excellent", "#1e7e34")
+        """
+        if mos is None:
+            return "NA", None
+        mos = round(mos, 2)
+        for threshold, label, color in cls.MOS_RATING_BANDS:
+            if mos >= threshold:
+                return label, color
+        return cls.MOS_RATING_BANDS[-1][1], cls.MOS_RATING_BANDS[-1][2]
+
+    @staticmethod
+    def _resolution_label(resolution):
+        """Turns a Zoom resolution such as "640*360" into "360p"; "360p" is kept as it is.
+
+        Example:
+            label = ZoomAutomation._resolution_label("640*360")  # "360p"
+        """
+        if resolution is None or (isinstance(resolution, float) and pd.isna(resolution)):
+            return ""
+        text = str(resolution).strip()
+        dimensions = re.findall(r"\d+", text)
+        if len(dimensions) >= 2:
+            return "{}p".format(min(int(dimensions[0]), int(dimensions[1])))
+        return text
+
+    @staticmethod
+    def _rssi_value(rssi):
+        """Reads an RSSI such as "-42 dBm" as a number; None when it is missing or 0.
+
+        Example:
+            rssi = ZoomAutomation._rssi_value("-42 dBm")  # -42
+        """
+        match = re.search(r"-?\d+(?:\.\d+)?", str(rssi)) if rssi not in (None, "") else None
+        if not match or float(match.group(0)) == 0:
+            return None
+        value = float(match.group(0))
+        return int(value) if value.is_integer() else value
+
+    @staticmethod
+    def _range_text(values, digits=2, separator="–"):
+        """Formats the spread of values, e.g. "4.07–4.38", or a single value when they are all equal.
+
+        Example:
+            text = ZoomAutomation._range_text([4.38, 4.07])  # "4.07–4.38"
+        """
+        low = "{:.{d}f}".format(min(values), d=digits)
+        high = "{:.{d}f}".format(max(values), d=digits)
+        return low if low == high else "{}{}{}".format(low, separator, high)
+
+    @staticmethod
+    def _join_words(words):
+        """Joins ["a", "b", "c"] as "a, b and c".
+
+        Example:
+            text = ZoomAutomation._join_words(["611 ms audio delay", "2.55% packet loss"])
+        """
+        words = list(words)
+        if len(words) <= 1:
+            return "".join(words)
+        return "{} and {}".format(", ".join(words[:-1]), words[-1])
+
+    @staticmethod
+    def _chart_id(name):
+        """Makes a chart name safe to use as an HTML element id.
+
+        Example:
+            chart_id = ZoomAutomation._chart_id("Audio_Packet Loss_1,2_30")  # "Audio_Packet_Loss_1_2_30"
+        """
+        return re.sub(r"[^A-Za-z0-9_-]+", "_", str(name)).strip("_") or "chart"
+
+    def _media_text(self):
+        """Returns "audio and video", "audio" or "video" for the media this test collected."""
+        if self.audio and self.video:
+            return "audio and video"
+        return "audio" if self.audio else "video"
+
+    def _call_type(self):
+        """Returns the call type shown in the report, e.g. "Audio & Video"."""
+        if self.audio and self.video:
+            return "Audio & Video"
+        if self.audio:
+            return "Audio"
+        return "Video" if self.video else "NA"
+
+    def _test_duration_hms(self):
+        """Returns the configured call duration as hh:mm:ss."""
+        if self.continuous_robo:
+            return "Until route completes"
+        seconds = int(float(self.duration or 0) * 60)
+        return "{:02d}:{:02d}:{:02d}".format(seconds // 3600, seconds % 3600 // 60, seconds % 60)
+
+    def _device_count_text(self, order):
+        """Counts the configured clients per OS, e.g. "Windows: 5, macOS: 1"; OSes with no client are left out.
+
+        Args:
+            order (list): OS labels in the order to list them.
+        """
+        counts = {"Windows": self.windows, "macOS": self.mac, "Linux": self.linux, "Android": self.android}
+        return ", ".join("{}: {}".format(name, counts[name]) for name in order if counts.get(name))
+
+    def _start_modern_report(self, mos_overview=False):
+        """Creates the report with the banner and the "Test Overview" section.
+
+        Args:
+            mos_overview (bool): also explain where the MOS scores come from (API reports).
+
+        Returns:
+            lf_report: the new report, also kept in self.report.
+        """
         self.report = lf_report(
             _output_pdf="zoom_call_report.pdf",
             _output_html="zoom_call_report.html",
             _results_dir_name="zoom_call_report",
             _path=self.path,
         )
-        self.report_path_date_time = self.report.get_path_date_time()
-        self.report.set_title("Zoom Call Automated Report")
+        self.report_path_date_time = self.report.path_date_time
+        self.report.set_title("LANforge Interop<br>Zoom Call Test<br>"
+                              "<span style='font-size:0.45em; font-weight:400;'>(Real Client Performance Validation)</span>")
         self.report.build_banner()
-        self.report.set_table_title("Objective:")
-        self.report.build_table_title()
-        self.report.set_text(
-            """The Zoom Conference Test is designed to evaluate an Access Point ability
-                to handle real-time conferencing workloads when multiple clients, including Windows,
-                Linux, macOS, and Android devices, participate in a Zoom meeting. The test measures
-                the AP's efficiency in managing audio, video, and screen share traffic while maintaining
-                acceptable latency, jitter, packet loss, and bitrate. Additional observations include client
-                connection stability, airtime fairness, and MOS Score. The expected behavior is for the
-                Access Point to sustain consistent Zoom performance as the client load increases,
-                ensuring reliable conferencing quality without significant degradation across upstream
-                and downstream traffic
-            """
-        )
-        self.report.build_text_simple()
-        self.report.set_table_title("Test Parameters:")
-        self.report.build_table_title()
-        testtype = ""
-        if self.audio and self.video:
-            testtype = "AUDIO & VIDEO"
-        elif self.audio:
-            testtype = "AUDIO"
-        elif self.video:
-            testtype = "VIDEO"
+        overview = ("The objective is to conduct automated Zoom call tests across multiple laptops, desktops and Android "
+                    "devices to gather statistics on sent and received audio and video performance. The test collects "
+                    "these statistics, stores them in CSV files and generates automated graphs from the collected data.")
+        if mos_overview:
+            overview += (" Per-client quality scores (MOS) are taken from the Zoom dashboard QoS export for the meeting "
+                         "and combined into an overall score for each client.")
+        self.report.set_obj_html(_obj_title="Test Overview", _obj=overview)
+        self.report.build_objective()
+        return self.report
 
-        # lambda function to convert min to HH:MM:SS
-        to_hms = (
-            lambda mins: f"{int(mins * 60 // 3600):02}:{int((mins * 60 % 3600) // 60):02}:{int(mins * 60 % 60):02}"
-        )
+    def _finish_modern_report(self, report):
+        """Adds the "Test Configuration" card and the footer, then writes the HTML and PDF."""
+        self._add_test_configuration_to_report(report)
+        report.build_footer()
+        report.write_html()
+        report.write_pdf(_orientation="Landscape")
 
+    def _add_test_configuration_to_report(self, report):
+        """Adds the "Test Configuration" card. Values that do not apply to this run are left out."""
+        configuration = {
+            "Number of Clients": "Total: {} configured ({})".format(
+                len(self.real_sta_hostname), self._device_count_text(["Windows", "Linux", "macOS", "Android"])),
+            "Zoom Account": self.signin_email,
+            "Host Interface": self.real_sta_list[0] if self.real_sta_list else None,
+            "Test Duration(hh:mm:ss)": self._test_duration_hms(),
+            "Call Type": self._call_type(),
+        }
         if self.config:
-            test_parameters = pd.DataFrame(
-                [
-                    {
-                        "Test Name": "Zoom Conference Call Test",
-                        "Date": time.strftime("%d-%m-%Y", time.localtime()),
-                        "Configured Devices": self.hostname_os_combination,
-                        "Zoom Meeting ID": self.remote_login_url,
-                        "Devices Used": f"W({self.windows}),L({self.linux}),M({self.mac}),A({self.android})",
-                        "Test Duration": to_hms(self.duration),
-                        "EMAIL ID": self.signin_email,
-                        "PASSWORD": self.signin_passwd,
-                        "HOST": self.real_sta_list[0],
-                        "TEST TYPE": testtype,
-                        "SSID": self.ssid,
-                        "Security": self.security,
-                    }
-                ]
-            )
-        elif len(self.selected_groups) > 0 and len(self.selected_profiles) > 0:
-            gp_pairs = zip(self.selected_groups, self.selected_profiles)
-            gp_map = ", ".join(f"{group} -> {profile}" for group, profile in gp_pairs)
-
-            test_parameters = pd.DataFrame(
-                [
-                    {
-                        "Test Name": "Zoom Conference Call Test",
-                        "Date": time.strftime("%d-%m-%Y", time.localtime()),
-                        "Configuration": gp_map,
-                        "Configured Devices": self.hostname_os_combination,
-                        "Zoom Meeting ID": self.remote_login_url,
-                        "Devices Used": f"W({self.windows}),L({self.linux}),M({self.mac}),A({self.android})",
-                        "Test Duration": to_hms(self.duration),
-                        "EMAIL ID": self.signin_email,
-                        "PASSWORD": self.signin_passwd,
-                        "HOST": self.real_sta_list[0],
-                        "TEST TYPE": testtype,
-                        "Cycles": self.cycles,
-                    }
-                ]
-            )
-        else:
-            test_params_list = [
-                {
-                    "Test Name": "Zoom Conference Call Test",
-                    "Date": time.strftime("%d-%m-%Y", time.localtime()),
-                    "Devices Used": f"W({self.windows}),L({self.linux}),M({self.mac}),A({self.android})",
-                    "EMAIL ID": self.signin_email,
-                    "PASSWORD": self.signin_passwd,
-                    "HOST": self.real_sta_list[0],
-                    "TEST TYPE": testtype,
-                }
-            ]
-            if self.do_robo or self.do_bs:
-                test_params_list[0].update(
-                    {
-                        "Coordinates": self.coordinates_list,
-                    }
-                )
-                if self.continuous_robo:
-                    test_params_list[0].update(
-                        {
-                            "Cycles": self.cycles,
-                        }
-                    )
-            test_parameters = pd.DataFrame(test_params_list)
+            configuration["SSID"] = self.ssid
+            configuration["Security"] = self.security
+        elif self.selected_groups and self.selected_profiles:
+            configuration["Configuration"] = ", ".join(
+                f"{group} -> {profile}" for group, profile in zip(self.selected_groups, self.selected_profiles))
         if self.do_robo or self.do_bs:
-            test_parameters["Measurement Mode"] = (
-                "Continuous" if self.continuous_robo else "Per point"
-            )
-        if self.continuous_robo:
-            test_parameters["Test Duration"] = "Until route completes"
-            test_parameters["Cycles"] = self.cycles
-        self.report.set_table_dataframe(test_parameters)
-        self.report.build_table()
+            configuration["Coordinates"] = ", ".join(str(coord) for coord in (self.coordinates_list or []))
+            configuration["Measurement Mode"] = "Continuous" if self.continuous_robo else "Per point"
+            if self.rotations_enabled and self.angles_list:
+                configuration["Rotations"] = ", ".join(str(angle) for angle in self.angles_list)
+            if self.continuous_robo:
+                configuration["Cycles"] = self.cycles
+            if self.do_bs and self.bssids:
+                configuration["BSSIDs"] = ", ".join(self.bssids)
+        report.build_info_card(
+            title="Test Configuration",
+            items=[{"label": escape(label), "value": escape(str(value)) if value is not None else None}
+                   for label, value in configuration.items()])
 
-        device_data = self._get_report_device_data()
+    def _wait_for_dashboard_csv(self, timeout=300):
+        """Waits up to timeout seconds for the host to upload the Zoom dashboard CSV (the MOS source)."""
+        if not self.download_csv or self.is_csv_available:
+            return
+        logger.info("Waiting for the Zoom dashboard CSV before building the report")
+        deadline = time.time() + timeout
+        while not self.is_csv_available and time.time() < deadline:
+            time.sleep(5)
+        if not self.is_csv_available:
+            logger.warning("Zoom dashboard CSV was not received within %s seconds; MOS will be reported as NA", timeout)
 
+    def _collect_report_device_data(self):
+        """Returns the per-client stats for the report: the Zoom API summary, overridden by the
+        Zoom dashboard CSV export (the only source of MOS) when it was received.
+
+        Returns:
+            dict: {hostname: {metric_key: value}}.
+        """
+        # Copy first: summarize_csv_audio_video() replaces the stored API summary.
+        device_data = {name: dict(stats) for name, stats in (self._get_report_device_data() or {}).items()}
         if not self.download_csv:
-            self.report.set_table_title("Test Devices:")
-            self.report.build_table_title()
-            device_details = pd.DataFrame(
-                {
-                    "Hostname": self.real_sta_hostname,
-                    "OS Type": self.real_sta_os_type,
-                    "MAC": self.mac_list,
-                    "RSSI": self.rssi_list,
-                    "Link Rate": self.link_rate_list,
-                    "SSID": self.ssid_list,
-                    "Role in call": [
-                        "Host" if index == 0 else "Participant"
-                        for index, hostname in enumerate(self.real_sta_hostname)
-                    ],
-                }
-            )
+            return device_data
+        self._wait_for_dashboard_csv()
+        csv_path = os.path.join(self.path, self.csv_file_name)
+        if not os.path.exists(csv_path):
+            logger.error(f"Zoom dashboard CSV not found: {csv_path}; MOS will be reported as NA")
+            return device_data
+        try:
+            csv_data = self.summarize_csv_audio_video(csv_path)
+        except Exception as e:
+            logger.error(f"Error while reading the Zoom dashboard CSV {csv_path}: {e}; MOS will be reported as NA")
+            return device_data
+        for name, stats in (csv_data or {}).items():
+            merged = device_data.setdefault(name, {})
+            for key, value in stats.items():
+                if value is not None:
+                    merged[key] = value
+        return device_data
+
+    def _build_client_results(self, device_data):
+        """Works out the received metrics, MOS and rating of every configured client.
+
+        Args:
+            device_data (dict): {hostname: {metric_key: value}} from _collect_report_device_data().
+
+        Returns:
+            list: one dict per client, in the configured order (host first).
+        """
+        clients = []
+        for index, hostname in enumerate(self.real_sta_hostname):
+            stats = device_data.get(hostname) or {}
+            client = {
+                "name": hostname,
+                "label": f"{hostname} (Host)" if index == 0 else hostname,
+                "os": self.OS_LABELS.get(str(self.real_sta_os_type[index]).lower(), str(self.real_sta_os_type[index]))
+                if index < len(self.real_sta_os_type) else "NA",
+                "mac": self.mac_list[index] if index < len(self.mac_list) else "NA",
+                "rssi": self._rssi_value(self.rssi_list[index]) if index < len(self.rssi_list) else None,
+                "audio_latency": self._number(stats.get("audio_input_latency_avg")) if self.audio else None,
+                "video_latency": self._number(stats.get("video_input_latency_avg")) if self.video else None,
+                "audio_jitter": self._number(stats.get("audio_input_jitter_avg")) if self.audio else None,
+                "video_jitter": self._number(stats.get("video_input_jitter_avg")) if self.video else None,
+                "audio_loss": self._number(stats.get("audio_input_avg_loss_avg")) if self.audio else None,
+                "video_loss": self._number(stats.get("video_input_avg_loss_avg")) if self.video else None,
+                "video_fps": self._number(stats.get("video_input_frame_rate_avg")) if self.video else None,
+                "video_resolution": self._resolution_label(stats.get("video_input_resolution")) if self.video else "",
+                "audio_mos": self._mos_value(stats.get("audio_mos_avg")) if self.audio else None,
+                "video_mos": self._mos_value(stats.get("video_mos_avg")) if self.video else None,
+            }
+            if client["audio_mos"] is not None and client["video_mos"] is not None:
+                client["overall_mos"] = round(client["audio_mos"] * self.AUDIO_MOS_WEIGHT
+                                              + client["video_mos"] * self.VIDEO_MOS_WEIGHT, 2)
+            else:
+                client["overall_mos"] = client["audio_mos"] if client["audio_mos"] is not None else client["video_mos"]
+            client["rating"], client["rating_color"] = self.classify_mos_rating(client["overall_mos"])
+            client["has_data"] = any(client[key] is not None for key in (
+                "audio_latency", "video_latency", "audio_jitter", "video_jitter", "audio_loss", "video_loss",
+                "video_fps", "audio_mos", "video_mos"))
+            clients.append(client)
+        return clients
+
+    def _client_issues(self, client):
+        """Lists what is outside the received-media targets for one client, e.g. ["611 ms audio delay"].
+
+        Returns:
+            list: plain-English issues; empty when the client stayed within target.
+        """
+        issues = []
+        if client["audio_latency"] is not None and client["audio_latency"] > self.AUDIO_LATENCY_TARGET_MS:
+            issues.append("{:.0f} ms audio delay".format(client["audio_latency"]))
+        elif client["video_latency"] is not None and client["video_latency"] > self.VIDEO_LATENCY_TARGET_MS:
+            issues.append("{:.0f} ms video delay".format(client["video_latency"]))
+        jitters = [value for value in (client["audio_jitter"], client["video_jitter"]) if value is not None]
+        if jitters and max(jitters) > self.JITTER_TARGET_MS:
+            issues.append("{:.0f} ms jitter".format(max(jitters)))
+        losses = [value for value in (client["audio_loss"], client["video_loss"]) if value is not None]
+        if losses and max(losses) > self.PACKET_LOSS_TARGET_PCT:
+            issues.append("{:.2f}% packet loss".format(max(losses)))
+        return issues
+
+    @staticmethod
+    def _average(values):
+        """Average of the values that are not None, or None when there are none."""
+        values = [value for value in values if value is not None]
+        return round(sum(values) / len(values), 2) if values else None
+
+    def _add_overall_test_verdict(self, report, clients):
+        """Adds the "Overall Test Verdict" card: clients tested, average MOS and the overall rating."""
+        average_audio = self._average(client["audio_mos"] for client in clients)
+        average_video = self._average(client["video_mos"] for client in clients)
+        average_overall = self._average(client["overall_mos"] for client in clients)
+        rating, rating_color = self.classify_mos_rating(average_overall)
+        rating_html = ("<span style='color:{color}; font-weight:800;'>{rating}</span>".format(color=rating_color, rating=rating)
+                       if rating_color else "NA")
+
+        def mos_text(value):
+            return "{:.2f} / 5".format(value) if value is not None else "NA"
+
+        verdict_fields = {
+            "Total Clients Tested": "{} ({})".format(
+                len(self.real_sta_hostname), self._device_count_text(["Windows", "macOS", "Linux", "Android"])),
+            "Average Audio MOS": mos_text(average_audio) if self.audio else None,
+            "Average Video MOS": mos_text(average_video) if self.video else None,
+            "Average Overall MOS": mos_text(average_overall),
+            "Overall Rating": rating_html,
+        }
+        report.build_info_card(
+            title="Overall Test Verdict",
+            items=[{"label": label, "value": value} for label, value in verdict_fields.items()])
+
+    def _key_findings(self, clients):
+        """Writes the "Key Findings" sentences from the per-client results.
+
+        Returns:
+            list: plain-text findings, most important first.
+        """
+        joined = [client for client in clients if client["has_data"]]
+        if not joined:
+            return ["No call statistics were received from any client, so call quality could not be assessed."]
+        findings = []
+        total = len(joined)
+
+        # Ratings
+        rated = [client for client in joined if client["overall_mos"] is not None]
+        if rated:
+            average_overall = self._average(client["overall_mos"] for client in rated)
+            average_rating, _ = self.classify_mos_rating(average_overall)
+            good = [client for client in rated if client["rating"] in ("Excellent", "Good")]
+            who = "clients that joined" if len(rated) == total else "clients with MOS data"
+            if len(good) == len(rated):
+                labels = [label for label in ("Good", "Excellent") if any(client["rating"] == label for client in rated)]
+                findings.append("All {n} {who} rated {labels}, with an average Overall MOS of {avg:.2f} ({rating}).".format(
+                    n=len(rated), who=who, labels=" or ".join(labels), avg=average_overall, rating=average_rating))
+            else:
+                low = [client["name"] for client in rated if client not in good]
+                findings.append("{good} of {n} {who} rated Good or Excellent, while {low} rated Fair or Poor; the average "
+                                "Overall MOS was {avg:.2f} ({rating}).".format(
+                                    good=len(good), n=len(rated), who=who, low=self._join_words(low),
+                                    avg=average_overall, rating=average_rating))
         else:
-            csv_device_data = {}
-            try:
-                csv_path = os.path.join(self.path, self.csv_file_name)
-                if not os.path.exists(csv_path):
-                    logger.error(f"File not found: {csv_path}")
-                    self.report.set_table_title("Test Devices:")
-                    self.report.build_table_title()
-                    device_details = pd.DataFrame(
-                        {
-                            "Hostname": self.real_sta_hostname,
-                            "OS Type": self.real_sta_os_type,
-                            "MAC": self.mac_list,
-                            "SSID": self.ssid_list,
-                            "Role in call": [
-                                "Host" if index == 0 else "Participant"
-                                for index, hostname in enumerate(self.real_sta_hostname)
-                            ],
-                        }
-                    )
-                else:
-                    csv_device_data = self.summarize_csv_audio_video(csv_path)
-                    device_data = csv_device_data
-                    self.report.set_table_title("Test Devices:")
-                    self.report.build_table_title()
-                    device_details = pd.DataFrame(
-                        {
-                            "Hostname": self.real_sta_hostname,
-                            "OS Type": self.real_sta_os_type,
-                            "MAC": self.mac_list,
-                            "SSID": self.ssid_list,
-                            "Role in call": [
-                                "Host" if index == 0 else "Participant"
-                                for index, hostname in enumerate(self.real_sta_hostname)
-                            ],
-                            "Overall Audio MOS": [
-                                csv_device_data.get(client, {}).get("audio_mos_avg")
-                                or 0
-                                for client in self.real_sta_hostname
-                            ],
-                            "Overall Video MOS": [
-                                csv_device_data.get(client, {}).get("video_mos_avg")
-                                or 0
-                                for client in self.real_sta_hostname
-                            ],
-                        }
-                    )
-            except Exception as e:
-                logger.error(f"Error while getting/reading: {self.csv_file_name}: {e}")
-                device_data = self._get_report_device_data()
-                self.report.set_table_title("Test Devices:")
-                self.report.build_table_title()
-                device_details = pd.DataFrame(
-                    {
-                        "Hostname": self.real_sta_hostname,
-                        "OS Type": self.real_sta_os_type,
-                        "MAC": self.mac_list,
-                        "SSID": self.ssid_list,
-                        "Role in call": [
-                            "Host" if index == 0 else "Participant"
-                            for index, hostname in enumerate(self.real_sta_hostname)
-                        ],
-                    }
-                )
-        self.report.set_table_dataframe(device_details)
-        self.report.build_table()
+            findings.append("MOS scores are not available because the Zoom dashboard QoS export was not received for "
+                            "this meeting, so the clients could not be rated.")
 
-        if self.audio:
-            self.report.set_table_title("1. Audio Performance")
-            self.report.build_table_title()
+        missing = [client["name"] for client in clients if not client["has_data"]]
+        if missing:
+            findings.append("{k} of {m} configured clients did not report call statistics ({names}).".format(
+                k=len(missing), m=len(clients), names=self._join_words(missing)))
 
-            self.report.set_text(
-                """Audio quality is evaluated through latency, jitter, bitrate, and packet loss, ensuring clear communication and consistent voice transmission."""
-            )
-            self.report.build_text_simple()
+        # Audio quality
+        audio_rated = [client for client in joined if client["audio_mos"] is not None]
+        if audio_rated:
+            spread = self._range_text([client["audio_mos"] for client in audio_rated])
+            low_audio = [client["name"] for client in audio_rated if client["audio_mos"] < self.MOS_RATING_BANDS[1][0]]
+            if not low_audio:
+                findings.append("Audio was clear on every client, with Audio MOS of {}.".format(spread))
+            else:
+                findings.append("Audio quality was Fair or Poor on {names}, with Audio MOS of {spread} across the "
+                                "clients.".format(names=self._join_words(low_audio), spread=spread))
 
-            self.report.set_graph_title("a. Audio Bitrate (Received/Sent)")
-            self.report.build_graph_title()
-            x_data_set = [
-                [
-                    (device_data.get(client, {}).get("audio_input_bitrate_avg") or 0)
-                    for index, client in enumerate(self.real_sta_hostname)
-                ],
-                [
-                    (device_data.get(client, {}).get("audio_output_bitrate_avg") or 0)
-                    for index, client in enumerate(self.real_sta_hostname)
-                ],
-            ]
-            y_data_set = self.real_sta_hostname
+        # Latency, jitter and packet loss
+        within = [client for client in joined if not self._client_issues(client)]
+        if within:
+            details = []
+            audio_delays = [client["audio_latency"] for client in within if client["audio_latency"] is not None]
+            video_delays = [client["video_latency"] for client in within if client["video_latency"] is not None]
+            if audio_delays:
+                details.append("audio delay {} ms".format(self._range_text(audio_delays, digits=0)))
+            elif video_delays:
+                details.append("video delay {} ms".format(self._range_text(video_delays, digits=0)))
+            losses = [max(value for value in (client["audio_loss"], client["video_loss"]) if value is not None)
+                      for client in within if client["audio_loss"] is not None or client["video_loss"] is not None]
+            if losses:
+                details.append("packet loss under {:g}%".format(math.floor(max(losses) * 2) / 2 + 0.5))
+            scope = "all {} clients".format(total) if len(within) == total else "{} of {} clients".format(len(within), total)
+            findings.append("Latency, jitter and packet loss stayed within target for {scope}{details}.".format(
+                scope=scope, details=" ({})".format(", ".join(details)) if details else ""))
+        else:
+            findings.append("Latency, jitter or packet loss went outside the target on all {} clients.".format(total))
 
-            x_fig_size = 18
-            y_fig_size = len(self.real_sta_hostname) * 1 + 4
-            bar_graph_horizontal = lf_bar_graph_horizontal(
-                _data_set=x_data_set,
-                _xaxis_name="Bitrate (Kbps)",
-                _yaxis_name="Devices",
-                _yaxis_label=y_data_set,
-                _yaxis_categories=y_data_set,
-                _yaxis_step=1,
-                _yticks_font=8,
-                _bar_height=0.20,
-                _color_name=["blue", "orange"],
-                _show_bar_value=True,
-                _figsize=(x_fig_size, y_fig_size),
-                _graph_title="Audio Bitrate(Received/Sent)",
-                _graph_image_name="Audio Bitrate(Recevied and Sent)",
-                _label=["Avg Recv", "Avg Sent"],
-            )
-            graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
-            self.report.set_graph_image(graph_image)
-            self.report.move_graph_image()
-            self.report.build_graph()
+        # Video quality by platform
+        mobile = [client["video_mos"] for client in joined if client["os"] == "Android" and client["video_mos"] is not None]
+        desktop = [client["video_mos"] for client in joined
+                   if client["os"] in ("Windows", "macOS", "Linux") and client["video_mos"] is not None]
+        if mobile and desktop:
+            mobile_average, desktop_average = sum(mobile) / len(mobile), sum(desktop) / len(desktop)
+            if mobile_average < desktop_average - 0.25:
+                comparison = "lower on Android (Video MOS {}) than on laptops and desktops ({})"
+            elif mobile_average > desktop_average + 0.25:
+                comparison = "higher on Android (Video MOS {}) than on laptops and desktops ({})"
+            else:
+                comparison = "similar on Android (Video MOS {}) and on laptops and desktops ({})"
+            findings.append("Video quality was {}.".format(
+                comparison.format(self._range_text(mobile), self._range_text(desktop))))
+        elif mobile or desktop:
+            findings.append("Video MOS was {} across the clients.".format(self._range_text(mobile or desktop)))
 
-            self.report.set_graph_title("b. Audio Latency (Received/Sent)")
-            self.report.build_graph_title()
-            x_data_set = [
-                [
-                    (device_data.get(client, {}).get("audio_input_latency_avg") or 0)
-                    for index, client in enumerate(self.real_sta_hostname)
-                ],
-                [
-                    (device_data.get(client, {}).get("audio_output_latency_avg") or 0)
-                    for index, client in enumerate(self.real_sta_hostname)
-                ],
-            ]
-            y_data_set = self.real_sta_hostname
-            x_fig_size = 18
-            y_fig_size = len(self.real_sta_hostname) * 1 + 4
-            bar_graph_horizontal = lf_bar_graph_horizontal(
-                _data_set=x_data_set,
-                _xaxis_name="Latency (ms)",
-                _yaxis_name="Devices",
-                _yaxis_label=y_data_set,
-                _yaxis_categories=y_data_set,
-                _yaxis_step=1,
-                _yticks_font=8,
-                _bar_height=0.20,
-                _color_name=["blue", "orange"],
-                _show_bar_value=True,
-                _figsize=(x_fig_size, y_fig_size),
-                _graph_title="Audio Latency(received/sent)",
-                _graph_image_name="Audio Latency(received and sent)",
-                _label=["Avg Recv", "Avg Sent"],
-            )
-            graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
-            self.report.set_graph_image(graph_image)
-            self.report.move_graph_image()
-            self.report.build_graph()
+        # Problem clients
+        problems = [(client["name"], self._client_issues(client)) for client in joined]
+        problems = [(name, issues) for name, issues in problems if issues]
+        if len(problems) == 1:
+            findings.append("{} was the only problem client, with {}.".format(problems[0][0], self._join_words(problems[0][1])))
+        elif problems:
+            findings.append("{} clients had problems: {}.".format(len(problems), "; ".join(
+                "{} ({})".format(name, self._join_words(issues)) for name, issues in problems)))
 
-            self.report.set_graph_title("c. Audio Jitter (Received/Sent)")
-            self.report.build_graph_title()
-            x_data_set = [
-                [
-                    (device_data.get(client, {}).get("audio_input_jitter_avg") or 0)
-                    for index, client in enumerate(self.real_sta_hostname)
-                ],
-                [
-                    (device_data.get(client, {}).get("audio_output_jitter_avg") or 0)
-                    for index, client in enumerate(self.real_sta_hostname)
-                ],
-            ]
-            y_data_set = self.real_sta_hostname
-            x_fig_size = 18
-            y_fig_size = len(self.real_sta_hostname) * 1 + 4
-            bar_graph_horizontal = lf_bar_graph_horizontal(
-                _data_set=x_data_set,
-                _xaxis_name="Jitter (ms)",
-                _yaxis_name="Devices",
-                _yaxis_label=y_data_set,
-                _yaxis_categories=y_data_set,
-                _yaxis_step=1,
-                _yticks_font=8,
-                _bar_height=0.20,
-                _color_name=["blue", "orange"],
-                _show_bar_value=True,
-                _figsize=(x_fig_size, y_fig_size),
-                _graph_title="Audio Jitter(Received/Sent)",
-                _graph_image_name="Audio Jitter(received and Sent)",
-                _label=["Avg Recv", "Avg Sent"],
-            )
-            graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
-            self.report.set_graph_image(graph_image)
-            self.report.move_graph_image()
-            self.report.build_graph()
+        # Signal strength
+        readings = [(client["name"], client["rssi"]) for client in joined if client["rssi"] is not None]
+        if readings:
+            weak = [name for name, rssi in readings if rssi < self.WEAK_RSSI_DBM]
+            values = [rssi for _, rssi in readings]
+            if not weak:
+                spread = "{:g} dBm".format(max(values)) if max(values) == min(values) else \
+                    "{:g} to {:g} dBm".format(max(values), min(values))
+                findings.append("Signal strength was good on all clients ({}), so Wi-Fi signal was not a limiting "
+                                "factor.".format(spread))
+            else:
+                findings.append("{k} of {n} clients had weak signal (below {limit} dBm): {names}, which may have affected "
+                                "their call quality.".format(k=len(weak), n=len(readings), limit=self.WEAK_RSSI_DBM,
+                                                             names=self._join_words(weak)))
+        return findings
 
-            self.report.set_graph_title("d. Audio Packet Loss (Received/Sent)")
-            self.report.build_graph_title()
-            x_data_set = [
-                [
-                    (device_data.get(client, {}).get("audio_input_avg_loss_avg") or 0)
-                    for index, client in enumerate(self.real_sta_hostname)
-                ],
-                [
-                    (device_data.get(client, {}).get("audio_output_avg_loss_avg") or 0)
-                    for index, client in enumerate(self.real_sta_hostname)
-                ],
-            ]
-            y_data_set = self.real_sta_hostname
-            x_fig_size = 18
-            y_fig_size = len(self.real_sta_hostname) * 1 + 4
-            bar_graph_horizontal = lf_bar_graph_horizontal(
-                _data_set=x_data_set,
-                _xaxis_name="Packet Loss (%)",
-                _yaxis_name="Devices",
-                _yaxis_label=y_data_set,
-                _yaxis_categories=y_data_set,
-                _yaxis_step=1,
-                _yticks_font=8,
-                _bar_height=0.20,
-                _color_name=["blue", "orange"],
-                _show_bar_value=True,
-                _figsize=(x_fig_size, y_fig_size),
-                _graph_title="Audio Packet Loss(Received/Sent)",
-                _graph_image_name="Audio Packet Loss(Recevied and Sent)",
-                _label=["Avg Recv", "Avg Sent"],
-            )
-            graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
-            self.report.set_graph_image(graph_image)
-            self.report.move_graph_image()
-            self.report.build_graph()
+    def _add_key_findings_to_report(self, report, clients):
+        """Adds the "Key Findings" card."""
+        try:
+            items = "".join("<li style='font-size:14px; color:var(--ink); line-height:1.5;'>{}</li>".format(escape(point))
+                            for point in self._key_findings(clients))
+            report.set_custom_html(
+                "<div class='info-card'><div class='info-card-header'>Key Findings</div>"
+                "<ul style='margin:0; padding-left:20px; display:flex; flex-direction:column; "
+                "gap:10px;'>{}</ul></div>".format(items))
+            report.build_custom()
+        except Exception as error:
+            logger.warning("Key findings could not be added to the report: %s", error)
 
-            self.report.set_table_title("Test Audio Results Table:")
-            self.report.build_table_title()
-            audio_test_details = pd.DataFrame(
-                {
-                    "Device Name": [client for client in self.real_sta_hostname],
-                    "Avg Bitrate (kbps) [Received/Sent]": [
-                        "{}/{}".format(
-                            (
-                                device_data.get(client, {}).get(
-                                    "audio_input_bitrate_avg"
-                                )
-                                or 0
-                            ),
-                            (
-                                device_data.get(client, {}).get(
-                                    "audio_output_bitrate_avg"
-                                )
-                                or 0
-                            ),
-                        )
-                        for index, client in enumerate(self.real_sta_hostname)
-                    ],
-                    "Avg Latency (ms) [Received/Sent]": [
-                        "{}/{}".format(
-                            (
-                                device_data.get(client, {}).get(
-                                    "audio_input_latency_avg"
-                                )
-                                or 0
-                            ),
-                            (
-                                device_data.get(client, {}).get(
-                                    "audio_output_latency_avg"
-                                )
-                                or 0
-                            ),
-                        )
-                        for index, client in enumerate(self.real_sta_hostname)
-                    ],
-                    "Avg Jitter (ms) [Received/Sent]": [
-                        "{}/{}".format(
-                            (
-                                device_data.get(client, {}).get(
-                                    "audio_input_jitter_avg"
-                                )
-                                or 0
-                            ),
-                            (
-                                device_data.get(client, {}).get(
-                                    "audio_output_jitter_avg"
-                                )
-                                or 0
-                            ),
-                        )
-                        for index, client in enumerate(self.real_sta_hostname)
-                    ],
-                    "Avg Pkt Loss (%) [Received/Sent]": [
-                        "{}/{}".format(
-                            (
-                                device_data.get(client, {}).get(
-                                    "audio_input_avg_loss_avg"
-                                )
-                                or 0
-                            ),
-                            (
-                                device_data.get(client, {}).get(
-                                    "audio_output_avg_loss_avg"
-                                )
-                                or 0
-                            ),
-                        )
-                        for index, client in enumerate(self.real_sta_hostname)
-                    ],
-                }
-            )
-            self.report.set_table_dataframe(audio_test_details)
-            self.report.dataframe_html = self.report.dataframe.to_html(
-                index=False, justify="center", render_links=True, escape=False
-            )
-            self.report.html += self.report.dataframe_html
-        if self.video:
-            self.report.set_table_title("2. Video Performance")
-            self.report.build_table_title()
+    def _add_client_graph(self, report, title, description, chart_title, xaxis_name, labels, data_set, image_name):
+        """Adds one per-client horizontal bar graph with its heading and description."""
+        report.set_obj_html(_obj_title=title, _obj=description)
+        report.build_objective()
+        graph = lf_bar_graph_horizontal(
+            _data_set=data_set,
+            _xaxis_name=xaxis_name,
+            _yaxis_name="Wireless Clients",
+            _yaxis_categories=labels[0],
+            _graph_title=chart_title,
+            _graph_image_name=image_name,
+            _label=labels[1],
+            _color=[self.MEDIA_COLORS[0] if label.startswith("Audio") else
+                    self.MEDIA_COLORS[1] if label.startswith("Video") else self.MEDIA_COLORS[2] for label in labels[1]],
+            _show_bar_value=True,
+        )
+        report.set_graph_image(graph.build_bar_graph_horizontal())
+        report.build_graph()
 
-            self.report.set_text(
-                "Video traffic stresses the Access Point with higher bandwidth demand. "
-                "Performance is validated by maintaining resolution, frame rate, "
-                "and minimal loss under increasing client loads."
-            )
-            self.report.build_text_simple()
+    def _add_client_graphs_to_report(self, report, clients):
+        """Adds the MOS, latency, jitter and packet loss graphs for the clients that joined the call."""
+        joined = [client for client in clients if client["has_data"]]
+        if not joined:
+            report.set_obj_html(_obj_title="Per Client Results",
+                                _obj="No call statistics were received from any client, so no graphs could be drawn.")
+            report.build_objective()
+            return
+        names = [client["label"] for client in joined]
+        media = self._media_text()
 
-            self.report.set_graph_title("a. Video Bitrate (Received/Sent)")
-            self.report.build_graph_title()
-            x_data_set = [
-                [
-                    (device_data.get(client, {}).get("video_input_bitrate_avg") or 0)
-                    for index, client in enumerate(self.real_sta_hostname)
-                ],
-                [
-                    (device_data.get(client, {}).get("video_output_bitrate_avg") or 0)
-                    for index, client in enumerate(self.real_sta_hostname)
-                ],
-            ]
-            y_data_set = self.real_sta_hostname
-            x_fig_size = 18
-            y_fig_size = len(self.real_sta_hostname) * 1 + 4
-            bar_graph_horizontal = lf_bar_graph_horizontal(
-                _data_set=x_data_set,
-                _xaxis_name="Bitrate (kbps)",
-                _yaxis_name="Devices",
-                _yaxis_label=y_data_set,
-                _yaxis_categories=y_data_set,
-                _yaxis_step=1,
-                _yticks_font=8,
-                _bar_height=0.20,
-                _color_name=["blue", "orange"],
-                _show_bar_value=True,
-                _figsize=(x_fig_size, y_fig_size),
-                _graph_title="Video Bitrate(Received/Sent)",
-                _graph_image_name="Video Bitrate(Recevied and Sent)",
-                _label=["Avg Recv", "Avg Sent"],
-            )
-            graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
-            self.report.set_graph_image(graph_image)
-            self.report.move_graph_image()
-            self.report.build_graph()
+        def series(prefix, key):
+            """(labels, data_set) for the audio and/or video values of one metric."""
+            labels, data_set = [], []
+            if self.audio:
+                labels.append("Audio {}".format(prefix))
+                data_set.append([client["audio_" + key] for client in joined])
+            if self.video:
+                labels.append("Video {}".format(prefix))
+                data_set.append([client["video_" + key] for client in joined])
+            return labels, [[round(value, 2) if value is not None else None for value in values] for values in data_set]
 
-            self.report.set_graph_title("b. Video Latency (Received/Sent)")
-            self.report.build_graph_title()
-            x_data_set = [
-                [
-                    (device_data.get(client, {}).get("video_input_latency_avg") or 0)
-                    for index, client in enumerate(self.real_sta_hostname)
-                ],
-                [
-                    (device_data.get(client, {}).get("video_output_latency_avg") or 0)
-                    for index, client in enumerate(self.real_sta_hostname)
-                ],
-            ]
-            y_data_set = self.real_sta_hostname
-            x_fig_size = 18
-            y_fig_size = len(self.real_sta_hostname) * 1 + 4
-            bar_graph_horizontal = lf_bar_graph_horizontal(
-                _data_set=x_data_set,
-                _xaxis_name="Latency (ms)",
-                _yaxis_name="Devices",
-                _yaxis_label=y_data_set,
-                _yaxis_categories=y_data_set,
-                _yaxis_step=1,
-                _yticks_font=8,
-                _bar_height=0.20,
-                _color_name=["blue", "orange"],
-                _show_bar_value=True,
-                _figsize=(x_fig_size, y_fig_size),
-                _graph_title="Video Latency(Received/Sent)",
-                _graph_image_name="Video Latency(Recevied and Sent)",
-                _label=["Avg Recv", "Avg Sent"],
-            )
-            graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
-            self.report.set_graph_image(graph_image)
-            self.report.move_graph_image()
-            self.report.build_graph()
+        rated = [client for client in joined if client["overall_mos"] is not None]
+        if rated:
+            mos_labels, mos_data = [], []
+            if self.audio:
+                mos_labels.append("Audio MOS")
+                mos_data.append([client["audio_mos"] for client in rated])
+            if self.video:
+                mos_labels.append("Video MOS")
+                mos_data.append([client["video_mos"] for client in rated])
+            if self.audio and self.video:
+                mos_labels.append("Overall MOS")
+                mos_data.append([client["overall_mos"] for client in rated])
+            self._add_client_graph(
+                report, "MOS Score per Device",
+                "The graph below illustrates the {} observed for each wireless device during the test. The X-axis represents "
+                "the MOS value on a scale of 1 to 5, while the Y-axis lists the individual wireless client devices.".format(
+                    self._join_words(mos_labels)),
+                "Per Client MOS Score (1–5)", "MOS", ([client["label"] for client in rated], mos_labels), mos_data,
+                "zoom_mos_per_client")
+        else:
+            report.set_obj_html(
+                _obj_title="MOS Score per Device",
+                _obj="MOS scores are not available because the Zoom dashboard QoS export was not received for this meeting.")
+            report.build_objective()
 
-            self.report.set_graph_title("c. Video Jitter (Received/Sent)")
-            self.report.build_graph_title()
-            x_data_set = [
-                [
-                    (device_data.get(client, {}).get("video_input_jitter_avg") or 0)
-                    for index, client in enumerate(self.real_sta_hostname)
-                ],
-                [
-                    (device_data.get(client, {}).get("video_output_jitter_avg") or 0)
-                    for index, client in enumerate(self.real_sta_hostname)
-                ],
-            ]
-            y_data_set = self.real_sta_hostname
-            x_fig_size = 18
-            y_fig_size = len(self.real_sta_hostname) * 1 + 4
-            bar_graph_horizontal = lf_bar_graph_horizontal(
-                _data_set=x_data_set,
-                _xaxis_name="Jitter (ms)",
-                _yaxis_name="Devices",
-                _yaxis_label=y_data_set,
-                _yaxis_categories=y_data_set,
-                _yaxis_step=1,
-                _yticks_font=8,
-                _bar_height=0.20,
-                _color_name=["blue", "orange"],
-                _show_bar_value=True,
-                _figsize=(x_fig_size, y_fig_size),
-                _graph_title="Video Jitter(Received/Sent)",
-                _graph_image_name="Video Jitter(Recevied and sent)",
-                _label=["Avg Recv", "Avg Sent"],
-            )
-            graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
-            self.report.set_graph_image(graph_image)
-            self.report.move_graph_image()
-            self.report.build_graph()
+        labels, data_set = series("Latency (ms)", "latency")
+        self._add_client_graph(
+            report, "Latency per Device (ms)",
+            "The graph below illustrates the average received {} latency observed for each wireless device during the test. "
+            "The X-axis represents the latency in milliseconds, while the Y-axis lists the individual wireless client "
+            "devices.".format(media),
+            "Per Client Avg Received Latency (ms)", "Latency (ms)", (names, labels), data_set, "zoom_latency_per_client")
 
-            self.report.set_graph_title("d. Video Packet Loss (Received/Sent)")
-            self.report.build_graph_title()
-            x_data_set = [
-                [
-                    (device_data.get(client, {}).get("video_input_avg_loss_avg") or 0)
-                    for index, client in enumerate(self.real_sta_hostname)
-                ],
-                [
-                    (device_data.get(client, {}).get("video_output_avg_loss_avg") or 0)
-                    for index, client in enumerate(self.real_sta_hostname)
-                ],
-            ]
-            y_data_set = self.real_sta_hostname
-            x_fig_size = 18
-            y_fig_size = len(self.real_sta_hostname) * 1 + 4
-            bar_graph_horizontal = lf_bar_graph_horizontal(
-                _data_set=x_data_set,
-                _xaxis_name="Packet Loss (%)",
-                _yaxis_name="Devices",
-                _yaxis_label=y_data_set,
-                _yaxis_categories=y_data_set,
-                _yaxis_step=1,
-                _yticks_font=8,
-                _bar_height=0.20,
-                _color_name=["blue", "orange"],
-                _show_bar_value=True,
-                _figsize=(x_fig_size, y_fig_size),
-                _graph_title="Video Packet Loss(Received/Sent)",
-                _graph_image_name="Video Packet Loss(Recevied and Sent)",
-                _label=["Avg Recv", "Avg Sent"],
-            )
-            graph_image = bar_graph_horizontal.build_bar_graph_horizontal()
-            self.report.set_graph_image(graph_image)
-            self.report.move_graph_image()
-            self.report.build_graph()
+        labels, data_set = series("Jitter (ms)", "jitter")
+        self._add_client_graph(
+            report, "Jitter per Device (ms)",
+            "The graph below illustrates the average received {} jitter observed for each wireless device during the test. "
+            "The X-axis represents the jitter in milliseconds, while the Y-axis lists the individual wireless client "
+            "devices.".format(media),
+            "Per Client Avg Received Jitter (ms)", "Jitter (ms)", (names, labels), data_set, "zoom_jitter_per_client")
 
-            self.report.set_table_title("Test Video Results Table:")
-            self.report.build_table_title()
-            video_test_details = pd.DataFrame(
-                {
-                    "Device Name": [client for client in self.real_sta_hostname],
-                    "Avg Bitrate (kbps) [Received/Sent]": [
-                        "{}/{}".format(
-                            (
-                                device_data.get(client, {}).get(
-                                    "video_input_bitrate_avg"
-                                )
-                                or 0
-                            ),
-                            (
-                                device_data.get(client, {}).get(
-                                    "video_output_bitrate_avg"
-                                )
-                                or 0
-                            ),
-                        )
-                        for index, client in enumerate(self.real_sta_hostname)
-                    ],
-                    "Avg Latency (ms) [Received/Sent]": [
-                        "{}/{}".format(
-                            (
-                                device_data.get(client, {}).get(
-                                    "video_input_latency_avg"
-                                )
-                                or 0
-                            ),
-                            (
-                                device_data.get(client, {}).get(
-                                    "video_output_latency_avg"
-                                )
-                                or 0
-                            ),
-                        )
-                        for index, client in enumerate(self.real_sta_hostname)
-                    ],
-                    "Avg Jitter (ms) [Received/Sent]": [
-                        "{}/{}".format(
-                            (
-                                device_data.get(client, {}).get(
-                                    "video_input_jitter_avg"
-                                )
-                                or 0
-                            ),
-                            (
-                                device_data.get(client, {}).get(
-                                    "video_output_jitter_avg"
-                                )
-                                or 0
-                            ),
-                        )
-                        for index, client in enumerate(self.real_sta_hostname)
-                    ],
-                    "Avg Pkt Loss (%) [Received/Sent]": [
-                        "{}/{}".format(
-                            (
-                                device_data.get(client, {}).get(
-                                    "video_input_avg_loss_avg"
-                                )
-                                or 0
-                            ),
-                            (
-                                device_data.get(client, {}).get(
-                                    "video_output_avg_loss_avg"
-                                )
-                                or 0
-                            ),
-                        )
-                        for index, client in enumerate(self.real_sta_hostname)
-                    ],
-                }
-            )
-            self.report.set_table_dataframe(video_test_details)
-            self.report.dataframe_html = self.report.dataframe.to_html(
-                index=False, justify="center", render_links=True, escape=False
-            )
-            self.report.html += self.report.dataframe_html
-        if self.do_bs and self.bs_graph:
-            self.add_bandsteering_report_section(report=self.report)
+        labels, data_set = series("Packet Loss (%)", "loss")
+        self._add_client_graph(
+            report, "Packet Loss per Device (%)",
+            "The graph below illustrates the average received {} packet loss observed for each wireless device during the "
+            "test. The X-axis represents the packet loss percentage, while the Y-axis lists the individual wireless client "
+            "devices.".format(media),
+            "Per Client Avg Received Packet Loss (%)", "Packet Loss (%)", (names, labels), data_set,
+            "zoom_packet_loss_per_client")
+
+    def _add_client_results_table(self, report, clients):
+        """Adds the "Per Client Results" table: device details, received A/V metrics, MOS and rating."""
+        def pair(audio, video, digits):
+            def one(value):
+                return "{:.{d}f}".format(value, d=digits) if value is not None else "–"
+            return "{} / {}".format(one(audio), one(video))
+
+        def mos(value):
+            return "{:.2f}".format(value) if value is not None else "NA"
+
+        rows = []
+        for client in clients:
+            if client["video_resolution"] and client["video_fps"] is not None:
+                received_video = "{} {:.0f}fps".format(client["video_resolution"], client["video_fps"])
+            elif client["video_fps"] is not None:
+                received_video = "{:.0f} fps".format(client["video_fps"])
+            else:
+                received_video = client["video_resolution"] or "–"
+            rows.append({
+                "Device Name": escape(client["label"]),
+                "OS Type": client["os"],
+                "MAC": client["mac"],
+                "RSSI": client["rssi"] if client["rssi"] is not None else "NA",
+                "Latency A / V (ms)": pair(client["audio_latency"], client["video_latency"], 1),
+                "Jitter A / V (ms)": pair(client["audio_jitter"], client["video_jitter"], 1),
+                "Pkt Loss A / V (%)": pair(client["audio_loss"], client["video_loss"], 2),
+                "Recv Video": received_video,
+                "Audio MOS": mos(client["audio_mos"]),
+                "Video MOS": mos(client["video_mos"]),
+                "Overall MOS": "<b>{}</b>".format(mos(client["overall_mos"])),
+                "Rating": client["rating"] if client["has_data"] else "No data",
+            })
+        report.set_obj_html(
+            _obj_title="Per Client Results",
+            _obj="The table below combines device details, received audio and video performance, and the MOS rating for "
+                 "each client that joined the call. Values shown as “A / V” are audio / video.")
+        report.build_objective()
+        report.set_table_dataframe(pd.DataFrame(rows))
+        report.rating_build_table("Rating", {label: color for _, label, color in self.MOS_RATING_BANDS})
+
+    def _add_scoring_parameters_to_report(self, report):
+        """Adds the "Scoring Parameters and Range" table with the Overall MOS formula and rating bands."""
+        scoring = pd.DataFrame({
+            "Metric": ["Latency (ms)", "Jitter (ms)", "Packet Loss (%)", "Received Resolution", "MOS"],
+            "Audio Target": ["≤ {} ms".format(self.AUDIO_LATENCY_TARGET_MS), "≤ {} ms".format(self.JITTER_TARGET_MS),
+                             "0 – {}%".format(self.PACKET_LOSS_TARGET_PCT), "–", "1 – 5"],
+            "Video Target": ["≤ {} ms".format(self.VIDEO_LATENCY_TARGET_MS), "≤ {} ms".format(self.JITTER_TARGET_MS),
+                             "0 – {}%".format(self.PACKET_LOSS_TARGET_PCT), "≥ 360p", "1 – 5"],
+            "Score Mapping": ["Lower latency → Higher MOS", "Lower jitter → Higher MOS", "0% = Best",
+                              "Higher resolution → Higher MOS", "Reported by the Zoom dashboard"],
+        })
+        report.set_table_title("Scoring Parameters and Range")
+        report.build_table_title()
+        report.set_table_dataframe(scoring)
+        report.build_table()
+        report.set_custom_html(
+            "<div class='chart-card' style='text-align:left;'>"
+            "<p align='left'><b>Overall MOS = Audio MOS × {audio:.0f}% + Video MOS × {video:.0f}%</b></p>"
+            "<p align='left'>Rating: Excellent ≥ 4.00 &nbsp;|&nbsp; Good 3.50 – 3.99 &nbsp;|&nbsp; Fair 3.00 – 3.49 "
+            "&nbsp;|&nbsp; Poor &lt; 3.00</p></div>".format(audio=self.AUDIO_MOS_WEIGHT * 100, video=self.VIDEO_MOS_WEIGHT * 100))
+        report.build_custom()
+
+    def generate_report_from_api(self):
+        self.stop_wifi_analysis()
+        report = self._start_modern_report(mos_overview=True)
+
+        clients = self._build_client_results(self._collect_report_device_data())
+        # Verdict and summary
+        self._add_overall_test_verdict(report, clients)
+        self._add_key_findings_to_report(report, clients)
+
+        report.set_custom_html("<h2>Test Results</h2>")
+        report.build_custom()
+        self._add_client_graphs_to_report(report, clients)
+        self._add_client_results_table(report, clients)
+        self._add_scoring_parameters_to_report(report)
+
         # Wi-Fi connectivity stats
-        self.add_wifi_analysis_to_report(self.report)
-        self.report.write_html()
-        self.report.write_pdf(_page_size="Legal", _orientation="Landscape")
+        self.add_wifi_analysis_to_report(report)
+        if self.do_bs and self.bs_graph:
+            self.add_bandsteering_report_section(report=report)
+        # Configuration at the end
+        self._finish_modern_report(report)
+
         for client in self.real_sta_hostname:
             file_to_move_path = os.path.join(self.path, f"{client}.csv")
             self.move_files(file_to_move_path, self.report_path_date_time)
@@ -4287,74 +4225,18 @@ class ZoomAutomation(Realm):
     def generate_report_from_data(self):
         """Generate the report from collected API data."""
         self.stop_wifi_analysis()
-        self.report = lf_report(
-            _output_pdf="zoom_call_report.pdf",
-            _output_html="zoom_call_report.html",
-            _results_dir_name="zoom_call_report",
-            _path=self.path,
-        )
-        report_path_date_time = self.report.get_path_date_time()
-        self.report_path_date_time = report_path_date_time  # main()'s finally reads this to place the client and run logs
-        self.report.set_title("Zoom Call Automated Report")
-        self.report.build_banner()
-
-        self.report.set_table_title("Objective:")
-        self.report.build_table_title()
-        self.report.set_text(
-            """The Zoom Conference Test is designed to evaluate an Access Point ability
-                to handle real-time conferencing workloads when multiple clients, including Windows,
-                Linux, macOS, and Android devices, participate in a Zoom meeting...
-            """
-        )
-        self.report.build_text_simple()
-
-        self.report.set_table_title("Test Parameters:")
-        self.report.build_table_title()
-
-        testtype = (
-            "AUDIO & VIDEO"
-            if (self.audio and self.video)
-            else ("AUDIO" if self.audio else "VIDEO")
-        )
-        to_hms = (
-            lambda mins: f"{int(mins * 60 // 3600):02}:{int((mins * 60 % 3600) // 60):02}:{int(mins * 60 % 60):02}"
-        )
-
-        param_data = {
-            "Test Name": "Zoom Conference Call Test",
-            "Date": time.strftime("%d-%m-%Y", time.localtime()),
-            "Devices Used": f"W({self.windows}),L({self.linux}),M({self.mac}),A({self.android})",
-            "Zoom Meeting ID": (
-                self.remote_login_url if not self.do_robo else "Robo-Multi-Location"
-            ),
-            "Test Duration": to_hms(self.duration),
-            "TEST TYPE": testtype,
-            "Mode": "Per point" if self.per_point_robo else "Static",
-        }
-
-        if self.config:
-            param_data["Configured Devices"] = self.hostname_os_combination
-            param_data["SSID"] = self.ssid
-            param_data["Security"] = self.security
-        elif len(self.selected_groups) > 0 and len(self.selected_profiles) > 0:
-            gp_pairs = zip(self.selected_groups, self.selected_profiles)
-            gp_map = ", ".join(f"{group} -> {profile}" for group, profile in gp_pairs)
-            param_data["Configuration"] = gp_map
-            param_data["Configured Devices"] = self.hostname_os_combination
-
-        self.report.set_table_dataframe(pd.DataFrame([param_data]))
-        self.report.build_table()
+        report = self._start_modern_report()
+        report_path_date_time = self.report_path_date_time  # main()'s finally reads this to place the client and run logs
 
         self._generate_robo_per_location_report()
 
         if self.do_webui:
             self.add_live_view_images_to_report()
 
-        self.report.build_custom()
         # Wi-Fi connectivity stats
-        self.add_wifi_analysis_to_report(self.report)
-        self.report.write_html()
-        self.report.write_pdf(_page_size="Legal", _orientation="Landscape")
+        self.add_wifi_analysis_to_report(report)
+        # Configuration at the end
+        self._finish_modern_report(report)
         self._move_report_files(report_path_date_time)
 
     def _generate_robo_per_location_report(self):
@@ -4389,12 +4271,12 @@ class ZoomAutomation(Realm):
                         device_data = self._get_report_device_data(raw_data)
                     except Exception as e:
                         logger.error(f"Error reading {found_files[0]}: {e}")
-                        self.report.set_text(f"Error loading data for {coord}/{angle}")
-                        self.report.build_text_simple()
+                        self.report.set_custom_html(f"<p>Error loading data for {escape(str(coord))}/{escape(str(angle))}</p>")
+                        self.report.build_custom()
                         continue
                 else:
-                    self.report.set_text(f"No data found for {coord}/{angle}")
-                    self.report.build_text_simple()
+                    self.report.set_custom_html(f"<p>No data found for {escape(str(coord))}/{escape(str(angle))}</p>")
+                    self.report.build_custom()
                     continue
 
                 if self.audio:
@@ -4444,9 +4326,6 @@ class ZoomAutomation(Realm):
         self, media_type, metric_name, unit, data, input_key, output_key, suffix=""
     ):
         """Build a horizontal bar graph with device names on the Y-axis."""
-        self.report.set_graph_title(f"{media_type} {metric_name} (Sent/Received)")
-        self.report.build_graph_title()
-
         sent_vals = []
         recv_vals = []
 
@@ -4461,8 +4340,8 @@ class ZoomAutomation(Realm):
             _xaxis_name=f"{metric_name} ({unit})",
             _yaxis_name="Devices",
             _yaxis_categories=self.real_sta_hostname,
-            _graph_title=f"{media_type} {metric_name}",
-            _graph_image_name=f"{media_type}_{metric_name}{suffix}",
+            _graph_title=f"{media_type} {metric_name} (Sent/Received)",
+            _graph_image_name=self._chart_id(f"{media_type}_{metric_name}{suffix}"),
             _label=["Avg Sent", "Avg Recv"],
             _figsize=(18, len(self.real_sta_hostname) * 1 + 4),
             _color_name=["blue", "orange"],
@@ -4502,10 +4381,7 @@ class ZoomAutomation(Realm):
             }
         )
         self.report.set_table_dataframe(details)
-        self.report.dataframe_html = self.report.dataframe.to_html(
-            index=False, justify="center", render_links=True, escape=False
-        )
-        self.report.html += self.report.dataframe_html
+        self.report.build_table()
 
     def _move_report_files(self, report_path_date_time):
         """Move CSVs and robo JSONs into the report folder."""
