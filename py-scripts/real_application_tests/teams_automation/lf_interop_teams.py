@@ -174,6 +174,10 @@ class TeamsAutomation(Realm):
         window_dir=WINDOWS_TEAMS_DIR,
         linux_dir=LINUX_TEAMS_DIR,
         mac_dir=MACOS_TEAMS_DIR,
+        wifi_analysis=False,
+        enable_bg_ping=False,
+        bg_ping_target=None,
+        bg_ping_interval=1,
     ):
         super().__init__(lfclient_host=lanforge_ip)
         self.app = Flask(__name__)
@@ -271,6 +275,12 @@ class TeamsAutomation(Realm):
         self.hostname_to_station_map = {}
         self.running_averages = {}
         self.enable_mobile_stats = enable_mobile_stats
+        self.wifi_analysis_enabled = wifi_analysis
+        self.enable_bg_ping = enable_bg_ping
+        self.bg_ping_target = bg_ping_target
+        self.bg_ping_interval = bg_ping_interval
+        self.connectivity_started = False
+        self.background_ping = None
 
         if self.do_robo or self.do_bs:
             self.robo_ip = robo_ip
@@ -1206,6 +1216,7 @@ class TeamsAutomation(Realm):
         self.create_participants()
 
         self.wait_for_test_start()
+        self.start_connectivity_monitoring()
         self.monitor_test()
         self.stop_signal = True
         time.sleep(10)
@@ -1894,6 +1905,31 @@ class TeamsAutomation(Realm):
         except (Exception, SystemExit) as error:
             logger.warning("Wifi connectivity analysis could not be started: %s", error)
             self.wifi_analysis = None
+
+    def start_connectivity_monitoring(self):
+        """Start requested connectivity monitoring when Teams traffic is active."""
+        if self.connectivity_started or self.stop_signal:
+            return
+        if not (self.enable_bg_ping or self.wifi_analysis_enabled):
+            return
+
+        self.connectivity_started = True
+        logger.info("Starting requested Teams connectivity monitoring")
+        if self.enable_bg_ping:
+            try:
+                self.background_ping = lf_interop_ping.Ping(
+                    host=self.lanforge_ip, port=8080,
+                    target=self.bg_ping_target or self.upstream_port,
+                    interval=self.bg_ping_interval, sta_list=[], duration=0,
+                    real=True, virtual=False,
+                    debug=logger.isEnabledFor(logging.DEBUG))
+                if not self.background_ping.start_background_ping(self.real_sta_list):
+                    self.background_ping = None
+            except (Exception, SystemExit) as error:
+                logger.warning("Background ping could not be started: %s", error)
+                self.background_ping = None
+        if self.wifi_analysis_enabled:
+            self.start_wifi_analysis(host=self.lanforge_ip, port=8080)
 
     def stop_wifi_analysis(self):
         """Stop live Wi-Fi monitoring and retain its per-client statistics."""
@@ -3452,6 +3488,10 @@ def main():
             window_dir=args.window_dir,
             linux_dir=args.linux_dir,
             mac_dir=args.mac_dir,
+            wifi_analysis=args.wifi_analysis,
+            enable_bg_ping=args.enable_bg_ping,
+            bg_ping_target=args.bg_ping_target or args.upstream_port,
+            bg_ping_interval=args.bg_ping_interval,
         )
 
         teams.dut_model = args.dut_model
@@ -3479,23 +3519,6 @@ def main():
             teams.update_webui_data()
         teams.load_credentials()
         teams.handle_flask_server()
-
-        if args.wifi_analysis:
-            teams.start_wifi_analysis(host=args.mgr, port=8080)
-        teams.background_ping = None
-        if args.enable_bg_ping:
-            try:
-                teams.background_ping = lf_interop_ping.Ping(
-                    host=args.mgr, port=8080,
-                    target=args.bg_ping_target or args.upstream_port,
-                    interval=args.bg_ping_interval, sta_list=[], duration=0,
-                    real=True, virtual=False,
-                    debug=logger.isEnabledFor(logging.DEBUG))
-                if not teams.background_ping.start_background_ping(teams.real_sta_list):
-                    teams.background_ping = None
-            except (Exception, SystemExit) as error:
-                logger.warning("Background ping could not be started: %s", error)
-                teams.background_ping = None
 
         if args.do_robo:
             teams.run_robo_test()
