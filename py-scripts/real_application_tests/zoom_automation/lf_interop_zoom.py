@@ -40,6 +40,12 @@ python3 lf_interop_zoom.py --lanforge_ip "10.17.1.208" --signin_email "demo@gmai
 --participants 2 --audio --video --upstream_port 10.17.1.68 --robo_ip 127.0.0.1:6000 --coordinates 1,2 --cycles 2
 --do_bs --api_stats_collection --env_file .env --bssids 00:11:22:33:44:55,66:77:88:99:AA:BB
 
+Example-8:
+Command Line Interface to run Zoom test with Wi-Fi analysis on the real clients:
+python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.214.219" --signin_email "demo@gmail.com" --signin_passwd "Demo@123"
+--participants 3 --audio --video --resources 1.400,1.375 --zoom_host 1.95 --upstream_port 1.1.eth1 --api_stats_collection --env_file .env
+--download_csv --wifi_analysis
+
 
 NOTES:
 1. Use './lf_interop_zoom.py --help' to see command line usage and options.
@@ -99,6 +105,7 @@ lf_horizontal_stacked_graph = lf_graph.lf_horizontal_stacked_graph
 DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
 lf_base_interop_profile = importlib.import_module("py-scripts.lf_base_interop_profile")
 RealDevice = lf_base_interop_profile.RealDevice
+ClientAnalysis = importlib.import_module("py-scripts.lf_wifi_msgs").ClientAnalysis
 
 flask_server_logger = logging.getLogger(__name__)
 flask_server_log = logging.getLogger("werkzeug")
@@ -297,6 +304,10 @@ class ZoomAutomation(Realm):
         self.is_csv_available = False
         self.wait_at_point = int(wait_at_point)
         self.resource_ip = resource_ip
+        self.wifi_analysis = None
+        self.wifi_analysis_stats = {}
+        self.wifi_analysis_log = None
+        self.wifi_analysis_monitoring = False
 
     def stop_previous_flask_server(self):
         """Kill any process listening on port 5000 (Linux/Darwin only)."""
@@ -2502,6 +2513,7 @@ class ZoomAutomation(Realm):
         return True
 
     def generate_report(self):
+        self.stop_wifi_analysis()
         report = lf_report(_output_pdf='zoom_call_report.pdf',
                            _output_html='zoom_call_report.html',
                            _results_dir_name="zoom_call_report",
@@ -3077,6 +3089,8 @@ class ZoomAutomation(Realm):
                 report.set_table_dataframe(video_test_details)
                 report.html += report.dataframe.to_html(index=False,
                                                         justify='center', render_links=True, escape=False)  # have the index be able to be passed in.
+        # Wi-Fi connectivity stats
+        self.add_wifi_analysis_to_report(report)
         report.set_custom_html("<br/><hr/>")
         report.build_custom()
 
@@ -3192,6 +3206,129 @@ class ZoomAutomation(Realm):
 
         self.device_list = filtered_list
         return filtered_list
+
+    def start_wifi_analysis(self, device_list):
+        """Starts live Wi-Fi message monitoring (ClientAnalysis) for the devices under test.
+        If no device can be resolved, it logs a warning and skips the analysis instead of
+        stopping the test.
+
+        Args:
+            device_list (list): port names of the devices under test, e.g. ["1.10.wlan0"].
+
+        Example:
+            self.start_wifi_analysis(device_list=self.real_sta_list)
+        """
+        self.wifi_analysis = None
+        self.wifi_analysis_stats = {}
+        self.wifi_analysis_log = None
+        self.wifi_analysis_monitoring = False
+        if not device_list:
+            return
+        try:
+            # ClientAnalysis needs resource IDs like '1.10'
+            resource_ids = list(dict.fromkeys(".".join(name.split(".")[:2]) for name in device_list))
+            self.wifi_analysis = ClientAnalysis(host=self.mgr_ip, port=8080, device_list=resource_ids)
+            # start_monitoring() exits if no device is found
+            if not self.wifi_analysis.setup_device_entries():
+                logger.warning("None of the wifi connectivity analysis devices resolved to a device LANforge knows about")
+                self.wifi_analysis = None
+                return
+            self.wifi_analysis.start_monitoring()
+            self.wifi_analysis_monitoring = True
+        except (Exception, SystemExit) as error:
+            logger.warning("Wifi connectivity analysis could not be started: %s", error)
+            self.wifi_analysis = None
+
+    def stop_wifi_analysis(self):
+        """Stops the live Wi-Fi monitoring and stores the per-device stats in
+        self.wifi_analysis_stats. Does nothing if monitoring was not started.
+
+        Example:
+            self.stop_wifi_analysis()
+        """
+        if not getattr(self, 'wifi_analysis_monitoring', False):
+            return
+        self.wifi_analysis_monitoring = False
+        if self.wifi_analysis._monitor_file_name:
+            self.wifi_analysis_log = os.path.join("Wifi_Messages", self.wifi_analysis._monitor_file_name)
+        try:
+            self.wifi_analysis_stats = self.wifi_analysis.stop_monitoring()
+        except (Exception, SystemExit) as error:
+            logger.warning("Wifi connectivity analysis results could not be collected: %s", error)
+
+    def add_wifi_analysis_to_report(self, report):
+        """Adds the "Client Connectivity Event Summary" bar graph and the Wi-Fi connectivity
+        analysis table to the report. Does nothing if there are no Wi-Fi analysis stats.
+
+        Args:
+            report (lf_report): report to add the section to.
+
+        Example:
+            self.add_wifi_analysis_to_report(self.report)
+        """
+        wifi_analysis_log = getattr(self, 'wifi_analysis_log', None)
+        if wifi_analysis_log and os.path.exists(wifi_analysis_log):
+            try:
+                shutil.copy(wifi_analysis_log, os.path.join(report.path_date_time, "wifi_analysis_messages.json"))
+            except OSError as error:
+                logger.warning("Wifi analysis messages could not be copied to the report folder: %s", error)
+        if not getattr(self, 'wifi_analysis_stats', None):
+            return
+        try:
+            devices, connect_attempt, disconnected, scanning, association_rejection, connected, remarks, cx_time = \
+                ClientAnalysis.stats_to_lists(self.wifi_analysis_stats)
+            port_to_name = dict(zip(self.real_sta_list, self.real_sta_hostname))
+            devices = [port_to_name.get(port_name, port_name) for port_name in devices]
+
+            categories = ["Disconnected", "Scans", "Association Attempts", "Association Rejected", "Connected"]
+            totals = [sum(disconnected), sum(scanning), sum(connect_attempt), sum(association_rejection), sum(connected)]
+            colors = ['#e67e22', '#1e824c', '#2980b9', '#8e44ad', '#27ae60']
+
+            report.set_obj_html(
+                _obj_title="Client Connectivity Event Summary",
+                _obj="This graph summarizes connection-related events observed during the Zoom call test. "
+                     "These metrics provide insight into client stability and wireless connectivity performance.")
+            report.build_objective()
+            # One series across 5 categories so the bars spread across the chart's full width,
+            # each under its own x-axis label, instead of clustering together in the middle.
+            graph = lf_bar_graph(_data_set=[totals],
+                                 _xaxis_name="",
+                                 _yaxis_name="Count",
+                                 _xaxis_categories=categories,
+                                 _graph_image_name="wifi_connectivity_status",
+                                 _label=["Client Connectivity Status"],
+                                 _graph_title="Client Connectivity Status",
+                                 _title_size=16,
+                                 _color_edge='black',
+                                 _bar_width=0.5,
+                                 _figsize=(10, 6),
+                                 _legend_loc="best",
+                                 _dpi=96,
+                                 _show_bar_value=True,
+                                 _enable_csv=True,
+                                 _color=colors,
+                                 _color_name=colors)
+            graph_png = graph.build_bar_graph()
+            report.set_graph_image(graph_png)
+            report.move_graph_image()
+            report.set_csv_filename(graph.graph_image_name)
+            report.move_csv_file()
+            report.build_graph()
+
+            dataframe = pd.DataFrame({
+                "Device": devices,
+                "Association Attempts": connect_attempt,
+                "Disconnected": disconnected,
+                "Scanning": scanning,
+                "Association Rejection": association_rejection,
+                "Connected": connected,
+            })
+            report.set_table_title("Wifi Connectivity Analysis")
+            report.build_table_title()
+            report.set_table_dataframe(dataframe)
+            report.build_table()
+        except Exception as error:
+            logger.warning("Wifi connectivity analysis could not be added to the report: %s", error)
 
     def add_bandsteering_report_section(self, report=None):
         try:
@@ -3444,6 +3581,7 @@ class ZoomAutomation(Realm):
             self.report.set_custom_html(html_content)
 
     def generate_report_from_api(self):
+        self.stop_wifi_analysis()
         self.report = lf_report(
             _output_pdf="zoom_call_report.pdf",
             _output_html="zoom_call_report.html",
@@ -4116,6 +4254,8 @@ class ZoomAutomation(Realm):
             self.report.html += self.report.dataframe_html
         if self.do_bs and self.bs_graph:
             self.add_bandsteering_report_section(report=self.report)
+        # Wi-Fi connectivity stats
+        self.add_wifi_analysis_to_report(self.report)
         self.report.write_html()
         self.report.write_pdf(_page_size="Legal", _orientation="Landscape")
         for client in self.real_sta_hostname:
@@ -4146,6 +4286,7 @@ class ZoomAutomation(Realm):
 
     def generate_report_from_data(self):
         """Generate the report from collected API data."""
+        self.stop_wifi_analysis()
         self.report = lf_report(
             _output_pdf="zoom_call_report.pdf",
             _output_html="zoom_call_report.html",
@@ -4210,6 +4351,8 @@ class ZoomAutomation(Realm):
             self.add_live_view_images_to_report()
 
         self.report.build_custom()
+        # Wi-Fi connectivity stats
+        self.add_wifi_analysis_to_report(self.report)
         self.report.write_html()
         self.report.write_pdf(_page_size="Legal", _orientation="Landscape")
         self._move_report_files(report_path_date_time)
@@ -4513,6 +4656,12 @@ def main():
                 python3 lf_interop_zoom.py --lanforge_ip "10.17.1.208" --signin_email "demo@gmail.com" --signin_passwd "demo123"
                 --participants 2 --audio --video --upstream_port 10.17.1.68 --robo_ip 127.0.0.1:6000 --coordinates 1,2 --cycles 2 --do_bs --api_stats_collection
                 --env_file .env --bssids 00:11:22:33:44:55,66:77:88:99:AA:BB
+
+                Example-8:
+                Command Line Interface to run Zoom test with Wi-Fi analysis on the real clients:
+                python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.214.219" --signin_email "demo@gmail.com" --signin_passwd "Demo@123"
+                --participants 3 --audio --video --resources 1.400,1.375 --zoom_host 1.95 --upstream_port 1.1.eth1 --api_stats_collection
+                --env_file .env --download_csv --wifi_analysis
             """),
         )
         parser.add_argument(
@@ -4706,6 +4855,12 @@ def main():
             "--download_csv",
             action="store_true",
             help="Specify if wanted to collect csv from dashboard. Only works with business account",
+        )
+        parser.add_argument(
+            "--wifi_analysis",
+            action="store_true",
+            help="Analyze real-client wifi-msgs (connects/disconnects/scans/association rejections) "
+            "for the duration of the test and include the results in the report",
         )
 
         # arguments related to the paths of the zoom automation scripts on real client stations
@@ -5159,6 +5314,9 @@ def main():
         zoom_automation.get_ports_data()
         zoom_automation.get_interop_data()
 
+        if args.wifi_analysis:
+            zoom_automation.start_wifi_analysis(device_list=zoom_automation.real_sta_list)
+
         if args.do_robo:
             zoom_automation.run_robo_test()
         else:
@@ -5179,6 +5337,7 @@ def main():
             if zoom_automation.do_webui:
                 zoom_automation.stop_webui()
 
+            zoom_automation.stop_wifi_analysis()
             if zoom_automation.per_point_robo and args.api_stats_collection:
                 zoom_automation.generate_report_from_data()
             elif args.api_stats_collection:
