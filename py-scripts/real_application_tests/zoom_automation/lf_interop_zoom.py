@@ -41,10 +41,10 @@ python3 lf_interop_zoom.py --lanforge_ip "10.17.1.208" --signin_email "demo@gmai
 --do_bs --api_stats_collection --env_file .env --bssids 00:11:22:33:44:55,66:77:88:99:AA:BB
 
 Example-8:
-Command Line Interface to run Zoom test with Wi-Fi analysis on the real clients:
+Command Line Interface to run Zoom test with Wi-Fi analysis and background ping on the real clients:
 python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.214.219" --signin_email "demo@gmail.com" --signin_passwd "Demo@123"
 --participants 3 --audio --video --resources 1.400,1.375 --zoom_host 1.95 --upstream_port 1.1.eth1 --api_stats_collection --env_file .env
---download_csv --wifi_analysis
+--download_csv --wifi_analysis --enable_bg_ping
 
 
 NOTES:
@@ -89,6 +89,7 @@ from requests.auth import HTTPBasicAuth
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../py-json")))  # lf_interop_ping imports from py-json
 
 
 lfcli_base = importlib.import_module("py-json.LANforge.lfcli_base")
@@ -102,6 +103,7 @@ DeviceConfig = importlib.import_module("py-scripts.DeviceConfig")
 lf_base_interop_profile = importlib.import_module("py-scripts.lf_base_interop_profile")
 RealDevice = lf_base_interop_profile.RealDevice
 ClientAnalysis = importlib.import_module("py-scripts.lf_wifi_msgs").ClientAnalysis
+lf_interop_ping = importlib.import_module("py-scripts.lf_interop_ping")
 
 flask_server_logger = logging.getLogger(__name__)
 flask_server_log = logging.getLogger("werkzeug")
@@ -304,6 +306,7 @@ class ZoomAutomation(Realm):
         self.wifi_analysis_stats = {}
         self.wifi_analysis_log = None
         self.wifi_analysis_monitoring = False
+        self.background_ping = None
 
     def stop_previous_flask_server(self):
         """Kill any process listening on port 5000 (Linux/Darwin only)."""
@@ -2533,6 +2536,7 @@ class ZoomAutomation(Realm):
 
     def generate_report(self):
         self.stop_wifi_analysis()
+        self.stop_background_ping()
         report = self._start_modern_report()
         report_path_date_time = self.report_path_date_time
 
@@ -3064,6 +3068,8 @@ class ZoomAutomation(Realm):
                 self._build_link_table(report)
         # Wi-Fi connectivity stats
         self.add_wifi_analysis_to_report(report)
+        if self.background_ping:
+            self.background_ping.add_background_ping_to_report(report)
         # Configuration at the end
         self._finish_modern_report(report)
         for client in accepted_clients:
@@ -3225,6 +3231,48 @@ class ZoomAutomation(Realm):
             self.wifi_analysis_stats = self.wifi_analysis.stop_monitoring()
         except (Exception, SystemExit) as error:
             logger.warning("Wifi connectivity analysis results could not be collected: %s", error)
+
+    def start_background_ping(self, target, interval):
+        """Starts a ping on the real clients for the duration of the call. If it cannot be
+        started, it logs a warning and the test continues without it.
+
+        Args:
+            target (str): IP, domain name or LANforge port to ping.
+            interval (float): packet interval in seconds.
+
+        Example:
+            self.start_background_ping(target="192.168.1.1", interval=1)
+        """
+        try:
+            self.background_ping = lf_interop_ping.Ping(host=self.mgr_ip, port=8080, target=target, interval=interval,
+                                                        sta_list=[], real=True, virtual=False, duration=0)
+            if not self.background_ping.start_background_ping(self.real_sta_list):
+                self.background_ping = None
+        except (Exception, SystemExit) as error:
+            logger.warning("Background ping could not be started: %s", error)
+            self.background_ping = None
+
+    def stop_background_ping(self):
+        """Stops the background ping and collects its results. Does nothing if it is not running.
+
+        Example:
+            self.stop_background_ping()
+        """
+        if not self.background_ping or self.background_ping.bg_stop_time is not None:
+            return
+        try:
+            self.background_ping.stop_background_ping()
+        except (Exception, SystemExit) as error:
+            logger.warning("Background ping could not be stopped cleanly: %s", error)
+
+    def cleanup_background_ping(self):
+        """Removes the background ping endpoints from LANforge."""
+        if not self.background_ping:
+            return
+        try:
+            self.background_ping.cleanup()
+        except (Exception, SystemExit) as error:
+            logger.warning("Background ping endpoints could not be cleaned up: %s", error)
 
     def add_wifi_analysis_to_report(self, report):
         """Adds the "Client Connectivity Event Summary" bar graph and the Wi-Fi connectivity
@@ -4176,6 +4224,7 @@ class ZoomAutomation(Realm):
 
     def generate_report_from_api(self):
         self.stop_wifi_analysis()
+        self.stop_background_ping()
         report = self._start_modern_report(mos_overview=True)
 
         clients = self._build_client_results(self._collect_report_device_data())
@@ -4191,6 +4240,8 @@ class ZoomAutomation(Realm):
 
         # Wi-Fi connectivity stats
         self.add_wifi_analysis_to_report(report)
+        if self.background_ping:
+            self.background_ping.add_background_ping_to_report(report)
         if self.do_bs and self.bs_graph:
             self.add_bandsteering_report_section(report=report)
         # Configuration at the end
@@ -4225,6 +4276,7 @@ class ZoomAutomation(Realm):
     def generate_report_from_data(self):
         """Generate the report from collected API data."""
         self.stop_wifi_analysis()
+        self.stop_background_ping()
         report = self._start_modern_report()
         report_path_date_time = self.report_path_date_time  # main()'s finally reads this to place the client and run logs
 
@@ -4235,6 +4287,8 @@ class ZoomAutomation(Realm):
 
         # Wi-Fi connectivity stats
         self.add_wifi_analysis_to_report(report)
+        if self.background_ping:
+            self.background_ping.add_background_ping_to_report(report)
         # Configuration at the end
         self._finish_modern_report(report)
         self._move_report_files(report_path_date_time)
@@ -4534,10 +4588,10 @@ def main():
                 --env_file .env --bssids 00:11:22:33:44:55,66:77:88:99:AA:BB
 
                 Example-8:
-                Command Line Interface to run Zoom test with Wi-Fi analysis on the real clients:
+                Command Line Interface to run Zoom test with Wi-Fi analysis and background ping on the real clients:
                 python3 lf_interop_zoom.py --duration 1  --lanforge_ip "192.168.214.219" --signin_email "demo@gmail.com" --signin_passwd "Demo@123"
                 --participants 3 --audio --video --resources 1.400,1.375 --zoom_host 1.95 --upstream_port 1.1.eth1 --api_stats_collection
-                --env_file .env --download_csv --wifi_analysis
+                --env_file .env --download_csv --wifi_analysis --enable_bg_ping
             """),
         )
         parser.add_argument(
@@ -4731,6 +4785,24 @@ def main():
             "--download_csv",
             action="store_true",
             help="Specify if wanted to collect csv from dashboard. Only works with business account",
+        )
+        background_ping = parser.add_argument_group("Background ping")
+        background_ping.add_argument(
+            "--enable_bg_ping",
+            action="store_true",
+            help="Run a ping on the real clients in the background while the test runs and report its statistics at the end of the report",
+        )
+        background_ping.add_argument(
+            "--bg_ping_target",
+            type=str,
+            default=None,
+            help="IP, domain name or LANforge port the background ping should target. Defaults to the upstream port of the test when not given",
+        )
+        background_ping.add_argument(
+            "--bg_ping_interval",
+            type=float,
+            default=1,
+            help="Packet interval of the background ping in seconds. Defaults to 1",
         )
         parser.add_argument(
             "--wifi_analysis",
@@ -5192,6 +5264,9 @@ def main():
 
         if args.wifi_analysis:
             zoom_automation.start_wifi_analysis(device_list=zoom_automation.real_sta_list)
+        if args.enable_bg_ping:
+            zoom_automation.start_background_ping(target=args.bg_ping_target or args.upstream_port,
+                                                  interval=args.bg_ping_interval)
 
         if args.do_robo:
             zoom_automation.run_robo_test()
@@ -5214,12 +5289,14 @@ def main():
                 zoom_automation.stop_webui()
 
             zoom_automation.stop_wifi_analysis()
+            zoom_automation.stop_background_ping()
             if zoom_automation.per_point_robo and args.api_stats_collection:
                 zoom_automation.generate_report_from_data()
             elif args.api_stats_collection:
                 zoom_automation.generate_report_from_api()
             time.sleep(5)
             zoom_automation.cleanup_generic_endpoints()
+            zoom_automation.cleanup_background_ping()
             # zoom_automation.move_ping_logs()
             zoom_automation.move_log_folder()
             logger.info("Done.")
