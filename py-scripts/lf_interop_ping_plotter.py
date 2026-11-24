@@ -354,10 +354,6 @@ class Ping(Realm):
             # removing virtual stations if existing
             for station in self.sta_list:
                 logging.info('Removing the station {} if exists'.format(station))
-                self.generic_endps_profile.created_cx.append(
-                    'CX_generic-{}'.format(station.split('.')[2]))
-                self.generic_endps_profile.created_endp.append(
-                    'generic-{}'.format(station.split('.')[2]))
                 self.rm_port(station, check_exists=True)
 
             if not LFUtils.wait_until_ports_disappear(base_url=self.host, port_list=self.sta_list, debug=self.debug):
@@ -365,18 +361,18 @@ class Ping(Realm):
                 logging.error('Aborting the test.')
                 exit(0)
 
+        # virtual stations are named by their port name, real clients by their full EID
+        ports = []
+        os_types = []
+        if self.enable_virtual:
+            ports += self.sta_list
+            os_types += [None] * len(self.sta_list)
         if self.enable_real:
-            # removing generic endpoints for real devices if existing
-            for station in self.real_sta_list:
-                self.generic_endps_profile.created_cx.append(
-                    'CX_generic-{}'.format(station))
-                self.generic_endps_profile.created_endp.append(
-                    'generic-{}'.format(station))
+            ports += self.real_sta_list
+            os_types += ['real'] * len(self.real_sta_list)
 
         logging.info('Cleaning up generic endpoints if exists')
-        self.generic_endps_profile.cleanup()
-        self.generic_endps_profile.created_cx = []
-        self.generic_endps_profile.created_endp = []
+        self.generic_endps_profile.delete_cx(ports=ports, os_types=os_types)
         logging.info('Cleanup Successful')
 
     # Args:
@@ -442,9 +438,7 @@ class Ping(Realm):
             logger.info("Please re-check the configuration applied")
 
     def check_tab_exists(self):
-        logger.debug("GET /generic")
-        response = self.json_get("generic")
-        if response is None:
+        if not self.generic_endps_profile.is_tab_enabled():
             logger.error("GET /generic returned no response; Generic tab may not be available on the LANforge manager.")
             raise RuntimeError("Generic tab is not available on the LANforge manager.")
         return True
@@ -452,27 +446,26 @@ class Ping(Realm):
     def create_generic_endp(self):
         # Virtual stations are tracked in same list as real stations, so need to separate them
         # in order to create generic endpoints for just the virtual stations
-        virtual_stations = list(set(self.sta_list).difference(set(self.real_sta_list)))
+        virtual_stations = list(set(self.sta_list).difference(set(self.real_sta_list))) if self.enable_virtual else []
+        real_stations = [sta_name for sta_name in self.real_sta_list if sta_name in self.real_sta_data_dict] if self.enable_real else []
+        real_sta_os_types = [self.real_sta_data_dict[sta_name]['ostype'] for sta_name in real_stations]
 
-        if self.enable_virtual:
-            if self.generic_endps_profile.create(ports=virtual_stations, sleep_time=.5):
-                logging.info('Virtual client generic endpoint creation completed.')
-            else:
+        created_endps = self.generic_endps_profile.create_cx(ports=virtual_stations + real_stations,
+                                                             os_types=[None] * len(virtual_stations) + real_sta_os_types,
+                                                             pre_cleanup=False, sleep_time=.5)
+        if virtual_stations:
+            if not all(sta_name in created_endps for sta_name in virtual_stations):
                 logging.error('Virtual client generic endpoint creation failed.')
                 exit(0)
-
-        if self.enable_real:
-            real_sta_os_types = [self.real_sta_data_dict[real_sta_name]['ostype'] for real_sta_name in self.real_sta_data_dict]
-
-            if self.generic_endps_profile.create(ports=self.real_sta_list, sleep_time=.5, real_client_os_types=real_sta_os_types):
-                logging.info('Real client generic endpoint creation completed.')
-            else:
+            logging.info('Virtual client generic endpoint creation completed.')
+        if real_stations:
+            if not all(sta_name in created_endps for sta_name in real_stations):
                 logging.error('Real client generic endpoint creation failed.')
                 exit(0)
+            logging.info('Real client generic endpoint creation completed.')
 
         # setting endpoint report time to ping packet interval
-        for endpoint in self.generic_endps_profile.created_endp:
-            self.generic_endps_profile.set_report_timer(endp_name=endpoint, timer=250)
+        self.generic_endps_profile.set_report_timers(250)
 
     def start_generic(self):
         self.generic_endps_profile.start_cx()
@@ -575,16 +568,13 @@ class Ping(Realm):
     def get_results(self):
         endp = "/generic/{}".format(','.join(self.generic_endps_profile.created_endp))
         logger.debug(f"GET {endp}")
-        results = self.json_get(endp)
+        results = self.generic_endps_profile.get_endp_results()
 
         if results is None:
             logger.error(f"GET {endp} returned no response for created endpoints: {self.generic_endps_profile.created_endp}")
             return results
 
-        multiple_endpoints_requested = len(self.generic_endps_profile.created_endp) > 1
-
-        if multiple_endpoints_requested and 'endpoints' in results.keys():
-            results = results['endpoints']
+        if isinstance(results, list):
             try:
                 returned_names = []
                 for d in results:
@@ -612,7 +602,6 @@ class Ping(Realm):
             return results
 
         try:
-            results = results['endpoint']
             self.log_endpoint_status_change(results['name'], results)
         except Exception:
             response_keys = list(results.keys()) if isinstance(results, dict) else []

@@ -22,6 +22,9 @@ pandas_extensions = importlib.import_module("py-json.LANforge.pandas_extensions"
 logger = logging.getLogger(__name__)
 
 
+DEFAULT_IDLE_STATUSES = ("Stopped", "WAITING", "NO-CX", "FTM_WAIT")
+
+
 class GenCXProfile(LFCliBase):
     def __init__(self, lfclient_host, lfclient_port, local_realm, debug_=False):
         super().__init__(lfclient_host, lfclient_port, debug_)
@@ -42,6 +45,9 @@ class GenCXProfile(LFCliBase):
         self.speedtest_min_dl = 0
         self.speedtest_min_up = 0
         self.speedtest_max_ping = 0
+        self.last_statuses = {}
+        self._stall_since = {}
+        self._gave_up = set()
 
     # setting endpoint report timer
     def set_report_timer(self, endp_name=None, timer=5000):
@@ -125,34 +131,34 @@ class GenCXProfile(LFCliBase):
         else: # linux and virtual stations
             self.cmd = "lfping -I %s -i %s %s" % (sta_name, self.interval, self.dest)
 
-    def start_cx(self):
-        logger.info("Starting CXs: %s" % self.created_cx)
+    def start_cx(self, cx_names=None, report_timer=None, endp_names=None):
+        """Set CXs to RUNNING; defaults to all created CXs."""
+        cx_names = list(self.created_cx if cx_names is None else cx_names)
+        logger.info("Starting CXs: %s" % cx_names)
         logger.info("Created-Endp: %s" % self.created_endp)
-        for cx_name in self.created_cx:
+        if report_timer:
+            self.set_report_timers(report_timer, endp_names)
+        for cx_name in cx_names:
             self.json_post("/cli-json/set_cx_state", {
                 "test_mgr": "default_tm",
                 "cx_name": cx_name,
                 "cx_state": "RUNNING"
             }, debug_=True)
-            # print({
-            #     "test_mgr": "default_tm",
-            #     "cx_name": cx_name,
-            #     "cx_state": "RUNNING"
-            # })
+        return cx_names
 
-    def stop_cx(self):
+    def stop_cx(self, cx_names=None, skip_endps=None):
+        """Set CXs to STOPPED; defaults to all created CXs."""
         logger.info("Stopping CXs...")
-        for cx_name in self.created_cx:
+        if skip_endps:
+            self.untrack_endps(skip_endps)
+        cx_names = list(self.created_cx if cx_names is None else cx_names)
+        for cx_name in cx_names:
             self.json_post("/cli-json/set_cx_state", {
                 "test_mgr": "default_tm",
                 "cx_name": cx_name,
                 "cx_state": "STOPPED"
             }, debug_=True)
-            # print({
-            #     "test_mgr": "default_tm",
-            #     "cx_name": cx_name,
-            #     "cx_state": "STOPPED"
-            # })
+        return cx_names
 
     def cleanup(self):
         logger.info("Cleaning up cxs and endpoints")
@@ -754,3 +760,367 @@ class GenCXProfile(LFCliBase):
             if output_format.lower() != 'csv':
                 pandas_extensions.df_to_file(dataframe=pd.read_csv(report_file), output_f=output_format,
                                              save_path=report_file)
+
+    def is_tab_enabled(self):
+        """Return True if the Generic tab is enabled on the LANforge GUI."""
+        response = self.json_get("generic")
+        if not response:
+            logger.error("Failed to fetch generic tab data.\nRequested URL: 'generic'\nResponse: %s", response)
+            return False
+        return True
+
+    def has_endp(self, endp_name, api="generic"):
+        """Return True if LANforge currently has an endpoint by this name; api is generic or layer4."""
+        response = self.json_get("/{}/{}".format(api, endp_name))
+        return bool(response and "endpoint" in response)
+
+    def has_cx(self, cx_name):
+        """Return True if LANforge currently has a CX by this name."""
+        response = self.json_get("/cx/{}".format(cx_name))
+        if not response or not isinstance(response, dict):
+            return False
+        response_text = str(response).lower()
+        return cx_name.lower() in response_text and "not found" not in response_text
+
+    def get_endp_cx_names(self, port, prefix=None, virtual=False, android=False):
+        """Return the (endpoint name, CX name) that create_cx() uses for a port."""
+        prefix = prefix or self.name_prefix
+        if android:
+            endp_name = "{}-{}".format(prefix, "_".join(port.split(".")))
+            return endp_name, "CX_generic-{}".format(endp_name)
+        endp_suffix = self.local_realm.name_to_eid(port)[2] if virtual else port
+        endp_name = "{}-{}".format(prefix, endp_suffix)
+        return endp_name, "CX_{}".format(endp_name)
+
+    def list_endps(self):
+        """Return the names of every generic endpoint on the manager, without the auto-created RX ("D_") side."""
+        response = self.json_get("/generic/all?fields=name")
+        if not response:
+            return []
+        endp_entries = response.get("endpoints", response.get("endpoint", []))
+        if isinstance(endp_entries, dict):
+            endp_entries = [{endp_entries.get("name", ""): endp_entries}]
+        endp_names = [endp_values.get("name") for endp_entry in endp_entries for endp_values in endp_entry.values() if isinstance(endp_values, dict)]
+        return [endp_name for endp_name in endp_names if endp_name and not endp_name.startswith("D_")]
+
+    def find_endp_cx(self, endp_or_cx_name):
+        """Return the (endpoint name, CX name) for an endpoint or CX name, or None if it does not exist."""
+        endp_candidates = [endp_or_cx_name]
+        if endp_or_cx_name.startswith("CX_generic-"):
+            endp_candidates.append(endp_or_cx_name[len("CX_generic-"):])
+        if endp_or_cx_name.startswith("CX_"):
+            endp_candidates.append(endp_or_cx_name[len("CX_"):])
+        endp_name = next((candidate_endp for candidate_endp in endp_candidates if self.has_endp(candidate_endp)), None)
+        if endp_name is None:
+            return None
+        cx_candidates = [endp_or_cx_name] if endp_or_cx_name.startswith("CX_") else []
+        cx_candidates += ["CX_{}".format(endp_name), "CX_generic-{}".format(endp_name)]
+        cx_name = next((candidate_cx for candidate_cx in dict.fromkeys(cx_candidates) if self.json_get("/cx/{}".format(candidate_cx))), None)
+        return endp_name, cx_name
+
+    def track_endps(self, endp_or_cx_names):
+        """Start tracking existing endpoints and their CXs, given by endpoint or CX name."""
+        endp_cx_pairs = []
+        for endp_or_cx_name in endp_or_cx_names:
+            endp_cx_pair = self.find_endp_cx(endp_or_cx_name)
+            if endp_cx_pair is None:
+                logger.warning("Generic endpoint '%s' not found on the LANforge manager, skipping", endp_or_cx_name)
+                continue
+            endp_name, cx_name = endp_cx_pair
+            if endp_name not in self.created_endp:
+                self.created_endp.append(endp_name)
+            if cx_name and cx_name not in self.created_cx:
+                self.created_cx.append(cx_name)
+            endp_cx_pairs.append(endp_cx_pair)
+        return endp_cx_pairs
+
+    def create_cx(self, ports=None, os_types=None, android_ports=None, android_host=None, cmds=None, prefix=None,
+                  pre_cleanup=True, sleep_time=.5, on_error=None, debug_=False, suppress_related_commands_=None):
+        """Create endpoints and CXs for virtual, real and Android clients; returns {port: endpoint name}."""
+        ports = list(ports or [])
+        android_ports = list(android_ports or [])
+        cmds = cmds or {}
+        if os_types is not None and len(os_types) != len(ports):
+            raise ValueError("os_types needs one entry per port ({} ports, {} os_types)".format(len(ports), len(os_types)))
+        os_types = list(os_types) if os_types is not None else [None] * len(ports)
+
+        previous_prefix = self.name_prefix
+        if prefix:
+            self.name_prefix = prefix
+        created_endps = {}
+        try:
+            if pre_cleanup:
+                self.delete_cx(ports=ports, os_types=os_types, android_ports=android_ports, tracked=False)
+
+            # Runs of the same kind (virtual or real) are created in one call, keeping the given order.
+            batch_start = 0
+            while batch_start < len(ports):
+                is_virtual_batch = not os_types[batch_start]
+                batch_end = batch_start
+                while batch_end < len(ports) and (not os_types[batch_end]) == is_virtual_batch:
+                    batch_end += 1
+                batch_ports = ports[batch_start:batch_end]
+                first_new_endp_index = len(self.created_endp)
+                self.create(ports=batch_ports, sleep_time=sleep_time, debug_=debug_, suppress_related_commands_=suppress_related_commands_,
+                            real_client_os_types=None if is_virtual_batch else os_types[batch_start:batch_end])
+                new_endp_names = self.created_endp[first_new_endp_index:]
+                if len(new_endp_names) != len(batch_ports):
+                    logger.warning("Expected %d endpoints but the profile tracked %d", len(batch_ports), len(new_endp_names))
+                created_endps.update(zip(batch_ports, new_endp_names))
+                batch_start = batch_end
+
+            if android_ports:
+                realm = self.local_realm
+                android_specs = []
+                for port in android_ports:
+                    port_eid = realm.name_to_eid(port)
+                    if android_host is None:
+                        host_resource = port_eid[1]
+                    else:
+                        host_text = str(android_host)
+                        host_resource = host_text.split(".")[1] if "." in host_text else host_text
+                    endp_name, cx_name = self.get_endp_cx_names(port, android=True)
+                    android_specs.append({"port": port, "shelf": port_eid[0], "resource": host_resource, "endp_name": endp_name, "cx_name": cx_name})
+
+                for android_spec in android_specs:
+                    self.json_post("cli-json/add_gen_endp", {
+                        "alias": android_spec["endp_name"],
+                        "shelf": android_spec["shelf"],
+                        "resource": android_spec["resource"],
+                        "port": "eth0",
+                        "type": "gen_generic"
+                    }, debug_=debug_)
+                realm.json_post("/cli-json/nc_show_endpoints", {"endpoint": "all"})
+                if sleep_time:
+                    time.sleep(sleep_time)
+
+                for android_spec in android_specs:
+                    self.set_flags(android_spec["endp_name"], "ClearPortOnStart", 1)
+
+                for android_spec in android_specs:
+                    response = realm.json_post("/cli-json/add_cx", {
+                        "alias": android_spec["cx_name"],
+                        "test_mgr": "default_tm",
+                        "tx_endp": android_spec["endp_name"]
+                    }, debug_=debug_, suppress_related_commands_=suppress_related_commands_)
+                    if response is None:
+                        message = "No response received from CX creation request; waiting for CX to appear"
+                        logger.warning("%s: %s", android_spec["cx_name"], message)
+                        if on_error:
+                            on_error(android_spec["cx_name"], message)
+                    self.created_cx.append(android_spec["cx_name"])
+                    self.created_endp.append(android_spec["endp_name"])
+                    created_endps[android_spec["port"]] = android_spec["endp_name"]
+                if sleep_time:
+                    time.sleep(sleep_time)
+
+                for android_spec in android_specs:
+                    realm.json_post("/cli-json/show_cx", {"test_mgr": "default_tm", "cross_connect": android_spec["cx_name"]})
+        finally:
+            self.name_prefix = previous_prefix
+
+        for port, endp_name in created_endps.items():
+            if port in cmds:
+                self.set_cmd(endp_name, cmds[port])
+        return created_endps
+
+    def delete_cx(self, ports=None, os_types=None, android_ports=None, endp_or_cx_names=None, prefix=None, tracked=True, check_exists=True, settle=0):
+        """Delete CXs and their endpoints, tracked ones and/or ones named by port or name; returns the endpoints removed."""
+        port_endp_cx_names = []
+        ports = list(ports or [])
+        if os_types is not None and len(os_types) != len(ports):
+            raise ValueError("os_types needs one entry per port ({} ports, {} os_types)".format(len(ports), len(os_types)))
+        for port_index, port in enumerate(ports):
+            if os_types is None or os_types[port_index]:
+                port_endp_cx_names.append(self.get_endp_cx_names(port, prefix))
+            if os_types is None or not os_types[port_index]:
+                port_endp_cx_names.append(self.get_endp_cx_names(port, prefix, virtual=True))
+        for port in android_ports or []:
+            port_endp_cx_names.append(self.get_endp_cx_names(port, prefix, android=True))
+
+        endp_names = list(self.created_endp) if tracked else []
+        cx_names = list(self.created_cx) if tracked else []
+        tracked_endps = set(endp_names)
+        for endp_or_cx_name in endp_or_cx_names or []:
+            endp_cx_pair = self.find_endp_cx(endp_or_cx_name)
+            if endp_cx_pair is None:
+                logger.warning("Generic endpoint '%s' not found on the LANforge manager, skipping", endp_or_cx_name)
+                continue
+            endp_names.append(endp_cx_pair[0])
+            if endp_cx_pair[1]:
+                cx_names.append(endp_cx_pair[1])
+            tracked_endps.add(endp_cx_pair[0])
+        for endp_name, cx_name in port_endp_cx_names:
+            if endp_name in tracked_endps:
+                continue
+            if not check_exists or self.has_endp(endp_name):
+                endp_names.append(endp_name)
+                cx_names.append(cx_name)
+
+        if check_exists:
+            endp_names = [endp_name for endp_name in endp_names if endp_name not in tracked_endps or self.has_endp(endp_name)]
+        endp_names = list(dict.fromkeys(endp_names))
+        cx_names = list(dict.fromkeys(cx_names))
+
+        logger.info("Cleaning up generic endpoints if exists: cx=%s, endp=%s", cx_names, endp_names)
+        for cx_name in cx_names:
+            self.json_post("cli-json/rm_cx", {"test_mgr": "default_tm", "cx_name": cx_name})
+        if settle and endp_names:
+            time.sleep(settle)
+        for endp_name in endp_names:
+            self.json_post("cli-json/rm_endp", {"endp_name": endp_name})
+
+        if tracked:
+            self.created_cx = []
+            self.created_endp = []
+            self._stall_since.clear()
+            self._gave_up.clear()
+        else:
+            self.untrack_endps(endp_names)
+        return endp_names
+
+    def set_report_timers(self, timer, endp_names=None):
+        """Set the report timer, in milliseconds, on the given endpoints."""
+        for endp_name in self.created_endp if endp_names is None else endp_names:
+            self.set_report_timer(endp_name=endp_name, timer=timer)
+
+    def untrack_endps(self, endp_names):
+        """Stop tracking the given endpoints, and their CXs, in the profile."""
+        endp_names = set(endp_names)
+        cx_names = {"CX_{}".format(endp_name) for endp_name in endp_names} | {"CX_generic-{}".format(endp_name) for endp_name in endp_names}
+        self.created_endp = [endp_name for endp_name in self.created_endp if endp_name not in endp_names]
+        self.created_cx = [cx_name for cx_name in self.created_cx if cx_name not in cx_names]
+        for endp_name in endp_names:
+            self._stall_since.pop(endp_name, None)
+            self._gave_up.discard(endp_name)
+
+    def get_endp_results(self, endp_names=None, api="generic"):
+        """Return LANforge's answer for the endpoints: one endpoint's data, a list of {name: data}, the answer itself if it has neither, or None."""
+        endp_names = list(self.created_endp if endp_names is None else endp_names)
+        response = self.json_get("/{}/{}".format(api, ",".join(endp_names)))
+        if response is None:
+            return None
+        return response.get("endpoints", response.get("endpoint", response))
+
+    def get_endp_data(self, endp_names=None, batch=True, api="generic"):
+        """Return {endpoint name: endpoint data}; defaults to the created endpoints, api is generic or layer4."""
+        endp_names = list(self.created_endp if endp_names is None else endp_names)
+        if not endp_names:
+            return {}
+        urls = ["/{}/{}".format(api, ",".join(endp_names))] if batch else ["/{}/{}".format(api, endp_name) for endp_name in endp_names]
+        endp_data = {}
+        for url in urls:
+            response = self.json_get(url)
+            if not response:
+                logger.debug("No response for %s", url)
+                continue
+            endp_entries = response.get("endpoints", response.get("endpoint", []))
+            if isinstance(endp_entries, dict):
+                endp_entries = [{endp_entries["name"]: endp_entries}]
+            for endp_entry in endp_entries:
+                for endp_key, endp_values in endp_entry.items():
+                    # Listing many endpoints keys each one by entity id; the real name is inside it.
+                    endp_data[(endp_values.get("name") if isinstance(endp_values, dict) else None) or endp_key] = endp_values
+        return endp_data
+
+    def get_endp_statuses(self, endp_names=None, api="generic"):
+        """Return {endpoint name: status or None}; None means the endpoint could not be fetched."""
+        endp_names = list(self.created_endp if endp_names is None else endp_names)
+        endp_data = self.get_endp_data(endp_names, batch=False, api=api)
+        return {endp_name: (endp_data[endp_name].get("status", "") if endp_name in endp_data else None) for endp_name in endp_names}
+
+    def get_endp_availability(self, endp_names=None, endp_data=None, running_status="run"):
+        """Sort endpoints into missing, not_running and running sets."""
+        endp_names = list(self.created_endp if endp_names is None else endp_names)
+        endp_data = self.get_endp_data(endp_names) if endp_data is None else endp_data
+        endp_availability = {"missing": set(), "not_running": set(), "running": set()}
+        for endp_name in endp_names:
+            if endp_name not in endp_data:
+                endp_availability["missing"].add(endp_name)
+            elif str(endp_data[endp_name].get("status", "")).lower() != running_status:
+                endp_availability["not_running"].add(endp_name)
+            else:
+                endp_availability["running"].add(endp_name)
+        return endp_availability
+
+    def are_endps_idle(self, idle_statuses=DEFAULT_IDLE_STATUSES, stall_timeout=300, unreachable_is_idle=False,
+                       stall_on_active=True, on_status=None, endp_names=None, api="generic"):
+        """Return True once every endpoint is idle or has been waited on long enough."""
+        now = time.monotonic()
+        ready = True
+        statuses = {}
+        try:
+            for endp_name in dict.fromkeys(self.created_endp if endp_names is None else endp_names):
+                endp_values = self.get_endp_data([endp_name], batch=False, api=api).get(endp_name)
+                status = None if endp_values is None else endp_values.get("status", "")
+                statuses[endp_name] = status
+                if on_status:
+                    on_status(endp_name, status, endp_values)
+
+                if status in idle_statuses or (status is None and unreachable_is_idle):
+                    self._clear_stall(endp_name)
+                    continue
+
+                if status is not None and not stall_on_active:
+                    self._clear_stall(endp_name)
+                    ready = False
+                    continue
+
+                stalled_for = now - self._stall_since.setdefault(endp_name, now)
+                if stalled_for >= stall_timeout:
+                    if endp_name not in self._gave_up:
+                        logger.warning("%s unresolved (status=%r) for %.0fs (limit %ss) - no longer waiting on it.",
+                                       endp_name, status, stalled_for, stall_timeout)
+                        self._gave_up.add(endp_name)
+                    continue
+                ready = False
+        except Exception:
+            logger.exception("Error while checking generic endpoint status")
+            return False
+        finally:
+            self.last_statuses = statuses
+        return ready
+
+    def _clear_stall(self, endp_name):
+        self._stall_since.pop(endp_name, None)
+        self._gave_up.discard(endp_name)
+
+    def monitor_endps(self, duration=None, interval=5, on_poll=None, stop_when=None, until_idle=False, idle_kwargs=None, batch=True,
+                      endp_names=None):
+        """Poll endpoints until duration, stop_when or until_idle ends it; returns (reason, endp_data)."""
+        if duration is None and stop_when is None and not until_idle:
+            raise ValueError("monitor_endps needs a duration, a stop_when callback or until_idle")
+        idle_kwargs = idle_kwargs or {}
+        start_time = time.monotonic()
+        while True:
+            endp_data = self.get_endp_data(endp_names, batch=batch)
+            if on_poll:
+                on_poll(endp_data)
+            if stop_when and stop_when(endp_data):
+                return "stop_when", endp_data
+            if until_idle and self.are_endps_idle(endp_names=endp_names, **idle_kwargs):
+                return "idle", endp_data
+            remaining = None if duration is None else duration - (time.monotonic() - start_time)
+            if remaining is not None and remaining <= 0:
+                return "duration", endp_data
+            time.sleep(interval if remaining is None else max(0, min(interval, remaining)))
+
+    def get_report_data(self, endp_names=None, results=None, fields=None, parse=None):
+        """Return {endpoint name: report values}: the selected fields plus whatever parse(endp_values) returns for each endpoint."""
+        if results is None:
+            endp_data = self.get_endp_data(endp_names)
+        elif isinstance(results, dict):
+            endp_data = results
+        else:
+            endp_data = {}
+            for endp_result in results:
+                endp_data.update(endp_result)
+        report_endp_names = list(endp_data) if endp_names is None else [endp_name for endp_name in endp_names if endp_name in endp_data]
+        report_data = {}
+        for endp_name in report_endp_names:
+            endp_values = endp_data[endp_name]
+            endp_report = {field_name: field_value for field_name, field_value in endp_values.items() if fields is None or field_name in fields}
+            if parse:
+                endp_report.update(parse(endp_values))
+            report_data[endp_name] = endp_report
+        return report_data
