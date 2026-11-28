@@ -1892,7 +1892,7 @@ class VideoStreamingTest(Realm):
             report.build_table()
 
             # Set and build title for the overall results table
-            report.set_obj_html("Detailed Total Errors Table", "The below tables provides detailed information of total errors for the web browsing test.")
+            report.set_obj_html("Detailed Total Errors Table", "The below tables provides detailed information of total errors for the video streaming test.")
             report.build_objective()
             dataframe2 = {
                 " DEVICE": username[:created_incremental_values[iter]],
@@ -2709,7 +2709,7 @@ class VideoStreamingTest(Realm):
             report.build_table()
 
             # Set and build title for the overall results table
-            report.set_obj_html("Detailed Total Errors Table", "The below tables provides detailed information of total errors for the web browsing test.")
+            report.set_obj_html("Detailed Total Errors Table", "The below tables provides detailed information of total errors for the video streaming test.")
             report.build_objective()
             dataframe2 = {
                 " DEVICE": username[:created_incremental_values[iter]],
